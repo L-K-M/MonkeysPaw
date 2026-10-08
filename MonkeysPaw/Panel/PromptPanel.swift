@@ -47,6 +47,22 @@ final class PromptPanel: NSPanel {
         onCancel?()
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Ignore incidental flags so Caps Lock does not disable the shortcut.
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        guard flags == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "w" else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        // Borderless panels cannot use the usual close action. Handle ⌘W before
+        // menu dispatch and use Escape's cancel path to hide the reusable panel.
+        cancelOperation(nil)
+        return true
+    }
+
     private func configure() {
         isFloatingPanel = true
         // Default already, but stated because the opposite is an active hazard here:
@@ -66,6 +82,8 @@ final class PromptPanel: NSPanel {
         // alone, the panel would vanish when another app takes focus. Hiding
         // belongs to the controller rather than this AppKit default.
         hidesOnDeactivate = false
+        // Show immediately at the cursor, without AppKit's default appear animation.
+        animationBehavior = .none
         // The flags that put the panel over another app's full-screen window:
         //   .canJoinAllSpaces       : it exists on every Space, so showing it needs
         //                             no Space switch. A .moveToActiveSpace panel

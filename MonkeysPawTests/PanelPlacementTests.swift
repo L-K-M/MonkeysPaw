@@ -61,7 +61,10 @@ final class PanelPlacementTests: XCTestCase {
         let visibleFrame = CGRect(x: -1920, y: -300, width: 1920, height: 1080)
         let frame = PanelPlacement.frame(at: CGPoint(x: -10, y: -290), in: visibleFrame)
 
-        XCTAssertEqual(frame, CGRect(x: -640, y: -300, width: 640, height: 420))
+        XCTAssertEqual(frame, CGRect(x: visibleFrame.maxX - CGFloat(Limits.panelSize.width),
+                                    y: visibleFrame.minY,
+                                    width: Limits.panelSize.width,
+                                    height: Limits.panelSize.height))
     }
 
     func testShrinksPanelToFitSmallVisibleFrame() {
