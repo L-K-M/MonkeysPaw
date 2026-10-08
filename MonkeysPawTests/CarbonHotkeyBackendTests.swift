@@ -4,6 +4,25 @@ import XCTest
 @testable import MonkeysPaw
 
 final class CarbonHotkeyBackendTests: XCTestCase {
+    func testUnboundRegistrationsKeepTheirIdentityPerAction() throws {
+        let backend = CarbonHotkeyBackend()
+        let toggle = backend.registration(for: .togglePicker)
+        let repeatLast = backend.registration(for: .repeatLast)
+        XCTAssertEqual(toggle.status, .unbound)
+        XCTAssertEqual(repeatLast.status, .unbound)
+        XCTAssertNotEqual(toggle.id, repeatLast.id)
+        XCTAssertEqual(backend.registration(for: .togglePicker), toggle)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatLast)
+
+        // An unsupported key exercises unregister without native registration.
+        let refused = backend.register(.togglePicker, accelerator: try Accelerator("Insert")) {
+            XCTFail("A refused shortcut must never fire")
+        }
+        backend.unregister(refused)
+        XCTAssertEqual(backend.registration(for: .togglePicker), toggle)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatLast)
+    }
+
     func testDefaultAndModifierTranslation() throws {
         let cases: [(String, Int, Int)] = [
             ("⌃⌥P", kVK_ANSI_P, controlKey | optionKey),

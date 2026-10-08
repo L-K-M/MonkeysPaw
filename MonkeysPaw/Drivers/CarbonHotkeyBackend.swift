@@ -35,6 +35,7 @@ final class CarbonHotkeyBackend: HotkeyBackend {
     private var nextIdentifier: UInt32 = 0
     private var entries: [UUID: Entry] = [:]
     private var liveRegistrations: [HotkeyAction: HotkeyRegistration] = [:]
+    private var unboundRegistrations: [HotkeyAction: HotkeyRegistration] = [:]
 
     deinit {
         for entry in entries.values { UnregisterEventHotKey(entry.reference) }
@@ -42,8 +43,7 @@ final class CarbonHotkeyBackend: HotkeyBackend {
     }
 
     func registration(for action: HotkeyAction) -> HotkeyRegistration {
-        liveRegistrations[action] ?? HotkeyRegistration(
-            mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        liveRegistrations[action] ?? unboundRegistration(for: action)
     }
 
     func register(_ action: HotkeyAction, accelerator: Accelerator,
@@ -84,10 +84,19 @@ final class CarbonHotkeyBackend: HotkeyBackend {
             UnregisterEventHotKey(entry.reference)
         }
         if let action = liveRegistrations.first(where: { $0.value.id == registration.id })?.key {
-            liveRegistrations[action] = HotkeyRegistration(
-                mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+            liveRegistrations.removeValue(forKey: action)
         }
         removeUnusedHandler()
+    }
+
+    private func unboundRegistration(for action: HotkeyAction) -> HotkeyRegistration {
+        if let registration = unboundRegistrations[action] { return registration }
+
+        // A separate stable identity per Carbon action prevents Setup refresh churn.
+        let registration = HotkeyRegistration(mechanism: mechanism, status: .unbound,
+                                               detail: SetupStrings.unboundShortcut)
+        unboundRegistrations[action] = registration
+        return registration
     }
 
     private func record(_ action: HotkeyAction, status: RegistrationStatus,
