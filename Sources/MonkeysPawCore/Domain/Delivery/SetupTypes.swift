@@ -21,6 +21,16 @@ public struct SetupRow: Equatable, Sendable {
     }
 }
 
+public struct SetupSnapshot: Equatable, Sendable {
+    public let session: DesktopSession
+    public let rows: [SetupRow]
+
+    public init(session: DesktopSession, rows: [SetupRow]) {
+        self.session = session
+        self.rows = rows
+    }
+}
+
 public enum SetupStrings {
     public static let pressShortcut = "Press your shortcut now"
     public static let assignShortcut = "Assign a shortcut in Settings"
