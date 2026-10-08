@@ -175,9 +175,9 @@ constants.
     grant is deferred.
 - **Local state.** The sync state, remembered values, usage, and the Keystore
   ciphertexts mirror §5.1 and §9.2 in `filesDir` and DataStore.
-- **Backups.** The manifest disables backup for app-private data:
-  `android:allowBackup="false"`, plus `dataExtractionRules` (API 31+) and
-  `fullBackupContent` limiting any backup to settings.
+- **Backups.** The manifest sets `android:allowBackup="false"` and nothing
+  else. There is no settings-only backup, because DataStore also holds
+  remembered values and Keystore ciphertexts.
   - Auto Backup would otherwise upload the library and the remembered values
     to Google Drive.
   - A restored Keystore ciphertext cannot be decrypted anyway.
@@ -250,6 +250,11 @@ risk, so it is contained by contract:
   as a `spec/fixtures/sync/*.json` case: server events, plus the expected
   request log and final state. Both engines run every case, and the
   real-server CI runs execute the same fixtures live.
+  - A case can also carry client steps: a local file write, an engine
+    restart mid-pull, a second device's pass, a sign-in change, a clock
+    step. That covers the crash, concurrency, and account scenarios.
+  - Any scenario that stays engine-specific is listed in the fixture
+    README.
 - **The move-together rule** goes into AGENTS.md: a change to format,
   grammar, validation, canonical form, or the sync protocol lands with
   fixture updates and both implementations in the same PR.

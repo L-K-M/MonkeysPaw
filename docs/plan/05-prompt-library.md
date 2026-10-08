@@ -90,6 +90,12 @@ Save semantics:
   - The validator rejects YAML 1.1 spellings (`y`, `yes`, `n`, `no`, `on`,
     `off`), octal-style integers (`010`), anchors, and `<<` merge keys.
   - Canonical writing emits `true` and `false` only.
+  - These are validator errors, not warnings, so a push fails with `422`
+    (§8.4).
+  - The subset applies to every front-matter scalar, including preserved
+    unknown keys.
+  - A boolean key holding a rejected spelling fails closed: `private` reads
+    as `true`, and `optional` as `false`.
 
 ### 5.3 Placeholder grammar
 
