@@ -30,12 +30,19 @@ private struct Healthcheck: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Check the local server's health.")
 
     mutating func run() async throws {
+        let configuration: ServerConfiguration
         do {
-            let configuration = try ServerConfiguration()
-            let url = URL(string: "http://127.0.0.1:\(configuration.httpPort)/api/health")!
-            var request = URLRequest(url: url)
-            request.timeoutInterval = ServerLimits.healthcheckTimeout
+            configuration = try ServerConfiguration()
+        } catch {
+            FileHandle.standardError.write(Data("\(error)\n".utf8))
+            throw ExitCode.failure
+        }
 
+        let url = URL(string: "http://127.0.0.1:\(configuration.httpPort)/api/health")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = ServerLimits.healthcheckTimeout
+
+        do {
             let (_, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
