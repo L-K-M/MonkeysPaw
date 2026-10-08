@@ -41,7 +41,7 @@ Run these commands from the repository root:
 | Build Core without GTK | `swift build --target MonkeysPawCore` |
 | Build Linux app | `swift build --product monkeyspaw` |
 | Test Core and Linux app | `swift test` |
-| Test Linux app with a required display | `xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 swift test --filter MonkeysPawLinuxTests` |
+| Test Linux app with a required display | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
 | Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
 | Build server | `swift build --package-path server` |
 | Test server | `swift test --package-path server` |
