@@ -28,10 +28,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install project validation tools
+      - name: Ensure project validation tools
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends python3
+          command -v python3 || {
+            apt-get update
+            apt-get install -y --no-install-recommends python3
+          }
       - name: Validate Xcode object references
         run: python3 scripts/check-pbxproj.py
       - name: Build Core
