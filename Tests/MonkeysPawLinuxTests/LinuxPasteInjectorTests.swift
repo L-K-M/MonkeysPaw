@@ -1,5 +1,6 @@
 #if os(Linux)
 import Foundation
+import Glibc
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -128,12 +129,63 @@ final class LinuxPasteInjectorTests: XCTestCase {
         XCTAssertLessThan(ContinuousClock().now - start, .seconds(4))
     }
 
+    func testImmediateExitPreservesFinalOutput() throws {
+        let tools = try FakeLinuxTools()
+        try tools.install("xdotool", script: "printf 'final-marker'\nexit 0")
+
+        let output = try tools.runner.run("xdotool", arguments: []).get()
+        XCTAssertEqual(output.status, 0)
+        XCTAssertEqual(output.text, "final-marker")
+    }
+
+    func testExitAfterEmptyReadPreservesFinalOutput() throws {
+        let tools = try FakeLinuxTools()
+        let pidFile = tools.directory.appendingPathComponent("child-pid")
+        tools.environment["FAKE_PID"] = pidFile.path
+        try tools.install("xdotool", script: """
+            printf '%s' "$$" > "$FAKE_PID"
+            printf 'final-marker'
+            exit 0
+            """)
+
+        var firstRead = true
+        let runner = LinuxToolRunner(environment: tools.environment, readOutput: { descriptor, buffer, capacity in
+            if !firstRead { return Glibc.read(descriptor, buffer, capacity) }
+            firstRead = false
+
+            // Force the scheduling race: an empty read is followed by the tool's
+            // write and exit before the runner checks isRunning. Leave its bytes
+            // in the real pipe so only a subsequent drain can recover them.
+            let deadline = ContinuousClock().now.advanced(by: .seconds(1))
+            var reaped = false
+            while ContinuousClock().now < deadline {
+                if let pid = try? String(contentsOf: pidFile, encoding: .utf8),
+                   !pid.isEmpty, !FileManager.default.fileExists(atPath: "/proc/\(pid)/stat") {
+                    reaped = true
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.001)
+            }
+            XCTAssertTrue(reaped, "The tool must exit before the simulated empty read returns")
+            errno = EAGAIN
+            return -1
+        })
+
+        let output = try runner.run("xdotool", arguments: []).get()
+        XCTAssertEqual(output.status, 0)
+        XCTAssertEqual(output.text, "final-marker")
+    }
+
     func testInheritedPipeCannotExtendTheToolDeadline() throws {
         let tools = try FakeLinuxTools()
         try tools.install("xdotool", script: "/bin/sleep 3 &\nexit 0")
         let start = ContinuousClock().now
         let result = tools.runner.run("xdotool", arguments: [], timeout: .milliseconds(100))
-        if case .failure(let failure) = result { XCTAssertEqual(failure, .timeout) }
+        guard case .failure(let failure) = result else {
+            XCTFail("An inherited writer must not bypass the tool deadline")
+            return
+        }
+        XCTAssertEqual(failure, .timeout)
         XCTAssertLessThan(ContinuousClock().now - start, .seconds(2))
     }
 

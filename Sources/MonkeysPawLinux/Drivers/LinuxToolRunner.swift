@@ -18,9 +18,12 @@ struct LinuxToolRunner {
     }
 
     let environment: [String: String]
+    private let readOutput: (Int32, UnsafeMutableRawPointer?, Int) -> Int
 
-    init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    init(environment: [String: String] = ProcessInfo.processInfo.environment,
+         readOutput: @escaping (Int32, UnsafeMutableRawPointer?, Int) -> Int = Glibc.read) {
         self.environment = environment
+        self.readOutput = readOutput
     }
 
     func executable(_ name: String) -> URL? {
@@ -78,7 +81,7 @@ struct LinuxToolRunner {
                 return .failure(.timeout)
             }
 
-            let count = Glibc.read(descriptor, &buffer, buffer.count)
+            let count = readOutput(descriptor, &buffer, buffer.count)
             if count > 0 {
                 guard data.count + count <= Limits.linuxToolOutputCap else {
                     if process.isRunning { kill(process.processIdentifier, SIGKILL) }
@@ -91,8 +94,9 @@ struct LinuxToolRunner {
                 if process.isRunning { kill(process.processIdentifier, SIGKILL) }
                 return .failure(.unknown)
             }
-            if !process.isRunning {
-                // Output has been drained before inspecting the exit status.
+            if count == 0, !process.isRunning {
+                // EAGAIN can race the child's final write and exit. Only EOF
+                // proves the pipe is drained, including any inherited writer.
                 guard process.terminationReason == .exit,
                       acceptedStatuses.contains(process.terminationStatus) else {
                     return .failure(.unknown)
