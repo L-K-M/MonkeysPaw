@@ -4,7 +4,8 @@ FROM swift:6.4-noble AS build
 WORKDIR /build
 
 # Preserve the parent package layout: the server links Core through ../.
-# SwiftPM validates the parent manifest's source paths, including unused targets.
+# Native-engine builds with this manifest reject missing Linux app source paths.
+# Keep the full source tree for robust parent package loading.
 # GTK sources are present, but stay outside Core's build dependency closure.
 COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
