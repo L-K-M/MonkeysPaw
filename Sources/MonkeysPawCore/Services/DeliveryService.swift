@@ -116,7 +116,7 @@ public final class DeliveryService {
 
     // Self-test has stronger evidence than exit 0; do not reuse a proven failure.
     func recordUnreceived(_ backend: PasteBackend) {
-        failureCache.record(.notReceived, for: backend)
+        mainThread.run { self.failureCache.record(.notReceived, for: backend) }
     }
 
     // Keep focus and the clipboard exclusive through every backend's readback.

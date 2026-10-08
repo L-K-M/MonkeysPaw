@@ -77,6 +77,17 @@ final class DeliveryServiceTests: XCTestCase {
         XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.remoteDesktopPortal))
     }
 
+    func testUnreceivedFailureIsCachedOnlyAfterMainThreadRuns() {
+        let h = DeliveryHarness()
+        h.main.mode = .deferred
+
+        h.service.recordUnreceived(.cgEvent)
+
+        XCTAssertNil(h.cache.failure(for: .cgEvent))
+        h.main.drain()
+        XCTAssertEqual(h.cache.failure(for: .cgEvent), .notReceived)
+    }
+
     func testExhaustedLadderNotifiesBeforeCompletingAndKeepsTypedReasons() {
         let h = DeliveryHarness(session: .kdeWayland)
         h.injectors[.ydotool]?.result = .failed(.toolMissing)
