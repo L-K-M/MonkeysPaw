@@ -3,14 +3,30 @@ import MonkeysPawCore
 import SwiftUI
 
 /// Builds one reusable panel and marshals every window operation to AppKit's thread.
-final class PanelController {
+final class PanelController: PanelWindow {
+    enum HideReason { case delivery, dismissal }
+
+    var rootView: (() -> AnyView)?
+    var onCancel: (() -> Void)?
+    var onHide: ((HideReason) -> Void)?
+
     private let mainThread: MainThread
+    private let scheduler: Scheduler
     private let log: LogSink
     private var panel: PromptPanel?
+    private var resignObserver: NSObjectProtocol?
+    private var presentationGeneration = 0
 
-    init(mainThread: MainThread, log: LogSink) {
+    var isVisible: Bool { panel?.isVisible == true }
+
+    init(mainThread: MainThread, scheduler: Scheduler, log: LogSink) {
         self.mainThread = mainThread
+        self.scheduler = scheduler
         self.log = log
+    }
+
+    deinit {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
     }
 
     func show() {
@@ -18,19 +34,11 @@ final class PanelController {
     }
 
     func hide() {
-        mainThread.run { [weak self] in self?.hideOnMainThread() }
+        mainThread.run { [weak self] in self?.hideOnMainThread(reason: .dismissal) }
     }
 
-    func toggle() {
-        mainThread.run { [weak self] in
-            guard let self else { return }
-
-            if self.panel?.isVisible == true {
-                self.hideOnMainThread()
-            } else {
-                self.showOnMainThread()
-            }
-        }
+    func hideForDelivery() {
+        mainThread.run { [weak self] in self?.hideOnMainThread(reason: .delivery) }
     }
 
     private func showOnMainThread() {
@@ -57,22 +65,42 @@ final class PanelController {
         // the current full-screen Space in place.
         NSApp.activate()
         panel.makeKey()
+        presentationGeneration &+= 1
+        observeBlur(of: panel)
     }
 
-    private func hideOnMainThread() {
+    private func hideOnMainThread(reason: HideReason) {
+        presentationGeneration &+= 1
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+        // DeliveryService restores after the settle delay. This path only tells
+        // the focus driver whether that restore is delivery or guarded dismissal.
+        onHide?(reason)
         panel?.orderOut(nil)
     }
 
+    private func observeBlur(of panel: PromptPanel) {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let generation = self.presentationGeneration
+            self.scheduler.after(Limits.blurHideDelay) { [weak self] in
+                guard let self, generation == self.presentationGeneration,
+                      self.isVisible, self.panel?.isKeyWindow == false else { return }
+                self.onCancel?()
+            }
+        }
+    }
+
     private func makePanel() -> PromptPanel {
-        let content = NSHostingView(rootView:
-            Text("Monkey's Paw: nothing here yet")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor)))
+        let content = NSHostingView(rootView: rootView?() ?? AnyView(EmptyView()))
         // Placement owns the frame; the hosting view must not propose its own size.
         content.sizingOptions = []
 
         let panel = PromptPanel(content: content)
-        panel.onCancel = { [weak self] in self?.hide() }
+        panel.onCancel = { [weak self] in self?.onCancel?() }
         return panel
     }
 }

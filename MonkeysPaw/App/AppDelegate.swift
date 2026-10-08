@@ -1,22 +1,92 @@
 import AppKit
 import MonkeysPawCore
+import SwiftUI
 
 /// The macOS composition root owns the drivers and the resident status item.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: PanelController?
+    private var panelPresentation: PanelViewState?
+    private var setupWindow: SetupWindowController?
+    private var focusTracker: WorkspaceFocusTracker?
+    private var shortcuts: ShortcutService?
     private var statusItem: NSStatusItem?
+    private(set) var panelModel: PanelModel?
+    private(set) var setupModel: SetupModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hosted XCTest must not add a status item or open application windows.
+        let log = OSLogSink()
+        compose(log: log)
+        // Graph construction is safe under hosted XCTest. Native registrations,
+        // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
 
-        let log = OSLogSink()
-        let mainThread = DispatchMainThread()
-        panelController = PanelController(mainThread: mainThread, log: log)
+        focusTracker?.startTrackingActivations()
+        if let accelerator = Accelerator.defaultBinding(for: .togglePicker) {
+            shortcuts?.configure([.togglePicker: accelerator]) { [weak self] action in
+                guard action == .togglePicker else { return }
+                self?.togglePanel()
+            }
+        }
 
         installMainMenu()
         installStatusItem()
         log.write(.info, "Application started")
+
+        // M1's first-run step is Setup (§6.4); library onboarding arrives in M2.
+        let setupKey = "hasShownDeliverySetup"
+        if !UserDefaults.standard.bool(forKey: setupKey) {
+            showSetup()
+            UserDefaults.standard.set(true, forKey: setupKey)
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Returning from System Settings refreshes grants and registration state.
+        setupModel?.refresh()
+    }
+
+    private func compose(log: LogSink) {
+        let mainThread = DispatchMainThread()
+        let scheduler = DispatchScheduler()
+        let focus = WorkspaceFocusTracker(mainThread: mainThread, scheduler: scheduler)
+        let panel = PanelController(mainThread: mainThread, scheduler: scheduler, log: log)
+        let hotkeys = CarbonHotkeyBackend()
+        let session = MacSessionProbe()
+        let clipboard = PasteboardClipboard()
+        let notifier = UserNotificationNotifier()
+        let cgEvent = CGEventPasteInjector()
+        let appleScript = AppleScriptPasteInjector()
+        let failureCache = SessionPasteFailureCache()
+        let delivery = DeliveryService(panel: panel, focus: focus, clipboard: clipboard,
+                                       injectors: [cgEvent, appleScript], notifier: notifier,
+                                       session: session, scheduler: scheduler,
+                                       mainThread: mainThread, failureCache: failureCache)
+        let shortcuts = ShortcutService(backend: hotkeys, scheduler: scheduler, mainThread: mainThread)
+        let target = TextFieldSelfTestTarget()
+        let selfTest = SelfTest(target: target, delivery: delivery, session: session,
+                                scheduler: scheduler, mainThread: mainThread)
+        let probe = MacSetupProbe(hotkeys: hotkeys, mainThread: mainThread)
+        let setup = SetupService(probe: probe, session: session, shortcuts: shortcuts,
+                                 selfTest: selfTest, mainThread: mainThread)
+        let model = PanelModel(delivery: delivery)
+        let presentation = PanelViewState(model: model)
+        panel.rootView = { [weak presentation] in
+            guard let presentation else { return AnyView(EmptyView()) }
+            return AnyView(PanelView(presentation: presentation))
+        }
+        panel.onCancel = { [weak model] in model?.cancel() }
+        panel.onHide = { reason in
+            focus.prepareForRestore(reason == .delivery ? .delivery : .dismissal)
+        }
+
+        panelController = panel
+        panelPresentation = presentation
+        panelModel = model
+        focusTracker = focus
+        self.shortcuts = shortcuts
+        let setupModel = SetupModel(setup: setup)
+        self.setupModel = setupModel
+        setupWindow = SetupWindowController(model: setupModel)
     }
 
     private func installMainMenu() {
@@ -56,9 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.image?.isTemplate = true
 
         let menu = NSMenu()
-        let show = menu.addItem(withTitle: "Show Panel", action: #selector(showPanel),
+        let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
                                 keyEquivalent: "")
         show.target = self
+        let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
+        setup.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
@@ -67,10 +139,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showPanel() {
-        panelController?.show()
+        guard panelController?.isVisible != true else { return }
+        panelModel?.show()
     }
 
-    private static var isRunningTests: Bool {
+    private func togglePanel() {
+        if panelController?.isVisible == true {
+            panelModel?.cancel()
+        } else {
+            panelModel?.show()
+        }
+    }
+
+    @objc private func showSetup() {
+        if panelController?.isVisible == true { panelModel?.cancel() }
+        focusTracker?.cancelPendingRestoration()
+        setupWindow?.show()
+    }
+
+    static var isRunningTests: Bool {
         NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
