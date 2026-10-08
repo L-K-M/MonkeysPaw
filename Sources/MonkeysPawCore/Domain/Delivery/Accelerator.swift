@@ -36,23 +36,30 @@ public struct Accelerator: Equatable, Hashable, Sendable {
     public let key: Key
 
     public init(_ text: String) throws {
-        var spelling = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let spelling = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spelling.isEmpty else { throw AcceleratorError.empty }
 
-        // Accept the macOS default spelling as well as Ctrl+Alt+P.
-        var prefixes: [String] = []
+        // Accept textual modifiers, joined glyphs, and glyphs separated by "+".
         let symbols: [Character: String] = ["⌃": "Ctrl", "⌥": "Alt", "⇧": "Shift", "⌘": "Cmd"]
-        while let first = spelling.first, let modifier = symbols[first] {
-            prefixes.append(modifier)
-            spelling.removeFirst()
-        }
-        spelling = (prefixes + [spelling]).joined(separator: "+")
+        let segments = spelling.components(separatedBy: "+")
+        var parts: [String] = []
+        for (index, rawSegment) in segments.enumerated() {
+            var segment = rawSegment.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !segment.isEmpty else { throw AcceleratorError.malformed }
+            while let first = segment.first, let modifier = symbols[first] {
+                parts.append(modifier)
+                segment.removeFirst()
+                segment = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
 
-        let parts = spelling.components(separatedBy: "+")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard parts.allSatisfy({ !$0.isEmpty }), let last = parts.last else {
-            throw AcceleratorError.malformed
+            // Glyph-only segments are modifiers; the final segment needs a key.
+            guard !segment.isEmpty || index < segments.count - 1 else {
+                throw AcceleratorError.malformed
+            }
+            if !segment.isEmpty { parts.append(segment) }
         }
+
+        guard let last = parts.last else { throw AcceleratorError.malformed }
 
         var parsed: Set<Modifier> = []
         for part in parts.dropLast() {

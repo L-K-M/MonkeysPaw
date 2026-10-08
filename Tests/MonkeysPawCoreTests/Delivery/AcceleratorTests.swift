@@ -5,11 +5,33 @@ final class AcceleratorTests: XCTestCase {
     func testParsesDefaultsAndLeavesRepeatUnbound() throws {
         let expected = try Accelerator("Ctrl+Alt+P")
         XCTAssertEqual(try Accelerator("⌃⌥P"), expected)
+        XCTAssertEqual(try Accelerator("Alt+Ctrl+P"), expected)
         XCTAssertEqual(expected.modifiers, [.control, .alt])
         XCTAssertEqual(expected.key, .character("p"))
 
         XCTAssertEqual(Accelerator.defaultBinding(for: .togglePicker), expected)
         XCTAssertNil(Accelerator.defaultBinding(for: .repeatLast))
+    }
+
+    func testParsesMixedGlyphAndPlusSpellings() throws {
+        let table = [
+            ("⌘+P", "Cmd+P"),
+            ("⌃ + ⌥ + P", "Ctrl+Alt+P"),
+            ("⌘⌥P", "Cmd+Alt+P"),
+            ("⌘⌥+P", "Cmd+Alt+P"),
+            ("⌘+Alt+P", "Cmd+Alt+P"),
+            ("Ctrl+⌥P", "Ctrl+Alt+P"),
+            ("Alt+⌘P", "Cmd+Alt+P"),
+            ("⌥+⌃+P", "Ctrl+Alt+P"),
+            ("⌃ ⌥ P", "Ctrl+Alt+P"),
+            ("⇧ + ⌘ + P", "Cmd+Shift+P"),
+            ("⌘+F12", "Cmd+F12"),
+            ("⌘+⌥+Space", "Cmd+Alt+Space"),
+        ]
+
+        for (input, expected) in table {
+            XCTAssertEqual(try Accelerator(input), try Accelerator(expected), input)
+        }
     }
 
     func testGTKTranslationsFollowCopywraith() throws {
@@ -49,8 +71,16 @@ final class AcceleratorTests: XCTestCase {
             ("Ctrl+V+B", .unsupportedModifier("V")),
             ("Ctrl++P", .malformed),
             ("Ctrl+", .malformed),
+            ("⌘", .malformed),
+            ("⌘ ", .malformed),
+            ("⌘+ ", .malformed),
+            ("⌘++P", .malformed),
+            ("+⌘P", .malformed),
+            ("Ctrl+⌥", .malformed),
             ("⌃⌥", .malformed),
             ("Ctrl+Control+P", .duplicateModifier(.control)),
+            ("⌃+Ctrl+P", .duplicateModifier(.control)),
+            ("⌘+⌘+P", .duplicateModifier(.command)),
         ]
 
         for (input, expected) in table {
