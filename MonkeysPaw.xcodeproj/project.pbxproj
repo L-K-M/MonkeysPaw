@@ -327,7 +327,7 @@
 				DEVELOPMENT_TEAM = "";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Monkey's Paw";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -349,7 +349,7 @@
 				DEVELOPMENT_TEAM = "";
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Monkey's Paw";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
