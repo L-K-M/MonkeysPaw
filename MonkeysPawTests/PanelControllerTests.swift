@@ -43,6 +43,8 @@ final class PanelControllerTests: XCTestCase {
         XCTAssertEqual(PanelController.dismissalReason(requested: .dismissal, panel: panel,
                                                         keyWindow: panel), .dismissal)
         XCTAssertEqual(PanelController.dismissalReason(requested: .dismissal, panel: panel,
+                                                        keyWindow: nil), .dismissal)
+        XCTAssertEqual(PanelController.dismissalReason(requested: .dismissal, panel: panel,
                                                         keyWindow: setup), .blur)
         XCTAssertEqual(PanelController.dismissalReason(requested: .blur, panel: panel,
                                                         keyWindow: nil), .blur)

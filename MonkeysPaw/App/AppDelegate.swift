@@ -5,6 +5,8 @@ import SwiftUI
 /// The macOS composition root owns the drivers and the resident status item.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let makeFocusTracker: (MainThread, Scheduler) -> WorkspaceFocusTracker
+    private let scheduler: Scheduler
+    private let makePanelController: (MainThread, Scheduler, LogSink) -> PanelController
     private var panelController: PanelController?
     private var panelPresentation: PanelViewState?
     private var setupWindow: SetupWindowController?
@@ -17,8 +19,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hosted tests replace workspace/AX access while exercising the real UI wiring.
     init(makeFocusTracker: @escaping (MainThread, Scheduler) -> WorkspaceFocusTracker = {
         WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
-    }) {
+    }, scheduler: Scheduler = DispatchScheduler(),
+         makePanelController: @escaping (MainThread, Scheduler, LogSink) -> PanelController = {
+             PanelController(mainThread: $0, scheduler: $1, log: $2)
+         }) {
         self.makeFocusTracker = makeFocusTracker
+        self.scheduler = scheduler
+        self.makePanelController = makePanelController
         super.init()
     }
 
@@ -56,9 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func compose(log: LogSink) {
         let mainThread = DispatchMainThread()
-        let scheduler = DispatchScheduler()
+        let scheduler = self.scheduler
         let focus = makeFocusTracker(mainThread, scheduler)
-        let panel = PanelController(mainThread: mainThread, scheduler: scheduler, log: log)
+        let panel = makePanelController(mainThread, scheduler, log)
         let hotkeys = CarbonHotkeyBackend()
         let session = MacSessionProbe()
         let clipboard = PasteboardClipboard()
@@ -165,11 +172,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() {
-        // Make Setup key before dismissal so the panel reports blur and never
-        // activates the captured app, even once, while opening this window.
-        setupWindow?.show()
+        // Revoke older retries and suppress this cancellation's restore before
+        // presenting Setup. Native key-window transitions may still be pending.
         focusTracker?.cancelPendingRestoration()
-        if panelController?.isVisible == true { panelModel?.cancel() }
+        panelController?.cancelForOwnedWindow()
+        setupWindow?.show()
     }
 
     static var isRunningTests: Bool {

@@ -9,12 +9,12 @@ final class AppleScriptPasteInjector: PasteInjector {
 
     private let worker = DispatchQueue(label: "ch.lkmc.MonkeysPaw.appleScript", qos: .userInitiated)
     private let isTrusted: () -> Bool
-    private let makeProcess: () -> Process
+    private let makeInvocation: () -> AppleScriptInvocation
 
     init(isTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
-         makeProcess: @escaping () -> Process = AppleScriptPasteInjector.makeProcess) {
+         makeInvocation: @escaping () -> AppleScriptInvocation = AppleScriptPasteInjector.makeInvocation) {
         self.isTrusted = isTrusted
-        self.makeProcess = makeProcess
+        self.makeInvocation = makeInvocation
     }
 
     func paste(chord: PasteChord, completion: @escaping (PasteAttemptResult) -> Void) {
@@ -24,19 +24,15 @@ final class AppleScriptPasteInjector: PasteInjector {
                 return
             }
 
-            let process = makeProcess()
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
+            let invocation = makeInvocation()
             let stderr = Pipe()
-            process.standardError = stderr
             // Drain concurrently, including during launch, so pipe capacity cannot
             // prevent exit. Diagnostics are inspected for a code, never logged.
             let errorCapture = StandardErrorCapture(handle: stderr.fileHandleForReading)
 
             let exited = DispatchSemaphore(value: 0)
-            process.terminationHandler = { _ in exited.signal() }
             do {
-                try process.run()
+                try invocation.run(standardError: stderr, onExit: { exited.signal() })
             } catch {
                 try? stderr.fileHandleForWriting.close()
                 _ = errorCapture.permissionWasDenied()
@@ -49,10 +45,10 @@ final class AppleScriptPasteInjector: PasteInjector {
             guard exited.wait(timeout: .now() + Limits.appleScriptPasteTimeout.timeInterval) == .success else {
                 // Kill before returning: a late consent answer must not send a
                 // keystroke after Core has already fallen back to copy-only.
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                if invocation.isRunning { invocation.kill() }
                 // SIGKILL cannot be ignored. Reap on this worker before completing,
                 // including an exit racing the deadline, without blocking AppKit.
-                process.waitUntilExit()
+                invocation.waitUntilExit()
                 _ = errorCapture.permissionWasDenied()
                 completion(.failed(.timeout))
                 return
@@ -60,7 +56,7 @@ final class AppleScriptPasteInjector: PasteInjector {
 
             // Exit zero means sent, not received. SelfTest supplies stronger evidence.
             let permissionDenied = errorCapture.permissionWasDenied()
-            guard process.terminationStatus != 0 else {
+            guard invocation.terminationStatus != 0 else {
                 completion(.sent)
                 return
             }
@@ -68,13 +64,42 @@ final class AppleScriptPasteInjector: PasteInjector {
         }
     }
 
-    private static func makeProcess() -> Process {
+    private static func makeInvocation() -> AppleScriptInvocation {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         // Script and argv are fixed; prompt contents travel only on the clipboard.
         process.arguments = ["-e", "tell application \"System Events\" to keystroke \"v\" using command down"]
-        return process
+        return AppleScriptProcessInvocation(process: process)
     }
+}
+
+/// Driver-local invocation seam: Darwin's Process class cluster is not a fake base.
+protocol AppleScriptInvocation: AnyObject {
+    var isRunning: Bool { get }
+    var terminationStatus: Int32 { get }
+    func run(standardError: Pipe, onExit: @escaping () -> Void) throws
+    func kill()
+    func waitUntilExit()
+}
+
+final class AppleScriptProcessInvocation: AppleScriptInvocation {
+    private let process: Process
+
+    init(process: Process) { self.process = process }
+
+    var isRunning: Bool { process.isRunning }
+    var terminationStatus: Int32 { process.terminationStatus }
+
+    func run(standardError: Pipe, onExit: @escaping () -> Void) throws {
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = standardError
+        process.terminationHandler = { _ in onExit() }
+        try process.run()
+    }
+
+    func kill() { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+    func waitUntilExit() { process.waitUntilExit() }
 }
 
 /// The drain owns the diagnostic bytes; the worker reads only its typed result.

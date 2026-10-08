@@ -1,6 +1,7 @@
 import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
+import Darwin
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPaw
@@ -47,9 +48,9 @@ final class PasteInjectorTests: XCTestCase {
         }
 
         let scriptDone = expectation(description: "AppleScript denied")
-        let script = AppleScriptPasteInjector(isTrusted: { false }, makeProcess: {
+        let script = AppleScriptPasteInjector(isTrusted: { false }, makeInvocation: {
             XCTFail("Must not launch System Events")
-            return Process()
+            return StubScriptInvocation(exit: .finished(0, ""))
         })
         script.paste(chord: .standard) { result in
             XCTAssertEqual(result, .failed(.permissionDenied))
@@ -64,10 +65,15 @@ final class PasteInjectorTests: XCTestCase {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sleep")
         process.arguments = ["30"]
-        let injector = AppleScriptPasteInjector(isTrusted: { true }, makeProcess: { process })
+        let injector = AppleScriptPasteInjector(isTrusted: { true }, makeInvocation: {
+            AppleScriptProcessInvocation(process: process)
+        })
         injector.paste(chord: .standard) { result in
             XCTAssertFalse(Thread.isMainThread)
             XCTAssertEqual(result, .failed(.timeout))
+            XCTAssertFalse(process.isRunning, "Kill and reap must finish before the callback")
+            XCTAssertEqual(process.terminationReason, .uncaughtSignal)
+            XCTAssertEqual(process.terminationStatus, SIGKILL)
             completed.fulfill()
         }
         wait(for: [completed], timeout: Limits.appleScriptPasteTimeout.timeInterval + 2)
@@ -87,8 +93,8 @@ final class PasteInjectorTests: XCTestCase {
         completed.assertForOverFulfill = true
         // This fake has already stopped at the deadline, so no PID is killed.
         // Its exit handler is withheld until waitUntilExit, exposing the race.
-        let process = StubScriptProcess(exit: .timeout)
-        let injector = AppleScriptPasteInjector(isTrusted: { true }, makeProcess: { process })
+        let process = StubScriptInvocation(exit: .timeout)
+        let injector = AppleScriptPasteInjector(isTrusted: { true }, makeInvocation: { process })
         injector.paste(chord: .standard) { result in
             XCTAssertFalse(Thread.isMainThread)
             XCTAssertEqual(result, .failed(.timeout))
@@ -110,8 +116,8 @@ final class PasteInjectorTests: XCTestCase {
         for (status, stderr, expected) in cases {
             let completed = expectation(description: "Fake osascript exit classified")
             completed.assertForOverFulfill = true
-            let process = StubScriptProcess(exit: .finished(status, stderr))
-            let injector = AppleScriptPasteInjector(isTrusted: { true }, makeProcess: { process })
+            let process = StubScriptInvocation(exit: .finished(status, stderr))
+            let injector = AppleScriptPasteInjector(isTrusted: { true }, makeInvocation: { process })
             injector.paste(chord: .standard) { result in
                 XCTAssertFalse(Thread.isMainThread)
                 XCTAssertEqual(result, expected)
@@ -122,35 +128,38 @@ final class PasteInjectorTests: XCTestCase {
     }
 }
 
-/// A process-factory fake; no executable, AX query, event or TCC prompt is used.
-private final class StubScriptProcess: Process {
+/// No Foundation subclass, executable, AX query, event or TCC prompt is used.
+private final class StubScriptInvocation: AppleScriptInvocation {
     enum Exit { case finished(Int32, String), timeout }
 
     private let exit: Exit
+    private var onExit: (() -> Void)?
     private(set) var didWaitForExit = false
 
     init(exit: Exit) {
         self.exit = exit
-        super.init()
     }
 
-    override var isRunning: Bool { false }
+    var isRunning: Bool { false }
 
-    override var terminationStatus: Int32 {
+    var terminationStatus: Int32 {
         if case .finished(let status, _) = exit { return status }
         return 0
     }
 
-    override func run() throws {
+    func run(standardError: Pipe, onExit: @escaping () -> Void) throws {
+        XCTAssertFalse(Thread.isMainThread)
+        self.onExit = onExit
         guard case .finished(_, let stderr) = exit else { return }
-        let handle = (standardError as? Pipe)?.fileHandleForWriting ?? (standardError as? FileHandle)
-        handle?.write(Data(stderr.utf8))
-        terminationHandler?(self)
+        standardError.fileHandleForWriting.write(Data(stderr.utf8))
+        onExit()
     }
 
-    override func waitUntilExit() {
+    func kill() { XCTFail("This fake has already stopped") }
+
+    func waitUntilExit() {
         XCTAssertFalse(Thread.isMainThread)
         didWaitForExit = true
-        if case .timeout = exit { terminationHandler?(self) }
+        if case .timeout = exit { onExit?() }
     }
 }

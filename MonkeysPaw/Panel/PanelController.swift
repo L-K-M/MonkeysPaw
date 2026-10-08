@@ -13,6 +13,7 @@ final class PanelController: PanelWindow {
     private let mainThread: MainThread
     private let scheduler: Scheduler
     private let log: LogSink
+    private let keyWindow: () -> NSWindow?
     private var panel: PromptPanel?
     private var resignObserver: NSObjectProtocol?
     private var presentationGeneration = 0
@@ -20,10 +21,12 @@ final class PanelController: PanelWindow {
 
     var isVisible: Bool { panel?.isVisible == true }
 
-    init(mainThread: MainThread, scheduler: Scheduler, log: LogSink) {
+    init(mainThread: MainThread, scheduler: Scheduler, log: LogSink,
+         keyWindow: @escaping () -> NSWindow? = { NSApp.keyWindow }) {
         self.mainThread = mainThread
         self.scheduler = scheduler
         self.log = log
+        self.keyWindow = keyWindow
     }
 
     deinit {
@@ -34,13 +37,23 @@ final class PanelController: PanelWindow {
         mainThread.run { [weak self] in self?.showOnMainThread() }
     }
 
+    func cancelForOwnedWindow() {
+        mainThread.run { [weak self] in
+            guard let self, self.isVisible else { return }
+            // Opening our own window is a new focus choice before AppKit makes
+            // it key. Still cancel through the model to clear the armed target.
+            self.pendingDismissal = .blur
+            self.onCancel?()
+        }
+    }
+
     func hide() {
         mainThread.run { [weak self] in
             guard let self, self.isVisible else { return }
             // Capture before orderOut: Escape may automatically make Setup key
             // afterward. A queued dismissal must also respect an already-key window.
             let reason = Self.dismissalReason(requested: self.pendingDismissal, panel: self.panel,
-                                               keyWindow: NSApp.keyWindow)
+                                               keyWindow: self.keyWindow())
             self.pendingDismissal = .dismissal
             self.hideOnMainThread(reason: reason)
         }
