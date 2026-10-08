@@ -29,6 +29,14 @@ public enum Limits {
     /// §6.1: bound KDE RemoteDesktop portal calls to two seconds.
     public static let portalCallTimeout: Duration = .seconds(2)
 
+    /// §12: bound opaque portal tokens and their private JSON representation.
+    public static let portalTokenMaxBytes: Int = 4 * kibibyte
+    public static let portalTokenFileMaxBytes: Int = 16 * kibibyte
+
+    /// §13: bound native portal response decoding and pre-reply buffering.
+    public static let portalResponseMaxBytes: Int = 64 * kibibyte
+    public static let portalEarlyResponseCap: Int = 16
+
     /// §4.2 subprocess discipline and PasteInjector's bounded-wait contract.
     /// M1b uses the §6.1 two-second portal budget for local tools as well.
     public static let linuxToolTimeout: Duration = .seconds(2)
