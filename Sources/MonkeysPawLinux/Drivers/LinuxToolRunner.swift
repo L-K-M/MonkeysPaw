@@ -28,7 +28,9 @@ struct LinuxToolRunner {
             .split(separator: ":") where directory.hasPrefix("/") {
             let url = URL(fileURLWithPath: String(directory), isDirectory: true)
                 .appendingPathComponent(name).standardizedFileURL
-            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+               !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: url.path) { return url }
         }
         return nil
     }
@@ -52,10 +54,12 @@ struct LinuxToolRunner {
         process.standardError = errorOutput == .mergeForHelp ? pipe : FileHandle.nullDevice
         defer {
             try? pipe.fileHandleForReading.close()
-            try? pipe.fileHandleForWriting.close()
         }
 
-        do { try process.run() } catch { return .failure(.unknown) }
+        do { try process.run() } catch {
+            try? pipe.fileHandleForWriting.close()
+            return .failure(.unknown)
+        }
         // The parent must not retain the pipe's writer; grandchildren may retain
         // theirs. Nonblocking reads and a deadline handle both cases.
         try? pipe.fileHandleForWriting.close()

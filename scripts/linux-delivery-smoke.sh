@@ -96,6 +96,8 @@ except (OSError, ValueError):
 PY
 }
 
+app_exited() { ! kill -0 "$smoke_app_pid" 2>/dev/null; }
+
 # Xvfb supplies a display, but no compositor refocus. Openbox supplies the
 # ordinary X11 hide/refocus behavior, rather than adding it to the app driver.
 openbox --sm-disable >"$smoke_directory/wm.log" 2>&1 &
@@ -156,3 +158,31 @@ print('CLI and D-Bus self-test reports verified xdotool receipt.')
 PY
 
 timeout "$smoke_call_timeout" gapplication action "$smoke_app_id" quit
+wait_for 'the resident app to exit' app_exited
+wait "$smoke_app_pid"
+smoke_app_pid=
+
+# A standalone diagnostic on GNOME must not run the shortcut installer.
+mkdir "$smoke_directory/diagnostic-tools"
+cat >"$smoke_directory/diagnostic-tools/gsettings" <<'SH'
+#!/bin/sh
+printf 'called\n' >> "$MONKEYSPAW_SMOKE_GSETTINGS_LOG"
+exit 1
+SH
+chmod +x "$smoke_directory/diagnostic-tools/gsettings"
+env PATH="$smoke_directory/diagnostic-tools:$PATH" XDG_CURRENT_DESKTOP=GNOME \
+    MONKEYSPAW_SMOKE_GSETTINGS_LOG="$smoke_directory/gsettings.calls" \
+    timeout 20 "$smoke_binary" --selftest >"$smoke_directory/standalone.json" 2>"$smoke_directory/cli.stderr"
+if [[ -e "$smoke_directory/gsettings.calls" ]]; then
+    printf 'The standalone diagnostic called the GNOME shortcut installer.\n' >&2
+    exit 1
+fi
+python3 - "$smoke_directory/standalone.json" <<'PY'
+import json
+import pathlib
+import sys
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if report['session'] != {'gnomeX11': {}}:
+    raise SystemExit('Standalone diagnostic did not detect GNOME X11')
+print('Standalone diagnostic returned JSON without installing shortcuts.')
+PY

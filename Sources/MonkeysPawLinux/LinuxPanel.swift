@@ -6,6 +6,7 @@ import MonkeysPawCore
 final class LinuxPanel: PanelWindow {
     private let window: GTK.Widget
     private weak var model: PanelModel?
+    private var initialFocus: GTK.Widget?
     private var blurRevision = 0
 
     var clipboardOwner: GTK.Widget { window }
@@ -31,14 +32,16 @@ final class LinuxPanel: PanelWindow {
         let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16)!
         let prompt = GTK.label(model.prompt)
         gtk_label_set_selectable(mp_label(prompt), 1)
+        gtk_widget_set_focusable(prompt, 1)
+        initialFocus = prompt
         gtk_widget_set_vexpand(prompt, 1)
         gtk_box_append(mp_box(content), prompt)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.panelHint))
         gtk_box_append(mp_box(content), GTK.button(LinuxStrings.setup, openSetup))
         gtk_window_set_child(mp_window(window), content)
 
-        GTK.observeKeys(window) { [weak model] key, modifiers in
-            guard let model else { return false }
+        GTK.observeKeys(window) { [weak self, weak model] key, modifiers in
+            guard let self, let model else { return false }
             if key == UInt32(GDK_KEY_Escape) {
                 model.cancel()
                 return true
@@ -48,6 +51,10 @@ final class LinuxPanel: PanelWindow {
             }
             let terminalModifiers = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue
             let chord: PasteChord = modifiers & terminalModifiers == terminalModifiers ? .terminal : .standard
+            if chord == .standard, let focus = gtk_window_get_focus(mp_window(self.window)), mp_is_button(focus) != 0 {
+                // Let a focused Setup button handle its native Enter activation.
+                return false
+            }
             model.confirm(mode: .paste(chord))
             return true
         }
@@ -72,7 +79,7 @@ final class LinuxPanel: PanelWindow {
     func show() {
         blurRevision += 1
         gtk_window_present(mp_window(window))
-        gtk_widget_grab_focus(window)
+        gtk_widget_grab_focus(initialFocus ?? window)
     }
 
     func hideForDelivery() {

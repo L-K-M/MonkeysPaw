@@ -16,6 +16,18 @@ final class LinuxPasteInjectorTests: XCTestCase {
         XCTAssertEqual(tools.log, ["key --clearmodifiers ctrl+v", "key --clearmodifiers ctrl+shift+v"])
     }
 
+    func testPathSkipsAnExecutableDirectory() throws {
+        let first = try FakeLinuxTools()
+        let actual = try FakeLinuxTools()
+        try FileManager.default.createDirectory(at: first.directory.appendingPathComponent("xdotool"),
+                                               withIntermediateDirectories: true)
+        try actual.install("xdotool", script: "exit 0")
+        first.environment["PATH"] = first.directory.path + ":" + actual.directory.path
+        XCTAssertEqual(first.runner.executable("xdotool")?.path,
+                       actual.directory.appendingPathComponent("xdotool").path)
+        assertPaste(XdotoolPasteInjector(runner: first.runner), equals: .sent)
+    }
+
     func testModernYdotoolChordsAndExplicitSocket() throws {
         let tools = try modernTools()
         try tools.install("ydotool", script: """
@@ -92,10 +104,20 @@ final class LinuxPasteInjectorTests: XCTestCase {
     func testHangingToolCompletesOnceWithTimeout() throws {
         let tools = try FakeLinuxTools()
         // exec ensures the killed process is the sleeper, with no orphan child.
-        try tools.install("xdotool", script: "exec /bin/sleep 10")
+        let pidFile = tools.directory.appendingPathComponent("child-pid")
+        tools.environment["FAKE_PID"] = pidFile.path
+        try tools.install("xdotool", script: "printf '%s' \"$$\" > \"$FAKE_PID\"\nexec /bin/sleep 10")
         let start = ContinuousClock().now
         assertPaste(XdotoolPasteInjector(runner: tools.runner), equals: .failed(.timeout))
         XCTAssertLessThan(ContinuousClock().now - start, .seconds(4))
+        let pid = try String(contentsOf: pidFile, encoding: .utf8)
+        let deadline = ContinuousClock().now.advanced(by: .seconds(1))
+        while FileManager.default.fileExists(atPath: "/proc/\(pid)/stat"), ContinuousClock().now < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        // Foundation's Process monitor must reap the SIGKILL'd child even though
+        // the driver never blocks the callback on waitUntilExit.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "/proc/\(pid)/stat"))
     }
 
     func testLargeStderrDoesNotBlock() throws {

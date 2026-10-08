@@ -44,6 +44,7 @@ static inline GActionMap   *mp_action_map(GtkApplication *a) { return G_ACTION_M
 static inline GActionGroup *mp_action_group(GtkApplication *a) { return G_ACTION_GROUP(a); }
 static inline GAction      *mp_action(GSimpleAction *a) { return G_ACTION(a); }
 static inline GtkScrolledWindow *mp_scrolled_window(GtkWidget *w) { return GTK_SCROLLED_WINDOW(w); }
+static inline gboolean mp_is_button(GtkWidget *w) { return GTK_IS_BUTTON(w); }
 
 /* ---- M1b delivery and setup --------------------------------------------- */
 

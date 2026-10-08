@@ -27,6 +27,7 @@ when you run them. Do not put clipboard text or tool error bodies in logs.
   terminal-class selection is reserved for M7.
 - [ ] Esc cancels without delivery. Clicking another window hides the picker
   after 300 ms and leaves focus in the window you selected.
+- [ ] Tab to the Setup button and press Return. Setup opens without delivery.
 - [ ] Run `monkeyspaw --selftest` from a terminal, both with and without a
   resident instance. JSON appears in the invoking terminal. The report must
   show `xdotool` as `pasted`, based on field readback. A standalone test exits.
@@ -82,7 +83,18 @@ cached until "Test paste" resets and rechecks them.
   terminal chord, pastes through xdotool into xterm running raw-input `cat`,
   compares the exact bytes without logging them, and verifies both CLI and
   D-Bus self-test JSON. It sends no Enter to the target terminal.
+- The standalone diagnostic skips GNOME shortcut installation. CI checks
+  this with a fake gsettings after the resident service exits.
 - CI gates GTK lifecycle, notification mock-bus, and X11 smoke checks.
   Real compositor behavior, full-screen windows, browser fields, and
   ydotool/uinput remain owner-run. GNOME portal and KDE checklists arrive
   in M1c and M1d respectively.
+
+The first Devin review found only minor issues. The timeout test confirms
+Foundation reaps the killed child without a blocking wait. Executable
+directories on PATH are skipped, and writer handles are explicitly closed
+once. A busy legacy stream daemon can currently be reported as unavailable;
+rerun "Test paste" to recheck after it recovers. The review suggestion to
+drop socket read checks was rejected because M1b requires unreadable sockets
+to report `permissionDenied`. Pending nonblocking connects are not treated
+as proof of a reachable daemon.

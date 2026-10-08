@@ -1,5 +1,6 @@
 #if os(Linux)
 import CGtk
+import Foundation
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -53,7 +54,15 @@ final class GTKNotificationTests: XCTestCase {
                 Unmanaged<Calls>.fromOpaque(data).takeUnretainedValue().ready = true
             }, nil, data, nil)
         defer { g_bus_unown_name(owner) }
-        XCTAssertTrue(GTKTestSupport.spin { calls.ready })
+        guard GTKTestSupport.spin(until: { calls.ready }) else {
+            // A normal desktop may already own this name. Never send our test
+            // notifications to its real daemon after mock ownership failed.
+            if ProcessInfo.processInfo.environment["MONKEYSPAW_REQUIRE_DISPLAY"] == "1" {
+                XCTFail("Notification mock requires a private D-Bus session.")
+                return
+            }
+            throw XCTSkip("Requires a private D-Bus session without a notification daemon.")
+        }
 
         let application = try XCTUnwrap(gtk_application_new("ch.lkmc.monkeyspaw.tests.notifications", G_APPLICATION_NON_UNIQUE))
         defer { GTKTestSupport.destroy(application) }
