@@ -11,9 +11,15 @@ COPY server/ server/
 
 # SwiftPM caches dependencies and objects across builds. Copy the executable
 # out in this same step because cache mounts are not retained in image layers.
+# Swift 6.4's default Swift Build engine omits lib_FoundationICU,
+# libCoreFoundation, lib_FoundationCollections, and lib_CFURLSessionInterface
+# from static autolink, leaving undefined swift_u*/CFURLSession* symbols.
+# The native engine emits the full autolink and keeps the .build/release layout.
+# --build-system native is deprecated; remove it once swift-build links
+# static Foundation correctly.
 RUN --mount=type=cache,target=/build/server/.build \
-    swift build -c release --static-swift-stdlib --package-path server \
-        --product monkeyspaw-server \
+    swift build --build-system native -c release --static-swift-stdlib \
+        --package-path server --product monkeyspaw-server \
     && cp server/.build/release/monkeyspaw-server /usr/local/bin/monkeyspaw-server
 
 FROM ubuntu:noble AS runtime
