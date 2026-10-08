@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import MonkeysPawCore
 import XCTest
 
 enum GTKTestSupport {
@@ -18,11 +19,24 @@ enum GTKTestSupport {
         }
     }
 
+    private static var applicationCount = 0
+
     static func application() throws -> UnsafeMutablePointer<GtkApplication> {
         try requireDisplay()
-        let application = try XCTUnwrap(gtk_application_new(nil, G_APPLICATION_NON_UNIQUE))
-        guard g_application_register(mp_gapp(application), nil, nil) != 0 else {
+
+        // GLib exports every NULL-id application at /org/gtk/Application/anonymous.
+        // Test apps outlive their test, so a shared path fails the next register
+        // on a session bus (CI's dbus-run-session). Unique ids keep paths distinct.
+        applicationCount += 1
+        let id = "\(AppIdentity.linuxAppID).tests.app\(applicationCount)"
+        let application = try XCTUnwrap(gtk_application_new(id, G_APPLICATION_NON_UNIQUE))
+
+        var error: UnsafeMutablePointer<GError>?
+        guard g_application_register(mp_gapp(application), nil, &error) != 0 else {
+            let message = error.map { String(cString: $0.pointee.message) } ?? "unknown error"
+            g_clear_error(&error)
             g_object_unref(application)
+            XCTFail("Could not register test application \(id): \(message)")
             throw NSError(domain: "GTKTestSupport", code: 2)
         }
         return application
