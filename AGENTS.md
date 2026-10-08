@@ -25,8 +25,8 @@ design record; read its index, then the sections relevant to your task.
 - `docs/plan/`: the specification. `docs/platform/`: owner-run checklists.
   Packaging, deployment, seeds, and release scripts follow their milestones.
 
-M0a contains only repository furniture, Core foundations, the server health
-route and CLI, Dockerfile, and CI. Do not start the M0b or M0c apps here.
+M0a supplies Core foundations, the server health route and CI. M0b adds the
+Linux GTK skeleton. The macOS app starts in M0c; delivery plumbing starts in M1.
 
 ## Build and test
 
@@ -38,8 +38,11 @@ Run these commands from the repository root:
 
 | Task | Command |
 |---|---|
-| Build Core | `swift build` |
-| Test Core | `swift test` |
+| Build Core without GTK | `swift build --target MonkeysPawCore` |
+| Build Linux app | `swift build --product monkeyspaw` |
+| Test Core and Linux app | `swift test` |
+| Test Linux app with a required display | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
+| Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
 | Build server | `swift build --package-path server` |
 | Test server | `swift test --package-path server` |
 | Run server | `swift run --package-path server monkeyspaw-server serve` |
@@ -47,9 +50,36 @@ Run these commands from the repository root:
 | Build server image | `docker build -f server/Dockerfile .` |
 
 On the Paseo implementation host, use `/home/paseo/.local/bin/swift64`
-instead of `swift` for all four build/test commands. This wrapper supplies
+instead of `swift` for every build/test command. This wrapper supplies
 Swift 6.4 and the host's userland sysroot. Docker is unavailable there; the
 image job in CI builds and exercises the container.
+
+The lifecycle test skips without a display unless `MONKEYSPAW_REQUIRE_DISPLAY=1`,
+which makes a missing display fail. The Core portability job compiles Core and
+its tests without GTK; the Linux app job runs both suites. `swift test --filter`
+still builds all test targets, so filtering alone cannot isolate Core from GTK.
+
+## Linux GLib main-loop rules
+
+- `DispatchQueue.main` and `@MainActor` never run under a GLib main loop.
+  A GTK app gives its main thread to GLib, which does not drain libdispatch's
+  main queue. A main-actor hop hangs silently and the window never updates.
+  Core hands UI work to the injected `MainThread` port; `GLibMainThread`
+  uses `GTK.onMainLoop` and `g_idle_add`.
+- Schedule delayed UI work with `GTK.after` (`g_timeout_add_full`), never
+  `DispatchQueue.main.asyncAfter`. The destroy notify releases the boxed
+  closure even when a timer is removed before it fires.
+- Use synchronous top-level `main.swift`, never async `@main`, so Swift
+  does not drain a competing main queue. Panel operations stay on this thread.
+- Keep `hide_on_close`: GTK owns the window and the panel keeps a borrowed
+  pointer. Native close must hide it so the next toggle can reuse it.
+- One identity string, `ch.lkmc.monkeyspaw`, is the D-Bus name, `.desktop`
+  basename and `StartupWMClass`. All match `AppIdentity.linuxAppID`.
+  Desktop action identifiers must match `ActionName` and the registered
+  `GSimpleAction` names exactly; a mismatch silently does nothing.
+- Keep `--gapplication-service` in the D-Bus service's Exec. Service mode
+  avoids an automatic activation before a cold toggle action, and
+  `g_application_hold` keeps the process resident with its window hidden.
 
 ## Architecture and engineering rules (§4.2)
 

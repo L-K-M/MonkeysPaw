@@ -1,0 +1,10 @@
+// GTK4 and the GObject stack, as one Swift module.
+//
+// `[system]` suppresses warnings from the C headers, which are not written to be
+// clean under Swift's import rules. The header and library search paths come from
+// pkg-config (`pkgConfig: "gtk4"` in Package.swift), which is why nothing is
+// hard-coded here: GTK's include path differs per distribution and architecture.
+module CGtk [system] {
+    umbrella header "shim.h"
+    export *
+}

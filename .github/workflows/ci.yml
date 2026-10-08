@@ -29,9 +29,41 @@ jobs:
         with:
           persist-credentials: false
       - name: Build Core
-        run: swift build
-      - name: Test Core
-        run: swift test
+        run: swift build --target MonkeysPawCore
+      # swift test builds every test target, even with --filter. Compile Core
+      # tests without GTK here; run them in linux-app below.
+      - name: Build Core tests without GTK
+        run: swift build --target MonkeysPawCoreTests
+
+  linux-app:
+    name: Linux GTK app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: swift:6.4-noble
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install GTK and display test tools
+        run: |
+          apt-get update
+          apt-get install -y libgtk-4-dev xvfb xauth desktop-file-utils dbus
+      - name: Build Linux app
+        run: swift build --product monkeyspaw
+      - name: Test Core on Linux
+        run: swift test --filter MonkeysPawCoreTests
+      - name: Test Linux app with a required display
+        env:
+          MONKEYSPAW_REQUIRE_DISPLAY: '1'
+          # Keep settings in memory instead of using the host's dconf storage.
+          GSETTINGS_BACKEND: memory
+          # Disable accessibility bus discovery in this isolated test session.
+          GTK_A11Y: none
+          # Use software rendering so Xvfb needs no GL or GPU support.
+          GSK_RENDERER: cairo
+        run: dbus-run-session -- xvfb-run -a swift test --filter MonkeysPawLinuxTests
+      - name: Validate desktop entry
+        run: desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop
 
   core-macos:
     name: Core on macOS
