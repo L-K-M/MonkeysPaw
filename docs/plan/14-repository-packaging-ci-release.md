@@ -23,7 +23,8 @@ Rollout by milestone:
   - `CLAUDE.md`: copied verbatim from a peer repo.
   - `CHANGELOG.md`: Keep a Changelog.
   - `CICD.md`: workflows, the tag → release flow, the ghcr notes.
-  - `.github/dependabot.yml`: swift, docker, github-actions.
+  - `.github/dependabot.yml`: swift, docker, github-actions, and `gradle`
+    for `/android`, with the androidx and kotlin+ksp groups.
   - `zai-code-review.yml`: copied byte-identical. It reviews from the PR
     after the one that adds it.
 - **Identifiers.** macOS bundle `ch.lkmc.MonkeysPaw`; Linux and flatpak app id

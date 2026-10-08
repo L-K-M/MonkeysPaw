@@ -30,7 +30,7 @@
 | M6 | Sync client | `SyncService` and state (§9.2); sign-in, devices, sign-out; first sync and adoption (§9.4); personal sync; group folders; viewer read-only; canonical form; conflicts, `Conflicts/`, and the resolve view; error states; scope moves by drag or folder move; invites (the `monkeyspaw://` scheme on both OSes; owners create and manage members); Settings: Account; sync status in the footer. | Every §13.1 scenario passes against the in-process server. Owner-run: two devices and two users share a group prompt through the deployed server. |
 | M7 | Desktop polish | The repeat action; X11 terminal detection; optional clipboard restore; Settings: Delivery; the update check (Vervellum `Core/Updates`); flatpak; SECURITY.md, PRIVACY.md, CICD.md, per-platform READMEs. | The owner-run matrix passes on macOS, GNOME, KDE, and X11. |
 | M8 | Android foundation | `android/` Gradle root (§10.8); `:core` Kotlin port of format, grammar, render, validator, canonical form, path rules, ranking; Library, Fill, and Editor screens over app-private storage; seeds; tile, launcher shortcut, widget → fill → copy (§10.4 B); ci.yml `android` job; release.yml APK job; `sync-android-version.sh`. | `:core` tests consume every `spec/fixtures/` case that M2 and M5 created. CI green (`:core:test testDebugUnitTest lintDebug assembleDebug assembleRelease`). Owner-run: tile → fill → copy → paste works in Chrome, the ChatGPT and Claude apps, and Termux (`docs/platform/android.md`). |
-| M9 | Android insertion | The picker IME with the Compose bridge, `inputType` rules, and switch-back; the text-selection action; the share target; onboarding (enable keyboard, add tile). | JVM tests for the `inputType` decision table and the selection-field choice. Owner-run on Android 14-16 with Gboard and Samsung Keyboard: the IME inserts into the same apps as M8; multi-line into Termux offers Copy instead. |
+| M9 | Android insertion | The picker IME with the Compose bridge, `inputType` rules, and switch-back; the text-selection action; the share target; onboarding (enable keyboard, add tile). | JVM tests for the `inputType` decision table and the selection-field choice. Owner-run on Android 14-16 plus one device below API 34, with Gboard and Samsung Keyboard: the IME inserts into the same apps as M8; multi-line into Termux offers Copy instead. |
 | M10 | Android sync | The Kotlin `SyncEngine` (§9 semantics), Keystore secret store, WorkManager scheduling, sign-in, invites (accept), groups, viewer read-only, conflicts and the resolve view, network security config. | `sync/*.json` scenario fixtures pass in both engines. The §13.1 suite runs against the real server in CI for the Kotlin engine. Owner-run: a phone and a desktop share a group prompt. |
 | M11 | Android assistant | The LLM clients (§7) in `:core`, write, review, and improve screens, provider settings, Keystore-held keys. | LLM request and response fixtures pass on both sides. Owner-run: write, review, and improve against Anthropic and Ollama. |
 | M12 | v1.0 | Release notes; all artifacts (dmg, deb, flatpak, APK, server image) from one tag. | `scripts/build.sh` produces every artifact it can on the build host. The owner pushes `v1.0.0`. |
@@ -41,9 +41,11 @@
 - M5 depends only on M2's format code and can run in parallel with M3 and
   M4.
 - M6 needs M5 and M4's `SecretStore` drivers, which hold the device token.
-- M8 needs M2's fixtures and can run in parallel with M3-M7. M10 needs M5
-  and benefits from M6, whose Swift engine is the reference. M11 needs M4.
-- M12 closes v1 once M7 and M11 are done.
+- M8 needs M2's fixtures and can run in parallel with M3-M7. It closes only
+  once M5's canonical-form, path, and DTO fixtures exist.
+- M10 needs M5, and benefits from M6, whose Swift engine is the reference.
+- M11 needs M4.
+- M12 closes v1 once M7 through M11 are done.
 
 Deferred after v1. Each item is additive, and none needs a format change:
 

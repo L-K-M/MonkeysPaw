@@ -84,6 +84,9 @@ fields.**
    clipboard.
 3. Tap → `currentInputConnection.commitText(result, 1)` →
    `switchToPreviousInputMethod()` returns the user to their keyboard.
+   - That call needs API 28+. On API 26-27 the app falls back to
+     `InputMethodManager.switchToLastInputMethod`, or else leaves the
+     keyboard switcher open.
 
 Rules:
 
@@ -103,7 +106,7 @@ Rules:
 
 1. Entry points:
    - the Quick Settings tile (`startActivityAndCollapse(PendingIntent)` on
-     API 34+)
+     API 34+; the `Intent` overload on API 26-33)
    - the launcher shortcut "Insert prompt"
    - the home-screen widget
    - the IME's "Fill in Monkey's Paw" button
@@ -172,6 +175,13 @@ constants.
     grant is deferred.
 - **Local state.** The sync state, remembered values, usage, and the Keystore
   ciphertexts mirror §5.1 and §9.2 in `filesDir` and DataStore.
+- **Backups.** The manifest disables backup for app-private data:
+  `android:allowBackup="false"`, plus `dataExtractionRules` (API 31+) and
+  `fullBackupContent` limiting any backup to settings.
+  - Auto Backup would otherwise upload the library and the remembered values
+    to Google Drive.
+  - A restored Keystore ciphertext cannot be decrypted anyway.
+  - Re-syncing from the server rebuilds everything.
 - **Sync engine.** The §9 algorithm, ported to Kotlin in `core`. It is the
   same protocol and passes the same scenario suite (§13.1), run against the
   real server in CI.
@@ -182,8 +192,15 @@ constants.
 - **Network.** HTTPS by default. The network security config permits
   cleartext so that LAN servers work. The client allows `http://` only for
   loopback, private-network, and `.local` hosts, and warns there too, the
-  same rule as desktop (§8.5). Optionally, user-installed CAs are trusted for
-  self-signed LAN TLS (opt-in setting).
+  same rule as desktop (§8.5).
+  - An opt-in setting trusts user-installed CAs for self-signed LAN TLS.
+  - That setting lives in the OkHttp trust manager, because the network
+    security config is static.
+- **Manifest.**
+  - It requests `INTERNET` and `POST_NOTIFICATIONS`. Notifications are asked
+    for during onboarding; without them, the §9.3 and §9.6 notices appear
+    as an in-app banner.
+  - It registers `monkeyspaw://`, so join links open the app.
 - **The device token and API keys** use the Keystore-backed secret store. The
   keys require no user authentication, because WorkManager and the IME read
   them in the background.
@@ -204,7 +221,9 @@ risk, so it is contained by contract:
 
 - **Conformance fixtures.** `spec/fixtures/` holds language-neutral cases:
   input files, plus the expected outputs as JSON.
-  - front-matter parsing and canonical writing
+  - front-matter parsing and canonical writing, including the YAML 1.1 vs
+    1.2 divergence cases (`y`, `yes`, `on`, `off`, `<<` merge keys, anchors,
+    octal-style integers) that §5.2 forbids
   - grammar tokens and render results
   - validation issues
   - canonical form
@@ -227,6 +246,10 @@ risk, so it is contained by contract:
   corrupting a shared library.
 - **Every fixture is consumed.** Both suites enumerate `spec/fixtures/` and
   fail on any fixture they do not consume (the HalloMiao drift-gate pattern).
+- **Sync scenarios are written once.** Every §13.1 scenario is encoded once
+  as a `spec/fixtures/sync/*.json` case: server events, plus the expected
+  request log and final state. Both engines run every case, and the
+  real-server CI runs execute the same fixtures live.
 - **The move-together rule** goes into AGENTS.md: a change to format,
   grammar, validation, canonical form, or the sync protocol lands with
   fixture updates and both implementations in the same PR.
@@ -264,6 +287,9 @@ risk, so it is contained by contract:
     exactly 1.
   - `versionCode` is never hand-edited, and `v*` tags are never created by
     hand.
+  - Before the first tag, a dry run of `scripts/release.sh` (no `--push`)
+    proves the post-bump hook against `android/app/build.gradle.kts`. No
+    fleet repo has exercised the xcode kind with this hook yet.
 - **`scripts/build.sh`** becomes the multi-target orchestrator: per-target
   feasibility (skip Android without an SDK, fail when it is named) and one
   summary block. It stages into `dist/`.

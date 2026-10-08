@@ -83,6 +83,13 @@ Save semantics:
   and trailing newlines (Copywraith #159 lesson).
 - YAML comments inside front matter are not preserved. The README says so.
 - Writes are atomic: temp file in the same directory, then rename.
+- **Scalar subset.** Front matter is restricted to what both parsers read
+  identically: Yams reads YAML 1.1, and Android's snakeyaml-engine reads
+  strict YAML 1.2.
+  - Booleans are exactly `true` or `false`.
+  - The validator rejects YAML 1.1 spellings (`y`, `yes`, `n`, `no`, `on`,
+    `off`), octal-style integers (`010`), anchors, and `<<` merge keys.
+  - Canonical writing emits `true` and `false` only.
 
 ### 5.3 Placeholder grammar
 
