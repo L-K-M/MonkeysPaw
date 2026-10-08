@@ -16,12 +16,14 @@ public enum Limits {
 
     /// §4.6: retry cooperative activation twice, as in Invoque's AppActivator.
     public static let activationRetryDelay: Duration = .milliseconds(120)
+    /// §4.6: retries after the first attempt, giving three attempts in total.
     public static let activationRetryCount: Int = 2
 
     /// §6.3: poll AX focus without blocking AppKit's run loop.
     public static let accessibilityFocusPoll: Duration = .milliseconds(10)
 
-    /// Bound the System Events fallback, including an unanswered consent prompt.
+    /// §6.3: bound the System Events fallback, including an unanswered consent prompt.
+    /// The osascript child is killed at the deadline; grant TCC and retry.
     public static let appleScriptPasteTimeout: Duration = .seconds(2)
 
     /// §6.1: bound KDE RemoteDesktop portal calls to two seconds.
