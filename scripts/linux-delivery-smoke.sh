@@ -5,6 +5,7 @@ set -euo pipefail
 smoke_binary=$(realpath "${1:-.build/debug/monkeyspaw}")
 smoke_directory=$(mktemp -d)
 smoke_app_id=ch.lkmc.monkeyspaw
+smoke_app_path=/${smoke_app_id//./\/}
 smoke_wait_attempts=100
 smoke_poll_seconds=0.1
 smoke_call_timeout=3
@@ -16,6 +17,26 @@ cleanup() {
     local status=$?
     if (( status != 0 )); then
         printf 'Linux delivery smoke failed (status %s).\n' "$status" >&2
+        if [[ -n "$smoke_app_pid" ]] && kill -0 "$smoke_app_pid" 2>/dev/null; then
+            printf 'The resident app is still running (pid %s).\n' "$smoke_app_pid" >&2
+        else
+            printf 'The resident app is not running.\n' >&2
+        fi
+        timeout "$smoke_call_timeout" gapplication list-actions "$smoke_app_id" \
+            >"$smoke_directory/static-actions.stdout" 2>"$smoke_directory/static-actions.stderr" || true
+        printf 'gapplication list-actions stdout:\n' >&2
+        cat "$smoke_directory/static-actions.stdout" >&2
+        printf 'gapplication list-actions stderr:\n' >&2
+        cat "$smoke_directory/static-actions.stderr" >&2
+        if [[ -f "$smoke_directory/actions.stdout" ]]; then
+            printf 'org.gtk.Actions.List stdout:\n' >&2
+            cat "$smoke_directory/actions.stdout" >&2
+            printf 'org.gtk.Actions.List stderr:\n' >&2
+            cat "$smoke_directory/actions.stderr" >&2
+        fi
+        printf 'Session D-Bus names:\n' >&2
+        timeout "$smoke_call_timeout" dbus-send --session --print-reply \
+            --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames >&2 2>&1 || true
         # App diagnostics contain no prompt or subprocess error bodies. Never
         # print the received file, clipboard, or xdotool's output/error stream.
         if [[ -f "$smoke_directory/app.stderr" ]]; then
@@ -54,8 +75,13 @@ wm_ready() {
 app_ready() {
     kill -0 "$smoke_app_pid" 2>/dev/null || return 1
     local actions
-    actions=$(timeout "$smoke_call_timeout" gapplication list-actions "$smoke_app_id" 2>/dev/null) || return 1
-    [[ "$actions" == *toggle* && "$actions" == *selftest* && "$actions" == *quit* ]]
+    # gapplication list-actions reads static .desktop actions, including when
+    # the app is stopped. Query the resident application's exported group.
+    timeout "$smoke_call_timeout" gdbus call --session --dest "$smoke_app_id" \
+        --object-path "$smoke_app_path" --method org.gtk.Actions.List \
+        >"$smoke_directory/actions.stdout" 2>"$smoke_directory/actions.stderr" || return 1
+    actions=$(<"$smoke_directory/actions.stdout")
+    [[ "$actions" == *"'toggle'"* && "$actions" == *"'selftest'"* && "$actions" == *"'quit'"* ]]
 }
 
 terminal_ready() {
@@ -125,8 +151,8 @@ timeout "$smoke_call_timeout" xdotool windowactivate --sync "$smoke_terminal_win
 timeout "$smoke_call_timeout" gapplication action "$smoke_app_id" toggle
 wait_for 'the canned picker' panel_ready
 timeout "$smoke_call_timeout" xdotool windowactivate --sync "$smoke_panel_window" >/dev/null 2>&1
-smoke_panel_class=$(timeout "$smoke_call_timeout" xdotool getwindowclassname "$smoke_panel_window" 2>/dev/null)
-if [[ "${smoke_panel_class,,}" != "$smoke_app_id" ]]; then
+smoke_panel_class=$(timeout "$smoke_call_timeout" xprop -id "$smoke_panel_window" WM_CLASS 2>/dev/null)
+if [[ "${smoke_panel_class,,}" != "wm_class(string) = \"$smoke_app_id\", \"$smoke_app_id\"" ]]; then
     printf 'The picker WM_CLASS does not match the application identity.\n' >&2
     exit 1
 fi
