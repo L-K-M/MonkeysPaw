@@ -11,7 +11,7 @@ Terminal=false
 Categories=Utility;
 StartupWMClass=ch.lkmc.monkeyspaw
 DBusActivatable=true
-Actions=toggle;
+Actions=toggle;selftest;
 # Version 1.5 is rejected outright by Ubuntu's desktop-file-validate; 1.4 is the
 # highest that passes.
 Version=1.4
@@ -21,3 +21,7 @@ Version=1.4
 [Desktop Action toggle]
 Name=Toggle Panel
 Exec=gapplication action ch.lkmc.monkeyspaw toggle
+
+[Desktop Action selftest]
+Name=Test Paste
+Exec=gapplication action ch.lkmc.monkeyspaw selftest

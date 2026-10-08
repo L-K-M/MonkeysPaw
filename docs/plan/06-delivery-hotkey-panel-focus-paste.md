@@ -144,8 +144,9 @@ DeliveryService.deliver(text, mode)
   - Settings has a "default chord" option for users who mostly paste into
     terminals.
   - On X11 the target's class is read at `arm()` with
-    `xdotool getactivewindow getwindowclassname` and matched against a
-    terminal list, and the terminal chord is chosen automatically.
+    `xdotool getactivewindow`, then `xprop -id <id> WM_CLASS` (`x11-utils`).
+    The class is matched against a terminal list, and the terminal chord is
+    chosen automatically in M7.
 - **Typing is never automatic.** Typing multi-line text sends Enter: it
   submits chat boxes and runs shell commands. An opt-in typing mode is
   deferred past v1.

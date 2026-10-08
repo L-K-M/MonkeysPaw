@@ -55,7 +55,8 @@ jobs:
       - name: Install GTK and display test tools
         run: |
           apt-get update
-          apt-get install -y libgtk-4-dev xvfb xauth desktop-file-utils dbus
+          apt-get install -y libgtk-4-dev xvfb xauth desktop-file-utils dbus \
+            libglib2.0-bin xdotool xterm openbox x11-utils python3
       - name: Build Linux app
         run: swift build --product monkeyspaw
       - name: Test Core on Linux
@@ -70,6 +71,18 @@ jobs:
           # Use software rendering so Xvfb needs no GL or GPU support.
           GSK_RENDERER: cairo
         run: dbus-run-session -- xvfb-run -a swift test --filter MonkeysPawLinuxTests
+      # M1b's plan calls this linux.yml; keep the existing Linux job here.
+      - name: Smoke X11 delivery and CLI self-test
+        env:
+          GSETTINGS_BACKEND: memory
+          GTK_A11Y: none
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          XDG_SESSION_TYPE: x11
+          XDG_CURRENT_DESKTOP: MONKEYSPAW_CI
+        run: |
+          timeout 60s dbus-run-session -- xvfb-run -a \
+            bash scripts/linux-delivery-smoke.sh .build/debug/monkeyspaw
       - name: Validate desktop entry
         run: desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop
 
