@@ -1,0 +1,5 @@
+# One identity string: Name, the desktop basename and StartupWMClass must all
+# match AppIdentity.linuxAppID so the session bus can cold-start the same app.
+[D-BUS Service]
+Name=ch.lkmc.monkeyspaw
+Exec=/usr/bin/monkeyspaw --gapplication-service

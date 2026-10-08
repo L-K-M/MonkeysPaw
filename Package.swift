@@ -32,7 +32,39 @@ let package = Package(
 )
 
 #if os(Linux)
-// M0b adds the CGtk system library, MonkeysPawLinux target, and monkeyspaw
-// executable here. Keeping them outside Core's dependency closure lets the
-// server build without GTK headers and Xcode resolve the package on macOS.
+// The GTK front end and executable exist only on Linux. Keeping them outside
+// Core's dependency closure lets the server build without GTK headers and
+// Xcode resolve the package on macOS.
+package.targets.append(
+    .systemLibrary(
+        name: "CGtk",
+        path: "Sources/CGtk",
+        pkgConfig: "gtk4",
+        providers: [.apt(["libgtk-4-dev"])]
+    )
+)
+package.targets.append(
+    .target(
+        name: "MonkeysPawLinux",
+        dependencies: ["MonkeysPawCore", "CGtk"],
+        path: "Sources/MonkeysPawLinux"
+    )
+)
+package.targets.append(
+    .executableTarget(
+        name: "monkeyspaw",
+        dependencies: ["MonkeysPawLinux"],
+        path: "Sources/monkeyspaw"
+    )
+)
+package.products.append(
+    .executable(name: "monkeyspaw", targets: ["monkeyspaw"])
+)
+package.targets.append(
+    .testTarget(
+        name: "MonkeysPawLinuxTests",
+        dependencies: ["MonkeysPawLinux", "MonkeysPawCore", "CGtk"],
+        path: "Tests/MonkeysPawLinuxTests"
+    )
+)
 #endif
