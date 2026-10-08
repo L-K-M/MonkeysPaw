@@ -28,6 +28,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install project validation tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3
+      - name: Validate Xcode object references
+        run: python3 scripts/check-pbxproj.py
       - name: Build Core
         run: swift build --target MonkeysPawCore
       # swift test builds every test target, even with --filter. Compile Core
@@ -79,6 +85,35 @@ jobs:
           xcode-version: '26.0'
       - name: Test Core
         run: swift test
+
+  macos-app:
+    name: macOS app
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '26.0'
+      - name: Build and test app
+        run: |
+          xcodebuild \
+            -project MonkeysPaw.xcodeproj \
+            -scheme MonkeysPaw \
+            -destination 'platform=macOS' \
+            -resultBundlePath MacAppTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            clean test
+      - name: Upload app test results on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MacAppTests
+          path: MacAppTests.xcresult
+          if-no-files-found: ignore
 
   server:
     name: Server build and tests

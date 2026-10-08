@@ -38,6 +38,9 @@ Run these commands from the repository root:
 
 | Task | Command |
 |---|---|
+| Build macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build` |
+| Test macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO clean test` |
+| Validate Xcode object IDs without Xcode | `python3 scripts/check-pbxproj.py` |
 | Build Core without GTK | `swift build --target MonkeysPawCore` |
 | Build Linux app | `swift build --product monkeyspaw` |
 | Test Core and Linux app | `swift test` |
@@ -58,6 +61,38 @@ The lifecycle test skips without a display unless `MONKEYSPAW_REQUIRE_DISPLAY=1`
 which makes a missing display fail. The Core portability job compiles Core and
 its tests without GTK; the Linux app job runs both suites. `swift test --filter`
 still builds all test targets, so filtering alone cannot isolate Core from GTK.
+
+## macOS app rules
+
+- The Xcode project links the root local package product `MonkeysPawCore`.
+  Only `MonkeysPaw/` and `MonkeysPawTests/` use synchronized groups. Keep
+  source and resource build phases empty; new files need no pbxproj entries.
+  Package products have build-file entries in the frameworks phases.
+- No type is `@MainActor`. AppKit callbacks drive the front end; a
+  type-level annotation makes those closures illegal in Swift 5 language
+  mode. Deliver UI work through Core's `MainThread` port, implemented by
+  `DispatchMainThread` on macOS and `GLibMainThread` on Linux.
+- `LSUIElement = YES` and `.accessory` keep the app in the menu bar without
+  a Dock icon. Switch to `.regular` only while Settings or Library is
+  open, once those windows exist. Install a main menu even while it is
+  hidden: AppKit routes text-editing key equivalents through its items.
+- Preserve the panel flags and activation order in
+  `MonkeysPaw/Panel/PromptPanel.swift` and `PanelController.swift`. The
+  comments explain the full-screen Spaces, key-window and Mission Control
+  rationale from Vervellum and §4.6. Placement uses the cursor's screen and
+  clamps to its `visibleFrame`, excluding the menu bar and Dock.
+- Gate launch side effects with `isRunningTests` so hosted unit tests do
+  not create a status item or panel. Geometry tests run in the hosted app;
+  Core is imported as a separate package module.
+- Run `scripts/make-icons.sh` on macOS to regenerate AppIcon PNGs from
+  `media-sources/icon.png` using `sips`, and `build/MonkeysPaw.icns` using
+  `iconutil`. The PNGs are committed; the initial set was resized with
+  Pillow on Linux. `scripts/build.sh` and `scripts/release.sh` configure
+  the shared lkm engines. Tag publishing arrives with `release.yml` in M2.
+- A Linux host cannot build or test the app. XML and object-ID checks are
+  structural checks only; the `macos-app` CI job on `macos-26`, pinned to
+  Xcode 26.0, runs the app build and hosted tests after push. Launch and
+  full-screen panel behavior still need an owner-run macOS check (§15).
 
 ## Linux GLib main-loop rules
 
