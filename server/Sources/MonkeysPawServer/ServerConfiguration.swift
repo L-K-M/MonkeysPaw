@@ -7,7 +7,12 @@ public struct ServerConfiguration: Sendable {
     let version: String
     public let httpPort: Int
 
+    /// Treats empty or whitespace-only environment values as unset before applying defaults.
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) throws {
+        let environment = environment.filter {
+            !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
         httpHost = environment["MONKEYSPAW_HTTP_HOST"] ?? ServerLimits.defaultHTTPHost
         version = environment["MONKEYSPAW_VERSION"] ?? AppIdentity.fallbackVersion
 

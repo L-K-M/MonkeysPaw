@@ -15,6 +15,26 @@ final class HealthTests: XCTestCase {
         )
     }
 
+    func testEmptyVersionUsesFallbackVersion() async throws {
+        for version in ["", " \t\n"] {
+            try await assertHealth(environment: ["MONKEYSPAW_VERSION": version], expectedVersion: "0.0.0")
+        }
+    }
+
+    func testEmptyHostUsesDefaultHost() throws {
+        for host in ["", " \t\n"] {
+            let configuration = try ServerConfiguration(environment: ["MONKEYSPAW_HTTP_HOST": host])
+            XCTAssertEqual(configuration.httpHost, "0.0.0.0")
+        }
+    }
+
+    func testEmptyPortUsesDefaultPort() throws {
+        for port in ["", " \t\n"] {
+            let configuration = try ServerConfiguration(environment: ["MONKEYSPAW_HTTP_PORT": port])
+            XCTAssertEqual(configuration.httpPort, 8080)
+        }
+    }
+
     func testConfigurationDefaultsAndOverrides() throws {
         let defaults = try ServerConfiguration(environment: [:])
         XCTAssertEqual(defaults.httpHost, "0.0.0.0")
@@ -29,7 +49,8 @@ final class HealthTests: XCTestCase {
     }
 
     func testConfigurationRejectsInvalidPorts() {
-        for port in ["", "not-a-port", "0", "-1", "65536"] {
+        // Blank ports now use the default because empty environment values are treated as unset.
+        for port in ["not-a-port", "0", "-1", "65536"] {
             XCTAssertThrowsError(try ServerConfiguration(environment: ["MONKEYSPAW_HTTP_PORT": port]))
         }
     }
