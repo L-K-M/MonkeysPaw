@@ -154,6 +154,23 @@ final class SetupModelTests: XCTestCase {
         XCTAssertEqual(h.status(.hotkey), .needsAction(fix: SetupStrings.assignShortcut))
     }
 
+    func testCurrentRegistrationFailureOverridesEarlierVerification() throws {
+        let h = Harness(session: .gnomeWayland)
+        h.shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        let registered = try XCTUnwrap(h.shortcuts.registrations[.togglePicker])
+        h.probe.hotkey = registered
+        h.model.beginHotkeyVerification()
+        h.backend.fire()
+        XCTAssertEqual(h.status(.hotkey), .ok)
+
+        let fix = "Reconnect the shortcuts portal"
+        h.probe.hotkey = HotkeyRegistration(
+            id: registered.id, mechanism: registered.mechanism, status: .failed, detail: fix
+        )
+        h.model.refresh()
+        XCTAssertEqual(h.status(.hotkey), .needsAction(fix: fix))
+    }
+
     func testSelfTestStateTransitionsAndDuplicateIntentsDoNotRerunIt() {
         let h = Harness(session: .wlroots)
         h.delivery.target.received = [DeliveryStrings.testPrompt]

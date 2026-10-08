@@ -38,6 +38,9 @@ public final class SetupService {
         let hotkeyStatus: SetupStatus
         if registration.status == .unbound {
             hotkeyStatus = .needsAction(fix: SetupStrings.assignShortcut)
+        } else if registration.status == .failed {
+            // A current failure supersedes proof from an earlier activation.
+            hotkeyStatus = .needsAction(fix: registration.detail)
         } else if shortcuts.verification(for: .togglePicker) == .verified {
             hotkeyStatus = .ok
         } else if registration.status == .registered {
