@@ -4,5 +4,8 @@
 /// GLib main loop. Inject this port instead; Linux marshals with g_idle_add,
 /// while the macOS driver uses its native UI thread.
 public protocol MainThread {
+    /// Runs work on the UI thread without blocking the caller: inline when
+    /// already there (macOS) or enqueued (Linux); Core is tested under both.
+    /// Core nests run calls, so DispatchQueue.main.sync-style dispatch deadlocks.
     func run(_ work: @escaping () -> Void)
 }

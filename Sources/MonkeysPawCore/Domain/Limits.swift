@@ -14,6 +14,19 @@ public enum Limits {
     /// §6.3: wait up to 500 ms for Accessibility to confirm the paste target.
     public static let accessibilityFocusWait: Duration = .milliseconds(500)
 
+    /// §6.1: bound KDE RemoteDesktop portal calls to two seconds.
+    public static let portalCallTimeout: Duration = .seconds(2)
+
+    /// §6.3: separate CGEvent down/up so apps do not debounce the pair.
+    public static let cgEventPairGap: Duration = .milliseconds(20)
+
+    /// §6.5: allow 500 ms for the target to consume queued paste events.
+    /// Readback, rather than a successful tool exit, establishes receipt.
+    public static let selfTestReadBackDelay: Duration = .milliseconds(500)
+
+    /// §4.2 hotkey debounce: Copywraith src-tauri/src/lib.rs uses 100 ms.
+    public static let toggleDebounce: Duration = .milliseconds(100)
+
     /// §11.1: the initial 640 × 420 picker size, without platform UI types.
     public static let panelSize: (width: Int, height: Int) = (640, 420)
 
