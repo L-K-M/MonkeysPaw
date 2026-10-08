@@ -40,7 +40,10 @@
 - M1c lands in two focused PRs: first the native GDBus Request/Response
   transport, private restore-token storage and mock-bus tests; then
   GlobalShortcuts/RemoteDesktop sessions and app wiring. The first PR does
-  not complete M1c acceptance or its GNOME owner-run checks.
+  not complete M1c acceptance or its GNOME owner-run checks. The second
+  coding slice can merge with mock-bus/CI proof; M1c still stays open for
+  the NOT RUN GNOME and later flatpak owner checklist in
+  `docs/platform/gnome.md`.
 - M1 is risk-first: proven delivery before features.
 - M5 depends only on M2's format code and can run in parallel with M3 and
   M4.
