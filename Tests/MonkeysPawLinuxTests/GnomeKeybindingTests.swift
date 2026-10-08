@@ -1,5 +1,6 @@
 #if os(Linux)
 import MonkeysPawCore
+import Foundation
 import XCTest
 @testable import MonkeysPawLinux
 
@@ -7,6 +8,56 @@ final class GnomeKeybindingTests: XCTestCase {
     private let schema = GnomeKeybindingInstaller.listSchema
     private let itemSchema = GnomeKeybindingInstaller.itemSchema
     private let base = GnomeKeybindingInstaller.basePath
+
+    func testBackendReportsLiveStateAndForwardsTheAction() throws {
+        let tools = try fakeSettings()
+        let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())
+        var changes = 0
+        var fires = 0
+        backend.onChange = {
+            XCTAssertTrue(Thread.isMainThread)
+            changes += 1
+        }
+        let registration = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {
+            fires += 1
+        }
+        XCTAssertEqual(registration.mechanism, .gnomeCustomKeybinding)
+        XCTAssertEqual(registration.status, .needsAction)
+        XCTAssertTrue(GTKTestSupport.spin { changes == 1 })
+        XCTAssertEqual(backend.currentRegistration.id, registration.id)
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        XCTAssertTrue(backend.fire(.togglePicker))
+        XCTAssertEqual(fires, 1)
+        let calls = tools.arguments.count
+        backend.unregister(registration)
+        XCTAssertFalse(backend.fire(.togglePicker))
+        // App exit/unregister must not remove the user's compositor binding.
+        XCTAssertEqual(tools.arguments.count, calls)
+    }
+
+    func testBackendFailureOffersTheManualCommand() throws {
+        let tools = try fakeSettings()
+        tools.environment["FAKE_FAIL_KEY"] = "binding"
+        let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())
+        _ = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {}
+        XCTAssertTrue(GTKTestSupport.spin { backend.currentRegistration.status == .failed })
+        XCTAssertTrue(backend.currentRegistration.detail.contains(GnomeKeybindingInstaller.command))
+    }
+
+    func testManualBackendExposesTheCommandAndUnregisters() throws {
+        let backend = ManualHotkeyBackend()
+        var fires = 0
+        let registration = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {
+            fires += 1
+        }
+        XCTAssertEqual(registration.mechanism, .manual)
+        XCTAssertEqual(registration.status, .needsAction)
+        XCTAssertEqual(registration.detail, GnomeKeybindingInstaller.command)
+        XCTAssertTrue(backend.fire(.togglePicker))
+        XCTAssertEqual(fires, 1)
+        backend.unregister(registration)
+        XCTAssertFalse(backend.fire(.togglePicker))
+    }
 
     func testPublishesCompleteRowAndPreservesOtherBindings() throws {
         let tools = try fakeSettings()
