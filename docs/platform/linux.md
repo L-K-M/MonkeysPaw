@@ -5,6 +5,10 @@ are owner-run and have **not** been completed on the implementation host.
 Record your desktop/compositor, tool versions, date, and self-test report
 when you run them. Do not put clipboard text or tool error bodies in logs.
 
+X11 dependencies are `xdotool` and `xprop` (`x11-utils` on Debian/Ubuntu).
+The display smoke also needs Xvfb, xauth, D-Bus, GLib's command-line tools,
+xterm, Openbox, and Python 3.
+
 ## X11
 
 - [ ] Launch `monkeyspaw` normally on first run. Setup opens. It opens again
@@ -77,12 +81,16 @@ cached until "Test paste" resets and rechecks them.
 - Each subprocess has a two-second budget, a 64 KiB output cap, discarded
   stderr, and typed failures. The exception is dialect discovery: legacy
   ydotool's help exits one on stderr, which is drained together with stdout
-  and never logged. X11 capture uses a shorter 250 ms budget.
+  and never logged. X11 capture shares one shorter 250 ms deadline between
+  `xdotool getactivewindow` and `xprop -id <id> WM_CLASS`.
 - The CI smoke uses Openbox because Xvfb alone has no window manager to
   refocus after a hide. It exercises the real Return handler with the
   terminal chord, pastes through xdotool into xterm running raw-input `cat`,
   compares the exact bytes without logging them, and verifies both CLI and
-  D-Bus self-test JSON. It sends no Enter to the target terminal.
+  D-Bus self-test JSON. Focused XCTest assertions check that capture returns
+  the xterm's class and excludes the picker using real xdotool and xprop.
+  Build the test executable with `swift test` before running the smoke.
+  It sends no Enter to the target terminal.
 - The standalone diagnostic skips GNOME shortcut installation. CI checks
   this with a fake gsettings after the resident service exits.
 - CI gates GTK lifecycle, notification mock-bus, and X11 smoke checks.
