@@ -3,34 +3,64 @@ import MonkeysPawCore
 import SwiftUI
 
 /// Builds one reusable panel and marshals every window operation to AppKit's thread.
-final class PanelController {
-    private let mainThread: MainThread
-    private let log: LogSink
-    private var panel: PromptPanel?
+final class PanelController: PanelWindow {
+    enum HideReason { case delivery, dismissal, blur }
 
-    init(mainThread: MainThread, log: LogSink) {
+    var rootView: (() -> AnyView)?
+    var onCancel: (() -> Void)?
+    var onHide: ((HideReason) -> Void)?
+
+    private let mainThread: MainThread
+    private let scheduler: Scheduler
+    private let log: LogSink
+    private let keyWindow: () -> NSWindow?
+    private var panel: PromptPanel?
+    private var resignObserver: NSObjectProtocol?
+    private var presentationGeneration = 0
+    private var pendingDismissal = HideReason.dismissal
+
+    var isVisible: Bool { panel?.isVisible == true }
+
+    init(mainThread: MainThread, scheduler: Scheduler, log: LogSink,
+         keyWindow: @escaping () -> NSWindow? = { NSApp.keyWindow }) {
         self.mainThread = mainThread
+        self.scheduler = scheduler
         self.log = log
+        self.keyWindow = keyWindow
+    }
+
+    deinit {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
     }
 
     func show() {
         mainThread.run { [weak self] in self?.showOnMainThread() }
     }
 
-    func hide() {
-        mainThread.run { [weak self] in self?.hideOnMainThread() }
+    func cancelForOwnedWindow() {
+        mainThread.run { [weak self] in
+            guard let self, self.isVisible else { return }
+            // Opening our own window is a new focus choice before AppKit makes
+            // it key. Still cancel through the model to clear the armed target.
+            self.pendingDismissal = .blur
+            self.onCancel?()
+        }
     }
 
-    func toggle() {
+    func hide() {
         mainThread.run { [weak self] in
-            guard let self else { return }
-
-            if self.panel?.isVisible == true {
-                self.hideOnMainThread()
-            } else {
-                self.showOnMainThread()
-            }
+            guard let self, self.isVisible else { return }
+            // Capture before orderOut: Escape may automatically make Setup key
+            // afterward. A queued dismissal must also respect an already-key window.
+            let reason = Self.dismissalReason(requested: self.pendingDismissal, panel: self.panel,
+                                               keyWindow: self.keyWindow())
+            self.pendingDismissal = .dismissal
+            self.hideOnMainThread(reason: reason)
         }
+    }
+
+    func hideForDelivery() {
+        mainThread.run { [weak self] in self?.hideOnMainThread(reason: .delivery) }
     }
 
     private func showOnMainThread() {
@@ -57,22 +87,50 @@ final class PanelController {
         // the current full-screen Space in place.
         NSApp.activate()
         panel.makeKey()
+        presentationGeneration &+= 1
+        pendingDismissal = .dismissal
+        observeBlur(of: panel)
     }
 
-    private func hideOnMainThread() {
+    private func hideOnMainThread(reason: HideReason) {
+        presentationGeneration &+= 1
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
+        // DeliveryService restores after the settle delay. This path only tells
+        // the focus driver whether that restore is delivery or guarded dismissal.
+        onHide?(reason)
         panel?.orderOut(nil)
     }
 
+    private func observeBlur(of panel: PromptPanel) {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let generation = self.presentationGeneration
+            self.scheduler.after(Limits.blurHideDelay) { [weak self] in
+                guard let self, generation == self.presentationGeneration,
+                      self.isVisible, self.panel?.isKeyWindow == false else { return }
+                self.pendingDismissal = .blur
+                self.onCancel?()
+            }
+        }
+    }
+
+    static func dismissalReason(requested: HideReason, panel: NSWindow?,
+                                keyWindow: NSWindow?) -> HideReason {
+        guard requested == .dismissal, let keyWindow, keyWindow !== panel else { return requested }
+        return .blur
+    }
+
     private func makePanel() -> PromptPanel {
-        let content = NSHostingView(rootView:
-            Text("Monkey's Paw: nothing here yet")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor)))
+        let content = NSHostingView(rootView: rootView?() ?? AnyView(EmptyView()))
         // Placement owns the frame; the hosting view must not propose its own size.
         content.sizingOptions = []
 
         let panel = PromptPanel(content: content)
-        panel.onCancel = { [weak self] in self?.hide() }
+        panel.onCancel = { [weak self] in self?.onCancel?() }
         return panel
     }
 }
