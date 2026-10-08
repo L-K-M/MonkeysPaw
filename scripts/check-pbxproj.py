@@ -26,10 +26,8 @@ def check(path: Path) -> int:
         print(f"{path}: {error}", file=sys.stderr)
         return 1
 
-    # Preserve quoted strings, including URLs; ignore IDs mentioned in comments.
-    source = COMMENTS_OR_STRINGS.sub(
-        lambda match: match[0] if match[0].startswith('"') else " ", source
-    )
+    # Only bare tokens can be references; ignore comments and quoted content.
+    source = COMMENTS_OR_STRINGS.sub(" ", source)
     # TargetAttributes contains ID keys too. Only object definitions have an isa.
     definitions = Counter(DEFINITIONS.findall(source))
     undefined = sorted(set(TOKENS.findall(source)) - definitions.keys())
@@ -82,6 +80,20 @@ def self_test(path: Path) -> int:
         while f"{candidate:024X}" in existing_ids:
             candidate += 1
         corrupted_id = f"{candidate:024X}"
+
+        quoted_path = Path(temporary) / "quoted.pbxproj"
+        quoted_path.write_text(
+            "{ objects = { AAAAAAAAAAAAAAAAAAAAAAAA = {\n"
+            "    isa = PBXFileReference;\n"
+            f'    name = "{corrupted_id}";\n'
+            f'    path = "{corrupted_id}.png";\n'
+            "}; }; }\n", encoding="utf-8",
+        )
+        if check(quoted_path) != 0:
+            print("Positive self-test failed: quoted ID was treated as a reference",
+                  file=sys.stderr)
+            return 1
+        print("Positive self-test passed: quoted ID ignored")
 
         for scheme in sorted((project / "xcshareddata/xcschemes").glob("*.xcscheme")):
             source = scheme.read_text(encoding="utf-8")
