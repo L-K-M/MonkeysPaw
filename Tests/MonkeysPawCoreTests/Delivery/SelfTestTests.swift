@@ -163,6 +163,47 @@ final class SelfTestTests: XCTestCase {
         if let close, let show { XCTAssertLessThan(close, show) }
     }
 
+    func testQueuedPickerRemembersTheTargetWhenShowWasRequested() {
+        let h = DeliveryHarness()
+        h.target.received = [DeliveryStrings.testPrompt, DeliveryStrings.testPrompt]
+        let test = runner(h)
+        test.run { _ in }
+        h.settle()
+
+        let requested = DeliveryTarget.macOS(processID: 99, bundleID: "test.browser")
+        h.focus.target = requested
+        h.service.show()
+        // A later test field regains focus before the queued picker can open.
+        h.focus.target = .macOS(processID: 7, bundleID: "test.selftest")
+        h.scheduler.advance(by: .milliseconds(1100))
+        h.recorder.events.removeAll()
+        h.deliver()
+        h.settle()
+        XCTAssertTrue(h.recorder.events.contains(.restore(requested)))
+    }
+
+    func testQueuedDismissUsesItsOriginalTargetAndPreservesALaterArm() throws {
+        let h = DeliveryHarness(session: .wlroots)
+        let original = try XCTUnwrap(h.focus.target)
+        h.arm()
+        h.target.received = [DeliveryStrings.testPrompt]
+        let test = runner(h)
+        test.run { _ in }
+        h.settle()
+        h.recorder.events.removeAll()
+        h.service.dismiss()
+
+        let next = DeliveryTarget.macOS(processID: 99, bundleID: "test.next")
+        h.focus.target = next
+        h.service.arm()
+        h.scheduler.advance(by: Limits.selfTestReadBackDelay)
+        XCTAssertTrue(h.recorder.events.contains(.restore(original)))
+        h.recorder.events.removeAll()
+        h.deliver()
+        h.settle()
+        XCTAssertTrue(h.recorder.events.contains(.restore(next)))
+    }
+
     func testReportRoundTripsAllStatusesAndFlatpakHostAsJSON() throws {
         let report = SelfTestReport(session: .flatpak(host: .kdeWayland), results: [
             SelfTestResult(backend: .remoteDesktopPortal, status: .pasted),

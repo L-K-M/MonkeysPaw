@@ -54,11 +54,11 @@ public final class DeliveryService {
         mainThread.run { self.armedTarget = self.focus.captureTarget() }
     }
 
-    /// Capture and present in one UI hop so the picker cannot become the target.
+    /// §4.6: capture the hotkey's target before queuing panel presentation.
     public func show() {
         mainThread.run {
+            self.armedTarget = self.focus.captureTarget()
             self.queue {
-                self.armedTarget = self.focus.captureTarget()
                 self.panel.show()
                 self.completeOperation()
             }
@@ -68,9 +68,9 @@ public final class DeliveryService {
     /// The driver must restore only while our app is still frontmost (§4.6).
     public func dismiss() {
         mainThread.run {
+            let target = self.armedTarget
+            self.armedTarget = nil
             self.queue {
-                let target = self.armedTarget
-                self.armedTarget = nil
                 self.panel.hide()
                 guard let target else {
                     self.completeOperation()
