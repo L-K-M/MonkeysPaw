@@ -285,8 +285,41 @@ final class SetupModelTests: XCTestCase {
             SelfTestResult(backend: .ydotool, status: .pasted),
         ])
         XCTAssertEqual(h.model.state, .tested(report))
-        XCTAssertEqual(states, [.testing, .tested(report)])
+        XCTAssertEqual(states, [.testing, .tested(report), .tested(report)])
         XCTAssertEqual(h.delivery.injectors[.ydotool]?.chords.count, 1)
+    }
+
+    func testSelfTestNotifiesTestedStateBeforeDeferredRefresh() {
+        let h = Harness(session: .wlroots, mainMode: .deferred)
+        h.delivery.target.received = [DeliveryStrings.testPrompt]
+        h.delivery.main.drain()
+        var states: [SetupModel.State] = []
+        var statuses: [SetupStatus?] = []
+        h.model.onChange = {
+            XCTAssertTrue(h.delivery.main.isRunning)
+            states.append(h.model.state)
+            statuses.append(h.status(.ydotool))
+        }
+
+        h.delivery.main.run { h.model.runSelfTest() }
+        h.delivery.main.drain()
+        XCTAssertEqual(states, [.testing])
+        h.delivery.scheduler.advance(by: Limits.settleDelayLinux)
+        h.delivery.main.drain()
+        h.probe.ydotool = .ok
+        h.delivery.scheduler.advance(by: Limits.selfTestReadBackDelay)
+        XCTAssertEqual(h.model.state, .testing)
+        XCTAssertEqual(states, [.testing])
+
+        h.delivery.main.drain()
+
+        let report = SelfTestReport(session: .wlroots, results: [
+            SelfTestResult(backend: .ydotool, status: .pasted),
+        ])
+        XCTAssertEqual(states, [.testing, .tested(report), .tested(report)])
+        XCTAssertEqual(statuses, [.unknown, .unknown, .ok])
+        XCTAssertEqual(h.model.state, .tested(report))
+        XCTAssertEqual(h.status(.ydotool), .ok)
     }
 
     func testQueuedProbingStartsUnknownThenPublishesOnMainThread() {

@@ -45,6 +45,7 @@ public final class SetupModel {
         setup.runSelfTest { [weak self] report in
             guard let self else { return }
             self.state = .tested(report)
+            self.onChange?()
             self.refresh()
         }
     }
