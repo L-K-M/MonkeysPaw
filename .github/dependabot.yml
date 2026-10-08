@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Shared Core package and its YAML dependency.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # Server package dependencies.
+  - package-ecosystem: swift
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # Server build and runtime container images.
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # Workflow actions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

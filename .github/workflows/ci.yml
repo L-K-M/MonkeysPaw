@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: builds and tests only need to read repository contents.
+permissions:
+  contents: read
+
+# Cancel superseded PR runs; keep every main commit's result for bisection.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job has a timeout so a wedged build cannot consume the default six hours.
+jobs:
+  core-linux:
+    name: Core on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: swift:6.4-noble
+    # This is the portability gate: Core must build without Apple or GTK APIs.
+    steps:
+      # Immutable action SHAs prevent a mutable tag from changing executed code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build Core
+        run: swift build
+      - name: Test Core
+        run: swift test
+
+  core-macos:
+    name: Core on macOS
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '26.0'
+      - name: Test Core
+        run: swift test
+
+  server:
+    name: Server build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: swift:6.4-noble
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build server
+        run: swift build --package-path server
+      - name: Test server
+        run: swift test --package-path server
+
+  server-image:
+    name: Server image and health
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build --tag monkeyspaw-server:ci -f server/Dockerfile .
+      - name: Wait for container health and check the API
+        run: |
+          set -euo pipefail
+
+          docker run --detach --name monkeyspaw-server-ci \
+            --publish 127.0.0.1:8080:8080 monkeyspaw-server:ci
+
+          # Bound the wait to about one minute; print logs on failure.
+          health_wait_attempts=30
+          health_poll_seconds=2
+          for _attempt in $(seq 1 "$health_wait_attempts"); do
+            # A crashed entry point cannot become healthy; show its logs now.
+            if [ "$(docker inspect --format '{{.State.Running}}' monkeyspaw-server-ci)" != true ]; then
+              docker logs monkeyspaw-server-ci
+              exit 1
+            fi
+
+            health=$(docker inspect --format '{{.State.Health.Status}}' monkeyspaw-server-ci)
+            if [ "$health" = healthy ]; then
+              curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/api/health
+              exit 0
+            fi
+
+            if [ "$health" = unhealthy ]; then
+              docker logs monkeyspaw-server-ci
+              exit 1
+            fi
+
+            sleep "$health_poll_seconds"
+          done
+
+          docker logs monkeyspaw-server-ci
+          exit 1
+      - name: Remove test container
+        if: always()
+        run: docker rm --force monkeyspaw-server-ci || true

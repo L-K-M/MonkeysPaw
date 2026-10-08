@@ -11,6 +11,7 @@
 | macOS TCC grants lost on each update of an ad-hoc build | High | Re-grant Accessibility after every update | Stable signing identity (Q3); detection and explanation in Setup. |
 | GTK4 shim grows large | Medium | Slow Linux UI work | Wrap only what §11.1 lists; keep the Linux UI plainer; presentation models hold the logic. |
 | Hummingbird minor releases churn (2.27 dropped Swift 6.1) | Medium | Build breaks on upgrade | Pin versions; upgrade deliberately; server tests gate. |
+| Swift 6.4's default build engine omits Foundation's support archives in `--static-swift-stdlib` links | Certain today | Server image and Linux deb fail to link | Static builds pass `--build-system native` (deprecated) with a comment naming the bug; the server image job and the deb job catch regressions; drop the flag once swift-build is fixed. |
 | SwiftPM pulls GTK into the server build | Low | Server image fails | Target layout in §4.4; proven in M0. |
 | Sync bugs lose edits | Medium | Data loss | Compare-and-swap; conflict copies instead of overwrites; trash instead of delete; server revisions; the §13.1 scenario suite. |
 | Server exposed to the internet without TLS | Medium | Credential theft | Loopback bind by default; `tls` profile; the client refuses public `http://`. |

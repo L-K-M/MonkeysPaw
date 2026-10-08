@@ -1,0 +1,26 @@
+# Allow only the manifests and source tree needed by the server build.
+**
+!Package.swift
+!Package.resolved
+!Sources/
+!Sources/MonkeysPawCore/
+!Sources/MonkeysPawCore/**
+!server/
+!server/Package.swift
+!server/Package.resolved
+!server/Sources/
+!server/Sources/**
+!server/Tests/
+!server/Tests/**
+!server/Dockerfile
+
+# Keep host build state, repository metadata, docs, and artwork out of images.
+.git/
+**/.build/
+**/.swiftpm/
+server/.build/
+.idea/
+docs/
+media-sources/
+**/.DS_Store
+**/.env
