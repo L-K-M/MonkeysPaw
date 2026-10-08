@@ -11,6 +11,7 @@ enum GTK {
     typealias Widget = UnsafeMutablePointer<GtkWidget>
 
     private static let millisecondsPerSecond: TimeInterval = 1_000
+    private static let maximumDelayMilliseconds = TimeInterval(guint.max)
 
     /// Holds a Swift closure for the lifetime of a signal connection.
     ///
@@ -64,23 +65,28 @@ enum GTK {
     /// This is the only correct UI hop from Swift concurrency on Linux.
     /// GLib does not drain libdispatch's main queue: DispatchQueue.main never
     /// fires and a MainActor hop hangs silently, leaving a window that never updates.
-    static func onMainLoop(_ work: @escaping () -> Void) {
+    @discardableResult
+    static func onMainLoop(_ work: @escaping () -> Void) -> guint {
         let box = Unmanaged.passRetained(Box(work)).toOpaque()
         let trampoline: @convention(c) (UnsafeMutableRawPointer?) -> gboolean = { data in
             guard let data else { return 0 }
 
-            let unmanaged = Unmanaged<Box>.fromOpaque(data)
-            unmanaged.takeUnretainedValue().call()
-            unmanaged.release()
-            return 0 // G_SOURCE_REMOVE
+            Unmanaged<Box>.fromOpaque(data).takeUnretainedValue().call()
+            return 0 // G_SOURCE_REMOVE; the destroy notify releases the box
+        }
+        let release: @convention(c) (UnsafeMutableRawPointer?) -> Void = { data in
+            guard let data else { return }
+
+            Unmanaged<Box>.fromOpaque(data).release()
         }
 
-        g_idle_add(trampoline, box)
+        return g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, trampoline, box, release)
     }
 
     /// The delayed counterpart to onMainLoop, on the same GLib thread.
     /// DispatchQueue.main.asyncAfter would schedule onto a queue nothing drains.
-    static func after(_ interval: TimeInterval, _ work: @escaping () -> Void) {
+    @discardableResult
+    static func after(_ interval: TimeInterval, _ work: @escaping () -> Void) -> guint {
         let box = Unmanaged.passRetained(Box(work)).toOpaque()
         let trampoline: @convention(c) (UnsafeMutableRawPointer?) -> gboolean = { data in
             guard let data else { return 0 }
@@ -96,9 +102,9 @@ enum GTK {
 
         // GLib runs the destroy notify exactly once, even if the source is removed
         // before firing, so a timer cannot leak its closure on early teardown.
-        let milliseconds = interval * millisecondsPerSecond
-        g_timeout_add_full(G_PRIORITY_DEFAULT, guint(milliseconds),
-                           trampoline, box, release)
+        let milliseconds = min(maximumDelayMilliseconds, max(0, interval * millisecondsPerSecond))
+        return g_timeout_add_full(G_PRIORITY_DEFAULT, guint(milliseconds),
+                                  trampoline, box, release)
     }
 
     /// Keep borrowed widget pointers valid when the window manager closes the panel.
