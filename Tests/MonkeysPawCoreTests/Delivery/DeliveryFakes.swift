@@ -4,7 +4,7 @@ enum DeliveryEvent: Equatable {
     case capture, show, hide, hideForDelivery
     case write(String), wait(Duration), restore(DeliveryTarget)
     case paste(PasteBackend, PasteChord)
-    case copied(PasteChord), pressPaste(PasteChord, CopyReason), done(DeliveryOutcome)
+    case copied, pressPaste(PasteChord, CopyReason), done(DeliveryOutcome)
     case testPresent(String), testReadBack, testClose
 }
 
@@ -169,7 +169,7 @@ final class FakeInjector: PasteInjector {
 final class FakeNotifier: Notifier {
     private let recorder: DeliveryRecorder
     init(_ recorder: DeliveryRecorder) { self.recorder = recorder }
-    func copied(chord: PasteChord) { recorder.events.append(.copied(chord)) }
+    func copied() { recorder.events.append(.copied) }
     func pressPaste(chord: PasteChord, reason: CopyReason) {
         recorder.events.append(.pressPaste(chord, reason))
     }

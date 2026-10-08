@@ -71,9 +71,7 @@ public struct Accelerator: Equatable, Hashable, Sendable {
     }
 
     /// §6.2: one default shortcut on both platforms; repeat remains unbound.
-    public static func defaultBinding(
-        for action: HotkeyAction, session: DesktopSession
-    ) -> Accelerator? {
+    public static func defaultBinding(for action: HotkeyAction) -> Accelerator? {
         guard action == .togglePicker else { return nil }
         return Accelerator(modifiers: [.control, .alt], key: .character("p"))
     }

@@ -1,5 +1,6 @@
 /// Owns probing so SetupModel only calls the service layer (§4.2).
 public final class SetupService {
+    /// This hook has one owner, SetupModel. Assignment replaces the callback.
     public var onChange: (() -> Void)?
 
     private let probe: SetupProbe

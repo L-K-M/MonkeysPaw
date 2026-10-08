@@ -7,6 +7,8 @@ public final class PanelModel {
         case done(DeliveryOutcome)
     }
 
+    /// This hook has one owner, the front end's view.
+    /// Assignment replaces the previous callback.
     public var onChange: (() -> Void)?
     public private(set) var state = State.idle
     public var prompt: String { DeliveryStrings.testPrompt }

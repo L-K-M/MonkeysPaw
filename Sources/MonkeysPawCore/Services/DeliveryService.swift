@@ -1,7 +1,8 @@
 /// §6.3 sequencing. State and UI ports are confined to the injected MainThread;
 /// schedulers and injectors return immediately and own their callback threads.
 public final class DeliveryService {
-    /// The last picker delivery, excluding self-tests. Read only on MainThread.
+    /// The last picker delivery, excluding self-tests.
+    /// Read only on the injected MainThread.
     public private(set) var lastDelivery: DeliveryReceipt?
 
     private enum Selection {
@@ -106,15 +107,7 @@ public final class DeliveryService {
     public func deliver(
         _ text: String, mode: DeliveryMode, done: @escaping (DeliveryOutcome) -> Void
     ) {
-        enqueue(text, mode: mode, selection: .ladder, done: done)
-    }
-
-    /// §6.5: test exactly one backend, even when it previously failed.
-    /// Capture the focused test field without changing the picker's armed target.
-    public func deliver(
-        _ text: String, through backend: PasteBackend, done: @escaping (DeliveryOutcome) -> Void
-    ) {
-        enqueue(text, mode: .paste(.standard), selection: .only(backend), done: done)
+        enqueue(text, mode: mode, done: done)
     }
 
     public func resetFailures() {
@@ -143,6 +136,8 @@ public final class DeliveryService {
         }
     }
 
+    /// §6.5: test one backend, including cached failures, without changing
+    /// the picker target.
     /// Only SelfTest calls this, sequentially inside performSelfTest's operation.
     func deliverForSelfTest(
         _ text: String, through backend: PasteBackend, done: @escaping (DeliveryOutcome) -> Void
@@ -154,11 +149,11 @@ public final class DeliveryService {
     }
 
     private func enqueue(
-        _ text: String, mode: DeliveryMode, selection: Selection,
+        _ text: String, mode: DeliveryMode,
         done: @escaping (DeliveryOutcome) -> Void
     ) {
         mainThread.run {
-            let request = self.request(text, mode: mode, selection: selection) { outcome in
+            let request = self.request(text, mode: mode, selection: .ladder) { outcome in
                 done(outcome)
                 self.completeOperation()
             }
@@ -228,7 +223,7 @@ public final class DeliveryService {
 
     private func beginPaste(for request: Request, focus: FocusConfirmation) {
         guard case .paste(let chord) = request.mode else {
-            if case .ladder = request.selection { notifier.copied(chord: .standard) }
+            if case .ladder = request.selection { notifier.copied() }
             finish(request, outcome: .copiedOnly(.requested), focus: focus)
             return
         }

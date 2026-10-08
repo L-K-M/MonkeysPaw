@@ -8,10 +8,8 @@ final class AcceleratorTests: XCTestCase {
         XCTAssertEqual(expected.modifiers, [.control, .alt])
         XCTAssertEqual(expected.key, .character("p"))
 
-        for session: DesktopSession in [.macOS, .gnomeWayland, .kdeX11, .flatpak(host: .wlroots)] {
-            XCTAssertEqual(Accelerator.defaultBinding(for: .togglePicker, session: session), expected)
-            XCTAssertNil(Accelerator.defaultBinding(for: .repeatLast, session: session))
-        }
+        XCTAssertEqual(Accelerator.defaultBinding(for: .togglePicker), expected)
+        XCTAssertNil(Accelerator.defaultBinding(for: .repeatLast))
     }
 
     func testGTKTranslationsFollowCopywraith() throws {

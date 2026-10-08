@@ -1,6 +1,10 @@
 /// Registration is reported immediately; verification requires a real activation.
 public final class ShortcutService {
+    /// This hook has one owner, SetupService. Assignment replaces the callback.
     public var onChange: (() -> Void)?
+
+    /// State returned at registration. Read only on the injected MainThread.
+    /// Setup reads live driver status from SetupProbe.
     public private(set) var registrations: [HotkeyAction: HotkeyRegistration] = [:]
 
     private enum ToggleState {
@@ -55,6 +59,7 @@ public final class ShortcutService {
         }
     }
 
+    /// Read only on the injected MainThread.
     public func verification(for action: HotkeyAction) -> ShortcutVerification {
         verification[action] ?? .notStarted
     }

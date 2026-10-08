@@ -48,7 +48,7 @@ final class DeliveryServiceTests: XCTestCase {
 
         XCTAssertEqual(h.recorder.events, [
             .write("test"), .hideForDelivery, .wait(Limits.settleDelayMacOS),
-            .restore(try XCTUnwrap(h.focus.target)), .copied(.standard), .done(.copiedOnly(.requested)),
+            .restore(try XCTUnwrap(h.focus.target)), .copied, .done(.copiedOnly(.requested)),
         ])
         XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
     }
@@ -161,7 +161,12 @@ final class DeliveryServiceTests: XCTestCase {
         h.cache.record(.permissionDenied, for: .cgEvent)
         h.injectors[.cgEvent]?.result = .failed(.permissionDenied)
         var outcome: DeliveryOutcome?
-        h.service.deliver("test", through: .cgEvent) { outcome = $0 }
+        h.service.performSelfTest { finished in
+            h.service.deliverForSelfTest("test", through: .cgEvent) {
+                outcome = $0
+                finished()
+            }
+        }
         h.settle()
         XCTAssertEqual(outcome, .copiedOnly(.backendsFailed([
             BackendFailure(backend: .cgEvent, reason: .permissionDenied),
