@@ -89,8 +89,20 @@ cached until "Test paste" resets and rechecks them.
   compares the exact bytes without logging them, and verifies both CLI and
   D-Bus self-test JSON. Focused XCTest assertions check that capture returns
   the xterm's class and excludes the picker using real xdotool and xprop.
-  Build the test executable with `swift test` before running the smoke.
-  It sends no Enter to the target terminal.
+  Build tests with `swift test` first, then run the smoke from the repository
+  root. Each capture assertion runs through `swift test --skip-build --filter`
+  with its exact test name and a 20-second timeout. The smoke sends no Enter
+  to the target terminal. The whole smoke keeps CI's 60-second timeout:
+
+  ```sh
+  timeout 60s dbus-run-session -- xvfb-run -a \
+    bash scripts/linux-delivery-smoke.sh .build/debug/monkeyspaw
+  ```
+
+  The optional second script argument selects the Swift runner used to build
+  the tests. On the implementation host, build with
+  `/home/paseo/.local/bin/swift64` and append that path to the smoke command.
+  Omitting it uses `swift`, as CI does.
 - The standalone diagnostic skips GNOME shortcut installation. CI checks
   this with a fake gsettings after the resident service exits.
 - CI gates GTK lifecycle, notification mock-bus, and X11 smoke checks.

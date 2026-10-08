@@ -3,14 +3,16 @@
 set -euo pipefail
 
 smoke_binary=$(realpath "${1:-.build/debug/monkeyspaw}")
-# swift test builds this executable alongside the app before CI runs the smoke.
-smoke_test_binary=$(dirname "$smoke_binary")/MonkeysPawPackageTests.xctest
+# Use the same Swift runner that built the tests; SwiftPM locates its artifacts.
+smoke_swift=${2:-swift}
 smoke_directory=$(mktemp -d)
 smoke_app_id=ch.lkmc.monkeyspaw
 smoke_app_path=/${smoke_app_id//./\/}
 smoke_wait_attempts=100
 smoke_poll_seconds=0.1
 smoke_call_timeout=3
+# SwiftPM startup needs more time than an individual D-Bus or tool call.
+smoke_test_timeout=20
 smoke_app_pid=
 smoke_terminal_pid=
 smoke_wm_pid=
@@ -149,8 +151,8 @@ xterm -title monkeyspaw-smoke-target -class XTerm \
 smoke_terminal_pid=$!
 wait_for 'the xterm target' terminal_ready
 timeout "$smoke_call_timeout" xdotool windowactivate --sync "$smoke_terminal_window" >/dev/null 2>&1
-timeout "$smoke_call_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_test_binary" \
-    MonkeysPawLinuxTests.LinuxFocusTrackerX11SmokeTests/testCapturesXtermClass
+timeout "$smoke_test_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_swift" test --skip-build \
+    --filter '^MonkeysPawLinuxTests\.LinuxFocusTrackerX11SmokeTests/testCapturesXtermClass$'
 
 timeout "$smoke_call_timeout" gapplication action "$smoke_app_id" toggle
 wait_for 'the canned picker' panel_ready
@@ -160,8 +162,8 @@ if [[ "${smoke_panel_class,,}" != "wm_class(string) = \"$smoke_app_id\", \"$smok
     printf 'The picker WM_CLASS does not match the application identity.\n' >&2
     exit 1
 fi
-timeout "$smoke_call_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_test_binary" \
-    MonkeysPawLinuxTests.LinuxFocusTrackerX11SmokeTests/testSkipsOurOwnWindow
+timeout "$smoke_test_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_swift" test --skip-build \
+    --filter '^MonkeysPawLinuxTests\.LinuxFocusTrackerX11SmokeTests/testSkipsOurOwnWindow$'
 
 # Exercise the real picker key handler, then Core's settle and the xdotool
 # backend. Automatic terminal-class selection is scheduled for M7.
