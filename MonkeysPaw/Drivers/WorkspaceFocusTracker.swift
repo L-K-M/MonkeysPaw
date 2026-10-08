@@ -2,7 +2,8 @@ import AppKit
 import ApplicationServices
 import MonkeysPawCore
 
-/// Activation runs on AppKit's thread; AX polling runs on a worker (§4.6).
+/// Restoration state and workspace calls are confined to AppKit's main thread.
+/// Only independent AX queries run on workers (§4.6).
 final class WorkspaceFocusTracker: FocusTracker {
     enum RestorationMode { case dismissal, delivery, blur }
 
@@ -35,7 +36,9 @@ final class WorkspaceFocusTracker: FocusTracker {
     private let isTrusted: () -> Bool
     private let waitForFocus: (Int32, TimeInterval) -> FocusConfirmation
     private let deactivateIfUnused: () -> Void
-    private let worker = DispatchQueue(label: "ch.lkmc.MonkeysPaw.focus", qos: .userInitiated)
+    // A superseded AX query must not consume the next restore's deadline.
+    private let worker = DispatchQueue(label: "ch.lkmc.MonkeysPaw.focus", qos: .userInitiated,
+                                       attributes: .concurrent)
     private var mode = RestorationMode.dismissal
     private var generation = 0
     private var activationObserver: NSObjectProtocol?
@@ -66,6 +69,7 @@ final class WorkspaceFocusTracker: FocusTracker {
     }
 
     func startTrackingActivations() {
+        assert(Thread.isMainThread, "Restoration state is main-thread-confined")
         guard activationObserver == nil else { return }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -78,11 +82,13 @@ final class WorkspaceFocusTracker: FocusTracker {
     }
 
     func cancelPendingRestoration() {
+        assert(Thread.isMainThread, "Restoration state is main-thread-confined")
         generation &+= 1
         activeRestorePID = nil
     }
 
     func captureTarget() -> DeliveryTarget? {
+        assert(Thread.isMainThread, "Restoration state is main-thread-confined")
         // A new summon supersedes an older activation retry, like Invoque's generation.
         cancelPendingRestoration()
         guard let target = source.frontmost(),
@@ -92,6 +98,7 @@ final class WorkspaceFocusTracker: FocusTracker {
 
     /// AppDelegate connects these modes to the panel's two hide paths.
     func prepareForRestore(_ mode: RestorationMode) {
+        assert(Thread.isMainThread, "Restoration state is main-thread-confined")
         self.mode = mode
     }
 
@@ -193,7 +200,7 @@ enum AccessibilityFocusWait {
         for pid: Int32, timeout: TimeInterval,
         now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         pause: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-        focusedPID: (TimeInterval) -> Int32? = readFocusedPID
+        focusedPID: (TimeInterval) -> Int32? = { readFocusedPID(timeout: $0) }
     ) -> FocusConfirmation {
         let deadline = now() + timeout
         while now() < deadline {
@@ -205,13 +212,28 @@ enum AccessibilityFocusWait {
         return .unconfirmed
     }
 
-    private static func readFocusedPID(timeout: TimeInterval) -> Int32? {
+    /// The attribute/query seam does not require a live AX connection in tests.
+    static func readFocusedPID(
+        timeout: TimeInterval,
+        now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        query: (CFString, TimeInterval) -> Int32? = readPID
+    ) -> Int32? {
+        let deadline = now() + timeout
+        if let pid = query(kAXFocusedUIElementAttribute as CFString, timeout) { return pid }
+
+        // Some apps have no focusable element. §6.3 still permits confirming the
+        // focused application, but both AX calls must share the original budget.
+        let remaining = deadline - now()
+        guard remaining > 0 else { return nil }
+        return query(kAXFocusedApplicationAttribute as CFString, remaining)
+    }
+
+    private static func readPID(attribute: CFString, timeout: TimeInterval) -> Int32? {
         let systemWide = AXUIElementCreateSystemWide()
         // AX calls have their own IPC timeout; a dead target must not stall this worker.
         guard AXUIElementSetMessagingTimeout(systemWide, Float(timeout)) == .success else { return nil }
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString,
-                                            &focused) == .success,
+        guard AXUIElementCopyAttributeValue(systemWide, attribute, &focused) == .success,
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
 
         var pid: pid_t = 0

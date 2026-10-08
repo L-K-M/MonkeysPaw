@@ -1,3 +1,4 @@
+import ApplicationServices
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPaw
@@ -138,6 +139,106 @@ final class WorkspaceFocusTrackerTests: XCTestCase {
         releaseQuery.signal()
         wait(for: [queryReturned], timeout: 2)
         XCTAssertEqual(results, [.unconfirmed])
+    }
+
+    func testSecondRestoreConfirmsWhileSupersededWaitNeverFocuses() {
+        let scheduler = ManualScheduler()
+        let firstPaused = expectation(description: "First fake AX poll is sleeping")
+        let secondCompleted = expectation(description: "Second restore confirms independently")
+        secondCompleted.assertForOverFulfill = true
+        let answersReturned = expectation(description: "Both workers return to main")
+        answersReturned.expectedFulfillmentCount = 2
+        let releaseFirst = DispatchSemaphore(value: 0)
+        let second = DeliveryTarget.macOS(processID: 456, bundleID: "test.second")
+        var frontmost: DeliveryTarget? = target
+        let tracker = WorkspaceFocusTracker(
+            source: .init(frontmost: { frontmost }, activate: { frontmost = $0; return true }),
+            ownPID: ownPID,
+            mainThread: ObservingMainThread(onBackgroundDelivery: { answersReturned.fulfill() }),
+            scheduler: scheduler, isTrusted: { true }, waitForFocus: { pid, timeout in
+                var time: TimeInterval = 0
+                var didPause = false
+                return AccessibilityFocusWait.wait(for: pid, timeout: timeout, now: { time }, pause: { delay in
+                    if !didPause {
+                        didPause = true
+                        firstPaused.fulfill()
+                        // Hold the obsolete poll until the second request completes.
+                        // A serial focus queue cannot run the second query in time.
+                        _ = releaseFirst.wait(timeout: .now() + 5)
+                    }
+                    time += delay
+                }, focusedPID: { _ in pid == 456 ? 456 : nil })
+            }, deactivateIfUnused: {})
+
+        var firstResults: [FocusConfirmation] = []
+        tracker.prepareForRestore(.delivery)
+        tracker.restore(target) { firstResults.append($0) }
+        wait(for: [firstPaused], timeout: 2)
+
+        _ = tracker.captureTarget()
+        tracker.prepareForRestore(.delivery)
+        var secondResults: [FocusConfirmation] = []
+        tracker.restore(second) { result in
+            secondResults.append(result)
+            secondCompleted.fulfill()
+        }
+        wait(for: [secondCompleted], timeout: 2)
+        XCTAssertEqual(secondResults, [.confirmed])
+
+        releaseFirst.signal()
+        wait(for: [answersReturned], timeout: 2)
+        scheduler.fire(Limits.accessibilityFocusWait)
+        scheduler.fire(Limits.accessibilityFocusWait)
+        XCTAssertEqual(firstResults, [.unconfirmed])
+        XCTAssertEqual(secondResults, [.confirmed])
+    }
+
+    func testMissingAXElementFallsBackToFocusedApplicationWithoutSleeping() {
+        var time: TimeInterval = 0
+        var attributes: [String] = []
+        let result = AccessibilityFocusWait.wait(
+            for: 123, timeout: Limits.accessibilityFocusWait.timeInterval,
+            now: { time }, pause: { time += $0 }, focusedPID: { remaining in
+                AccessibilityFocusWait.readFocusedPID(timeout: remaining, now: { time }, query: { attribute, _ in
+                    attributes.append(attribute as String)
+                    return attribute as String == kAXFocusedApplicationAttribute as String ? 123 : nil
+                })
+            })
+
+        XCTAssertEqual(result, .confirmed)
+        XCTAssertEqual(time, 0)
+        XCTAssertEqual(attributes, [kAXFocusedUIElementAttribute as String, kAXFocusedApplicationAttribute as String])
+    }
+
+    func testAXElementTakesPrecedenceAndFallbackKeepsOriginalDeadline() {
+        let timeout = Limits.accessibilityFocusWait.timeInterval
+        let elementPID = AccessibilityFocusWait.readFocusedPID(timeout: timeout, query: { attribute, _ in
+            XCTAssertEqual(attribute as String, kAXFocusedUIElementAttribute as String)
+            return self.ownPID
+        })
+        XCTAssertEqual(elementPID, ownPID)
+
+        var time: TimeInterval = 0
+        var remainingBudgets: [TimeInterval] = []
+        let applicationPID = AccessibilityFocusWait.readFocusedPID(timeout: timeout, now: { time }, query: { attribute, budget in
+            remainingBudgets.append(budget)
+            if attribute as String == kAXFocusedUIElementAttribute as String {
+                time += timeout / 2
+                return nil
+            }
+            return 123
+        })
+        XCTAssertEqual(applicationPID, 123)
+        XCTAssertEqual(remainingBudgets, [timeout, timeout / 2])
+
+        time = 0
+        var queries = 0
+        XCTAssertNil(AccessibilityFocusWait.readFocusedPID(timeout: timeout, now: { time }, query: { _, _ in
+            queries += 1
+            time = timeout
+            return nil
+        }))
+        XCTAssertEqual(queries, 1)
     }
 
     func testAXWaitWithFakeClockConfirmsMatchingFocusedElement() {
