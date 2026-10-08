@@ -1,5 +1,7 @@
 # One identity string: Name, the desktop basename and StartupWMClass must all
 # match AppIdentity.linuxAppID so the session bus can cold-start the same app.
+# D-Bus activation requires an absolute Exec path. The package installs to /usr.
+# Other prefixes must rewrite it together with the .desktop entry's Exec.
 [D-BUS Service]
 Name=ch.lkmc.monkeyspaw
 Exec=/usr/bin/monkeyspaw --gapplication-service

@@ -12,6 +12,8 @@ Categories=Utility;
 StartupWMClass=ch.lkmc.monkeyspaw
 DBusActivatable=true
 Actions=toggle;
+# Version 1.5 is rejected outright by Ubuntu's desktop-file-validate; 1.4 is the
+# highest that passes.
 Version=1.4
 
 # With D-Bus activation, this identifier is the GSimpleAction name exactly.
