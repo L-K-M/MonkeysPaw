@@ -55,7 +55,8 @@ Rollout by milestone:
   - The draft release is published only after every job uploads:
     - macOS: a universal `.dmg`, plus `.zip` (Vervellum).
     - Linux: a `.deb` built by `packaging/build-deb.sh` with
-      `--static-swift-stdlib` and `dpkg-shlibdeps`.
+      `--static-swift-stdlib` (plus `--build-system native` until swift-build
+      links static Foundation; §16) and `dpkg-shlibdeps`.
     - Flatpak: repacked from the deb (from M7).
     - Server: the ghcr image (from M5).
   - The Linux and server jobs run first; the macOS job `needs` them, so a
