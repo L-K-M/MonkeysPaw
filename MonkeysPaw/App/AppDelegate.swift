@@ -76,7 +76,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel.onCancel = { [weak model] in model?.cancel() }
         panel.onHide = { reason in
-            focus.prepareForRestore(reason == .delivery ? .delivery : .dismissal)
+            switch reason {
+            case .delivery: focus.prepareForRestore(.delivery)
+            case .dismissal: focus.prepareForRestore(.dismissal)
+            case .blur: focus.prepareForRestore(.blur)
+            }
         }
 
         panelController = panel

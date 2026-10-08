@@ -17,7 +17,7 @@ enum Strings {
     static let accessibilityFix = "Grant Monkey's Paw in System Settings → Privacy & Security → Accessibility. An app update may require a new grant."
     static let selfTestWindowTitle = "Monkey's Paw Paste Test"
     static let selfTestPlaceholder = "The self-test pastes here"
-    static let registeredHotkey = "Carbon · ⌃⌥P"
+    static let defaultHotkey = "Carbon default: ⌃⌥P"
     static let carbonRegistered = "Carbon shortcut registered"
     static let carbonUnsupportedKey = "This key has no macOS Carbon shortcut equivalent. Choose another key."
     static let carbonOverlappingModifiers = "Cmd, Super, and CmdOrCtrl all mean Command on macOS. Use only one."

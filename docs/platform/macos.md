@@ -75,6 +75,9 @@ return to the same target field.
 - [ ] Holding the shortcut does not repeatedly toggle; quick releases are debounced.
 - [ ] Escape or a second shortcut release dismisses and returns focus to the original app.
 - [ ] Clicking a different app hides the panel after about 300 ms and keeps that app focused.
+- [ ] Clicking the already-open Setup window keeps Setup focused after the panel hides.
+- [ ] A dismissal queued during self-test does not refocus the old external target.
+- [ ] If the captured app quits, dismissal leaves no invisible app swallowing keystrokes.
 - [ ] Option+Return and **Copy** copy the text and return focus without pasting.
 - [ ] Without Accessibility, delivery still returns focus and keeps the text on the clipboard.
       With notifications allowed, fallback says **Copied. Press Cmd+V**.
@@ -99,3 +102,6 @@ return to the same target field.
 - Linux syntax and Xcode-object checks cannot establish AppKit API compatibility.
   `macos-app` CI must compile and run the hosted driver tests. Real focus, TCC,
   notification permission and full-screen behavior require the owner checks above.
+- Devin's first review identified blur refocusing our own Setup/self-test windows
+  and failure to relinquish unused activation. Hosted regression tests were added
+  before the fixes, but their failing/passing runs require macOS and remain for CI.

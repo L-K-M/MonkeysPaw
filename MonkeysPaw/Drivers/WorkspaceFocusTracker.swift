@@ -4,7 +4,7 @@ import MonkeysPawCore
 
 /// Activation runs on AppKit's thread; AX polling runs on a worker (§4.6).
 final class WorkspaceFocusTracker: FocusTracker {
-    enum RestorationMode { case dismissal, delivery }
+    enum RestorationMode { case dismissal, delivery, blur }
 
     /// The workspace seam carries identities, never retained native applications.
     struct Source {
@@ -34,6 +34,7 @@ final class WorkspaceFocusTracker: FocusTracker {
     private let scheduler: Scheduler
     private let isTrusted: () -> Bool
     private let waitForFocus: (Int32, TimeInterval) -> FocusConfirmation
+    private let deactivateIfUnused: () -> Void
     private let worker = DispatchQueue(label: "ch.lkmc.MonkeysPaw.focus", qos: .userInitiated)
     private var mode = RestorationMode.dismissal
     private var generation = 0
@@ -46,6 +47,10 @@ final class WorkspaceFocusTracker: FocusTracker {
          isTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
          waitForFocus: @escaping (Int32, TimeInterval) -> FocusConfirmation = {
              AccessibilityFocusWait.wait(for: $0, timeout: $1)
+         },
+         deactivateIfUnused: @escaping () -> Void = {
+             // Never resign a newly focused Setup or self-test window.
+             if NSApp.isActive, NSApp.keyWindow == nil { NSApp.deactivate() }
          }) {
         self.source = source
         self.ownPID = ownPID
@@ -53,6 +58,7 @@ final class WorkspaceFocusTracker: FocusTracker {
         self.scheduler = scheduler
         self.isTrusted = isTrusted
         self.waitForFocus = waitForFocus
+        self.deactivateIfUnused = deactivateIfUnused
     }
 
     deinit {
@@ -93,6 +99,11 @@ final class WorkspaceFocusTracker: FocusTracker {
         mainThread.run { [self] in
             let mode = self.mode
             self.mode = .dismissal
+            guard mode != .blur else {
+                // Blur already chose a new target, including a window of our own.
+                completion(.unconfirmed)
+                return
+            }
             guard case .macOS(let pid, _) = target, pid != ownPID else {
                 completion(.unconfirmed)
                 return
@@ -116,7 +127,14 @@ final class WorkspaceFocusTracker: FocusTracker {
             let finish: (FocusConfirmation) -> Void = { confirmation in
                 guard !didComplete else { return }
                 didComplete = true
-                if requestGeneration == self.generation { self.activeRestorePID = nil }
+                if requestGeneration == self.generation {
+                    self.activeRestorePID = nil
+                    if confirmation == .unconfirmed, Self.processID(of: self.source.frontmost()) == self.ownPID {
+                        // Invoque relinquishes failed activation. Do not leave an
+                        // accessory agent invisibly swallowing the user's next keys.
+                        self.deactivateIfUnused()
+                    }
+                }
                 completion(confirmation)
             }
 

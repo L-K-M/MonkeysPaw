@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Builds one reusable panel and marshals every window operation to AppKit's thread.
 final class PanelController: PanelWindow {
-    enum HideReason { case delivery, dismissal }
+    enum HideReason { case delivery, dismissal, blur }
 
     var rootView: (() -> AnyView)?
     var onCancel: (() -> Void)?
@@ -16,6 +16,7 @@ final class PanelController: PanelWindow {
     private var panel: PromptPanel?
     private var resignObserver: NSObjectProtocol?
     private var presentationGeneration = 0
+    private var pendingDismissal = HideReason.dismissal
 
     var isVisible: Bool { panel?.isVisible == true }
 
@@ -34,7 +35,15 @@ final class PanelController: PanelWindow {
     }
 
     func hide() {
-        mainThread.run { [weak self] in self?.hideOnMainThread(reason: .dismissal) }
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            // Capture before orderOut: Escape may automatically make Setup key
+            // afterward. A queued dismissal must also respect an already-key window.
+            let reason = Self.dismissalReason(requested: self.pendingDismissal, panel: self.panel,
+                                               keyWindow: NSApp.keyWindow)
+            self.pendingDismissal = .dismissal
+            self.hideOnMainThread(reason: reason)
+        }
     }
 
     func hideForDelivery() {
@@ -66,6 +75,7 @@ final class PanelController: PanelWindow {
         NSApp.activate()
         panel.makeKey()
         presentationGeneration &+= 1
+        pendingDismissal = .dismissal
         observeBlur(of: panel)
     }
 
@@ -89,9 +99,16 @@ final class PanelController: PanelWindow {
             self.scheduler.after(Limits.blurHideDelay) { [weak self] in
                 guard let self, generation == self.presentationGeneration,
                       self.isVisible, self.panel?.isKeyWindow == false else { return }
+                self.pendingDismissal = .blur
                 self.onCancel?()
             }
         }
+    }
+
+    static func dismissalReason(requested: HideReason, panel: NSWindow?,
+                                keyWindow: NSWindow?) -> HideReason {
+        guard requested == .dismissal, let keyWindow, keyWindow !== panel else { return requested }
+        return .blur
     }
 
     private func makePanel() -> PromptPanel {

@@ -29,6 +29,37 @@ final class WorkspaceFocusTrackerTests: XCTestCase {
         XCTAssertTrue(scheduler.pending.isEmpty)
     }
 
+    func testBlurDismissalKeepsOurSetupOrSelfTestFocused() {
+        let scheduler = ManualScheduler()
+        let tracker = makeTracker(
+            frontmost: { .macOS(processID: self.ownPID, bundleID: "test.own") },
+            scheduler: scheduler, activate: { _ in
+                XCTFail("Blur must not take focus from an owned window")
+                return true
+            })
+        var results: [FocusConfirmation] = []
+        tracker.prepareForRestore(.blur)
+        tracker.restore(target) { results.append($0) }
+        XCTAssertEqual(results, [.unconfirmed])
+        XCTAssertTrue(scheduler.pending.isEmpty)
+    }
+
+    func testFailedActivationRelinquishesUnusedFocusOnlyOnce() {
+        let scheduler = ManualScheduler()
+        var resignations = 0
+        let tracker = WorkspaceFocusTracker(
+            source: .init(frontmost: { .macOS(processID: self.ownPID, bundleID: "test.own") },
+                          activate: { _ in false }), ownPID: ownPID,
+            mainThread: DispatchMainThread(), scheduler: scheduler,
+            isTrusted: { false }, deactivateIfUnused: { resignations += 1 })
+        var results: [FocusConfirmation] = []
+        tracker.restore(target) { results.append($0) }
+        for _ in 0...Limits.activationRetryCount { scheduler.fire(Limits.activationRetryDelay) }
+        scheduler.fire(Limits.accessibilityFocusWait)
+        XCTAssertEqual(results, [.unconfirmed])
+        XCTAssertEqual(resignations, 1)
+    }
+
     func testRestoreAlsoRefusesOurOwnProcess() {
         let tracker = makeTracker(frontmost: { self.target }, activate: { _ in
             XCTFail("Our own app is never a restore target")
@@ -98,7 +129,7 @@ final class WorkspaceFocusTrackerTests: XCTestCase {
             queryStarted.fulfill()
             _ = releaseQuery.wait(timeout: .now() + 2)
             return .confirmed
-        })
+        }, deactivateIfUnused: {})
         var results: [FocusConfirmation] = []
         tracker.prepareForRestore(.delivery)
         tracker.restore(target) { results.append($0) }
@@ -147,7 +178,8 @@ final class WorkspaceFocusTrackerTests: XCTestCase {
                              scheduler: ManualScheduler = ManualScheduler(),
                              activate: @escaping (DeliveryTarget) -> Bool = { _ in true }) -> WorkspaceFocusTracker {
         WorkspaceFocusTracker(source: .init(frontmost: frontmost, activate: activate), ownPID: ownPID,
-                              mainThread: DispatchMainThread(), scheduler: scheduler, isTrusted: { false })
+                              mainThread: DispatchMainThread(), scheduler: scheduler,
+                              isTrusted: { false }, deactivateIfUnused: {})
     }
 }
 

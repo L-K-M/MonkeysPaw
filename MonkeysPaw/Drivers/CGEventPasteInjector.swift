@@ -1,5 +1,6 @@
 import ApplicationServices
 import Carbon.HIToolbox
+import CoreGraphics
 import Foundation
 import MonkeysPawCore
 

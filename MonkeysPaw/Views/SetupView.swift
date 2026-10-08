@@ -31,7 +31,7 @@ struct SetupView: View {
                             Circle().fill(color(for: row.status)).frame(width: 8, height: 8).padding(.top, 6)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(Strings.rowTitle(row.kind)).font(.headline)
-                                if row.kind == .hotkey { Text(Strings.registeredHotkey).font(.caption) }
+                                if row.kind == .hotkey { Text(Strings.defaultHotkey).font(.caption) }
                                 Text(Strings.status(row.status)).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
