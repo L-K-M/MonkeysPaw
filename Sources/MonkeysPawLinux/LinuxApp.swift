@@ -109,9 +109,11 @@ public enum MonkeysPawLinuxApp {
         // Register early so a remote invocation exits without entering the main loop.
         var error: UnsafeMutablePointer<GError>?
         guard g_application_register(gapp, nil, &error) != 0 else {
+            let detail = error.flatMap { $0.pointee.message }
+                .map { String(cString: $0) } ?? "unknown error"
             if let error { g_error_free(error) }
 
-            environment.log.write(.error, "Could not register the application with the session bus")
+            environment.log.write(.error, "Could not register the application with the session bus: \(detail)")
             return 1
         }
 
