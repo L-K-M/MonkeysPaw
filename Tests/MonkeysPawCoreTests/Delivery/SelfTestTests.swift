@@ -68,6 +68,57 @@ final class SelfTestTests: XCTestCase {
         ])
     }
 
+    func testFailedSelfTestBackendsDoNotNotify() {
+        let h = DeliveryHarness(session: .gnomeWayland)
+        h.injectors[.remoteDesktopPortal]?.result = .failed(.portalDenied)
+        h.injectors[.ydotool]?.result = .failed(.toolMissing)
+        let test = runner(h)
+        var report: SelfTestReport?
+        test.run { report = $0 }
+        h.scheduler.advance(by: (Limits.settleDelayLinux + Limits.selfTestReadBackDelay) * 2)
+
+        XCTAssertEqual(report?.results, [
+            SelfTestResult(backend: .remoteDesktopPortal, status: .failed(.portalDenied)),
+            SelfTestResult(backend: .ydotool, status: .failed(.toolMissing)),
+        ])
+        XCTAssertFalse(h.recorder.events.contains {
+            switch $0 {
+            case .copied, .pressPaste: return true
+            default: return false
+            }
+        })
+        XCTAssertNil(h.service.lastDelivery)
+    }
+
+    func testBackendWithoutAnInjectorReportsUnavailable() {
+        let h = DeliveryHarness(session: .wlroots, available: [])
+        let test = runner(h)
+        var report: SelfTestReport?
+        test.run { report = $0 }
+        h.scheduler.advance(by: Limits.settleDelayLinux + Limits.selfTestReadBackDelay)
+
+        XCTAssertEqual(report?.results, [
+            SelfTestResult(backend: .ydotool, status: .failed(.backendUnavailable)),
+        ])
+    }
+
+    func testSelfTestPreservesTheLastPickerDelivery() throws {
+        let h = DeliveryHarness(session: .wlroots)
+        h.arm()
+        h.deliver("picker delivery")
+        h.settle()
+        let receipt = try XCTUnwrap(h.service.lastDelivery)
+
+        h.injectors[.ydotool]?.result = .failed(.timeout)
+        let test = runner(h)
+        var report: SelfTestReport?
+        test.run { report = $0 }
+        h.scheduler.advance(by: Limits.settleDelayLinux + Limits.selfTestReadBackDelay)
+
+        XCTAssertEqual(report?.results, [SelfTestResult(backend: .ydotool, status: .failed(.timeout))])
+        XCTAssertEqual(h.service.lastDelivery, receipt)
+    }
+
     func testMissingOrDifferentReadbackIsNotReportedAsPasted() {
         for received: String? in [nil, "wrong text", DeliveryStrings.testPrompt + "extra"] {
             let h = DeliveryHarness(session: .flatpak(host: .gnomeWayland))

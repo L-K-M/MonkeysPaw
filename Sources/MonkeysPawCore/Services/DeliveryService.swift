@@ -1,6 +1,7 @@
 /// §6.3 sequencing. State and UI ports are confined to the injected MainThread;
 /// schedulers and injectors return immediately and own their callback threads.
 public final class DeliveryService {
+    /// The last picker delivery, excluding self-tests. Read only on MainThread.
     public private(set) var lastDelivery: DeliveryReceipt?
 
     private enum Selection {
@@ -190,7 +191,7 @@ public final class DeliveryService {
 
     private func beginPaste(for request: Request, focus: FocusConfirmation) {
         guard case .paste(let chord) = request.mode else {
-            notifier.copied(chord: .standard)
+            if case .ladder = request.selection { notifier.copied(chord: .standard) }
             finish(request, outcome: .copiedOnly(.requested), focus: focus)
             return
         }
@@ -209,7 +210,8 @@ public final class DeliveryService {
     ) {
         guard let backend = remaining.first else {
             let reason = CopyReason.backendsFailed(failures)
-            notifier.pressPaste(chord: chord, reason: reason)
+            // SelfTestReport is the only output of diagnostic deliveries (§6.5).
+            if case .ladder = request.selection { notifier.pressPaste(chord: chord, reason: reason) }
             finish(request, outcome: .copiedOnly(reason), focus: focus)
             return
         }
@@ -251,7 +253,9 @@ public final class DeliveryService {
 
     private func finish(_ request: Request, outcome: DeliveryOutcome, focus: FocusConfirmation) {
         // Every continuation entered through MainThread, including done.
-        lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
+        if case .ladder = request.selection {
+            lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
+        }
         request.done(outcome)
     }
 }
