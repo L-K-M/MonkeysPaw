@@ -4,9 +4,10 @@ FROM swift:6.4-noble AS build
 WORKDIR /build
 
 # Preserve the parent package layout: the server links Core through ../.
-# No GTK sources or system headers belong in this dependency closure.
+# SwiftPM validates the parent manifest's source paths, including unused targets.
+# GTK sources are present, but stay outside Core's build dependency closure.
 COPY Package.swift Package.resolved ./
-COPY Sources/MonkeysPawCore/ Sources/MonkeysPawCore/
+COPY Sources/ Sources/
 COPY server/ server/
 
 # SwiftPM caches dependencies and objects across builds. Copy the executable
