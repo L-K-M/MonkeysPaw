@@ -4,6 +4,7 @@ import SwiftUI
 
 /// The macOS composition root owns the drivers and the resident status item.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let makeFocusTracker: (MainThread, Scheduler) -> WorkspaceFocusTracker
     private var panelController: PanelController?
     private var panelPresentation: PanelViewState?
     private var setupWindow: SetupWindowController?
@@ -12,6 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private(set) var panelModel: PanelModel?
     private(set) var setupModel: SetupModel?
+
+    /// Hosted tests replace workspace/AX access while exercising the real UI wiring.
+    init(makeFocusTracker: @escaping (MainThread, Scheduler) -> WorkspaceFocusTracker = {
+        WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
+    }) {
+        self.makeFocusTracker = makeFocusTracker
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let log = OSLogSink()
@@ -48,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func compose(log: LogSink) {
         let mainThread = DispatchMainThread()
         let scheduler = DispatchScheduler()
-        let focus = WorkspaceFocusTracker(mainThread: mainThread, scheduler: scheduler)
+        let focus = makeFocusTracker(mainThread, scheduler)
         let panel = PanelController(mainThread: mainThread, scheduler: scheduler, log: log)
         let hotkeys = CarbonHotkeyBackend()
         let session = MacSessionProbe()
@@ -156,9 +165,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() {
-        if panelController?.isVisible == true { panelModel?.cancel() }
-        focusTracker?.cancelPendingRestoration()
+        // Make Setup key before dismissal so the panel reports blur and never
+        // activates the captured app, even once, while opening this window.
         setupWindow?.show()
+        focusTracker?.cancelPendingRestoration()
+        if panelController?.isVisible == true { panelModel?.cancel() }
     }
 
     static var isRunningTests: Bool {

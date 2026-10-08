@@ -22,4 +22,30 @@ final class AppDelegateTests: XCTestCase {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSAppleEventsUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
     }
+
+    func testOpeningSetupDoesNotActivateTheCapturedApp() throws {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let ownPID = NSRunningApplication.current.processIdentifier
+        let target = DeliveryTarget.macOS(processID: ownPID + 1, bundleID: "test.external")
+        var frontmost: DeliveryTarget? = target
+        var activations: [DeliveryTarget] = []
+        let delegate = AppDelegate(makeFocusTracker: { mainThread, scheduler in
+            WorkspaceFocusTracker(
+                source: .init(frontmost: { frontmost }, activate: { activations.append($0); return true }),
+                ownPID: ownPID, mainThread: mainThread, scheduler: scheduler,
+                isTrusted: { false }, deactivateIfUnused: {})
+        })
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        let model = try XCTUnwrap(delegate.panelModel)
+        model.show()
+        frontmost = .macOS(processID: ownPID, bundleID: "test.own")
+
+        // Invoke the status-menu action without a real event or external app.
+        _ = delegate.perform(Selector(("showSetup")))
+        XCTAssertEqual(NSApp.keyWindow?.title, Strings.setupTitle)
+        XCTAssertTrue(activations.isEmpty, "Setup must become key before the panel dismisses")
+    }
 }

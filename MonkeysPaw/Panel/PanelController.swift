@@ -36,7 +36,7 @@ final class PanelController: PanelWindow {
 
     func hide() {
         mainThread.run { [weak self] in
-            guard let self else { return }
+            guard let self, self.isVisible else { return }
             // Capture before orderOut: Escape may automatically make Setup key
             // afterward. A queued dismissal must also respect an already-key window.
             let reason = Self.dismissalReason(requested: self.pendingDismissal, panel: self.panel,

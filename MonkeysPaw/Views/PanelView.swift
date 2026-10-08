@@ -33,7 +33,7 @@ struct PanelView: View {
                 Spacer()
                 Button(Strings.cancel) { presentation.model.cancel() }
             }
-            .disabled(presentation.state == .delivering)
+            .disabled(presentation.state != .idle)
             Text(Strings.panelHint).font(.caption).foregroundStyle(.secondary)
         }
         .padding(24)

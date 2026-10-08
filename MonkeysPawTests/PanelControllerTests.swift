@@ -1,8 +1,37 @@
 import AppKit
+import MonkeysPawCore
 import XCTest
 @testable import MonkeysPaw
 
 final class PanelControllerTests: XCTestCase {
+    func testHideBeforeShowingDoesNotNotify() {
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        controller.onHide = { _ in XCTFail("A hidden panel has no dismissal to report") }
+        controller.hide()
+        XCTAssertFalse(controller.isVisible)
+    }
+
+    func testRepeatedHideReportsOnlyTheFirstDismissal() {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        var reasons: [PanelController.HideReason] = []
+        controller.onHide = { reasons.append($0) }
+        controller.show()
+        XCTAssertTrue(controller.isVisible)
+        controller.hide()
+        XCTAssertFalse(controller.isVisible)
+        XCTAssertEqual(reasons.count, 1)
+
+        let firstDismissal = reasons
+        controller.hide()
+        XCTAssertEqual(reasons, firstDismissal)
+    }
+
     func testEscapeMayRestoreWhilePanelIsKeyButOwnedWindowDismissalMayNot() {
         let panel = PromptPanel(content: NSView())
         let setup = NSWindow()
