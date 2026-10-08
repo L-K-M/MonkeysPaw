@@ -13,7 +13,8 @@ final class LinuxPanelLifecycleTests: XCTestCase {
                 return
             }
 
-            throw XCTSkip("Requires a GTK display, such as Xvfb.")
+            throw XCTSkip("Requires a GTK display, such as Xvfb. "
+                + "Set MONKEYSPAW_REQUIRE_DISPLAY=1 to fail instead of skipping.")
         }
 
         let application = try XCTUnwrap(gtk_application_new(nil, G_APPLICATION_NON_UNIQUE))
