@@ -25,14 +25,18 @@ public final class SelfTest {
             self.completions.append(done)
             guard !self.isRunning else { return }
             self.isRunning = true
-            let session = self.session.currentSession()
-            self.delivery.resetFailures()
-            self.test(PasteLadder.backends(for: session)[...], session: session, results: [])
+            self.delivery.performSelfTest { finished in
+                let session = self.session.currentSession()
+                self.delivery.resetFailures()
+                self.test(PasteLadder.backends(for: session)[...], session: session,
+                          results: [], finished: finished)
+            }
         }
     }
 
     private func test(
-        _ remaining: ArraySlice<PasteBackend>, session: DesktopSession, results: [SelfTestResult]
+        _ remaining: ArraySlice<PasteBackend>, session: DesktopSession,
+        results: [SelfTestResult], finished: @escaping () -> Void
     ) {
         guard let backend = remaining.first else {
             let report = SelfTestReport(session: session, results: results)
@@ -40,11 +44,12 @@ public final class SelfTest {
             let callbacks = completions
             completions.removeAll()
             callbacks.forEach { $0(report) }
+            finished()
             return
         }
 
         target.present(fieldExpecting: DeliveryStrings.testPrompt)
-        delivery.deliver(DeliveryStrings.testPrompt, through: backend) { outcome in
+        delivery.deliverForSelfTest(DeliveryStrings.testPrompt, through: backend) { outcome in
             self.scheduler.after(Limits.selfTestReadBackDelay) {
                 self.mainThread.run {
                     let received = self.target.readBack()
@@ -52,7 +57,8 @@ public final class SelfTest {
                     if status == .sentButNotReceived { self.delivery.recordUnreceived(backend) }
                     self.target.close()
                     self.test(remaining.dropFirst(), session: session,
-                              results: results + [SelfTestResult(backend: backend, status: status)])
+                              results: results + [SelfTestResult(backend: backend, status: status)],
+                              finished: finished)
                 }
             }
         }

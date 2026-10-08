@@ -8,6 +8,10 @@ public final class DeliveryService {
         case only(PasteBackend)
     }
 
+    private enum OperationState {
+        case idle, running
+    }
+
     private struct Request {
         let text: String
         let mode: DeliveryMode
@@ -27,8 +31,8 @@ public final class DeliveryService {
     private let mainThread: MainThread
     private let failureCache: PasteFailureCache
     private var armedTarget: DeliveryTarget?
-    private var pending: [Request] = []
-    private var active: Request?
+    private var pending: [() -> Void] = []
+    private var operationState = OperationState.idle
 
     public init(
         panel: PanelWindow, focus: FocusTracker, clipboard: Clipboard,
@@ -53,19 +57,29 @@ public final class DeliveryService {
     /// Capture and present in one UI hop so the picker cannot become the target.
     public func show() {
         mainThread.run {
-            self.armedTarget = self.focus.captureTarget()
-            self.panel.show()
+            self.queue {
+                self.armedTarget = self.focus.captureTarget()
+                self.panel.show()
+                self.completeOperation()
+            }
         }
     }
 
     /// The driver must restore only while our app is still frontmost (§4.6).
     public func dismiss() {
         mainThread.run {
-            let target = self.armedTarget
-            self.armedTarget = nil
-            self.panel.hide()
-            guard let target else { return }
-            self.focus.restore(target) { _ in }
+            self.queue {
+                let target = self.armedTarget
+                self.armedTarget = nil
+                self.panel.hide()
+                guard let target else {
+                    self.completeOperation()
+                    return
+                }
+                self.focus.restore(target) { _ in
+                    self.mainThread.run { self.completeOperation() }
+                }
+            }
         }
     }
 
@@ -92,29 +106,68 @@ public final class DeliveryService {
         failureCache.record(.notReceived, for: backend)
     }
 
+    // Keep focus and the clipboard exclusive through every backend's readback.
+    // SelfTest releases the operation only after its last target closes.
+    func performSelfTest(_ start: @escaping (@escaping () -> Void) -> Void) {
+        mainThread.run {
+            self.queue {
+                start { self.mainThread.run { self.completeOperation() } }
+            }
+        }
+    }
+
+    /// Only SelfTest calls this, sequentially inside performSelfTest's operation.
+    func deliverForSelfTest(
+        _ text: String, through backend: PasteBackend, done: @escaping (DeliveryOutcome) -> Void
+    ) {
+        mainThread.run {
+            self.start(self.request(text, mode: .paste(.standard), selection: .only(backend), done: done))
+        }
+    }
+
     private func enqueue(
         _ text: String, mode: DeliveryMode, selection: Selection,
         done: @escaping (DeliveryOutcome) -> Void
     ) {
         mainThread.run {
-            let target: DeliveryTarget?
-            switch selection {
-            case .ladder: target = self.armedTarget
-            case .only: target = self.focus.captureTarget()
+            let request = self.request(text, mode: mode, selection: selection) { outcome in
+                done(outcome)
+                self.completeOperation()
             }
-            self.pending.append(Request(
-                text: text, mode: mode, target: target,
-                session: self.session.currentSession(), selection: selection, done: done
-            ))
-            self.startNext()
+            self.queue { self.start(request) }
         }
     }
 
-    private func startNext() {
-        guard active == nil, !pending.isEmpty else { return }
-        let request = pending.removeFirst()
-        active = request
+    private func request(
+        _ text: String, mode: DeliveryMode, selection: Selection,
+        done: @escaping (DeliveryOutcome) -> Void
+    ) -> Request {
+        let target: DeliveryTarget?
+        switch selection {
+        case .ladder: target = armedTarget
+        case .only: target = focus.captureTarget()
+        }
+        return Request(text: text, mode: mode, target: target,
+                       session: session.currentSession(), selection: selection, done: done)
+    }
 
+    private func queue(_ work: @escaping () -> Void) {
+        pending.append(work)
+        startNext()
+    }
+
+    private func startNext() {
+        guard operationState == .idle, !pending.isEmpty else { return }
+        operationState = .running
+        pending.removeFirst()()
+    }
+
+    private func completeOperation() {
+        operationState = .idle
+        startNext()
+    }
+
+    private func start(_ request: Request) {
         // Wayland needs the panel's selection serial before it loses focus.
         clipboard.writeText(request.text)
         panel.hideForDelivery()
@@ -200,7 +253,5 @@ public final class DeliveryService {
         // Every continuation entered through MainThread, including done.
         lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
         request.done(outcome)
-        active = nil
-        startNext()
     }
 }

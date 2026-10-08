@@ -114,6 +114,55 @@ final class SelfTestTests: XCTestCase {
         XCTAssertEqual(h.injectors[.ydotool]?.chords.count, 1)
     }
 
+    func testSelfTestDoesNotPresentUntilAnEarlierDeliveryCompletes() {
+        let h = DeliveryHarness(session: .wlroots)
+        h.injectors[.ydotool]?.mode = .deferred
+        h.arm()
+        h.deliver("normal delivery")
+        let test = runner(h)
+        test.run { _ in }
+        XCTAssertFalse(h.recorder.events.contains(.testPresent(DeliveryStrings.testPrompt)))
+        XCTAssertEqual(h.cache.resets, 0)
+        h.settle()
+        h.injectors[.ydotool]?.complete(.sent)
+        XCTAssertTrue(h.recorder.events.contains(.testPresent(DeliveryStrings.testPrompt)))
+    }
+
+    func testNormalDeliveryWaitsUntilSelfTestReadbackAndCloseComplete() {
+        let h = DeliveryHarness(session: .wlroots)
+        h.target.received = [DeliveryStrings.testPrompt]
+        let test = runner(h)
+        var report: SelfTestReport?
+        test.run { report = $0 }
+        h.settle()
+        h.deliver("normal delivery")
+        XCTAssertEqual(h.clipboard.readText(), DeliveryStrings.testPrompt)
+        XCTAssertFalse(h.recorder.events.contains(.write("normal delivery")))
+        h.scheduler.advance(by: Limits.selfTestReadBackDelay)
+        XCTAssertEqual(report?.results, [SelfTestResult(backend: .ydotool, status: .pasted)])
+        XCTAssertEqual(Array(h.recorder.events.suffix(4)), [
+            .testClose, .write("normal delivery"), .hideForDelivery, .wait(Limits.settleDelayLinux),
+        ])
+    }
+
+    func testPickerWindowOperationsWaitForSelfTestToClose() {
+        let h = DeliveryHarness(session: .wlroots)
+        h.target.received = [DeliveryStrings.testPrompt]
+        let test = runner(h)
+        test.run { _ in }
+        h.settle()
+        h.service.show()
+        h.service.dismiss()
+        XCTAssertFalse(h.recorder.events.contains(.show))
+        XCTAssertFalse(h.recorder.events.contains(.hide))
+        h.scheduler.advance(by: Limits.selfTestReadBackDelay)
+        let close = h.recorder.events.firstIndex(of: .testClose)
+        let show = h.recorder.events.firstIndex(of: .show)
+        XCTAssertNotNil(close)
+        XCTAssertNotNil(show)
+        if let close, let show { XCTAssertLessThan(close, show) }
+    }
+
     func testReportRoundTripsAllStatusesAndFlatpakHostAsJSON() throws {
         let report = SelfTestReport(session: .flatpak(host: .kdeWayland), results: [
             SelfTestResult(backend: .remoteDesktopPortal, status: .pasted),
