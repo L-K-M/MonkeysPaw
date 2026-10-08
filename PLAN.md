@@ -1003,7 +1003,7 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
 | `POST /api/v1/auth/password` | Change own password; revokes all other devices |
 | `GET /api/v1/me` | User, groups with names and roles, devices |
 | `DELETE /api/v1/me/devices/{id}` | Revoke a device |
-| `POST /api/v1/sync/pull` `{database_id, cursors: {scope_key: seq}}` | Per-scope feed (§8.4) |
+| `POST /api/v1/sync/pull` `{database_id, cursors: {scope_key: cursor}}` | Per-scope feed (§8.4). Cursors are opaque strings: a seq, or `snap:…` for an unfinished snapshot. |
 | `GET /api/v1/prompts/{id}` | `{id, rev, scope, group_id, path, content}`, or 404 out of scope |
 | `PUT /api/v1/prompts/{id}` `{base_rev, scope, group_id?, path, content}` | Create (`base_rev: 0`) or update with compare-and-swap. On update, `scope` and `group_id` must equal the current values; scope changes go through `/move`. |
 | `DELETE /api/v1/prompts/{id}?base_rev=<n>` | Tombstone, with compare-and-swap |
@@ -1065,8 +1065,9 @@ both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
     - the cursor is below `scope_floors`
     - the cursor is above the scope head (a restored database)
     - `database_id` differs from the client's
-  - Delta pages return at most `SYNC_PAGE_MAX = 200` items and stop early at
-    `SYNC_PAGE_BYTES = 8 MiB` of content. Consecutive rows for one prompt
+  - Delta pages return at most `SYNC_PAGE_MAX = 200` items. A response stops
+    early at `SYNC_PAGE_BYTES = 8 MiB` of content, a budget shared across all
+    scopes in the response, below `SYNC_RESPONSE_CAP`. Consecutive rows for one prompt
     collapse to the latest. `has_more` says whether that scope continues.
   - Snapshots page with the same limits, ordered by prompt id.
     - Until the snapshot is complete, `cursor` is `snap:<last id>@<head>`
@@ -1084,9 +1085,10 @@ both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
     - does not end in `.` or a space
     - is NFC-normalized and at most 255 bytes
   - The whole path is at most `MAX_PATH_BYTES = 1024`, and ends in `.md`.
-  - Private paths may not start with `Groups/`. `Conflicts/` is allowed:
-    conflict copies and rescued files are ordinary private prompts and sync
-    like any other.
+  - Private paths may not start with `Groups/`. The check runs on the folded
+    `path_key`, so `groups/`, `GROUPS/`, and NFD spellings are all rejected.
+    `Conflicts/` is allowed: conflict copies and rescued files are ordinary
+    private prompts and sync like any other.
   - The front-matter `id` must be a ULID.
   - Group names become folder names only after the client sanitizes them
     (§9.1). Device names are sanitized before they appear in a file name.
@@ -1221,8 +1223,9 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     name, sanitized: path-validation rules applied, then de-duplicated
     with ` (2)`.
   - A group rename renames the folder.
-  - A folder under `Groups/` that maps to no current group is never pushed.
-    It is rescued (§9.3, step 1) and removed.
+  - A folder under `Groups/` that maps to no current group, or a file
+    sitting loose directly under `Groups/`, is never pushed. It is rescued
+    (§9.3, step 1) and removed.
 - **Viewer groups are read-only.** Files are written with
   `READONLY_FILE_MODE = 0444` and the editor opens them read-only. When a
   role changes to or from `viewer`, existing files are re-moded and open
@@ -1236,14 +1239,15 @@ Files at the repo root, in fleet house style (dl-tool is the model):
 
 ```
 version, server_url, user_id, database_id,
-cursors:   scope_key → seq,
+cursors:   scope_key → cursor (opaque string),
 groups:    group_id → {name, folder, role},
 prompts:   id → {scope_key, path, rev, canonical_hash, origin?, last_error?}
 favorites: id → true                    (group prompts only, §9.5)
 ```
 
-- **Atomic and durable.** `state.json` is written atomically. A cursor is
-  persisted only after that page's file writes are on disk.
+- **Atomic and durable.** `state.json` is written atomically. Scope cursors
+  are persisted only after the collected pull is applied and its file writes
+  are on disk.
 - **Account changes.** Signing in with a different server or user discards
   the state and runs first sync (§9.4). Folders that don't match the new
   account's membership are rescued, never pushed into another account's
@@ -1280,14 +1284,16 @@ saves, and on demand.
        takes the new path, and the local edits follow §9.6.
    - **`move_out` / `delete`.**
      - Paired with an `upsert` of the same `id` in another scope of this
-       pull, it moves the file between scope folders; the upsert then
-       follows its normal rules.
+       pull, it moves the file between scope folders. It also updates the
+       state entry to the upsert's scope and path; the upsert then follows
+       its normal rules.
      - Unpaired, it trashes the file at the recorded path. This happens only
        if the file's front-matter `id` matches (otherwise the item is a
        no-op), and a dirty file is rescued first (§9.6).
-   - **Snapshot.** Snapshot items are reconciled by id and canonical hash,
+   - **Snapshot.** Each snapshot is reconciled only against the state
+     entries its scope owns. Items are matched by id and canonical hash,
      never by rev order: after a restore, server revs can be lower than
-     recorded ones.
+     recorded ones. The `database_id` comparison is made once per pull.
      - An id present on both sides with an identical hash: record the
        snapshot `rev`.
      - An id present on both sides, different content, on a normal resync:
@@ -1300,7 +1306,7 @@ saves, and on demand.
      - Same, after a `database_id` change: data the restore may have lost.
        Always rescue it; never trash it.
      - Unknown snapshot ids are written.
-     - Finally the new `database_id` is stored.
+     - The new `database_id` is stored after every scope is reconciled.
    - **`removed` scopes.**
      - Rescue dirty and unknown files from the folder into
        `Conflicts/rescued-<UTC date>/` and notify ("You were removed from
@@ -1386,13 +1392,17 @@ instead of doubling.
     where a group folder would push it into the group.
   - State marks it `origin: conflict_of <id>`. The Conflicts filter uses
     that flag, never the file name, so renaming a copy keeps it listed.
+    Files pulled into `Conflicts/` from other devices are listed too.
   - The resolve view reuses the improve diff (§7.3). The actions are: keep
     server, keep mine (re-push on the new head), or keep both.
+- **A `409` on `/move`** resolves to the server's scope and path. The local
+  version then follows edit-vs-edit.
 - **Create retried after a network drop.** If the `409` head equals what was
   pushed, the create succeeded: adopt it, and make no copy.
 - **Edit vs delete.**
   - Local edit vs server delete or `410 deleted`: the local version becomes
-    a new private prompt in `Conflicts/`, and the user is notified.
+    a new private prompt with a new id in `Conflicts/`, and the user is
+    notified.
   - Local delete vs server edit: the server version is restored.
   - `DELETE` answered with `410` or `404`: success.
 - **Path clash** (`409 path_taken`): rename the local file first, to
@@ -1628,6 +1638,7 @@ temp SQLite, with two simulated devices and two users. Scenarios:
 - 422 invalid content → `syncError`, no retry loop
 - crash mid-pull (killed after some files are written) → resume without loss or duplicates
 - rename on one device while the other edits
+- two devices move one prompt to different scopes at once → one winner, no trashed file
 - our own move echoed back as `move_out` → no-op; a move pair split across pull pages → the file moves, never trashed
 - remote rename → the old file is gone, and no rename is pushed back
 - server restored from backup (`database_id` changed, revs lower) → local content re-pushed or rescued, nothing trashed
