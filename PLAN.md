@@ -115,7 +115,7 @@ Keystroke budget, enforced by presentation-model tests (§12):
 | D12 | Sync model | **Users, groups, memberships (`owner` / `editor` / `viewer`). Prompts are owned by a user (private) or by a group (shared). Revision-based optimistic concurrency, an integer change feed, conflict copies, no CRDT** | Bitwarden, Joplin Server, and Standard Notes all converge on this for whole-document items edited rarely. Integer sequence cursors avoid the timestamp pitfalls Standard Notes hit. | CRDTs (heavy metadata, hard to test, solves live co-editing nobody asked for). Last-writer-wins without conflict detection. |
 | D13 | Auth | **bcrypt cost 12 (`HummingbirdBcrypt`). Opaque 256-bit device tokens, SHA-256 at rest, revocable. Invite links. First admin bootstrapped from a compose secret. Login backoff persisted in SQLite** | Revocation matters more than stateless verification. Invite-only registration matches ManorsAndMenaces. | JWT; open registration; Argon2 (needs a third-party C binding on Linux). |
 | D14 | Deployment | **`compose.yaml` + `.env.example` + `update.sh` at the repo root, fleet house style (dl-tool model). Optional `tls` profile with Caddy. Image published to `ghcr.io/l-k-m/monkeyspaw-server` on release** | Conventions skill §5. | A bespoke deploy script. Pulling the repo-owned image in `update.sh`. |
-| D15 | Language mode | **Swift 5 language mode for the core and both front ends (tools-version 5.9 manifest, `SWIFT_VERSION = 5.0`); Swift 6 mode for the server (`server/Package.swift` declares tools-version 6.0). Toolchain Swift 6.4 on Linux, Xcode 26 on macOS** | `@MainActor` and `DispatchQueue.main` never run under a GLib main loop, so strict concurrency in shared desktop code invites silent hangs (Vervellum). The server has no GLib and Hummingbird is Swift 6 native. Hummingbird 2.27 needs Swift 6.2+. Mixed modes were reproduced working (review2). **Sendable policy:** types the server uses from Core are value types (DTOs, domain structs); Core's `final class` services are never shared across server tasks. | Swift 6 mode everywhere. |
+| D15 | Language mode | **Swift 5 language mode for the core and both front ends (tools-version 5.9 manifest, `SWIFT_VERSION = 5.0`); Swift 6 mode for the server (`server/Package.swift` declares tools-version 6.0). Toolchain Swift 6.4 on Linux, Xcode 26 on macOS** | `@MainActor` and `DispatchQueue.main` never run under a GLib main loop, so strict concurrency in shared desktop code invites silent hangs (Vervellum). The server has no GLib and Hummingbird is Swift 6 native. Hummingbird 2.27 needs Swift 6.2+. Mixed modes were reproduced working (review2). **Sendable policy:** types the server uses from Core are value types (DTOs, domain structs); Core's `final class` services are never shared across server tasks. `@preconcurrency import MonkeysPawCore` is the temporary escape hatch, never the plan. | Swift 6 mode everywhere. |
 
 ---
 
@@ -744,7 +744,8 @@ The configuration unit is: provider kind, base URL, model, and an optional key.
   - HTTPS required, except on loopback.
   - No userinfo in URLs.
   - Redirects refused, so `Authorization` cannot leak to another host.
-  - `RESPONSE_CAP = 2 MiB`.
+  - `RESPONSE_CAP = 2 MiB` for LLM calls. Sync uses
+    `SYNC_RESPONSE_CAP = 16 MiB` on the same transport.
   - Provider error bodies are never shown or logged; the user sees a typed
     error instead.
 
@@ -902,6 +903,7 @@ prompt-engineering guide. `placeholders` is checked locally, without an LLM.
 ### 8.1 Data model
 
 ```text
+-- every *.id below is a ULID string
 meta(database_id)                         -- random UUID; rotated by `monkeyspaw-server restore`
 users(id, username UNIQUE, display_name, password_hash,
       account_kind ∈ {member, admin}, created_at, disabled_at NULL)
@@ -911,7 +913,7 @@ prompts(id ULID PK,                       -- the same id as the file's front mat
         scope ∈ {user, group}, owner_id NULL, group_id NULL,
         path,                             -- validated relative path inside the scope (§8.4)
         path_key,                         -- Core's folded form of path: NFC + Unicode case fold
-        content,                          -- canonical file bytes (§9.5), one blob column
+        content,                          -- group scope: canonical bytes (§9.5); user scope: verbatim
         title,                            -- extracted by Core on write, for listings
         rev INTEGER NOT NULL,             -- per-prompt compare-and-swap counter
         created_by, created_at, updated_by, updated_at, deleted_at NULL,
@@ -921,7 +923,7 @@ prompt_revisions(prompt_id, rev, author_id, content, created_at, origin, PK(prom
 changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,
         scope_key,                        -- "user:<id>" or "group:<id>"; INDEX(scope_key, seq)
         prompt_id, kind ∈ {upsert, delete, move_out}, at)
-scope_floors(scope_key PK, floor_seq)     -- lowest retained seq per scope
+scope_floors(scope_key PK, floor_seq)     -- one past the highest purged seq; only ever raised
 devices(id, user_id, name, token_hash UNIQUE, created_at, last_seen_at, revoked_at NULL)
 invites(token_hash PK, group_id NULL, role, created_by, expires_at, consumed_at NULL)
 login_attempts(username, ip, failures, locked_until, PK(username, ip))
@@ -950,7 +952,11 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
   break.
 - **Retention.** Change rows and tombstones older than
   `CHANGE_RETENTION_DAYS = 90` are purged, and `scope_floors` is raised in
-  the same transaction. Revisions are capped at
+  the same transaction.
+  - `floor_seq` is one past the highest purged seq in the scope. For a
+    scope whose every row was purged, that is `head + 1`.
+  - The floor is never cleared, so a cursor in a purged gap is always
+    detected. Revisions are capped at
   `SERVER_REVISIONS_PER_PROMPT = 200`.
 - **Time.** Every stored timestamp is UTC ISO-8601.
 
@@ -960,9 +966,9 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
 |---|---|---|---|---|---|
 | Read, use, sync | owner only | ✓ | ✓ | ✓ | only through memberships, like anyone |
 | Create, edit, rename, delete prompts | owner only | ✗ | ✓ | ✓ | as left |
-| Move private → group | owner, if `editor`+ in the target | | | | |
-| Move group → private | | ✗ | prompt creator only | ✓ | |
-| Move group → group | | ✗ | creator, if `editor`+ in the target | ✓ (+ `editor`+ in the target) | |
+| Move private → group | owner, if `editor`+ in the target | | | | only through memberships |
+| Move group → private | | ✗ | prompt creator only | ✓ | only through memberships |
+| Move group → group | | ✗ | creator, if `editor`+ in the target | ✓ (+ `editor`+ in the target) | only through memberships |
 | List members, see revision authors | | ✓ | ✓ | ✓ | ✓ |
 | Invite (`editor`/`viewer` roles), change roles, remove members | | ✗ | ✗ | ✓ | ✓, except on themselves |
 | Owner-role invites | | | | | admin CLI only |
@@ -1012,11 +1018,11 @@ Write responses:
 
 | Outcome | Response | Meaning |
 |---|---|---|
-| Success | `200 {rev, seq}` | |
+| Success | `200 {rev, seq}` | For a move, `seq` is the new scope's row. |
 | Stale `base_rev` | `409 {code: "conflict", head}` | `head` is `{rev, path, content}` |
 | Path taken | `409 {code: "path_taken", existing: {id, rev, content}}` | The caller can read the existing prompt, since paths are per scope. |
 | Id is tombstoned | `410 {code: "deleted"}` | A stale id can't resurrect a prompt; revival mints a new id (§9.6). |
-| Invalid content or path | `422 {issues}` | Core validator output |
+| Invalid content or path | `422 {issues}` | Core validator errors only. Warnings (e.g. declared-but-unused fields) are returned with a `200` and never block a push. |
 
 Request and response types live in `MonkeysPawCore/SyncAPI` and are shared by
 both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
@@ -1062,6 +1068,11 @@ both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
   - Delta pages return at most `SYNC_PAGE_MAX = 200` items and stop early at
     `SYNC_PAGE_BYTES = 8 MiB` of content. Consecutive rows for one prompt
     collapse to the latest. `has_more` says whether that scope continues.
+  - Snapshots page with the same limits, ordered by prompt id.
+    - Until the snapshot is complete, `cursor` is `snap:<last id>@<head>`
+      and items carry `seq = head`.
+    - The final page sets `cursor` to the head captured on page one.
+    - Changes made meanwhile arrive as normal deltas after it.
 - **Moves** write `move_out` in the old scope and `upsert` in the new one,
   in one transaction.
 - **Deleting a group** deletes its prompts. The group's scope disappears for
@@ -1073,7 +1084,10 @@ both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
     - does not end in `.` or a space
     - is NFC-normalized and at most 255 bytes
   - The whole path is at most `MAX_PATH_BYTES = 1024`, and ends in `.md`.
-  - Private paths may not start with `Groups/` or `Conflicts/`.
+  - Private paths may not start with `Groups/`. `Conflicts/` is allowed:
+    conflict copies and rescued files are ordinary private prompts and sync
+    like any other.
+  - The front-matter `id` must be a ULID.
   - Group names become folder names only after the client sanitizes them
     (§9.1). Device names are sanitized before they appear in a file name.
 - **Admin CLI** (inside the container), run with
@@ -1144,7 +1158,8 @@ Files at the repo root, in fleet house style (dl-tool is the model):
 - **`.env.example`.** `PUID`, `PGID`, `TZ`, `CONFIG_DIR`,
   `MONKEYSPAW_BIND_ADDRESS`, `MONKEYSPAW_PORT`, `MONKEYSPAW_PUBLIC_URL`
   (invite links and the Caddy site), `MONKEYSPAW_ADMIN_USERNAME`,
-  `MONKEYSPAW_ADMIN_PASSWORD`, `MONKEYSPAW_TRUSTED_PROXIES`,
+  `MONKEYSPAW_ADMIN_PASSWORD` (compose mounts it as the secret file read via
+  `MONKEYSPAW_ADMIN_PASSWORD_FILE`), `MONKEYSPAW_TRUSTED_PROXIES`,
   `MONKEYSPAW_LOG_LEVEL`, and a commented `COMPOSE_PROFILES=tls`.
 - **`update.sh`.**
   1. `cd` to its own dir; warn on a missing `.env`.
@@ -1209,7 +1224,9 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   - A folder under `Groups/` that maps to no current group is never pushed.
     It is rescued (§9.3, step 1) and removed.
 - **Viewer groups are read-only.** Files are written with
-  `READONLY_FILE_MODE = 0444` and the editor opens them read-only.
+  `READONLY_FILE_MODE = 0444` and the editor opens them read-only. When a
+  role changes to or from `viewer`, existing files are re-moded and open
+  editors switch.
 - **Moving a file is a scope change.** Moving a file into, out of, or
   between group folders (in the app or a file manager) requests a `/move`.
 
@@ -1239,25 +1256,61 @@ favorites: id → true                    (group prompts only, §9.5)
 A pass runs every `SYNC_INTERVAL = 60 s`, `SYNC_DEBOUNCE = 3 s` after local
 saves, and on demand.
 
-1. **Pull.** `POST /sync/pull` with `database_id` and all cursors, repeated
-   until no scope has `has_more`. All scopes in a response are applied
-   together.
-   - **`upsert`.** Skip if `rev` ≤ the recorded rev; that also absorbs our
-     own pushes echoed back. If the local file is clean, overwrite it.
-     Otherwise follow the conflict rules (§9.6). Before writing, check the
-     target path case-insensitively. On a collision with another prompt,
-     clash-rename locally (§9.6) and push the rename.
-   - **`move_out` / `delete`.** Without a matching upsert elsewhere in the
-     response, the file at the recorded path goes to the OS trash. This
-     happens only if its front-matter `id` matches; otherwise it was
-     already moved or replaced locally, and the item is a no-op. A matching
-     upsert in another scope moves the file instead.
-   - **Snapshot.** Reconcile by id. Recorded ids missing from the snapshot
-     are deleted server-side: trash the file if clean, rescue it if dirty.
-     Unknown snapshot ids are written.
-   - **`removed` scopes.** Rescue dirty and unknown files from the folder
-     into `Conflicts/rescued-<UTC date>/` and notify ("You were removed from
-     <group>; N local files were kept"). Trash the rest.
+1. **Pull.** `POST /sync/pull` with `database_id` and all cursors. Repeat
+   until no scope has `has_more`, collecting every page, then apply
+   everything together. A move pair split across pages is therefore still
+   seen as a pair.
+   - **Scope guard.** An item applies to a prompt's state entry only when the
+     entry's `scope_key` is the scope the item arrived in. Our own move,
+     echoed back as `move_out` from the old scope, therefore finds the
+     entry already in the new scope and is a no-op.
+   - **`upsert`.**
+     - Skip if `rev` ≤ the recorded rev; that also absorbs our own pushes
+       echoed back.
+     - Clean local file: overwrite it.
+     - Dirty local file: follow §9.6.
+     - Before writing, check the target path case-insensitively. On a
+       collision with another prompt, clash-rename locally (§9.6) and push
+       the rename.
+     - An upsert whose `path` differs from the recorded path is a remote
+       rename or move. The file at the recorded path is removed, but only
+       if it carries the item's `id` (otherwise it was already moved or
+       replaced locally, and it stays). The server content is then written
+       at the new path. If the old file was dirty, the server version still
+       takes the new path, and the local edits follow §9.6.
+   - **`move_out` / `delete`.**
+     - Paired with an `upsert` of the same `id` in another scope of this
+       pull, it moves the file between scope folders; the upsert then
+       follows its normal rules.
+     - Unpaired, it trashes the file at the recorded path. This happens only
+       if the file's front-matter `id` matches (otherwise the item is a
+       no-op), and a dirty file is rescued first (§9.6).
+   - **Snapshot.** Snapshot items are reconciled by id and canonical hash,
+     never by rev order: after a restore, server revs can be lower than
+     recorded ones.
+     - An id present on both sides with an identical hash: record the
+       snapshot `rev`.
+     - An id present on both sides, different content, on a normal resync:
+       apply the upsert rules and adopt the snapshot `rev`.
+     - Same, but the response's `database_id` differs from the stored one (a
+       restore): re-push the local content as an update on the adopted
+       `rev`. A 409 falls back to §9.6.
+     - A recorded id missing from the snapshot, on a normal resync: a
+       deletion. Trash the file if clean; rescue it if dirty.
+     - Same, after a `database_id` change: data the restore may have lost.
+       Always rescue it; never trash it.
+     - Unknown snapshot ids are written.
+     - Finally the new `database_id` is stored.
+   - **`removed` scopes.**
+     - Rescue dirty and unknown files from the folder into
+       `Conflicts/rescued-<UTC date>/` and notify ("You were removed from
+       <group>; N local files were kept"). Trash the rest.
+     - Then drop the scope's cursor, its `groups` entry, and every
+       `state.prompts` entry it owned.
+   - **Rescue** (here, for stale folders §9.1, and for account changes
+     §9.2). A rescued file becomes a new private prompt: the app writes a
+     fresh ULID `id:` into it, replacing any old one, before it can be
+     pushed.
 2. **Detect local changes.**
    - Scan every `*.md` under the library, excluding `.`/`_` entries and the
      root `README.md`. Symlinks are never followed.
@@ -1329,7 +1382,7 @@ instead of doubling.
   - The server version takes the original path.
   - The local version becomes a new private prompt with a new id, at
     `Conflicts/<group folder or "Personal">/<name> (conflict <device>
-    <UTC YYYY-MM-DD HHmm>).md`. It is never placed beside the original,
+    <UTC YYYY-MM-DD HHmm>).md` (`CONFLICT_NAME_FORMAT`). It is never placed beside the original,
     where a group folder would push it into the group.
   - State marks it `origin: conflict_of <id>`. The Conflicts filter uses
     that flag, never the file name, so renaming a copy keeps it listed.
@@ -1346,8 +1399,12 @@ instead of doubling.
   `<name> (2).md`, then `(3)` up to `PATH_CLASH_MAX = 20`. Update state,
   then retry. Beyond the cap the file is marked `syncError`.
 - **Denied (`403`)** for a viewer edit, delete, or move: the file is
-  restored from `GET /prompts/{id}` at its recorded path. Any local edit is
-  kept as a private copy in `Conflicts/`, and the user is notified.
+  restored from `GET /prompts/{id}` at its recorded path (a moved file is
+  moved back). Any local edit is kept as a private copy in `Conflicts/`, and
+  the user is notified.
+- **A `403` on create**, such as a new file dropped into a viewer group's
+  folder: the file moves to `Conflicts/` as a private prompt, and the user
+  is notified. A `403` is never retried.
 - **Not retryable** (`422`, `404` on update): state records `last_error`.
   The file is skipped until its content changes. The footer shows "sync
   errors" and lists the file and the reason.
@@ -1475,6 +1532,7 @@ Footers differ per OS:
 | Sync: errors | The footer says "sync errors". The list names each file and the reason (§9.6). |
 | Sync: snapshot in progress | The footer says "resyncing…". Automatic. |
 | Removed from a group | Notification: "You were removed from <group>; N local files were kept". |
+| Path renamed by a clash | Silent. The prompt's history entry notes the rename. |
 
 ### 10.6 Accessibility and language
 
@@ -1570,6 +1628,10 @@ temp SQLite, with two simulated devices and two users. Scenarios:
 - 422 invalid content → `syncError`, no retry loop
 - crash mid-pull (killed after some files are written) → resume without loss or duplicates
 - rename on one device while the other edits
+- our own move echoed back as `move_out` → no-op; a move pair split across pull pages → the file moves, never trashed
+- remote rename → the old file is gone, and no rename is pushed back
+- server restored from backup (`database_id` changed, revs lower) → local content re-pushed or rescued, nothing trashed
+- every change row of a quiet scope purged while a device is offline → snapshot detected through the floor
 
 Shared Core tests may use `@testable import`: both `swift test` and Xcode
 Debug builds compile local packages with testing enabled.
