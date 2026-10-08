@@ -46,7 +46,8 @@ Run these commands from the repository root:
 | Build Core without GTK | `swift build --target MonkeysPawCore` |
 | Build Linux app | `swift build --product monkeyspaw` |
 | Test Core and Linux app | `swift test` |
-| Test Linux app with a required display (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
+| Test portal transport on a required private bus (no display) | `dbus-run-session -- env MONKEYSPAW_REQUIRE_PORTAL_BUS=1 swift test --filter LinuxPortalTransportTests` |
+| Test Linux app with a required display and private bus (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 MONKEYSPAW_REQUIRE_PORTAL_BUS=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
 | Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
 | Build server | `swift build --package-path server` |
 | Test server | `swift test --package-path server` |
@@ -60,7 +61,10 @@ Swift 6.4 and the host's userland sysroot. Docker is unavailable there; the
 image job in CI builds and exercises the container.
 
 The lifecycle test skips without a display unless `MONKEYSPAW_REQUIRE_DISPLAY=1`,
-which makes a missing display fail. The Core portability job compiles Core and
+which makes a missing display fail. Portal transport tests skip unless
+`MONKEYSPAW_REQUIRE_PORTAL_BUS=1`; set it only under `dbus-run-session`, since
+the fake service owns the portal name. An enabled gate without a bus fails.
+The Core portability job compiles Core and
 its tests without GTK; the Linux app job runs both suites. `swift test --filter`
 still builds all test targets, so filtering alone cannot isolate Core from GTK.
 

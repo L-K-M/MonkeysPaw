@@ -61,9 +61,11 @@ jobs:
         run: swift build --product monkeyspaw
       - name: Test Core on Linux
         run: swift test --filter MonkeysPawCoreTests
-      - name: Test Linux app with a required display
+      - name: Test Linux app with a required display and portal bus
         env:
           MONKEYSPAW_REQUIRE_DISPLAY: '1'
+          # Enable fake portal ownership only on this private D-Bus session.
+          MONKEYSPAW_REQUIRE_PORTAL_BUS: '1'
           # Keep settings in memory instead of using the host's dconf storage.
           GSETTINGS_BACKEND: memory
           # Disable accessibility bus discovery in this isolated test session.
