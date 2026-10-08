@@ -43,6 +43,53 @@ static inline GApplication *mp_gapp(GtkApplication *a) { return G_APPLICATION(a)
 static inline GActionMap   *mp_action_map(GtkApplication *a) { return G_ACTION_MAP(a); }
 static inline GActionGroup *mp_action_group(GtkApplication *a) { return G_ACTION_GROUP(a); }
 static inline GAction      *mp_action(GSimpleAction *a) { return G_ACTION(a); }
+static inline GtkScrolledWindow *mp_scrolled_window(GtkWidget *w) { return GTK_SCROLLED_WINDOW(w); }
+static inline gboolean mp_is_button(GtkWidget *w) { return GTK_IS_BUTTON(w); }
+
+/* ---- M1b delivery and setup --------------------------------------------- */
+
+static inline void mp_clipboard_set_text(GtkWidget *owner, const char *text) {
+    gdk_clipboard_set_text(gtk_widget_get_clipboard(owner), text);
+}
+
+static inline void mp_notify(GtkApplication *app, const char *title, const char *body) {
+    GNotification *notification = g_notification_new(title);
+    g_notification_set_body(notification, body);
+    /* No buttons or default action: delivery guidance must not take focus. */
+    g_application_send_notification(G_APPLICATION(app), "delivery", notification);
+    g_object_unref(notification);
+}
+
+static inline void mp_entry_set_text(GtkWidget *entry, const char *text) {
+    gtk_editable_set_text(GTK_EDITABLE(entry), text);
+}
+
+static inline const char *mp_entry_text(GtkWidget *entry) {
+    return gtk_editable_get_text(GTK_EDITABLE(entry));
+}
+
+/* Parse gsettings output as GVariant, failing closed on malformed lists.
+ * Both results transfer ownership to Swift; free with g_strfreev / g_free. */
+static inline char **mp_parse_string_array(const char *text) {
+    GVariant *value = g_variant_parse(G_VARIANT_TYPE_STRING_ARRAY, text, NULL, NULL, NULL);
+    if (!value) return NULL;
+    char **strings = g_variant_dup_strv(value, NULL);
+    g_variant_unref(value);
+    return strings;
+}
+
+static inline char *mp_parse_string(const char *text) {
+    GVariant *value = g_variant_parse(G_VARIANT_TYPE_STRING, text, NULL, NULL, NULL);
+    if (!value) return NULL;
+    char *string = g_variant_dup_string(value, NULL);
+    g_variant_unref(value);
+    return string;
+}
+
+/* Swift cannot call GApplicationCommandLine's variadic print functions. */
+static inline void mp_command_line_print(GApplicationCommandLine *command, const char *text) {
+    g_application_command_line_print(command, "%s\n", text);
+}
 
 /* ---- Signals (g_signal_connect is a macro; G_CALLBACK is another) ---------- */
 

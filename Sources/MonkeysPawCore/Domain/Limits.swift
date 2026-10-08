@@ -29,6 +29,19 @@ public enum Limits {
     /// §6.1: bound KDE RemoteDesktop portal calls to two seconds.
     public static let portalCallTimeout: Duration = .seconds(2)
 
+    /// §4.2 subprocess discipline and PasteInjector's bounded-wait contract.
+    /// M1b uses the §6.1 two-second portal budget for local tools as well.
+    public static let linuxToolTimeout: Duration = .seconds(2)
+
+    /// §4.6: active-window capture is synchronous, so keep its UI wait short.
+    public static let linuxFocusProbeTimeout: Duration = .milliseconds(250)
+
+    /// Poll child output and termination without blocking on inherited pipes.
+    public static let linuxToolPollInterval: Duration = .milliseconds(10)
+
+    /// §4.2: bound captured help and gsettings output, never diagnostic logs.
+    public static let linuxToolOutputCap: Int = 64 * kibibyte
+
     /// §6.3: separate CGEvent down/up so apps do not debounce the pair.
     public static let cgEventPairGap: Duration = .milliseconds(20)
 
@@ -39,11 +52,11 @@ public enum Limits {
     /// §4.2 hotkey debounce: Copywraith src-tauri/src/lib.rs uses 100 ms.
     public static let toggleDebounce: Duration = .milliseconds(100)
 
+    /// §11.5: hide a blurred picker after 300 ms without taking focus back.
+    public static let blurHideDelay: Duration = .milliseconds(300)
+
     /// §11.1: the initial 640 × 420 picker size, without platform UI types.
     public static let panelSize: (width: Int, height: Int) = (640, 420)
-
-    /// §11.5: let a transient focus change settle before dismissing the panel.
-    public static let blurHideDelay: Duration = .milliseconds(300)
 
     /// §6.4–6.5: initial sizes of the macOS Setup and paste-test windows.
     public static let setupWindowSize: (width: Int, height: Int) = (640, 480)
