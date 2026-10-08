@@ -60,9 +60,7 @@ final class LinuxSetupWindow {
                 detail = LinuxStrings.notApplicable
                 needsFix = false
             case .unknown:
-                // Core's .unknown has no payload. Keep M1c's explanatory copy in
-                // the Linux view without widening the shared port or value type.
-                detail = row.kind == .portal ? LinuxStrings.portalDeferred : LinuxStrings.unknown
+                detail = LinuxStrings.unknown
                 needsFix = false
             case .needsAction(let text):
                 detail = text
@@ -70,7 +68,12 @@ final class LinuxSetupWindow {
             }
             let registration = row.registration.map { " [\($0.mechanism.rawValue): \($0.detail)]" } ?? ""
             gtk_label_set_text(mp_label(label), LinuxStrings.rowTitle(row.kind) + ": " + detail + registration)
-            gtk_widget_set_sensitive(fix, needsFix ? 1 : 0)
+            let canConfigure = row.registration?.configuration != nil
+            let title = canConfigure ? LinuxStrings.configureShortcuts
+                : (row.kind == .portal || row.registration?.mechanism == .globalShortcutsPortal
+                    ? LinuxStrings.allow : LinuxStrings.fix)
+            gtk_button_set_label(mp_button(fix), title)
+            gtk_widget_set_sensitive(fix, needsFix || canConfigure ? 1 : 0)
         }
 
         let text: String

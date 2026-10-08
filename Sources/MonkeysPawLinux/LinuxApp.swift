@@ -73,6 +73,7 @@ public enum MonkeysPawLinuxApp {
 
         let gapp = mp_gapp(application)
         let environment = LinuxEnvironment(application: application)
+        defer { environment.shutdown() }
         g_application_add_main_option(gapp, "selftest", 0, G_OPTION_FLAG_NONE,
                                       G_OPTION_ARG_NONE, "Run the paste self-test and print JSON", nil)
 

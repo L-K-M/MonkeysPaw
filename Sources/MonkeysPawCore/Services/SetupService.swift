@@ -30,7 +30,9 @@ public final class SetupService {
         mainThread.run {
             guard let row = self.snapshot().rows.first(where: { $0.kind == kind }) else { return }
             switch row.status {
-            case .ok, .notApplicable: return
+            case .notApplicable: return
+            case .ok:
+                guard kind == .hotkey, row.registration?.configuration != nil else { return }
             case .needsAction, .unknown: break
             }
 

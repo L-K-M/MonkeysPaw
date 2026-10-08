@@ -11,6 +11,8 @@ final class LinuxEnvironment {
     private let runner: LinuxToolRunner
     private let scheduler: Scheduler
     private let hotkey: LinuxHotkeyBackend
+    private let portal: LinuxPortalTransport
+    private let remoteDesktop: RemoteDesktopPasteInjector
     private let firstRun: LinuxFirstRunState
 
     // GApplication can dispatch a cold action without "activate". A stored lazy
@@ -25,7 +27,7 @@ final class LinuxEnvironment {
     private lazy var delivery = DeliveryService(
         panel: panel, focus: LinuxFocusTracker(session: session, runner: runner),
         clipboard: GTKClipboard(owner: panel.clipboardOwner),
-        injectors: [XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
+        injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
         notifier: GTKNotifier(application: application, session: session), session: session,
         scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache())
     private lazy var selfTest = SelfTest(
@@ -34,7 +36,7 @@ final class LinuxEnvironment {
     private lazy var shortcuts = ShortcutService(backend: hotkey, scheduler: scheduler, mainThread: mainThread)
     private(set) lazy var setupModel = SetupModel(setup: SetupService(
         probe: LinuxSetupProbe(application: application, runner: runner, hotkey: hotkey,
-                               session: session, mainThread: mainThread),
+                               session: session, mainThread: mainThread, remoteDesktop: remoteDesktop),
         session: session, shortcuts: shortcuts, selfTest: selfTest, mainThread: mainThread))
     private lazy var setupWindow = LinuxSetupWindow(application: application, model: setupModel)
 
@@ -49,17 +51,39 @@ final class LinuxEnvironment {
         session = LinuxSessionProbe(environment: environment)
         scheduler = GLibScheduler()
         firstRun = LinuxFirstRunState(paths: LinuxPaths(environment: environment))
-        switch session.currentSession() {
-        case .gnomeWayland, .gnomeX11:
-            hotkey = GnomeKeybindingBackend(runner: runner, mainThread: mainThread)
+        portal = LinuxPortalTransport(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
+        let portalWindow = PortalWindow(application: application)
+        let desktop = session.currentSession()
+        remoteDesktop = RemoteDesktopPasteInjector(transport: portal,
+            tokens: PortalTokenStore(paths: LinuxPaths(environment: environment)),
+            session: desktop, mainThread: mainThread, parent: portalWindow.parent)
+        switch desktop {
+        case .kdeWayland, .kdeX11:
+            hotkey = ManualHotkeyBackend() // KGlobalAccel belongs to M1d.
         default:
-            hotkey = ManualHotkeyBackend()
+            let fallback: LinuxHotkeyBackend
+            let migration: PortalHotkeyBackend.Migration
+            switch desktop {
+            case .gnomeWayland, .gnomeX11:
+                fallback = GnomeKeybindingBackend(runner: runner, mainThread: mainThread)
+                migration = .gnomeHost
+            default:
+                fallback = ManualHotkeyBackend()
+                migration = .none
+            }
+            hotkey = PortalHotkeyBackend(transport: portal, fallback: fallback,
+                runner: runner, migration: migration, mainThread: mainThread, parent: portalWindow.parent)
         }
     }
 
     /// Start only in the registered primary, not remote invocations or unit tests.
     func start() {
         hotkey.onChange = { [weak self] in self?.setupModel.refresh() }
+        remoteDesktop.onChange = { [weak self] in self?.setupModel.refresh() }
+        switch session.currentSession() {
+        case .gnomeWayland, .gnomeX11, .kdeWayland, .kdeX11, .flatpak: remoteDesktop.probe()
+        default: break
+        }
         let bindings = HotkeyAction.allCases.reduce(into: [HotkeyAction: Accelerator]()) { result, action in
             result[action] = Accelerator.defaultBinding(for: action)
         }
@@ -90,7 +114,18 @@ final class LinuxEnvironment {
 
     func togglePicker() {
         // A buried picker needs presenting, matching M0b's toggle semantics.
-        if panel.isActiveAndVisible { panelModel.cancel() } else { panelModel.show() }
+        if panel.isActiveAndVisible {
+            panelModel.cancel()
+        } else {
+            panel.useActivationToken(hotkey.consumeActivationToken())
+            panelModel.show()
+        }
+    }
+
+    func shutdown() {
+        hotkey.shutdown()
+        remoteDesktop.shutdown()
+        portal.shutdown()
     }
 
     func runSelfTest(done: @escaping (SelfTestReport) -> Void) {

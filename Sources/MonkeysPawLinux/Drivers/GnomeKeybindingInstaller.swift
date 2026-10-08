@@ -32,7 +32,8 @@ struct GnomeKeybindingInstaller {
 
             guard let rawBinding = run(["get", schema, "binding"]),
                   let binding = Self.string(in: rawBinding),
-                  run(["set", schema, "command", Self.quote(Self.command)]) != nil else { return nil }
+                  let rawCommand = run(["get", schema, "command"]),
+                  Self.string(in: rawCommand) == Self.command else { return nil }
             return binding
         }
 
@@ -51,6 +52,42 @@ struct GnomeKeybindingInstaller {
             return nil
         }
         return binding
+    }
+
+    enum PortalMigration { case ready, editedBinding, unavailable }
+
+    /// Retire only untouched M1b defaults. Fields and foreign list entries survive.
+    /// Inspect every row before the single list write, failing closed on ambiguity.
+    func prepareForPortal(deadline: ContinuousClock.Instant = ContinuousClock.now.advanced(by: Limits.portalConsentTimeout)) -> PortalMigration {
+        func read(_ arguments: [String]) -> String? { run(arguments, deadline: deadline) }
+        guard let raw = read(["get", Self.listSchema, "custom-keybindings"]),
+              let paths = Self.paths(in: raw),
+              let defaultBinding = try? Accelerator.defaultBinding(for: .togglePicker)?.gtkAccelerator() else {
+            return .unavailable
+        }
+        var retired = Set<String>()
+        for path in paths {
+            let schema = Self.itemSchema + ":" + path
+            guard let rawName = read(["get", schema, "name"]), let name = Self.string(in: rawName),
+                  let rawCommand = read(["get", schema, "command"]), let command = Self.string(in: rawCommand),
+                  let rawBinding = read(["get", schema, "binding"]), let binding = Self.string(in: rawBinding) else {
+                return .unavailable
+            }
+            guard name == Self.bindingName || command == Self.command else { continue }
+            guard !binding.isEmpty else { continue }
+            guard name == Self.bindingName, command == Self.command, binding == defaultBinding else {
+                return .editedBinding
+            }
+            retired.insert(path)
+        }
+        guard !retired.isEmpty else { return .ready }
+        // Re-read before publishing so a concurrent settings edit is not lost.
+        guard let latest = read(["get", Self.listSchema, "custom-keybindings"]),
+              Self.paths(in: latest) == paths,
+              read(["set", Self.listSchema, "custom-keybindings", Self.encode(paths.filter { !retired.contains($0) })]) != nil else {
+            return .unavailable
+        }
+        return .ready
     }
 
     static func paths(in text: String) -> [String]? {
@@ -88,8 +125,13 @@ struct GnomeKeybindingInstaller {
         return String(cString: raw)
     }
 
-    private func run(_ arguments: [String]) -> String? {
-        guard case .success(let output) = runner.run("gsettings", arguments: arguments) else { return nil }
+    private func run(_ arguments: [String], deadline: ContinuousClock.Instant? = nil) -> String? {
+        let budget: Duration
+        if let deadline {
+            guard ContinuousClock.now < deadline else { return nil }
+            budget = min(Limits.linuxToolTimeout, ContinuousClock.now.duration(to: deadline))
+        } else { budget = Limits.linuxToolTimeout }
+        guard case .success(let output) = runner.run("gsettings", arguments: arguments, timeout: budget) else { return nil }
         return output.text
     }
 }

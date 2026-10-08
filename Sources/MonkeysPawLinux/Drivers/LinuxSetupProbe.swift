@@ -8,19 +8,22 @@ final class LinuxSetupProbe: SetupProbe {
     private let hotkey: LinuxHotkeyBackend
     private let session: SessionProbe
     private let mainThread: MainThread
+    private let remoteDesktop: RemoteDesktopPasteInjector
     private var instructions: GTK.Widget?
 
     init(application: UnsafeMutablePointer<GtkApplication>, runner: LinuxToolRunner,
-         hotkey: LinuxHotkeyBackend, session: SessionProbe, mainThread: MainThread) {
+         hotkey: LinuxHotkeyBackend, session: SessionProbe, mainThread: MainThread,
+         remoteDesktop: RemoteDesktopPasteInjector) {
         self.application = application
         self.runner = runner
         self.hotkey = hotkey
         self.session = session
         self.mainThread = mainThread
+        self.remoteDesktop = remoteDesktop
     }
 
     func accessibilityStatus() -> SetupStatus { .notApplicable }
-    func portalStatus() -> SetupStatus { .unknown }
+    func portalStatus() -> SetupStatus { remoteDesktop.status }
 
     func ydotoolStatus() -> SetupStatus {
         guard runner.executable("ydotool") != nil else { return .needsAction(fix: LinuxStrings.ydotoolMissing) }
@@ -48,11 +51,17 @@ final class LinuxSetupProbe: SetupProbe {
                 // or prompt text enter a URL or diagnostics.
                 gtk_show_uri(nil, LinuxStrings.ydotoolDocs, 0)
             case .hotkey:
-                self.showInstructions(GnomeKeybindingInstaller.command)
+                if self.hotkey.mechanism == .manual {
+                    self.showInstructions(GnomeKeybindingInstaller.command)
+                } else {
+                    self.hotkey.configure(done: done)
+                    return
+                }
             case .kde:
                 self.showInstructions(SetupStrings.kdeShortcut + " (Added in M1d)")
             case .portal:
-                self.showInstructions(LinuxStrings.portalDeferred)
+                self.remoteDesktop.allow(done: done)
+                return
             case .accessibility:
                 break
             }

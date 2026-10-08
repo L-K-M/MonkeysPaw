@@ -3,13 +3,31 @@ import MonkeysPawCore
 
 /// Linux-only copy; delivery notifications use Core's DeliveryStrings.
 enum LinuxStrings {
-    static let installingShortcut = "Installing the GNOME shortcut"
+    static let installShortcut = "Install the GNOME shortcut in Setup"
     static let shortcutFailed = "Could not install the GNOME shortcut. Bind: " + GnomeKeybindingInstaller.command
     static let panelHint = "Return: paste · Ctrl+Shift+Return: terminal paste · Esc: cancel"
     static let setup = "Setup"
     static let testPaste = "Test paste"
     static let selfTestTitle = "Monkey's Paw: Test paste"
-    static let portalDeferred = "Added in M1c"
+    static let portalAllow = "Allow keyboard access in Setup, then run Test paste"
+    static let portalUnavailable = "Keyboard portal unavailable. Check the desktop portal installation or use copy/paste"
+    static let portalSessionLost = "Portal session closed. Allow access again, then run Test paste"
+    static let portalTokenWriteFailed = "Keyboard access granted, but consent could not be saved. Check data-directory permissions"
+    static let shortcutAllow = "Allow a global shortcut in Setup; you choose the keys"
+    static let shortcutSessionLost = "Shortcut session closed. Allow the shortcut again in Setup"
+    static let shortcutCancelled = "Shortcut consent cancelled or denied. Use Setup to try again"
+    static let shortcutMigrationBlocked = "Disable the existing Monkey's Paw toggle binding in GNOME Settings, then retry in Setup"
+    static let shortcutMigrationFailed = "Could not inspect or retire the old GNOME binding. Check GNOME Settings, then retry in Setup"
+    static let configureShortcuts = "Change in system settings"
+    static let allow = "Allow"
+
+    static func portalFailure(_ failure: PasteFailure) -> String {
+        switch failure {
+        case .portalDenied: return "Keyboard access was denied or cancelled. Allow it again in Setup"
+        case .timeout: return "Portal interaction timed out. Allow it again in Setup"
+        default: return portalSessionLost
+        }
+    }
     static let ydotoolFix = """
         Install ydotool and start ydotoold. Allow access to /dev/uinput with:
         KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
