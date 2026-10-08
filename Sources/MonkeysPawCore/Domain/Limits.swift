@@ -14,6 +14,18 @@ public enum Limits {
     /// §6.3: wait up to 500 ms for Accessibility to confirm the paste target.
     public static let accessibilityFocusWait: Duration = .milliseconds(500)
 
+    /// §4.6: retry cooperative activation twice, as in Invoque's AppActivator.
+    public static let activationRetryDelay: Duration = .milliseconds(120)
+    /// §4.6: retries after the first attempt, giving three attempts in total.
+    public static let activationRetryCount: Int = 2
+
+    /// §6.3: poll AX focus without blocking AppKit's run loop.
+    public static let accessibilityFocusPoll: Duration = .milliseconds(10)
+
+    /// §6.3: bound the System Events fallback, including an unanswered consent prompt.
+    /// The osascript child is killed at the deadline; grant TCC and retry.
+    public static let appleScriptPasteTimeout: Duration = .seconds(2)
+
     /// §6.1: bound KDE RemoteDesktop portal calls to two seconds.
     public static let portalCallTimeout: Duration = .seconds(2)
 
@@ -53,6 +65,10 @@ public enum Limits {
 
     /// §11.1: the initial 640 × 420 picker size, without platform UI types.
     public static let panelSize: (width: Int, height: Int) = (640, 420)
+
+    /// §6.4–6.5: initial sizes of the macOS Setup and paste-test windows.
+    public static let setupWindowSize: (width: Int, height: Int) = (640, 480)
+    public static let selfTestWindowSize: (width: Int, height: Int) = (480, 140)
 
     /// §5.1: retain 50 local revisions per prompt to bound history storage.
     public static let historyCapPerPrompt: Int = 50
