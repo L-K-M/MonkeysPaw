@@ -52,6 +52,7 @@ final class FakeScheduler: Scheduler {
 
     private let recorder: DeliveryRecorder
     private var tasks: [Task] = []
+    private var lastCallback: (() -> Void)?
     private var sequence = 0
     private(set) var now: Duration = .zero
     private(set) var delays: [Duration] = []
@@ -75,10 +76,13 @@ final class FakeScheduler: Scheduler {
         }), tasks[next].deadline <= until {
             let task = tasks.remove(at: next)
             now = task.deadline
+            lastCallback = task.work
             task.work()
         }
         now = until
     }
+
+    func repeatLastCallback() { lastCallback?() }
 }
 
 final class FakePanel: PanelWindow {
@@ -111,7 +115,12 @@ final class FakeFocus: FocusTracker {
         }
     }
 
-    func complete(_ confirmation: FocusConfirmation) { completions.removeFirst()(confirmation) }
+    func complete(_ confirmation: FocusConfirmation) { complete([confirmation]) }
+
+    func complete(_ confirmations: [FocusConfirmation]) {
+        let completion = completions.removeFirst()
+        confirmations.forEach(completion)
+    }
 }
 
 final class FakeClipboard: Clipboard {
@@ -149,7 +158,12 @@ final class FakeInjector: PasteInjector {
         }
     }
 
-    func complete(_ result: PasteAttemptResult) { completions.removeFirst()(result) }
+    func complete(_ result: PasteAttemptResult) { complete([result]) }
+
+    func complete(_ results: [PasteAttemptResult]) {
+        let completion = completions.removeFirst()
+        results.forEach(completion)
+    }
 }
 
 final class FakeNotifier: Notifier {

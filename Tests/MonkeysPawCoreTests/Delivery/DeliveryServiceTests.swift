@@ -1,4 +1,4 @@
-import MonkeysPawCore
+@testable import MonkeysPawCore
 import XCTest
 
 final class DeliveryServiceTests: XCTestCase {
@@ -193,6 +193,124 @@ final class DeliveryServiceTests: XCTestCase {
         h.settle()
         h.injectors[.cgEvent]?.complete(.sent)
         XCTAssertEqual(h.recorder.events.filter { if case .done = $0 { return true }; return false }.count, 2)
+    }
+
+    func testDuplicateInjectorCompletionDoesNotInterleaveQueuedDeliveries() {
+        let h = DeliveryHarness()
+        h.injectors[.cgEvent]?.mode = .deferred
+        h.arm()
+        h.deliver("first")
+        h.deliver("second")
+        h.deliver("third")
+        h.settle()
+        h.injectors[.cgEvent]?.complete([.sent, .sent])
+
+        XCTAssertEqual(h.clipboard.readText(), "second")
+        XCTAssertFalse(h.recorder.events.contains(.write("third")))
+        XCTAssertEqual(h.recorder.events.filter { if case .done = $0 { return true }; return false }.count, 1)
+        h.settle()
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords.count, 2)
+        h.injectors[.cgEvent]?.complete(.sent)
+        XCTAssertEqual(h.clipboard.readText(), "third")
+        h.settle()
+        h.injectors[.cgEvent]?.complete(.sent)
+        XCTAssertEqual(h.recorder.events.filter { if case .done = $0 { return true }; return false }.count, 3)
+    }
+
+    func testLateInjectorFailureDoesNotStartFallbackAfterCompletion() {
+        let h = DeliveryHarness()
+        h.injectors[.cgEvent]?.mode = .deferred
+        h.arm()
+        h.deliver()
+        h.settle()
+        h.injectors[.cgEvent]?.complete([.sent, .failed(.timeout)])
+
+        XCTAssertNil(h.cache.failure(for: .cgEvent))
+        XCTAssertEqual(h.injectors[.appleScript]?.chords, [])
+        XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.cgEvent))
+        XCTAssertEqual(h.recorder.events.filter { if case .done = $0 { return true }; return false }.count, 1)
+    }
+
+    func testQueuedOperationsWaitUntilFocusRestoreCompletes() {
+        let h = DeliveryHarness()
+        h.focus.mode = .deferred
+        h.arm()
+        h.deliver("first")
+        h.deliver("second")
+        h.service.show()
+        h.settle()
+        h.scheduler.advance(by: .seconds(1))
+
+        XCTAssertEqual(h.clipboard.readText(), "first")
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords, [])
+        XCTAssertFalse(h.recorder.events.contains(.show))
+        XCTAssertFalse(h.recorder.events.contains(.write("second")))
+        h.focus.complete(.unconfirmed)
+        XCTAssertEqual(h.clipboard.readText(), "second")
+        h.settle()
+        h.focus.complete(.confirmed)
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords.count, 2)
+        XCTAssertTrue(h.recorder.events.contains(.show))
+    }
+
+    func testDuplicateFocusCompletionDoesNotInjectTwice() {
+        let h = DeliveryHarness()
+        h.focus.mode = .deferred
+        h.injectors[.cgEvent]?.mode = .deferred
+        h.arm()
+        h.deliver("first")
+        h.deliver("second")
+        h.settle()
+        h.focus.complete([.confirmed, .unconfirmed])
+
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords.count, 1)
+        XCTAssertEqual(h.clipboard.readText(), "first")
+        h.injectors[.cgEvent]?.complete(.sent)
+        XCTAssertEqual(h.clipboard.readText(), "second")
+    }
+
+    func testDuplicateSettleCallbackDoesNotRestoreTwice() {
+        let h = DeliveryHarness()
+        h.focus.mode = .deferred
+        h.arm()
+        h.deliver()
+        h.settle()
+        h.scheduler.repeatLastCallback()
+
+        XCTAssertEqual(h.recorder.events.filter { if case .restore = $0 { return true }; return false }.count, 1)
+        h.focus.complete(.confirmed)
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords.count, 1)
+    }
+
+    func testDuplicateDismissCompletionDoesNotReleaseTheNextOperation() {
+        let h = DeliveryHarness()
+        h.focus.mode = .deferred
+        h.arm()
+        h.service.dismiss()
+        h.deliver("first")
+        h.deliver("second")
+        h.focus.complete([.unconfirmed, .confirmed])
+
+        XCTAssertEqual(h.clipboard.readText(), "first")
+        XCTAssertFalse(h.recorder.events.contains(.write("second")))
+        h.settle()
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords.count, 1)
+    }
+
+    func testDuplicateSelfTestCompletionDoesNotReleaseTheNextOperation() throws {
+        let h = DeliveryHarness()
+        var finished: (() -> Void)?
+        h.service.performSelfTest { finished = $0 }
+        h.deliver("first")
+        h.deliver("second")
+        let finish = try XCTUnwrap(finished)
+        finish()
+        finish()
+
+        XCTAssertEqual(h.clipboard.readText(), "first")
+        XCTAssertFalse(h.recorder.events.contains(.write("second")))
+        h.settle()
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords.count, 1)
     }
 
     func testShowCapturesBeforePresentingAndDismissRestoresWithoutDeliveryHide() throws {

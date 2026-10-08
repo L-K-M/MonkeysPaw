@@ -196,6 +196,25 @@ final class SelfTestTests: XCTestCase {
         ])
     }
 
+    func testDuplicateReadbackCallbackDoesNotReleaseTheNextDelivery() {
+        let h = DeliveryHarness(session: .wlroots)
+        h.target.received = [DeliveryStrings.testPrompt]
+        let test = runner(h)
+        var reports: [SelfTestReport] = []
+        test.run { reports.append($0) }
+        h.settle()
+        h.deliver("first")
+        h.deliver("second")
+        h.scheduler.advance(by: Limits.selfTestReadBackDelay)
+        h.scheduler.repeatLastCallback()
+
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertEqual(h.recorder.events.filter { if case .testReadBack = $0 { return true }; return false }.count, 1)
+        XCTAssertEqual(h.recorder.events.filter { if case .testClose = $0 { return true }; return false }.count, 1)
+        XCTAssertEqual(h.clipboard.readText(), "first")
+        XCTAssertFalse(h.recorder.events.contains(.write("second")))
+    }
+
     func testPickerWindowOperationsWaitForSelfTestToClose() {
         let h = DeliveryHarness(session: .wlroots)
         h.target.received = [DeliveryStrings.testPrompt]

@@ -50,8 +50,11 @@ public final class SelfTest {
 
         target.present(fieldExpecting: DeliveryStrings.testPrompt)
         delivery.deliverForSelfTest(DeliveryStrings.testPrompt, through: backend) { outcome in
+            var didReadBack = false
             self.scheduler.after(Limits.selfTestReadBackDelay) {
                 self.mainThread.run {
+                    guard !didReadBack else { return }
+                    didReadBack = true
                     let received = self.target.readBack()
                     let status = self.status(for: outcome, received: received)
                     if status == .sentButNotReceived { self.delivery.recordUnreceived(backend) }

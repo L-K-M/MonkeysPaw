@@ -13,13 +13,27 @@ public final class DeliveryService {
         case idle, running
     }
 
-    private struct Request {
+    // Continuations share the terminal state even after the next operation starts.
+    private final class Request {
         let text: String
         let mode: DeliveryMode
         let target: DeliveryTarget?
         let session: DesktopSession
         let selection: Selection
         let done: (DeliveryOutcome) -> Void
+        var didComplete = false
+
+        init(
+            text: String, mode: DeliveryMode, target: DeliveryTarget?,
+            session: DesktopSession, selection: Selection, done: @escaping (DeliveryOutcome) -> Void
+        ) {
+            self.text = text
+            self.mode = mode
+            self.target = target
+            self.session = session
+            self.selection = selection
+            self.done = done
+        }
     }
 
     private let panel: PanelWindow
@@ -77,8 +91,13 @@ public final class DeliveryService {
                     self.completeOperation()
                     return
                 }
+                var didComplete = false
                 self.focus.restore(target) { _ in
-                    self.mainThread.run { self.completeOperation() }
+                    self.mainThread.run {
+                        guard !didComplete else { return }
+                        didComplete = true
+                        self.completeOperation()
+                    }
                 }
             }
         }
@@ -112,7 +131,14 @@ public final class DeliveryService {
     func performSelfTest(_ start: @escaping (@escaping () -> Void) -> Void) {
         mainThread.run {
             self.queue {
-                start { self.mainThread.run { self.completeOperation() } }
+                var didComplete = false
+                start {
+                    self.mainThread.run {
+                        guard !didComplete else { return }
+                        didComplete = true
+                        self.completeOperation()
+                    }
+                }
             }
         }
     }
@@ -122,6 +148,7 @@ public final class DeliveryService {
         _ text: String, through backend: PasteBackend, done: @escaping (DeliveryOutcome) -> Void
     ) {
         mainThread.run {
+            assert(self.operationState == .running, "Self-test must hold the operation queue")
             self.start(self.request(text, mode: .paste(.standard), selection: .only(backend), done: done))
         }
     }
@@ -173,8 +200,13 @@ public final class DeliveryService {
         clipboard.writeText(request.text)
         panel.hideForDelivery()
         let delay = request.session == .macOS ? Limits.settleDelayMacOS : Limits.settleDelayLinux
+        var didSettle = false
         scheduler.after(delay) {
-            self.mainThread.run { self.restore(for: request) }
+            self.mainThread.run {
+                guard !didSettle, !request.didComplete else { return }
+                didSettle = true
+                self.restore(for: request)
+            }
         }
     }
 
@@ -184,8 +216,13 @@ public final class DeliveryService {
             return
         }
 
+        var didRestore = false
         focus.restore(target) { confirmation in
-            self.mainThread.run { self.beginPaste(for: request, focus: confirmation) }
+            self.mainThread.run {
+                guard !didRestore, !request.didComplete else { return }
+                didRestore = true
+                self.beginPaste(for: request, focus: confirmation)
+            }
         }
     }
 
@@ -229,8 +266,11 @@ public final class DeliveryService {
         }
 
         // The port enqueues work on its worker; Core never waits on injection.
+        var didRespond = false
         injector.paste(chord: chord) { result in
             self.mainThread.run {
+                guard !didRespond, !request.didComplete else { return }
+                didRespond = true
                 switch result {
                 case .sent:
                     self.finish(request, outcome: .pasted(backend), focus: focus)
@@ -253,6 +293,8 @@ public final class DeliveryService {
 
     private func finish(_ request: Request, outcome: DeliveryOutcome, focus: FocusConfirmation) {
         // Every continuation entered through MainThread, including done.
+        guard !request.didComplete else { return }
+        request.didComplete = true
         if case .ladder = request.selection {
             lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
         }
