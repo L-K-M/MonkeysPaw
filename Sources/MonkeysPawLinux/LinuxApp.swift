@@ -11,14 +11,23 @@ enum ActionName: String {
 
 /// The synchronous Linux entry point, with one GtkApplication per session.
 public enum MonkeysPawLinuxApp {
+    private static let usage = """
+        Usage:
+          monkeyspaw
+          monkeyspaw --version
+          monkeyspaw --gapplication-service
+          monkeyspaw --help
+          monkeyspaw -h
+        """
+
     private enum LaunchMode {
         case interactive
         case service
 
-        var flags: GApplicationFlags {
+        var arguments: [String] {
             switch self {
-            case .interactive: return mp_app_default_flags()
-            case .service: return G_APPLICATION_IS_SERVICE
+            case .interactive: return [AppIdentity.binaryName]
+            case .service: return [AppIdentity.binaryName, "--gapplication-service"]
             }
         }
     }
@@ -30,28 +39,30 @@ public enum MonkeysPawLinuxApp {
         case ["--version"]:
             print("\(AppIdentity.binaryName) \(AppIdentity.fallbackVersion)")
             return 0
+        case ["--help"], ["-h"]:
+            print(usage)
+            return 0
         case ["--gapplication-service"]:
             // The session bus starts the app with GLib's service convention.
             return runPanel(mode: .service)
         case []:
             return runPanel(mode: .interactive)
         default:
-            FileHandle.standardError.write(Data(
-                "Usage: monkeyspaw [--version | --gapplication-service]\n".utf8))
+            FileHandle.standardError.write(Data("\(usage)\n".utf8))
             return 2
         }
     }
 
     private static func runPanel(mode: LaunchMode) -> Int32 {
         // This identity is also the D-Bus name, desktop basename and StartupWMClass.
-        let application = gtk_application_new(AppIdentity.linuxAppID, mode.flags)!
+        // IS_SERVICE rejects an existing primary during registration. Register
+        // normally to detect remote launches, then let run parse the service flag.
+        let application = gtk_application_new(AppIdentity.linuxAppID, mp_app_default_flags())!
         defer { g_object_unref(application) }
 
         let gapp = mp_gapp(application)
         let environment = LinuxEnvironment(application: application)
 
-        // Service mode prevents an automatic activation before a cold toggle,
-        // which would otherwise show the window and immediately hide it again.
         let toggle = g_simple_action_new(ActionName.toggle.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(toggle)) {
             // Cold D-Bus actions need not emit "activate". The environment creates
@@ -71,20 +82,30 @@ public enum MonkeysPawLinuxApp {
         // Register early so a remote invocation exits without entering the main loop.
         var error: UnsafeMutablePointer<GError>?
         guard g_application_register(gapp, nil, &error) != 0 else {
+            let detail = error.flatMap { $0.pointee.message }
+                .map { String(cString: $0) } ?? "unknown error"
             if let error { g_error_free(error) }
 
-            environment.log.write(.error, "Could not register the application with the session bus.")
+            environment.log.write(.error, "Could not register the application with the session bus: \(detail)")
             return 1
         }
 
         if g_application_get_is_remote(gapp) != 0 {
-            // Dispatch to the primary instance, and flush before this process exits.
-            g_action_group_activate_action(mp_action_group(application), ActionName.toggle.rawValue, nil)
-            if let connection = g_application_get_dbus_connection(gapp) {
-                g_dbus_connection_flush_sync(connection, nil, nil)
+            // Service activation races must leave the primary panel's visibility alone.
+            if mode == .interactive {
+                g_action_group_activate_action(mp_action_group(application), ActionName.toggle.rawValue, nil)
+                if let connection = g_application_get_dbus_connection(gapp) {
+                    g_dbus_connection_flush_sync(connection, nil, nil)
+                }
             }
 
-            return 0
+            // Run GLib's unregister cleanup without its default remote activation.
+            // Destroying a registered GtkApplication without run emits a warning.
+            let stop: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?,
+                                      UnsafeMutableRawPointer?) -> gint = { _, _, _ in 0 }
+            mp_connect(UnsafeMutableRawPointer(application), "handle-local-options",
+                       unsafeBitCast(stop, to: GCallback.self), nil, nil)
+            return g_application_run(gapp, 0, nil)
         }
 
         GTK.onSignal(UnsafeMutableRawPointer(application), "activate") {
@@ -95,7 +116,15 @@ public enum MonkeysPawLinuxApp {
         g_application_hold(gapp)
         defer { g_application_release(gapp) }
 
-        return g_application_run(gapp, 0, nil)
+        // Service mode prevents an automatic activation before a cold toggle,
+        // which would otherwise show the window and immediately hide it again.
+        let arguments = mode.arguments
+        var argv = arguments.map { strdup($0) } + [nil]
+        defer { argv.forEach { free($0) } }
+
+        return argv.withUnsafeMutableBufferPointer {
+            g_application_run(gapp, Int32(arguments.count), $0.baseAddress)
+        }
     }
 }
 #endif
