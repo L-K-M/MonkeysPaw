@@ -3,6 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
+	// Synchronized groups require objectVersion 70 and Xcode 16+.
 	objectVersion = 70;
 	objects = {
 
@@ -139,7 +140,7 @@
 				};
 			};
 			buildConfigurationList = AA0000000000000000000010 /* Build configuration list for PBXProject "MonkeysPaw" */;
-			compatibilityVersion = "Xcode 15.0";
+			compatibilityVersion = "Xcode 16.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -438,10 +439,12 @@
 /* Begin XCSwiftPackageProductDependency section */
 		AA000000000000000000001C /* MonkeysPawCore */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = AA0000000000000000000019 /* XCLocalSwiftPackageReference "." */;
 			productName = MonkeysPawCore;
 		};
 		AA000000000000000000001E /* MonkeysPawCore */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = AA0000000000000000000019 /* XCLocalSwiftPackageReference "." */;
 			productName = MonkeysPawCore;
 		};
 /* End XCSwiftPackageProductDependency section */
