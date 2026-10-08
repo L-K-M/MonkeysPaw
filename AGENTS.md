@@ -13,8 +13,8 @@ design record; read its index, then the sections relevant to your task.
 - `Sources/CGtk/`, `Sources/MonkeysPawLinux/`, and `Sources/monkeyspaw/`:
   the Linux shim, drivers, app, and entry point, added in M0b.
 - `MonkeysPaw.xcodeproj`, `MonkeysPaw/`, and `MonkeysPawTests/`: the native
-  macOS app and drivers, added in M0c. Xcode links the local package
-  product `MonkeysPawCore`.
+  macOS app and drivers, added in M0c. `MonkeysPaw/Common/` holds the
+  platform drivers. Xcode links the local package product `MonkeysPawCore`.
 - `server/`: a separate SwiftPM package depending on Core. Its library
   lives in `Sources/MonkeysPawServer/`, CLI in
   `Sources/monkeyspaw-server/`, and tests in `Tests/MonkeysPawServerTests/`.
@@ -32,7 +32,9 @@ Linux GTK skeleton. The macOS app starts in M0c; delivery plumbing starts in M1.
 
 Linux uses Swift 6.4; macOS uses Xcode 26.x. Core's tools-version 5.9 keeps
 Swift 5 language mode; the server's tools-version 6.0 selects Swift 6 mode
-(D15). Commit both `Package.resolved` files.
+(D15). Commit the root and server `Package.resolved` files. The Xcode-side
+`MonkeysPaw.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+cannot be generated on this Linux host; commit it after the first macOS resolve.
 
 Run these commands from the repository root:
 
@@ -44,7 +46,7 @@ Run these commands from the repository root:
 | Build Core without GTK | `swift build --target MonkeysPawCore` |
 | Build Linux app | `swift build --product monkeyspaw` |
 | Test Core and Linux app | `swift test` |
-| Test Linux app with a required display | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
+| Test Linux app with a required display (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
 | Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
 | Build server | `swift build --package-path server` |
 | Test server | `swift test --package-path server` |

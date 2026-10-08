@@ -5,6 +5,10 @@ DerivedData/
 .swiftpm/
 xcuserdata/
 *.xcuserstate
+*.xcresult
+# Track Package.resolved (reproducible release builds), ignore other swiftpm state
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 .DS_Store
 /config/
 .env
