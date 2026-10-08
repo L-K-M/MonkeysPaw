@@ -34,6 +34,10 @@ public final class SetupModel {
         setup.beginHotkeyVerification()
     }
 
+    public func fix(_ kind: SetupRow.Kind) {
+        setup.performFix(for: kind)
+    }
+
     public func runSelfTest() {
         guard state != .testing else { return }
         state = .testing

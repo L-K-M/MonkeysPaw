@@ -123,6 +123,106 @@ final class SetupModelTests: XCTestCase {
         }
     }
 
+    func testFixIntentRoutesEveryActionableKindToProbe() {
+        let table: [(DesktopSession, SetupRow.Kind)] = [
+            (.macOS, .accessibility),
+            (.gnomeWayland, .portal),
+            (.wlroots, .ydotool),
+            (.kdeWayland, .hotkey),
+            (.kdeWayland, .kde),
+        ]
+        for (session, kind) in table {
+            let h = Harness(session: session)
+            h.probe.accessibility = .needsAction(fix: "Allow Accessibility")
+            h.probe.portal = .needsAction(fix: "Allow portal access")
+            h.probe.ydotool = .needsAction(fix: "Enable ydotoold")
+            h.model.refresh()
+
+            h.model.fix(kind)
+
+            XCTAssertEqual(h.probe.fixes, [kind], "\(session): \(kind)")
+        }
+    }
+
+    func testFixCompletionRefreshesRowsThroughMainThread() {
+        let h = Harness(session: .macOS, mainMode: .deferred)
+        h.probe.accessibility = .needsAction(fix: "Allow Accessibility")
+        h.probe.fixMode = .deferred
+        h.delivery.main.drain()
+        var changes = 0
+        h.model.onChange = { changes += 1; XCTAssertTrue(h.delivery.main.isRunning) }
+
+        h.model.fix(.accessibility)
+        XCTAssertTrue(h.probe.fixes.isEmpty)
+        h.delivery.main.drain()
+        XCTAssertEqual(h.probe.fixes, [.accessibility])
+        guard !h.probe.fixes.isEmpty else { return }
+        XCTAssertEqual(changes, 0)
+
+        h.probe.accessibility = .ok
+        let hops = h.delivery.main.hops
+        h.probe.completeFix()
+        XCTAssertEqual(h.delivery.main.hops, hops + 1)
+        XCTAssertEqual(h.status(.accessibility), .needsAction(fix: "Allow Accessibility"))
+        XCTAssertEqual(changes, 0)
+
+        h.delivery.main.drain()
+        XCTAssertEqual(h.status(.accessibility), .ok)
+        XCTAssertEqual(changes, 1)
+    }
+
+    func testFixIgnoresOKAndNotApplicableRows() throws {
+        let h = Harness(session: .kdeWayland)
+        h.probe.portal = .ok
+        h.probe.ydotool = .ok
+        h.probe.kde = .ok
+        h.shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        h.model.beginHotkeyVerification()
+        h.backend.fire()
+        XCTAssertEqual(h.status(.accessibility), .notApplicable)
+        XCTAssertEqual(h.status(.hotkey), .ok)
+
+        for kind in SetupRow.Kind.allCases { h.model.fix(kind) }
+
+        XCTAssertTrue(h.probe.fixes.isEmpty)
+    }
+
+    func testFixChecksCurrentSnapshotAndAllowsUnknownRows() {
+        let statuses: [SetupStatus] = [.ok, .notApplicable, .unknown]
+        for status in statuses {
+            let h = Harness(session: .macOS)
+            h.probe.accessibility = .needsAction(fix: "Allow Accessibility")
+            h.model.refresh()
+            h.probe.accessibility = status
+
+            h.model.fix(.accessibility)
+
+            XCTAssertEqual(h.probe.fixes, status == .unknown ? [.accessibility] : [], "\(status)")
+        }
+    }
+
+    func testDuplicateFixCompletionRefreshesOnce() {
+        let h = Harness(session: .macOS, mainMode: .deferred)
+        h.probe.fixMode = .deferred
+        h.delivery.main.drain()
+        var changes = 0
+        h.model.onChange = { changes += 1; XCTAssertTrue(h.delivery.main.isRunning) }
+        h.model.fix(.accessibility)
+        h.delivery.main.drain()
+        XCTAssertEqual(h.probe.fixes, [.accessibility])
+        guard !h.probe.fixes.isEmpty else { return }
+        let queries = h.probe.queried.count
+
+        h.probe.accessibility = .ok
+        h.probe.completeFix(times: 2)
+        XCTAssertEqual(changes, 0)
+        h.delivery.main.drain()
+
+        XCTAssertEqual(h.status(.accessibility), .ok)
+        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(h.probe.queried.count, queries + 2)
+    }
+
     func testHotkeyRowOnlyTurnsGreenAfterRequestedVerificationFires() throws {
         let h = Harness(session: .gnomeWayland)
         h.probe.hotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .registered, detail: "Bound")

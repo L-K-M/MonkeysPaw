@@ -25,6 +25,27 @@ public final class SetupService {
         mainThread.run { done(self.snapshot()) }
     }
 
+    /// Recheck the row so a stale view cannot launch an unnecessary fix.
+    public func performFix(for kind: SetupRow.Kind) {
+        mainThread.run {
+            guard let row = self.snapshot().rows.first(where: { $0.kind == kind }) else { return }
+            switch row.status {
+            case .ok, .notApplicable: return
+            case .needsAction, .unknown: break
+            }
+
+            // Keep duplicate completion checks on the UI thread as well.
+            var didComplete = false
+            self.probe.performFix(for: kind) {
+                self.mainThread.run {
+                    guard !didComplete else { return }
+                    didComplete = true
+                    self.onChange?()
+                }
+            }
+        }
+    }
+
     public func beginHotkeyVerification() {
         shortcuts.beginVerification()
     }
