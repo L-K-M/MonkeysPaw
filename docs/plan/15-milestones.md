@@ -44,6 +44,45 @@
   coding slice can merge with mock-bus/CI proof; M1c still stays open for
   the NOT RUN GNOME and later flatpak owner checklist in
   `docs/platform/gnome.md`.
+- M1d lands in two focused slices. First, integrate native KGlobalAccel
+  into the GTK app, ShortcutService and Setup on KDE Wayland and X11,
+  with private-bus protocol/lifetime tests and the unchanged delivery
+  smoke. Second, select the shared GlobalShortcuts portal by capability on
+  Plasma >= 6.3 and define the native-to-portal transition: preserve user
+  choices, prevent duplicate activation and keep an explicit fallback.
+  The first slice can merge with mock-bus/CI proof. It does not close M1d;
+  the second slice and NOT RUN KDE/flatpak owner checks remain required in
+  `docs/platform/kde.md`.
+  - Native identity is the normal resident component
+    `ch.lkmc.monkeyspaw`, action `toggle`. A `.desktop` KService action
+    launches on press and cannot provide native release verification.
+    Manual/cold GApplication actions remain a separate activation path.
+  - Use the KDE v2 `a(ai)` sequence API, returned component path and signed
+    64-bit release timestamp. Preserve complete saved sequences and
+    deliberately unbound assignments with Autoloading (0) + SetPresent
+    (2). Record Ctrl+Alt+P only as IsDefault (8), after loading active keys;
+    a fresh install stays unbound until you assign keys in System Settings.
+    Repeat remains unbound. Never use NoAutoloading (4) or foreign-key
+    removal to resolve a conflict. Check availability of assigned sequences
+    (or the default suggestion when unbound), excluding our component, and
+    direct conflicts to System Settings -> Shortcuts -> Monkey's Paw.
+  - A driver-owned retained GDBus connection carries all native calls and
+    signals on GLib. Pin the service owner and filter its signals by path,
+    action and payload type. Bound each complete registration/refresh to
+    two seconds, including connection and conflict probes; owner/bus loss
+    removes readiness and requires an explicit Setup retry. Revision guards
+    reject obsolete replies and activations. Exit queues only SetInactive
+    for the action registered by this run, without daemon auto-start;
+    persistent choices survive. No Qt dependency or Core native values.
+  - Preserve KDE's ydotool -> short lazy RemoteDesktop portal -> copy
+    ladder and diagnostics' no-consent/readback rules. Real Plasma release
+    handling, assignment persistence and Wayland focus remain owner proof.
+  Protocol authority: KDE's [root XML](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/org.kde.KGlobalAccel.xml),
+  [component XML](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/org.kde.kglobalaccel.Component.xml),
+  [flags](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/kglobalaccel_p.h),
+  [setter semantics](https://github.com/KDE/kglobalacceld/blob/5b7f39b88d33877aeecaf9e73e80cbf755c14f12/src/kglobalacceld.cpp),
+  [desktop-action implementation](https://github.com/KDE/kglobalacceld/blob/5b7f39b88d33877aeecaf9e73e80cbf755c14f12/src/kserviceactioncomponent.cpp),
+  and [Qt key/modifier declarations](https://github.com/qt/qtbase/blob/v6.8.0/src/corelib/global/qnamespace.h).
 - M1 is risk-first: proven delivery before features.
 - M5 depends only on M2's format code and can run in parallel with M3 and
   M4.
