@@ -5,6 +5,7 @@ import MonkeysPawCore
 
 /// The Linux composition root: only this type assembles platform drivers.
 final class LinuxEnvironment {
+    private enum ToggleOrigin { case shortcut, manual }
     let log: LogSink
     let mainThread: MainThread
     private let session: LinuxSessionProbe
@@ -59,7 +60,11 @@ final class LinuxEnvironment {
             session: desktop, mainThread: mainThread, parent: portalWindow.parent)
         switch desktop {
         case .kdeWayland, .kdeX11:
-            hotkey = KGlobalAccelHotkeyBackend(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
+            let native = KGlobalAccelHotkeyBackend(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
+            let shortcutPortal = PortalHotkeyBackend(transport: portal, fallback: ManualHotkeyBackend(),
+                runner: runner, migration: .none, mainThread: mainThread, parent: portalWindow.parent)
+            hotkey = KDEPortalHotkeyBackend(native: native, portal: shortcutPortal, transport: portal,
+                choices: KDEHotkeyChoiceStore(paths: LinuxPaths(environment: environment)))
         default:
             let fallback: LinuxHotkeyBackend
             let migration: PortalHotkeyBackend.Migration
@@ -89,7 +94,7 @@ final class LinuxEnvironment {
         }
         shortcuts.configure(bindings) { [weak self] action in
             guard action == .togglePicker else { return }
-            self?.togglePicker()
+            self?.togglePicker(origin: .shortcut)
         }
     }
 
@@ -112,12 +117,12 @@ final class LinuxEnvironment {
         }
     }
 
-    func togglePicker() {
+    private func togglePicker(origin: ToggleOrigin = .manual) {
         // A buried picker needs presenting, matching M0b's toggle semantics.
         if panel.isActiveAndVisible {
             panelModel.cancel()
         } else {
-            panel.useActivationToken(hotkey.consumeActivationToken())
+            panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken() : nil)
             panelModel.show()
         }
     }

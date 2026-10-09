@@ -9,12 +9,14 @@ protocol LinuxHotkeyBackend: AnyObject, HotkeyBackend {
     var onChange: (() -> Void)? { get set }
     @discardableResult func fire(_ action: HotkeyAction) -> Bool
     func configure(done: @escaping () -> Void)
+    func configureNative(done: @escaping () -> Void)
     func consumeActivationToken() -> String?
     func shutdown()
 }
 
 extension LinuxHotkeyBackend {
     func configure(done: @escaping () -> Void) { done() }
+    func configureNative(done: @escaping () -> Void) { configure(done: done) }
     func consumeActivationToken() -> String? { nil }
     func shutdown() { unregister(currentRegistration) }
 }

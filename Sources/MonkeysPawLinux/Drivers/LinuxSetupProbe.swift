@@ -52,7 +52,8 @@ final class LinuxSetupProbe: SetupProbe {
                 // or prompt text enter a URL or diagnostics.
                 gtk_show_uri(nil, LinuxStrings.ydotoolDocs, 0)
             case .hotkey:
-                if self.hotkey.mechanism == .kglobalaccel { self.showInstructions(SetupStrings.kdeShortcut) }
+                if self.hotkey.currentRegistration.configuration == .systemSettings,
+                   self.kdeStatus() != .notApplicable { self.showInstructions(SetupStrings.kdeShortcut) }
                 if self.hotkey.mechanism == .manual {
                     self.showInstructions(GnomeKeybindingInstaller.command)
                 } else {
@@ -61,8 +62,8 @@ final class LinuxSetupProbe: SetupProbe {
                 }
             case .kde:
                 self.showInstructions(SetupStrings.kdeShortcut)
-                if self.hotkey.mechanism == .kglobalaccel {
-                    self.hotkey.configure(done: done)
+                if self.hotkey.mechanism == .kglobalaccel || self.hotkey.currentRegistration.alternativeConfiguration == .nativeFallback {
+                    self.hotkey.configureNative(done: done)
                     return
                 }
             case .portal:

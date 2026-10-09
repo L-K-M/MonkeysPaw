@@ -32,7 +32,7 @@ public final class SetupService {
             switch row.status {
             case .notApplicable: return
             case .ok:
-                guard kind == .hotkey, row.registration?.configuration != nil else { return }
+                guard (kind == .hotkey || kind == .kde), row.registration?.configuration != nil else { return }
             case .needsAction, .unknown: break
             }
 
@@ -98,7 +98,11 @@ public final class SetupService {
             SetupRow(kind: .portal, status: hasPortal ? probe.portalStatus() : .notApplicable),
             SetupRow(kind: .ydotool, status: hasYdotool ? probe.ydotoolStatus() : .notApplicable),
             SetupRow(kind: .hotkey, status: hotkeyStatus, registration: registration),
-            SetupRow(kind: .kde, status: isKDE ? probe.kdeStatus() : .notApplicable),
+            SetupRow(kind: .kde, status: isKDE ? probe.kdeStatus() : .notApplicable,
+                registration: isKDE && registration.alternativeConfiguration != nil
+                    ? HotkeyRegistration(id: registration.id, mechanism: registration.mechanism,
+                        status: registration.status, detail: registration.detail,
+                        configuration: registration.alternativeConfiguration) : nil),
         ])
     }
 

@@ -82,6 +82,12 @@ final class FakePortal {
     var replacementTokens = ["rotation-one", "rotation-two"]
     var responses: [String: String] = [:]
     var handleCall: ((Call) -> Bool)?
+    // Optional coupled KDE daemon: Create loads stored actions before Bind,
+    // and Bind removes omitted component actions, as in Plasma 6.3.
+    var kde: FakeKGlobalAccel?
+    var closeError = false
+    var holdSessionClose = false
+    private var heldCloses: [OpaquePointer] = []
     private(set) var ordinaryCalls: [Call] = []
     private(set) var propertyCalls: [(sender: String, interface: String, name: String)] = []
     private(set) var sessionOwners: [String: String] = [:]
@@ -181,6 +187,10 @@ final class FakePortal {
         for timer in timers.values { g_source_remove(timer) }
         timers.removeAll()
         handleCall = nil
+        for invocation in heldCloses {
+            g_dbus_method_invocation_return_dbus_error(invocation, "org.freedesktop.DBus.Error.Failed", "Fixture stopped")
+        }
+        heldCloses.removeAll()
         if nameSubscription != 0 {
             g_dbus_connection_signal_unsubscribe(connection, nameSubscription)
             nameSubscription = 0
@@ -280,6 +290,7 @@ final class FakePortal {
     private func sessionResponse(_ call: Call) -> String {
         switch call.method {
         case "CreateSession":
+            if call.interface == "org.freedesktop.portal.GlobalShortcuts" { kde?.portalCreate() }
             let value = call.option("session_handle_token")!
             defer { g_variant_unref(value) }
             let session = "/org/freedesktop/portal/desktop/session/"
@@ -290,8 +301,32 @@ final class FakePortal {
                 try! register(path: session, interface: "org.freedesktop.portal.Session")
             }
             return "(uint32 0, {'session_handle': <'\(session)'>})"
-        case "ListShortcuts": return "(uint32 0, {'shortcuts': <\(restoredShortcuts)>})"
-        case "BindShortcuts": return "(uint32 0, {'shortcuts': <\(boundShortcuts)>})"
+        case "ListShortcuts":
+            if let kde, kde.componentExists {
+                let actions = kde.actionNames.map { "('\($0)', {'trigger_description': <'\(kde.hasBinding ? "Saved KDE choice" : "")'>})" }
+                return "(uint32 0, {'shortcuts': <@a(sa{sv}) [\(actions.joined(separator: ","))]>})"
+            }
+            return "(uint32 0, {'shortcuts': <\(restoredShortcuts)>})"
+        case "BindShortcuts":
+            if let kde {
+                let actions = g_variant_get_child_value(call.parameters, 1)!
+                defer { g_variant_unref(actions) }
+                var preferred: String?
+                let ids = (0..<g_variant_n_children(actions)).map { index -> String in
+                    let entry = g_variant_get_child_value(actions, index)!
+                    let id = g_variant_get_child_value(entry, 0)!
+                    let properties = g_variant_get_child_value(entry, 1)!
+                    defer { g_variant_unref(entry); g_variant_unref(id); g_variant_unref(properties) }
+                    if let trigger = g_variant_lookup_value(properties, "preferred_trigger", nil) {
+                        preferred = String(cString: g_variant_get_string(trigger, nil))
+                        g_variant_unref(trigger)
+                    }
+                    return String(cString: g_variant_get_string(id, nil))
+                }
+                kde.portalBind(ids, preferred: preferred)
+                return "(uint32 0, {'shortcuts': <[('toggle', {'trigger_description': <'\(kde.hasBinding ? "Saved KDE choice" : "")'>})]>})"
+            }
+            return "(uint32 0, {'shortcuts': <\(boundShortcuts)>})"
         case "Start":
             let token = replacementTokens[min(starts, replacementTokens.count - 1)]
             starts += 1
@@ -315,6 +350,14 @@ final class FakePortal {
         }
         if method == "Close" {
             closedPaths.append(path)
+            if sessionOwners[path] != nil {
+                if holdSessionClose { heldCloses.append(invocation); return }
+                if closeError {
+                    g_dbus_method_invocation_return_dbus_error(invocation, "org.freedesktop.DBus.Error.Failed", "Fixture close failed")
+                    return
+                }
+                kde?.portalClose()
+            }
             g_dbus_method_invocation_return_value(invocation, nil)
             return
         }
@@ -363,6 +406,15 @@ final class FakePortal {
         case .beforeReply: respond(call); reply(call)
         case .afterReply: reply(call); respond(call)
         case .manual: break
+        }
+    }
+
+    func releaseSessionCloses() {
+        let invocations = heldCloses
+        heldCloses.removeAll()
+        for invocation in invocations {
+            kde?.portalClose()
+            g_dbus_method_invocation_return_value(invocation, nil)
         }
     }
 
