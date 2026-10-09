@@ -46,14 +46,18 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
     }
 
     /// A valid edit follows the test signals on the service connection. Its
-    /// completed availability round trip proves earlier signals were dispatched.
+    /// completed ownership round trip proves earlier signals were dispatched.
     private func barrier() {
-        let count = service.calls.filter { $0.method == "globalShortcutAvailable" }.count
+        let count = probes.count
         service.change(service.savedKeys)
         XCTAssertTrue(GTKTestSupport.spin {
-            self.service.calls.filter { $0.method == "globalShortcutAvailable" }.count > count
+            self.probes.count > count
                 && self.backend.currentRegistration.status != .needsAction
         })
+    }
+
+    private var probes: [FakeKGlobalAccel.Call] {
+        service.calls.filter { ["globalShortcutAvailable", "globalShortcutsByKey"].contains($0.method) }
     }
 
     private func assertKeys(_ call: FakeKGlobalAccel.Call, _ literal: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -63,14 +67,37 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertNotEqual(g_variant_equal(UnsafeRawPointer(value), UnsafeRawPointer(expected)), 0, file: file, line: line)
     }
 
+    func testOwnSavedAndLiveBindingsStayRegisteredAndFire() {
+        XCTAssertFalse(service.shortcutAvailable([201326672]))
+        start()
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status != .needsAction })
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        service.emit()
+        barrier()
+        XCTAssertEqual(fires, 1)
+
+        service.change("@a(ai) [([67108933],)]") // Ctrl+E
+        XCTAssertFalse(service.shortcutAvailable([67108933]))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.backend.currentRegistration.detail.contains("Ctrl+E")
+                && self.backend.currentRegistration.status != .needsAction
+        })
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        service.emit()
+        barrier()
+        XCTAssertEqual(fires, 2)
+    }
+
     func testAuthoritativeV2ShapesAndOneOwnedActionLifetime() throws {
         start()
         ready()
         let id = backend.currentRegistration.id
         let calls = service.calls
-        guard calls.count == 6 else { return XCTFail("Native registration did not complete") }
-        XCTAssertEqual(calls.map(\.method), ["doRegister", "getComponent", "shortcutKeys", "setShortcutKeys", "setShortcutKeys", "globalShortcutAvailable"])
-        XCTAssertEqual(calls.map(\.signature), ["(as)", "(s)", "(as)", "(asa(ai)u)", "(asa(ai)u)", "((ai)s)"])
+        guard calls.count == 8 else { return XCTFail("Native registration did not complete") }
+        XCTAssertEqual(calls.map(\.method), ["doRegister", "getComponent", "shortcutKeys", "setShortcutKeys", "setShortcutKeys"]
+            + Array(repeating: "globalShortcutsByKey", count: 3))
+        XCTAssertEqual(calls.map(\.signature), ["(as)", "(s)", "(as)", "(asa(ai)u)", "(asa(ai)u)"]
+            + Array(repeating: "((ai)(i))", count: 3))
         XCTAssertEqual(Set(calls.map(\.sender)).count, 1)
         let action = g_variant_get_child_value(calls[0].parameters, 0)!
         defer { g_variant_unref(action) }
@@ -84,7 +111,7 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(calls[4].text(2), "uint32 8")
         assertKeys(calls[3], "@a(ai) [([201326672],)]")
         assertKeys(calls[4], "@a(ai) [([201326672],)]")
-        XCTAssertEqual(calls[5].text(1), "'ch.lkmc.monkeyspaw'")
+        XCTAssertEqual(calls[5...7].map { $0.text(1) }, ["(0,)", "(1,)", "(2,)"])
         XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+Alt+P")
         XCTAssertEqual(backend.currentRegistration.configuration, .systemSettings)
         let repeatRegistration = backend.register(.repeatLast, accelerator: try Accelerator("Alt+R")) { XCTFail("Repeat must stay unbound") }
@@ -109,9 +136,11 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         ready()
         assertKeys(service.calls[3], service.savedKeys)
         XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+K, Ctrl+C / Ctrl+Alt+P")
-        let availability = service.calls.filter { $0.method == "globalShortcutAvailable" }
-        XCTAssertEqual(availability.count, 2)
-        XCTAssertEqual(availability.first?.text(0), "([67108939, 67108931, 0, 0],)")
+        let holders = service.calls.filter { $0.method == "globalShortcutsByKey" }
+        XCTAssertEqual(holders.count, 6)
+        XCTAssertEqual(holders.first?.text(0), "([67108939, 67108931, 0, 0],)")
+        XCTAssertEqual(holders.map { $0.text(1) }, ["(0,)", "(1,)", "(2,)", "(0,)", "(1,)", "(2,)"])
+        XCTAssertFalse(service.calls.contains { $0.method == "globalShortcutAvailable" })
         service.change("@a(ai) [([218103812],)]") // Qt Ctrl+Alt+Return
         ready()
         XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.detail == "Ctrl+Alt+Return" })
@@ -125,6 +154,10 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
             ready(.unbound)
             let active = service.calls.last { $0.method == "setShortcutKeys" && $0.text(2) == "uint32 2" }!
             assertKeys(active, literal)
+            XCTAssertEqual(probes.last?.method, "globalShortcutAvailable")
+            XCTAssertEqual(probes.last?.signature, "((ai)s)")
+            XCTAssertEqual(probes.last?.text(0), "([201326672],)")
+            XCTAssertEqual(probes.last?.text(1), "'ch.lkmc.monkeyspaw'")
             service.emit()
             barrier()
             XCTAssertEqual(fires, 0)
@@ -135,7 +168,7 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
     }
 
     func testConflictNeverStealsAndConfigurationRechecksActualKeys() {
-        service.available = false
+        service.foreignHolders = [.init(component: "other.component", action: "toggle", keys: [[201326672]])]
         start()
         XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.detail.contains("conflicts") })
         XCTAssertEqual(backend.currentRegistration.status, .failed)
@@ -144,20 +177,61 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(fires, 0)
         XCTAssertEqual(service.calls.filter { $0.method == "doRegister" }.count, 1)
         XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" }.count, 2)
-        XCTAssertTrue(service.calls.allSatisfy { ["doRegister", "getComponent", "shortcutKeys", "setShortcutKeys", "globalShortcutAvailable"].contains($0.method) })
-        service.available = true
+        XCTAssertTrue(service.calls.allSatisfy { ["doRegister", "getComponent", "shortcutKeys", "setShortcutKeys", "globalShortcutsByKey"].contains($0.method) })
+        service.foreignHolders.removeAll()
+        configure()
+        ready()
+        service.foreignHolders = [.init(component: "ch.lkmc.monkeyspaw", action: "repeat", keys: [[201326672]])]
+        configure()
+        ready(.failed)
+        XCTAssertTrue(backend.currentRegistration.detail.contains("another action"))
+        service.foreignHolders.removeAll()
         configure()
         ready()
         service.change("@a(ai) []")
         ready(.unbound)
-        service.available = false
+        service.foreignHolders = [.init(component: "ch.lkmc.monkeyspaw", action: "repeat", keys: [[201326672]])]
         configure()
         XCTAssertEqual(backend.currentRegistration.status, .unbound)
         XCTAssertTrue(backend.currentRegistration.detail.contains("used by another"))
-        service.available = true
+        service.foreignHolders.removeAll()
         service.change("@a(ai) [([67108933],)]")
         ready()
         XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+E")
+    }
+
+    func testForeignExactPrefixAndSuffixHoldersConflictWithoutFlattening() {
+        service.savedKeys = "@a(ai) [([67108939, 67108931, 0, 0],)]" // Ctrl+K, Ctrl+C
+        start()
+        ready()
+        for (keys, mode): ([Int32], String) in [
+            ([67108939, 67108931], "(0,)"), // Equal
+            ([67108939], "(2,)"), // Shorter prefix shadows our sequence
+            ([67108931], "(2,)"), // Shorter suffix also shadows it
+            ([67108939, 67108931, 67108950], "(1,)"), // Our sequence shadows this prefix
+            ([67108950, 67108939, 67108931], "(1,)"), // And this suffix
+        ] {
+            service.foreignHolders = [.init(component: "foreign.component", action: "toggle", keys: [keys])]
+            configure()
+            ready(.failed)
+            XCTAssertEqual(probes.last?.text(0), "([67108939, 67108931, 0, 0],)")
+            XCTAssertEqual(probes.last?.text(1), mode)
+            service.emit()
+            barrier()
+            XCTAssertEqual(fires, 0)
+        }
+        // Same first chord, different complete sequence: flattened info arrays
+        // cannot prove a conflict or replace our original multi-chord binding.
+        service.foreignHolders = [.init(component: "foreign.component", action: "toggle", keys: [[67108939, 67108933]])]
+        configure()
+        ready()
+        XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+K, Ctrl+C")
+        service.emit()
+        barrier()
+        XCTAssertEqual(fires, 1)
+        XCTAssertEqual(service.calls.filter { $0.method == "doRegister" }.count, 1)
+        XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" }.count, 2)
+        assertKeys(service.calls[3], service.savedKeys)
     }
 
     func testReleaseOnlyAndOwnerPathActionPayloadFiltering() throws {
@@ -224,21 +298,25 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
     }
 
     func testDeadlineRetryAndLateRepliesCompleteExactlyOnce() {
-        service.heldMethods = ["getComponent"]
-        start(budget: .milliseconds(100))
+        service.heldMethods = ["globalShortcutsByKey"]
+        start(budget: .milliseconds(250))
         var completions = 0
         backend.configure { completions += 1 }
         backend.configure { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "globalShortcutsByKey" })
+        service.change("@a(ai) [([67108933],)]")
         ready(.failed)
         XCTAssertEqual(completions, 2)
-        let late = service.calls.first { $0.method == "getComponent" }!
+        let late = service.calls.first { $0.method == "globalShortcutsByKey" }!
         service.heldMethods.removeAll()
         configure()
         ready()
+        XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+E")
         service.reply(late)
         barrier()
         XCTAssertEqual(completions, 2)
-        XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" }.count, 2)
+        XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" }.count, 4)
+        XCTAssertEqual(Set(service.calls.map(\.sender)).count, 1)
         service.emit()
         XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
     }
@@ -255,16 +333,47 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         service.reply(read, body: "(@a(ai) [([201326672],)],)")
         ready(.unbound)
         XCTAssertEqual(completions, 1)
-        service.heldMethods = ["globalShortcutAvailable"]
+        service.heldMethods = ["globalShortcutsByKey"]
         service.change("@a(ai) [([67108931],)]")
-        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "globalShortcutAvailable" && self.backend.currentRegistration.status == .needsAction })
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "globalShortcutsByKey" && self.backend.currentRegistration.status == .needsAction })
         let probe = try XCTUnwrap(service.calls.last)
         service.change("@a(ai) []")
         service.heldMethods.removeAll()
-        service.reply(probe, body: "(false,)")
+        let foreign = FakeKGlobalAccel.Holder(component: "foreign.component", action: "toggle", keys: [[67108931]])
+        service.reply(probe, body: "(@a(ssssssaiai) [\(foreign.literal)],)")
         ready(.unbound)
         XCTAssertFalse(backend.currentRegistration.detail.contains("used by another"))
         XCTAssertEqual(completions, 1)
+
+        service.heldMethods = ["globalShortcutsByKey"]
+        service.change("@a(ai) [([67108933],)]")
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "globalShortcutsByKey" && self.backend.currentRegistration.status == .needsAction })
+        let staleSuccess = try XCTUnwrap(service.calls.last)
+        backend.configure { completions += 1 }
+        service.foreignHolders = [.init(component: "ch.lkmc.monkeyspaw", action: "repeat", keys: [[67108934]])]
+        service.change("@a(ai) [([67108934],)]")
+        service.heldMethods.removeAll()
+        service.reply(staleSuccess, body: "(@a(ssssssaiai) [],)")
+        ready(.failed)
+        XCTAssertTrue(backend.currentRegistration.detail.contains("Ctrl+F"))
+        XCTAssertTrue(backend.currentRegistration.detail.contains("conflicts"))
+        XCTAssertEqual(completions, 2)
+        service.emit()
+        configure()
+        XCTAssertEqual(fires, 0)
+        XCTAssertEqual(completions, 2)
+
+        service.foreignHolders.removeAll()
+        service.heldMethods = ["globalShortcutAvailable"]
+        service.change("@a(ai) []")
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "globalShortcutAvailable" && self.backend.currentRegistration.status == .needsAction })
+        let staleSuggestion = try XCTUnwrap(service.calls.last)
+        service.change("@a(ai) [([67108935],)]")
+        service.heldMethods.removeAll()
+        service.reply(staleSuggestion, body: "(false,)")
+        ready()
+        XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+G")
+        XCTAssertEqual(completions, 2)
     }
 
     func testOwnerLossDuringRegistrationPreventsLateActivation() throws {
@@ -361,6 +470,32 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
             ready(.failed)
             XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" }.count, 0)
             backend.shutdown()
+        }
+    }
+
+    func testMalformedAndOversizedHolderRepliesFailAndRetry() {
+        let own = FakeKGlobalAccel.Holder(component: "ch.lkmc.monkeyspaw", action: "toggle", keys: [[201326672]])
+        let entries = Array(repeating: own.literal, count: 65).joined(separator: ",")
+        let oversized = "('toggle', '\(String(repeating: "x", count: 65_536))', 'ch.lkmc.monkeyspaw', 'Paw', 'default', 'Default', @ai [], @ai [])"
+        let alternatives = Array(repeating: "201326672", count: 17).joined(separator: ",")
+        for body in [
+            "(@a(sssssaiai) [],)",
+            "(@a(ssssssaiai) [('toggle', 'Open', '', 'Paw', 'default', 'Default', @ai [], @ai [])],)",
+            "(@a(ssssssaiai) [\(entries)],)",
+            "(@a(ssssssaiai) [\(oversized)],)",
+            "(@a(ssssssaiai) [('toggle', 'Open', 'ch.lkmc.monkeyspaw', 'Paw', 'default', 'Default', @ai [\(alternatives)], @ai [])],)",
+            "(@a(ssssssaiai) [('toggle', 'Open', 'ch.lkmc.monkeyspaw', 'Paw', 'default', 'Default', @ai [], @ai [\(alternatives)])],)",
+        ] {
+            service.rawReplies = ["globalShortcutsByKey": body]
+            start()
+            ready(.failed)
+            XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
+            service.rawReplies.removeAll()
+            configure()
+            ready()
+            XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+Alt+P")
+            backend.shutdown()
+            XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
         }
     }
 

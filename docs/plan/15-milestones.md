@@ -63,9 +63,15 @@
     (2). Record Ctrl+Alt+P only as IsDefault (8), after loading active keys;
     a fresh install stays unbound until you assign keys in System Settings.
     Repeat remains unbound. Never use NoAutoloading (4) or foreign-key
-    removal to resolve a conflict. Check availability of assigned sequences
-    (or the default suggestion when unbound), excluding our component, and
-    direct conflicts to System Settings -> Shortcuts -> Monkey's Paw.
+    removal to resolve a conflict. For each complete assigned sequence,
+    query `globalShortcutsByKey` with Equal (0), Shadows (1) and Shadowed
+    (2), encoded as `(i)`. Ignore only our exact component/action identity;
+    another component or another action in our component is a foreign
+    holder. Bound each reply to 64 holders and 64 KiB. Holder info's legacy
+    `ai` fields contain first chords only; never replace assigned `a(ai)`
+    values with them. `globalShortcutAvailable` includes our own action, so
+    use it only for the default suggestion while unbound. Direct conflicts
+    to System Settings -> Shortcuts -> Monkey's Paw.
   - A driver-owned retained GDBus connection carries all native calls and
     signals on GLib. Pin the service owner and filter its signals by path,
     action and payload type. Bound each complete registration/refresh to
@@ -80,6 +86,11 @@
   Protocol authority: KDE's [root XML](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/org.kde.KGlobalAccel.xml),
   [component XML](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/org.kde.kglobalaccel.Component.xml),
   [flags](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/kglobalaccel_p.h),
+  [match types](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/kglobalaccel.h),
+  [match encoding](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/kglobalaccel.cpp),
+  [holder fields](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/kglobalshortcutinfo_dbus.cpp),
+  [holder and availability semantics](https://github.com/KDE/kglobalacceld/blob/5b7f39b88d33877aeecaf9e73e80cbf755c14f12/src/globalshortcutcontext.cpp),
+  [sequence shadowing](https://github.com/KDE/kglobalacceld/blob/5b7f39b88d33877aeecaf9e73e80cbf755c14f12/src/sequencehelpers_p.cpp),
   [setter semantics](https://github.com/KDE/kglobalacceld/blob/5b7f39b88d33877aeecaf9e73e80cbf755c14f12/src/kglobalacceld.cpp),
   [desktop-action implementation](https://github.com/KDE/kglobalacceld/blob/5b7f39b88d33877aeecaf9e73e80cbf755c14f12/src/kserviceactioncomponent.cpp),
   and [Qt key/modifier declarations](https://github.com/qt/qtbase/blob/v6.8.0/src/corelib/global/qnamespace.h).

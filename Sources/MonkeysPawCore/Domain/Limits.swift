@@ -35,6 +35,7 @@ public enum Limits {
     /// §15 M1d: total native shortcut registration or refresh, including probes.
     public static let kglobalaccelTimeout: Duration = .seconds(2)
     public static let kglobalaccelPayloadMaxBytes: Int = 64 * kibibyte
+    public static let kglobalaccelHolderCap: Int = 64
     public static let kglobalaccelSequenceCap: Int = 16
     /// Qt QKeySequence stores at most four chords per alternative.
     public static let kglobalaccelChordCap: Int = 4

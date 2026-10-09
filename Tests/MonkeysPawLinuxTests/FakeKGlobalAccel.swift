@@ -7,6 +7,19 @@ import XCTest
 /// A real service on a separate private-bus connection. Replies are literal
 /// fixtures, independent of the production sequence encoder and policy.
 final class FakeKGlobalAccel {
+    struct Holder {
+        let component: String
+        let action: String
+        let keys: [[Int32]]
+
+        // KGlobalShortcutInfo's legacy arrays flatten each sequence's first
+        // chord. Ownership queries must not use these as assigned v2 keys.
+        var literal: String {
+            let firstChords = keys.map { String($0.first ?? 0) }.joined(separator: ", ")
+            return "('\(action)', 'Open picker', '\(component)', 'Monkey’s Paw', 'default', 'Default', @ai [\(firstChords)], @ai [])"
+        }
+    }
+
     final class Call {
         let sender: String
         let method: String
@@ -47,7 +60,7 @@ final class FakeKGlobalAccel {
     static let busName = "org.kde.kglobalaccel"
     static let componentPath = "/component/fixture_returned_path_42"
     var savedKeys = "@a(ai) [([201326672],)]" // Qt Ctrl+Alt+P
-    var available = true
+    var foreignHolders: [Holder] = []
     var heldMethods: Set<String> = []
     var replies: [String: String] = [:]
     var rawReplies: [String: String] = [:]
@@ -166,7 +179,20 @@ final class FakeKGlobalAccel {
         switch call.method {
         case "getComponent": value = "(objectpath '\(Self.componentPath)',)"
         case "shortcutKeys", "setShortcutKeys": value = "(\(savedKeys),)"
-        case "globalShortcutAvailable": value = available ? "(true,)" : "(false,)"
+        case "globalShortcutAvailable":
+            value = shortcutAvailable(Self.queryKey(call)) ? "(true,)" : "(false,)"
+        case "globalShortcutsByKey":
+            let mode = g_variant_get_child_value(call.parameters, 1)!
+            let number = g_variant_get_child_value(mode, 0)!
+            defer { g_variant_unref(mode); g_variant_unref(number) }
+            let query = Self.queryKey(call)
+            let match = g_variant_get_int32(number)
+            let matches = holders.flatMap { holder in
+                holder.keys.compactMap { key in
+                    Self.matches(query, Self.chords(key), mode: match) ? holder.literal : nil
+                }
+            }
+            value = "(@a(ssssssaiai) [\(matches.joined(separator: ", "))],)"
         default: value = "()"
         }
         g_dbus_method_invocation_return_value(invocation, Self.variant(body ?? replies[call.method] ?? value))
@@ -189,6 +215,65 @@ final class FakeKGlobalAccel {
 
     static func variant(_ literal: String) -> OpaquePointer {
         g_variant_parse(nil, literal, nil, nil, nil)!
+    }
+
+    private var holders: [Holder] {
+        let value = g_variant_ref_sink(Self.variant(savedKeys))!
+        defer { g_variant_unref(value) }
+        let keys = (0..<g_variant_n_children(value)).map { index -> [Int32] in
+            let sequence = g_variant_get_child_value(value, index)!
+            let array = g_variant_get_child_value(sequence, 0)!
+            defer { g_variant_unref(sequence); g_variant_unref(array) }
+            return Self.readChords(array)
+        }
+        return [Holder(component: "ch.lkmc.monkeyspaw", action: "toggle", keys: keys)] + foreignHolders
+    }
+
+    // The component argument restricts our context, rather than excluding our
+    // action. Every configured key, including our own, makes availability false.
+    func shortcutAvailable(_ key: [Int32]) -> Bool {
+        let query = Self.chords(key)
+        return !holders.contains { holder in
+            holder.keys.contains { other in
+                (0...2).contains { Self.matches(query, Self.chords(other), mode: $0) }
+            }
+        }
+    }
+
+    private static func queryKey(_ call: Call) -> [Int32] {
+        let sequence = g_variant_get_child_value(call.parameters, 0)!
+        let array = g_variant_get_child_value(sequence, 0)!
+        defer { g_variant_unref(sequence); g_variant_unref(array) }
+        return readChords(array)
+    }
+
+    private static func readChords(_ array: OpaquePointer) -> [Int32] {
+        chords((0..<g_variant_n_children(array)).map { index in
+            let value = g_variant_get_child_value(array, index)!
+            defer { g_variant_unref(value) }
+            return g_variant_get_int32(value)
+        })
+    }
+
+    private static func chords(_ key: [Int32]) -> [Int32] { Array(key.prefix { $0 != 0 }) }
+
+    // Independent model of the pinned daemon's Equal=0, Shadows=1,
+    // Shadowed=2: strict contiguous subsequences, including suffixes.
+    private static func matches(_ query: [Int32], _ other: [Int32], mode: Int32) -> Bool {
+        guard !query.isEmpty, !other.isEmpty else { return false }
+        switch mode {
+        case 0: return query == other
+        case 1: return contains(query, in: other)
+        case 2: return contains(other, in: query)
+        default: return false
+        }
+    }
+
+    private static func contains(_ shorter: [Int32], in longer: [Int32]) -> Bool {
+        guard shorter.count < longer.count else { return false }
+        return (0...(longer.count - shorter.count)).contains { offset in
+            Array(longer[offset..<(offset + shorter.count)]) == shorter
+        }
     }
 
     // Literal consumed declarations from KDE/kglobalaccel revision
@@ -226,6 +311,14 @@ final class FakeKGlobalAccel {
               <arg name="key" type="(ai)" direction="in"/>
               <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QKeySequence"/>
               <arg name="component" type="s" direction="in"/>
+            </method>
+            <method name="globalShortcutsByKey">
+              <arg type="a(ssssssaiai)" direction="out"/>
+              <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QList&lt;KGlobalShortcutInfo&gt;"/>
+              <arg name="key" type="(ai)" direction="in"/>
+              <annotation name="org.qtproject.QtDBus.QtTypeName.In0" value="QKeySequence"/>
+              <arg name="matchType" type="(i)" direction="in"/>
+              <annotation name="org.qtproject.QtDBus.QtTypeName.In1" value="KGlobalAccel::MatchType"/>
             </method>
           </interface>
           <interface name="org.kde.kglobalaccel.Component">

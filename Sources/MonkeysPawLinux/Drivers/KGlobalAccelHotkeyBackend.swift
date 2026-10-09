@@ -263,8 +263,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     private func checkAssignment(_ work: Work) {
         let revision = keysRevision
-        let keys = assigned.bound.isEmpty ? suggestion.bound : assigned.bound
-        checkAvailability(keys, index: 0, work: work) { [weak self] available in
+        let done: (Bool) -> Void = { [weak self] available in
             guard let self else { return }
             // A live edit wins over a read/probe already in flight, within the
             // original total deadline. Never publish stale readiness.
@@ -279,6 +278,25 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
                 self.publish(.registered, self.assigned.detail)
             }
             self.finish()
+        }
+        if assigned.bound.isEmpty {
+            checkAvailability(suggestion.bound, index: 0, work: work, done: done)
+        } else {
+            checkHolders(assigned.bound, index: 0, work: work, done: done)
+        }
+    }
+
+    private func checkHolders(_ keys: [[Int32]], index: Int, work: Work, done: @escaping (Bool) -> Void) {
+        // Availability includes our own action. Enumerate all three match modes
+        // for each complete sequence to find foreign exact/shadowing holders.
+        let modes = KGlobalAccelWire.MatchType.allCases
+        guard index < keys.count * modes.count else { done(true); return }
+        nativeCall(work, "globalShortcutsByKey",
+            KGlobalAccelWire.holderQuery(keys[index / modes.count], modes[index % modes.count])) { [weak self] reply in
+            guard let self else { return }
+            guard let foreign = KGlobalAccelWire.hasForeignHolder(reply) else { self.fail(LinuxStrings.kdeUnavailable); return }
+            guard !foreign else { done(false); return }
+            self.checkHolders(keys, index: index + 1, work: work, done: done)
         }
     }
 
@@ -370,7 +388,8 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         assigned = assignment
         keysRevision += 1
         if work == nil {
-            // The signal already supplies the keys; probe only availability.
+            // The signal already supplies the keys; probe only their holders
+            // (or availability of the default suggestion while unbound).
             let work = Work(budget: budget, done: nil)
             self.work = work
             state = .loading

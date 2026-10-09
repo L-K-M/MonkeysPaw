@@ -99,12 +99,12 @@ final class LinuxKDECompositionTests: XCTestCase {
         environment.setupModel.beginHotkeyVerification()
         service.emit()
         XCTAssertTrue(GTKTestSupport.spin { self.row(.hotkey)?.status == .ok })
-        service.available = false
+        service.foreignHolders = [.init(component: "ch.lkmc.monkeyspaw", action: "repeat", keys: [[67108933]])]
         service.change("@a(ai) [([67108933],)]")
         XCTAssertTrue(GTKTestSupport.spin { self.row(.hotkey)?.registration?.detail.contains("conflicts") == true })
         XCTAssertNotEqual(row(.hotkey)?.status, .ok)
         XCTAssertNotEqual(row(.kde)?.status, .ok)
-        service.available = true
+        service.foreignHolders.removeAll()
         let count = service.calls.count
         environment.setupModel.fix(.hotkey)
         XCTAssertTrue(GTKTestSupport.spin {
