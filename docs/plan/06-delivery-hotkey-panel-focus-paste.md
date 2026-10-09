@@ -58,6 +58,56 @@ Hotkey notes:
   or unavailable GlobalShortcuts uses the existing gsettings mechanism on
   GNOME, installed only on its Setup action. Other unsupported desktops
   retain the manual D-Bus instructions; KDE integration stays in M1d.
+- **Plasma selection and handoff (M1d).** Native KDE Wayland/X11 probes the
+  public GlobalShortcuts `version`; v1 and later are supported. No desktop
+  version guessing. Startup and diagnostics never Create/List/Bind/configure
+  a portal session or open settings. A saved native `toggle`, including a
+  custom, unbound, multi-chord or alternative assignment, remains native
+  until you choose **Use shortcut portal** in Setup. A fresh supported path
+  offers portal attachment; absent capability retains native behavior.
+  **Use native KDE shortcut** remains an explicit Setup action even after
+  verification. Flatpak retains its portal-only driver and host instructions.
+  - Both drivers use component `ch.lkmc.monkeyspaw`, action `toggle`.
+    KDE CreateSession.loadActions can make saved actions present before Bind;
+    Bind.setActions can delete omitted actions. Inspect all component contexts
+    and action names before creation, then again before Bind. Unknown actions
+    or non-default contexts block the single-toggle handoff without mutation.
+    Read complete `a(ai)` assignments, never reconstruct them from legacy
+    `ai` fields or localized portal descriptions. Autoloading must preserve
+    the exact daemon assignment across Create and Bind; recheck it. Native
+    multi-chord/alternative values never become preferred_trigger strings.
+    Saved portal actions from List omit preferred_trigger, including unbound
+    actions. Only a new action gets the default suggestion. No foreign-key
+    stealing, destructive unregister/cleanUp or NoAutoloading.
+  - Gate native callbacks before acknowledged SetInactive, then create/list/
+    bind once on the retained portal connection. Gate portal callbacks and
+    tokens before acknowledged Close, then reactivate native. Two-second IPC
+    and cleanup bounds remain; explicit Setup has a total 60-second consent
+    budget. Snapshot reads and operations on separate connections are not an
+    atomic transaction. Detect changes and fail closed; owner-run settings
+    races remain required proof. A failed/uncertain Close or timed-out Create
+    never authorizes native activation. Denial/cancellation installs no
+    fallback. This slice deliberately leaves a suspended native action
+    inactive after a failed handoff; choose the explicit native action to
+    resume after verified cleanup. Persistent keys survive every cleanup.
+  - One composite registration id survives selection changes. Only events
+    from the effective mechanism/revision may toggle or verify. Reject
+    duplicate events and obsolete tokens; manual/cold GApplication toggles
+    remain usable and never verify either mechanism. Verification is tied
+    to the current mechanism so a handoff requires a real new activation.
+  - Persist only the explicit mechanism enum in an owner-private, validated,
+    atomic `<data>/shortcut-mechanism.json` record, with no key values or
+    tokens. Save portal intent before creation to recover conservatively from
+    an interrupted transition. Restart with portal intent offers **Attach
+    shortcut portal**; it never starts consent automatically or activates
+    native. Save native intent only after portal quiescence. Missing/corrupt
+    records inspect saved native choices without prompting; read/save failures
+    stay actionable and do not claim durable success. No settings framework.
+  - v1 Bind may immediately return unbound while System Settings is open;
+    ShortcutsChanged updates readiness. For an attached v1 session, Setup
+    gives System Settings guidance without another Bind. v2 ConfigureShortcuts
+    is ordinary no-output IPC. Retain native window leases and activation
+    tokens through their bounded interaction, invalidating late continuations.
 - **Linux actions.**
   - `toggle` opens or closes the picker.
   - `repeat` re-delivers the last delivered prompt with the exact values

@@ -18,7 +18,10 @@ capabilities, rather than inferring them from the GNOME version.
   trigger description and changes from system configuration are displayed.
   The v2 configuration action should remain available after verification.
   A manual D-Bus toggle must open the picker without verifying this portal
-  shortcut. Press the real shortcut to turn its verification row green.
+  shortcut or consume a pending portal activation token. Press the real
+  shortcut to turn its verification row green. Duplicate Activated events
+  with the same timestamp must not toggle twice; obsolete callbacks after
+  reconfiguration must not supply verification.
 - [ ] Quit and relaunch. Use Setup's hotkey action to attach this run's
   session without resetting your chosen keys. Confirm only one Bind attempt
   per session, a stable shortcut session identity, and session closure on

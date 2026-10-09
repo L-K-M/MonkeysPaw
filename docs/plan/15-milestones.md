@@ -83,6 +83,23 @@
   - Preserve KDE's ydotool -> short lazy RemoteDesktop portal -> copy
     ladder and diagnostics' no-consent/readback rules. Real Plasma release
     handling, assignment persistence and Wayland focus remain owner proof.
+  - Second-slice policy is specified in §6.1: quiet public v1+ capability
+    selection, explicit portal attachment/native fallback, complete component
+    inspection and exact key readback, acknowledged suspension/Close ordering,
+    one effective callback route and revision-bound verification. A minimal
+    atomic mechanism record preserves explicit choice across restarts; portal
+    attachment still requires Setup each run. Failed or ambiguous cleanup
+    disables activation instead of activating both mechanisms.
+  - Coupled private-bus fixtures model CreateSession reactivation, shared
+    daemon keys and omitted-action deletion. Prove custom/unbound/full
+    sequences, foreign preservation, timeout/loss/cancellation, old events,
+    tokens/parent leases, retry, restart and Setup/composition behavior. These
+    tests do not close M1d: Plasma Wayland/X11 settings/permission-store,
+    identity, activation/focus and flatpak owner checks stay NOT RUN.
+  Portal transition authority: Plasma 6.3 [GlobalShortcuts implementation](https://github.com/KDE/xdg-desktop-portal-kde/blob/v6.3.0/src/globalshortcuts.cpp),
+  [action loading/binding](https://github.com/KDE/xdg-desktop-portal-kde/blob/v6.3.0/src/session.cpp),
+  [component identity](https://github.com/KDE/xdg-desktop-portal-kde/blob/v6.3.0/src/session.h),
+  and the [public XDG interface](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html).
   Protocol authority: KDE's [root XML](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/org.kde.KGlobalAccel.xml),
   [component XML](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/org.kde.kglobalaccel.Component.xml),
   [flags](https://github.com/KDE/kglobalaccel/blob/be418d995b5422cccb29572844919df22ffabc5f/src/kglobalaccel_p.h),
