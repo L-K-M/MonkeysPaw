@@ -19,3 +19,16 @@
 | D15 | Language mode | **Swift 5 language mode for the core and both front ends (tools-version 5.9 manifest, `SWIFT_VERSION = 5.0`); Swift 6 mode for the server (`server/Package.swift` declares tools-version 6.0). Toolchain Swift 6.4 on Linux, Xcode 26 on macOS** | `@MainActor` and `DispatchQueue.main` never run under a GLib main loop, so strict concurrency in shared desktop code invites silent hangs (Vervellum). The server has no GLib and Hummingbird is Swift 6 native. Hummingbird 2.27 needs Swift 6.2+. Mixed modes were reproduced working (review2). **Sendable policy:** types the server uses from Core are value types (DTOs, domain structs); Core's `final class` services are never shared across server tasks. `@preconcurrency import MonkeysPawCore` is the temporary escape hatch, never the plan. | Swift 6 mode everywhere. |
 | D16 | Android | **Kotlin + Jetpack Compose, the HalloMiao stack (AGP 9.3.1, Kotlin 2.4.10, JDK 17, minSdk 26, targetSdk 37, Hilt). Delivery: a picker keyboard (IME) plus a Quick Settings tile → fill → copy, with the text-selection action as a bonus. APK on GitHub Releases, signed by a checked-in key** | It follows the fleet's Android conventions and needs no secrets in CI. The IME and the clipboard are the sanctioned ways to put text into another app's field. | AccessibilityService auto-paste (Play policy, trust). Overlays and bubbles. The Play Store and F-Droid (fleet rule). |
 | D17 | Android core | **A pure-Kotlin port of the Swift core, in a JVM-only `:core` module, kept in step by a shared conformance corpus (`spec/fixtures/`) and JSON Schemas generated from the Swift `SyncAPI` (`spec/schema/`)** | The domain is small and spec-shaped. The server validates every upload with the Swift core, which backstops drift. | The Swift SDK for Android: a second toolchain, pre-1.0 JNI tooling, minSdk 31, and 15-40+ MB per ABI. Kotlin Multiplatform (no Kotlin on the desktop). |
+
+D3 dependency provenance: Core pins the owner-approved
+[BigBoyDevBox/Yams fork](https://github.com/BigBoyDevBox/Yams) at immutable
+revision `d03c783ece4eeacf132828ff569c4060b4d4f198`, the merged
+[anchored-key backport](https://github.com/BigBoyDevBox/Yams/pull/1) on
+`monkeyspaw-6.2.2`. Its base is upstream 6.2.2
+(`a27b21e0c81c5bf42049b897a62aaf387e80f279`); its tree matches the reviewed
+`23e9bd7d8ee615822486774d380f937ec0653410` patch. The personal namespace was
+approved after organization fork creation was unavailable. The backport adds
+a per-parser option to defer comparisons involving anchored key subtrees,
+avoiding alias expansion during duplicate hashing before Core can reject
+them (§5.2). Ordinary duplicate checks and the default Yams policy are
+unchanged. Core still depends only on Foundation and Yams.

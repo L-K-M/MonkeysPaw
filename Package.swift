@@ -15,7 +15,10 @@ let package = Package(
         .library(name: "MonkeysPawCore", targets: ["MonkeysPawCore"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/jpsim/Yams.git", from: "6.2.2"),
+        // Reviewed 6.2.2 backport; Core rejects anchors before key comparison.
+        // Fork provenance and the required parser lifetime are recorded in §3/§5.
+        .package(url: "https://github.com/BigBoyDevBox/Yams.git",
+                 revision: "d03c783ece4eeacf132828ff569c4060b4d4f198"),
     ],
     targets: [
         .target(

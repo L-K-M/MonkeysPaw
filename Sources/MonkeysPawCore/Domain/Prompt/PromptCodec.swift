@@ -21,10 +21,12 @@ public enum PromptCodec {
         }
 
         do {
-            let parser = try Parser(yaml: header, resolver: PortableYAML.syntaxResolver, encoding: .utf8)
+            let parser = try Parser(yaml: header, resolver: PortableYAML.syntaxResolver, encoding: .utf8,
+                                    duplicateKeyPolicy: .deferAnchoredKeys)
             let root = try parser.singleRoot()
             var decodingIssues = [PromptIssue]()
-            // Anchors are weak in Node. Parser owns them until validation ends.
+            // Deferred key comparisons are safe only after rejecting anchors.
+            // Node's anchor references are weak; retain Parser through that check.
             let normalized = withExtendedLifetime(parser) {
                 root.map { PortableYAML.normalize($0, issues: &decodingIssues) }
             }
