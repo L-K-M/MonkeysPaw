@@ -119,6 +119,20 @@ enum KGlobalAccelWire {
         return KGlobalAccelKeys(sequences: sequences)
     }
 
+    static func replyNames(_ value: OpaquePointer) -> [String]? {
+        guard hasType(value, "(as)") else { return nil }
+        let array = g_variant_get_child_value(value, 0)!
+        defer { g_variant_unref(array) }
+        guard g_variant_n_children(array) <= Limits.kglobalaccelHolderCap else { return nil }
+        let names = (0..<g_variant_n_children(array)).map { index -> String in
+            let child = g_variant_get_child_value(array, index)!
+            defer { g_variant_unref(child) }
+            return String(cString: g_variant_get_string(child, nil))
+        }
+        guard names.allSatisfy({ !$0.isEmpty }), Set(names).count == names.count else { return nil }
+        return names
+    }
+
     static func replyKeys(_ value: OpaquePointer) -> KGlobalAccelKeys? {
         guard hasType(value, "(a(ai))") else { return nil }
         let child = g_variant_get_child_value(value, 0)!

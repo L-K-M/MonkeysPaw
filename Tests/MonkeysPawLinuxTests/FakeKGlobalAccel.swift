@@ -65,6 +65,13 @@ final class FakeKGlobalAccel {
     var replies: [String: String] = [:]
     var rawReplies: [String: String] = [:]
     var errors: Set<String> = []
+    var componentExists = true
+    var actionNames = ["toggle"]
+    var additionalKeys: [String: String] = [:]
+    var contexts = ["default"]
+    var events: ((String) -> Void)?
+    private(set) var portalPresent = false
+    private(set) var removedActions: [String] = []
     private(set) var calls: [Call] = []
     private(set) var present = false
     private(set) var registered = false
@@ -73,6 +80,7 @@ final class FakeKGlobalAccel {
     private var node: UnsafeMutablePointer<GDBusNodeInfo>?
     private var registrations: [guint] = []
     private var name: guint = 0
+    private var timestamp: Int64 = 0
 
     init(address: String) throws {
         final class Result { var connection: OpaquePointer?; var done = false }
@@ -143,9 +151,10 @@ final class FakeKGlobalAccel {
 
     deinit { shutdown() }
 
-    func emit(_ member: String = "globalShortcutReleased", body: String = "('ch.lkmc.monkeyspaw', 'toggle', int64 7)",
+    func emit(_ member: String = "globalShortcutReleased", body: String? = nil,
               path: String = componentPath, connection other: OpaquePointer? = nil) {
-        let value = Self.variant(body)
+        timestamp += 1
+        let value = Self.variant(body ?? "('ch.lkmc.monkeyspaw', 'toggle', int64 \(timestamp))")
         defer { g_variant_unref(value) }
         g_dbus_connection_emit_signal(other ?? connection, nil, path,
             member == "yourShortcutsChanged" ? "org.kde.KGlobalAccel" : "org.kde.kglobalaccel.Component",
@@ -178,6 +187,8 @@ final class FakeKGlobalAccel {
         let value: String
         switch call.method {
         case "getComponent": value = "(objectpath '\(Self.componentPath)',)"
+        case "getShortcutContexts": value = "(\(contexts),)"
+        case "shortcutNames": value = "(\(actionNames),)"
         case "shortcutKeys", "setShortcutKeys": value = "(\(savedKeys),)"
         case "globalShortcutAvailable":
             value = shortcutAvailable(Self.queryKey(call)) ? "(true,)" : "(false,)"
@@ -201,8 +212,18 @@ final class FakeKGlobalAccel {
     private func receive(sender: String, method: String, parameters: OpaquePointer, invocation: OpaquePointer) {
         let call = Call(sender: sender, method: method, parameters: parameters, invocation: invocation)
         calls.append(call)
+        events?(method)
+        if method == "getComponent", !componentExists {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                "org.kde.kglobalaccel.NoSuchComponent", "Fixture has no component")
+            call.invocation = nil
+            return
+        }
         switch method {
-        case "doRegister": registered = true
+        case "doRegister":
+            registered = true
+            componentExists = true
+            if !actionNames.contains("toggle") { actionNames.append("toggle") }
         case "setShortcutKeys":
             let flags = g_variant_get_child_value(parameters, 2)!
             defer { g_variant_unref(flags) }
@@ -211,6 +232,31 @@ final class FakeKGlobalAccel {
         default: break
         }
         if !heldMethods.contains(method) { reply(call) }
+    }
+
+    // KDE loadActions uses Autoloading. Its legacy info may flatten display
+    // chords, but the daemon reloads the complete saved a(ai) assignment.
+    func portalCreate() {
+        events?("portal.CreateSession")
+        portalPresent = componentExists && !actionNames.isEmpty
+    }
+
+    func portalBind(_ supplied: [String], preferred: String?) {
+        events?("portal.BindShortcuts")
+        let omitted = actionNames.filter { !supplied.contains($0) }
+        removedActions += omitted
+        omitted.forEach { additionalKeys.removeValue(forKey: $0) }
+        if !actionNames.contains("toggle"), preferred == "CTRL+ALT+p", shortcutAvailable([201326672]) {
+            savedKeys = "@a(ai) [([201326672],)]"
+        }
+        actionNames = supplied
+        componentExists = true
+        portalPresent = true
+    }
+
+    func portalClose() {
+        events?("portal.Close")
+        portalPresent = false
     }
 
     static func variant(_ literal: String) -> OpaquePointer {
@@ -228,6 +274,8 @@ final class FakeKGlobalAccel {
         }
         return [Holder(component: "ch.lkmc.monkeyspaw", action: "toggle", keys: keys)] + foreignHolders
     }
+
+    var hasBinding: Bool { holders.first!.keys.contains { $0.contains { $0 != 0 } } }
 
     // The component argument restricts our context, rather than excluding our
     // action. Every configured key, including our own, makes availability false.
@@ -322,6 +370,10 @@ final class FakeKGlobalAccel {
             </method>
           </interface>
           <interface name="org.kde.kglobalaccel.Component">
+            <method name="getShortcutContexts"><arg type="as" direction="out"/></method>
+            <method name="shortcutNames">
+              <arg type="as" direction="out"/><arg name="context" type="s" direction="in"/>
+            </method>
             <signal name="globalShortcutPressed">
               <arg name="componentUnique" type="s" direction="out"/>
               <arg name="actionUnique" type="s" direction="out"/>

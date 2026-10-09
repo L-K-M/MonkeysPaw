@@ -27,6 +27,13 @@ enum LinuxStrings {
     static let kdeUnavailable = "Could not register the native KDE shortcut. Check KGlobalAccel, then retry in Setup"
     static let kdeTimedOut = "The native KDE shortcut check timed out. Check KGlobalAccel, then retry in Setup"
     static let kdeLost = "The KDE shortcut service was lost. Restart KGlobalAccel, then retry in Setup"
+    static let attachShortcutPortal = "Attach shortcut portal"
+    static let useNativeKDE = "Use native KDE shortcut"
+    static let kdePortalUnavailable = "The shortcut portal is unavailable. Use native KDE shortcut in Setup"
+    static let kdeHandoffBlocked = "The KDE component has additional actions, contexts or changed keys. Keep the native shortcut; review Monkey's Paw in System Settings, then retry in Setup"
+    static let kdeCleanupFailed = "Could not verify shortcut cleanup. Restart Monkey's Paw, then attach the portal or choose Use native KDE shortcut in Setup"
+    static let kdeChoiceUnreadable = "Could not restore the shortcut mechanism choice. Saved native keys are preserved. Choose the mechanism again in Setup"
+    static let kdeChoiceSaveFailed = "Could not save the shortcut mechanism choice. Check the app data directory permissions, then retry in Setup"
 
     static func portalFailure(_ failure: PasteFailure) -> String {
         switch failure {

@@ -261,6 +261,14 @@ final class LinuxPortalTransport {
             nil, nil, nil)
     }
 
+    /// Ordered handoff cleanup must use the retained connection and must not
+    /// reconnect or auto-start a portal to close a session from an old owner.
+    func closeSession(_ session: String, deadline: ContinuousClock.Instant,
+                      completion: @escaping (PortalCallOutcome) -> Void) {
+        guard connection != nil else { completion(.failed(.busFailure)); return }
+        call(.closeSession(session), deadline: deadline, completion: completion)
+    }
+
     func cancel(_ id: UUID) {
         precondition(Thread.isMainThread)
         if let work = pending[id] { finish(work, .cancelled) }
@@ -393,7 +401,8 @@ final class LinuxPortalTransport {
         guard ContinuousClock.now < work.deadline else { finish(work, .failed(.timedOut)); return }
         work.started = true
         g_dbus_connection_call(connection, Self.busName, work.call.path, work.call.interface,
-            work.call.method, PortalWire.arguments(work.call.arguments), nil, G_DBUS_CALL_FLAGS_NONE,
+            work.call.method, PortalWire.arguments(work.call.arguments), nil,
+            work.call.isCleanup ? G_DBUS_CALL_FLAGS_NO_AUTO_START : G_DBUS_CALL_FLAGS_NONE,
             Self.remainingMilliseconds(work.deadline), work.cancellable,
             { source, result, data in
                 guard let source, let result, let data else { return }
@@ -858,6 +867,8 @@ private enum PortalWire {
     }
 }
 private extension PortalCall {
+    var isCleanup: Bool { if case .closeSession = self { return true }; return false }
+
     var path: String {
         if case .closeSession(let session) = self { return session }
         return "/org/freedesktop/portal/desktop"

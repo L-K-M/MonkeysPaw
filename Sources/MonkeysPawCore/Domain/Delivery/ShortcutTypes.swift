@@ -20,7 +20,7 @@ public enum RegistrationStatus: Equatable, Sendable {
     case unbound
 }
 
-public enum HotkeyConfiguration: Sendable { case systemSettings }
+public enum HotkeyConfiguration: Sendable { case systemSettings, attachPortal, nativeFallback }
 
 /// The opaque id lets a driver retain its native registration privately.
 public struct HotkeyRegistration: Equatable, Sendable {
@@ -29,17 +29,20 @@ public struct HotkeyRegistration: Equatable, Sendable {
     public let status: RegistrationStatus
     public let detail: String
     public let configuration: HotkeyConfiguration?
+    public let alternativeConfiguration: HotkeyConfiguration?
 
     public init(
         id: UUID = UUID(), mechanism: HotkeyMechanism,
         status: RegistrationStatus, detail: String,
-        configuration: HotkeyConfiguration? = nil
+        configuration: HotkeyConfiguration? = nil,
+        alternativeConfiguration: HotkeyConfiguration? = nil
     ) {
         self.id = id
         self.mechanism = mechanism
         self.status = status
         self.detail = detail
         self.configuration = configuration
+        self.alternativeConfiguration = alternativeConfiguration
     }
 }
 

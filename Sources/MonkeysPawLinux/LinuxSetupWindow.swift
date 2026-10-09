@@ -69,9 +69,15 @@ final class LinuxSetupWindow {
             let registration = row.registration.map { " [\($0.mechanism.rawValue): \($0.detail)]" } ?? ""
             gtk_label_set_text(mp_label(label), LinuxStrings.rowTitle(row.kind) + ": " + detail + registration)
             let canConfigure = row.registration?.configuration != nil
-            let title = canConfigure ? LinuxStrings.configureShortcuts
-                : (row.kind == .portal || row.registration?.mechanism == .globalShortcutsPortal
-                    ? LinuxStrings.allow : LinuxStrings.fix)
+            let title: String
+            switch row.registration?.configuration {
+            case .attachPortal: title = LinuxStrings.attachShortcutPortal
+            case .nativeFallback: title = LinuxStrings.useNativeKDE
+            case .systemSettings: title = LinuxStrings.configureShortcuts
+            case nil:
+                title = row.kind == .portal || row.registration?.mechanism == .globalShortcutsPortal
+                    ? LinuxStrings.allow : LinuxStrings.fix
+            }
             gtk_button_set_label(mp_button(fix), title)
             gtk_widget_set_sensitive(fix, needsFix || canConfigure ? 1 : 0)
         }

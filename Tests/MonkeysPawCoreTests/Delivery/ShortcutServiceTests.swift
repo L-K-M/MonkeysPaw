@@ -2,6 +2,47 @@ import MonkeysPawCore
 import XCTest
 
 final class ShortcutServiceTests: XCTestCase {
+    func testNewSessionRevisionRejectsQueuedProofFromTheSameMechanism() throws {
+        let h = DeliveryHarness()
+        let backend = FakeHotkeyBackend()
+        backend.activationRevision = UUID()
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var fires = 0
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in fires += 1 }
+        service.beginVerification()
+        h.main.mode = .deferred
+        backend.fire()
+        backend.activationRevision = UUID()
+        h.main.drain()
+        XCTAssertEqual(fires, 0)
+        XCTAssertEqual(service.verification(for: .togglePicker), .notStarted)
+        service.beginVerification()
+        h.main.drain()
+        backend.fire()
+        h.main.drain()
+        XCTAssertEqual(fires, 1)
+        XCTAssertEqual(service.verification(for: .togglePicker), .verified)
+    }
+
+    func testMechanismChangeInvalidatesVerificationAndQueuedActivation() throws {
+        let h = DeliveryHarness()
+        let backend = FakeHotkeyBackend()
+        backend.mechanism = .kglobalaccel
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var fires = 0
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in fires += 1 }
+        service.beginVerification()
+        backend.fire()
+        XCTAssertEqual(service.verification(for: .togglePicker), .verified)
+        h.scheduler.advance(by: .milliseconds(100))
+        h.main.mode = .deferred
+        backend.fire()
+        backend.mechanism = .globalShortcutsPortal
+        XCTAssertEqual(service.verification(for: .togglePicker), .notStarted)
+        h.main.drain()
+        XCTAssertEqual(fires, 1)
+    }
+
     func testRegistersConfiguredAcceleratorsAndExposesMechanismAndDetails() throws {
         let h = DeliveryHarness()
         let backend = FakeHotkeyBackend()

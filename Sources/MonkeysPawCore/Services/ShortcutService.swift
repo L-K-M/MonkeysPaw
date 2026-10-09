@@ -1,3 +1,5 @@
+import Foundation
+
 /// Registration is reported immediately; verification requires a real activation.
 public final class ShortcutService {
     /// This hook has one owner, SetupService. Assignment replaces the callback.
@@ -15,6 +17,14 @@ public final class ShortcutService {
     private let scheduler: Scheduler
     private let mainThread: MainThread
     private var verification: [HotkeyAction: ShortcutVerification] = [:]
+    private struct Activation: Equatable {
+        let mechanism: HotkeyMechanism
+        let revision: UUID?
+    }
+    private var verifiedSelection: [HotkeyAction: Activation] = [:]
+    private var activation: Activation {
+        Activation(mechanism: backend.mechanism, revision: backend.activationRevision)
+    }
     private var revision = 0
     private var toggleState = ToggleState.ready
 
@@ -36,6 +46,7 @@ public final class ShortcutService {
             }
             self.registrations.removeAll()
             self.verification.removeAll()
+            self.verifiedSelection.removeAll()
             self.toggleState = .ready
 
             for action in HotkeyAction.allCases {
@@ -50,8 +61,9 @@ public final class ShortcutService {
                     action, accelerator: accelerator
                 ) { [weak self] in
                     guard let self else { return }
+                    let activation = self.activation
                     self.mainThread.run {
-                        self.fired(action, revision: revision, onFire: onFire)
+                        self.fired(action, revision: revision, activation: activation, onFire: onFire)
                     }
                 }
             }
@@ -61,19 +73,22 @@ public final class ShortcutService {
 
     /// Read only on the injected MainThread.
     public func verification(for action: HotkeyAction) -> ShortcutVerification {
-        verification[action] ?? .notStarted
+        guard verifiedSelection[action] == activation else { return .notStarted }
+        return verification[action] ?? .notStarted
     }
 
     public func beginVerification(_ action: HotkeyAction = .togglePicker) {
         mainThread.run {
             guard let registration = self.registrations[action], registration.status != .unbound else { return }
             self.verification[action] = .waiting
+            self.verifiedSelection[action] = self.activation
             self.onChange?()
         }
     }
 
-    private func fired(_ action: HotkeyAction, revision: Int, onFire: (HotkeyAction) -> Void) {
-        guard revision == self.revision else { return }
+    private func fired(_ action: HotkeyAction, revision: Int, activation: Activation,
+                       onFire: (HotkeyAction) -> Void) {
+        guard revision == self.revision, activation == self.activation else { return }
 
         if verification(for: action) == .waiting {
             verification[action] = .verified

@@ -1,7 +1,9 @@
+import Foundation
 import MonkeysPawCore
 
 final class FakeHotkeyBackend: HotkeyBackend {
     var mechanism: HotkeyMechanism = .globalShortcutsPortal
+    var activationRevision: UUID?
     var status: RegistrationStatus = .registered
     var detail = "Registered by the system"
     private(set) var registered: [(HotkeyAction, Accelerator)] = []

@@ -65,12 +65,12 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { model.session != nil })
         XCTAssertEqual(model.rows.first { $0.kind == .accessibility }?.status, .notApplicable)
         XCTAssertEqual(model.rows.first { $0.kind == .portal }?.status, .needsAction(fix: LinuxStrings.portalAllow))
-        XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.mechanism, .kglobalaccel)
+        XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.mechanism, .globalShortcutsPortal)
         XCTAssertEqual(model.rows.first { $0.kind == .ydotool }?.status, .needsAction(fix: LinuxStrings.ydotoolMissing))
         XCTAssertEqual(model.rows.first { $0.kind == .kde }?.status,
                        .needsAction(fix: SetupStrings.kdeShortcut))
 
-        model.fix(.hotkey)
+        model.fix(.kde)
         XCTAssertTrue(GTKTestSupport.spin {
             guard let window = gtk_application_get_active_window(application),
                   let title = gtk_window_get_title(window) else { return false }

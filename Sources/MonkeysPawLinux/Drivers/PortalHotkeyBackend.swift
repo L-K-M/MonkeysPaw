@@ -6,7 +6,7 @@ import MonkeysPawCore
 /// GNOME capability selection and both portal registration phases share one id.
 final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private enum Selection { case probing, portal(UInt32), fallback, stopped }
-    private enum Teardown { case close, alreadyClosed }
+    private enum Teardown { case close, alreadyClosed, ownerLost }
     enum Migration { case gnomeHost, none }
 
     // Unlike handle_token, this identity remains stable across app runs (§6.3).
@@ -37,6 +37,46 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private var activationToken: String?
     private var activationRevision = 0
     private var parentLease: PortalParent?
+    private var creating = false
+    private var uncertainCreation = false
+    private enum Cleanup { case pending, failed }
+    private struct Retirement {
+        let id = UUID()
+        var state: Cleanup
+    }
+    private var retiring: [String: Retirement] = [:]
+    private var cleanupWaiters: [(Bool) -> Void] = []
+    private var lastActivation: UInt64?
+    /// KDE rechecks owned daemon state after List and immediately before Bind.
+    var beforeBind: (([PortalShortcut], @escaping (Bool) -> Void) -> Void)?
+
+    /// Invalidate all callbacks/leases first, then wait for Session.Close.
+    /// A failed Create may have loaded native actions without returning a handle.
+    func quiesce(done: @escaping (Bool) -> Void) {
+        close(.close)
+        completeConfiguration()
+        cleanupWaiters.append(done)
+        for (session, entry) in retiring where entry.state == .failed { retire(session) }
+        finishCleanup()
+    }
+
+    private func retire(_ session: String) {
+        let entry = Retirement(state: .pending)
+        retiring[session] = entry
+        transport.closeSession(session, deadline: ContinuousClock.now.advanced(by: Limits.portalCallTimeout)) { [weak self] outcome in
+            guard let self, self.retiring[session]?.id == entry.id else { return }
+            if outcome == .success { self.retiring.removeValue(forKey: session) }
+            else { self.retiring[session]?.state = .failed }
+            self.finishCleanup()
+        }
+    }
+
+    private func finishCleanup() {
+        guard !retiring.values.contains(where: { $0.state == .pending }) else { return }
+        let waiters = cleanupWaiters
+        cleanupWaiters.removeAll()
+        waiters.forEach { $0(retiring.isEmpty && !uncertainCreation) }
+    }
 
     init(transport: LinuxPortalTransport, fallback: LinuxHotkeyBackend,
          runner: LinuxToolRunner, migration: Migration, mainThread: MainThread,
@@ -105,7 +145,23 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         onChange?()
     }
 
+    var isAttached: Bool { sessionHandle != nil && bindAttempted }
+
+    /// A KDE retry rechecks capability without attaching a session. The caller
+    /// has already acknowledged old-session cleanup before invoking this seam.
+    func prepareAttachment(done: @escaping (UInt32?) -> Void) {
+        guard !configuring, !isAttached, onFire != nil else { done(nil); return }
+        probe { [weak self] in
+            if let self, case .portal(let version) = self.selection { done(version) }
+            else { done(nil) }
+        }
+    }
+
     func configure(done: @escaping () -> Void) {
+        configure(until: ContinuousClock.now.advanced(by: Limits.portalConsentTimeout), done: done)
+    }
+
+    func configure(until deadline: ContinuousClock.Instant, done: @escaping () -> Void) {
         guard !configuring, onFire != nil else { done(); return }
         switch selection {
         case .probing:
@@ -115,15 +171,14 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 guard let self else { return }
                 self.configuring = false
                 self.configurationDone = nil
-                self.configure(done: done)
+                self.configure(until: deadline, done: done)
             }
         case .fallback:
             fallback.configure(done: done)
         case .portal(let version):
             configuring = true
             configurationDone = done
-            let deadline = ContinuousClock.now.advanced(by: Limits.portalConsentTimeout)
-            watchdog = GTK.after(Limits.portalConsentTimeout.timeInterval) { [weak self] in
+            watchdog = GTK.after(max(0, ContinuousClock.now.duration(to: deadline).timeInterval)) { [weak self] in
                 guard let self else { return }
                 self.watchdog = 0
                 self.failed(.timedOut)
@@ -174,6 +229,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     private func create(deadline: ContinuousClock.Instant, version: UInt32) {
         let revision = revision
+        creating = true
         calls.insert(transport.request(interface: .globalShortcuts, method: "CreateSession",
             options: ["session_handle_token": .string(Self.sessionToken)], deadline: ipcDeadline(deadline)) { [weak self] result in
                 guard let self, self.revision == revision, self.configuring else { return }
@@ -181,6 +237,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                     self.failed(result)
                     return
                 }
+                self.creating = false
                 self.sessionHandle = session
                 self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "ListShortcuts",
                     arguments: [.objectPath(session)], deadline: self.ipcDeadline(deadline)) { [weak self] result in
@@ -210,19 +267,27 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         parent { [weak self] parent in
             guard let self, self.revision == revision, self.configuring else { parent.close(); return }
             self.parentLease = parent
-            self.bindAttempted = true
-            self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "BindShortcuts",
-                arguments: [.objectPath(session), .shortcuts([PortalShortcut(id: ActionName.toggle.rawValue,
-                    properties: properties)]),
-                    .string(parent.identifier)], deadline: deadline) { [weak self] result in
-                        guard let self, self.revision == revision, self.configuring else { return }
-                        guard case .success(let response) = result, let shortcuts = response.shortcuts else {
-                            self.failed(result)
-                            return
-                        }
-                        self.apply(shortcuts, version: version)
-                        self.completeConfiguration()
-                    })
+            let send: (Bool) -> Void = { [weak self] allowed in
+                guard let self, self.revision == revision, self.configuring else { return }
+                guard allowed else { self.failed(.invalidArguments); return }
+                self.bindAttempted = true
+                self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "BindShortcuts",
+                    arguments: [.objectPath(session), .shortcuts([PortalShortcut(id: ActionName.toggle.rawValue,
+                        properties: properties)]),
+                        .string(parent.identifier)], deadline: deadline) { [weak self] result in
+                            guard let self, self.revision == revision, self.configuring else { return }
+                            guard case .success(let response) = result, let shortcuts = response.shortcuts else {
+                                self.failed(result)
+                                return
+                            }
+                            self.apply(shortcuts, version: version)
+                            self.completeConfiguration()
+                        })
+            }
+            // A Wayland export may finish much later than List. Recheck the
+            // shared KDE component after that wait, immediately before Bind.
+            if let beforeBind = self.beforeBind { beforeBind(previous, send) }
+            else { send(true) }
         }
     }
 
@@ -256,9 +321,11 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     private func signal(_ signal: PortalSignal) {
         switch signal {
-        case .activated(let session, let action, _, let token):
+        case .activated(let session, let action, let timestamp, let token):
             guard session == sessionHandle, action == ActionName.toggle.rawValue, bindAttempted,
                   currentRegistration.status == .registered else { return }
+            guard lastActivation != timestamp else { return }
+            lastActivation = timestamp
             activationToken = token
             activationRevision += 1
             let activationRevision = activationRevision
@@ -278,7 +345,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             completeConfiguration()
         case .lost:
             guard case .portal = selection else { return }
-            close(.alreadyClosed)
+            close(.ownerLost)
             update(.failed, LinuxStrings.shortcutSessionLost)
             completeConfiguration()
         default: break
@@ -323,8 +390,15 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         configuring = false
         for id in ids { transport.cancel(id) }
         configuring = wasConfiguring
-        if mode == .close, let sessionHandle { transport.closeSession(sessionHandle) }
+        if creating { uncertainCreation = true; creating = false }
+        if let sessionHandle {
+            if mode == .close { retire(sessionHandle) }
+            else if mode == .ownerLost { retiring[sessionHandle] = Retirement(state: .failed) }
+            else { retiring.removeValue(forKey: sessionHandle) }
+        }
         sessionHandle = nil
+        // Deduplication belongs to the retired session, even if its path is reused.
+        lastActivation = nil
         bindAttempted = false
         parentLease?.close()
         parentLease = nil

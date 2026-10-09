@@ -1,5 +1,6 @@
 #if os(Linux)
 import CGtk
+import Foundation
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -18,6 +19,7 @@ final class LinuxKDECompositionTests: XCTestCase {
         try service.ownName()
         portal = try FakePortal(address: address)
         portal.behavior = .sessions
+        portal.kde = service
         try portal.ownName()
         try portal.ownNotifications()
         tools = try PortalSessionTestSupport.tools()
@@ -56,10 +58,10 @@ final class LinuxKDECompositionTests: XCTestCase {
         XCTAssertEqual(row.registration?.mechanism, .kglobalaccel)
         XCTAssertTrue(GTKTestSupport.spin { service.present })
         XCTAssertEqual(row.registration?.detail, "Ctrl+Alt+P")
-        XCTAssertEqual(row.registration?.configuration, .systemSettings)
+        XCTAssertEqual(row.registration?.configuration, .attachPortal)
         XCTAssertEqual(self.row(.kde)?.status, .ok)
         XCTAssertTrue(portal.calls.isEmpty)
-        XCTAssertFalse(portal.propertyCalls.contains { $0.interface == "org.freedesktop.portal.GlobalShortcuts" })
+        XCTAssertTrue(portal.propertyCalls.contains { $0.interface == "org.freedesktop.portal.GlobalShortcuts" })
         XCTAssertTrue(tools.arguments.isEmpty)
     }
 
@@ -106,7 +108,7 @@ final class LinuxKDECompositionTests: XCTestCase {
         XCTAssertNotEqual(row(.kde)?.status, .ok)
         service.foreignHolders.removeAll()
         let count = service.calls.count
-        environment.setupModel.fix(.hotkey)
+        environment.setupModel.fix(.kde)
         XCTAssertTrue(GTKTestSupport.spin {
             self.service.calls.count > count && self.row(.hotkey)?.registration?.status == .registered
         })
@@ -127,8 +129,64 @@ final class LinuxKDECompositionTests: XCTestCase {
         service.emit()
         XCTAssertTrue(GTKTestSupport.spin { self.row(.hotkey)?.status == .ok })
         let count = service.calls.filter { $0.method == "shortcutKeys" }.count
-        environment.setupModel.fix(.hotkey)
+        environment.setupModel.fix(.kde)
         XCTAssertTrue(GTKTestSupport.spin { self.service.calls.filter { $0.method == "shortcutKeys" }.count > count })
+    }
+
+    func testSetupHandsOffAndFallbackRemainsVisibleAfterRealVerification() throws {
+        portal.versions["org.freedesktop.portal.GlobalShortcuts"] = 1
+        start()
+        let id = try XCTUnwrap(row(.hotkey)?.registration?.id)
+        environment.setupModel.beginHotkeyVerification()
+        service.emit()
+        XCTAssertTrue(GTKTestSupport.spin { self.row(.hotkey)?.status == .ok })
+        environment.setupModel.fix(.hotkey)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.row(.hotkey)?.registration?.mechanism == .globalShortcutsPortal
+                && self.row(.hotkey)?.registration?.status == .registered
+        })
+        XCTAssertEqual(row(.hotkey)?.registration?.id, id)
+        XCTAssertNotEqual(row(.hotkey)?.status, .ok)
+        XCTAssertFalse(service.present)
+        environment.setupModel.beginHotkeyVerification()
+        environment.activateToggle()
+        XCTAssertNotEqual(row(.hotkey)?.status, .ok)
+        service.emit()
+        XCTAssertNotEqual(row(.hotkey)?.status, .ok)
+        let session = try XCTUnwrap(portal.sessionOwners.keys.first)
+        portal.emit(member: "Activated", body: "(objectpath '\(session)', 'toggle', uint64 42, @a{sv} {})")
+        XCTAssertTrue(GTKTestSupport.spin { self.row(.hotkey)?.status == .ok })
+        XCTAssertEqual(row(.kde)?.registration?.configuration, .nativeFallback)
+        environment.presentFromLauncher()
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.setup
+        })
+        let window = try XCTUnwrap(gtk_application_get_active_window(application))
+        let button = try XCTUnwrap(findButton(mp_window_widget(window), title: LinuxStrings.useNativeKDE))
+        XCTAssertNotEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.service.present && self.row(.hotkey)?.registration?.mechanism == .kglobalaccel })
+        XCTAssertFalse(service.portalPresent)
+        XCTAssertNotEqual(row(.hotkey)?.status, .ok)
+        XCTAssertEqual(row(.hotkey)?.registration?.id, id)
+        environment.setupModel.beginHotkeyVerification()
+        service.emit()
+        XCTAssertTrue(GTKTestSupport.spin { self.row(.hotkey)?.status == .ok })
+        XCTAssertEqual(service.savedKeys, "@a(ai) [([201326672],)]")
+        XCTAssertTrue(service.removedActions.isEmpty)
+    }
+
+    private func findButton(_ widget: GTK.Widget, title: String) -> GTK.Widget? {
+        if mp_is_button(widget) != 0, let label = gtk_button_get_label(mp_button(widget)),
+           String(cString: label) == title { return widget }
+        var child = gtk_widget_get_first_child(widget)
+        while let current = child {
+            if let result = findButton(current, title: title) { return result }
+            child = gtk_widget_get_next_sibling(current)
+        }
+        return nil
     }
 
     func testKDEDiagnosticsDoNotAskForConsentAndKeepLadderOrder() {
