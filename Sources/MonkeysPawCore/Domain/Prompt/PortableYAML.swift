@@ -250,36 +250,192 @@ enum PortableYAML {
         return output.reversed()
     }
 
+    private static let decimalChunkRadix: UInt64 = 1_000_000_000
+    private static let decimalChunkDigits = 9
+    private static let radixProductThreshold = 128
+
     private static func decimalInteger(_ string: String) -> String {
         let negative = string.first == "-"
         let unsigned = string.first == "-" || string.first == "+" ? String(string.dropFirst()) : string
-        var digits = unsigned
-        let base: Int
+        let bitsPerDigit: Int
         if unsigned.hasPrefix("0x") {
-            base = 16
-            digits = String(unsigned.dropFirst(2))
+            bitsPerDigit = 4
         } else if unsigned.hasPrefix("0o") {
-            base = 8
-            digits = String(unsigned.dropFirst(2))
+            bitsPerDigit = 3
         } else {
             let value = unsigned.drop(while: { $0 == "0" })
             return value.isEmpty ? "0" : (negative ? "-" : "") + value
         }
-        // Arbitrary-size integer keys stay comparable without imposing a new
-        // metadata number bound or constructing untyped Foundation values.
-        var decimal: [Int] = [0]
-        for byte in digits.lowercased().utf8 {
-            let digit = byte >= 97 ? Int(byte - 87) : Int(byte) - 48
-            guard (0..<base).contains(digit) else { return string }
-            var carry = digit
-            for index in decimal.indices {
-                let value = decimal[index] * base + carry
-                decimal[index] = value % 10
-                carry = value / 10
+
+        // Align groups from the right. Balanced composition avoids repeatedly
+        // scanning a growing decimal value for every group of input digits.
+        let digits = Array(unsigned.dropFirst(2).utf8.drop(while: { $0 == 48 }))
+        let groupWidth = UInt32.bitWidth / bitsPerDigit
+        let radix = UInt64(1) << bitsPerDigit
+        var values = [[UInt64]]()
+        var group: UInt64 = 0
+        var groupDigits = 0
+        var width = digits.count % groupWidth
+        if width == 0 { width = groupWidth }
+        for byte in digits {
+            let digit: UInt64
+            switch byte {
+            case 48...57: digit = UInt64(byte - 48)
+            case 65...70: digit = UInt64(byte - 55)
+            case 97...102: digit = UInt64(byte - 87)
+            default: return string
             }
-            while carry > 0 { decimal.append(carry % 10); carry /= 10 }
+            guard digit < radix else { return string }
+            group = (group << bitsPerDigit) | digit
+            groupDigits += 1
+            if groupDigits == width {
+                values.append(radixChunks(group))
+                group = 0
+                groupDigits = 0
+                width = groupWidth
+            }
         }
-        let value = decimal.reversed().map(String.init).joined()
+
+        var power = radixChunks(UInt64(1) << (groupWidth * bitsPerDigit))
+        while values.count > 1 {
+            var combined = [[UInt64]]()
+            combined.reserveCapacity((values.count + 1) / 2)
+            var index = 0
+            if values.count % 2 == 1 {
+                combined.append(values[0])
+                index = 1
+            }
+            while index < values.count {
+                var value = radixProduct(values[index], power)
+                addRadixChunks(values[index + 1], to: &value)
+                combined.append(value)
+                index += 2
+            }
+            values = combined
+            if values.count > 1 { power = radixProduct(power, power) }
+        }
+
+        let decimal = values.first ?? []
+        var value = String(decimal.last ?? 0)
+        value.reserveCapacity(decimal.count * decimalChunkDigits)
+        for chunk in decimal.dropLast().reversed() {
+            let text = String(chunk)
+            value += String(repeating: "0", count: decimalChunkDigits - text.utf8.count) + text
+        }
         return value == "0" ? value : (negative ? "-" : "") + value
+    }
+
+    // These little-endian decimal chunks are private to radix conversion.
+    // Empty represents zero; the highest stored chunk is always nonzero.
+    private static func radixChunks(_ value: UInt64) -> [UInt64] {
+        var remaining = value
+        var chunks = [UInt64]()
+        while remaining > 0 {
+            chunks.append(remaining % decimalChunkRadix)
+            remaining /= decimalChunkRadix
+        }
+        return chunks
+    }
+
+    private static func addRadixChunks(_ addend: [UInt64], to value: inout [UInt64], offset: Int = 0) {
+        guard !addend.isEmpty else { return }
+        // One spare zero absorbs any final carry. Buffers cannot resize while
+        // borrowed, and every target stays within this allocated count.
+        let count = max(value.count, offset + addend.count) + 1
+        value += repeatElement(0, count: count - value.count)
+        let divisor = decimalChunkRadix
+        addend.withUnsafeBufferPointer { input in
+            value.withUnsafeMutableBufferPointer { output in
+                let source = input.baseAddress!, target = output.baseAddress!
+                let inputCount = input.count
+                var carry: UInt64 = 0
+                var index = 0
+                while index < inputCount || carry > 0 {
+                    let position = offset + index
+                    let sum = target[position] + (index < inputCount ? source[index] : 0) + carry
+                    carry = sum >= divisor ? 1 : 0
+                    target[position] = sum - carry * divisor
+                    index += 1
+                }
+            }
+        }
+        while value.last == 0 { value.removeLast() }
+    }
+
+    private static func subtractRadixChunks(_ subtrahend: [UInt64], from value: inout [UInt64]) {
+        guard !subtrahend.isEmpty else { return }
+        var borrow: UInt64 = 0
+        let divisor = decimalChunkRadix
+        subtrahend.withUnsafeBufferPointer { input in
+            value.withUnsafeMutableBufferPointer { output in
+                let source = input.baseAddress!, target = output.baseAddress!
+                let inputCount = input.count, count = output.count
+                var index = 0
+                while index < count {
+                    let amount = (index < inputCount ? source[index] : 0) + borrow
+                    let chunk = target[index]
+                    borrow = chunk < amount ? 1 : 0
+                    target[index] = chunk + borrow * divisor - amount
+                    index += 1
+                }
+            }
+        }
+        // Only nonnegative cross products are subtracted below.
+        assert(borrow == 0)
+        while value.last == 0 { value.removeLast() }
+    }
+
+    /// Balanced radix products use Karatsuba above the small-product threshold.
+    /// The base case's product + existing chunk + carry is below (10^9)^2,
+    /// so checked UInt64 arithmetic preserves every carry without overflow.
+    private static func radixProduct(_ lhs: [UInt64], _ rhs: [UInt64]) -> [UInt64] {
+        guard !lhs.isEmpty, !rhs.isEmpty else { return [] }
+        if min(lhs.count, rhs.count) <= radixProductThreshold {
+            var result = [UInt64](repeating: 0, count: lhs.count + rhs.count)
+            let divisor = decimalChunkRadix
+            lhs.withUnsafeBufferPointer { leftBuffer in
+                rhs.withUnsafeBufferPointer { rightBuffer in
+                    result.withUnsafeMutableBufferPointer { chunks in
+                        let leftWords = leftBuffer.baseAddress!, rightWords = rightBuffer.baseAddress!
+                        let words = chunks.baseAddress!
+                        let leftCount = leftBuffer.count, rightCount = rightBuffer.count
+                        var leftIndex = 0
+                        while leftIndex < leftCount {
+                            let left = leftWords[leftIndex]
+                            var carry: UInt64 = 0
+                            var rightIndex = 0
+                            while rightIndex < rightCount {
+                                let index = leftIndex + rightIndex
+                                let product = left * rightWords[rightIndex] + words[index] + carry
+                                carry = product / divisor
+                                words[index] = product - carry * divisor
+                                rightIndex += 1
+                            }
+                            // Earlier rows end one position before this carry slot.
+                            words[leftIndex + rightCount] = carry
+                            leftIndex += 1
+                        }
+                    }
+                }
+            }
+            while result.last == 0 { result.removeLast() }
+            return result
+        }
+
+        let split = max(lhs.count, rhs.count) / 2
+        let leftLow = Array(lhs.prefix(split)), leftHigh = Array(lhs.dropFirst(split))
+        let rightLow = Array(rhs.prefix(split)), rightHigh = Array(rhs.dropFirst(split))
+        let low = radixProduct(leftLow, rightLow)
+        let high = radixProduct(leftHigh, rightHigh)
+        var leftSum = leftLow, rightSum = rightLow
+        addRadixChunks(leftHigh, to: &leftSum)
+        addRadixChunks(rightHigh, to: &rightSum)
+        var middle = radixProduct(leftSum, rightSum)
+        subtractRadixChunks(low, from: &middle)
+        subtractRadixChunks(high, from: &middle)
+        var result = low
+        addRadixChunks(middle, to: &result, offset: split)
+        addRadixChunks(high, to: &result, offset: split * 2)
+        return result
     }
 }

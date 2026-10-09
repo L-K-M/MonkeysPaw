@@ -109,6 +109,23 @@ M2a content API clarifications:
   copying source or parser error bodies into messages.
   Positive format integers have no machine-word ceiling; even an unusually
   large future version stays explicitly incompatible and read-only.
+  Exact radix conversion combines groups of 8 hexadecimal or 10 octal digits
+  in balanced batches of 9-digit decimal chunks. Large products use Karatsuba
+  multiplication; chunk products and carries fit checked UInt64 arithmetic.
+  This avoids repeated scans of a growing decimal value and retains
+  arbitrary-size typed key comparison and exact future format versions
+  under the source limit.
+- The reviewed Yams 6.2.2 backport is pinned by immutable revision (§3, D3).
+  Core opts into `Parser.DuplicateKeyPolicy.deferAnchoredKeys`, which defers
+  every comparison involving a key subtree containing an anchor or alias.
+  Core retains the parser while checking parsed anchor metadata and rejects
+  anchored nodes before descending. No anchored tree reaches later key
+  comparison, construction or canonical writing; the parser policy alone
+  does not bound those operations. Ordinary duplicate keys still abort YAML
+  composition with the existing duplicate error and private recovery state.
+  Comparisons involving anchored keys instead reach Core's anchor errors,
+  retaining other decoded metadata and exact source/body. Such documents
+  remain invalid and cannot render or be written.
 - The scalar subset is the intersection of Yams 6.2.2's resolver and the
   YAML 1.2 Core schema, with the lowercase boolean rule above. It also
   rejects binary/sexagesimal numbers, numeric underscores, timestamps,
