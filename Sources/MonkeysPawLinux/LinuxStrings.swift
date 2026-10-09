@@ -20,6 +20,13 @@ enum LinuxStrings {
     static let shortcutMigrationFailed = "Could not inspect or retire the old GNOME binding. Check GNOME Settings, then retry in Setup"
     static let configureShortcuts = "Change in system settings"
     static let allow = "Allow"
+    static let kdeRegistering = "Checking the native KDE shortcut"
+    static let kdeAssign = "No shortcut assigned. " + SetupStrings.kdeShortcut + ". Suggested default: Ctrl+Alt+P"
+    static let kdeDefaultConflict = "No shortcut assigned; Ctrl+Alt+P is used by another component. Choose a free key in System Settings → Shortcuts → Monkey's Paw"
+    static let kdeConflict = "This shortcut conflicts with another component. Choose a free key in System Settings → Shortcuts → Monkey's Paw, then retry in Setup"
+    static let kdeUnavailable = "Could not register the native KDE shortcut. Check KGlobalAccel, then retry in Setup"
+    static let kdeTimedOut = "The native KDE shortcut check timed out. Check KGlobalAccel, then retry in Setup"
+    static let kdeLost = "The KDE shortcut service was lost. Restart KGlobalAccel, then retry in Setup"
 
     static func portalFailure(_ failure: PasteFailure) -> String {
         switch failure {

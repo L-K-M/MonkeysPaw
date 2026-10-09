@@ -39,7 +39,8 @@ final class LinuxSetupProbe: SetupProbe {
         var host = session.currentSession()
         while case .flatpak(let nested) = host { host = nested }
         guard host == .kdeWayland || host == .kdeX11 else { return .notApplicable }
-        return .needsAction(fix: SetupStrings.kdeShortcut + " (Added in M1d)")
+        if hotkey.mechanism == .kglobalaccel, hotkey.currentRegistration.status == .registered { return .ok }
+        return .needsAction(fix: SetupStrings.kdeShortcut)
     }
 
     func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) {
@@ -51,6 +52,7 @@ final class LinuxSetupProbe: SetupProbe {
                 // or prompt text enter a URL or diagnostics.
                 gtk_show_uri(nil, LinuxStrings.ydotoolDocs, 0)
             case .hotkey:
+                if self.hotkey.mechanism == .kglobalaccel { self.showInstructions(SetupStrings.kdeShortcut) }
                 if self.hotkey.mechanism == .manual {
                     self.showInstructions(GnomeKeybindingInstaller.command)
                 } else {
@@ -58,7 +60,11 @@ final class LinuxSetupProbe: SetupProbe {
                     return
                 }
             case .kde:
-                self.showInstructions(SetupStrings.kdeShortcut + " (Added in M1d)")
+                self.showInstructions(SetupStrings.kdeShortcut)
+                if self.hotkey.mechanism == .kglobalaccel {
+                    self.hotkey.configure(done: done)
+                    return
+                }
             case .portal:
                 self.remoteDesktop.allow(done: done)
                 return

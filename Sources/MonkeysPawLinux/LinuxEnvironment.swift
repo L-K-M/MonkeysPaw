@@ -59,7 +59,7 @@ final class LinuxEnvironment {
             session: desktop, mainThread: mainThread, parent: portalWindow.parent)
         switch desktop {
         case .kdeWayland, .kdeX11:
-            hotkey = ManualHotkeyBackend() // KGlobalAccel belongs to M1d.
+            hotkey = KGlobalAccelHotkeyBackend(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
         default:
             let fallback: LinuxHotkeyBackend
             let migration: PortalHotkeyBackend.Migration

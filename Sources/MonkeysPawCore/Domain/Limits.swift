@@ -32,6 +32,13 @@ public enum Limits {
     /// §6.3: total explicit Setup/initial GNOME or flatpak consent budget.
     public static let portalConsentTimeout: Duration = .seconds(60)
 
+    /// §15 M1d: total native shortcut registration or refresh, including probes.
+    public static let kglobalaccelTimeout: Duration = .seconds(2)
+    public static let kglobalaccelPayloadMaxBytes: Int = 64 * kibibyte
+    public static let kglobalaccelSequenceCap: Int = 16
+    /// Qt QKeySequence stores at most four chords per alternative.
+    public static let kglobalaccelChordCap: Int = 4
+
     /// §12: bound opaque portal tokens and their private JSON representation.
     public static let portalTokenMaxBytes: Int = 4 * kibibyte
     public static let portalTokenFileMaxBytes: Int = 16 * kibibyte
