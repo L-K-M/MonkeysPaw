@@ -81,10 +81,22 @@ struct GnomeKeybindingInstaller {
             retired.insert(path)
         }
         guard !retired.isEmpty else { return .ready }
-        // Re-read before publishing so a concurrent settings edit is not lost.
+        // Recheck the list and candidates before publishing. Separate CLI calls
+        // cannot prevent an edit after the final checks.
         guard let latest = read(["get", Self.listSchema, "custom-keybindings"]),
-              Self.paths(in: latest) == paths,
-              read(["set", Self.listSchema, "custom-keybindings", Self.encode(paths.filter { !retired.contains($0) })]) != nil else {
+              Self.paths(in: latest) == paths else { return .unavailable }
+        for path in paths where retired.contains(path) {
+            let schema = Self.itemSchema + ":" + path
+            guard let rawName = read(["get", schema, "name"]), let name = Self.string(in: rawName),
+                  let rawCommand = read(["get", schema, "command"]), let command = Self.string(in: rawCommand),
+                  let rawBinding = read(["get", schema, "binding"]), let binding = Self.string(in: rawBinding) else {
+                return .unavailable
+            }
+            guard name == Self.bindingName, command == Self.command, binding == defaultBinding else {
+                return .editedBinding
+            }
+        }
+        guard read(["set", Self.listSchema, "custom-keybindings", Self.encode(paths.filter { !retired.contains($0) })]) != nil else {
             return .unavailable
         }
         return .ready

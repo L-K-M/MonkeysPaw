@@ -261,6 +261,82 @@ final class PortalHotkeyTests: XCTestCase {
         }
     }
 
+    func testFallbackEditedAfterInspectionBlocksPortalAndPreservesRows() throws {
+        let row = GnomeKeybindingInstaller.itemSchema + ":" + GnomeKeybindingInstaller.basePath + "custom1/"
+        let originalFields = [
+            "name": "'Monkey\\'s Paw: toggle'",
+            "command": "'gapplication action ch.lkmc.monkeyspaw toggle'",
+            "binding": "'<Control><Alt>p'",
+        ]
+        for (field, edited) in [("name", "'User shortcut'"), ("command", "'user-command'"),
+                                ("binding", "'<Control><Alt>e'"), ("binding", "''")] {
+            try editFallbackOnSecondListRead(field: field, value: edited)
+            try register()
+            configure()
+            XCTAssertEqual(backend.currentRegistration.status, .needsAction, field)
+            XCTAssertEqual(backend.currentRegistration.detail, LinuxStrings.shortcutMigrationBlocked, field)
+            XCTAssertTrue(portal.calls.isEmpty, field)
+            XCTAssertEqual(tools.arguments.filter { $0.prefix(3) == ["get", GnomeKeybindingInstaller.listSchema,
+                "custom-keybindings"] }.count, 2, field)
+            XCTAssertFalse(tools.arguments.contains { $0.first == "set" }, field)
+            XCTAssertEqual(try settingsValue(schema: GnomeKeybindingInstaller.listSchema, key: "custom-keybindings"),
+                           tools.environment["FAKE_BINDINGS"], field)
+            for (key, original) in originalFields {
+                XCTAssertEqual(try settingsValue(schema: row, key: key), key == field ? edited : original, field)
+            }
+        }
+    }
+
+    func testFailedOrMalformedFallbackRecheckBlocksPortalWithoutWrites() throws {
+        for field in ["name", "command", "binding"] {
+            for value in ["FAIL", "malformed"] {
+                try editFallbackOnSecondListRead(field: field, value: value)
+                try register()
+                configure()
+                XCTAssertEqual(backend.currentRegistration.status, .failed, field)
+                XCTAssertEqual(backend.currentRegistration.detail, LinuxStrings.shortcutMigrationFailed, field)
+                XCTAssertTrue(portal.calls.isEmpty, field)
+                XCTAssertFalse(tools.arguments.contains { $0.first == "set" }, field)
+                XCTAssertEqual(try settingsValue(schema: GnomeKeybindingInstaller.listSchema, key: "custom-keybindings"),
+                               tools.environment["FAKE_BINDINGS"], field)
+            }
+        }
+    }
+
+    private func editFallbackOnSecondListRead(field: String, value: String) throws {
+        backend.shutdown()
+        tools = try PortalSessionTestSupport.tools(settingsHook: #"""
+            if [ "$1:$3" = get:custom-keybindings ]; then
+                if [ -f "$FAKE_LOG.list-read" ]; then
+                    printf '%s\n' "$FAKE_EDIT_VALUE" > "$FAKE_LOG.$FAKE_EDIT_FIELD"
+                fi
+                : > "$FAKE_LOG.list-read"
+            fi
+            if [ "$1" = get ] && [ -f "$FAKE_LOG.$3" ] &&
+               { [ "$3" = custom-keybindings ] || [ "$2" = "$FAKE_EDIT_SCHEMA" ]; }; then
+                IFS= read -r value < "$FAKE_LOG.$3"
+                [ "$value" = FAIL ] && exit 2
+                printf '%s\n' "$value"
+                exit 0
+            fi
+            if [ "$1:$3" = set:custom-keybindings ]; then
+                printf '%s\n' "$4" > "$FAKE_LOG.custom-keybindings"
+            fi
+            """#)
+        tools.environment["FAKE_BINDINGS"] = GnomeKeybindingInstaller.encode(["custom0/", "custom1/", "custom2/"]
+            .map { GnomeKeybindingInstaller.basePath + $0 })
+        tools.environment["FAKE_NAME"] = "'Monkey\\'s Paw: toggle'"
+        tools.environment["FAKE_EDIT_SCHEMA"] = GnomeKeybindingInstaller.itemSchema + ":"
+            + GnomeKeybindingInstaller.basePath + "custom1/"
+        tools.environment["FAKE_EDIT_FIELD"] = field
+        tools.environment["FAKE_EDIT_VALUE"] = value
+        backend = makeBackend(migration: .gnomeHost)
+    }
+
+    private func settingsValue(schema: String, key: String) throws -> String {
+        try tools.runner.run("gsettings", arguments: ["get", schema, key]).get().text
+    }
+
     func testClosedAndOwnerLossInvalidateRegistrationAndShutdownClosesSession() throws {
         try register()
         configure()

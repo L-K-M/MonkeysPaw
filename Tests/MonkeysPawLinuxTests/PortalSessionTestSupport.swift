@@ -6,13 +6,14 @@ import XCTest
 @testable import MonkeysPawLinux
 
 enum PortalSessionTestSupport {
-    static func tools() throws -> FakeLinuxTools {
+    static func tools(settingsHook: String = "") throws -> FakeLinuxTools {
         let tools = try FakeLinuxTools()
         tools.environment["DBUS_SESSION_BUS_ADDRESS"] = try FakePortal.requirePrivateBus()
         tools.environment["XDG_DATA_HOME"] = tools.directory.path
         tools.environment["XDG_CONFIG_HOME"] = tools.directory.path
         try tools.install("gsettings", script: """
             \(FakeLinuxTools.recordArguments)
+            \(settingsHook)
             case "$1:$3" in
                 list-schemas:) printf '%s\\n' 'org.gnome.settings-daemon.plugins.media-keys' ;;
                 get:custom-keybindings)
