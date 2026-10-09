@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [
+      {
+        "name": "x",
+        "type": "text",
+        "label": "x",
+        "description": null,
+        "default": "seed",
+        "options": [],
+        "optional": true,
+        "remember": true,
+        "implicit": false
+      }
+    ],
+    "builtins": [],
+    "issues": [],
+    "result": {
+      "text": "[]"
+    }
+  },
+  "values": {
+    "x": ""
+  }
+}

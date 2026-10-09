@@ -1,0 +1,4 @@
+---
+x: !custom text
+---
+Body

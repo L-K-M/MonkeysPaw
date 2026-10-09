@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "source.too_large",
+        "severity": "error"
+      }
+    ],
+    "private": true,
+    "fields": [],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  },
+  "repeat": 131073
+}

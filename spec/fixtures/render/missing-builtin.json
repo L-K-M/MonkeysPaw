@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [
+      "date"
+    ],
+    "issues": [],
+    "result": {
+      "error": "builtin_missing",
+      "name": "date"
+    }
+  },
+  "values": {
+    "date": "field-override"
+  }
+}

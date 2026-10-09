@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "literal",
+        "text": "{{9a}} {{-a}} {{}}"
+      }
+    ],
+    "names": [],
+    "fields": [],
+    "issues": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      }
+    ]
+  }
+}

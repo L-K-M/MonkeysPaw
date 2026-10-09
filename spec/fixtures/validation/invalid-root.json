@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "yaml.root_not_mapping",
+        "severity": "error"
+      }
+    ],
+    "private": true,
+    "fields": [],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  }
+}

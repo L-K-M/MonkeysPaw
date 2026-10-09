@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "expected": {
+    "metadata": {
+      "id": null,
+      "title": "on",
+      "description": null,
+      "tags": [],
+      "favorite": false,
+      "private": false,
+      "format": "1",
+      "declarations": []
+    },
+    "body": "Body",
+    "issues": [],
+    "canonical": "---\ntitle: \"on\"\nx:\n- \"y\"\n- \"yes\"\n- \"n\"\n- \"no\"\n- \"on\"\n- \"off\"\n- \"010\"\n- \"0b10\"\n- \"1_000\"\n- \"1:20\"\n- \"2026-10-09\"\n- \"<<\"\n- \"=\"\n- \"on\\n010\\n\"\nquoted:\n  \"<<\": \"yes\"\n  \"=\": \"010\"\n  \"on\": \"true\"\n---\nBody"
+  }
+}

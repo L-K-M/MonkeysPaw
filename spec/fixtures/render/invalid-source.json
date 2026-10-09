@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [],
+    "issues": [
+      {
+        "code": "template.unbalanced_opener",
+        "severity": "error"
+      }
+    ],
+    "result": {
+      "error": "invalid_prompt"
+    }
+  }
+}

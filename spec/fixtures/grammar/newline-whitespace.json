@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "literal",
+        "text": "{{\nx}} {{x\n}} "
+      },
+      {
+        "kind": "placeholder",
+        "name": "x"
+      }
+    ],
+    "names": [
+      "x"
+    ],
+    "fields": [
+      {
+        "name": "x",
+        "type": "text",
+        "label": "x",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "issues": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [],
+    "issues": [],
+    "result": {
+      "text": "{{x}}"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [
+      {
+        "name": "x",
+        "type": "text",
+        "label": "x",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "builtins": [],
+    "issues": [],
+    "result": {
+      "text": "  👋\r\n\t{{x}} & <tag>\n"
+    }
+  },
+  "values": {
+    "x": "  👋\r\n\t{{x}} & <tag>\n"
+  }
+}

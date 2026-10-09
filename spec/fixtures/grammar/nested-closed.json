@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "literal",
+        "text": "{{outer {{inner}} tail}}"
+      }
+    ],
+    "names": [],
+    "fields": [],
+    "issues": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      }
+    ]
+  }
+}

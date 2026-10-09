@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "field.invalid_name",
+        "severity": "error"
+      },
+      {
+        "code": "field.unused",
+        "severity": "warning"
+      }
+    ],
+    "private": false,
+    "fields": [],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "expected": {
+    "metadata": {
+      "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "title": "Review",
+      "description": "Review a pasted diff.",
+      "tags": [
+        "code",
+        "review"
+      ],
+      "favorite": true,
+      "private": false,
+      "format": "1",
+      "declarations": [
+        {
+          "name": "notes",
+          "type": "multiline",
+          "label": "Notes",
+          "description": "Details",
+          "default": "seed",
+          "options": [],
+          "optional": true,
+          "remember": false,
+          "implicit": false
+        },
+        {
+          "name": "language",
+          "type": "choice",
+          "label": "language",
+          "description": null,
+          "default": "Rust",
+          "options": [
+            {
+              "label": "Rust",
+              "value": "Rust"
+            },
+            {
+              "label": "Python 3",
+              "value": "Python"
+            }
+          ],
+          "optional": false,
+          "remember": true,
+          "implicit": false
+        }
+      ]
+    },
+    "body": "{{language}} :: {{notes}} :: {{language}}",
+    "issues": [],
+    "canonical": "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ntitle: Review\ndescription: Review a pasted diff.\ntags:\n- code\n- review\nfavorite: true\nprivate: false\nfields:\n  notes:\n    description: Details\n    label: Notes\n    type: multiline\n    optional: true\n    remember: false\n    default: seed\n    hint:\n      z: last\n      a: first\n  language:\n    type: choice\n    options:\n    - Rust\n    - label: Python 3\n      value: Python\n      extra: keep\n    default: Rust\nformat: 1\nzeta:\n  second:\n  - \"on\"\n  - \"010\"\n  - true\n  - null\n  - 12\n  - 1.5\n  first:\n    \"yes\": literal\nalpha: tail\n---\n{{language}} :: {{notes}} :: {{language}}"
+  }
+}

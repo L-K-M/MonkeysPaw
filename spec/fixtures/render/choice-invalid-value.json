@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [
+      {
+        "name": "x",
+        "type": "choice",
+        "label": "x",
+        "description": null,
+        "default": "a",
+        "options": [
+          {
+            "label": "A",
+            "value": "a"
+          }
+        ],
+        "optional": false,
+        "remember": true,
+        "implicit": false
+      }
+    ],
+    "builtins": [],
+    "issues": [],
+    "result": {
+      "error": "choice_value_invalid",
+      "field": "x"
+    }
+  },
+  "values": {
+    "x": "A"
+  }
+}

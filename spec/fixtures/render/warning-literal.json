@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [],
+    "issues": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      }
+    ],
+    "result": {
+      "text": "{{#if x}}"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [
+      {
+        "name": "x",
+        "type": "text",
+        "label": "x",
+        "description": null,
+        "default": "seed",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": false
+      }
+    ],
+    "builtins": [],
+    "issues": [],
+    "result": {
+      "error": "required_value_missing",
+      "field": "x"
+    }
+  },
+  "values": {
+    "x": ""
+  }
+}

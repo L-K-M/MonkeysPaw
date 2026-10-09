@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "yaml.invalid",
+        "severity": "error"
+      }
+    ],
+    "private": true,
+    "fields": [],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  }
+}

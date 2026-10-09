@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "placeholder",
+        "name": "_x-9"
+      },
+      {
+        "kind": "literal",
+        "text": " "
+      },
+      {
+        "kind": "placeholder",
+        "name": "CUSTOMER_NAME"
+      }
+    ],
+    "names": [
+      "_x-9",
+      "CUSTOMER_NAME"
+    ],
+    "fields": [
+      {
+        "name": "_x-9",
+        "type": "text",
+        "label": "_x-9",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      },
+      {
+        "name": "CUSTOMER_NAME",
+        "type": "text",
+        "label": "CUSTOMER_NAME",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "issues": []
+  }
+}
