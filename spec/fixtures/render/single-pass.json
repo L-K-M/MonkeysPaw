@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [
+      {
+        "name": "name",
+        "type": "text",
+        "label": "name",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "builtins": [
+      "clipboard"
+    ],
+    "issues": [],
+    "result": {
+      "text": "{{x}} & <a> / {{name}}"
+    }
+  },
+  "values": {
+    "name": "{{x}} & <a>"
+  },
+  "builtins": {
+    "clipboard": "{{name}}"
+  }
+}

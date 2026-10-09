@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [],
+    "issues": [
+      {
+        "code": "format.unsupported",
+        "severity": "error"
+      }
+    ],
+    "result": {
+      "error": "unsupported_format",
+      "version": "2"
+    }
+  }
+}

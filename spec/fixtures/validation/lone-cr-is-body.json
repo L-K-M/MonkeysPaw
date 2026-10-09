@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [],
+    "private": false,
+    "fields": [],
+    "canRender": true,
+    "readOnly": false,
+    "canWrite": true
+  }
+}

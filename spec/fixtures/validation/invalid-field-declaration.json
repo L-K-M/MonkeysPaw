@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "field.invalid_declaration",
+        "severity": "error"
+      }
+    ],
+    "private": false,
+    "fields": [
+      {
+        "name": "x",
+        "type": "text",
+        "label": "x",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": false
+      }
+    ],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  }
+}

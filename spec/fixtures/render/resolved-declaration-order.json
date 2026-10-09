@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [
+      {
+        "name": "a",
+        "type": "text",
+        "label": "a",
+        "description": null,
+        "default": "A",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": false
+      },
+      {
+        "name": "b",
+        "type": "text",
+        "label": "b",
+        "description": null,
+        "default": "B",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": false
+      },
+      {
+        "name": "implicit",
+        "type": "text",
+        "label": "implicit",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "builtins": [],
+    "issues": [],
+    "result": {
+      "text": "ABI"
+    }
+  },
+  "values": {
+    "implicit": "I"
+  }
+}

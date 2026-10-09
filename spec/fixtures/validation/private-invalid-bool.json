@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "yaml.scalar_not_portable",
+        "severity": "error"
+      },
+      {
+        "code": "metadata.invalid_type",
+        "severity": "error"
+      }
+    ],
+    "private": true,
+    "fields": [],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  }
+}

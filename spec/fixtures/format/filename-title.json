@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Meeting.notes.md",
+  "expected": {
+    "metadata": {
+      "id": null,
+      "title": "Meeting.notes",
+      "description": null,
+      "tags": [],
+      "favorite": false,
+      "private": false,
+      "format": "1",
+      "declarations": []
+    },
+    "body": "plain",
+    "issues": [],
+    "canonical": "plain"
+  }
+}

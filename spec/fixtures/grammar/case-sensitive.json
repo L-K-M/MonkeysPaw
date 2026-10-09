@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "placeholder",
+        "name": "A"
+      },
+      {
+        "kind": "literal",
+        "text": "/"
+      },
+      {
+        "kind": "placeholder",
+        "name": "a"
+      },
+      {
+        "kind": "literal",
+        "text": "/"
+      },
+      {
+        "kind": "placeholder",
+        "name": "A"
+      }
+    ],
+    "names": [
+      "A",
+      "a"
+    ],
+    "fields": [
+      {
+        "name": "A",
+        "type": "text",
+        "label": "A",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      },
+      {
+        "name": "a",
+        "type": "text",
+        "label": "a",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "issues": []
+  }
+}

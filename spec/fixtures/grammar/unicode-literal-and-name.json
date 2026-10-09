@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "literal",
+        "text": "尾 👋 é {{é}} "
+      },
+      {
+        "kind": "placeholder",
+        "name": "A1_-"
+      }
+    ],
+    "names": [
+      "A1_-"
+    ],
+    "fields": [
+      {
+        "name": "A1_-",
+        "type": "text",
+        "label": "A1_-",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "issues": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      }
+    ]
+  }
+}

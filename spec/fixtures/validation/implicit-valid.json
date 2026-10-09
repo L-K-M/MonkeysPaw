@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [],
+    "private": false,
+    "fields": [
+      {
+        "name": "ordinary",
+        "type": "text",
+        "label": "ordinary",
+        "description": null,
+        "default": "",
+        "options": [],
+        "optional": false,
+        "remember": true,
+        "implicit": true
+      }
+    ],
+    "canRender": true,
+    "readOnly": false,
+    "canWrite": true
+  }
+}

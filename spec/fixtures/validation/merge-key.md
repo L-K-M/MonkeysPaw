@@ -1,0 +1,5 @@
+---
+extension:
+  <<: {safe: text}
+---
+Body

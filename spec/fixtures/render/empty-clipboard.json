@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [
+      "clipboard"
+    ],
+    "issues": [],
+    "result": {
+      "text": ""
+    }
+  },
+  "builtins": {
+    "clipboard": ""
+  }
+}

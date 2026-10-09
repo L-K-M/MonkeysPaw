@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "literal",
+        "text": "}} end } {"
+      }
+    ],
+    "names": [],
+    "fields": [],
+    "issues": []
+  }
+}

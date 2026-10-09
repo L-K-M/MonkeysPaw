@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "category": "grammar",
+  "filename": "Example.md",
+  "expected": {
+    "tokens": [
+      {
+        "kind": "literal",
+        "text": "{{#if x}} {{ a b }} {{> other}} {{x | lower}}"
+      }
+    ],
+    "names": [],
+    "fields": [],
+    "issues": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      }
+    ]
+  }
+}

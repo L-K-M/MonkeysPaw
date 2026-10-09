@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "expected": {
+    "metadata": {
+      "id": null,
+      "title": "Example",
+      "description": null,
+      "tags": [],
+      "favorite": false,
+      "private": false,
+      "format": "1",
+      "declarations": []
+    },
+    "body": "Body",
+    "issues": [],
+    "canonical": "---\nx: 5e2\nextra:\n- -5e-1\n- 5e-1\n- 0.0\n- -0.0\n---\nBody"
+  }
+}

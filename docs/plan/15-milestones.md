@@ -37,6 +37,18 @@
 
 **Ordering.**
 
+- M2 starts with M2a, a focused source-to-render foundation: pure Core
+  values parse Markdown front matter and the body, validate content,
+  resolve fields in first-use order, render with supplied field/builtin
+  snapshots, and return canonical supported front matter with exact body
+  bytes. Language-neutral format, grammar, render and validation fixtures
+  have a Swift consumer that rejects unconsumed cases. Kotlin follows in
+  M8. This slice has no filesystem or OS effects and does not complete
+  M2 daily-use acceptance or close the NOT RUN M1a/M1c/M1d owner gates.
+  Later M2 slices own stores, identity assignment on real save/push,
+  watchers, index/search/ranking, picker/fill, remembered values, settings,
+  seeds and releases. Sync canonical form/path rules and server endpoints
+  remain with M5; imports, LLMs and history remain with their milestones.
 - M1c lands in two focused PRs: first the native GDBus Request/Response
   transport, private restore-token storage and mock-bus tests; then
   GlobalShortcuts/RemoteDesktop sessions and app wiring. The first PR does

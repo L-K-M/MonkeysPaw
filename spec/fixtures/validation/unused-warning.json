@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "field.unused",
+        "severity": "warning"
+      }
+    ],
+    "private": false,
+    "fields": [],
+    "canRender": true,
+    "readOnly": false,
+    "canWrite": true
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "category": "render",
+  "filename": "Example.md",
+  "expected": {
+    "fields": [],
+    "builtins": [
+      "time",
+      "date",
+      "clipboard"
+    ],
+    "issues": [],
+    "result": {
+      "text": "09:08 2026-10-09 {{x}}\r\n 09:08"
+    }
+  },
+  "values": {
+    "date": "wrong",
+    "clipboard": "wrong"
+  },
+  "builtins": {
+    "time": "09:08",
+    "date": "2026-10-09",
+    "clipboard": "{{x}}\r\n"
+  }
+}

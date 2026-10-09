@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "validation",
+  "filename": "Example.md",
+  "expected": {
+    "issues": [
+      {
+        "code": "metadata.invalid_format",
+        "severity": "error"
+      }
+    ],
+    "private": false,
+    "fields": [],
+    "canRender": false,
+    "readOnly": false,
+    "canWrite": false
+  }
+}

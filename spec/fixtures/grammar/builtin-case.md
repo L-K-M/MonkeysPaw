@@ -1,0 +1,1 @@
+{{date}}{{Date}}{{clipboard}}{{time}}{{date}}
