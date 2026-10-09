@@ -268,6 +268,113 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.fires == fires + 1 })
     }
 
+    func testDeferredDaemonLossCannotCancelQueuedReregistration() throws {
+        start()
+        configure()
+        try activate()
+        let id = backend.currentRegistration.id
+        let oldSession = try session()
+        let registrations = daemon.calls.filter { $0.method == "doRegister" }.count
+        let creates = service.calls.filter { $0.method == "CreateSession" }.count
+        var failures: [String] = []
+        backend.onChange = {
+            if self.backend.currentRegistration.status == .failed {
+                failures.append(self.backend.currentRegistration.detail)
+            }
+        }
+        service.holdSessionClose = true
+
+        // GDBus loss runs at default priority, ahead of Core's already queued
+        // GLibMainThread idle. Hold idles until loss queues its later cleanup;
+        // this deterministically models a ready bus event overtaking UI work.
+        var idleBarrier = g_idle_add_full(G_PRIORITY_HIGH_IDLE, { _ in 1 }, nil, nil)
+        defer { if idleBarrier != 0 { g_source_remove(idleBarrier) } }
+        var reregistered = false
+        let reconfiguration = GTK.onMainLoop {
+            // ShortcutService.configure replaces registrations in this order.
+            self.backend.unregister(self.backend.currentRegistration)
+            _ = self.backend.register(.togglePicker,
+                accelerator: Accelerator.defaultBinding(for: .togglePicker)!) {
+                    self.fires += 1
+                    self.tokens.append(self.backend.consumeActivationToken())
+                }
+            reregistered = true
+        }
+        defer { if !reregistered { g_source_remove(reconfiguration) } }
+        daemon.dropName()
+        XCTAssertTrue(GTKTestSupport.spin { self.native.currentRegistration.status == .failed })
+        XCTAssertFalse(reregistered)
+        g_source_remove(idleBarrier)
+        idleBarrier = 0
+
+        XCTAssertTrue(GTKTestSupport.spin {
+            reregistered && self.service.closedPaths.contains(oldSession)
+        })
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertTrue(failures.isEmpty, failures.joined(separator: ", "))
+        XCTAssertEqual(backend.currentRegistration.status, .needsAction)
+        XCTAssertEqual(backend.currentRegistration.configuration, .attachPortal)
+        XCTAssertEqual(backend.currentRegistration.id, id)
+        XCTAssertEqual(store.load(), .loaded(.portal))
+        XCTAssertEqual(daemon.calls.filter { $0.method == "doRegister" }.count, registrations)
+
+        let replacement = try FakeKGlobalAccel(address: address)
+        defer { replacement.shutdown() }
+        replacement.events = { [weak self] in self?.events.append($0) }
+        try replacement.ownName()
+        var completions = 0
+        backend.configure { completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(completions, 0)
+        XCTAssertEqual(service.calls.filter { $0.method == "CreateSession" }.count, creates)
+        XCTAssertFalse(daemon.present)
+        XCTAssertFalse(replacement.registered)
+        XCTAssertFalse(replacement.portalPresent)
+        daemon.emit()
+        replacement.emit()
+        try activate(2)
+        XCTAssertEqual(fires, 1)
+        XCTAssertNil(backend.consumeActivationToken())
+
+        service.releaseSessionCloses()
+        XCTAssertFalse(daemon.portalPresent)
+        service.kde = replacement
+        service.holdSessionClose = false
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertTrue(GTKTestSupport.spin { completions == 1 })
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        guard backend.currentRegistration.status == .registered else { return }
+        XCTAssertEqual(backend.currentRegistration.id, id)
+        XCTAssertFalse(replacement.present)
+        XCTAssertTrue(replacement.portalPresent)
+        XCTAssertEqual(service.calls.filter { $0.method == "CreateSession" }.count, creates + 1)
+        let close = try XCTUnwrap(events.firstIndex(of: "portal.Close"))
+        let create = try XCTUnwrap(events.lastIndex(of: "portal.CreateSession"))
+        XCTAssertLessThan(close, create)
+        daemon.emit()
+        replacement.emit()
+        try activate() // The replacement session may reuse the old timestamp.
+        XCTAssertEqual(fires, 2)
+        XCTAssertEqual(tokens.last!, "fixture-token")
+        try activate()
+        XCTAssertEqual(fires, 2)
+        XCTAssertNil(backend.consumeActivationToken())
+
+        fallback()
+        XCTAssertFalse(replacement.portalPresent)
+        XCTAssertTrue(replacement.present)
+        daemon.emit()
+        try activate(3)
+        XCTAssertEqual(fires, 2)
+        replacement.emit()
+        XCTAssertTrue(GTKTestSupport.spin { self.fires == 3 })
+        XCTAssertNil(tokens.last!)
+        XCTAssertTrue(failures.isEmpty, failures.joined(separator: ", "))
+        XCTAssertEqual(completions, 1)
+        backend.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { !replacement.present })
+    }
+
     func testFullKeysChangedDuringCreateAreNotReconstructedOrBound() {
         start()
         service.handleCall = { call in

@@ -255,8 +255,10 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             // beginning acknowledged cleanup on either connection.
             select(.none)
             phase = .busy
+            let operation = operation
             GTK.onMainLoop { [weak self] in
-                guard let self, self.phase == .busy, self.effective == .none else { return }
+                guard let self, self.operation == operation,
+                      self.phase == .busy, self.effective == .none else { return }
                 self.failClosed(LinuxStrings.kdeLost)
             }
             return
