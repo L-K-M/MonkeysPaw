@@ -63,8 +63,8 @@ Hotkey notes:
   version guessing. Startup and diagnostics never Create/List/Bind/configure
   a portal session or open settings. A saved native `toggle`, including a
   custom, unbound, multi-chord or alternative assignment, remains native
-  until you choose **Use shortcut portal** in Setup. A fresh supported path
-  offers portal attachment; absent capability retains native behavior.
+  until you choose **Attach shortcut portal** in Setup. A fresh supported
+  path offers portal attachment; absent capability retains native behavior.
   **Use native KDE shortcut** remains an explicit Setup action even after
   verification. Flatpak retains its portal-only driver and host instructions.
   - Both drivers use component `ch.lkmc.monkeyspaw`, action `toggle`.

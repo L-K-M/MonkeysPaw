@@ -170,6 +170,67 @@ final class PortalHotkeyTests: XCTestCase {
         XCTAssertFalse(creates[0].token == creates[1].token)
     }
 
+    func testActivationDedupResetsAfterAcknowledgedSessionRetirement() throws {
+        try register()
+        configure()
+        let oldSession = try session()
+        portal.emit(member: "Activated", body: "(objectpath '\(oldSession)', 'toggle', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 1)
+
+        var retired = false
+        backend.quiesce { retired = $0 }
+        XCTAssertTrue(GTKTestSupport.spin { retired })
+        XCTAssertTrue(portal.closedPaths.contains(oldSession))
+        portal.emit(member: "Activated", body: "(objectpath '\(oldSession)', 'toggle', uint64 18, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 1)
+
+        configure()
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        let newSession = try session()
+        portal.emit(member: "Activated", body: "(objectpath '\(newSession)', 'toggle', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 2, "A new session must accept a reused timestamp.")
+        portal.emit(member: "Activated", body: "(objectpath '\(newSession)', 'toggle', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 2, "Duplicates within the new session must remain ignored.")
+        XCTAssertEqual(portal.calls.filter { $0.method == "BindShortcuts" }.count, 2)
+    }
+
+    func testActivationDedupResetsAfterOwnerLossAndIgnoresObsoleteOwner() throws {
+        try register()
+        configure()
+        let oldSession = try session()
+        portal.emit(member: "Activated", body: "(objectpath '\(oldSession)', 'toggle', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 1)
+
+        let oldOwner = portal!
+        defer { oldOwner.shutdown() }
+        oldOwner.dropName()
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .failed })
+        portal = try FakePortal(address: FakePortal.requirePrivateBus())
+        portal.behavior = .sessions
+        try portal.ownName()
+        configure()
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        let newSession = try session()
+        // The stable token can reuse the same path under a different owner.
+        XCTAssertEqual(newSession, oldSession)
+        oldOwner.emit(member: "Activated", body: "(objectpath '\(newSession)', 'toggle', uint64 18, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 1)
+
+        portal.emit(member: "Activated", body: "(objectpath '\(newSession)', 'toggle', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 2, "A new owner must accept a reused timestamp.")
+        portal.emit(member: "Activated", body: "(objectpath '\(newSession)', 'toggle', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(fires, 2, "Duplicates within the new session must remain ignored.")
+        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession", "ListShortcuts", "BindShortcuts"])
+    }
+
     func testDeniedCancelledAndEmptyBindingNeverInstallFallback() throws {
         for response in ["(uint32 1, @a{sv} {})", "(uint32 2, @a{sv} {})", "(uint32 0, {'shortcuts': <@a(sa{sv}) []>})"] {
             portal.responses["BindShortcuts"] = response

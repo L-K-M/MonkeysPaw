@@ -397,6 +397,8 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             else { retiring.removeValue(forKey: sessionHandle) }
         }
         sessionHandle = nil
+        // Deduplication belongs to the retired session, even if its path is reused.
+        lastActivation = nil
         bindAttempted = false
         parentLease?.close()
         parentLease = nil
