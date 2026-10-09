@@ -2,12 +2,15 @@
 import CGtk
 import Foundation
 import XCTest
+@testable import MonkeysPawLinux
 
 /// A separate GDBus connection exporting real portal wire signatures. No
 /// transport code or codec is reused here, and no display is initialized.
 final class FakePortal {
     enum Timing { case beforeReply, afterReply, manual }
     enum Handle { case predicted, different }
+    enum Behavior { case requestsOnly, sessions }
+    enum DeferredReply { case method, response }
 
     final class Call {
         let sender: String
@@ -40,10 +43,14 @@ final class FakePortal {
         var signature: String { String(cString: g_variant_get_type_string(parameters)) }
 
         func option(_ name: String) -> OpaquePointer? {
-            let count = g_variant_n_children(parameters)
-            let options = g_variant_get_child_value(parameters, count - 1)!
-            defer { g_variant_unref(options) }
-            return g_variant_lookup_value(options, name, nil)
+            for index in 0..<g_variant_n_children(parameters) {
+                let child = g_variant_get_child_value(parameters, index)!
+                defer { g_variant_unref(child) }
+                if String(cString: g_variant_get_type_string(child)) == "a{sv}" {
+                    return g_variant_lookup_value(child, name, nil)
+                }
+            }
+            return nil
         }
     }
 
@@ -65,6 +72,21 @@ final class FakePortal {
         'trigger_description': <'Ctrl+Alt+P'>})]>})
         """
 
+    var behavior: Behavior = .requestsOnly
+    var versions: [String: UInt32] = ["org.freedesktop.portal.GlobalShortcuts": 2,
+                                    "org.freedesktop.portal.RemoteDesktop": 2]
+    var availableDevices: UInt32 = 1
+    var grantedDevices: UInt32 = 1
+    var restoredShortcuts = "@a(sa{sv}) []"
+    var boundShortcuts = "[('toggle', {'trigger_description': <'Ctrl+Alt+P'>})]"
+    var replacementTokens = ["rotation-one", "rotation-two"]
+    var responses: [String: String] = [:]
+    var handleCall: ((Call) -> Bool)?
+    private(set) var ordinaryCalls: [Call] = []
+    private(set) var propertyCalls: [(sender: String, interface: String, name: String)] = []
+    private(set) var sessionOwners: [String: String] = [:]
+    private var starts = 0
+    private var timers: [UUID: guint] = [:]
     var timing: Timing = .afterReply
     var handle: Handle = .predicted
     var responseBody = successBody
@@ -79,6 +101,9 @@ final class FakePortal {
     private var node: UnsafeMutablePointer<GDBusNodeInfo>?
     private var registrations: [guint] = []
     private var nameOwner: guint = 0
+    private var notificationOwner: guint = 0
+    private var notificationsReady = false
+    private(set) var notificationCount = 0
     private var nameSubscription: guint = 0
 
     static func requirePrivateBus() throws -> String {
@@ -89,7 +114,10 @@ final class FakePortal {
                              "The required private portal bus is missing.")
     }
 
-    init(address: String) throws {
+    init(address: String, globalShortcuts: UInt32? = 2, remoteDesktop: UInt32? = 2) throws {
+        versions = [:]
+        if let globalShortcuts { versions["org.freedesktop.portal.GlobalShortcuts"] = globalShortcuts }
+        if let remoteDesktop { versions["org.freedesktop.portal.RemoteDesktop"] = remoteDesktop }
         let box = ConnectionBox()
         let flags = GDBusConnectionFlags(rawValue:
             G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT.rawValue |
@@ -106,7 +134,7 @@ final class FakePortal {
         g_dbus_connection_set_exit_on_close(connection, 0)
         node = try XCTUnwrap(g_dbus_node_info_new_for_xml(Self.xml, nil))
         do {
-            for name in ["org.freedesktop.portal.GlobalShortcuts", "org.freedesktop.portal.RemoteDesktop"] {
+            for name in versions.keys {
                 try register(path: "/org/freedesktop/portal/desktop", interface: name)
             }
             observeDepartures()
@@ -129,6 +157,16 @@ final class FakePortal {
         guard hasName else { throw NSError(domain: "FakePortal", code: 1) }
     }
 
+    func ownNotifications() throws {
+        try register(path: "/org/freedesktop/Notifications", interface: "org.freedesktop.Notifications")
+        notificationOwner = g_bus_own_name_on_connection(connection, "org.freedesktop.Notifications",
+            G_BUS_NAME_OWNER_FLAGS_NONE, { _, _, data in
+                guard let data else { return }
+                Unmanaged<WeakBox>.fromOpaque(data).takeUnretainedValue().portal?.notificationsReady = true
+            }, nil, Unmanaged.passRetained(WeakBox(self)).toOpaque(), Self.releaseBox)
+        XCTAssertTrue(GTKTestSupport.spin { self.notificationsReady })
+    }
+
     func dropName() {
         guard nameOwner != 0 else { return }
         g_bus_unown_name(nameOwner)
@@ -139,6 +177,10 @@ final class FakePortal {
     func shutdown() {
         guard let connection else { return }
         dropName()
+        if notificationOwner != 0 { g_bus_unown_name(notificationOwner); notificationOwner = 0 }
+        for timer in timers.values { g_source_remove(timer) }
+        timers.removeAll()
+        handleCall = nil
         if nameSubscription != 0 {
             g_dbus_connection_signal_unsubscribe(connection, nameSubscription)
             nameSubscription = 0
@@ -146,15 +188,38 @@ final class FakePortal {
         for registration in registrations { g_dbus_connection_unregister_object(connection, registration) }
         registrations.removeAll()
         calls.removeAll()
+        ordinaryCalls.removeAll()
+        if g_dbus_connection_is_closed(connection) == 0 {
+            let receipt = ConnectionBox()
+            g_dbus_connection_flush(connection, nil, { source, result, data in
+                guard let source, let result, let data else { return }
+                let receipt = Unmanaged<ConnectionBox>.fromOpaque(data).takeRetainedValue()
+                _ = g_dbus_connection_flush_finish(mp_dbus_connection(source), result, nil)
+                receipt.finished = true
+            }, Unmanaged.passRetained(receipt).toOpaque())
+            XCTAssertTrue(GTKTestSupport.spin { receipt.finished })
+        }
         g_dbus_connection_close(connection, nil, nil, nil)
         g_object_unref(UnsafeMutableRawPointer(connection))
         self.connection = nil
         if let node { g_dbus_node_info_unref(node); self.node = nil }
     }
 
+    func deferReply(_ call: Call, kind: DeferredReply, after seconds: Double) {
+        let id = UUID()
+        timers[id] = GTK.after(seconds) { [weak self] in
+            guard let self else { return }
+            self.timers.removeValue(forKey: id)
+            switch kind {
+            case .method: self.reply(call)
+            case .response: self.respond(call)
+            }
+        }
+    }
+
     func respond(_ call: Call, body: String? = nil, path: String? = nil) {
         guard let connection else { return }
-        let value = Self.variant(body ?? responseBody)
+        let value = Self.variant(body ?? responses[call.method] ?? (behavior == .sessions ? sessionResponse(call) : responseBody))
         defer { g_variant_unref(value) }
         XCTAssertNotEqual(g_dbus_connection_emit_signal(connection, call.sender, path ?? call.path,
             "org.freedesktop.portal.Request", "Response", value, nil), 0)
@@ -180,16 +245,95 @@ final class FakePortal {
             g_object_unref(UnsafeMutableRawPointer(invocation))
             return
         }
+        if ["ConfigureShortcuts", "NotifyKeyboardKeysym"].contains(call.method) {
+            g_dbus_method_invocation_return_value(invocation, nil)
+            return
+        }
         var children: [OpaquePointer?] = [g_variant_new_object_path(call.path)]
         let value = children.withUnsafeMutableBufferPointer { g_variant_new_tuple($0.baseAddress, 1) }
         g_dbus_method_invocation_return_value(invocation, value)
     }
 
+    func emit(member: String, body: String, path: String = "/org/freedesktop/portal/desktop") {
+        guard let connection else { return }
+        let parameters = Self.variant(body)
+        defer { g_variant_unref(parameters) }
+        let interface = member == "Closed" ? "org.freedesktop.portal.Session"
+            : "org.freedesktop.portal.GlobalShortcuts"
+        XCTAssertNotEqual(g_dbus_connection_emit_signal(connection, nil, path, interface,
+            member, parameters, nil), 0)
+    }
+
+    func keys(_ call: Call) -> (Int32, UInt32) {
+        let key = g_variant_get_child_value(call.parameters, 2)!
+        let state = g_variant_get_child_value(call.parameters, 3)!
+        defer { g_variant_unref(key); g_variant_unref(state) }
+        return (g_variant_get_int32(key), g_variant_get_uint32(state))
+    }
+
+    func text(_ call: Call, index: UInt) -> String {
+        let value = g_variant_get_child_value(call.parameters, index)!
+        defer { g_variant_unref(value) }
+        return String(cString: g_variant_get_string(value, nil))
+    }
+
+    private func sessionResponse(_ call: Call) -> String {
+        switch call.method {
+        case "CreateSession":
+            let value = call.option("session_handle_token")!
+            defer { g_variant_unref(value) }
+            let session = "/org/freedesktop/portal/desktop/session/"
+                + call.sender.dropFirst().replacingOccurrences(of: ".", with: "_") + "/"
+                + String(cString: g_variant_get_string(value, nil))
+            if sessionOwners[session] == nil {
+                sessionOwners[session] = call.sender
+                try! register(path: session, interface: "org.freedesktop.portal.Session")
+            }
+            return "(uint32 0, {'session_handle': <'\(session)'>})"
+        case "ListShortcuts": return "(uint32 0, {'shortcuts': <\(restoredShortcuts)>})"
+        case "BindShortcuts": return "(uint32 0, {'shortcuts': <\(boundShortcuts)>})"
+        case "Start":
+            let token = replacementTokens[min(starts, replacementTokens.count - 1)]
+            starts += 1
+            return "(uint32 0, {'devices': <uint32 \(grantedDevices)>, 'restore_token': <'\(token)'>})"
+        default: return "(uint32 0, @a{sv} {})"
+        }
+    }
+
     private func receive(sender: String, path: String, interface: String, method: String,
                          parameters: OpaquePointer, invocation: OpaquePointer) {
+        if interface == "org.freedesktop.Notifications" {
+            let body: String
+            switch method {
+            case "Notify": notificationCount += 1; body = "(uint32 1,)"
+            case "GetCapabilities": body = "(['body'],)"
+            case "GetServerInformation": body = "('Fixture', 'Fixture', '1', '1.2')"
+            default: body = "()"
+            }
+            g_dbus_method_invocation_return_value(invocation, Self.variant(body))
+            return
+        }
         if method == "Close" {
             closedPaths.append(path)
             g_dbus_method_invocation_return_value(invocation, nil)
+            return
+        }
+        if behavior == .sessions, method != "CreateSession" {
+            let session = g_variant_get_child_value(parameters, 0)!
+            defer { g_variant_unref(session) }
+            let handle = String(cString: g_variant_get_string(session, nil))
+            guard sessionOwners[handle] == sender else {
+                g_dbus_method_invocation_return_dbus_error(invocation,
+                    "org.freedesktop.portal.Error.NotAllowed", "Different session owner")
+                return
+            }
+        }
+        if ["ConfigureShortcuts", "NotifyKeyboardKeysym"].contains(method) {
+            let call = Call(sender: sender, interface: interface, method: method, token: "",
+                            path: path, parameters: parameters, invocation: invocation)
+            ordinaryCalls.append(call)
+            if handleCall?(call) == true { return }
+            reply(call)
             return
         }
         let options = g_variant_get_child_value(parameters, g_variant_n_children(parameters) - 1)!
@@ -214,6 +358,7 @@ final class FakePortal {
         if call.path != call.expectedPath {
             try! register(path: call.expectedPath, interface: "org.freedesktop.portal.Request")
         }
+        if handleCall?(call) == true { return }
         switch timing {
         case .beforeReply: respond(call); reply(call)
         case .afterReply: reply(call); respond(call)
@@ -237,6 +382,15 @@ final class FakePortal {
             box.portal?.receive(sender: String(cString: sender), path: String(cString: path),
                 interface: String(cString: interface), method: String(cString: method),
                 parameters: parameters, invocation: invocation)
+        }
+        table.get_property = { _, sender, _, interface, name, _, data in
+            guard let sender, let interface, let name, let data,
+                  let portal = Unmanaged<WeakBox>.fromOpaque(data).takeUnretainedValue().portal else { return nil }
+            let interfaceName = String(cString: interface)
+            let property = String(cString: name)
+            portal.propertyCalls.append((String(cString: sender), interfaceName, property))
+            return g_variant_new_uint32(property == "version"
+                ? (portal.versions[interfaceName] ?? 0) : portal.availableDevices)
         }
         let data = Unmanaged.passRetained(WeakBox(self)).toOpaque()
         let registration = g_dbus_connection_register_object(connection, path, info, &table,
@@ -269,10 +423,26 @@ final class FakePortal {
     }
 
     // Signatures from the linked xdg-desktop-portal API docs. These fake methods
-    // only test encoding and Request semantics; they create no real sessions.
+    // enforce session ownership on the real bus without desktop consent UI.
     private static let xml = """
         <node>
+          <interface name='org.freedesktop.Notifications'>
+            <method name='Notify'><arg type='s' direction='in'/><arg type='u' direction='in'/>
+              <arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/>
+              <arg type='as' direction='in'/><arg type='a{sv}' direction='in'/><arg type='i' direction='in'/>
+              <arg type='u' direction='out'/></method>
+            <method name='GetCapabilities'><arg type='as' direction='out'/></method>
+            <method name='GetServerInformation'><arg type='s' direction='out'/><arg type='s' direction='out'/>
+              <arg type='s' direction='out'/><arg type='s' direction='out'/></method>
+            <method name='CloseNotification'><arg type='u' direction='in'/></method>
+          </interface>
           <interface name='org.freedesktop.portal.GlobalShortcuts'>
+            <property name='version' type='u' access='read'/>
+            <method name='ConfigureShortcuts'><arg type='o' direction='in'/><arg type='s' direction='in'/>
+              <arg type='a{sv}' direction='in'/></method>
+            <signal name='Activated'><arg type='o'/><arg type='s'/><arg type='t'/><arg type='a{sv}'/></signal>
+            <signal name='Deactivated'><arg type='o'/><arg type='s'/><arg type='t'/><arg type='a{sv}'/></signal>
+            <signal name='ShortcutsChanged'><arg type='o'/><arg type='a(sa{sv})'/></signal>
             <method name='CreateSession'><arg type='a{sv}' direction='in'/><arg type='o' direction='out'/></method>
             <method name='BindShortcuts'><arg type='o' direction='in'/><arg type='a(sa{sv})' direction='in'/>
               <arg type='s' direction='in'/><arg type='a{sv}' direction='in'/><arg type='o' direction='out'/></method>
@@ -280,11 +450,18 @@ final class FakePortal {
               <arg type='o' direction='out'/></method>
           </interface>
           <interface name='org.freedesktop.portal.RemoteDesktop'>
+            <property name='version' type='u' access='read'/>
+            <property name='AvailableDeviceTypes' type='u' access='read'/>
+            <method name='NotifyKeyboardKeysym'><arg type='o' direction='in'/><arg type='a{sv}' direction='in'/>
+              <arg type='i' direction='in'/><arg type='u' direction='in'/></method>
             <method name='CreateSession'><arg type='a{sv}' direction='in'/><arg type='o' direction='out'/></method>
             <method name='SelectDevices'><arg type='o' direction='in'/><arg type='a{sv}' direction='in'/>
               <arg type='o' direction='out'/></method>
             <method name='Start'><arg type='o' direction='in'/><arg type='s' direction='in'/>
               <arg type='a{sv}' direction='in'/><arg type='o' direction='out'/></method>
+          </interface>
+          <interface name='org.freedesktop.portal.Session'>
+            <method name='Close'/><signal name='Closed'><arg type='a{sv}'/></signal>
           </interface>
           <interface name='org.freedesktop.portal.Request'>
             <method name='Close'/><signal name='Response'><arg type='u'/><arg type='a{sv}'/></signal>

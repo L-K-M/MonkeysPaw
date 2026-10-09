@@ -271,6 +271,29 @@ final class SetupModelTests: XCTestCase {
         XCTAssertEqual(h.status(.hotkey), .needsAction(fix: fix))
     }
 
+    func testVerifiedHotkeyStillOffersSystemConfigurationIntent() throws {
+        let h = Harness(session: .gnomeWayland)
+        h.probe.hotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .registered,
+            detail: "Actual trigger", configuration: .systemSettings)
+        h.shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        h.model.beginHotkeyVerification()
+        h.backend.fire()
+        XCTAssertEqual(h.status(.hotkey), .ok)
+        h.model.fix(.hotkey)
+        XCTAssertEqual(h.probe.fixes, [.hotkey])
+    }
+
+    func testSelfTestUsesExistingSessionWhilePanelGestureOwnsConsent() {
+        let h = Harness(session: .gnomeWayland)
+        let panel = PanelModel(delivery: h.delivery.service)
+        panel.confirm(mode: .paste(.standard))
+        h.delivery.scheduler.advance(by: Limits.settleDelayLinux)
+        XCTAssertEqual(h.delivery.injectors[.remoteDesktopPortal]?.consents, [.userInitiated])
+        h.model.runSelfTest()
+        h.delivery.scheduler.advance(by: .seconds(2))
+        XCTAssertEqual(h.delivery.injectors[.remoteDesktopPortal]?.consents, [.userInitiated, .existingSession])
+    }
+
     func testSelfTestStateTransitionsAndDuplicateIntentsDoNotRerunIt() {
         let h = Harness(session: .wlroots)
         h.delivery.target.received = [DeliveryStrings.testPrompt]

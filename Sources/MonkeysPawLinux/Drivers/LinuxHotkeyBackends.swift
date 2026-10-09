@@ -8,6 +8,15 @@ protocol LinuxHotkeyBackend: AnyObject, HotkeyBackend {
     var currentRegistration: HotkeyRegistration { get }
     var onChange: (() -> Void)? { get set }
     @discardableResult func fire(_ action: HotkeyAction) -> Bool
+    func configure(done: @escaping () -> Void)
+    func consumeActivationToken() -> String?
+    func shutdown()
+}
+
+extension LinuxHotkeyBackend {
+    func configure(done: @escaping () -> Void) { done() }
+    func consumeActivationToken() -> String? { nil }
+    func shutdown() { unregister(currentRegistration) }
 }
 
 final class ManualHotkeyBackend: LinuxHotkeyBackend {
@@ -47,8 +56,10 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
     private let mainThread: MainThread
     private let worker = DispatchQueue(label: "ch.lkmc.monkeyspaw.gsettings")
     private var onFire: (() -> Void)?
+    private var accelerator: Accelerator?
+    private var isConfiguring = false
     private(set) var currentRegistration = HotkeyRegistration(
-        mechanism: .gnomeCustomKeybinding, status: .needsAction, detail: LinuxStrings.installingShortcut)
+        mechanism: .gnomeCustomKeybinding, status: .needsAction, detail: LinuxStrings.installShortcut)
 
     init(runner: LinuxToolRunner, mainThread: MainThread) {
         installer = GnomeKeybindingInstaller(runner: runner)
@@ -61,12 +72,21 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
             return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
         }
         self.onFire = onFire
-        let registration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
-                                             detail: LinuxStrings.installingShortcut)
-        currentRegistration = registration
+        self.accelerator = accelerator
+        currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
+                                                 detail: LinuxStrings.installShortcut)
+        return currentRegistration
+    }
+
+    func configure(done: @escaping () -> Void) {
+        guard !isConfiguring, let accelerator, onFire != nil else { done(); return }
+        isConfiguring = true
+        let registration = currentRegistration
         worker.async {
             let binding = self.installer.install(accelerator: accelerator)
             self.mainThread.run {
+                self.isConfiguring = false
+                defer { done() }
                 guard self.currentRegistration.id == registration.id, self.onFire != nil else { return }
                 let status: RegistrationStatus = binding == nil ? .failed : (binding!.isEmpty ? .unbound : .registered)
                 self.currentRegistration = HotkeyRegistration(id: registration.id, mechanism: self.mechanism,
@@ -75,7 +95,6 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
                 self.onChange?()
             }
         }
-        return registration
     }
 
     func unregister(_ registration: HotkeyRegistration) {

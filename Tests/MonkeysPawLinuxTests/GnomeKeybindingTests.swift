@@ -9,6 +9,29 @@ final class GnomeKeybindingTests: XCTestCase {
     private let itemSchema = GnomeKeybindingInstaller.itemSchema
     private let base = GnomeKeybindingInstaller.basePath
 
+    func testRegistrationIsQuietUntilExplicitSetupAction() throws {
+        let tools = try fakeSettings()
+        let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())
+        _ = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {}
+        XCTAssertTrue(tools.arguments.isEmpty)
+        var finished = false
+        backend.configure { finished = true }
+        XCTAssertTrue(GTKTestSupport.spin { finished })
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        XCTAssertTrue(tools.arguments.contains { $0.first == "set" })
+    }
+
+    func testOwnedNameWithForeignCommandIsNeverOverwritten() throws {
+        let tools = try fakeSettings()
+        tools.environment["FAKE_BINDINGS"] = "['\(base)custom0/']"
+        tools.environment["FAKE_NAME"] = "'Monkey\\'s Paw: toggle'"
+        tools.environment["FAKE_COMMAND"] = "'foreign-command'"
+        tools.environment["FAKE_ACCELERATOR"] = "'<Control><Alt>p'"
+        XCTAssertNil(GnomeKeybindingInstaller(runner: tools.runner)
+            .install(accelerator: try Accelerator("Ctrl+Alt+P")))
+        XCTAssertFalse(tools.arguments.contains { $0.first == "set" })
+    }
+
     func testBackendReportsLiveStateAndForwardsTheAction() throws {
         let tools = try fakeSettings()
         let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())
@@ -23,6 +46,7 @@ final class GnomeKeybindingTests: XCTestCase {
         }
         XCTAssertEqual(registration.mechanism, .gnomeCustomKeybinding)
         XCTAssertEqual(registration.status, .needsAction)
+        backend.configure {}
         XCTAssertTrue(GTKTestSupport.spin { changes == 1 })
         XCTAssertEqual(backend.currentRegistration.id, registration.id)
         XCTAssertEqual(backend.currentRegistration.status, .registered)
@@ -40,6 +64,7 @@ final class GnomeKeybindingTests: XCTestCase {
         tools.environment["FAKE_FAIL_KEY"] = "binding"
         let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())
         _ = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {}
+        backend.configure {}
         XCTAssertTrue(GTKTestSupport.spin { backend.currentRegistration.status == .failed })
         XCTAssertTrue(backend.currentRegistration.detail.contains(GnomeKeybindingInstaller.command))
     }
@@ -119,8 +144,7 @@ final class GnomeKeybindingTests: XCTestCase {
             tools.environment["FAKE_ACCELERATOR"] = "'\(binding)'"
             XCTAssertEqual(GnomeKeybindingInstaller(runner: tools.runner)
                 .install(accelerator: try Accelerator("Ctrl+Alt+P")), binding)
-            XCTAssertEqual(tools.arguments.filter { $0.first == "set" }.count, 1)
-            XCTAssertEqual(tools.arguments.last?[2], "command")
+            XCTAssertFalse(tools.arguments.contains { $0.first == "set" })
         }
     }
 
@@ -146,6 +170,7 @@ final class GnomeKeybindingTests: XCTestCase {
                     [ "$FAKE_NAME" = FAIL ] && exit 2
                     printf '%s\\n' "${FAKE_NAME:-'Other app'}" ;;
                 get:binding) printf '%s\\n' "$FAKE_ACCELERATOR" ;;
+                get:command) printf '%s\\n' "${FAKE_COMMAND:-'gapplication action ch.lkmc.monkeyspaw toggle'}" ;;
                 set:*) [ "$3" = "$FAKE_FAIL_KEY" ] && exit 2; exit 0 ;;
                 *) exit 2 ;;
             esac

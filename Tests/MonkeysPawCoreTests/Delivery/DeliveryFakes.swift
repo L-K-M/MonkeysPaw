@@ -140,12 +140,18 @@ final class FakeInjector: PasteInjector {
     var mode: FakeCompletionMode = .immediate
     var onPaste: (() -> Void)?
     private(set) var chords: [PasteChord] = []
+    private(set) var consents: [PasteConsent] = []
     private let recorder: DeliveryRecorder
     private var completions: [(PasteAttemptResult) -> Void] = []
 
     init(_ backend: PasteBackend, recorder: DeliveryRecorder) {
         self.backend = backend
         self.recorder = recorder
+    }
+
+    func paste(chord: PasteChord, consent: PasteConsent, completion: @escaping (PasteAttemptResult) -> Void) {
+        consents.append(consent)
+        paste(chord: chord, completion: completion)
     }
 
     func paste(chord: PasteChord, completion: @escaping (PasteAttemptResult) -> Void) {

@@ -76,8 +76,16 @@ final class LinuxPanel: PanelWindow {
         }
     }
 
+    private var activationToken: String?
+
+    func useActivationToken(_ token: String?) { activationToken = token }
+
     func show() {
         blurRevision += 1
+        if let activationToken {
+            gtk_window_set_startup_id(mp_window(window), activationToken)
+            self.activationToken = nil
+        }
         gtk_window_present(mp_window(window))
         gtk_widget_grab_focus(initialFocus ?? window)
     }

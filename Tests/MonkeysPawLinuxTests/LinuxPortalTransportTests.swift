@@ -397,5 +397,42 @@ final class LinuxPortalTransportTests: XCTestCase {
         }
         XCTAssertTrue(portal.calls.isEmpty)
     }
+
+    func testSharedGioConnectionSurvivesTransportShutdown() throws {
+        final class ConnectionReceipt { var connection: OpaquePointer?; var done = false }
+        let receipt = ConnectionReceipt()
+        g_bus_get(G_BUS_TYPE_SESSION, nil, { _, result, data in
+            guard let result, let data else { return }
+            let receipt = Unmanaged<ConnectionReceipt>.fromOpaque(data).takeRetainedValue()
+            receipt.connection = g_bus_get_finish(result, nil)
+            receipt.done = true
+        }, Unmanaged.passRetained(receipt).toOpaque())
+        XCTAssertTrue(GTKTestSupport.spin { receipt.done })
+        let shared = try XCTUnwrap(receipt.connection)
+        defer { g_object_unref(UnsafeMutableRawPointer(shared)) }
+        let client = LinuxPortalTransport(busAddress: nil)
+        let response = Receipt()
+        client.request(interface: .globalShortcuts, method: "CreateSession",
+            deadline: ContinuousClock.now.advanced(by: .seconds(1)), completion: response.receive)
+        wait(response, success)
+        let sender = try XCTUnwrap(portal.calls.last?.sender)
+        XCTAssertTrue(sender == String(cString: g_dbus_connection_get_unique_name(shared)))
+        client.shutdown()
+        XCTAssertEqual(g_dbus_connection_is_closed(shared), 0)
+        final class ReplyReceipt { var done = false }
+        let reply = ReplyReceipt()
+        g_dbus_connection_call(shared, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+            "org.freedesktop.DBus", "ListNames", nil, nil, G_DBUS_CALL_FLAGS_NONE, 1_000, nil,
+            { source, result, data in
+                guard let source, let result, let data else { return }
+                let reply = Unmanaged<ReplyReceipt>.fromOpaque(data).takeRetainedValue()
+                let value = g_dbus_connection_call_finish(mp_dbus_connection(source), result, nil)
+                XCTAssertNotNil(value)
+                if let value { g_variant_unref(value) }
+                reply.done = true
+            }, Unmanaged.passRetained(reply).toOpaque())
+        XCTAssertTrue(GTKTestSupport.spin { reply.done })
+        XCTAssertFalse(portal.departedNames.contains(sender))
+    }
 }
 #endif

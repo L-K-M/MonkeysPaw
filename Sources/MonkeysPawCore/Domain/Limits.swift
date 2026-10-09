@@ -26,8 +26,11 @@ public enum Limits {
     /// The osascript child is killed at the deadline; grant TCC and retry.
     public static let appleScriptPasteTimeout: Duration = .seconds(2)
 
-    /// §6.1: bound KDE RemoteDesktop portal calls to two seconds.
+    /// §6.3: properties/established IPC; one budget for a complete chord.
     public static let portalCallTimeout: Duration = .seconds(2)
+
+    /// §6.3: total explicit Setup/initial GNOME or flatpak consent budget.
+    public static let portalConsentTimeout: Duration = .seconds(60)
 
     /// §12: bound opaque portal tokens and their private JSON representation.
     public static let portalTokenMaxBytes: Int = 4 * kibibyte

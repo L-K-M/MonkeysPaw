@@ -24,6 +24,9 @@ enum PortalArgument {
     case objectPath(String)
     case string(String)
     case shortcuts([PortalShortcut])
+    case int32(Int32)
+    case uint32(UInt32)
+    case dictionary([String: PortalOption])
 }
 
 struct PortalResponse: Equatable {
@@ -47,9 +50,36 @@ enum PortalRequestOutcome: Equatable {
     case tornDown
 }
 
+enum PortalProperty: String { case version, availableDeviceTypes = "AvailableDeviceTypes" }
+enum PortalKeyState: UInt32 { case released = 0, pressed = 1 }
+enum PortalDevice { static let keyboard: UInt32 = 1 }
+enum PortalPersistence: UInt32 { case untilRevoked = 2 }
+
+/// Only ordinary methods consumed by the two session drivers.
+enum PortalCall {
+    case property(PortalInterface, PortalProperty)
+    case configureShortcuts(session: String, parent: String)
+    case notifyKeysym(session: String, keysym: Int32, state: PortalKeyState)
+    case closeSession(String)
+}
+
+enum PortalCallOutcome: Equatable {
+    case success
+    case property(UInt32)
+    case failed(PortalRequestOutcome)
+}
+
+enum PortalSignal: Equatable {
+    case activated(session: String, action: String, timestamp: UInt64, activationToken: String?)
+    case deactivated(session: String, action: String, timestamp: UInt64)
+    case shortcutsChanged(session: String, shortcuts: [PortalShortcut])
+    case closed(session: String)
+    case lost
+}
+
 /// All entry points and callbacks run on the default GLib loop's thread.
-/// No native values escape this boundary. Only LinuxEnvironment will construct
-/// the production instance when sessions are wired in the second M1c PR.
+/// No native values escape this boundary. LinuxEnvironment owns the connection
+/// for both session drivers; ordinary calls never acquire another connection.
 final class LinuxPortalTransport {
     private enum ConnectionOwnership { case owned, shared }
     private enum RequestEnd { case response, aborted }
@@ -86,6 +116,33 @@ final class LinuxPortalTransport {
         }
 
         deinit { g_object_unref(cancellable) }
+    }
+
+    private final class Ordinary {
+        let id = UUID()
+        let call: PortalCall
+        let deadline: ContinuousClock.Instant
+        let cancellable = g_cancellable_new()!
+        var completion: ((PortalCallOutcome) -> Void)?
+        var timer: guint = 0
+        var started = false
+
+        init(call: PortalCall, deadline: ContinuousClock.Instant,
+             completion: @escaping (PortalCallOutcome) -> Void) {
+            self.call = call
+            self.deadline = deadline
+            self.completion = completion
+        }
+        deinit { g_object_unref(cancellable) }
+    }
+
+    private final class CallBox {
+        weak var owner: LinuxPortalTransport?
+        let work: Ordinary
+        init(_ owner: LinuxPortalTransport, _ work: Ordinary) {
+            self.owner = owner
+            self.work = work
+        }
     }
 
     private final class OwnerBox {
@@ -125,6 +182,9 @@ final class LinuxPortalTransport {
     private var closedSignal: gulong = 0
     private var ownerSubscription: guint = 0
     private var pending: [UUID: Pending] = [:]
+    private var ordinary: [UUID: Ordinary] = [:]
+    private var signalSubscriptions: [guint] = []
+    private var observers: [UUID: (PortalSignal) -> Void] = [:]
     private var isShutDown = false
 
     init(busAddress: String? = ProcessInfo.processInfo.environment["DBUS_SESSION_BUS_ADDRESS"]) {
@@ -161,10 +221,50 @@ final class LinuxPortalTransport {
         return work.id
     }
 
+    @discardableResult
+    func call(_ call: PortalCall, deadline: ContinuousClock.Instant,
+              completion: @escaping (PortalCallOutcome) -> Void) -> UUID {
+        precondition(Thread.isMainThread)
+        let work = Ordinary(call: call, deadline: deadline, completion: completion)
+        ordinary[work.id] = work
+        guard !isShutDown else { finish(work, .failed(.tornDown)); return work.id }
+        guard PortalWire.valid(call.arguments, [:]) else {
+            finish(work, .failed(.invalidArguments))
+            return work.id
+        }
+        guard ContinuousClock.now < deadline else { finish(work, .failed(.timedOut)); return work.id }
+        work.timer = GTK.after(Self.remainingSeconds(deadline)) { [weak self, weak work] in
+            guard let self, let work else { return }
+            work.timer = 0
+            self.finish(work, .failed(.timedOut))
+        }
+        if let connection { start(work, on: connection) } else { connect() }
+        return work.id
+    }
+
+    @discardableResult
+    func observe(_ handler: @escaping (PortalSignal) -> Void) -> UUID {
+        precondition(Thread.isMainThread)
+        let id = UUID()
+        observers[id] = handler
+        return id
+    }
+
+    func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
+
+    /// Queue Close on the session's owning connection, without reconnecting.
+    func closeSession(_ session: String) {
+        guard let connection, PortalWire.valid([.objectPath(session)], [:]) else { return }
+        g_dbus_connection_call(connection, Self.busName, session, "org.freedesktop.portal.Session",
+            "Close", nil, nil, G_DBUS_CALL_FLAGS_NO_AUTO_START,
+            Self.remainingMilliseconds(ContinuousClock.now.advanced(by: Limits.portalCallTimeout)),
+            nil, nil, nil)
+    }
+
     func cancel(_ id: UUID) {
         precondition(Thread.isMainThread)
-        guard let work = pending[id] else { return }
-        finish(work, .cancelled)
+        if let work = pending[id] { finish(work, .cancelled) }
+        if let work = ordinary[id] { finish(work, .failed(.cancelled)) }
     }
 
     func shutdown() {
@@ -172,6 +272,9 @@ final class LinuxPortalTransport {
         guard !isShutDown else { return }
         isShutDown = true
         for work in Array(pending.values) { finish(work, .tornDown) }
+        for work in Array(ordinary.values) { finish(work, .failed(.tornDown)) }
+        emit(.lost)
+        observers.removeAll()
         releaseConnection()
     }
 
@@ -199,12 +302,14 @@ final class LinuxPortalTransport {
             owner.attempt = nil
             guard let connection else {
                 for work in Array(owner.pending.values) { owner.finish(work, .busFailure) }
+                for work in Array(owner.ordinary.values) { owner.finish(work, .failed(.busFailure)) }
                 return
             }
             owner.connection = connection
             g_dbus_connection_set_exit_on_close(connection, 0)
             owner.observeConnection(connection)
             for work in Array(owner.pending.values) { owner.start(work, on: connection) }
+            for work in Array(owner.ordinary.values) { owner.start(work, on: connection) }
         }
         if let busAddress {
             let flags = GDBusConnectionFlags(rawValue:
@@ -283,6 +388,63 @@ final class LinuxPortalTransport {
             }, callData)
     }
 
+    private func start(_ work: Ordinary, on connection: OpaquePointer) {
+        guard work.completion != nil, !work.started else { return }
+        guard ContinuousClock.now < work.deadline else { finish(work, .failed(.timedOut)); return }
+        work.started = true
+        g_dbus_connection_call(connection, Self.busName, work.call.path, work.call.interface,
+            work.call.method, PortalWire.arguments(work.call.arguments), nil, G_DBUS_CALL_FLAGS_NONE,
+            Self.remainingMilliseconds(work.deadline), work.cancellable,
+            { source, result, data in
+                guard let source, let result, let data else { return }
+                let box = Unmanaged<CallBox>.fromOpaque(data).takeRetainedValue()
+                var error: UnsafeMutablePointer<GError>?
+                let reply = g_dbus_connection_call_finish(mp_dbus_connection(source), result, &error)
+                defer {
+                    if let reply { g_variant_unref(reply) }
+                    g_clear_error(&error)
+                }
+                guard let owner = box.owner, box.work.completion != nil else { return }
+                if ContinuousClock.now >= box.work.deadline {
+                    owner.finish(box.work, .failed(.timedOut))
+                } else if let error {
+                    let failure: PortalRequestOutcome
+                    if case .property = box.work.call,
+                       g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_INVALID_ARGS.rawValue)) != 0 {
+                        // Properties.Get uses InvalidArgs for an absent interface.
+                        // Our (ss) arguments are fixed and validated locally.
+                        failure = .unavailable
+                    } else { failure = LinuxPortalTransport.failure(error) }
+                    owner.finish(box.work, .failed(failure))
+                } else if let reply {
+                    owner.finish(box.work, PortalWire.ordinaryReply(reply, for: box.work.call))
+                } else {
+                    owner.finish(box.work, .failed(.malformedResponse))
+                }
+            }, Unmanaged.passRetained(CallBox(self, work)).toOpaque())
+    }
+
+    private func finish(_ work: Ordinary, _ outcome: PortalCallOutcome) {
+        guard let completion = work.completion else { return }
+        work.completion = nil
+        ordinary.removeValue(forKey: work.id)
+        if work.timer != 0 { g_source_remove(work.timer); work.timer = 0 }
+        g_cancellable_cancel(work.cancellable)
+        cancelUnusedAttempt()
+        completion(outcome)
+    }
+
+    private func cancelUnusedAttempt() {
+        if pending.isEmpty, ordinary.isEmpty, let attempt {
+            self.attempt = nil
+            g_cancellable_cancel(attempt.cancellable)
+        }
+    }
+
+    private func emit(_ signal: PortalSignal) {
+        for handler in Array(observers.values) { handler(signal) }
+    }
+
     private func response(_ work: Pending, path: String, parameters: OpaquePointer) {
         guard work.completion != nil, Self.validRequestPath(path) else { return }
         guard ContinuousClock.now < work.deadline else { finish(work, .timedOut); return }
@@ -320,10 +482,7 @@ final class LinuxPortalTransport {
         if outcome != .cancelled || end == .response {
             g_cancellable_cancel(work.cancellable)
         }
-        if pending.isEmpty, let attempt {
-            self.attempt = nil
-            g_cancellable_cancel(attempt.cancellable)
-        }
+        cancelUnusedAttempt()
         completion(outcome)
     }
 
@@ -335,6 +494,8 @@ final class LinuxPortalTransport {
                 guard let owner = box.owner else { return }
                 owner.releaseConnection()
                 for work in Array(owner.pending.values) { owner.finish(work, .busFailure) }
+                for work in Array(owner.ordinary.values) { owner.finish(work, .failed(.busFailure)) }
+                owner.emit(.lost)
             }
         closedSignal = mp_connect(UnsafeMutableRawPointer(connection), "closed",
             unsafeBitCast(closed, to: GCallback.self), Unmanaged.passRetained(OwnerBox(self)).toOpaque(),
@@ -346,16 +507,39 @@ final class LinuxPortalTransport {
             "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus", Self.busName,
             G_DBUS_SIGNAL_FLAGS_NONE, { _, _, _, _, _, parameters, data in
                 guard let data, let parameters, PortalWire.hasType(parameters, "(sss)") else { return }
-                let newOwner = g_variant_get_child_value(parameters, 2)!
-                defer { g_variant_unref(newOwner) }
-                guard PortalWire.string(newOwner)?.isEmpty == true else { return }
+                let oldOwner = g_variant_get_child_value(parameters, 1)!
+                defer { g_variant_unref(oldOwner) }
+                guard PortalWire.string(oldOwner)?.isEmpty == false else { return }
                 let box = Unmanaged<OwnerBox>.fromOpaque(data).takeUnretainedValue()
                 guard let owner = box.owner else { return }
                 for work in Array(owner.pending.values) { owner.finish(work, .unavailable) }
+                for work in Array(owner.ordinary.values) { owner.finish(work, .failed(.unavailable)) }
+                owner.emit(.lost)
             }, Unmanaged.passRetained(OwnerBox(self)).toOpaque(), { data in
                 guard let data else { return }
                 Unmanaged<OwnerBox>.fromOpaque(data).release()
             })
+        for (interface, member, path) in [
+            (PortalInterface.globalShortcuts.rawValue, "Activated", Self.desktopPath as String?),
+            (PortalInterface.globalShortcuts.rawValue, "Deactivated", Self.desktopPath as String?),
+            (PortalInterface.globalShortcuts.rawValue, "ShortcutsChanged", Self.desktopPath as String?),
+            ("org.freedesktop.portal.Session", "Closed", nil),
+        ] {
+            let subscription = g_dbus_connection_signal_subscribe(connection, Self.busName,
+                interface, member, path, nil, G_DBUS_SIGNAL_FLAGS_NONE,
+                { _, _, path, _, member, parameters, data in
+                    guard let data, let path, let member, let parameters else { return }
+                    let box = Unmanaged<OwnerBox>.fromOpaque(data).takeUnretainedValue()
+                    if let signal = PortalWire.signal(member: String(cString: member),
+                        path: String(cString: path), parameters: parameters) {
+                        box.owner?.emit(signal)
+                    }
+                }, Unmanaged.passRetained(OwnerBox(self)).toOpaque(), { data in
+                    guard let data else { return }
+                    Unmanaged<OwnerBox>.fromOpaque(data).release()
+                })
+            signalSubscriptions.append(subscription)
+        }
     }
 
     private func releaseConnection() {
@@ -368,6 +552,10 @@ final class LinuxPortalTransport {
             g_dbus_connection_signal_unsubscribe(connection, ownerSubscription)
             ownerSubscription = 0
         }
+        for subscription in signalSubscriptions {
+            g_dbus_connection_signal_unsubscribe(connection, subscription)
+        }
+        signalSubscriptions.removeAll()
         for work in pending.values where work.subscription != 0 {
             g_dbus_connection_signal_unsubscribe(connection, work.subscription)
             work.subscription = 0
@@ -431,7 +619,10 @@ final class LinuxPortalTransport {
             return .busFailure
         }
         if g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_SERVICE_UNKNOWN.rawValue)) != 0
-            || g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_NAME_HAS_NO_OWNER.rawValue)) != 0 {
+            || g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_NAME_HAS_NO_OWNER.rawValue)) != 0
+            || g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_UNKNOWN_INTERFACE.rawValue)) != 0
+            || g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_UNKNOWN_METHOD.rawValue)) != 0
+            || g_error_matches(error, g_dbus_error_quark(), Int32(G_DBUS_ERROR_UNKNOWN_PROPERTY.rawValue)) != 0 {
             return .unavailable
         }
         return .methodError
@@ -453,6 +644,9 @@ private enum PortalWire {
                 guard validString(path), g_variant_is_object_path(path) != 0 else { return false }
             case .string(let value):
                 guard validString(value) else { return false }
+            case .int32, .uint32: break
+            case .dictionary(let entries):
+                guard valid([], entries) else { return false }
             case .shortcuts(let shortcuts):
                 guard shortcuts.allSatisfy({ validString($0.id) && $0.properties.allSatisfy {
                     validString($0.key) && validString($0.value)
@@ -468,10 +662,19 @@ private enum PortalWire {
 
     static func parameters(_ arguments: [PortalArgument], _ options: [String: PortalOption],
                            token: String) -> OpaquePointer {
-        var children: [OpaquePointer?] = arguments.map { argument in
+        var options = options
+        options["handle_token"] = .string(token)
+        return self.arguments(arguments + [.dictionary(options)])
+    }
+
+    static func arguments(_ arguments: [PortalArgument]) -> OpaquePointer {
+        let children: [OpaquePointer?] = arguments.map { argument in
             switch argument {
             case .objectPath(let path): return g_variant_new_object_path(path)
             case .string(let string): return g_variant_new_string(string)
+            case .int32(let value): return g_variant_new_int32(value)
+            case .uint32(let value): return g_variant_new_uint32(value)
+            case .dictionary(let options): return dictionary(options)
             case .shortcuts(let shortcuts):
                 let builder = builder("a(sa{sv})")
                 for shortcut in shortcuts {
@@ -483,9 +686,6 @@ private enum PortalWire {
                 return g_variant_builder_end(builder)
             }
         }
-        var options = options
-        options["handle_token"] = .string(token)
-        children.append(dictionary(options))
         return tuple(children)
     }
 
@@ -524,6 +724,52 @@ private enum PortalWire {
         let child = g_variant_get_child_value(value, 0)!
         defer { g_variant_unref(child) }
         return string(child)
+    }
+
+    static func ordinaryReply(_ value: OpaquePointer, for call: PortalCall) -> PortalCallOutcome {
+        if case .property = call {
+            guard hasType(value, "(v)") else { return .failed(.malformedResponse) }
+            let wrapper = g_variant_get_child_value(value, 0)!
+            let child = g_variant_get_variant(wrapper)!
+            defer { g_variant_unref(wrapper); g_variant_unref(child) }
+            guard hasType(child, "u") else { return .failed(.malformedResponse) }
+            return .property(g_variant_get_uint32(child))
+        }
+        return hasType(value, "()") ? .success : .failed(.malformedResponse)
+    }
+
+    static func signal(member: String, path: String, parameters: OpaquePointer) -> PortalSignal? {
+        guard g_variant_get_size(parameters) <= Limits.portalResponseMaxBytes else { return nil }
+        if member == "Closed" {
+            guard hasType(parameters, "(a{sv})") else { return nil }
+            return .closed(session: path)
+        }
+        if member == "ShortcutsChanged" {
+            guard hasType(parameters, "(oa(sa{sv}))") else { return nil }
+            let session = g_variant_get_child_value(parameters, 0)!
+            let items = g_variant_get_child_value(parameters, 1)!
+            defer { g_variant_unref(session); g_variant_unref(items) }
+            guard let shortcuts = decodeShortcuts(items) else { return nil }
+            return .shortcutsChanged(session: string(session)!, shortcuts: shortcuts)
+        }
+        guard hasType(parameters, "(osta{sv})") else { return nil }
+        let session = g_variant_get_child_value(parameters, 0)!
+        let action = g_variant_get_child_value(parameters, 1)!
+        let timestamp = g_variant_get_child_value(parameters, 2)!
+        let options = g_variant_get_child_value(parameters, 3)!
+        defer {
+            g_variant_unref(session); g_variant_unref(action)
+            g_variant_unref(timestamp); g_variant_unref(options)
+        }
+        if member == "Deactivated" {
+            return .deactivated(session: string(session)!, action: string(action)!,
+                                timestamp: UInt64(g_variant_get_uint64(timestamp)))
+        }
+        let token = g_variant_lookup_value(options, "activation_token", nil)
+        defer { if let token { g_variant_unref(token) } }
+        if let token, !hasType(token, "s") { return nil }
+        return .activated(session: string(session)!, action: string(action)!,
+                          timestamp: UInt64(g_variant_get_uint64(timestamp)), activationToken: token.flatMap(string))
     }
 
     static func response(_ value: OpaquePointer) -> PortalRequestOutcome {
@@ -583,6 +829,7 @@ private enum PortalWire {
     private static func decodeShortcuts(_ value: OpaquePointer) -> [PortalShortcut]? {
         guard hasType(value, "a(sa{sv})") else { return nil }
         var shortcuts: [PortalShortcut] = []
+        var ids = Set<String>()
         for index in 0..<g_variant_n_children(value) {
             let entry = g_variant_get_child_value(value, index)!
             let id = g_variant_get_child_value(entry, 0)!
@@ -604,9 +851,43 @@ private enum PortalWire {
                     properties[name] = string(child)
                 }
             }
+            guard ids.insert(string(id)!).inserted else { return nil }
             shortcuts.append(PortalShortcut(id: string(id)!, properties: properties))
         }
         return shortcuts
+    }
+}
+private extension PortalCall {
+    var path: String {
+        if case .closeSession(let session) = self { return session }
+        return "/org/freedesktop/portal/desktop"
+    }
+    var interface: String {
+        switch self {
+        case .property: return "org.freedesktop.DBus.Properties"
+        case .configureShortcuts: return PortalInterface.globalShortcuts.rawValue
+        case .notifyKeysym: return PortalInterface.remoteDesktop.rawValue
+        case .closeSession: return "org.freedesktop.portal.Session"
+        }
+    }
+    var method: String {
+        switch self {
+        case .property: return "Get"
+        case .configureShortcuts: return "ConfigureShortcuts"
+        case .notifyKeysym: return "NotifyKeyboardKeysym"
+        case .closeSession: return "Close"
+        }
+    }
+    var arguments: [PortalArgument] {
+        switch self {
+        case .property(let interface, let property):
+            return [.string(interface.rawValue), .string(property.rawValue)]
+        case .configureShortcuts(let session, let parent):
+            return [.objectPath(session), .string(parent), .dictionary([:])]
+        case .notifyKeysym(let session, let keysym, let state):
+            return [.objectPath(session), .dictionary([:]), .int32(keysym), .uint32(state.rawValue)]
+        case .closeSession: return []
+        }
     }
 }
 #endif

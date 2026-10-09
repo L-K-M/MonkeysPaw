@@ -30,11 +30,18 @@
 #define MONKEYSPAW_CGTK_SHIM_H
 
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#endif
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/wayland/gdkwayland.h>
+#endif
 
 /* ---- Upcasts (the GTK_*() / G_*() macros) ---------------------------------- */
 
 static inline GtkWindow    *mp_window(GtkWidget *w)    { return GTK_WINDOW(w); }
 static inline GtkWidget    *mp_window_widget(GtkWindow *w) { return GTK_WIDGET(w); }
+static inline GtkButton    *mp_button(GtkWidget *w)  { return GTK_BUTTON(w); }
 static inline GtkBox       *mp_box(GtkWidget *w)       { return GTK_BOX(w); }
 static inline GtkLabel     *mp_label(GtkWidget *w)     { return GTK_LABEL(w); }
 static inline GtkEntry     *mp_entry(GtkWidget *w)     { return GTK_ENTRY(w); }
@@ -90,6 +97,35 @@ static inline char *mp_parse_string(const char *text) {
 /* Swift cannot call GApplicationCommandLine's variadic print functions. */
 static inline void mp_command_line_print(GApplicationCommandLine *command, const char *text) {
     g_application_command_line_print(command, "%s\n", text);
+}
+
+/* Portal window identities, with runtime backend checks. */
+static inline char *mp_portal_x11_parent(GtkWindow *window) {
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
+#ifdef GDK_WINDOWING_X11
+    if (surface && GDK_IS_X11_SURFACE(surface))
+        return g_strdup_printf("x11:%lx", (unsigned long)gdk_x11_surface_get_xid(surface));
+#endif
+    return NULL;
+}
+
+typedef void (*MPPortalExported)(GdkToplevel *, const char *, gpointer);
+static inline GdkSurface *mp_portal_export(GtkWindow *window, MPPortalExported callback,
+                                           gpointer data, GDestroyNotify destroy) {
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
+#ifdef GDK_WINDOWING_WAYLAND
+    if (surface && GDK_IS_WAYLAND_TOPLEVEL(surface) &&
+        gdk_wayland_toplevel_export_handle(GDK_TOPLEVEL(surface), callback, data, destroy))
+        return g_object_ref(surface);
+#endif
+    return NULL;
+}
+
+static inline void mp_portal_unexport(GdkSurface *surface) {
+#ifdef GDK_WINDOWING_WAYLAND
+    if (GDK_IS_WAYLAND_TOPLEVEL(surface))
+        gdk_wayland_toplevel_unexport_handle(GDK_TOPLEVEL(surface));
+#endif
 }
 
 /* ---- Signals (g_signal_connect is a macro; G_CALLBACK is another) ---------- */

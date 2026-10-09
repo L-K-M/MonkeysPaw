@@ -63,7 +63,7 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         let model = environment.setupModel
         XCTAssertTrue(GTKTestSupport.spin { model.session != nil })
         XCTAssertEqual(model.rows.first { $0.kind == .accessibility }?.status, .notApplicable)
-        XCTAssertEqual(model.rows.first { $0.kind == .portal }?.status, .unknown)
+        XCTAssertEqual(model.rows.first { $0.kind == .portal }?.status, .needsAction(fix: LinuxStrings.portalAllow))
         XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.mechanism, .manual)
         XCTAssertEqual(model.rows.first { $0.kind == .ydotool }?.status, .needsAction(fix: LinuxStrings.ydotoolMissing))
         XCTAssertEqual(model.rows.first { $0.kind == .kde }?.status,

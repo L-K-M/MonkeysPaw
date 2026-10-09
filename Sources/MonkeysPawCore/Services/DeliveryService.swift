@@ -262,7 +262,12 @@ public final class DeliveryService {
 
         // The port enqueues work on its worker; Core never waits on injection.
         var didRespond = false
-        injector.paste(chord: chord) { result in
+        let consent: PasteConsent
+        switch request.selection {
+        case .ladder: consent = .userInitiated
+        case .only: consent = .existingSession
+        }
+        injector.paste(chord: chord, consent: consent) { result in
             self.mainThread.run {
                 guard !didRespond, !request.didComplete else { return }
                 didRespond = true

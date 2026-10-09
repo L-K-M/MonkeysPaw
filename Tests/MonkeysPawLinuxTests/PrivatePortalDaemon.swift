@@ -9,7 +9,6 @@ import XCTest
 /// private session. Arguments, output reads and the child lifetime are bounded.
 final class PrivatePortalDaemon {
     private static let addressCap = 4_096
-    private static let lifetime: TimeInterval = 5
     private let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("mp-portal-bus-" + UUID().uuidString)
     private let process = Process()
@@ -17,11 +16,13 @@ final class PrivatePortalDaemon {
     private var watchdog: guint = 0
     private(set) var address = ""
 
-    init() throws {
+    var isRunning: Bool { process.isRunning }
+
+    init(lifetime: Duration = .seconds(5)) throws {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let config = directory.appendingPathComponent("bus.conf")
-            try Data(Self.config.utf8).write(to: config)
+            try Data(Self.config(socket: directory.appendingPathComponent("socket").path).utf8).write(to: config)
             process.executableURL = try XCTUnwrap(LinuxToolRunner().executable("dbus-daemon"))
             process.arguments = ["--config-file=" + config.path, "--nofork", "--print-address=1"]
             process.standardInput = FileHandle.nullDevice
@@ -35,8 +36,10 @@ final class PrivatePortalDaemon {
             guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
                 throw NSError(domain: "PrivatePortalDaemon", code: 1)
             }
-            watchdog = GTK.after(Self.lifetime) { [process] in
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            watchdog = GTK.after(lifetime.timeInterval) { [weak self] in
+                guard let self else { return }
+                self.watchdog = 0
+                if self.process.isRunning { kill(self.process.processIdentifier, SIGKILL) }
             }
             var bytes = Data()
             var buffer = [UInt8](repeating: 0, count: Self.addressCap)
@@ -68,13 +71,13 @@ final class PrivatePortalDaemon {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private static let config = """
+    private static func config(socket: String) -> String { """
         <busconfig>
-          <type>session</type><listen>unix:tmpdir=/tmp</listen>
+          <type>session</type><listen>unix:path=\(socket)</listen>
           <policy context='default'>
             <allow own='*'/><allow send_destination='*'/><allow receive_sender='*'/>
           </policy>
         </busconfig>
-        """
+        """ }
 }
 #endif
