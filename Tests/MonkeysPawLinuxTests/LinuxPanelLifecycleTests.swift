@@ -60,14 +60,15 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         let environment = LinuxEnvironment(application: application, environment: [
             "PATH": "/nonexistent", "XDG_CURRENT_DESKTOP": "KDE", "XDG_SESSION_TYPE": "wayland",
         ])
+        defer { environment.shutdown() }
         let model = environment.setupModel
         XCTAssertTrue(GTKTestSupport.spin { model.session != nil })
         XCTAssertEqual(model.rows.first { $0.kind == .accessibility }?.status, .notApplicable)
         XCTAssertEqual(model.rows.first { $0.kind == .portal }?.status, .needsAction(fix: LinuxStrings.portalAllow))
-        XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.mechanism, .manual)
+        XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.mechanism, .kglobalaccel)
         XCTAssertEqual(model.rows.first { $0.kind == .ydotool }?.status, .needsAction(fix: LinuxStrings.ydotoolMissing))
         XCTAssertEqual(model.rows.first { $0.kind == .kde }?.status,
-                       .needsAction(fix: SetupStrings.kdeShortcut + " (Added in M1d)"))
+                       .needsAction(fix: SetupStrings.kdeShortcut))
 
         model.fix(.hotkey)
         XCTAssertTrue(GTKTestSupport.spin {
@@ -84,7 +85,8 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         gtk_text_buffer_get_bounds(buffer, &start, &end)
         let raw = try XCTUnwrap(gtk_text_buffer_get_text(buffer, &start, &end, 0))
         defer { g_free(raw) }
-        XCTAssertEqual(String(cString: raw), GnomeKeybindingInstaller.command)
+        XCTAssertEqual(String(cString: raw), SetupStrings.kdeShortcut)
+        XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.status, .needsAction)
     }
 
     func testNativeCloseKeepsThePanelAvailableForTheShortcut() throws {
