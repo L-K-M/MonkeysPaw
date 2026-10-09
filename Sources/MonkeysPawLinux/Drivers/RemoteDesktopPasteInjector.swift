@@ -104,7 +104,11 @@ final class RemoteDesktopPasteInjector: PasteInjector {
 
     func allow(done: @escaping () -> Void) {
         mainThread.run {
-            if case .ready = self.state { done(); return }
+            if case .ready = self.state {
+                guard self.tokenWriteFailed, self.operation == nil else { done(); return }
+                // Start rotates single-use tokens; explicit recovery needs a fresh session.
+                self.close(.close)
+            }
             self.begin(.allow, budget: self.consentBudget) { _ in done() }
         }
     }

@@ -100,6 +100,140 @@ final class RemoteDesktopPortalTests: XCTestCase {
         XCTAssertTrue(rotated.value == "rotation-two")
     }
 
+    func testAllowRecoversTokenWriteFailureWithFreshSession() throws {
+        let file = LinuxPaths(environment: tools.environment).dataDirectory.appendingPathComponent("portal.json")
+        // A directory blocks atomic replacement even when tests run as root.
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        allow()
+        let firstSession = try session()
+        XCTAssertEqual(injector.status, .needsAction(fix: LinuxStrings.portalTokenWriteFailed))
+        XCTAssertEqual(store.load(), .corrupt)
+        XCTAssertEqual(paste(), .sent)
+
+        try FileManager.default.removeItem(at: file)
+        XCTAssertEqual(store.load(), .absent)
+        injector.probe()
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(paste(), .sent)
+        XCTAssertEqual(paste(consent: .userInitiated), .sent)
+        XCTAssertEqual(portal.calls.filter { $0.method == "Start" }.count, 1)
+        XCTAssertFalse(portal.closedPaths.contains(firstSession))
+        XCTAssertEqual(injector.status, .needsAction(fix: LinuxStrings.portalTokenWriteFailed))
+
+        portal.handleCall = { call in
+            if call.method == "CreateSession" {
+                XCTAssertTrue(self.portal.closedPaths.contains(firstSession), "Close must precede replacement setup")
+            }
+            return false
+        }
+        var completions = 0
+        injector.allow { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { completions == 1 })
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession", "SelectDevices", "Start",
+                                                   "CreateSession", "SelectDevices", "Start"])
+        XCTAssertEqual(portal.closedPaths.filter { $0 == firstSession }.count, 1)
+        XCTAssertEqual(injector.status, .ok)
+        guard case .loaded(let token) = store.load() else { return XCTFail("Fresh replacement token missing") }
+        XCTAssertTrue(token.value == "rotation-two")
+        let select = try XCTUnwrap(portal.calls.last { $0.method == "SelectDevices" })
+        XCTAssertNil(select.option("restore_token"))
+        let start = try XCTUnwrap(portal.calls.last { $0.method == "Start" })
+        let freshSession = portal.text(start, index: 0)
+        XCTAssertNotEqual(freshSession, firstSession)
+        XCTAssertEqual(paste(.terminal), .sent)
+        XCTAssertTrue(notify.suffix(6).allSatisfy { portal.text($0, index: 0) == freshSession })
+        XCTAssertEqual(Set((portal.calls + notify).map(\.sender)).count, 1)
+        XCTAssertEqual(parentCloses, 2)
+
+        let calls = portal.calls.count
+        let closes = portal.closedPaths
+        allow()
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(portal.calls.count, calls)
+        XCTAssertEqual(portal.closedPaths, closes)
+        XCTAssertEqual(injector.status, .ok)
+    }
+
+    func testRepeatedTokenWriteFailureStaysActionableAndUsable() throws {
+        let file = LinuxPaths(environment: tools.environment).dataDirectory.appendingPathComponent("portal.json")
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        allow()
+        let firstSession = try session()
+        allow()
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(portal.calls.filter { $0.method == "Start" }.count, 2)
+        XCTAssertEqual(portal.closedPaths.filter { $0 == firstSession }.count, 1)
+        let start = try XCTUnwrap(portal.calls.last { $0.method == "Start" })
+        let freshSession = portal.text(start, index: 0)
+        XCTAssertNotEqual(freshSession, firstSession)
+        XCTAssertEqual(injector.status, .needsAction(fix: LinuxStrings.portalTokenWriteFailed))
+        XCTAssertEqual(store.load(), .corrupt)
+        XCTAssertEqual(paste(), .sent)
+        XCTAssertTrue(notify.allSatisfy { portal.text($0, index: 0) == freshSession })
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path),
+                       ["portal.json"])
+    }
+
+    func testRecoveryAllowDoesNotInterruptPasteOrPendingSetup() throws {
+        let file = LinuxPaths(environment: tools.environment).dataDirectory.appendingPathComponent("portal.json")
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        allow()
+        let firstSession = try session()
+        try FileManager.default.removeItem(at: file)
+        var heldKey: FakePortal.Call?
+        portal.handleCall = { call in
+            guard call.method == "NotifyKeyboardKeysym", self.portal.keys(call) == (0xffe3, 1) else { return false }
+            heldKey = call
+            return true
+        }
+        var results: [PasteAttemptResult] = []
+        injector.paste(chord: .terminal) { results.append($0) }
+        XCTAssertTrue(GTKTestSupport.spin { heldKey != nil })
+        var busyCompletions = 0
+        injector.allow { busyCompletions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(busyCompletions, 1)
+        XCTAssertTrue(results.isEmpty)
+        XCTAssertFalse(portal.closedPaths.contains(firstSession))
+        XCTAssertEqual(portal.calls.filter { $0.method == "Start" }.count, 1)
+        XCTAssertEqual(injector.status, .needsAction(fix: LinuxStrings.portalTokenWriteFailed))
+        portal.reply(try XCTUnwrap(heldKey))
+        XCTAssertTrue(GTKTestSupport.spin { !results.isEmpty })
+        XCTAssertEqual(results, [.sent])
+        XCTAssertEqual(keys, [0xffe3, 0xffe1, 0x76, 0x76, 0xffe1, 0xffe3])
+        XCTAssertEqual(states, [1, 1, 1, 0, 0, 0])
+
+        var heldStart: FakePortal.Call?
+        portal.handleCall = { call in
+            guard call.method == "Start" else { return false }
+            heldStart = call
+            return true
+        }
+        var recoveryCompletions = 0
+        injector.allow { recoveryCompletions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { heldStart != nil || recoveryCompletions > 0 })
+        let start = try XCTUnwrap(heldStart, "Idle Allow must obtain a fresh token")
+        let freshSession = portal.text(start, index: 0)
+        XCTAssertTrue(portal.closedPaths.contains(firstSession))
+        XCTAssertEqual(injector.status, .unknown)
+        allow()
+        XCTAssertEqual(paste(), .failed(.backendUnavailable))
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(recoveryCompletions, 0)
+        XCTAssertEqual(portal.calls.filter { $0.method == "Start" }.count, 2)
+        XCTAssertFalse(portal.closedPaths.contains(freshSession))
+        portal.reply(start)
+        portal.respond(start)
+        XCTAssertTrue(GTKTestSupport.spin { recoveryCompletions == 1 })
+        XCTAssertEqual(injector.status, .ok)
+        XCTAssertEqual(paste(), .sent)
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(recoveryCompletions, 1)
+        XCTAssertEqual(results, [.sent])
+    }
+
     func testVersionOneOmitsPersistenceAndUnavailableKeyboardNeverCreatesSession() throws {
         portal.versions[PortalInterface.remoteDesktop.rawValue] = 1
         try store.save(XCTUnwrap(PortalRestoreToken("ignored-v1")))

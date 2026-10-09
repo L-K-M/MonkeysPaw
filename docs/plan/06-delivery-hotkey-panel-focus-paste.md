@@ -160,6 +160,8 @@ DeliveryService.deliver(text, mode)
   KDE's lazy delivery session retains its short total portal budget.
   Setup Allow explicitly retries a failed session; ordinary deliveries
   retain the process failure cache, and Test paste resets it as before.
+  After a token-save failure, only explicit Setup Allow replaces an idle
+  ready session through fresh consent to persist a replacement token.
 - **Native portal windows (M1c).** Use the active realized GTK window's
   hexadecimal X11 XID or exported Wayland surface handle. Export failure,
   absence of an active window, an export already leased by another portal
