@@ -13,7 +13,20 @@ final class RootedFileStore: FileStore {
 
     init(root: URL) throws {
         guard root.isFileURL, root.path.hasPrefix("/") else { throw FileStoreError.invalidRoot }
-        self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+        // Resolve only the existing ancestor: a missing tail prevents Foundation
+        // from fully resolving /var -> /private/var or a symlinked $HOME.
+        // Append missing components literally; later operations reject symlinks.
+        var ancestor = root.standardizedFileURL
+        var missingComponents = [String]()
+        while !FileManager.default.fileExists(atPath: ancestor.path) {
+            missingComponents.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
+        var canonicalRoot = ancestor.resolvingSymlinksInPath()
+        for component in missingComponents.reversed() {
+            canonicalRoot.appendPathComponent(component, isDirectory: true)
+        }
+        self.root = canonicalRoot
         _ = try sanitized { try rootExists(parents: .existing) }
     }
 

@@ -34,6 +34,47 @@ final class RootedFileStoreTests: XCTestCase {
         }
     }
 
+    func testSymlinkedAncestorWithMissingTailSupportsFilesButRejectsChildSymlinks() throws {
+        let real = directory.appendingPathComponent("real")
+        let link = directory.appendingPathComponent("link")
+        try manager.createDirectory(at: real, withIntermediateDirectories: true)
+        try manager.createSymbolicLink(at: link, withDestinationURL: real)
+        let bytes = Data("Through resolved root\r\n".utf8)
+        let secret = outside.appendingPathComponent("secret.md")
+        try Data("Outside".utf8).write(to: secret)
+
+        for tail in ["library", "missing/deep/library"] {
+            let libraryURL = link.appendingPathComponent(tail)
+            let resolvedRoot = real.appendingPathComponent(tail)
+            let linkedStore = try RootedFileStore(root: libraryURL)
+            XCTAssertTrue(try linkedStore.listFiles().isEmpty)
+            XCTAssertNil(try linkedStore.stamp(at: "nested/a.md"))
+            XCTAssertFalse(manager.fileExists(atPath: resolvedRoot.path))
+
+            try linkedStore.write(bytes, at: "nested/a.md")
+            XCTAssertEqual(try Data(contentsOf: resolvedRoot.appendingPathComponent("nested/a.md")), bytes)
+            XCTAssertEqual(try linkedStore.read(at: "nested/a.md"), bytes)
+            let stamp = try XCTUnwrap(linkedStore.stamp(at: "nested/a.md"))
+            XCTAssertEqual(try linkedStore.listFiles(), [StoredFile(relativePath: "nested/a.md", stamp: stamp)])
+
+            try manager.createSymbolicLink(at: resolvedRoot.appendingPathComponent("internal"),
+                                           withDestinationURL: resolvedRoot.appendingPathComponent("nested"))
+            try manager.createSymbolicLink(at: resolvedRoot.appendingPathComponent("escape"), withDestinationURL: outside)
+            try manager.createSymbolicLink(at: resolvedRoot.appendingPathComponent("alias.md"), withDestinationURL: secret)
+            for path in ["internal/a.md", "escape/secret.md", "alias.md"] {
+                assertOutsideRoot { _ = try linkedStore.stamp(at: path) }
+                assertOutsideRoot { _ = try linkedStore.read(at: path) }
+                assertOutsideRoot { try linkedStore.write(Data(), at: path) }
+                assertOutsideRoot { try linkedStore.delete(at: path) }
+                assertOutsideRoot { try linkedStore.move(from: path, to: "moved.md") }
+                assertOutsideRoot { try linkedStore.move(from: "nested/a.md", to: path) }
+            }
+            XCTAssertEqual(try linkedStore.listFiles(), [StoredFile(relativePath: "nested/a.md", stamp: stamp)])
+            XCTAssertEqual(try linkedStore.read(at: "nested/a.md"), bytes)
+            XCTAssertEqual(try Data(contentsOf: secret), Data("Outside".utf8))
+        }
+    }
+
     func testAtomicReplaceChangesInodeAndLeavesOpenReaderCompleteOldBytes() throws {
         let first = Data(repeating: 0x61, count: 256 * 1024)
         let second = Data("Complete replacement\r\n".utf8)

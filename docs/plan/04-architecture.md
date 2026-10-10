@@ -229,8 +229,11 @@ M2b's `FileStore` covers the sketch's `PromptStore` file access and
 `FileStamp` equality, reads/writes whole `Data`, deletes, and moves without
 replacing a destination. Per-OS drivers perform lexical/root/symlink checks;
 Core never reads files directly. Drivers canonicalize the selected root
-once and reject symlinked components on subsequent operations; listing
-skips all symlinks. Stamps include device/inode, size, and nanosecond mtime
+once by resolving its deepest existing ancestor, then appending missing
+components literally. This supports roots beneath macOS's `/var` symlink
+or a symlinked Linux home even before the root exists. Subsequent operations
+reject symlinked components in the canonical path; listing skips all
+symlinks. Stamps include device/inode, size, and nanosecond mtime
 and change time (plus birth time on macOS). No watch API exists yet;
 watchers and change notification belong to a later slice.
 
