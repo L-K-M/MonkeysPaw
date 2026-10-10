@@ -417,7 +417,7 @@ final class RootedFileWatcherTests: XCTestCase {
                                  originallyPresent: Set<String> = [],
                                  file: StaticString = #filePath, line: UInt = #line) {
         pump(for: quietWindow)
-        let received = Array(changes.dropFirst(consumed))
+        let batch = Array(changes.dropFirst(consumed))
         var valid = true
         func check(_ condition: Bool, _ message: String) {
             XCTAssertTrue(condition, message, file: file, line: line)
@@ -426,15 +426,15 @@ final class RootedFileWatcherTests: XCTestCase {
 
         var present = originallyPresent
         var touched = Set<String>()
-        for change in received {
+        for change in batch {
             let labels = change.created.union(change.modified).union(change.deleted)
-            check(labels.isSubset(of: paths), "Unexpected paths in \(received)")
+            check(labels.isSubset(of: paths), "Unexpected paths in \(batch)")
             check(change.created.isDisjoint(with: change.modified)
                   && change.created.isDisjoint(with: change.deleted)
-                  && change.modified.isDisjoint(with: change.deleted), "Overlapping labels in \(received)")
-            check(change.created.isDisjoint(with: present), "Created an existing path in \(received)")
-            check(change.modified.isSubset(of: present), "Modified an absent path in \(received)")
-            check(change.deleted.isSubset(of: present), "Deleted an absent path in \(received)")
+                  && change.modified.isDisjoint(with: change.deleted), "Overlapping labels in \(batch)")
+            check(change.created.isDisjoint(with: present), "Created an existing path in \(batch)")
+            check(change.modified.isSubset(of: present), "Modified an absent path in \(batch)")
+            check(change.deleted.isSubset(of: present), "Deleted an absent path in \(batch)")
             present.subtract(change.deleted)
             present.formUnion(change.created)
             touched.formUnion(labels)
@@ -442,8 +442,8 @@ final class RootedFileWatcherTests: XCTestCase {
         let aggregate = LibraryChangeSet(created: present.subtracting(originallyPresent),
                                          modified: present.intersection(originallyPresent).intersection(touched),
                                          deleted: originallyPresent.subtracting(present))
-        XCTAssertEqual(aggregate, expected, "Received \(received)", file: file, line: line)
-        if valid && aggregate == expected { consumed = changes.count }
+        XCTAssertEqual(aggregate, expected, "Received \(batch)", file: file, line: line)
+        if valid && aggregate == expected { consumed += batch.count }
     }
 
     private func expectQuiet(file: StaticString = #filePath, line: UInt = #line) {
@@ -490,15 +490,19 @@ private final class CallbackWatcher: @unchecked Sendable {
     private weak var watcher: RootedFileWatcher?
     private let ownerThread = pthread_self()
 
+    /// Must be constructed on the watcher's owning thread so ownerThread
+    /// identifies the GLib delivery thread.
     init(_ watcher: RootedFileWatcher) { self.watcher = watcher }
 
     func withWatcher(_ work: (RootedFileWatcher) -> Void) {
         precondition(pthread_equal(ownerThread, pthread_self()) != 0,
                      "Raw watcher lifecycle must stay on its owning GLib thread")
         lock.lock()
-        defer { lock.unlock() }
-        guard let watcher else { return }
-        work(watcher)
+        let current = watcher
+        lock.unlock()
+
+        guard let current else { return }
+        work(current)
     }
 }
 

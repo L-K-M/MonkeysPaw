@@ -1,5 +1,8 @@
 /// Disjoint prompt paths after one quiet debounce window. Paths are relative
 /// to the library root; no file reads or reloads are implied by notification.
+///
+/// `created`, `modified`, and `deleted` must be pairwise disjoint; debug builds
+/// assert this invariant.
 public struct LibraryChangeSet: Equatable, Sendable {
     public let created: Set<String>
     public let modified: Set<String>
