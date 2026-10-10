@@ -138,6 +138,29 @@ static inline gulong mp_connect(gpointer instance,
     return g_signal_connect_data(instance, signal, handler, user_data, destroy, (GConnectFlags)0);
 }
 
+/* GFileMonitor is non-recursive; the driver attaches one per directory.
+ * Request move pairs, and leave all debounce policy to Core's Scheduler. */
+static inline GFileMonitor *mp_monitor_directory(const char *path, GError **error) {
+    GFile *file = g_file_new_for_path(path);
+    GFileMonitor *monitor = g_file_monitor_directory(file, G_FILE_MONITOR_WATCH_MOVES, NULL, error);
+    g_object_unref(file);
+    if (monitor) g_file_monitor_set_rate_limit(monitor, 0);
+    return monitor;
+}
+
+/* A one-shot rescan runs after queued monitor events on their owning context.
+ * The destroy notify releases its callback context on completion or removal. */
+static inline guint mp_rescan_idle(GSourceFunc rescan, gpointer data, GDestroyNotify destroy) {
+    GSource *source = g_idle_source_new();
+    g_source_set_priority(source, G_PRIORITY_DEFAULT_IDLE);
+    g_source_set_callback(source, rescan, data, destroy);
+    GMainContext *context = g_main_context_ref_thread_default();
+    guint id = g_source_attach(source, context);
+    g_main_context_unref(context);
+    g_source_unref(source);
+    return id;
+}
+
 /* ---- Version forks ------------------------------------------------------- */
 
 /*
