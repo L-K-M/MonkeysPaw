@@ -12,18 +12,16 @@ final class RootedFileStore: FileStore {
 
     init(root: URL) throws {
         guard root.isFileURL, root.path.hasPrefix("/") else { throw FileStoreError.invalidRoot }
-        // Resolve only the existing ancestor: a missing tail prevents Foundation
-        // from fully resolving /var -> /private/var or a symlinked $HOME.
-        // Append missing components literally; later operations reject symlinks.
-        var ancestor = root.standardizedFileURL
-        var missingComponents = [String]()
-        while !FileManager.default.fileExists(atPath: ancestor.path) {
-            missingComponents.append(ancestor.lastPathComponent)
-            ancestor.deleteLastPathComponent()
-        }
-        var canonicalRoot = ancestor.resolvingSymlinksInPath()
-        for component in missingComponents.reversed() {
+        // POSIX resolution is required: Foundation's URL resolver does not
+        // canonicalize /var -> /private/var on Darwin. Resolve each prefix;
+        // keep unresolved components literal for later operation checks.
+        var canonicalRoot = URL(fileURLWithPath: "/", isDirectory: true)
+        for component in root.standardizedFileURL.pathComponents.dropFirst() {
             canonicalRoot.appendPathComponent(component, isDirectory: true)
+            if let resolvedPath = realpath(canonicalRoot.path, nil) {
+                canonicalRoot = URL(fileURLWithPath: String(cString: resolvedPath), isDirectory: true)
+                free(resolvedPath)
+            }
         }
         self.root = canonicalRoot
         _ = try sanitized { try rootExists(parents: .existing) }

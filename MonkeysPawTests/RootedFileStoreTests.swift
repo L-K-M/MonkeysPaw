@@ -74,6 +74,31 @@ final class RootedFileStoreTests: XCTestCase {
         }
     }
 
+    func testTwoLevelSymlinkedAncestorWithMissingTailKeepsCanonicalRoot() throws {
+        let real = directory.appendingPathComponent("real")
+        let innerLink = directory.appendingPathComponent("inner-link")
+        let outerLink = directory.appendingPathComponent("outer-link")
+        try manager.createDirectory(at: real, withIntermediateDirectories: true)
+        try manager.createSymbolicLink(at: innerLink, withDestinationURL: real)
+        try manager.createSymbolicLink(at: outerLink, withDestinationURL: innerLink)
+        let resolvedRoot = real.appendingPathComponent("missing/deep/library")
+        let linkedStore = try RootedFileStore(root: outerLink.appendingPathComponent("missing/deep/library"))
+        XCTAssertTrue(try linkedStore.listFiles().isEmpty)
+        XCTAssertFalse(manager.fileExists(atPath: resolvedRoot.path))
+
+        let bytes = Data("Through two links\r\n".utf8)
+        try linkedStore.write(bytes, at: "nested/a.md")
+        XCTAssertEqual(try Data(contentsOf: resolvedRoot.appendingPathComponent("nested/a.md")), bytes)
+
+        try manager.removeItem(at: innerLink)
+        try manager.createSymbolicLink(at: innerLink, withDestinationURL: outside)
+        XCTAssertEqual(try linkedStore.read(at: "nested/a.md"), bytes)
+        try linkedStore.write(bytes, at: "nested/b.md")
+        XCTAssertEqual(try Data(contentsOf: resolvedRoot.appendingPathComponent("nested/b.md")), bytes)
+        XCTAssertEqual(try linkedStore.listFiles().map(\.relativePath), ["nested/a.md", "nested/b.md"])
+        XCTAssertTrue(try manager.contentsOfDirectory(atPath: outside.path).isEmpty)
+    }
+
     func testAtomicReplaceChangesInodeAndLeavesOpenReaderCompleteOldBytes() throws {
         let first = Data(repeating: 0x61, count: 256 * 1024)
         let second = Data("Complete replacement\r\n".utf8)
