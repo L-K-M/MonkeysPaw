@@ -1,14 +1,16 @@
+import Foundation
 import XCTest
 @testable import MonkeysPawCore
 
 final class LibraryWatcherTests: XCTestCase {
     private let raw = FakeFileStoreWatcher()
     private let scheduler = WatchScheduler()
-    private var changes = [LibraryChangeSet]()
+    private let received = WatchChanges()
+    private var changes: [LibraryChangeSet] { received.values }
 
     private func start() throws -> LibraryWatcher {
         let service = LibraryWatcher(watcher: raw, scheduler: scheduler)
-        try service.start { [weak self] in self?.changes.append($0) }
+        try service.start { [received] in received.append($0) }
         return service
     }
 
@@ -98,7 +100,7 @@ final class LibraryWatcherTests: XCTestCase {
         service.stop()
         service.stop()
         XCTAssertEqual(raw.stops, 1)
-        try service.start { [weak self] in self?.changes.append($0) }
+        try service.start { [received] in received.append($0) }
         oldCallback?(FileStoreEvent(relativePath: "stale.md", kind: .created))
         raw.send("new.md", .created)
         scheduler.fire(0)
@@ -113,7 +115,7 @@ final class LibraryWatcherTests: XCTestCase {
         raw.failure = FileStoreError.ioFailure
         XCTAssertThrowsError(try service.start { _ in XCTFail() })
         raw.failure = nil
-        try service.start { [weak self] in self?.changes.append($0) }
+        try service.start { [received] in received.append($0) }
         raw.send("late-root.md", .created)
         scheduler.fireAll()
         XCTAssertEqual(changes, [LibraryChangeSet(created: ["late-root.md"])])
@@ -131,10 +133,10 @@ final class LibraryWatcherTests: XCTestCase {
 
     func testConsumerCanStopAndRestartDuringEmission() throws {
         let service = LibraryWatcher(watcher: raw, scheduler: scheduler)
-        try service.start { [weak self, weak service] change in
-            self?.changes.append(change)
+        try service.start { [received, weak service] change in
+            received.append(change)
             service?.stop()
-            try? service?.start { [weak self] in self?.changes.append($0) }
+            try? service?.start { [received] in received.append($0) }
         }
         raw.send("a.md", .created)
         scheduler.fireAll()
@@ -145,13 +147,31 @@ final class LibraryWatcherTests: XCTestCase {
     }
 }
 
+/// Callback writes and test reads share only this lock-protected buffer.
+private final class WatchChanges: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = [LibraryChangeSet]()
+
+    var values: [LibraryChangeSet] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func append(_ change: LibraryChangeSet) {
+        lock.lock()
+        defer { lock.unlock() }
+        stored.append(change)
+    }
+}
+
 private final class FakeFileStoreWatcher: FileStoreWatcher {
-    var callback: ((FileStoreEvent) -> Void)?
+    var callback: (@Sendable (FileStoreEvent) -> Void)?
     var failure: FileStoreError?
     var starts = 0
     var stops = 0
 
-    func start(_ onEvent: @escaping (FileStoreEvent) -> Void) throws {
+    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws {
         starts += 1
         if let failure { throw failure }
         callback = onEvent

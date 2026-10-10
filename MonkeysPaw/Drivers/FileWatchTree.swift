@@ -62,6 +62,8 @@ final class FileWatchTree {
         return snapshot
     }
 
+    /// Emits regular files only, ordered by UTF-8 path bytes. Directory nodes
+    /// describe monitor topology and never appear in the diff.
     static func changes(from old: Snapshot, to new: Snapshot) -> [FileStoreEvent] {
         let paths = Set(old.files.keys).union(new.files.keys)
         return paths.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }.compactMap { path in

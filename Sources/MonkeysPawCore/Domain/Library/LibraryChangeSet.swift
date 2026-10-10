@@ -6,6 +6,8 @@ public struct LibraryChangeSet: Equatable, Sendable {
     public let deleted: Set<String>
 
     public init(created: Set<String> = [], modified: Set<String> = [], deleted: Set<String> = []) {
+        assert(created.isDisjoint(with: modified) && created.isDisjoint(with: deleted)
+               && modified.isDisjoint(with: deleted), "LibraryChangeSet path sets must be disjoint")
         self.created = created
         self.modified = modified
         self.deleted = deleted

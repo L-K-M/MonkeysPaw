@@ -8,7 +8,7 @@ public protocol FileStoreWatcher {
     /// roots are watched through existing ancestors without creating them.
     /// A failed start leaves the watcher stopped. The driver owns the callback
     /// thread; callers must not assume it is the UI thread.
-    func start(_ onEvent: @escaping (FileStoreEvent) -> Void) throws
+    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws
     /// Idempotent. Release monitors and discard events from the stopped run.
     func stop()
 }

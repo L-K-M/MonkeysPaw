@@ -39,7 +39,7 @@ final class RootedFileWatcher: FileStoreWatcher {
     private let queueKey = DispatchSpecificKey<Void>()
     private var monitor: Monitor?
     private var snapshot = FileWatchTree.Snapshot()
-    private var onEvent: ((FileStoreEvent) -> Void)?
+    private var onEvent: (@Sendable (FileStoreEvent) -> Void)?
     private var epoch: UInt64 = 0
     private var hasRescanFailure = false
 
@@ -52,7 +52,7 @@ final class RootedFileWatcher: FileStoreWatcher {
     deinit { stop() }
 
     /// Idempotent while running; a second start retains the first handler.
-    func start(_ onEvent: @escaping (FileStoreEvent) -> Void) throws {
+    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws {
         try onQueue {
             guard self.onEvent == nil else { return }
             epoch &+= 1
@@ -143,7 +143,7 @@ final class RootedFileWatcher: FileStoreWatcher {
             if try arm(for: next) { next = try tree.scan() }
         } catch {
             if !hasRescanFailure {
-                log.write(.error, "library rescan failed; keeping last baseline")
+                log.write(.error, "library rescan failed; keeping last baseline: \(String(describing: error))")
             }
             hasRescanFailure = true
             return

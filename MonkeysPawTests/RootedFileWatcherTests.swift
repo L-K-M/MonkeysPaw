@@ -13,7 +13,8 @@ final class RootedFileWatcherTests: XCTestCase {
     private var outside: URL!
     private var store: RootedFileStore!
     private var service: LibraryWatcher?
-    private var changes = [LibraryChangeSet]()
+    private let received = WatcherEvents<LibraryChangeSet>()
+    private var changes: [LibraryChangeSet] { received.values }
     private var consumed = 0
     private var quietWindow: TimeInterval { Limits.watchDebounce.timeInterval + 0.3 }
     private var subWindow: TimeInterval { min(Limits.watchDebounce.timeInterval / 5, 0.1) }
@@ -38,7 +39,7 @@ final class RootedFileWatcherTests: XCTestCase {
         let watcher = try RootedFileWatcher(root: url ?? root, log: OSLogSink())
         let service = LibraryWatcher(watcher: watcher, scheduler: DispatchScheduler())
         self.service = service
-        try service.start { [weak self] in self?.changes.append($0) }
+        try service.start { [received] in received.append($0) }
     }
 
     func testExistingRecursiveTreeCreateModifyRenameAndDelete() throws {
@@ -213,7 +214,7 @@ final class RootedFileWatcherTests: XCTestCase {
         service?.stop()
         service?.stop()
         try store.write(Data(), at: "while-stopped.md")
-        try XCTUnwrap(service).start { [weak self] in self?.changes.append($0) }
+        try XCTUnwrap(service).start { [received] in received.append($0) }
         expectQuiet()
         try store.write(Data(), at: "new.md")
         expect(LibraryChangeSet(created: ["new.md"]))
@@ -248,11 +249,13 @@ final class RootedFileWatcherTests: XCTestCase {
         defer { watcher.stop() }
         let events = RawEvents()
         let stopped = RawCallbackResult()
-        try watcher.start { [weak watcher] event in
-            guard let watcher else { return }
-            events.append(event)
-            watcher.stop()
-            stopped.complete()
+        let callbackWatcher = CallbackWatcher(watcher)
+        try watcher.start { event in
+            callbackWatcher.withWatcher { watcher in
+                events.append(event)
+                watcher.stop()
+                stopped.complete()
+            }
         }
         try moveRawCallbackFixtureIntoRoot()
         XCTAssertTrue(spin { stopped.isComplete }, "Stop callback did not finish: \(events.values)")
@@ -283,15 +286,17 @@ final class RootedFileWatcherTests: XCTestCase {
         let events = RawEvents()
         let restartedEvents = RawEvents()
         let restarted = RawCallbackResult()
-        try watcher.start { [weak watcher] event in
-            guard let watcher else { return }
-            events.append(event)
-            watcher.stop()
-            do {
-                try watcher.start { restartedEvents.append($0) }
-                restarted.complete()
-            } catch {
-                restarted.complete(error: error)
+        let callbackWatcher = CallbackWatcher(watcher)
+        try watcher.start { event in
+            callbackWatcher.withWatcher { watcher in
+                events.append(event)
+                watcher.stop()
+                do {
+                    try watcher.start { restartedEvents.append($0) }
+                    restarted.complete()
+                } catch {
+                    restarted.complete(error: error)
+                }
             }
         }
         try moveRawCallbackFixtureIntoRoot()
@@ -328,8 +333,9 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertTrue(spin { !log.values.isEmpty })
         try store.write(Data(), at: "second.md")
         pump(for: quietWindow)
-        let diagnostic = WatcherLog.Entry(level: .error, message: "library rescan failed; keeping last baseline")
-        XCTAssertEqual(log.values, [diagnostic])
+        let diagnosticPrefix = "library rescan failed; keeping last baseline"
+        XCTAssertEqual(log.values.count, 1)
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .error && $0.message.hasPrefix(diagnosticPrefix) })
         XCTAssertTrue(events.values.isEmpty, "Failed scans must not emit partial diffs or invented deletions.")
 
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
@@ -344,7 +350,8 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertTrue(spin { log.values.count >= 2 })
         try store.write(Data(), at: "fourth.md")
         pump(for: quietWindow)
-        XCTAssertEqual(log.values, [diagnostic, diagnostic], "A successful scan starts a fresh failure streak.")
+        XCTAssertEqual(log.values.count, 2, "A successful scan starts a fresh failure streak.")
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .error && $0.message.hasPrefix(diagnosticPrefix) })
         XCTAssertEqual(events.values.count, 3)
 
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
@@ -355,7 +362,8 @@ final class RootedFileWatcherTests: XCTestCase {
                        ["first.md", "second.md", "recovered.md", "third.md", "fourth.md", "recovered-again.md"])
         XCTAssertEqual(events.values.count, 6)
         XCTAssertTrue(events.values.allSatisfy { $0.kind == .created })
-        XCTAssertEqual(log.values, [diagnostic, diagnostic])
+        XCTAssertEqual(log.values.count, 2)
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .error && $0.message.hasPrefix(diagnosticPrefix) })
     }
 
     private func moveRawCallbackFixtureIntoRoot() throws {
@@ -409,22 +417,23 @@ final class RootedFileWatcherTests: XCTestCase {
                                  file: StaticString = #filePath, line: UInt = #line) {
         pump(for: quietWindow)
         let received = Array(changes.dropFirst(consumed))
-        consumed = changes.count
+        var valid = true
+        func check(_ condition: Bool, _ message: String) {
+            XCTAssertTrue(condition, message, file: file, line: line)
+            valid = valid && condition
+        }
+
         var present = originallyPresent
         var touched = Set<String>()
         for change in received {
             let labels = change.created.union(change.modified).union(change.deleted)
-            XCTAssertTrue(labels.isSubset(of: paths), "Unexpected paths in \(received)", file: file, line: line)
-            XCTAssertTrue(change.created.isDisjoint(with: change.modified)
-                          && change.created.isDisjoint(with: change.deleted)
-                          && change.modified.isDisjoint(with: change.deleted),
-                          "Overlapping labels in \(received)", file: file, line: line)
-            XCTAssertTrue(change.created.isDisjoint(with: present),
-                          "Created an existing path in \(received)", file: file, line: line)
-            XCTAssertTrue(change.modified.isSubset(of: present),
-                          "Modified an absent path in \(received)", file: file, line: line)
-            XCTAssertTrue(change.deleted.isSubset(of: present),
-                          "Deleted an absent path in \(received)", file: file, line: line)
+            check(labels.isSubset(of: paths), "Unexpected paths in \(received)")
+            check(change.created.isDisjoint(with: change.modified)
+                  && change.created.isDisjoint(with: change.deleted)
+                  && change.modified.isDisjoint(with: change.deleted), "Overlapping labels in \(received)")
+            check(change.created.isDisjoint(with: present), "Created an existing path in \(received)")
+            check(change.modified.isSubset(of: present), "Modified an absent path in \(received)")
+            check(change.deleted.isSubset(of: present), "Deleted an absent path in \(received)")
             present.subtract(change.deleted)
             present.formUnion(change.created)
             touched.formUnion(labels)
@@ -433,6 +442,7 @@ final class RootedFileWatcherTests: XCTestCase {
                                          modified: present.intersection(originallyPresent).intersection(touched),
                                          deleted: originallyPresent.subtracting(present))
         XCTAssertEqual(aggregate, expected, "Received \(received)", file: file, line: line)
+        if valid && aggregate == expected { consumed = changes.count }
     }
 
     private func expectQuiet(file: StaticString = #filePath, line: UInt = #line) {
@@ -456,25 +466,44 @@ final class RootedFileWatcherTests: XCTestCase {
 
 /// macOS raw callbacks run on the watcher queue; the hosted test reads them
 /// on the main thread. Keeping this helper on Linux mirrors the same checks.
-private final class RawEvents {
-    private let lock = NSLock()
-    private var stored = [FileStoreEvent]()
+private typealias RawEvents = WatcherEvents<FileStoreEvent>
 
-    var values: [FileStoreEvent] {
+/// Only Sendable event values cross threads, through this locked buffer.
+private final class WatcherEvents<Event: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = [Event]()
+
+    var values: [Event] {
         lock.lock()
         defer { lock.unlock() }
         return stored
     }
 
-    func append(_ event: FileStoreEvent) {
+    func append(_ event: Event) {
         lock.lock()
         defer { lock.unlock() }
         stored.append(event)
     }
 }
 
+/// Lock the weak driver access without declaring the native driver Sendable.
+/// The macOS driver serializes lifecycle work on its native callback queue.
+private final class CallbackWatcher: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var watcher: RootedFileWatcher?
+
+    init(_ watcher: RootedFileWatcher) { self.watcher = watcher }
+
+    func withWatcher(_ work: (RootedFileWatcher) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let watcher else { return }
+        work(watcher)
+    }
+}
+
 /// Completion and thrown errors are read on the test thread after raw callbacks.
-private final class RawCallbackResult {
+private final class RawCallbackResult: @unchecked Sendable {
     private let lock = NSLock()
     private var finished = false
     private var caughtError: Error?

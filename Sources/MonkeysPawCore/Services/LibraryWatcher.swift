@@ -3,7 +3,9 @@ import Foundation
 /// Coalesces raw filesystem events without reading files or clocks. Driver
 /// and scheduler callbacks may arrive on different threads. Lifecycle and
 /// delivery are serialized; a callback can stop or restart this service.
-public final class LibraryWatcher {
+/// Locks protect internal state; lifecycle calls must still honor the driver's
+/// owning-thread requirement.
+public final class LibraryWatcher: @unchecked Sendable {
     private struct PendingChange {
         let originallyPresent: Bool
         var present: Bool
@@ -23,7 +25,7 @@ public final class LibraryWatcher {
     private let scheduler: Scheduler
     private let lifecycleLock = NSRecursiveLock()
     private let stateLock = NSLock()
-    private var onChange: ((LibraryChangeSet) -> Void)?
+    private var onChange: (@Sendable (LibraryChangeSet) -> Void)?
     private var pending = [String: PendingChange]()
     private var epoch: UInt64 = 0
     private var generation: UInt64 = 0
@@ -36,7 +38,7 @@ public final class LibraryWatcher {
     deinit { watcher.stop() }
 
     /// Idempotent while running. The scheduler owns the delivery thread.
-    public func start(_ onChange: @escaping (LibraryChangeSet) -> Void) throws {
+    public func start(_ onChange: @escaping @Sendable (LibraryChangeSet) -> Void) throws {
         lifecycleLock.lock()
         defer { lifecycleLock.unlock() }
 
