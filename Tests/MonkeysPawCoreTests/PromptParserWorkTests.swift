@@ -43,7 +43,7 @@ final class PromptParserWorkTests: XCTestCase {
 
     func testAliasKeyIsRejectedBeforeExpansion() throws {
         try isolated(#function) {
-            var entries = ["seed: &n0 [value]"]
+            var entries: [String] = ["seed: &n0 [value]"]
             for index in 1...25 {
                 entries.append("level\(index): &n\(index) [*n\(index - 1), *n\(index - 1)]")
             }
@@ -184,7 +184,7 @@ final class PromptParserWorkTests: XCTestCase {
         try isolated(#function) {
             // Python int/format oracles around binary-word and decimal-chunk
             // boundaries, plus multiple carries and a partial leading group.
-            let cases = [
+            let cases: [(String, String, String)] = [
                 ("0x3b9ac9ff", "0o7346544777", "999999999"),
                 ("0x3b9aca00", "0o7346545000", "1000000000"),
                 ("0x3b9aca01", "0o7346545001", "1000000001"),
@@ -208,7 +208,8 @@ final class PromptParserWorkTests: XCTestCase {
                  "5104318580563813509192675599417790693391")
             ]
             for (hex, octal, decimal) in cases {
-                for spelling in [hex, octal, decimal, "+" + decimal, hex.uppercased().replacingOccurrences(of: "0X", with: "0x")] {
+                let spellings: [String] = [hex, octal, decimal, "+" + decimal, hex.uppercased().replacingOccurrences(of: "0X", with: "0x")]
+                for spelling in spellings {
                     let document = PromptCodec.parse("---\nformat: " + spelling + "\n---\nBody", filename: "Probe.md")
                     XCTAssertEqual(document.frontMatter.format.decimalValue, decimal, spelling)
                     XCTAssertEqual(document.issues.map(\.code), [.unsupportedFormat], spelling)
@@ -276,26 +277,30 @@ final class PromptParserWorkTests: XCTestCase {
 
     func testRadixPaddingZeroAndDecimalSignsKeepTheirMeaning() throws {
         try isolated(#function) {
-            for spelling in ["1", "+1", "0x0001", "0o0001", "!!int '0x0001'"] {
+            let validSpellings: [String] = ["1", "+1", "0x0001", "0o0001", "!!int '0x0001'"]
+            for spelling in validSpellings {
                 let document = PromptCodec.parse("---\nformat: " + spelling + "\n---\nBody", filename: "Probe.md")
                 XCTAssertTrue(document.issues.isEmpty, spelling)
                 XCTAssertEqual(document.frontMatter.format.decimalValue, "1")
                 XCTAssertEqual(try PromptRenderer.render(document), "Body")
                 XCTAssertTrue(try PromptCodec.write(document).contains("format: 1\n"))
             }
-            for spelling in ["0", "+0", "-0", "0x000000000000000000000", "0o000000000000000000000", "-1"] {
+            let invalidSpellings: [String] = ["0", "+0", "-0", "0x000000000000000000000", "0o000000000000000000000", "-1"]
+            for spelling in invalidSpellings {
                 let document = PromptCodec.parse("---\nformat: " + spelling + "\n---\nBody", filename: "Probe.md")
                 XCTAssertEqual(document.issues.map(\.code), [.invalidFormat], spelling)
                 XCTAssertFalse(document.isReadOnly)
                 XCTAssertFalse(document.canRender)
             }
-            for pair in [("+0", "0x000"), ("-0", "0o000"), ("0x000a", "+10"), ("0o0012", "10"), ("-10", "!!int '-10'")] {
+            let pairs: [(String, String)] = [("+0", "0x000"), ("-0", "0o000"), ("0x000a", "+10"), ("0o0012", "10"), ("-10", "!!int '-10'")]
+            for pair in pairs {
                 let document = PromptCodec.parse("---\n? " + pair.0 + "\n: first\n? " + pair.1
                                                  + "\n: second\n---\nBody", filename: "Probe.md")
                 XCTAssertEqual(document.issues.map(\.code), [.duplicateKey])
                 XCTAssertFalse(document.canRender)
             }
-            for prefix in ["0x", "0o"] {
+            let prefixes: [String] = ["0x", "0o"]
+            for prefix in prefixes {
                 let padded = "---\nformat: " + prefix + String(repeating: "0", count: nearLimitRadixDigits - 1) + "1\n---\nBody"
                 let document = PromptCodec.parse(padded, filename: "Probe.md")
                 XCTAssertTrue(document.issues.isEmpty)
@@ -321,13 +326,13 @@ final class PromptParserWorkTests: XCTestCase {
             let reference = PromptCodec.parse("---\n" + metadata + "\n---\n" + body, filename: "Probe.md")
             XCTAssertTrue(reference.issues.isEmpty)
             let depth = 128
-            var entries = [metadata, "seed: &n0 [value]"]
+            var entries: [String] = [metadata, "seed: &n0 [value]"]
             for index in 1...depth {
                 entries.append("level\(index): &n\(index) [*n\(index - 1), *n\(index - 1)]")
             }
             // Aliases can hide in a sequence, either side of a mapping pair,
             // or a mapping nested inside a sequence used as a key.
-            let keys = ["[*n128]", "{? *n128 : value}", "{nested: *n128}", "[{nested: [*n128]}]"]
+            let keys: [String] = ["[*n128]", "{? *n128 : value}", "{nested: *n128}", "[{nested: [*n128]}]"]
             for key in keys {
                 let source = "---\n" + entries.joined(separator: "\n") + "\n? " + key + "\n: rejected\n---\n" + body
                 let document = PromptCodec.parse(source, filename: "Probe.md")
@@ -378,9 +383,10 @@ final class PromptParserWorkTests: XCTestCase {
 
             // Anchored values and duplicates inside anchored collections must
             // still take the ordinary parser-error/fail-closed recovery path.
-            for header in ["seed: &a value\nx: first\nx: second",
-                           "seed: &a {x: first, x: second}",
-                           "title: Retained title\nprivate: false\nx: first\nx: second"] {
+            let headers: [String] = ["seed: &a value\nx: first\nx: second",
+                                     "seed: &a {x: first, x: second}",
+                                     "title: Retained title\nprivate: false\nx: first\nx: second"]
+            for header in headers {
                 let invalid = PromptCodec.parse("---\n" + header + "\n---\nBody", filename: "Fallback.md")
                 XCTAssertEqual(invalid.issues.map(\.code), [.duplicateKey])
                 XCTAssertEqual(invalid.frontMatter.title, "Fallback")

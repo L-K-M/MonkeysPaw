@@ -85,6 +85,17 @@ public enum Limits {
     /// §5.1: retain 50 local revisions per prompt to bound history storage.
     public static let historyCapPerPrompt: Int = 50
 
+    /// §5.5: bounded six-digit collision sequence within one UTC millisecond.
+    public static let historySequenceMax: Int = 999_999
+    /// Four-digit UTC years keep revision filenames lexically sortable.
+    public static let historyMaxUnixSeconds: TimeInterval = 253_402_300_800
+
+    /// §5.2: bound copy-name probes (Name 2.md through Name 1001.md).
+    public static let libraryCopyCandidateCap: Int = 1_000
+
+    /// ULID's 80 random bits, supplied by the saving service.
+    public static let ulidEntropyBytes: Int = 10
+
     /// §5.5: debounce 500 ms so editor delete/create saves become one change.
     public static let watchDebounce: Duration = .milliseconds(500)
 

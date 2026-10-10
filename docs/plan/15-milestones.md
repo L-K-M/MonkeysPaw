@@ -45,10 +45,16 @@
   have a Swift consumer that rejects unconsumed cases. Kotlin follows in
   M8. This slice has no filesystem or OS effects and does not complete
   M2 daily-use acceptance or close the NOT RUN M1a/M1c/M1d owner gates.
-  Later M2 slices own stores, identity assignment on real save/push,
-  watchers, index/search/ranking, picker/fill, remembered values, settings,
-  seeds and releases. Sync canonical form/path rules and server endpoints
-  remain with M5; imports, LLMs and history remain with their milestones.
+  M2b follows with stores only: library enumeration and atomic saves,
+  library-file path safety, identity assignment on real save or explicit
+  pre-push assignment, keyed-state migration, and capped local history.
+  Two rooted `FileStore` instances cover the library and app-data trees;
+  per-OS drivers own all filesystem access. It adds no UI or app wiring.
+  Later slices own watchers/change notification, index/search/ranking and
+  usage stores, picker/fill/remembered values, settings/seeds/release,
+  sync Groups/Conflicts semantics, imports, and LLM provenance. M5 retains
+  sync canonical form, stricter sync path rules and server endpoints.
+  M2b does not complete M2 daily-use acceptance or owner-run gates.
 - M1c lands in two focused PRs: first the native GDBus Request/Response
   transport, private restore-token storage and mock-bus tests; then
   GlobalShortcuts/RemoteDesktop sessions and app wiring. The first PR does

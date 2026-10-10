@@ -61,3 +61,12 @@ recursive common Core-schema scalars with quoted literal equivalents; typed
 unique mapping keys. Canonical writing keeps optional key presence and
 nested ordering, normalizes scalar presentation, and never assigns an id.
 Front-matter comments are not preserved. Markdown body bytes are preserved.
+
+M2b adds store-lifecycle tests in `Tests/MonkeysPawCoreTests/Library/`, driven
+by an in-memory `FileStore`, injected clock and entropy. They cover scan/ignore
+rules, invalid-byte listing, atomic-save failure handling, identity/key
+migration, stamp conflicts, copy naming and capped history/restore. Per-OS
+`RootedFileStoreTests` use real temporary directories for replacement,
+symlink safety and stamps. These are Swift store tests; this content corpus
+and its four-category dispatch remain unchanged. Groups/Conflicts are ordinary
+folders until sync exists (§5.1).

@@ -27,6 +27,7 @@ public enum PromptIssueLocation: Equatable, Sendable {
 
 public enum PromptIssueCode: String, Sendable {
     case sourceTooLarge = "source.too_large"
+    case invalidUTF8 = "source.invalid_utf8"
     case unclosedFrontMatter = "front_matter.unclosed"
     case invalidYAML = "yaml.invalid"
     case frontMatterNotMapping = "yaml.root_not_mapping"
@@ -54,6 +55,7 @@ public enum PromptIssueCode: String, Sendable {
     fileprivate var message: String {
         switch self {
         case .sourceTooLarge: return "Keep the prompt source within \(Limits.maxPromptBytes) UTF-8 bytes."
+        case .invalidUTF8: return "Encode the prompt file as UTF-8."
         case .unclosedFrontMatter: return "Close the front matter with a delimiter line (---)."
         case .invalidYAML: return "Fix the YAML syntax in the front matter."
         case .frontMatterNotMapping: return "Use a mapping for front matter."

@@ -41,10 +41,10 @@
 │ ShortcutService · SettingsService · SyncService                                       │
 └───────────────┬───────────────────────────────────────────────────────┬──────────────┘
 ┌───────────────▼───────── Domain (Core, pure) ──────┐ ┌────────────────▼─ Ports (Core protocols) ┐
-│ Prompt · FrontMatter · Template · Fields · Render · │ │ PromptStore StateStore Clock Clipboard    │
+│ Prompt · FrontMatter · Template · Fields · Render · │ │ PromptStore StateStore WallClock          │
 │ Search · Ranking · History · LlmArtifact · Rubric · │ │ PanelWindow FocusTracker PasteInjector    │
 │ Diff · SyncState                                    │ │ HotkeyBackend Notifier SecretStore        │
-└─────────────────────────────────────────────────────┘ │ HTTPTransporting SessionProbe             │
+└─────────────────────────────────────────────────────┘ │ HTTPTransporting SessionProbe Clipboard   │
                                                         └────────────────▲──────────────────────────┘
 ┌────────────────────────────────────────────────────────────────────────┴─────────────────────────┐
 │ Drivers (per OS, in the front-end targets)  implement ports; the only code touching OS/fs/net      │
@@ -159,12 +159,19 @@ server Docker image builds in a container with no GTK.
 
 ```swift
 public final class LibraryService {
-    public func search(_ query: String, limit: Int) -> [PromptSummary]
-    public func prompt(_ id: PromptID) throws -> Prompt
-    public func save(_ draft: PromptDraft, origin: SaveOrigin) throws -> Prompt
-    public func delete(_ id: PromptID) throws
-    public func history(_ id: PromptID) -> [Revision]
-    public func restore(_ id: PromptID, revision: RevisionID) throws -> Prompt
+    // M2b store API. Search/index APIs follow in later slices.
+    public func entries() throws -> [LibraryEntry]
+    public func load(at path: String) throws -> LibraryEntry
+    public func save(_ document: PromptDocument, at path: String,
+                     expectedStamp: FileStamp? = nil) throws -> LibraryEntry
+    public func assignIdentity(to path: String,
+                               expectedStamp: FileStamp? = nil) throws -> LibraryEntry
+    public func availablePath(for path: String) throws -> String
+    public func move(from source: String, to destination: String) throws -> LibraryEntry
+    public func delete(at path: String, expectedStamp: FileStamp? = nil) throws
+    public func history(for identity: PromptIdentity) throws -> [HistoryRevision]
+    public func restore(_ revision: HistoryRevision, at path: String,
+                        expectedStamp: FileStamp? = nil) throws -> LibraryEntry
 }
 
 public final class FillService {
@@ -201,6 +208,10 @@ Async calls in Core never hop to a main actor. Results reach the UI through
 the presentation model's `onChange`, which each front end republishes on its
 own UI thread.
 
+`assignIdentity(to:expectedStamp:)` checks a supplied stamp before assignment
+or returning an already assigned entry. A mismatch throws
+`LibraryError.conflict`; nil uses the version read by the operation.
+
 ### 4.6 Port → driver map
 
 | Port | macOS driver | Linux driver | Precedent |
@@ -213,5 +224,33 @@ own UI thread.
 | `Notifier` | `UNUserNotificationCenter` | `GNotification` via `g_application_send_notification`: no actions, so it cannot steal focus. Under flatpak it goes through the notification portal with no extra permission. | Copywraith `notifications.rs` (behaviour); GIO |
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
-| `PromptStore` | atomic writes; `DispatchSource` / FSEvents watcher | atomic writes; `GFileMonitor` through the shim | |
+| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
+| `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
+| `PromptKeyedStore` | Core history store over app-data `FileStore` | same | M2b; usage/values join later |
 | single instance / CLI | n/a (in-process hotkey) | `GtkApplication` D-Bus activation; actions `toggle`, `repeat`, `selftest` | Vervellum `LinuxApp.swift:239-325` |
+
+The §4.2 diagram keeps the sketch port names. `EntropySource` and
+`PromptKeyedStore` are the M2b port names for injected entropy and keyed-state
+migration.
+
+M2b's `FileStore` covers the sketch's `PromptStore` file access and
+`StateStore` app-data file access. It lists regular files with opaque
+`FileStamp` equality, reads/writes whole `Data`, deletes, and moves without
+replacing a destination. Per-OS drivers perform lexical/root/symlink checks;
+Core never reads files directly. Drivers canonicalize the selected root
+once by resolving its deepest existing ancestor, then appending missing
+components literally. This supports roots beneath macOS's `/var` symlink
+or a symlinked Linux home even before the root exists. Subsequent operations
+reject symlinked components in the canonical path; listing skips all
+symlinks. Stamps include device/inode, size, and nanosecond mtime
+and change time (plus birth time on macOS). No watch API exists yet;
+watchers and change notification belong to a later slice.
+
+An assigned id survives move, save, and restore, keeping its history key.
+An unassigned prompt derives its identity from its relative path, so moving
+it changes its history key.
+
+The service synchronously serializes operations within one instance. Future
+composition roots must share one service per library/app-data pair and run
+file operations away from UI callbacks. M2b constructs no drivers in the
+running apps because there is no consumer yet.

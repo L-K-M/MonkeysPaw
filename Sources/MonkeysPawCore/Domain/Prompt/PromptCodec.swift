@@ -2,6 +2,24 @@ import Foundation
 import Yams
 
 public enum PromptCodec {
+    /// Parses file bytes already read by a store; performs no filesystem access.
+    /// The distinct name keeps parse(_:filename:) text-only. Undecodable/oversize
+    /// bytes remain invalid documents without replacement characters in YAML.
+    public static func parseFile(_ data: Data, filename: String) -> PromptDocument {
+        let issue: PromptIssueCode
+        if data.count > Limits.maxPromptBytes {
+            issue = .sourceTooLarge
+        } else if let source = String(data: data, encoding: .utf8) {
+            return parse(source, filename: filename)
+        } else {
+            issue = .invalidUTF8
+        }
+        return PromptDocument(source: "", body: "",
+                              frontMatter: FrontMatter(title: (filename as NSString).deletingPathExtension,
+                                                       isPrivate: true),
+                              template: Template.parse(""), decodingIssues: [PromptIssue(issue)])
+    }
+
     /// Filename is a basename used only for title fallback; no path or file is read.
     public static func parse(_ source: String, filename: String) -> PromptDocument {
         let title = (filename as NSString).deletingPathExtension
@@ -84,6 +102,24 @@ public enum PromptCodec {
         let result = "---\n" + yaml + "---\n" + document.body
         guard result.utf8.count <= Limits.maxPromptBytes else { throw PromptWriteError.sourceTooLarge }
         return result
+    }
+
+    /// Store lifecycle seam: add an absent id, never replace a supplied one.
+    /// Reparse the canonical result so source and diagnostic locations agree.
+    static func assigningIdentity(_ id: ULID, to document: PromptDocument) throws -> PromptDocument {
+        _ = try write(document)
+        guard document.frontMatter.id == nil else { return document }
+        let metadata = document.frontMatter
+        let assigned = FrontMatter(id: id, title: metadata.title, description: metadata.description,
+                                   tags: metadata.tags, favorite: metadata.favorite, isPrivate: metadata.isPrivate,
+                                   fields: metadata.fields, format: metadata.format)
+        var pairs = document.preservedHeader?.mapping?.map { ($0.key, $0.value) } ?? []
+        pairs.append((Node("id", Tag(.str)), Node(id.rawValue, Tag(.str))))
+        let updated = PromptDocument(source: document.source, body: document.body, frontMatter: assigned,
+                                     template: document.template, preservedHeader: Node(pairs, Tag(.map), .block),
+                                     decodingIssues: document.decodingIssues,
+                                     declarationLocations: document.declarationLocations)
+        return parse(try write(updated), filename: metadata.title + ".md")
     }
 
     private static let knownKeys = ["id", "title", "description", "tags", "favorite", "private", "fields", "format"]

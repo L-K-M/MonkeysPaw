@@ -6,7 +6,7 @@
 |---|---|---|
 | Prompts | Library folder, default `~/Documents/MonkeysPaw/` (Linux: XDG documents dir). Any folder can be chosen. | By the sync server (§9) or by the user's git / Syncthing / iCloud |
 | Settings | macOS `~/Library/Application Support/ch.lkmc.MonkeysPaw/settings.json`; Linux `$XDG_CONFIG_HOME/monkeyspaw/settings.json`. Every app-owned JSON file carries a `version` field and migrates forward on load. | no |
-| History | `<data>/history/<prompt-id>/<UTC-timestamp>.md` (`HISTORY_CAP_PER_PROMPT = 50`). Synced prompts also have server revisions. | no |
+| History | `<data>/history/<prompt-id>/<UTC-timestamp>-<sequence>.md` (`Limits.historyCapPerPrompt = 50`). Synced prompts also have server revisions. | no |
 | Logs | `<data>/logs/monkeyspaw.log` (§12) | no |
 | Usage (ranking, last delivery) | `<data>/usage.json` | no |
 | Remembered values | `<data>/values.json`, `PRIVATE_FILE_MODE = 0600` | no |
@@ -21,12 +21,33 @@
 Library rules:
 
 - Every `*.md` file under the library is a prompt. Subfolders are folders.
-- Dot-directories and files starting with `_` are ignored, so `.git/` and
-  `_drafts/` are skipped. A `README.md` at the root is ignored too.
+- Dot-directories and `_`-prefixed files or directories are ignored, so
+  `.git/` and `_drafts/` are skipped. Only exact-case root `README.md` is
+  ignored; a nested `README.md` is a prompt. Dot-files remain eligible.
+  The `.md` suffix is case-sensitive. Entries sort by relative path UTF-8
+  bytes, independent of filesystem enumeration order.
 - A file without front matter is a valid prompt: its title is the filename
   and its body is the whole file.
 - With sync enabled, the top-level folders `Groups/` and `Conflicts/` are
-  reserved (§9.1).
+  reserved (§9.1). Until sync exists they are ordinary folders, including
+  in M2b's store APIs.
+
+M2b library paths are relative POSIX paths within the selected root. Reject
+absolute/empty paths, empty segments, `.`/`..` segments, backslashes, NUL or
+control characters, and paths exceeding `Limits.maxPathBytes` (1,024 UTF-8
+bytes). Mutation targets must also obey the prompt/ignored-path rules.
+Reads and writes reject symlinked components, and enumeration never follows
+symlinks. M5's NFC, segment-length, case-folded clash and reserved-scope
+policies are deferred; this slice does not silently normalize local paths.
+
+`LibraryService.entries()` includes malformed YAML, oversized sources and
+non-UTF-8 files as `LibraryEntry` values with error issues. The byte-oriented
+`PromptCodec.parseFile(_:filename:)` reports `source.too_large` or
+`source.invalid_utf8` without parsing those bytes or fabricating replacement
+characters. `PromptCodec.parse(_:filename:)` accepts text only. For invalid
+byte input, source and body are empty in the document; the original bytes
+remain on disk and can still be snapshotted when a corrected valid draft
+replaces them.
 
 ### 5.2 File format
 
@@ -78,8 +99,8 @@ Save semantics:
   fields, format`, then preserved keys in their original order. The writer
   emits an ordered Yams `Node.mapping`, not an encoder with sorted keys, and a
   round-trip test pins the order.
-- ULIDs come from one generator in Core (`Domain/ULID.swift`), used by the
-  file writer, the sync client, and the server. The body is written byte-for-byte as edited, including indentation
+- ULIDs come from one generator in Core (`Domain/ULID.swift`), used by
+  `LibraryService`, the later sync client, and the server. The body is written byte-for-byte as edited, including indentation
   and trailing newlines (Copywraith #159 lesson).
 - YAML comments inside front matter are not preserved. The README says so.
 - Writes are atomic: temp file in the same directory, then rename.
@@ -104,9 +125,9 @@ M2a content API clarifications:
   allowed after the closing delimiter). Its body starts after that line's
   terminator. Missing closure and malformed YAML remain invalid documents
   with their original source. An empty/comment-only header is an empty map.
-- The 256 KiB UTF-8 limit covers the entire source, before YAML or template
-  parsing. Diagnostics carry stable codes, severity and locations, without
-  copying source or parser error bodies into messages.
+- `Limits.maxPromptBytes` (256 KiB) caps the entire UTF-8 source, before
+  YAML or template parsing. Diagnostics carry stable codes, severity and
+  locations, without copying source or parser error bodies into messages.
   Positive format integers have no machine-word ceiling; even an unusually
   large future version stays explicitly incompatible and read-only.
   Exact radix conversion combines groups of 8 hexadecimal or 10 octal digits
@@ -144,6 +165,37 @@ M2a content API clarifications:
   an id. A plain file stays plain. Atomic writes, identity assignment and
   migration remain store lifecycle work. Supplied ULIDs are case-insensitive
   using the standard alphabet, 26 characters and 128-bit overflow bound.
+
+M2b save and identity API:
+
+- `save(_:at:expectedStamp:)` calls `PromptCodec.write` and atomically
+  replaces the file, creating parents for new files. Error documents and
+  future formats are refused; an existing future-format file is protected
+  even if the submitted draft uses an older format.
+- `PromptIdentity.local(hash)` is the lowercase pure-Swift SHA-256 of the
+  exact relative path bytes and stays on this device. On first save,
+  `LibraryService` uses injected `WallClock` and `EntropySource` ports to assign
+  a ULID. Its internal `PromptCodec.assigningIdentity(_:to:)` seam adds
+  only an absent id, then reparses canonical text. A plain body gains
+  `---\nid: <ULID>\n---\n` without changing any body bytes. The public
+  content-only writer continues to assign nothing.
+- `assignIdentity(to:)` is the explicit pre-push operation. Existing ids
+  remain stable on save/restore/move, including when an edited draft omits
+  the id. A draft trying to replace an existing id fails with
+  `LibraryError.identityMismatch`. Reassigning an assigned file performs
+  no write and creates no revision.
+- `PromptKeyedStore.migrateKey(from:to:)` moves keyed state before the
+  library write. History participates now; later usage/values stores are
+  injected through the service initializer. Unassigned moves migrate
+  path-hash to path-hash; assignment migrates path-hash to ULID. Assigned
+  moves change no key. Occupied destination keys fail with
+  `keyedStateConflict`, preserving both states rather than merging or
+  overwriting. A failed file write reverses completed migrations and
+  removes its staged snapshot. Recovery failure is explicit as
+  `recoveryRequired`; callers reload before retrying. There is no durable
+  cross-root crash transaction in this slice.
+- `move(from:to:)` never replaces another file. `delete(at:)` removes only
+  the library file and retains history, so restore can resurrect it.
 
 ### 5.3 Placeholder grammar
 
@@ -252,16 +304,47 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
 
 ### 5.5 History, external edits, import
 
-- **History.** Before every save the app copies the current file into
-  history. Restore is a new save, so history only grows. Every LLM-accepted
-  change records provenance in the history entry: model, action, and
-  instruction.
+- **History.** Before every save overwriting an existing file, copy its
+  exact previous bytes to `<data>/history/<prompt-id>/`. A new file has
+  nothing to snapshot. Unassigned path-hash history keys are transient within
+  an operation: assignment migrates them to the ULID key; they are never
+  silently inherited across unrelated saves. UTC filenames use
+  `yyyyMMdd'T'HHmmss.SSS'Z'-NNNNNN.md`; the six-digit sequence increments
+  for collisions within the same millisecond, up to
+  `Limits.historySequenceMax` (999,999), then fails explicitly. For example:
+  `20261010T130700.123Z-000000.md`. `history(for:)` returns revisions
+  newest-first with their timestamps. After a successful write, prune
+  oldest-first to `Limits.historyCapPerPrompt` (50); unrelated app-data
+  files are untouched. A pruning failure reports `historyMaintenanceFailed`
+  after the library write has committed; reload before retrying.
+  `restore(_:at:expectedStamp:)` preserves the revision's body bytes, writes
+  canonical front matter, and re-injects the current assigned id from the
+  history key for pre-id snapshots. Local revisions may restore only to
+  their original path; assigned revisions may restore to a different path
+  only when no other live entry carries that id. Restore snapshots the
+  current file and grows history up to the cap. Invalid/non-UTF-8 snapshots
+  are forensic-only: restore refuses them with `PromptWriteError.invalidPrompt`.
+  Future formats are refused with `PromptWriteError.unsupportedFormat`.
+  LLM provenance belongs to M4 and is absent in M2b.
 - **External edits.** The watcher reloads changed files, debounced by
   `WATCH_DEBOUNCE_MS = 500`. A delete followed by a create within the window
   counts as a modification (editors save that way). Suppose the open
   editor has unsaved changes and the file changes on disk. Saving then
   offers three choices: keep mine (overwrite), take theirs, or save mine as
   a copy. The app never merges silently.
+  M2b implements the store contract beneath that future dialog:
+  `expectedStamp` compares the caller's load/list stamp with the file now,
+  including deletion/recreation, and throws `LibraryError.conflict` on
+  mismatch. It checks again after staging history and before replacement.
+  Re-read and retry with the new stamp to keep yours; reload to take theirs.
+  Omitting the stamp explicitly permits overwriting the version read by the
+  save operation. This is optimistic checking, not an OS-level atomic
+  compare-and-swap with arbitrary external writers.
+  `availablePath(for:)` probes `Name.md`, `Name 2.md`, `Name 3.md`, etc.,
+  bounded by `Limits.libraryCopyCandidateCap` (1,000 alternates from
+  `Name 2.md` through `Name 1001.md`; `Name.md` itself is uncounted).
+  Save a new draft without id at that path for a distinct copy identity.
+  The helper does not reserve the name; later UI must recheck availability.
 - **Import.** Drop `.md`, `.prompt` (Dotprompt), or `.prompty` files, or a
   folder, onto the library window. Dotprompt `input.schema` and Prompty
   `inputs` map to `fields` where the mapping is lossless. Everything else
