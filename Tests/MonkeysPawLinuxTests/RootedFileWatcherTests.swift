@@ -144,6 +144,36 @@ final class RootedFileWatcherTests: XCTestCase {
         expectAggregate(LibraryChangeSet(deleted: ["a.md"]), paths: ["a.md"], originallyPresent: ["a.md"])
     }
 
+    func testRapidWriteBurstsDeliverFinalChangesAndKeepNewDirectoriesMonitored() throws {
+        let created = Set((0..<32).map { "burst/deep/created-\($0).md" })
+        let modified = Set((0..<32).map { "existing/modified-\($0).md" })
+        let deleted = Set((0..<32).map { "existing/deleted-\($0).md" })
+        let transient = Set((0..<32).map { "burst/deep/transient-\($0).md" })
+        for path in modified.union(deleted) { try store.write(Data("Baseline".utf8), at: path) }
+        try start()
+
+        // Finish every write before pumping GLib so queued native events share
+        // a rescan opportunity. Compare net delivered sets, not callback counts.
+        for path in created { try store.write(Data("Created".utf8), at: path) }
+        for path in modified { try store.write(Data("Modified".utf8), at: path) }
+        for path in deleted { try store.delete(at: path) }
+        for path in transient {
+            try store.write(Data(), at: path)
+            try store.delete(at: path)
+        }
+        expectAggregate(LibraryChangeSet(created: created, modified: modified, deleted: deleted),
+                        paths: created.union(modified).union(deleted).union(transient),
+                        originallyPresent: modified.union(deleted))
+
+        // Another burst proves the deferred scan armed new directories and
+        // cleared its pending source so later changes can schedule again.
+        for path in created { try Data("Changed again".utf8).write(to: root.appendingPathComponent(path)) }
+        for path in deleted { try store.write(Data("Recreated".utf8), at: path) }
+        expectAggregate(LibraryChangeSet(created: deleted, modified: created),
+                        paths: created.union(deleted), originallyPresent: created)
+        expectQuiet()
+    }
+
     func testFiltersPromptPathsAndIgnoresAllSymlinksAndSpecialFiles() throws {
         try start()
         let eligible = [".draft.md", "folder/.draft.md", "folder/README.md", "folder.md/a.md"]

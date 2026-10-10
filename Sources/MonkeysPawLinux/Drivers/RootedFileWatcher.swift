@@ -4,8 +4,9 @@ import Foundation
 import MonkeysPawCore
 
 /// GIO directory monitors are non-recursive. Reconcile the regular-file
-/// snapshot on native events, arming every discovered directory before its
-/// scan. This catches populated directory moves and missing-root attachment.
+/// snapshot after queued native events quiesce, arming every discovered
+/// directory before its scan. This catches populated directory moves and
+/// missing-root attachment.
 /// No debounce or prompt policy lives here. Lifecycle calls must run on the
 /// owning GLib thread, whose main context delivers GFileMonitor callbacks.
 final class RootedFileWatcher: FileStoreWatcher {
@@ -39,6 +40,8 @@ final class RootedFileWatcher: FileStoreWatcher {
     private var onEvent: (@Sendable (FileStoreEvent) -> Void)?
     private var epoch: UInt64 = 0
     private var hasRescanFailure = false
+    private var needsRescan = false
+    private var rescanSource: guint = 0
 
     init(root: URL, log: LogSink) throws {
         tree = try FileWatchTree(root: root)
@@ -65,6 +68,11 @@ final class RootedFileWatcher: FileStoreWatcher {
         guard onEvent != nil else { return }
         epoch &+= 1
         onEvent = nil
+        if rescanSource != 0 {
+            g_source_remove(rescanSource)
+            rescanSource = 0
+        }
+        needsRescan = false
         for monitor in monitors.values { monitor.cancel() }
         monitors.removeAll()
         pathsByIdentity.removeAll()
@@ -119,6 +127,31 @@ final class RootedFileWatcher: FileStoreWatcher {
                   defer { g_free(path) }
                   return tree.containsOrIsAncestor(String(cString: path))
               }) else { return }
+
+        needsRescan = true
+        guard rescanSource == 0 else { return }
+        let box = Unmanaged.passRetained(Callback(self, epoch: expectedEpoch)).toOpaque()
+        let rescan: GSourceFunc = { data in
+            guard let data else { return 0 }
+            let callback = Unmanaged<Callback>.fromOpaque(data).takeUnretainedValue()
+            callback.owner?.performRescan(epoch: callback.epoch)
+            return 0 // G_SOURCE_REMOVE; the destroy notify releases the box.
+        }
+        let destroy: GDestroyNotify = { data in
+            guard let data else { return }
+            Unmanaged<Callback>.fromOpaque(data).release()
+        }
+        // Idle priority lets queued monitor events drain before one scan,
+        // without adding a fixed delay or moving work off the owning thread.
+        rescanSource = mp_rescan_idle(rescan, box, destroy)
+    }
+
+    private func performRescan(epoch expectedEpoch: UInt64) {
+        guard epoch == expectedEpoch, onEvent != nil else { return }
+        // Clear before delivery: the consumer may stop or restart the watcher.
+        rescanSource = 0
+        guard needsRescan else { return }
+        needsRescan = false
 
         // A raced-away directory is retried by its ancestor monitor. Keep the
         // last good baseline on I/O failure rather than inventing deletions.

@@ -148,6 +148,12 @@ static inline GFileMonitor *mp_monitor_directory(const char *path, GError **erro
     return monitor;
 }
 
+/* A one-shot rescan runs after queued monitor events. The destroy notify
+ * releases its callback context on completion or early source removal. */
+static inline guint mp_rescan_idle(GSourceFunc rescan, gpointer data, GDestroyNotify destroy) {
+    return g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, rescan, data, destroy);
+}
+
 /* ---- Version forks ------------------------------------------------------- */
 
 /*
