@@ -88,6 +88,12 @@ final class LibraryServiceTests: XCTestCase {
         let entry = try service.load(at: "a.md")
         let assignedEntry = try service.assignIdentity(to: "a.md")
         XCTAssertEqual(entry.stamp, assignedEntry.stamp)
+        let stampedEntry = try service.assignIdentity(to: "a.md", expectedStamp: entry.stamp)
+        let unstampedEntry = try service.assignIdentity(to: "a.md", expectedStamp: nil)
+        XCTAssertEqual(entry.stamp, stampedEntry.stamp)
+        XCTAssertEqual(entry.stamp, unstampedEntry.stamp)
+        XCTAssertEqual(try library.text(at: "a.md"), "---\nid: \(assigned.lowercased())\n---\nBody")
+        XCTAssertTrue(try service.history(for: entry.identity).isEmpty)
         let saved = try service.save(entry.document, at: "a.md")
         XCTAssertEqual(saved.document.frontMatter.id?.rawValue, assigned)
         XCTAssertTrue(entropy.requests.isEmpty)
@@ -95,6 +101,67 @@ final class LibraryServiceTests: XCTestCase {
         let withoutID = PromptCodec.parse("Edited", filename: "a.md")
         let edited = try service.save(withoutID, at: "a.md")
         XCTAssertEqual(edited.identity, entry.identity, "Removing id from a draft does not change an assigned file.")
+    }
+
+    func testAssignRejectsStaleStampPreservingExternalBytes() throws {
+        try library.put("Original", at: "a.md")
+        let opened = try service.load(at: "a.md")
+        keyed.values[opened.identity] = "remembered"
+        let external = Data("External\r\n\n".utf8)
+        try library.write(external, at: "a.md")
+        let externalStamp = try library.stamp(at: "a.md")
+
+        XCTAssertThrowsError(try service.assignIdentity(to: "a.md", expectedStamp: opened.stamp)) {
+            XCTAssertEqual($0 as? LibraryError, .conflict)
+        }
+        XCTAssertEqual(try library.read(at: "a.md"), external)
+        XCTAssertEqual(try library.stamp(at: "a.md"), externalStamp)
+        XCTAssertEqual(keyed.values[opened.identity], "remembered")
+        XCTAssertTrue(keyed.migrations.isEmpty)
+        XCTAssertTrue(entropy.requests.isEmpty)
+        XCTAssertTrue(try data.listFiles().isEmpty)
+    }
+
+    func testAssignRejectsStaleStampForAlreadyAssignedFile() throws {
+        let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        try library.put("---\nid: \(id)\n---\nOriginal", at: "a.md")
+        let opened = try service.load(at: "a.md")
+        let external = Data("---\nid: \(id)\n---\nExternal\r\n".utf8)
+        try library.write(external, at: "a.md")
+
+        XCTAssertThrowsError(try service.assignIdentity(to: "a.md", expectedStamp: opened.stamp)) {
+            XCTAssertEqual($0 as? LibraryError, .conflict)
+        }
+        XCTAssertEqual(try library.read(at: "a.md"), external)
+        XCTAssertTrue(entropy.requests.isEmpty)
+        XCTAssertTrue(try data.listFiles().isEmpty)
+    }
+
+    func testAssignAcceptsCurrentStamp() throws {
+        let body = "Original\r\n\n"
+        try library.put(body, at: "a.md")
+        let opened = try service.load(at: "a.md")
+
+        let assigned = try service.assignIdentity(to: "a.md", expectedStamp: opened.stamp)
+        let expected = try ULID.generate(at: clock.date, entropy: Array(0...9))
+        XCTAssertEqual(assigned.identity, .assigned(expected))
+        XCTAssertEqual(try library.text(at: "a.md"), "---\nid: \(expected.rawValue)\n---\n" + body)
+        let revision = try XCTUnwrap(service.history(for: assigned.identity).first)
+        XCTAssertEqual(try data.text(at: historyPath(revision)), body)
+    }
+
+    func testAssignWithNilUsesCurrentExternalBytes() throws {
+        try library.put("Original", at: "a.md")
+        _ = try service.load(at: "a.md")
+        let body = "External\r\n\n"
+        try library.put(body, at: "a.md")
+
+        let assigned = try service.assignIdentity(to: "a.md", expectedStamp: nil)
+        let expected = try ULID.generate(at: clock.date, entropy: Array(0...9))
+        XCTAssertEqual(assigned.identity, .assigned(expected))
+        XCTAssertEqual(try library.text(at: "a.md"), "---\nid: \(expected.rawValue)\n---\n" + body)
+        let revision = try XCTUnwrap(service.history(for: assigned.identity).first)
+        XCTAssertEqual(try data.text(at: historyPath(revision)), body)
     }
 
     func testAssignMigratesAllRegisteredStateAndExistingLocalHistory() throws {

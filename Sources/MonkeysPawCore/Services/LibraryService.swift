@@ -45,11 +45,14 @@ public final class LibraryService {
     }
 
     /// Later sync push calls this before transmitting an unassigned prompt.
+    /// A supplied stamp rejects stale edits before assignment or return.
     /// Already assigned files are returned without a write or new snapshot.
     @discardableResult
-    public func assignIdentity(to path: String) throws -> LibraryEntry {
+    public func assignIdentity(to path: String,
+                               expectedStamp: FileStamp? = nil) throws -> LibraryEntry {
         try locked {
             let loaded = try requireCurrent(at: path)
+            if let expectedStamp, expectedStamp != loaded.entry.stamp { throw LibraryError.conflict }
             guard loaded.entry.document.frontMatter.id == nil else { return loaded.entry }
             return try saveDocument(loaded.entry.document, at: path, expectedStamp: loaded.entry.stamp)
         }

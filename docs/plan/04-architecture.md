@@ -164,7 +164,8 @@ public final class LibraryService {
     public func load(at path: String) throws -> LibraryEntry
     public func save(_ document: PromptDocument, at path: String,
                      expectedStamp: FileStamp? = nil) throws -> LibraryEntry
-    public func assignIdentity(to path: String) throws -> LibraryEntry
+    public func assignIdentity(to path: String,
+                               expectedStamp: FileStamp? = nil) throws -> LibraryEntry
     public func availablePath(for path: String) throws -> String
     public func move(from source: String, to destination: String) throws -> LibraryEntry
     public func delete(at path: String, expectedStamp: FileStamp? = nil) throws
@@ -207,6 +208,10 @@ Async calls in Core never hop to a main actor. Results reach the UI through
 the presentation model's `onChange`, which each front end republishes on its
 own UI thread.
 
+`assignIdentity(to:expectedStamp:)` checks a supplied stamp before assignment
+or returning an already assigned entry. A mismatch throws
+`LibraryError.conflict`; nil uses the version read by the operation.
+
 ### 4.6 Port → driver map
 
 | Port | macOS driver | Linux driver | Precedent |
@@ -219,10 +224,14 @@ own UI thread.
 | `Notifier` | `UNUserNotificationCenter` | `GNotification` via `g_application_send_notification`: no actions, so it cannot steal focus. Under flatpak it goes through the notification portal with no extra permission. | Copywraith `notifications.rs` (behaviour); GIO |
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
-| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; two instances, for library and app data |
+| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
 | `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
 | `PromptKeyedStore` | Core history store over app-data `FileStore` | same | M2b; usage/values join later |
 | single instance / CLI | n/a (in-process hotkey) | `GtkApplication` D-Bus activation; actions `toggle`, `repeat`, `selftest` | Vervellum `LinuxApp.swift:239-325` |
+
+The §4.2 diagram keeps the sketch port names. `EntropySource` and
+`PromptKeyedStore` are the M2b port names for injected entropy and keyed-state
+migration.
 
 M2b's `FileStore` covers the sketch's `PromptStore` file access and
 `StateStore` app-data file access. It lists regular files with opaque

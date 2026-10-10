@@ -7,12 +7,13 @@ public struct SystemEntropy: EntropySource {
         var generator = SystemRandomNumberGenerator()
         var bytes = [UInt8]()
         bytes.reserveCapacity(count)
+        let bytesPerDraw = MemoryLayout<UInt64>.size
 
         while bytes.count < count {
             var draw = generator.next()
-            for _ in 0..<min(MemoryLayout<UInt64>.size, count - bytes.count) {
+            for _ in 0..<min(bytesPerDraw, count - bytes.count) {
                 bytes.append(UInt8(truncatingIfNeeded: draw))
-                draw >>= UInt8.bitWidth
+                draw >>= 8
             }
         }
 

@@ -22,11 +22,17 @@ final class RootedFileStoreTests: XCTestCase {
 
     override func tearDown() { try? manager.removeItem(at: directory) }
 
-    func testRootInitRejectsFilesystemRoot() {
-        for path in ["/", "/./"] {
+    func testRootInitRejectsFilesystemRoot() throws {
+        for path in ["/", "//", "/..", "/./"] {
             XCTAssertThrowsError(try RootedFileStore(root: URL(fileURLWithPath: path)), path) {
                 XCTAssertEqual($0 as? FileStoreError, .invalidRoot)
             }
+        }
+
+        let link = directory.appendingPathComponent("root-link")
+        try manager.createSymbolicLink(at: link, withDestinationURL: URL(fileURLWithPath: "/"))
+        XCTAssertThrowsError(try RootedFileStore(root: link)) {
+            XCTAssertEqual($0 as? FileStoreError, .invalidRoot)
         }
     }
 
