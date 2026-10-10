@@ -22,6 +22,20 @@ final class RootedFileStoreTests: XCTestCase {
 
     override func tearDown() { try? manager.removeItem(at: directory) }
 
+    func testRootInitRejectsFilesystemRoot() {
+        for path in ["/", "/./"] {
+            XCTAssertThrowsError(try RootedFileStore(root: URL(fileURLWithPath: path)), path) {
+                XCTAssertEqual($0 as? FileStoreError, .invalidRoot)
+            }
+        }
+    }
+
+    func testRootInitAcceptsExistingDirectoryAndMissingTail() {
+        XCTAssertNoThrow(try RootedFileStore(root: outside))
+        XCTAssertNoThrow(try RootedFileStore(root: root.appendingPathComponent("missing/deep")))
+        XCTAssertFalse(manager.fileExists(atPath: root.path))
+    }
+
     func testMissingRootReadAndListDoNotCreateDirectories() throws {
         XCTAssertTrue(try store.listFiles().isEmpty)
         XCTAssertNil(try store.stamp(at: "nested/a.md"))

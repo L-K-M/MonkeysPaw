@@ -3,8 +3,20 @@ public struct SystemEntropy: EntropySource {
 
     public func bytes(count: Int) throws -> [UInt8] {
         guard count >= 0 else { throw SystemEntropyError.invalidCount }
+
         var generator = SystemRandomNumberGenerator()
-        return (0..<count).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(count)
+
+        while bytes.count < count {
+            var draw = generator.next()
+            for _ in 0..<min(MemoryLayout<UInt64>.size, count - bytes.count) {
+                bytes.append(UInt8(truncatingIfNeeded: draw))
+                draw >>= UInt8.bitWidth
+            }
+        }
+
+        return bytes
     }
 }
 

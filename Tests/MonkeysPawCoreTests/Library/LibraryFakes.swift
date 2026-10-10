@@ -9,6 +9,7 @@ final class MemoryFileStore: FileStore {
     var failNextDelete = false
     var failMoveNumber: Int?
     var moveCount = 0
+    var onRead: ((String) throws -> Void)?
     var onWrite: ((String) -> Void)?
     private(set) var accessCount = 0
     private(set) var listCount = 0
@@ -29,6 +30,7 @@ final class MemoryFileStore: FileStore {
     func read(at path: String) throws -> Data {
         accessCount += 1
         try FileStorePath.validate(path)
+        try onRead?(path)
         guard let file = files[path] else { throw FileStoreError.notFound }
         return file.bytes
     }

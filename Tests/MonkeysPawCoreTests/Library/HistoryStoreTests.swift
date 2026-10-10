@@ -71,4 +71,47 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(try files.listFiles().map(\.relativePath), ["settings.json"])
         XCTAssertEqual(try files.text(at: "settings.json"), "Settings")
     }
+
+    func testRemovingRevisionTwiceReportsRevisionNotFoundWithoutListing() throws {
+        let revision = try store.snapshot(Data("Revision".utf8), for: identity, at: date)
+        let listings = files.listCount
+        try store.remove(revision)
+        XCTAssertThrowsError(try store.remove(revision)) {
+            XCTAssertEqual($0 as? LibraryError, .revisionNotFound)
+        }
+        XCTAssertEqual(files.listCount, listings)
+    }
+
+    func testReadExternallyDeletedRevisionReportsRevisionNotFoundWithoutListing() throws {
+        let revision = try store.snapshot(Data("Revision".utf8), for: identity, at: date)
+        let listings = files.listCount
+        try files.delete(at: "history/" + (try identity.storageKey) + "/" + revision.filename)
+        XCTAssertThrowsError(try store.read(revision)) {
+            XCTAssertEqual($0 as? LibraryError, .revisionNotFound)
+        }
+        XCTAssertEqual(files.listCount, listings)
+    }
+
+    func testReadRevisionDeletedAfterStampReportsRevisionNotFoundWithoutListing() throws {
+        let revision = try store.snapshot(Data("Revision".utf8), for: identity, at: date)
+        let listings = files.listCount
+        // Simulate an external deletion between the stamp probe and byte read.
+        files.onRead = { [unowned self] in try self.files.delete(at: $0) }
+        XCTAssertThrowsError(try store.read(revision)) {
+            XCTAssertEqual($0 as? LibraryError, .revisionNotFound)
+        }
+        XCTAssertEqual(files.listCount, listings)
+    }
+
+    func testReadAndRemovePreserveOtherFileStoreErrors() throws {
+        let revision = try store.snapshot(Data("Revision".utf8), for: identity, at: date)
+        files.onRead = { _ in throw FileStoreError.ioFailure }
+        XCTAssertThrowsError(try store.read(revision)) {
+            XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+        }
+        files.failNextDelete = true
+        XCTAssertThrowsError(try store.remove(revision)) {
+            XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+        }
+    }
 }

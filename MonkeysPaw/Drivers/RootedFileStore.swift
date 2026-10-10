@@ -14,7 +14,8 @@ final class RootedFileStore: FileStore {
     private let manager = FileManager.default
 
     init(root: URL) throws {
-        guard root.isFileURL, root.path.hasPrefix("/") else { throw FileStoreError.invalidRoot }
+        guard root.isFileURL, root.path.hasPrefix("/"),
+              root.standardizedFileURL.path != "/" else { throw FileStoreError.invalidRoot }
         // POSIX resolution is required: Foundation's URL resolver does not
         // canonicalize /var -> /private/var on Darwin. Resolve each prefix;
         // keep unresolved components literal for later operation checks.

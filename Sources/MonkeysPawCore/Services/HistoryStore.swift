@@ -50,12 +50,14 @@ final class HistoryStore: PromptKeyedStore {
         guard try files.stamp(at: path) != nil else {
             throw LibraryError.revisionNotFound
         }
-        return try files.read(at: path)
+        do { return try files.read(at: path) }
+        catch FileStoreError.notFound { throw LibraryError.revisionNotFound }
     }
 
     func remove(_ revision: HistoryRevision) throws {
         guard parts(of: revision.filename) != nil else { throw LibraryError.revisionNotFound }
-        try files.delete(at: path(for: revision))
+        do { try files.delete(at: path(for: revision)) }
+        catch FileStoreError.notFound { throw LibraryError.revisionNotFound }
     }
 
     func prune(for identity: PromptIdentity) throws {
