@@ -6,7 +6,7 @@
 |---|---|---|
 | Prompts | Library folder, default `~/Documents/MonkeysPaw/` (Linux: XDG documents dir). Any folder can be chosen. | By the sync server (§9) or by the user's git / Syncthing / iCloud |
 | Settings | macOS `~/Library/Application Support/ch.lkmc.MonkeysPaw/settings.json`; Linux `$XDG_CONFIG_HOME/monkeyspaw/settings.json`. Every app-owned JSON file carries a `version` field and migrates forward on load. | no |
-| History | `<data>/history/<prompt-id>/<UTC-timestamp>.md` (`Limits.historyCapPerPrompt = 50`). Synced prompts also have server revisions. | no |
+| History | `<data>/history/<prompt-id>/<UTC-timestamp>-<sequence>.md` (`Limits.historyCapPerPrompt = 50`). Synced prompts also have server revisions. | no |
 | Logs | `<data>/logs/monkeyspaw.log` (§12) | no |
 | Usage (ranking, last delivery) | `<data>/usage.json` | no |
 | Remembered values | `<data>/values.json`, `PRIVATE_FILE_MODE = 0600` | no |
@@ -125,9 +125,9 @@ M2a content API clarifications:
   allowed after the closing delimiter). Its body starts after that line's
   terminator. Missing closure and malformed YAML remain invalid documents
   with their original source. An empty/comment-only header is an empty map.
-- The 256 KiB UTF-8 limit covers the entire source, before YAML or template
-  parsing. Diagnostics carry stable codes, severity and locations, without
-  copying source or parser error bodies into messages.
+- `Limits.maxPromptBytes` (256 KiB) caps the entire UTF-8 source, before
+  YAML or template parsing. Diagnostics carry stable codes, severity and
+  locations, without copying source or parser error bodies into messages.
   Positive format integers have no machine-word ceiling; even an unusually
   large future version stays explicitly incompatible and read-only.
   Exact radix conversion combines groups of 8 hexadecimal or 10 octal digits
@@ -174,7 +174,7 @@ M2b save and identity API:
   even if the submitted draft uses an older format.
 - `PromptIdentity.local(hash)` is the lowercase pure-Swift SHA-256 of the
   exact relative path bytes and stays on this device. On first save,
-  `LibraryService` uses injected `Clock` and `EntropySource` ports to assign
+  `LibraryService` uses injected `WallClock` and `EntropySource` ports to assign
   a ULID. Its internal `PromptCodec.assigningIdentity(_:to:)` seam adds
   only an absent id, then reparses canonical text. A plain body gains
   `---\nid: <ULID>\n---\n` without changing any body bytes. The public
@@ -306,8 +306,9 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
 
 - **History.** Before every save overwriting an existing file, copy its
   exact previous bytes to `<data>/history/<prompt-id>/`. A new file has
-  nothing to snapshot. The key is the local path hash while unassigned and
-  the ULID after assignment. UTC filenames use
+  nothing to snapshot. Unassigned path-hash history keys are transient within
+  an operation: assignment migrates them to the ULID key; they are never
+  silently inherited across unrelated saves. UTC filenames use
   `yyyyMMdd'T'HHmmss.SSS'Z'-NNNNNN.md`; the six-digit sequence increments
   for collisions within the same millisecond, up to
   `Limits.historySequenceMax` (999,999), then fails explicitly. For example:
@@ -316,10 +317,15 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
   oldest-first to `Limits.historyCapPerPrompt` (50); unrelated app-data
   files are untouched. A pruning failure reports `historyMaintenanceFailed`
   after the library write has committed; reload before retrying.
-  `restore(_:at:expectedStamp:)` is a normal canonical save of a revision's
-  bytes, preserving the identity even for a pre-id snapshot. It snapshots
-  the current file and grows history up to the cap. Invalid/future revisions
-  are refused. LLM provenance belongs to M4 and is absent in M2b.
+  `restore(_:at:expectedStamp:)` preserves the revision's body bytes, writes
+  canonical front matter, and re-injects the current assigned id from the
+  history key for pre-id snapshots. Local revisions may restore only to
+  their original path; assigned revisions may restore to a different path
+  only when no other live entry carries that id. Restore snapshots the
+  current file and grows history up to the cap. Invalid/non-UTF-8 snapshots
+  are forensic-only: restore refuses them with `PromptWriteError.invalidPrompt`.
+  Future formats are refused with `PromptWriteError.unsupportedFormat`.
+  LLM provenance belongs to M4 and is absent in M2b.
 - **External edits.** The watcher reloads changed files, debounced by
   `WATCH_DEBOUNCE_MS = 500`. A delete followed by a create within the window
   counts as a modification (editors save that way). Suppose the open
@@ -335,7 +341,8 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
   save operation. This is optimistic checking, not an OS-level atomic
   compare-and-swap with arbitrary external writers.
   `availablePath(for:)` probes `Name.md`, `Name 2.md`, `Name 3.md`, etc.,
-  bounded by `Limits.libraryCopyCandidateCap` (1,000 alternate names).
+  bounded by `Limits.libraryCopyCandidateCap` (1,000 alternates from
+  `Name 2.md` through `Name 1001.md`; `Name.md` itself is uncounted).
   Save a new draft without id at that path for a distinct copy identity.
   The helper does not reserve the name; later UI must recheck availability.
 - **Import.** Drop `.md`, `.prompt` (Dotprompt), or `.prompty` files, or a

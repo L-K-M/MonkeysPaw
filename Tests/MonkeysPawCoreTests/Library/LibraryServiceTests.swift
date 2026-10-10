@@ -174,6 +174,29 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertTrue(try data.listFiles().isEmpty)
     }
 
+    func testDeleteRejectsStaleStampAndNilKeepsExistingBehavior() throws {
+        try library.put("Original", at: "a.md")
+        let opened = try service.load(at: "a.md")
+        try library.put("External", at: "a.md")
+
+        XCTAssertThrowsError(try service.delete(at: "a.md", expectedStamp: opened.stamp)) {
+            XCTAssertEqual($0 as? LibraryError, .conflict)
+        }
+        XCTAssertEqual(try library.text(at: "a.md"), "External")
+        try service.delete(at: "a.md", expectedStamp: nil)
+        XCTAssertNil(try library.stamp(at: "a.md"))
+        XCTAssertThrowsError(try service.delete(at: "a.md")) {
+            XCTAssertEqual($0 as? FileStoreError, .notFound)
+        }
+    }
+
+    func testDeleteAcceptsCurrentStamp() throws {
+        try library.put("Original", at: "a.md")
+        let opened = try service.load(at: "a.md")
+        try service.delete(at: "a.md", expectedStamp: opened.stamp)
+        XCTAssertNil(try library.stamp(at: "a.md"))
+    }
+
     func testHistorySnapshotsExactPreviousBytesAndRestoreGrowsHistory() throws {
         let original = "---\ntitle: Original # comment\nunknown: value\n---\n old\r\n\r\n"
         try library.put(original, at: "a.md")
@@ -225,6 +248,52 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertEqual(try service.history(for: entry.identity), revisions, "No current file was overwritten.")
     }
 
+    func testAssignedRevisionCannotRestoreToEmptyPathWhileIdentityIsLive() throws {
+        try library.put("Original", at: "a.md")
+        let entry = try service.assignIdentity(to: "a.md")
+        let revisions = try service.history(for: entry.identity)
+
+        XCTAssertThrowsError(try service.restore(revisions[0], at: "b.md")) {
+            XCTAssertEqual($0 as? LibraryError, .identityMismatch)
+        }
+        XCTAssertNil(try library.stamp(at: "b.md"))
+        XCTAssertEqual(try service.load(at: "a.md").stamp, entry.stamp)
+        XCTAssertEqual(try service.history(for: entry.identity), revisions)
+    }
+
+    func testAssignedRevisionRestoresToNewPathAfterOriginalIsDeleted() throws {
+        try library.put("Original\r\n", at: "a.md")
+        let entry = try service.assignIdentity(to: "a.md")
+        let revisions = try service.history(for: entry.identity)
+        try service.delete(at: "a.md")
+
+        let restored = try service.restore(revisions[0], at: "b.md")
+        XCTAssertEqual(restored.identity, entry.identity)
+        XCTAssertEqual(restored.document.body, "Original\r\n")
+        XCTAssertEqual(try service.history(for: restored.identity), revisions)
+        XCTAssertEqual(try service.entries().map(\.relativePath), ["b.md"])
+    }
+
+    func testLocalRevisionCannotRestoreToDifferentPath() throws {
+        try library.put("Current", at: "a.md")
+        let entry = try service.load(at: "a.md")
+        let revision = try HistoryStore(files: data).snapshot(Data("Before identity\r\n".utf8),
+                                                             for: entry.identity, at: clock.date)
+
+        XCTAssertThrowsError(try service.restore(revision, at: "b.md")) {
+            XCTAssertEqual($0 as? LibraryError, .identityMismatch)
+        }
+        XCTAssertNil(try library.stamp(at: "b.md"))
+        XCTAssertEqual(try service.load(at: "a.md").stamp, entry.stamp)
+        XCTAssertEqual(try service.history(for: entry.identity), [revision])
+
+        let restored = try service.restore(revision, at: "a.md", expectedStamp: entry.stamp)
+        XCTAssertEqual(restored.document.body, "Before identity\r\n")
+        XCTAssertNotNil(restored.document.frontMatter.id)
+        XCTAssertEqual(try service.history(for: restored.identity).count, 2)
+        XCTAssertTrue(try service.history(for: entry.identity).isEmpty)
+    }
+
     func testRefusesFutureFormatsAndIdentityReplacement() throws {
         let future = PromptCodec.parse("---\nformat: 2\n---\nFuture", filename: "a.md")
         XCTAssertThrowsError(try service.save(future, at: "a.md")) {
@@ -256,6 +325,7 @@ final class LibraryServiceTests: XCTestCase {
     }
 
     func testIgnoredAndUnsafePathsCannotBeMutationTargets() throws {
+        try library.put("Original", at: "a.md")
         let paths = ["", "/a.md", "../a.md", "./a.md", "a//b.md", "a/../b.md", "a/./b.md",
                      "a\\b.md", "a\0.md", "a\n.md", "README.md", "_a.md", "_dir/a.md",
                      ".git/a.md", "a.MD", "a.txt", String(repeating: "é", count: 511) + ".md"]
@@ -265,7 +335,8 @@ final class LibraryServiceTests: XCTestCase {
             XCTAssertThrowsError(try service.delete(at: path))
             XCTAssertThrowsError(try service.move(from: "a.md", to: path))
         }
-        XCTAssertTrue(try library.listFiles().isEmpty)
+        XCTAssertEqual(try library.listFiles().map(\.relativePath), ["a.md"])
+        XCTAssertEqual(try library.text(at: "a.md"), "Original")
         XCTAssertTrue(entropy.requests.isEmpty)
     }
 
@@ -324,7 +395,9 @@ final class LibraryServiceTests: XCTestCase {
         keyed.values[local] = "state"
         _ = try HistoryStore(files: data).snapshot(Data("Older".utf8), for: local, at: clock.date)
         library.failMoveNumber = 1
-        XCTAssertThrowsError(try service.move(from: "a.md", to: "b.md"))
+        XCTAssertThrowsError(try service.move(from: "a.md", to: "b.md")) {
+            XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+        }
         XCTAssertEqual(try library.text(at: "a.md"), "Original")
         XCTAssertNil(try library.stamp(at: "b.md"))
         XCTAssertEqual(keyed.values, [local: "state"])
@@ -357,7 +430,7 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertTrue(try store.revisions(for: target).isEmpty)
     }
 
-    func testFailedSnapshotCleanupAndFailedPruningAreExplicit() throws {
+    func testFailedSnapshotCleanupIsExplicit() throws {
         try library.put("Original", at: "a.md")
         library.failNextWrite = true
         data.failNextDelete = true
@@ -365,8 +438,9 @@ final class LibraryServiceTests: XCTestCase {
             XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
         }
         XCTAssertEqual(try library.text(at: "a.md"), "Original")
-        // Use fresh roots for the post-commit maintenance failure scenario.
-        setUp()
+    }
+
+    func testFailedPruningIsExplicit() throws {
         let entry = try service.save(PromptCodec.parse("0", filename: "a.md"), at: "a.md")
         for index in 1...50 { try service.save(PromptCodec.parse("\(index)", filename: "a.md"), at: "a.md") }
         data.failNextDelete = true

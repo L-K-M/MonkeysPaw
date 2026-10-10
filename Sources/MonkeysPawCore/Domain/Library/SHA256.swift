@@ -51,7 +51,8 @@ enum SHA256 {
     }
 
     private static func rotate(_ value: UInt32, by count: UInt32) -> UInt32 {
-        (value >> count) | (value << (32 - count))
+        let amount = count & 31
+        return amount == 0 ? value : (value >> amount) | (value << (32 - amount))
     }
 
     private static let constants: [UInt32] = [

@@ -3,6 +3,9 @@ import Foundation
 /// A rooted tree used for both library files and app-data files (§4.6).
 /// Operations are synchronous. Callers serialize access to a pair of roots.
 /// Drivers reject symlinks and nonregular files, including in path components.
+/// Per-component checks and the atomic-write window are check-then-act: they
+/// defend accidents, not a racing local adversary. Unlink bounds deletion;
+/// full fd-relative hardening is deferred.
 public protocol FileStore {
     func listFiles() throws -> [StoredFile]
     func stamp(at path: String) throws -> FileStamp?

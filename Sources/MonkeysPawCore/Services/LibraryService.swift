@@ -12,11 +12,11 @@ public final class LibraryService {
     private let files: FileStore
     private let historyStore: HistoryStore
     private let keyedStores: [PromptKeyedStore]
-    private let clock: Clock
+    private let clock: WallClock
     private let entropy: EntropySource
     private let lock = NSLock()
 
-    public init(library: FileStore, data: FileStore, clock: Clock, entropy: EntropySource,
+    public init(library: FileStore, data: FileStore, clock: WallClock, entropy: EntropySource,
                 keyedStores: [PromptKeyedStore] = []) {
         files = library
         let history = HistoryStore(files: data)
@@ -29,16 +29,7 @@ public final class LibraryService {
     /// Exact-case .md files, in relative POSIX path order. Invalid content stays
     /// listed with issues; I/O failures and concurrent changes are explicit.
     public func entries() throws -> [LibraryEntry] {
-        try locked {
-            try files.listFiles().filter { LibraryPath.isPrompt($0.relativePath) }
-                .sorted { $0.relativePath.utf8.lexicographicallyPrecedes($1.relativePath.utf8) }.map { file in
-                    try LibraryPath.validate(file.relativePath)
-                    guard let loaded = try readCurrent(at: file.relativePath), loaded.entry.stamp == file.stamp else {
-                        throw LibraryError.conflict
-                    }
-                    return loaded.entry
-                }
-        }
+        try locked { try libraryEntries() }
     }
 
     public func load(at path: String) throws -> LibraryEntry {
@@ -103,9 +94,12 @@ public final class LibraryService {
     }
 
     /// History survives deletion; restore can resurrect this identity later.
-    public func delete(at path: String) throws {
+    public func delete(at path: String, expectedStamp: FileStamp? = nil) throws {
         try locked {
             try LibraryPath.validate(path)
+            if let expectedStamp, expectedStamp != (try files.stamp(at: path)) {
+                throw LibraryError.conflict
+            }
             try files.delete(at: path)
         }
     }
@@ -121,6 +115,16 @@ public final class LibraryService {
                         expectedStamp: FileStamp? = nil) throws -> LibraryEntry {
         try locked {
             try LibraryPath.validate(path)
+            switch revision.identity {
+            case .local:
+                guard PromptIdentity(path: path, id: nil) == revision.identity else {
+                    throw LibraryError.identityMismatch
+                }
+            case .assigned:
+                guard try !libraryEntries().contains(where: {
+                    $0.identity == revision.identity && !$0.relativePath.utf8.elementsEqual(path.utf8)
+                }) else { throw LibraryError.identityMismatch }
+            }
             if let current = try readCurrent(at: path), current.entry.identity != revision.identity {
                 throw LibraryError.identityMismatch
             }
@@ -131,6 +135,17 @@ public final class LibraryService {
             }
             return try saveDocument(document, at: path, expectedStamp: expectedStamp)
         }
+    }
+
+    private func libraryEntries() throws -> [LibraryEntry] {
+        try files.listFiles().filter { LibraryPath.isPrompt($0.relativePath) }
+            .sorted { $0.relativePath.utf8.lexicographicallyPrecedes($1.relativePath.utf8) }.map { file in
+                try LibraryPath.validate(file.relativePath)
+                guard let loaded = try readCurrent(at: file.relativePath), loaded.entry.stamp == file.stamp else {
+                    throw LibraryError.conflict
+                }
+                return loaded.entry
+            }
     }
 
     private func saveDocument(_ draft: PromptDocument, at path: String,

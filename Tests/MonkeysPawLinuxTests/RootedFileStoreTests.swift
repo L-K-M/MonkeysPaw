@@ -137,6 +137,9 @@ final class RootedFileStoreTests: XCTestCase {
         try manager.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
         XCTAssertNotEqual(try store.stamp(at: "a.md"), replaced)
         let recreated = try store.stamp(at: "a.md")
+        // Let a coarse filesystem timestamp tick before the in-place write.
+        let nextTick = Date().addingTimeInterval(1)
+        while Date() < nextTick { Thread.sleep(forTimeInterval: 0.01) }
         try Data("Changed same length".utf8).write(to: url)
         try manager.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
         XCTAssertNotEqual(try store.stamp(at: "a.md"), recreated, "Change time detects in-place writes too.")
@@ -245,6 +248,8 @@ final class RootedFileStoreTests: XCTestCase {
             XCTAssertEqual($0 as? FileStoreError, .invalidRoot)
             XCTAssertFalse(String(describing: $0).contains(marker))
             XCTAssertFalse(String(describing: $0).contains(self.directory.path))
+            XCTAssertFalse($0.localizedDescription.contains(marker))
+            XCTAssertFalse($0.localizedDescription.contains(self.directory.path))
         }
     }
 
@@ -255,13 +260,13 @@ final class RootedFileStoreTests: XCTestCase {
         try store.write(Data(body.utf8), at: "folder/a.md")
         let local = try XCTUnwrap(library.entries().first)
         let assigned = try library.assignIdentity(to: local.relativePath)
-        XCTAssertNotNil(assigned.document.frontMatter.id)
+        let id = try XCTUnwrap(assigned.document.frontMatter.id)
         let edited = try library.save(PromptCodec.parse("Edited", filename: "a.md"), at: local.relativePath,
                                       expectedStamp: assigned.stamp)
         XCTAssertEqual(edited.identity, assigned.identity)
         let revisions = try library.history(for: assigned.identity)
         XCTAssertEqual(revisions.count, 2)
-        XCTAssertEqual(try dataStore.read(at: "history/" + assigned.document.frontMatter.id!.rawValue + "/" + revisions[1].filename), Data(body.utf8))
+        XCTAssertEqual(try dataStore.read(at: "history/" + id.rawValue + "/" + revisions[1].filename), Data(body.utf8))
         let moved = try library.move(from: local.relativePath, to: "moved.md")
         XCTAssertEqual(moved.identity, assigned.identity)
         let restored = try library.restore(revisions[1], at: "moved.md")
@@ -302,6 +307,9 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertThrowsError(try RootedFileStore(root: child)) {
             XCTAssertEqual($0 as? FileStoreError, .ioFailure)
             XCTAssertFalse(String(describing: $0).contains("sensitive-parent"))
+            XCTAssertFalse($0.localizedDescription.contains("sensitive-parent"))
+            XCTAssertFalse(String(describing: $0).contains(self.directory.path))
+            XCTAssertFalse($0.localizedDescription.contains(self.directory.path))
         }
     }
 

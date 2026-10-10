@@ -41,10 +41,10 @@
 │ ShortcutService · SettingsService · SyncService                                       │
 └───────────────┬───────────────────────────────────────────────────────┬──────────────┘
 ┌───────────────▼───────── Domain (Core, pure) ──────┐ ┌────────────────▼─ Ports (Core protocols) ┐
-│ Prompt · FrontMatter · Template · Fields · Render · │ │ PromptStore StateStore Clock Clipboard    │
+│ Prompt · FrontMatter · Template · Fields · Render · │ │ PromptStore StateStore WallClock          │
 │ Search · Ranking · History · LlmArtifact · Rubric · │ │ PanelWindow FocusTracker PasteInjector    │
 │ Diff · SyncState                                    │ │ HotkeyBackend Notifier SecretStore        │
-└─────────────────────────────────────────────────────┘ │ HTTPTransporting SessionProbe             │
+└─────────────────────────────────────────────────────┘ │ HTTPTransporting SessionProbe Clipboard   │
                                                         └────────────────▲──────────────────────────┘
 ┌────────────────────────────────────────────────────────────────────────┴─────────────────────────┐
 │ Drivers (per OS, in the front-end targets)  implement ports; the only code touching OS/fs/net      │
@@ -167,7 +167,7 @@ public final class LibraryService {
     public func assignIdentity(to path: String) throws -> LibraryEntry
     public func availablePath(for path: String) throws -> String
     public func move(from source: String, to destination: String) throws -> LibraryEntry
-    public func delete(at path: String) throws
+    public func delete(at path: String, expectedStamp: FileStamp? = nil) throws
     public func history(for identity: PromptIdentity) throws -> [HistoryRevision]
     public func restore(_ revision: HistoryRevision, at path: String,
                         expectedStamp: FileStamp? = nil) throws -> LibraryEntry
@@ -220,7 +220,7 @@ own UI thread.
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
 | `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; two instances, for library and app data |
-| `Clock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
+| `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
 | `PromptKeyedStore` | Core history store over app-data `FileStore` | same | M2b; usage/values join later |
 | single instance / CLI | n/a (in-process hotkey) | `GtkApplication` D-Bus activation; actions `toggle`, `repeat`, `selftest` | Vervellum `LinuxApp.swift:239-325` |
 
@@ -236,6 +236,10 @@ reject symlinked components in the canonical path; listing skips all
 symlinks. Stamps include device/inode, size, and nanosecond mtime
 and change time (plus birth time on macOS). No watch API exists yet;
 watchers and change notification belong to a later slice.
+
+An assigned id survives move, save, and restore, keeping its history key.
+An unassigned prompt derives its identity from its relative path, so moving
+it changes its history key.
 
 The service synchronously serializes operations within one instance. Future
 composition roots must share one service per library/app-data pair and run

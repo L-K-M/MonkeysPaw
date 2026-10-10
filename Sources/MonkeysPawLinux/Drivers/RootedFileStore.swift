@@ -5,6 +5,9 @@ import MonkeysPawCore
 
 /// Foundation owns file bytes/replacement; POSIX metadata supplies nanosecond
 /// change time and inode identity for stamps. No filesystem error text escapes.
+/// Per-component checks and the atomic-write window are check-then-act: they
+/// defend accidents, not a racing local adversary. Unlink bounds deletion;
+/// full fd-relative hardening is deferred.
 final class RootedFileStore: FileStore {
     private enum Parents { case existing, create }
 
@@ -25,6 +28,8 @@ final class RootedFileStore: FileStore {
             }
         }
         self.root = canonicalRoot
+        // Missing roots are intentional: writes create them lazily. This check
+        // only rejects symlink or non-directory ancestors that already exist.
         _ = try sanitized { try rootExists(parents: .existing) }
     }
 
@@ -71,7 +76,9 @@ final class RootedFileStore: FileStore {
                 throw FileStoreError.notFound
             }
             try requireRegular(attributes)
-            try manager.removeItem(at: url)
+            guard unlink(url.path) == 0 else {
+                throw errno == ENOENT ? FileStoreError.notFound : FileStoreError.ioFailure
+            }
         }
     }
 
@@ -83,12 +90,13 @@ final class RootedFileStore: FileStore {
             guard let sourceURL = try locate(source, parents: .existing),
                   let sourceAttributes = try attributes(at: sourceURL) else { throw FileStoreError.notFound }
             try requireRegular(sourceAttributes)
-            guard let destinationURL = try locate(destination, parents: .create) else {
-                throw FileStoreError.invalidRoot
-            }
-            if let existing = try attributes(at: destinationURL) {
+            if let existingURL = try locate(destination, parents: .existing),
+               let existing = try attributes(at: existingURL) {
                 if existing[.type] as? FileAttributeType == .typeSymbolicLink { throw FileStoreError.outsideRoot }
                 throw FileStoreError.alreadyExists
+            }
+            guard let destinationURL = try locate(destination, parents: .create) else {
+                throw FileStoreError.invalidRoot
             }
             try manager.moveItem(at: sourceURL, to: destinationURL)
         }
@@ -98,12 +106,13 @@ final class RootedFileStore: FileStore {
         try FileStorePath.validate(path)
         guard try rootExists(parents: parents) else { return nil }
         let parts = path.split(separator: "/").map(String.init)
+        guard let filename = parts.last else { throw FileStoreError.notFound }
         var directory = root
         for part in parts.dropLast() {
             directory.appendPathComponent(part, isDirectory: true)
             guard try ensureDirectory(directory, parents: parents) else { return nil }
         }
-        return directory.appendingPathComponent(parts.last!)
+        return directory.appendingPathComponent(filename)
     }
 
     private func rootExists(parents: Parents) throws -> Bool {
@@ -130,7 +139,7 @@ final class RootedFileStore: FileStore {
 
     private func collect(in directory: URL, prefix: String, into result: inout [StoredFile]) throws {
         for url in try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
-            guard let attributes = try attributes(at: url) else { throw FileStoreError.ioFailure }
+            guard let attributes = try attributes(at: url) else { continue }
             let path = prefix + url.lastPathComponent
             switch attributes[.type] as? FileAttributeType {
             case .typeSymbolicLink: continue

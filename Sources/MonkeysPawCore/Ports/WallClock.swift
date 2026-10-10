@@ -1,5 +1,5 @@
 import Foundation
 
-public protocol Clock {
+public protocol WallClock {
     func now() -> Date
 }

@@ -62,7 +62,7 @@ final class MemoryFileStore: FileStore {
     func text(at path: String) throws -> String { String(decoding: try read(at: path), as: UTF8.self) }
 }
 
-final class LibraryClock: Clock {
+final class LibraryClock: WallClock {
     var date = Date(timeIntervalSince1970: 1.234)
     func now() -> Date { date }
 }

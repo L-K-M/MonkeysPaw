@@ -21,7 +21,7 @@ final class SHA256Tests: XCTestCase {
     }
 
     func testLocalIdentityHashesExactRelativePathBytes() {
-        let path = "folder/é.md"
+        let path = "folder/e\u{00E9}.md"
         let identity = PromptIdentity(path: path, id: nil)
         XCTAssertEqual(identity, .local(SHA256.hexDigest(Data(path.utf8))))
         XCTAssertNotEqual(identity, PromptIdentity(path: "folder/e\u{301}.md", id: nil))
