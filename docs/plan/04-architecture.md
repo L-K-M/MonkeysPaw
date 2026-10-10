@@ -225,6 +225,7 @@ or returning an already assigned entry. A mismatch throws
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
 | `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
+| `FileStoreWatcher` | `RootedFileWatcher`: recursive FSEvents stream with regular-file snapshot reconciliation | `RootedFileWatcher`: non-recursive GIO `GFileMonitor` per directory, with recursive attachment/reconciliation through CGtk | M2c; raw relative-path events feed Core `LibraryWatcher`, whose injected `Scheduler` owns debounce |
 | `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
 | `PromptKeyedStore` | Core history store over app-data `FileStore` | same | M2b; usage/values join later |
 | single instance / CLI | n/a (in-process hotkey) | `GtkApplication` D-Bus activation; actions `toggle`, `repeat`, `selftest` | Vervellum `LinuxApp.swift:239-325` |
@@ -243,8 +244,32 @@ components literally. This supports roots beneath macOS's `/var` symlink
 or a symlinked Linux home even before the root exists. Subsequent operations
 reject symlinked components in the canonical path; listing skips all
 symlinks. Stamps include device/inode, size, and nanosecond mtime
-and change time (plus birth time on macOS). No watch API exists yet;
-watchers and change notification belong to a later slice.
+and change time (plus birth time on macOS).
+
+M2c adds `FileStoreWatcher` without changing `FileStore` or wiring the app.
+Both drivers mirror the store's POSIX canonicalization and ignore symlinks
+and nonregular files. Native notifications reconcile a metadata snapshot
+into raw `created`, `modified`, or `deleted` events at relative POSIX paths;
+directory moves/removals include their regular-file descendants. There is
+no driver debounce or prompt filtering. Linux arms each directory before
+enumerating it and keeps canonical ancestor monitors to recover a missing
+or replaced root. Its lifecycle runs on the owning GLib thread. macOS uses
+one recursive FSEvents stream, with zero latency and `WatchRoot`; every
+batch triggers a full scan, including dropped-event batches. The stream
+starts on the nearest existing ancestor when the root is absent and
+reattaches to the real root when it appears. A serial dispatch queue owns
+its resources. [Apple's FSEvents guide](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html)
+describes root-change detection and snapshot reconciliation;
+[GIO's FileMonitor documentation](https://docs.gtk.org/gio/class.FileMonitor.html)
+specifies callback delivery on the creating thread's main context.
+
+Neither driver creates roots or emits its initial baseline. Start/stop are
+idempotent, stop releases monitoring resources, and a new start takes a
+fresh baseline. Core `LibraryWatcher` uses only raw events and `Scheduler`,
+never filesystem access or time reads. Lifecycle epochs reject obsolete
+raw callbacks; event generations invalidate non-cancelable debounce
+callbacks. Notification consumers and `LibraryService` wiring remain in a
+later slice.
 
 An assigned id survives move, save, and restore, keeping its history key.
 An unassigned prompt derives its identity from its relative path, so moving
