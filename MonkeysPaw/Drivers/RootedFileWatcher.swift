@@ -129,7 +129,9 @@ final class RootedFileWatcher: FileStoreWatcher {
         }
         let previous = monitor
         monitor = Monitor(stream: stream, path: directory.path, identity: node.identity, token: token)
-        previous?.cancel()
+        // arm can run inside the retired stream's callback. Defer teardown
+        // on the serial queue until it returns; tokens reject stale events.
+        queue.async { previous?.cancel() }
         return true
     }
 

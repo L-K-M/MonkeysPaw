@@ -35,6 +35,10 @@ public final class LibraryWatcher: @unchecked Sendable {
         self.scheduler = scheduler
     }
 
+    /// Best-effort cleanup runs on an arbitrary thread. Callers must call stop()
+    /// on the driver's owning thread before releasing this service. Linux stop
+    /// assumes its owning GLib thread; macOS marshals via queue.sync and is
+    /// callable from any thread.
     deinit { watcher.stop() }
 
     /// Idempotent while running. The scheduler owns the delivery thread.
