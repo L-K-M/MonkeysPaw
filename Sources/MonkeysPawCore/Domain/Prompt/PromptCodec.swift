@@ -2,9 +2,10 @@ import Foundation
 import Yams
 
 public enum PromptCodec {
-    /// File-store entry point. Undecodable/oversize bytes remain represented as
-    /// invalid documents, without feeding replacement characters into YAML.
-    public static func parse(_ data: Data, filename: String) -> PromptDocument {
+    /// Parses file bytes already read by a store; performs no filesystem access.
+    /// The distinct name keeps parse(_:filename:) text-only. Undecodable/oversize
+    /// bytes remain invalid documents without replacement characters in YAML.
+    public static func parseFile(_ data: Data, filename: String) -> PromptDocument {
         let issue: PromptIssueCode
         if data.count > Limits.maxPromptBytes {
             issue = .sourceTooLarge

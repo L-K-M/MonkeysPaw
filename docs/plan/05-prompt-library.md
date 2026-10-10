@@ -42,10 +42,12 @@ policies are deferred; this slice does not silently normalize local paths.
 
 `LibraryService.entries()` includes malformed YAML, oversized sources and
 non-UTF-8 files as `LibraryEntry` values with error issues. The byte-oriented
-codec entry point reports `source.too_large` or `source.invalid_utf8` without
-parsing those bytes or fabricating replacement-character text. Their source
-and body are empty in the document; the original bytes remain on disk and
-can still be snapshotted when a corrected valid draft replaces them.
+`PromptCodec.parseFile(_:filename:)` reports `source.too_large` or
+`source.invalid_utf8` without parsing those bytes or fabricating replacement
+characters. `PromptCodec.parse(_:filename:)` accepts text only. For invalid
+byte input, source and body are empty in the document; the original bytes
+remain on disk and can still be snapshotted when a corrected valid draft
+replaces them.
 
 ### 5.2 File format
 

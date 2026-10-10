@@ -125,7 +125,7 @@ public final class LibraryService {
                 throw LibraryError.identityMismatch
             }
             let bytes = try historyStore.read(revision)
-            var document = PromptCodec.parse(bytes, filename: LibraryPath.filename(path))
+            var document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
             if case .assigned(let id) = revision.identity {
                 document = try PromptCodec.assigningIdentity(id, to: document)
             }
@@ -188,7 +188,7 @@ public final class LibraryService {
         do { bytes = try files.read(at: path) }
         catch FileStoreError.notFound { throw LibraryError.conflict }
         guard try files.stamp(at: path) == stamp else { throw LibraryError.conflict }
-        let document = PromptCodec.parse(bytes, filename: LibraryPath.filename(path))
+        let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
         return LoadedFile(bytes: bytes, entry: LibraryEntry(path: path, document: document, stamp: stamp))
     }
 
