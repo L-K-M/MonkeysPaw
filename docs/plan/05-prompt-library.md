@@ -326,10 +326,20 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
   are forensic-only: restore refuses them with `PromptWriteError.invalidPrompt`.
   Future formats are refused with `PromptWriteError.unsupportedFormat`.
   LLM provenance belongs to M4 and is absent in M2b.
-- **External edits.** The watcher reloads changed files, debounced by
-  `WATCH_DEBOUNCE_MS = 500`. A delete followed by a create within the window
-  counts as a modification (editors save that way). Suppose the open
-  editor has unsaved changes and the file changes on disk. Saving then
+- **External edits.** M2c's `LibraryWatcher` emits labeled
+  `LibraryChangeSet {created, modified, deleted}` after
+  `Limits.watchDebounce` (500 ms) of quiet. Every raw event restarts this
+  window; stale one-shot scheduler callbacks do nothing. Repeated events
+  on one path deduplicate. A delete followed by a create counts as one
+  modification (editors save that way); a create followed by its own
+  delete produces no event; delete/create/delete produces a deletion.
+  Sets contain only prompt paths under §5.2's policy: exact-case `.md`,
+  including dot-files, excluding `_`-prefixed components, dot-directory
+  components, and root `README.md`. An empty set is not emitted.
+  Missing roots attach through existing ancestors; their later prompt
+  changes notify normally. Start/stop are explicit and idempotent. This
+  slice emits notifications only; reload and app wiring come later.
+  Suppose the open editor has unsaved changes and the file changes on disk. Saving then
   offers three choices: keep mine (overwrite), take theirs, or save mine as
   a copy. The app never merges silently.
   M2b implements the store contract beneath that future dialog:
