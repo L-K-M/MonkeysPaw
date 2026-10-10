@@ -45,14 +45,16 @@ final class HistoryStore: PromptKeyedStore {
     }
 
     func read(_ revision: HistoryRevision) throws -> Data {
-        guard parts(of: revision.filename) != nil,
-              try revisions(for: revision.identity).contains(revision) else {
+        guard parts(of: revision.filename) != nil else { throw LibraryError.revisionNotFound }
+        let path = try path(for: revision)
+        guard try files.stamp(at: path) != nil else {
             throw LibraryError.revisionNotFound
         }
-        return try files.read(at: path(for: revision))
+        return try files.read(at: path)
     }
 
     func remove(_ revision: HistoryRevision) throws {
+        guard parts(of: revision.filename) != nil else { throw LibraryError.revisionNotFound }
         try files.delete(at: path(for: revision))
     }
 

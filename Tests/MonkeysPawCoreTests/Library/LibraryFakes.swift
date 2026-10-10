@@ -10,24 +10,31 @@ final class MemoryFileStore: FileStore {
     var failMoveNumber: Int?
     var moveCount = 0
     var onWrite: ((String) -> Void)?
+    private(set) var accessCount = 0
+    private(set) var listCount = 0
 
     func listFiles() throws -> [StoredFile] {
+        accessCount += 1
+        listCount += 1
         // Deliberately unsorted to prove service ordering.
-        files.map { StoredFile(relativePath: $0.key, stamp: $0.value.stamp) }.sorted { $0.relativePath > $1.relativePath }
+        return files.map { StoredFile(relativePath: $0.key, stamp: $0.value.stamp) }.sorted { $0.relativePath > $1.relativePath }
     }
 
     func stamp(at path: String) throws -> FileStamp? {
+        accessCount += 1
         try FileStorePath.validate(path)
         return files[path]?.stamp
     }
 
     func read(at path: String) throws -> Data {
+        accessCount += 1
         try FileStorePath.validate(path)
         guard let file = files[path] else { throw FileStoreError.notFound }
         return file.bytes
     }
 
     func write(_ data: Data, at path: String) throws {
+        accessCount += 1
         try FileStorePath.validate(path)
         if failNextWrite {
             failNextWrite = false
@@ -39,6 +46,7 @@ final class MemoryFileStore: FileStore {
     }
 
     func delete(at path: String) throws {
+        accessCount += 1
         try FileStorePath.validate(path)
         if failNextDelete {
             failNextDelete = false
@@ -48,6 +56,7 @@ final class MemoryFileStore: FileStore {
     }
 
     func move(from source: String, to destination: String) throws {
+        accessCount += 1
         try FileStorePath.validate(source)
         try FileStorePath.validate(destination)
         moveCount += 1

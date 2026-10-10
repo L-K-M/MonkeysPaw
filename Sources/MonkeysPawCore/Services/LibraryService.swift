@@ -97,8 +97,9 @@ public final class LibraryService {
     public func delete(at path: String, expectedStamp: FileStamp? = nil) throws {
         try locked {
             try LibraryPath.validate(path)
-            if let expectedStamp, expectedStamp != (try files.stamp(at: path)) {
-                throw LibraryError.conflict
+            if let expectedStamp {
+                guard let currentStamp = try files.stamp(at: path) else { throw FileStoreError.notFound }
+                guard expectedStamp == currentStamp else { throw LibraryError.conflict }
             }
             try files.delete(at: path)
         }
@@ -121,9 +122,13 @@ public final class LibraryService {
                     throw LibraryError.identityMismatch
                 }
             case .assigned:
-                guard try !libraryEntries().contains(where: {
+                // Assigned ids need a full scan to resolve their live paths.
+                // Keep utf8.elementsEqual for byte-exact comparison: String
+                // equality accepts canonically equivalent but byte-distinct paths.
+                let liveElsewhere = try libraryEntries().contains(where: {
                     $0.identity == revision.identity && !$0.relativePath.utf8.elementsEqual(path.utf8)
-                }) else { throw LibraryError.identityMismatch }
+                })
+                guard !liveElsewhere else { throw LibraryError.identityMismatch }
             }
             if let current = try readCurrent(at: path), current.entry.identity != revision.identity {
                 throw LibraryError.identityMismatch

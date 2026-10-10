@@ -197,6 +197,21 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertNil(try library.stamp(at: "a.md"))
     }
 
+    func testDeleteMissingFileReportsNotFoundWithOrWithoutStamp() throws {
+        try library.put("Original", at: "a.md")
+        let opened = try service.load(at: "a.md")
+        try library.delete(at: "a.md")
+
+        XCTAssertThrowsError(try service.delete(at: "a.md", expectedStamp: opened.stamp)) {
+            XCTAssertEqual($0 as? FileStoreError, .notFound)
+        }
+        XCTAssertThrowsError(try service.delete(at: "a.md", expectedStamp: nil)) {
+            XCTAssertEqual($0 as? FileStoreError, .notFound)
+        }
+        XCTAssertTrue(try library.listFiles().isEmpty)
+        XCTAssertTrue(try data.listFiles().isEmpty)
+    }
+
     func testHistorySnapshotsExactPreviousBytesAndRestoreGrowsHistory() throws {
         let original = "---\ntitle: Original # comment\nunknown: value\n---\n old\r\n\r\n"
         try library.put(original, at: "a.md")

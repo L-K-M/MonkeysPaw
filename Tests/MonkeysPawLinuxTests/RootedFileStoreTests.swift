@@ -138,8 +138,7 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertNotEqual(try store.stamp(at: "a.md"), replaced)
         let recreated = try store.stamp(at: "a.md")
         // Let a coarse filesystem timestamp tick before the in-place write.
-        let nextTick = Date().addingTimeInterval(1)
-        while Date() < nextTick { Thread.sleep(forTimeInterval: 0.01) }
+        Thread.sleep(forTimeInterval: 1.05)
         try Data("Changed same length".utf8).write(to: url)
         try manager.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
         XCTAssertNotEqual(try store.stamp(at: "a.md"), recreated, "Change time detects in-place writes too.")
