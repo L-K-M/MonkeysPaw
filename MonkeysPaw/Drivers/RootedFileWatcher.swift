@@ -34,20 +34,24 @@ final class RootedFileWatcher: FileStoreWatcher {
     }
 
     private let tree: FileWatchTree
+    private let log: LogSink
     private let queue = DispatchQueue(label: "ch.lkmc.monkeyspaw.file-watcher")
     private let queueKey = DispatchSpecificKey<Void>()
     private var monitor: Monitor?
     private var snapshot = FileWatchTree.Snapshot()
     private var onEvent: ((FileStoreEvent) -> Void)?
     private var epoch: UInt64 = 0
+    private var hasRescanFailure = false
 
-    init(root: URL) throws {
+    init(root: URL, log: LogSink) throws {
         tree = try FileWatchTree(root: root)
+        self.log = log
         queue.setSpecific(key: queueKey, value: ())
     }
 
     deinit { stop() }
 
+    /// Idempotent while running; a second start retains the first handler.
     func start(_ onEvent: @escaping (FileStoreEvent) -> Void) throws {
         try onQueue {
             guard self.onEvent == nil else { return }
@@ -57,7 +61,9 @@ final class RootedFileWatcher: FileStoreWatcher {
                 let initial = try tree.scan()
                 try arm(for: initial)
                 // Baseline after attachment closes the initial scan/arm gap.
+                // Changes between start() and this baseline are deliberately folded in.
                 snapshot = try tree.scan()
+                hasRescanFailure = false
             } catch {
                 stop()
                 throw error
@@ -70,8 +76,11 @@ final class RootedFileWatcher: FileStoreWatcher {
             guard onEvent != nil else { return }
             epoch &+= 1
             onEvent = nil
-            monitor?.cancel()
+            let retiring = monitor
             monitor = nil
+            // A consumer can stop inside this stream's callback. Retire it
+            // after the callback returns; epochs already reject stale events.
+            queue.async { retiring?.cancel() }
             snapshot = FileWatchTree.Snapshot()
         }
     }
@@ -102,8 +111,12 @@ final class RootedFileWatcher: FileStoreWatcher {
             let callback = Unmanaged<Callback>.fromOpaque(info).takeUnretainedValue()
             callback.owner?.changed(epoch: callback.epoch, token: callback.token)
         }
-        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents
-            | kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagNoDefer)
+        var flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagWatchRoot
+            | kFSEventStreamCreateFlagNoDefer)
+        // Ancestors need directory-level events only until the root appears.
+        if directory.path == tree.root.path {
+            flags |= FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+        }
         guard let stream = FSEventStreamCreate(kCFAllocatorDefault, changed, &context,
             [directory.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0, flags) else {
             throw FileStoreError.ioFailure
@@ -128,7 +141,14 @@ final class RootedFileWatcher: FileStoreWatcher {
         do {
             next = try tree.scan()
             if try arm(for: next) { next = try tree.scan() }
-        } catch { return }
+        } catch {
+            if !hasRescanFailure {
+                log.write(.error, "library rescan failed; keeping last baseline")
+            }
+            hasRescanFailure = true
+            return
+        }
+        hasRescanFailure = false
         let events = FileWatchTree.changes(from: snapshot, to: next)
         snapshot = next
         for event in events {

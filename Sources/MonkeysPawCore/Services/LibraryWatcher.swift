@@ -82,7 +82,8 @@ public final class LibraryWatcher {
     private func receive(_ event: FileStoreEvent, epoch expectedEpoch: UInt64) {
         stateLock.lock()
         guard onChange != nil, epoch == expectedEpoch,
-              (try? FileStorePath.validate(event.relativePath)) != nil else {
+              (try? FileStorePath.validate(event.relativePath)) != nil,
+              LibraryPath.isPrompt(event.relativePath) else {
             stateLock.unlock()
             return
         }
@@ -97,8 +98,8 @@ public final class LibraryWatcher {
         let expectedGeneration = generation
         stateLock.unlock()
 
-        // after is one-shot and cannot be canceled. Every raw event restarts
-        // the quiet window; all earlier callbacks become harmless no-ops.
+        // after is one-shot and cannot be canceled. Every prompt-path event
+        // restarts the quiet window; earlier callbacks become harmless no-ops.
         scheduler.after(Limits.watchDebounce) { [weak self] in
             self?.emit(epoch: expectedEpoch, generation: expectedGeneration)
         }

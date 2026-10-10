@@ -32,21 +32,28 @@ final class RootedFileWatcher: FileStoreWatcher {
     }
 
     private let tree: FileWatchTree
+    private let log: LogSink
     private var monitors = [String: Monitor]()
     private var pathsByIdentity = [String: String]()
     private var snapshot = FileWatchTree.Snapshot()
     private var onEvent: ((FileStoreEvent) -> Void)?
     private var epoch: UInt64 = 0
+    private var hasRescanFailure = false
 
-    init(root: URL) throws { tree = try FileWatchTree(root: root) }
+    init(root: URL, log: LogSink) throws {
+        tree = try FileWatchTree(root: root)
+        self.log = log
+    }
     deinit { stop() }
 
+    /// Idempotent while running; a second start retains the first handler.
     func start(_ onEvent: @escaping (FileStoreEvent) -> Void) throws {
         guard self.onEvent == nil else { return }
         epoch &+= 1
         self.onEvent = onEvent
         do {
             snapshot = try tree.scan(arm: arm)
+            hasRescanFailure = false
             prune()
         } catch {
             stop()
@@ -95,6 +102,12 @@ final class RootedFileWatcher: FileStoreWatcher {
             Unmanaged<Callback>.fromOpaque(data).release()
         }
         let signal = mp_connect(value, "changed", unsafeBitCast(changed, to: GCallback.self), box, destroy)
+        guard signal != 0 else {
+            Unmanaged<Callback>.fromOpaque(box).release()
+            g_file_monitor_cancel(value)
+            g_object_unref(value)
+            throw FileStoreError.ioFailure
+        }
         monitors[url.path] = Monitor(value: value, signal: signal, identity: node.identity)
         pathsByIdentity[node.identity] = url.path
     }
@@ -109,7 +122,17 @@ final class RootedFileWatcher: FileStoreWatcher {
 
         // A raced-away directory is retried by its ancestor monitor. Keep the
         // last good baseline on I/O failure rather than inventing deletions.
-        guard let next = try? tree.scan(arm: arm) else { return }
+        let next: FileWatchTree.Snapshot
+        do {
+            next = try tree.scan(arm: arm)
+        } catch {
+            if !hasRescanFailure {
+                log.write(.error, "library rescan failed; keeping last baseline")
+            }
+            hasRescanFailure = true
+            return
+        }
+        hasRescanFailure = false
         let events = FileWatchTree.changes(from: snapshot, to: next)
         snapshot = next
         prune()

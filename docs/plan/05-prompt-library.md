@@ -328,10 +328,12 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
   LLM provenance belongs to M4 and is absent in M2b.
 - **External edits.** M2c's `LibraryWatcher` emits labeled
   `LibraryChangeSet {created, modified, deleted}` after
-  `Limits.watchDebounce` (500 ms) of quiet. Every raw event restarts this
-  window; stale one-shot scheduler callbacks do nothing. Repeated events
-  on one path deduplicate. A delete followed by a create counts as one
-  modification (editors save that way); a create followed by its own
+  `Limits.watchDebounce` (500 ms) of prompt-path quiet. Every prompt-path
+  raw event restarts this window; events for non-prompt paths are dropped
+  before scheduling. Stale one-shot scheduler callbacks do nothing.
+  Repeated events on one prompt path deduplicate. A delete followed by a
+  create within the window counts as one modification (editors save that
+  way); a create followed by its own
   delete produces no event; delete/create/delete produces a deletion.
   Sets contain only prompt paths under §5.2's policy: exact-case `.md`,
   including dot-files, excluding `_`-prefixed components, dot-directory

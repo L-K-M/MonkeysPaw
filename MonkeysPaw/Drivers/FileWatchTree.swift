@@ -85,6 +85,7 @@ final class FileWatchTree {
 
         for url in children {
             let path = prefix + url.lastPathComponent
+            // Mirror FileStore visibility: invalid paths are unobservable to both layers.
             guard (try? FileStorePath.validate(path)) != nil, let node = try Self.node(at: url) else { continue }
             if node.kind == .directory {
                 snapshot.nodes[url.path] = node

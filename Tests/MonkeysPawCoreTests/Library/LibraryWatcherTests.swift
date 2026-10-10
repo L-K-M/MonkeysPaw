@@ -56,10 +56,13 @@ final class LibraryWatcherTests: XCTestCase {
         XCTAssertEqual(scheduler.delays, [Limits.watchDebounce, Limits.watchDebounce])
         scheduler.fire(0)
         XCTAssertTrue(changes.isEmpty)
-        // A non-prompt event still extends the quiet window.
-        raw.send("notes.txt", .modified)
+        raw.send("a.md", .modified)
+        XCTAssertEqual(scheduler.delays, Array(repeating: Limits.watchDebounce, count: 3))
         scheduler.fire(1)
         XCTAssertTrue(changes.isEmpty)
+        // Ignored-path churn must not postpone the pending prompt window.
+        for index in 0..<32 { raw.send("notes-\(index).txt", .modified) }
+        XCTAssertEqual(scheduler.delays, Array(repeating: Limits.watchDebounce, count: 3))
         scheduler.fire(2)
         XCTAssertEqual(changes, [LibraryChangeSet(created: ["a.md", "b.md"])])
     }
@@ -71,10 +74,17 @@ final class LibraryWatcherTests: XCTestCase {
         let ignored = ["README.md", "_private.md", "folder/_private.md", "_draft/a.md", ".git/a.md",
                        "folder/.cache/a.md", "notes.txt", "UPPER.MD", "../escape.md", "/outside.md",
                        "a//b.md", "a/./b.md", "a\\b.md", "a\0.md"]
+        for path in ignored { raw.send(path, .created) }
+        XCTAssertTrue(scheduler.delays.isEmpty)
+        scheduler.fireAll()
+        XCTAssertTrue(changes.isEmpty)
+
         for path in eligible + ignored { raw.send(path, .created) }
+        XCTAssertEqual(scheduler.delays, Array(repeating: Limits.watchDebounce, count: eligible.count))
         scheduler.fireAll()
         XCTAssertEqual(changes, [LibraryChangeSet(created: Set(eligible))])
         for path in ignored { raw.send(path, .deleted) }
+        XCTAssertEqual(scheduler.delays, Array(repeating: Limits.watchDebounce, count: eligible.count))
         scheduler.fireAll()
         XCTAssertEqual(changes.count, 1)
     }

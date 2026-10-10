@@ -225,7 +225,7 @@ or returning an already assigned entry. A mismatch throws
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
 | `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
-| `FileStoreWatcher` | `RootedFileWatcher`: recursive FSEvents stream with regular-file snapshot reconciliation | `RootedFileWatcher`: non-recursive GIO `GFileMonitor` per directory, with recursive attachment/reconciliation through CGtk | M2c; raw relative-path events feed Core `LibraryWatcher`, whose injected `Scheduler` owns debounce |
+| `FileStoreWatcher` | `RootedFileWatcher`: recursive FSEvents stream with regular-file snapshot reconciliation | `RootedFileWatcher`: non-recursive GIO `GFileMonitor` per directory, with recursive attachment/reconciliation on the owning GLib main context (via the `CGtk` bindings) | M2c; raw relative-path events feed Core `LibraryWatcher`, whose injected `Scheduler` owns debounce |
 | `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
 | `PromptKeyedStore` | Core history store over app-data `FileStore` | same | M2b; usage/values join later |
 | single instance / CLI | n/a (in-process hotkey) | `GtkApplication` D-Bus activation; actions `toggle`, `repeat`, `selftest` | Vervellum `LinuxApp.swift:239-325` |
