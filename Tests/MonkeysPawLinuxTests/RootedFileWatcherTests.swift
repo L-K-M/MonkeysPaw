@@ -1,4 +1,5 @@
 #if os(Linux)
+import CGtk
 import Glibc
 import Foundation
 import MonkeysPawCore
@@ -273,6 +274,35 @@ final class RootedFileWatcherTests: XCTestCase {
         weak var weakWatcher = watcher
         watcher = nil
         XCTAssertNil(weakWatcher, "Native callback contexts must not retain the driver.")
+    }
+
+    func testRawDriverRescansOnThreadDefaultContext() throws {
+        let context = try XCTUnwrap(g_main_context_new())
+        g_main_context_push_thread_default(context)
+        defer {
+            g_main_context_pop_thread_default(context)
+            g_main_context_unref(context)
+        }
+        let watcher = try RootedFileWatcher(root: root, log: StandardErrorLog())
+        defer { watcher.stop() }
+        let events = RawEvents()
+        try watcher.start { events.append($0) }
+
+        func expectEvent(_ event: FileStoreEvent) {
+            let deadline = Date().addingTimeInterval(eventTimeout)
+            // Never pump the global context: both monitor delivery and the
+            // deferred rescan must stay on the watcher's owning context.
+            while !events.values.contains(event), Date() < deadline {
+                g_main_context_iteration(context, 0)
+                usleep(1_000)
+            }
+            XCTAssertTrue(events.values.contains(event), "No event on the thread-default context: \(events.values)")
+        }
+
+        try store.write(Data("Created".utf8), at: "new/deep/a.md")
+        expectEvent(FileStoreEvent(relativePath: "new/deep/a.md", kind: .created))
+        try Data("Modified".utf8).write(to: root.appendingPathComponent("new/deep/a.md"))
+        expectEvent(FileStoreEvent(relativePath: "new/deep/a.md", kind: .modified))
     }
 
     func testRawDriverCanStopInsideHandlerAndRestartWithNewBaseline() throws {
