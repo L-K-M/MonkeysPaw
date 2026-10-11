@@ -81,6 +81,80 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { clipboard.value == "Snapshot" })
     }
 
+    func testToggleRaisesVisibleInactivePickerInsteadOfClosingIt() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try open()
+        let other = try XCTUnwrap(gtk_application_window_new(application))
+        defer { gtk_window_destroy(mp_window(other)) }
+        gtk_window_present(mp_window(other))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.panel.isVisible && !self.environment.panel.isActiveAndVisible
+                && gtk_window_is_active(mp_window(other)) != 0
+        })
+        gtk_window_set_focus(mp_window(environment.panel.clipboardOwner), nil)
+
+        environment.activateToggle()
+        XCTAssertTrue(environment.panel.isVisible)
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        // Bare Xvfb has no window manager to grant reactivation of a mapped
+        // window. Restored query focus proves the queued presentation ran.
+        let query = try widget("picker-query")
+        let deadline = ContinuousClock().now.advanced(by: .seconds(3))
+        var presented = false
+        // Drain promptly like the native loop: the common spin helper's 5 ms
+        // pause per iteration can delay idle presentation behind the blur timer.
+        while !presented, ContinuousClock().now < deadline {
+            _ = g_main_context_iteration(nil, 0)
+            guard let focus = gtk_window_get_focus(mp_window(self.environment.panel.clipboardOwner)) else { continue }
+            presented = focus == query || gtk_widget_is_ancestor(focus, query) != 0
+        }
+        XCTAssertTrue(presented)
+        XCTAssertTrue(environment.panel.isVisible)
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        environment.pickerModel.dismiss()
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+    }
+
+    func testFieldDescriptionsAppearBelowControlsOnlyWhenNonempty() throws {
+        let source = """
+        ---
+        fields:
+          topic: {description: Describe the topic}
+          detail: {type: multiline, description: Add details}
+          language: {type: choice, options: [Swift, Rust], description: Choose a language}
+          plain: {}
+          empty: {description: ""}
+        ---
+        {{topic}} {{detail}} {{language}} {{plain}} {{empty}}
+        """
+        try files.write(Data(source.utf8), at: "fields.md")
+        try open()
+        environment.pickerModel.use(mode: .copyOnly)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.builtinsResolved == true })
+        for (name, text) in [("topic", "Describe the topic"), ("detail", "Add details"),
+                             ("language", "Choose a language")] {
+            let description = try widget("fill-description-" + name)
+            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(description))), text)
+            XCTAssertNotEqual(gtk_widget_is_visible(description), 0)
+            let control = try widget("fill-field-" + name)
+            let preceding = name == "detail" ? gtk_widget_get_parent(control) : control
+            XCTAssertEqual(gtk_widget_get_next_sibling(preceding), description)
+        }
+        for name in ["plain", "empty"] {
+            XCTAssertNil(findWidget { String(cString: gtk_widget_get_name($0)) == "fill-description-" + name })
+        }
+    }
+
+    func testNoMatchCreationPreservesTitleAfterFilenameSanitizing() throws {
+        try createPrompt(query: "a/b", expectedPath: "a b.md")
+    }
+
+    func testNoMatchCreationPreservesTitleAfterFilenameCollision() throws {
+        try files.write(Data("---\ntitle: Unrelated\n---\nExisting body".utf8), at: "Name.md")
+        try createPrompt(query: "Name", expectedPath: "Name 2.md")
+        XCTAssertEqual(try files.read(at: "Name.md"), Data("---\ntitle: Unrelated\n---\nExisting body".utf8))
+    }
+
     func testReopeningWhileFillIsVisibleReturnsFocusToQueryAndKeepsDraft() throws {
         try files.write(Data("{{topic}}".utf8), at: "fields.md")
         try open()
@@ -230,8 +304,30 @@ final class LinuxPickerViewTests: XCTestCase {
     }
 
     private func widget(_ name: String) throws -> GTK.Widget {
+        try XCTUnwrap(findWidget { String(cString: gtk_widget_get_name($0)) == name }, "Missing GTK control \(name)")
+    }
+
+    private func createPrompt(query: String, expectedPath: String) throws {
+        try open()
+        mp_entry_set_text(try widget("picker-query"), query)
+        XCTAssertEqual(environment.pickerModel.noMatches?.createTitle, query)
+        let button = try XCTUnwrap(findWidget {
+            mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == "Create a prompt"
+        })
+        XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        XCTAssertTrue(GTKTestSupport.spin { (try? self.files.stamp(at: expectedPath)) != nil })
+        let document = PromptCodec.parseFile(try files.read(at: expectedPath), filename: expectedPath)
+        XCTAssertEqual(document.frontMatter.title, query)
+        XCTAssertEqual(document.body, LinuxStrings.newPromptBody)
+        XCTAssertTrue(document.canRender)
+        XCTAssertNotNil(document.frontMatter.id)
+        XCTAssertEqual(environment.pickerModel.state, .closed)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+    }
+
+    private func findWidget(matching predicate: (GTK.Widget) -> Bool) -> GTK.Widget? {
         func find(_ widget: GTK.Widget) -> GTK.Widget? {
-            if String(cString: gtk_widget_get_name(widget)) == name { return widget }
+            if predicate(widget) { return widget }
             var child = gtk_widget_get_first_child(widget)
             while let current = child {
                 if let found = find(current) { return found }
@@ -239,7 +335,7 @@ final class LinuxPickerViewTests: XCTestCase {
             }
             return nil
         }
-        return try XCTUnwrap(find(environment.panel.clipboardOwner), "Missing GTK control \(name)")
+        return find(environment.panel.clipboardOwner)
     }
 
     private func text(in view: GTK.Widget) -> String {

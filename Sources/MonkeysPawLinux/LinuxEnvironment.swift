@@ -164,7 +164,9 @@ final class LinuxEnvironment {
 
     private func togglePicker(origin: ToggleOrigin = .manual) {
         startLibrary()
-        if panel.isVisible {
+        // Only a focused panel toggles off. A buried or never-focused panel
+        // must be raised, including when Wayland denied its initial activation.
+        if panel.isActiveAndVisible {
             pickerModel.dismiss()
         } else {
             panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken() : nil)
@@ -178,15 +180,23 @@ final class LinuxEnvironment {
         // Establish the hook/view before a rebuild publishes its first results.
         _ = pickerModel
         do {
-            try index.rebuild()
-            guard let watcher else { throw FileStoreError.ioFailure }
-            try watcher.start { [weak self, weak index] changes in
+            try Self.startLibrary(index: index, watcher: watcher) { [weak self, weak index] changes in
                 guard let self, let index else { return }
                 self.apply(changes, to: index)
             }
         } catch {
             degradeLibrary()
         }
+    }
+
+    static func startLibrary(index: PromptIndex, watcher: LibraryWatcher?,
+                             onChange: @escaping @Sendable (LibraryChangeSet) -> Void) throws {
+        guard let watcher else { throw FileStoreError.ioFailure }
+        // Arm before rebuilding so saves cannot fall between the index scan
+        // and the watcher's silent baseline. GLib batches cannot interleave
+        // with this synchronous rebuild; reloading an indexed path is idempotent.
+        try watcher.start(onChange)
+        try index.rebuild()
     }
 
     private func apply(_ changes: LibraryChangeSet, to index: PromptIndex) {
@@ -237,9 +247,10 @@ final class LinuxEnvironment {
         guard pickerModel.libraryAvailable else { return }
         do {
             let path = try library.availablePath(for: LinuxPromptCreation.relativePath(title: title, now: clock.now()))
-            let document = PromptCodec.parse(LinuxStrings.newPromptBody, filename: path)
+            let document = try PromptCodec.newDocument(title: title, body: LinuxStrings.newPromptBody)
             let entry = try library.save(document, at: path)
-            try index.apply(LibraryChangeSet(created: [path]))
+            do { try index.apply(LibraryChangeSet(created: [path])) }
+            catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
             handle(.edit(identity: entry.identity, relativePath: path))
         } catch {
             panel.showStatus(LinuxStrings.createPromptFailed)

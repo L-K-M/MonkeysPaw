@@ -305,6 +305,13 @@ final class LinuxPanel: PanelWindow {
             gtk_widget_set_name(widget, "fill-field-" + field.name)
             mp_accessible_label(widget, field.label)
             gtk_widget_set_tooltip_text(widget, field.description)
+            if let description = field.description, !description.isEmpty {
+                let label = GTK.label(description)
+                gtk_widget_set_name(label, "fill-description-" + field.name)
+                gtk_widget_add_css_class(label, "dim-label")
+                gtk_box_append(mp_box(row), label)
+                mp_accessible_description(widget, description)
+            }
             controls.append(FieldControl(name: field.name, kind: field.kind, widget: widget))
             gtk_box_append(mp_box(formBox), row)
         }

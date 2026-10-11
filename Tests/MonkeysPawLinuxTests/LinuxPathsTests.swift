@@ -77,18 +77,61 @@ final class LinuxPathsTests: XCTestCase {
             try Data(" XDG_DOCUMENTS_DIR = \"/relocated/Doc \\\"files\\\"\" # comment\n".utf8)
                 .write(to: directory.appendingPathComponent("user-dirs.dirs"))
             let paths = LinuxPaths(environment: ["XDG_CONFIG_HOME": directory.path], home: home)
-            XCTAssertEqual(paths.documentsDirectory.path, "/relocated/Doc \"files\"")
+            XCTAssertEqual(paths.documentsDirectory.path, #"/relocated/Doc \"files\""#)
         }
     }
 
     func testDocumentsUsesInjectedHomeEnvironmentAndHomeOnlySetting() throws {
         try withDirectories { directory in
-            for value in ["$HOME", "${HOME}", "${HOME}/Docs"] {
+            for (value, expected) in [("$HOME", "/relocated/home"), ("$HOME/", "/relocated/home"),
+                                      ("$HOME/Docs", "/relocated/home/Docs"), ("$HOMEextra", "/relocated/home/extra"),
+                                      ("${HOME}", "/relocated/home/Documents"),
+                                      ("${HOME}/Docs", "/relocated/home/Documents")] {
                 try Data("XDG_DOCUMENTS_DIR=\"\(value)\"\n".utf8)
                     .write(to: directory.appendingPathComponent("user-dirs.dirs"))
                 let paths = LinuxPaths(environment: ["HOME": "/relocated/home", "XDG_CONFIG_HOME": directory.path])
-                XCTAssertEqual(paths.documentsDirectory.path, value.hasSuffix("/Docs") ? "/relocated/home/Docs" : "/relocated/home")
+                XCTAssertEqual(paths.documentsDirectory.path, expected, value)
             }
+        }
+    }
+
+    func testLastAcceptedDocumentsAssignmentWins() throws {
+        try withDirectories { directory in
+            let source = """
+            XDG_DOCUMENTS_DIR="/first"
+            XDG_DOCUMENTS_DIR="relative"
+            XDG_DOCUMENTS_DIR="/last"
+            XDG_DOCUMENTS_DIR=unquoted
+            """
+            try Data(source.utf8).write(to: directory.appendingPathComponent("user-dirs.dirs"))
+            let paths = LinuxPaths(environment: ["XDG_CONFIG_HOME": directory.path], home: home)
+            XCTAssertEqual(paths.documentsDirectory.path, "/last")
+        }
+    }
+
+    func testDocumentsKeepsBackslashesAndEmbeddedShellCharactersLiteral() throws {
+        try withDirectories { directory in
+            let paths = LinuxPaths(environment: ["XDG_CONFIG_HOME": directory.path], home: home)
+            for value in [#"/Documents/\$cash/\`tick"#, #"/Documents/$OTHER/`echo hello`"#,
+                          #"/Documents/quoted\"name/slash\\/any\q"#, #"/Documents/$(echo hello)"#] {
+                try Data("XDG_DOCUMENTS_DIR=\"\(value)\"\n".utf8)
+                    .write(to: directory.appendingPathComponent("user-dirs.dirs"))
+                XCTAssertEqual(paths.documentsDirectory.path, value, value)
+            }
+        }
+    }
+
+    func testDocumentsUsesFinalQuoteAndIgnoresAssignmentSuffixAsData() throws {
+        try withDirectories { directory in
+            let paths = LinuxPaths(environment: ["XDG_CONFIG_HOME": directory.path], home: home)
+            for suffix in [" # comment", "; command", " trailing text"] {
+                try Data("XDG_DOCUMENTS_DIR=\"/Docs\"\(suffix)\n".utf8)
+                    .write(to: directory.appendingPathComponent("user-dirs.dirs"))
+                XCTAssertEqual(paths.documentsDirectory.path, "/Docs")
+            }
+            try Data(#"XDG_DOCUMENTS_DIR="/Docs"extra""#.utf8)
+                .write(to: directory.appendingPathComponent("user-dirs.dirs"))
+            XCTAssertEqual(paths.documentsDirectory.path, #"/Docs"extra"#)
         }
     }
 
@@ -99,7 +142,7 @@ final class LinuxPathsTests: XCTestCase {
             for value in ["", "# XDG_DOCUMENTS_DIR=\"/ignored\"", "XDG_DOCUMENTS_DIR=Documents",
                           "XDG_DOCUMENTS_DIR=\"relative\"", "XDG_DOCUMENTS_DIR=\"\"",
                           "XDG_DOCUMENTS_DIR=\"$OTHER/docs\"", "XDG_DOCUMENTS_DIR=\"$(touch /tmp/wrong)\"",
-                          "XDG_DOCUMENTS_DIR=\"/unterminated", "XDG_DOCUMENTS_DIR=\"/valid\"; command"] {
+                          "XDG_DOCUMENTS_DIR=\"/unterminated", #"XDG_DOCUMENTS_DIR="\$HOME/Docs""#] {
                 try Data(value.utf8).write(to: directory.appendingPathComponent("user-dirs.dirs"))
                 XCTAssertEqual(paths.documentsDirectory.path, "/home/test-user/Documents")
             }

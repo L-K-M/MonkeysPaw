@@ -3,6 +3,24 @@ import XCTest
 import MonkeysPawCore
 
 final class PromptContentTests: XCTestCase {
+    func testNewDocumentKeepsExactTitlesThroughCanonicalYAMLWriting() throws {
+        let body = "  文書 {{topic}}\r\ne\u{301}\n"
+        for title in ["a/b", "a: b", "# Leading", "-", "\"Quoted\" and 'single'", "line one\nline two",
+                      "文書 🐒", "true", "null", "010", "line one\n---\nline three"] {
+            let document = try PromptCodec.newDocument(title: title, body: body)
+            XCTAssertEqual(document.frontMatter.title, title)
+            XCTAssertNil(document.frontMatter.id)
+            XCTAssertTrue(document.issues.isEmpty)
+            XCTAssertEqual(Array(document.body.utf8), Array(body.utf8))
+            let written = try PromptCodec.write(document)
+            XCTAssertEqual(document.source, written)
+            let reparsed = PromptCodec.parse(written, filename: "Sanitized 2.md")
+            XCTAssertEqual(reparsed.frontMatter.title, title)
+            XCTAssertTrue(reparsed.issues.isEmpty)
+            XCTAssertEqual(Array(reparsed.body.utf8), Array(body.utf8))
+        }
+    }
+
     func testCoherentSourceToRenderAndCanonicalRoundTrip() throws {
         let body = "  {{language}}: {{notes}} / {{new_field}} / {{date}}\r\n👋 {{notes}}"
         let source = """

@@ -31,53 +31,44 @@ struct LinuxPaths {
             .appendingPathComponent(AppIdentity.binaryName, isDirectory: true)
     }
 
-    /// user-dirs.dirs is data, never a shell script. Expand only a leading HOME.
+    /// Matches Unix load_user_special_dirs in GLib 2.74.6, glib/gutils.c:
+    /// last accepted assignment wins; only the leading $HOME expands.
+    /// Backslashes, embedded $ and backticks stay literal, never shell code.
+    /// https://github.com/GNOME/glib/blob/2.74.6/glib/gutils.c
     var documentsDirectory: URL {
         let file = directory(environment: "XDG_CONFIG_HOME", fallback: ".config")
             .appendingPathComponent("user-dirs.dirs")
+        var selected: URL?
         if let source = try? String(contentsOf: file, encoding: .utf8) {
             for line in source.split(separator: "\n") {
                 let parts = line.split(separator: "=", maxSplits: 1).map {
-                    $0.trimmingCharacters(in: .whitespaces)
+                    $0.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
                 }
                 guard parts.count == 2, parts[0] == "XDG_DOCUMENTS_DIR",
-                      let value = Self.quotedDirectory(parts[1]) else { continue }
-                let path: String
-                if value == "$HOME" || value.hasPrefix("$HOME/") {
-                    path = home.path + value.dropFirst(5)
-                } else if value == "${HOME}" || value.hasPrefix("${HOME}/") {
-                    path = home.path + value.dropFirst(7)
+                      var value = Self.quotedDirectory(parts[1]), !value.contains("\u{0}") else { continue }
+                let isRelative = value.hasPrefix("$HOME")
+                if isRelative { value = String(value.dropFirst(5)) }
+                if value.hasSuffix("/") { value.removeLast() }
+                let directory: URL
+                if isRelative {
+                    directory = home.appendingPathComponent(value, isDirectory: true)
                 } else {
-                    path = value
+                    guard value.hasPrefix("/") else { continue }
+                    directory = URL(fileURLWithPath: value, isDirectory: true)
                 }
-                guard path.hasPrefix("/"), !path.contains("$"), !path.contains("`"),
-                      !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { continue }
-                return URL(fileURLWithPath: path, isDirectory: true)
+                guard directory.path.hasPrefix("/") else { continue }
+                selected = directory
             }
         }
-        return home.appendingPathComponent("Documents", isDirectory: true)
+        return selected ?? home.appendingPathComponent("Documents", isDirectory: true)
     }
 
     private static func quotedDirectory(_ source: String) -> String? {
         guard source.first == "\"" else { return nil }
-        var value = ""
-        var escaped = false
-        for index in source.indices.dropFirst() {
-            let character = source[index]
-            if escaped {
-                guard ["\\", "\"", "$", "`"].contains(character) else { return nil }
-                value.append(character)
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else if character == "\"" {
-                let tail = source[source.index(after: index)...].trimmingCharacters(in: .whitespaces)
-                return tail.isEmpty || tail.hasPrefix("#") ? value : nil
-            } else {
-                value.append(character)
-            }
-        }
-        return nil
+        let value = source.dropFirst()
+        // GLib uses the final quote, preserving escapes and ignoring any suffix.
+        guard let end = value.lastIndex(of: "\"") else { return nil }
+        return String(value[..<end])
     }
 
     /// Runtime storage is optional until a driver can create a private fallback.

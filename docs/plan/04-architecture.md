@@ -57,7 +57,7 @@ Rules:
   forwards search, selection, focus and delivery intents. `LinuxEnvironment`
   owns the library/index/watcher service graph and the shared GTK clipboard;
   view callbacks forward file/folder launch and prompt-creation actions there.
-  `PanelModel` remains in Core for the macOS front end until M2g.
+  `PanelModel` remains in Core for the macOS front end until the macOS picker slice.
 
 - **Each layer calls only the layer directly below it.** Views never touch a
   service, the clipboard, files, keys, or HTTP. Presentation models never

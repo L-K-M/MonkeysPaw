@@ -60,6 +60,9 @@ static inline gboolean mp_is_button(GtkWidget *w) { return GTK_IS_BUTTON(w); }
 static inline void mp_accessible_label(GtkWidget *w, const char *label) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(w), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
 }
+static inline void mp_accessible_description(GtkWidget *w, const char *description) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(w), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, description, -1);
+}
 static inline GDBusConnection *mp_dbus_connection(gpointer object) { return G_DBUS_CONNECTION(object); }
 
 /* ---- M1b delivery and setup --------------------------------------------- */

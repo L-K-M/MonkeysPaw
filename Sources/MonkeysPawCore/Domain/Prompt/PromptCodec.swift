@@ -2,6 +2,15 @@ import Foundation
 import Yams
 
 public enum PromptCodec {
+    /// Creates explicit title metadata without deriving it from a filename.
+    /// Use the canonical writer for YAML quoting and reparse for source locations.
+    public static func newDocument(title: String, body: String) throws -> PromptDocument {
+        let header = Node([(Node("title", Tag(.str)), Node(title, Tag(.str)))], Tag(.map), .block)
+        let document = PromptDocument(source: "", body: body, frontMatter: FrontMatter(title: title),
+                                      template: Template.parse(body), preservedHeader: header)
+        return parse(try write(document), filename: title + ".md")
+    }
+
     /// Parses file bytes already read by a store; performs no filesystem access.
     /// The distinct name keeps parse(_:filename:) text-only. Undecodable/oversize
     /// bytes remain invalid documents without replacement characters in YAML.

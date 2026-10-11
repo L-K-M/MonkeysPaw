@@ -20,7 +20,8 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
   remembered values after delivery. Return inside multiline adds a newline;
   Ctrl+Return, Ctrl+Shift+Return and Alt+Return deliver from that field.
 - [ ] Escape from fill returns to the picker with typed values retained.
-  Toggle-off and native close dismiss fill; reopening restores its draft.
+  A focused panel toggles off and native close dismisses fill; reopening restores
+  its draft. Toggling an unfocused panel raises it and returns to the picker.
 - [ ] Click another window while filling. The panel hides after 300 ms,
   leaves focus in that window and restores typed values on the next form open.
 - [ ] Search for no matches. Open the library folder, create a prompt and

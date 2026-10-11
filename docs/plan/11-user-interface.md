@@ -41,7 +41,8 @@ pointer selection, previews and all Linux keyboard bindings use model intents.
 Fill controls remain in place during edits; plain Return in multiline controls
 stays native, while the primary Deliver action and single-line Return retain
 the mode chosen in the picker. Explicit Ctrl+Return selects standard paste.
-Blur and toggle-off dismiss the entire panel and retain session drafts.
+Blur and toggling a focused panel off dismiss the entire panel and retain
+session drafts. Toggling an unfocused panel raises it.
 
 Before M3, Edit opens the prompt with the OS default file handler and Library
 opens its folder. No-match creation sanitizes a single filename, probes a free
@@ -51,9 +52,10 @@ show a banner; failed watcher batches attempt one full rescan before stopping,
 and root loss retains the cached index. Delivery owns the panel hide. Delivery
 persistence warnings stay visible in the next picker until another use starts.
 
-The macOS picker (M2g), seeds/settings/library-folder setup (M2h), remaining
-fixtures and release delivery remain outstanding M2 work. Real compositor and
-paste-target checks remain owner-run in `docs/platform/linux.md`.
+The macOS picker slice, the settings/seeds/first-run slice (including
+library-folder setup), and the fixtures and release slice remain outstanding M2
+work. Real compositor and paste-target checks remain owner-run in
+`docs/platform/linux.md`.
 
 ```
 ┌ Monkey's Paw ─────────────────────────────────────────────────┐
