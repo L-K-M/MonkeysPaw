@@ -43,6 +43,7 @@ public struct StoredFile: Equatable, Sendable {
         self.stamp = stamp
     }
 
+    // Compare path bytes; this hand-written equality must list every stored property.
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.stamp == rhs.stamp && lhs.relativePath.utf8.elementsEqual(rhs.relativePath.utf8)
     }

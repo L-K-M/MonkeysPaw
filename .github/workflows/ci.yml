@@ -75,6 +75,7 @@ jobs:
         run: dbus-run-session -- xvfb-run -a swift test --filter MonkeysPawLinuxTests
       - name: Test filesystem permissions as an unprivileged user
         run: |
+          # This job runs as root inside the swift:6.4-noble container.
           useradd --create-home --shell /bin/bash monkeyspaw-tests
           test "$(id -u monkeyspaw-tests)" -ne 0
           chown -R monkeyspaw-tests:monkeyspaw-tests .build
@@ -83,7 +84,7 @@ jobs:
           runuser -u monkeyspaw-tests -- env TMPDIR=/home/monkeyspaw-tests \
             swift test --skip-build --filter \
             'RootedFileStoreTests/testInitializationErrorsDoNotExposeOSPaths|RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring|RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce' \
-            | tee permission-tests.log
+            2>&1 | tee permission-tests.log
           grep -q 'Executed 3 tests, with 0 failures' permission-tests.log
       - name: Smoke X11 delivery and CLI self-test
         env:

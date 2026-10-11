@@ -67,12 +67,12 @@ final class RootedFileWatcherTests: XCTestCase {
         try start()
         try store.write(Data("Composed".utf8), at: "é.md")
         try store.write(Data("Decomposed".utf8), at: "e\u{301}.md")
+        expect(LibraryChangeSet(created: ["é.md", "e\u{301}.md"]))
         XCTAssertTrue(spin { !self.changes.isEmpty })
         XCTAssertEqual(changes.first?.created.count, 2)
         let original = changes.count
         // Remove the destination first: both spellings coexist on Linux.
         try store.delete(at: "é.md")
-        expect(LibraryChangeSet(created: ["é.md", "e\u{301}.md"]))
         expect(LibraryChangeSet(deleted: ["é.md"]))
         try store.move(from: "e\u{301}.md", to: "é.md")
         XCTAssertTrue(spin { self.changes.count > original + 1 })

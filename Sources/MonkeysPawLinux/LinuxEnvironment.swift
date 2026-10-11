@@ -91,6 +91,7 @@ final class LinuxEnvironment {
 
     init(application: UnsafeMutablePointer<GtkApplication>,
          environment: [String: String] = ProcessInfo.processInfo.environment,
+         scheduler: Scheduler? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
              gtk_show_uri(nil, url.absoluteString, UInt32(GDK_CURRENT_TIME))
@@ -101,7 +102,7 @@ final class LinuxEnvironment {
         mainThread = GLibMainThread()
         runner = LinuxToolRunner(environment: environment)
         session = LinuxSessionProbe(environment: environment)
-        scheduler = GLibScheduler()
+        self.scheduler = scheduler ?? GLibScheduler()
         paths = LinuxPaths(environment: environment)
         firstRun = LinuxFirstRunState(paths: paths)
         portal = LinuxPortalTransport(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
@@ -192,11 +193,11 @@ final class LinuxEnvironment {
                 guard let self, let index else { return }
                 switch update {
                 case .changes(let changes): self.apply(changes, to: index)
-                case .rootUnavailable: self.degradeLibrary()
+                case .rootUnavailable(let error): self.degradeLibrary(error)
                 }
             }
         } catch {
-            degradeLibrary()
+            degradeLibrary(error as? FileStoreError)
         }
     }
 
@@ -217,7 +218,7 @@ final class LinuxEnvironment {
             // entries before the following health update stops this graph.
             try (libraryFiles as? RootedFileStore)?.requireRoot()
         } catch {
-            degradeLibrary()
+            degradeLibrary(error as? FileStoreError)
             return
         }
         do {
@@ -225,20 +226,24 @@ final class LinuxEnvironment {
         } catch {
             warnAboutLibrary()
             do { try index.rebuild() }
-            catch { degradeLibrary() }
+            catch { degradeLibrary(error as? FileStoreError) }
         }
     }
 
-    private func warnAboutLibrary() {
+    private func warnAboutLibrary(_ error: FileStoreError? = nil) {
         guard !libraryWarningLogged else { return }
         libraryWarningLogged = true
+        if let error {
+            log.write(.warning, "Library unavailable (\(error.rawValue)); keeping cached prompts")
+            return
+        }
         log.write(.warning, "Library unavailable or refresh failed; keeping cached prompts")
     }
 
-    private func degradeLibrary() {
+    private func degradeLibrary(_ error: FileStoreError? = nil) {
         watcher?.stop()
         pickerModel.libraryAvailable = false
-        warnAboutLibrary()
+        warnAboutLibrary(error)
     }
 
     private func handle(_ intent: PickerModel.Intent) {

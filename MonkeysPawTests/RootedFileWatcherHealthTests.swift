@@ -61,8 +61,10 @@ final class RootedFileWatcherHealthTests: XCTestCase {
         if manager.fileExists(atPath: root.path) {
             try manager.setAttributes([.posixPermissions: 0], ofItemAtPath: root.path)
         } else {
-            try manager.createDirectory(at: root, withIntermediateDirectories: false)
-            try manager.removeItem(at: root)
+            let parent = root.deletingLastPathComponent()
+            try Data("Nudge".utf8).write(to: parent.appendingPathComponent("health-nudge"))
+            // Linux filters sibling paths; notify the ancestor itself too.
+            try manager.setAttributes([.modificationDate: Date()], ofItemAtPath: parent.path)
         }
         let deadline = Date().addingTimeInterval(0.2)
         _ = spin { Date() >= deadline }

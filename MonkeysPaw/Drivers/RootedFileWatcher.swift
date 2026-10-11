@@ -160,9 +160,9 @@ final class RootedFileWatcher: FileStoreWatcher {
         }
         if let error = next.rootError {
             if error == .ioFailure { warnAboutRescan(error) }
-            guard !rootUnavailable else { return }
+            guard epoch == expectedEpoch, let onEvent, !rootUnavailable else { return }
             rootUnavailable = true
-            onEvent?(.rootUnavailable(error))
+            onEvent(.rootUnavailable(error))
             return
         }
         rootUnavailable = false

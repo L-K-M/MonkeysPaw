@@ -36,6 +36,7 @@ public struct FileStoreEvent: Equatable, Sendable {
         self.kind = kind
     }
 
+    // Compare path bytes; this hand-written equality must list every stored property.
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.kind == rhs.kind && lhs.relativePath.utf8.elementsEqual(rhs.relativePath.utf8)
     }

@@ -11,6 +11,7 @@ public struct RelativePath: Hashable, Comparable, Sendable, ExpressibleByStringL
     }
 
     public func hash(into hasher: inout Hasher) {
+        // String hashing uses canonical equivalence and would merge byte-distinct twins.
         hasher.combine(string.utf8.count)
         for byte in string.utf8 { hasher.combine(byte) }
     }
