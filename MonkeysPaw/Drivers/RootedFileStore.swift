@@ -95,7 +95,7 @@ final class RootedFileStore: FileStore {
             guard rename(temporaryPath, url.path) == 0 else { throw FileStoreError.ioFailure }
             // Persist the directory entry too; best-effort, since some
             // filesystems reject directory fsync.
-            let dirFd = Darwin.open(url.deletingLastPathComponent().path, O_RDONLY)
+            let dirFd = Darwin.open(url.deletingLastPathComponent().path, O_RDONLY | O_CLOEXEC)
             if dirFd >= 0 {
                 _ = fsync(dirFd)
                 _ = Darwin.close(dirFd)
