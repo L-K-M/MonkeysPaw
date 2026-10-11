@@ -6,7 +6,7 @@ Rollout by milestone:
 | Milestone | Pipeline added |
 |---|---|
 | M0 | ci.yml: Core tests (macOS + Linux), Linux app build (`swift:6.4-noble`), macOS app build (Xcode 26), server build + tests, server image build (`push: false`) with a `/api/health` check |
-| M1 | linux.yml: GTK lifecycle under Xvfb, driver fakes, GDBus mock-bus tests |
+| M1 | ci.yml `linux-app` job: GTK lifecycle under Xvfb, driver fakes, GDBus mock-bus tests |
 | M2 | release.yml: dmg (universal) + deb; scripts/build.sh |
 | M5 | server image publish to ghcr; compose config check and compose smoke job; `spec/schema/` drift check |
 | M7 | flatpak repack and release upload |

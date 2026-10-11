@@ -34,7 +34,8 @@ final class PromptIndexWatcherTests: XCTestCase {
         try library.put("Before", at: "a.md")
         try library.put("Delete", at: "b.md")
         try index.rebuild()
-        try watcher.start { [index] set in
+        try watcher.start { [index] update in
+            guard case .changes(let set) = update else { return }
             do { try index.apply(set) }
             catch { XCTFail("Index application failed with typed error: \(error)") }
         }
@@ -73,11 +74,11 @@ final class PromptIndexWatcherTests: XCTestCase {
 }
 
 private final class IndexFileWatcher: FileStoreWatcher {
-    private var callback: (@Sendable (FileStoreEvent) -> Void)?
-    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws { callback = onEvent }
+    private var callback: (@Sendable (FileStoreWatchEvent) -> Void)?
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws { callback = onEvent }
     func stop() { callback = nil }
     func send(_ path: String, _ kind: FileStoreEvent.Kind) {
-        callback?(FileStoreEvent(relativePath: path, kind: kind))
+        callback?(.file(FileStoreEvent(relativePath: path, kind: kind)))
     }
 }
 

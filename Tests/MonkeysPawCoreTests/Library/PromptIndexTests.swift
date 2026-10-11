@@ -224,12 +224,28 @@ final class PromptIndexTests: XCTestCase {
         try index.rebuild()
         XCTAssertEqual(index.search("n").map { Data($0.relativePath.utf8) }, [Data(decomposed.utf8), Data(composed.utf8)])
         try library.delete(at: composed)
-        try index.apply(LibraryChangeSet(deleted: [composed]))
+        try index.apply(LibraryChangeSet(deleted: [RelativePath(composed)]))
         XCTAssertEqual(index.search("n").map { Data($0.relativePath.utf8) }, [Data(decomposed.utf8)])
         try put("composed.md", title: "é")
         try put("decomposed.md", title: "e\u{301}")
         try index.rebuild()
         XCTAssertEqual(paths("é"), ["decomposed.md", "composed.md"])
+    }
+
+    func testApplyLoadsAndUpdatesBothByteDistinctTwins() throws {
+        try put("é.md", title: "Before")
+        try put("e\u{301}.md", title: "Before")
+        try index.apply(LibraryChangeSet(created: ["é.md", "e\u{301}.md"]))
+        XCTAssertEqual(index.search("before").map { Data($0.relativePath.utf8) },
+                       [Data("e\u{301}.md".utf8), Data("é.md".utf8)])
+        try put("é.md", title: "After")
+        try put("e\u{301}.md", title: "After")
+        try index.apply(LibraryChangeSet(modified: ["é.md", "e\u{301}.md"]))
+        XCTAssertEqual(index.search("after").count, 2)
+        try library.delete(at: "é.md")
+        try library.delete(at: "e\u{301}.md")
+        try index.apply(LibraryChangeSet(deleted: ["é.md", "e\u{301}.md"]))
+        XCTAssertTrue(index.search("").isEmpty)
     }
 
     func testRecordUseWritesThroughAndFailedPersistenceLeavesRankingUnchanged() throws {

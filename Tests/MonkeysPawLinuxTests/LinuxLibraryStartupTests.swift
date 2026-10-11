@@ -73,7 +73,7 @@ private final class StartupWatcher: FileStoreWatcher {
     private let onStart: () throws -> Void
 
     init(_ onStart: @escaping () throws -> Void) { self.onStart = onStart }
-    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws { try onStart() }
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws { try onStart() }
     func stop() {}
 }
 #endif

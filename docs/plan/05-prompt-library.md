@@ -59,6 +59,9 @@ bytes). Mutation targets must also obey the prompt/ignored-path rules.
 Reads and writes reject symlinked components, and enumeration never follows
 symlinks. M5's NFC, segment-length, case-folded clash and reserved-scope
 policies are deferred; this slice does not silently normalize local paths.
+Relative paths compare, hash and sort as exact UTF-8 bytes end to end,
+including native snapshots, watcher coalescing/change sets and picker selection.
+Canonically equivalent spellings can identify distinct local files.
 
 `LibraryService.entries()` includes malformed YAML, oversized sources and
 non-UTF-8 files as `LibraryEntry` values with error issues. The byte-oriented
@@ -507,9 +510,15 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   Sets contain only prompt paths under §5.2's policy: exact-case `.md`,
   including dot-files, excluding `_`-prefixed components, dot-directory
   components, and root `README.md`. An empty set is not emitted.
-  Missing roots attach through existing ancestors; their later prompt
-  changes notify normally. Start/stop are explicit and idempotent. This
-  slice emits notifications only; reload and app wiring come later.
+  The raw watcher reports root unavailability on the same ordered callback
+  as file events: missing, replaced by a non-directory, or not enumerable.
+  It reports once per transition and retains the last good file baseline,
+  without deletions caused solely by root loss. `LibraryWatcher` flushes
+  earlier pending changes before forwarding health, without debounce.
+  Composition stops monitoring, shows the existing unavailable banner and
+  keeps the cached index; restoration requires a restart (§11.5).
+  A driver started on a missing root still attaches through existing ancestors;
+  it emits no initial baseline. Start/stop are explicit and idempotent.
   Suppose the open editor has unsaved changes and the file changes on disk. Saving then
   offers three choices: keep mine (overwrite), take theirs, or save mine as
   a copy. The app never merges silently.

@@ -324,6 +324,53 @@ final class LinuxPickerViewTests: XCTestCase {
             .contains(LinuxStrings.libraryUnavailable))
     }
 
+    func testEmptyRootLossShowsBannerAndRestorationRequiresRestart() throws {
+        try open()
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(environment.pickerModel.results.isEmpty)
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.pickerModel.libraryAvailable })
+        XCTAssertTrue(String(cString: gtk_label_get_text(mp_label(try widget("picker-status"))))
+            .contains(LinuxStrings.libraryUnavailable))
+        try files.write(Data("Restored".utf8), at: "restored.md")
+        let deadline = Date().addingTimeInterval(0.8)
+        _ = GTKTestSupport.spin { Date() >= deadline }
+        environment.pickerModel.dismiss()
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+        environment.pickerModel.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(environment.pickerModel.results.isEmpty)
+    }
+
+    func testRootLossDuringPendingModificationRetainsCachedPrompt() throws {
+        let scheduler = PickerWatchScheduler()
+        environment.shutdown()
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+                                       scheduler: scheduler)
+        try files.write(Data("Cached".utf8), at: "cached.md")
+        try open()
+        XCTAssertTrue(scheduler.delays.isEmpty)
+        try Data("Pending edit".utf8).write(to: root.appendingPathComponent("cached.md"))
+        // A queued debounce proves the real driver observed the modification.
+        // This scheduler holds it pending regardless of native-loop timing.
+        XCTAssertTrue(GTKTestSupport.spin { scheduler.delays.contains(Limits.watchDebounce) })
+        XCTAssertTrue(scheduler.delays.allSatisfy { $0 == Limits.watchDebounce })
+        XCTAssertEqual(environment.pickerModel.selectedPreview, .body("Cached"))
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(GTKTestSupport.spin { scheduler.delays.contains(.zero) })
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        // Health flushes the pending modification before stopping the graph.
+        scheduler.fireAll()
+        // Let any index publication reach the picker before checking its cache.
+        var uiDrained = false
+        environment.mainThread.run { uiDrained = true }
+        XCTAssertTrue(GTKTestSupport.spin { uiDrained })
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(environment.pickerModel.results.count, 1)
+        XCTAssertEqual(environment.pickerModel.selectedPreview, .body("Cached"))
+    }
+
     func testServiceGraphKeepsOneRootWhenUserDirectoriesChangeBeforeStart() throws {
         try files.write(Data("First".utf8), at: "a.md")
         _ = environment.pickerModel // Compose stores before watcher startup.
@@ -405,6 +452,22 @@ final class LinuxPickerViewTests: XCTestCase {
         let value = gtk_text_buffer_get_text(buffer, &start, &end, 0)!
         defer { g_free(value) }
         return String(cString: value)
+    }
+}
+
+private final class PickerWatchScheduler: Scheduler {
+    private(set) var delays = [Duration]()
+    private var callbacks = [() -> Void]()
+
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        delays.append(delay)
+        callbacks.append(work)
+    }
+
+    func fireAll() {
+        let pending = callbacks
+        callbacks.removeAll()
+        for work in pending { work() }
     }
 }
 

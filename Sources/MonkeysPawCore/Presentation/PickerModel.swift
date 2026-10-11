@@ -9,6 +9,14 @@ public struct PickerResultRow: Equatable, Sendable {
     public let issues: [PromptIssue]
     public var hasIssues: Bool { !issues.isEmpty }
     public let canRender: Bool
+
+    // Compare path bytes; this hand-written equality must list every stored property.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.identity == rhs.identity && lhs.relativePath.utf8.elementsEqual(rhs.relativePath.utf8)
+            && lhs.title == rhs.title && lhs.folder.utf8.elementsEqual(rhs.folder.utf8)
+            && lhs.tags == rhs.tags && lhs.favorite == rhs.favorite
+            && lhs.previewLine == rhs.previewLine && lhs.issues == rhs.issues && lhs.canRender == rhs.canRender
+    }
 }
 
 public enum PickerPreview: Equatable, Sendable {
@@ -45,6 +53,15 @@ public final class PickerModel: @unchecked Sendable {
     public enum Intent: Equatable, Sendable {
         case edit(identity: PromptIdentity, relativePath: String)
         case openLibrary
+
+        public static func == (lhs: Self, rhs: Self) -> Bool {
+            switch (lhs, rhs) {
+            case (.edit(let leftID, let leftPath), .edit(let rightID, let rightPath)):
+                return leftID == rightID && leftPath.utf8.elementsEqual(rightPath.utf8)
+            case (.openLibrary, .openLibrary): return true
+            case (.edit, .openLibrary), (.openLibrary, .edit): return false
+            }
+        }
     }
 
     public var onChange: (() -> Void)?

@@ -273,17 +273,35 @@ Both drivers mirror the store's POSIX canonicalization and ignore symlinks
 and nonregular files. Native notifications reconcile a metadata snapshot
 into raw `created`, `modified`, or `deleted` events at relative POSIX paths;
 directory moves/removals include their regular-file descendants. There is
-no driver debounce or prompt filtering. Linux arms each directory before
+no driver debounce or prompt filtering. Each delivered native batch triggers
+one coalesced full rescan; Linux runs it at idle priority after queued monitor
+callbacks drain. Linux arms each directory before
 enumerating it and keeps canonical ancestor monitors to recover a missing
 or replaced root. Its lifecycle runs on the owning GLib thread. macOS uses
-one recursive FSEvents stream, with zero latency and `WatchRoot`; every
-batch triggers a full scan, including dropped-event batches. The stream
+one recursive FSEvents stream, with zero latency and `WatchRoot`; dropped-event
+batches also trigger the full rescan. The stream
 starts on the nearest existing ancestor when the root is absent and
 reattaches to the real root when it appears. A serial dispatch queue owns
 its resources. [Apple's FSEvents guide](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html)
 describes root-change detection and snapshot reconciliation;
 [GIO's FileMonitor documentation](https://docs.gtk.org/gio/class.FileMonitor.html)
 specifies callback delivery on the creating thread's main context.
+
+Both drivers report root unavailability on the same ordered callback as file
+events, once per transition, without diffing root loss into file deletions.
+They retain the last good baseline. Core flushes earlier pending changes before
+health and delivers both through its scheduler; Linux composition stops the
+watcher and retains its cached index until restart. Its root check before
+applying a batch also protects earlier pending reloads flushed after root loss.
+A streak is consecutive failed or overflow callbacks: a successful scan ends
+a failure streak, and a normal callback ends an overflow streak.
+FSEvents flags `MustScanSubDirs`, `UserDropped` and `KernelDropped` trigger one
+path-free warning per overflow streak and the usual full rescan. GLib
+[2.80.0's inotify backend](https://github.com/GNOME/glib/blob/2.80.0/gio/inotify/inotify-path.c#L497-L509)
+discards `IN_Q_OVERFLOW` before `GFileMonitor` delivery, exposing no overflow
+flag to the Linux driver. Full scans of delivered batches reconcile dropped
+individual events across the entire tree; an isolated overflow with no further
+delivered batch is not observable through this port and cannot be logged.
 
 Neither driver creates roots or emits its initial baseline. Start/stop are
 idempotent, stop releases monitoring resources, and a new start takes a

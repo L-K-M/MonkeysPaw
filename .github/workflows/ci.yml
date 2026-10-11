@@ -73,7 +73,19 @@ jobs:
           # Use software rendering so Xvfb needs no GL or GPU support.
           GSK_RENDERER: cairo
         run: dbus-run-session -- xvfb-run -a swift test --filter MonkeysPawLinuxTests
-      # M1b's plan calls this linux.yml; keep the existing Linux job here.
+      - name: Test filesystem permissions as an unprivileged user
+        run: |
+          # This job runs as root inside the swift:6.4-noble container.
+          useradd --create-home --shell /bin/bash monkeyspaw-tests
+          test "$(id -u monkeyspaw-tests)" -ne 0
+          chown -R monkeyspaw-tests:monkeyspaw-tests .build
+          # SwiftPM keeps its workspace lock in TMPDIR; root's lock in /tmp is
+          # unusable. Fail unless all three tests run without skipping.
+          runuser -u monkeyspaw-tests -- env TMPDIR=/home/monkeyspaw-tests \
+            swift test --skip-build --filter \
+            'RootedFileStoreTests/testInitializationErrorsDoNotExposeOSPaths|RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring|RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce' \
+            2>&1 | tee permission-tests.log
+          grep -q 'Executed 3 tests, with 0 failures' permission-tests.log
       - name: Smoke X11 delivery and CLI self-test
         env:
           GSETTINGS_BACKEND: memory

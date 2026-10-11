@@ -10,9 +10,7 @@ A prompt repository for macOS, Linux, and Android.
 - **Sync.** An optional self-hosted server syncs prompts between devices and
   shares them within groups.
 
-Status: plan only; no code yet. This plan is the design record and the
-build order. Each milestone is implemented by an AI coding agent, reviewed
-by a second agent, and validated before merge (§15).
+Status: Core, native desktop apps and a server skeleton are implemented; remaining work and acceptance criteria are tracked in §15.
 
 ## How to read this plan
 

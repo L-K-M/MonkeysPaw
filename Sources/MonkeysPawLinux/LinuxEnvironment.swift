@@ -91,6 +91,7 @@ final class LinuxEnvironment {
 
     init(application: UnsafeMutablePointer<GtkApplication>,
          environment: [String: String] = ProcessInfo.processInfo.environment,
+         scheduler: Scheduler? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
              gtk_show_uri(nil, url.absoluteString, UInt32(GDK_CURRENT_TIME))
@@ -101,7 +102,7 @@ final class LinuxEnvironment {
         mainThread = GLibMainThread()
         runner = LinuxToolRunner(environment: environment)
         session = LinuxSessionProbe(environment: environment)
-        scheduler = GLibScheduler()
+        self.scheduler = scheduler ?? GLibScheduler()
         paths = LinuxPaths(environment: environment)
         firstRun = LinuxFirstRunState(paths: paths)
         portal = LinuxPortalTransport(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
@@ -188,17 +189,20 @@ final class LinuxEnvironment {
         // Establish the hook/view before a rebuild publishes its first results.
         _ = pickerModel
         do {
-            try Self.startLibrary(index: index, watcher: watcher) { [weak self, weak index] changes in
+            try Self.startLibrary(index: index, watcher: watcher) { [weak self, weak index] update in
                 guard let self, let index else { return }
-                self.apply(changes, to: index)
+                switch update {
+                case .changes(let changes): self.apply(changes, to: index)
+                case .rootUnavailable(let error): self.degradeLibrary(error)
+                }
             }
         } catch {
-            degradeLibrary()
+            degradeLibrary(error as? FileStoreError)
         }
     }
 
     static func startLibrary(index: PromptIndex, watcher: LibraryWatcher?,
-                             onChange: @escaping @Sendable (LibraryChangeSet) -> Void) throws {
+                             onChange: @escaping @Sendable (LibraryWatchUpdate) -> Void) throws {
         guard let watcher else { throw FileStoreError.ioFailure }
         // Arm before rebuilding so saves cannot fall between the index scan
         // and the watcher's silent baseline. GLib batches cannot interleave
@@ -209,31 +213,42 @@ final class LinuxEnvironment {
 
     private func apply(_ changes: LibraryChangeSet, to index: PromptIndex) {
         do {
-            // Root loss keeps the index read-only in memory (§11.5).
+            // Health flushes earlier pending events first. The root can already
+            // be gone when those paths reload; avoid dropping cached modified
+            // entries before the following health update stops this graph.
             try (libraryFiles as? RootedFileStore)?.requireRoot()
         } catch {
-            degradeLibrary()
+            degradeLibrary(error as? FileStoreError)
             return
         }
         do {
             try index.apply(changes)
         } catch {
-            warnAboutLibrary()
-            do { try index.rebuild() }
-            catch { degradeLibrary() }
+            // Warn after the outcome is known: the warning latches once, and a
+            // failed rebuild must log its typed reason rather than a generic one.
+            do {
+                try index.rebuild()
+                warnAboutLibrary()
+            } catch {
+                degradeLibrary(error as? FileStoreError)
+            }
         }
     }
 
-    private func warnAboutLibrary() {
+    private func warnAboutLibrary(_ error: FileStoreError? = nil) {
         guard !libraryWarningLogged else { return }
         libraryWarningLogged = true
+        if let error {
+            log.write(.warning, "Library unavailable (\(error.rawValue)); keeping cached prompts")
+            return
+        }
         log.write(.warning, "Library unavailable or refresh failed; keeping cached prompts")
     }
 
-    private func degradeLibrary() {
+    private func degradeLibrary(_ error: FileStoreError? = nil) {
         watcher?.stop()
         pickerModel.libraryAvailable = false
-        warnAboutLibrary()
+        warnAboutLibrary(error)
     }
 
     private func handle(_ intent: PickerModel.Intent) {
@@ -256,7 +271,7 @@ final class LinuxEnvironment {
             let path = try library.availablePath(for: LinuxPromptCreation.relativePath(title: title, now: clock.now()))
             let document = try PromptCodec.newDocument(title: title, body: LinuxStrings.newPromptBody)
             let entry = try library.save(document, at: path)
-            do { try index.apply(LibraryChangeSet(created: [path])) }
+            do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
             catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
             handle(.edit(identity: entry.identity, relativePath: path))
         } catch {
