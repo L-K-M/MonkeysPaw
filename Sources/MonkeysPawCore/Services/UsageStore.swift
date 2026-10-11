@@ -5,7 +5,9 @@ import Foundation
 /// Doubles preserve Date precision; events stay in recording order. Atomic
 /// FileStore replacement retains the last usageEventCap events on each write.
 /// Corrupt/unsupported state is an error, never silently reset or merged.
-public final class UsageStore: PromptKeyedStore {
+/// One lock serializes every operation, including each read/append/write
+/// cycle, so the store is safe to share across threads as @unchecked Sendable.
+public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     private struct Payload: Codable {
         let events: [Double]
         let version: Int
