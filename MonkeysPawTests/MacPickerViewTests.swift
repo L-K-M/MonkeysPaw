@@ -345,6 +345,17 @@ final class MacPickerViewTests: XCTestCase {
             routedKeys += 1
             return route?(event, kind) ?? false
         }
+        // Hosted tests have no real input method. AppKit then turns the passed
+        // Escape into cancelOperation:, which a composing IME would consume.
+        // Isolate the monitor's decision from that test-only fallback.
+        let escape = controller.onEscape
+        let cancel = controller.onCancel
+        controller.onEscape = {}
+        controller.onCancel = {}
+        defer {
+            controller.onEscape = escape
+            controller.onCancel = cancel
+        }
 
         for (code, characters): (UInt16, String) in [(36, "\r"), (53, "\u{1b}")] {
             // Keep a matching selection when starting the next composition
@@ -376,6 +387,17 @@ final class MacPickerViewTests: XCTestCase {
         controller.onKey = { event, kind in
             routedKeys += 1
             return route?(event, kind) ?? false
+        }
+        // Hosted tests have no real input method. AppKit then turns the passed
+        // Escape into cancelOperation:, which a composing IME would consume.
+        // Isolate the monitor's decision from that test-only fallback.
+        let escape = controller.onEscape
+        let cancel = controller.onCancel
+        controller.onEscape = {}
+        controller.onCancel = {}
+        defer {
+            controller.onEscape = escape
+            controller.onCancel = cancel
         }
 
         for (position, name) in ["topic", "detail"].enumerated() {
