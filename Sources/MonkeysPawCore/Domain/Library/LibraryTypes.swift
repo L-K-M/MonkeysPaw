@@ -1,6 +1,9 @@
 import Foundation
 
-public struct LibraryEntry {
+/// Immutable after initialization. The document's internal preserved YAML has
+/// resolved tags from PromptCodec; callers cannot mutate it, and public reads
+/// use only value types. Yams.Node lacks Sendable, so this boundary is unchecked.
+public struct LibraryEntry: @unchecked Sendable {
     public let relativePath: String
     /// Empty at the root; otherwise the relative subfolder path.
     public let folder: String

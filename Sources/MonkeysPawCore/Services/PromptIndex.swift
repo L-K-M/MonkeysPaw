@@ -1,8 +1,9 @@
 import Foundation
 
 /// In-memory search (§5.4), with no watcher ownership or app wiring. One lock
-/// serializes all index operations and dependency calls; immutable dependencies
-/// are accessed only under it, permitting watcher callbacks on other threads.
+/// serializes index updates and dependency access; LibraryService and UsageStore
+/// are internally locked. Search snapshots state and the clock under the lock,
+/// then parses, matches, scores and sorts without it.
 /// Share the LibraryService/UsageStore instances used for identity migrations.
 public final class PromptIndex: @unchecked Sendable {
     private struct IndexedPrompt {
@@ -64,30 +65,29 @@ public final class PromptIndex: @unchecked Sendable {
     }
 
     public func search(_ query: String) -> [PromptSearchResult] {
-        locked {
-            let parsed = PromptSearchQuery(query)
-            let now = clock.now()
-            let results = prompts.values.compactMap { prompt -> PromptSearchResult? in
-                guard let match = prompt.content.match(parsed) else { return nil }
-                let frecency = PromptRanking.frecency(events: useEvents[prompt.entry.identity] ?? [], at: now)
-                let boost = prompt.entry.document.frontMatter.favorite ? Limits.favoriteBoost : 1
-                let score = parsed.isEmpty ? frecency : match.score * (1 + frecency) * boost
-                return PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields)
+        // COW snapshots retain immutable published entries and normalized fields.
+        let (snapshot, events, now) = locked { (prompts, useEvents, clock.now()) }
+        let parsed = PromptSearchQuery(query)
+        let results = snapshot.values.compactMap { prompt -> PromptSearchResult? in
+            guard let match = prompt.content.match(parsed) else { return nil }
+            let frecency = PromptRanking.frecency(events: events[prompt.entry.identity] ?? [], at: now)
+            let boost = prompt.entry.document.frontMatter.favorite ? Limits.favoriteBoost : 1
+            let score = parsed.isEmpty ? frecency : match.score * (1 + frecency) * boost
+            return PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields)
+        }
+        return results.sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            if parsed.isEmpty {
+                let leftFavorite = lhs.entry.document.frontMatter.favorite
+                let rightFavorite = rhs.entry.document.frontMatter.favorite
+                if leftFavorite != rightFavorite { return leftFavorite }
             }
-            return results.sorted { lhs, rhs in
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
-                if parsed.isEmpty {
-                    let leftFavorite = lhs.entry.document.frontMatter.favorite
-                    let rightFavorite = rhs.entry.document.frontMatter.favorite
-                    if leftFavorite != rightFavorite { return leftFavorite }
-                }
-                let leftTitle = lhs.entry.document.frontMatter.title
-                let rightTitle = rhs.entry.document.frontMatter.title
-                if !leftTitle.utf8.elementsEqual(rightTitle.utf8) {
-                    return leftTitle.utf8.lexicographicallyPrecedes(rightTitle.utf8)
-                }
-                return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
+            let leftTitle = lhs.entry.document.frontMatter.title
+            let rightTitle = rhs.entry.document.frontMatter.title
+            if !leftTitle.utf8.elementsEqual(rightTitle.utf8) {
+                return leftTitle.utf8.lexicographicallyPrecedes(rightTitle.utf8)
             }
+            return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
         }
     }
 

@@ -294,12 +294,16 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
 - **Index.** Core's `PromptIndex` caches every prompt's title, tags, folder,
   description and body in memory, including invalid entries and their issues
   as returned by `LibraryService.entries()`. `rebuild()` replaces the whole
-  index. `apply(_:)` drops deleted paths and reloads created/modified paths
-  through `load(at:)`; it drops vanished files, retrying once for a stamp/read
-  conflict to detect deletion during a load. Other read/conflict failures
-  are explicit and retain the last completed index. A rebuild or batch is
-  published only when all reads succeed. Path keys and tie-breaks use exact
-  UTF-8 bytes. A few thousand files load in well under a second; M2d measures
+  index, sourcing cached usage events from `UsageStore.useEvents(for:)` for
+  each identity. `apply(_:)` drops deleted paths and reloads created/modified
+  paths through `load(at:)` and their identities' usage events; it drops
+  vanished files, retrying once for a stamp/read conflict to detect deletion
+  during a load. Other read/conflict failures, including corrupt usage state,
+  are explicit and retain the last completed index and its loaded events.
+  A rebuild or batch is published only when all reads succeed; callers must
+  surface failures, including an initial rebuild that leaves the index empty.
+  Path keys and tie-breaks use exact UTF-8 bytes. A few thousand files load
+  in well under a second; M2d measures
   a 3,000-entry in-memory FileStore rebuild; its three-second smoke bound
   gives slower CI hosts headroom, and the measured time is recorded separately.
   Disk performance still depends on the selected filesystem. Watcher-to-index
@@ -312,9 +316,13 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
   `raw = m + 2W + C` over alignments. `W` counts matched word starts (position
   zero or following a non-alphanumeric scalar); `C` counts consecutive
   matched pairs. The normalized score is
-  `raw / (4m - 1) × (1 + m/n) / 2`, in `(0, 1]`. The denominator bounds all
-  bonuses and the length factor favours short fields. Dynamic programming
-  chooses the best alignment rather than the first subsequence.
+  `raw / (4m - 1) × (1 + m/n) / 2`, in `(0, 1]`. `4m − 1` is a loose upper
+  bound: for alphanumeric terms with `m ≥ 2`, the attainable maximum is
+  `max(3m, 2m + 1)`, because word-start and consecutive bonuses cannot peak
+  together. Exact contiguous matches of such terms score below 1 by design;
+  ordering uses relative scores. The length factor favours short fields.
+  Dynamic programming chooses the best alignment rather than the first
+  subsequence.
   Field weights are title **4**, each tag/folder **2**, description **1**,
   body **0.5**. Each term takes its highest weighted field score; `match` is
   the average across ordinary terms. Equal field scores prefer the declared
@@ -334,12 +342,16 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
   samples the injected `WallClock` once, so cached uses decay on every query.
 - **Usage.** `UsageStore` reads/writes the app-data `FileStore` at
   `usage/<identity-key>` (no extension), using the same path-hash/ULID keys
-  as history. Version 1 is deterministic sorted-key JSON:
+  as history. This is the initial format; `usage.json` never shipped, so no
+  migration is needed. Version 1 is deterministic sorted-key JSON:
   `{"events":[Unix seconds as doubles],"version":1}`. Timestamps must be
   finite; events retain recording order. `recordUse(identity:at:)` uses an
   explicit timestamp or the injected `WallClock`, appends, atomically
   replaces the file, and retains the last `Limits.usageEventCap = 1,024`
-  events. At one use/day, discarded events are over 73 half-lives old,
+  events. The service lock serializes each read/append/replace cycle within
+  one `UsageStore` instance, preventing lost updates there. Composition must
+  share one instance per app-data root, the same single-instance rule as
+  `LibraryService`. At one use/day, discarded events are over 73 half-lives old,
   contributing less than `1e-22` each; dense recent bursts already saturate
   the cap of 32. This is a bounded-history approximation, not age-based
   pruning or a guarantee about every possible usage distribution.

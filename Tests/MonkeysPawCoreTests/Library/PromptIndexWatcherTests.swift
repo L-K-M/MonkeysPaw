@@ -3,6 +3,22 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PromptIndexWatcherTests: XCTestCase {
+    func testSchedulerOrdersDeadlinesAndDefersTimersScheduledByCallbacks() {
+        let scheduler = IndexScheduler()
+        var fired = [String]()
+        scheduler.after(Limits.watchDebounce) { fired.append("late") }
+        scheduler.after(Limits.watchDebounce / 2) {
+            fired.append("early-first")
+            scheduler.after(.zero) { fired.append("deferred") }
+        }
+        scheduler.after(Limits.watchDebounce / 2) { fired.append("early-second") }
+
+        scheduler.advance(Limits.watchDebounce)
+        XCTAssertEqual(fired, ["early-first", "early-second", "late"])
+        scheduler.advance(.zero)
+        XCTAssertEqual(fired, ["early-first", "early-second", "late", "deferred"])
+    }
+
     func testRawEventsReachIndexOnlyAfterPromptQuietWindow() throws {
         let library = MemoryFileStore()
         let data = MemoryFileStore()
@@ -14,6 +30,7 @@ final class PromptIndexWatcherTests: XCTestCase {
         let raw = IndexFileWatcher()
         let scheduler = IndexScheduler()
         let watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
+        let halfWindow = Limits.watchDebounce / 2
         try library.put("Before", at: "a.md")
         try library.put("Delete", at: "b.md")
         try index.rebuild()
@@ -25,16 +42,16 @@ final class PromptIndexWatcherTests: XCTestCase {
 
         try library.put("Created", at: "c.md")
         raw.send("c.md", .created)
-        scheduler.advance(.milliseconds(300))
+        scheduler.advance(halfWindow)
         try library.put("After", at: "a.md")
         raw.send("a.md", .modified)
         try library.delete(at: "b.md")
         raw.send("b.md", .deleted)
-        scheduler.advance(.milliseconds(499))
+        scheduler.advance(Limits.watchDebounce - halfWindow)
         XCTAssertEqual(index.search("").map(\.relativePath), ["a.md", "b.md"])
         XCTAssertEqual(index.search("before").map(\.relativePath), ["a.md"])
         XCTAssertTrue(index.search("created").isEmpty)
-        scheduler.advance(.milliseconds(1))
+        scheduler.advance(halfWindow)
         XCTAssertEqual(index.search("").map(\.relativePath), ["a.md", "c.md"])
         XCTAssertEqual(index.search("after").map(\.relativePath), ["a.md"])
         XCTAssertEqual(index.search("created").map(\.relativePath), ["c.md"])
@@ -48,7 +65,7 @@ final class PromptIndexWatcherTests: XCTestCase {
         raw.send("a.md", .created)
         try library.delete(at: "c.md")
         raw.send("c.md", .deleted)
-        scheduler.advance(.milliseconds(500))
+        scheduler.advance(Limits.watchDebounce)
         XCTAssertEqual(index.search("").map(\.relativePath), ["a.md"])
         XCTAssertEqual(index.search("final").map(\.relativePath), ["a.md"])
         XCTAssertTrue(index.search("after").isEmpty)
@@ -76,8 +93,9 @@ private final class IndexScheduler: Scheduler {
 
     func advance(_ elapsed: Duration) {
         time += elapsed
-        let ready = pending.filter { $0.deadline <= time }
+        let ready = pending.filter { $0.deadline <= time }.sorted { $0.deadline < $1.deadline }
         pending.removeAll { $0.deadline <= time }
+        // Work scheduled by these callbacks waits until the next advance.
         for timer in ready { timer.work() }
     }
 }

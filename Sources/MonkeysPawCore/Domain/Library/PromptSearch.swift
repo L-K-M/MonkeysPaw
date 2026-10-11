@@ -14,7 +14,7 @@ public enum PromptSearchField: CaseIterable, Hashable, Sendable {
     }
 }
 
-public struct PromptSearchResult {
+public struct PromptSearchResult: Sendable {
     /// Retains issues and read-only state, including invalid library entries.
     public let entry: LibraryEntry
     public var relativePath: String { entry.relativePath }

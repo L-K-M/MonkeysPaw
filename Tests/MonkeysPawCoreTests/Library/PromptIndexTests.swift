@@ -75,7 +75,7 @@ final class PromptIndexTests: XCTestCase {
         XCTAssertTrue(paths("").isEmpty)
         try put("a.md", title: "Before")
         try index.rebuild()
-        library.onRead = { [library] path in
+        library.onRead = { [weak library] path in
             library?.onRead = nil
             try library?.delete(at: path)
         }
@@ -86,13 +86,13 @@ final class PromptIndexTests: XCTestCase {
     func testApplyRetriesOneConcurrentModificationButReportsPersistentConflicts() throws {
         try put("a.md", title: "Before")
         try index.rebuild()
-        library.onRead = { [library] path in
+        library.onRead = { [weak library] path in
             library?.onRead = nil
             try library?.put("New body", at: path)
         }
         try index.apply(LibraryChangeSet(modified: ["a.md"]))
         XCTAssertEqual(paths("new"), ["a.md"])
-        library.onRead = { [library] path in try library?.put("Still changing", at: path) }
+        library.onRead = { [weak library] path in try library?.put("Still changing", at: path) }
         XCTAssertThrowsError(try index.apply(LibraryChangeSet(modified: ["a.md"]))) {
             XCTAssertEqual($0 as? LibraryError, .conflict)
         }
@@ -136,6 +136,36 @@ final class PromptIndexTests: XCTestCase {
         XCTAssertThrowsError(try index.apply(LibraryChangeSet(modified: ["a.md"]))) {
             XCTAssertEqual($0 as? LibraryError, .operationFailed)
         }
+    }
+
+    func testCorruptUsageFailsRebuildAndApplyAndKeepsLastCompleteIndex() throws {
+        try put("a.md", title: "n")
+        try put("b.md", title: "n")
+        try index.rebuild()
+        let identity = try service.load(at: "b.md").identity
+        try index.recordUse(of: identity)
+        let previous = index.search("n")
+        XCTAssertEqual(previous.map(\.relativePath), ["b.md", "a.md"])
+        XCTAssertEqual(previous.map(\.score), [8, 4])
+
+        try put("a.md", title: "After")
+        try put("c.md", title: "Created")
+        try data.put("{malformed", at: "usage/" + identity.storageKey)
+        XCTAssertThrowsError(try index.rebuild()) {
+            XCTAssertEqual($0 as? LibraryError, .operationFailed)
+        }
+        XCTAssertEqual(index.search("n").map(\.relativePath), previous.map(\.relativePath))
+        XCTAssertEqual(index.search("n").map(\.score), previous.map(\.score))
+        XCTAssertTrue(paths("after").isEmpty)
+        XCTAssertTrue(paths("created").isEmpty)
+
+        XCTAssertThrowsError(try index.apply(LibraryChangeSet(created: ["c.md"], modified: ["b.md"],
+                                                            deleted: ["a.md"]))) {
+            XCTAssertEqual($0 as? LibraryError, .operationFailed)
+        }
+        XCTAssertEqual(index.search("n").map(\.relativePath), previous.map(\.relativePath))
+        XCTAssertEqual(index.search("n").map(\.score), previous.map(\.score))
+        XCTAssertTrue(paths("created").isEmpty)
     }
 
     func testRankingFormulaFavoritesAndDecayAtInjectedClock() throws {
@@ -243,7 +273,7 @@ final class PromptIndexTests: XCTestCase {
         try index.rebuild()
         let elapsed = start.duration(to: .now)
         print("M2d: 3,000-entry in-memory rebuild took \(elapsed)")
-        XCTAssertLessThan(elapsed, .seconds(3), "§5.4 smoke bound gives slower CI hosts headroom; record the actual time.")
+        XCTAssertLessThan(elapsed, .seconds(3), "3,000-entry rebuild took \(elapsed); §5.4 smoke bound gives slower CI hosts headroom.")
         XCTAssertEqual(index.search("").count, 3_000)
         XCTAssertEqual(library.listCount, 1)
         XCTAssertEqual(data.listCount, 0, "Usage lookups must not scan data per entry.")
