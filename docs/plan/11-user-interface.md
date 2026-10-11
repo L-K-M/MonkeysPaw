@@ -22,8 +22,8 @@ Per OS:
     ⌘C/⌘V/⌘A/⌘Z through main-menu items, and without them those keys die
     silently in text fields (Vervellum).
 - **Linux.** GTK4 through the shim:
-  - `GtkListView` + `GtkSingleSelection`
-  - `GtkEntry`, `GtkDropDown`, `GtkTextView`
+  - `GtkListBox` with single selection for the picker
+  - `GtkEntry`, `GtkComboBoxText`, `GtkTextView`
   - `GtkNotebook` for tabs
   - `GtkApplication` actions for menus
 
@@ -32,6 +32,30 @@ Per OS:
   hides tray icons.
 
 ### 11.2 Picker and fill form
+
+M2f supplies the Linux picker and fill view, bound to Core `PickerModel` and
+`FillModel`. `LinuxEnvironment` composes the library, watcher, index, remembered
+values and shared GTK clipboard. The default library is `MonkeysPaw` under the
+XDG documents directory, falling back to `~/Documents/MonkeysPaw`. Search,
+pointer selection, previews and all Linux keyboard bindings use model intents.
+Fill controls remain in place during edits; plain Return in multiline controls
+stays native, while the primary Deliver action and single-line Return retain
+the mode chosen in the picker. Explicit Ctrl+Return selects standard paste.
+Blur and toggling a focused panel off dismiss the entire panel and retain
+session drafts. Toggling an unfocused panel raises it.
+
+Before M3, Edit opens the prompt with the OS default file handler and Library
+opens its folder. No-match creation sanitizes a single filename, probes a free
+name through `LibraryService`, saves a minimal prompt and opens it for editing.
+The assistant action stays disabled with its Settings hint. Library failures
+show a banner; failed watcher batches attempt one full rescan before stopping,
+and root loss retains the cached index. Delivery owns the panel hide. Delivery
+persistence warnings stay visible in the next picker until another use starts.
+
+The macOS picker slice, the settings/seeds/first-run slice (including
+library-folder setup), and the fixtures and release slice remain outstanding M2
+work. Real compositor and paste-target checks remain owner-run in
+`docs/platform/linux.md`.
 
 ```
 ┌ Monkey's Paw ─────────────────────────────────────────────────┐
@@ -74,7 +98,7 @@ Footers differ per OS:
 | Picker | `Ctrl+Shift+Return` (Linux) | use the selection with the terminal chord (a prompt with fields goes to the form first and remembers the choice) |
 | Picker | `⌥Return` / `Alt+Return` | use the selection, copy only |
 | Fill form | `Tab` / `Shift+Tab` | next / previous field |
-| Fill form | `Return` (single-line field), `⌘/Ctrl+Return` (anywhere) | deliver with the standard chord |
+| Fill form | `Return` (single-line field), `⌘/Ctrl+Return` (anywhere) | Return uses the mode selected in the picker; ⌘/Ctrl+Return uses the standard chord |
 | Fill form | `Ctrl+Shift+Return` | deliver with the terminal chord (Linux) |
 | Fill form | `⌥Return` / `Alt+Return` | copy only |
 | Fill form | `Esc` | back to the picker |

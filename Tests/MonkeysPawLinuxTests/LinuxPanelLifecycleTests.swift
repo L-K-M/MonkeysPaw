@@ -12,6 +12,7 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         let tools = try FakeLinuxTools()
         let environment = LinuxEnvironment(application: application, environment: [
             "PATH": tools.directory.path, "XDG_CONFIG_HOME": tools.directory.path,
+            "XDG_DATA_HOME": tools.directory.path, "HOME": tools.directory.path,
         ])
         environment.presentFromLauncher()
         XCTAssertTrue(GTKTestSupport.spin {

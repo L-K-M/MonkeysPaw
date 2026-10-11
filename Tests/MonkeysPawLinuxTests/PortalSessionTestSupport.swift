@@ -11,6 +11,7 @@ enum PortalSessionTestSupport {
         tools.environment["DBUS_SESSION_BUS_ADDRESS"] = try FakePortal.requirePrivateBus()
         tools.environment["XDG_DATA_HOME"] = tools.directory.path
         tools.environment["XDG_CONFIG_HOME"] = tools.directory.path
+        tools.environment["HOME"] = tools.directory.path
         try tools.install("gsettings", script: """
             \(FakeLinuxTools.recordArguments)
             \(settingsHook)

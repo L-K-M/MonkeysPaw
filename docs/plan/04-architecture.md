@@ -28,7 +28,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ Views (per OS)   macOS: SwiftUI/AppKit       Linux: GTK widgets through CGtk          │
+│ Views (per OS)   macOS: SwiftUI/AppKit       Linux: LinuxPanel picker/fill via CGtk   │
 │                  Render presentation state; forward user intents. No logic.          │
 └───────────────────────────────────────┬──────────────────────────────────────────────┘
 ┌───────────────────────────────────────▼──────────────────────────────────────────────┐
@@ -52,6 +52,12 @@
 ```
 
 Rules:
+
+- **Linux picker (M2f).** `LinuxPanel` renders `PickerModel`/`FillModel` and
+  forwards search, selection, focus and delivery intents. `LinuxEnvironment`
+  owns the library/index/watcher service graph and the shared GTK clipboard;
+  view callbacks forward file/folder launch and prompt-creation actions there.
+  `PanelModel` remains in Core for the macOS front end until the macOS picker slice.
 
 - **Each layer calls only the layer directly below it.** Views never touch a
   service, the clipboard, files, keys, or HTTP. Presentation models never

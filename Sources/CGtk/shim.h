@@ -46,12 +46,23 @@ static inline GtkBox       *mp_box(GtkWidget *w)       { return GTK_BOX(w); }
 static inline GtkLabel     *mp_label(GtkWidget *w)     { return GTK_LABEL(w); }
 static inline GtkEntry     *mp_entry(GtkWidget *w)     { return GTK_ENTRY(w); }
 static inline GtkTextView  *mp_text_view(GtkWidget *w) { return GTK_TEXT_VIEW(w); }
+static inline GtkListBox   *mp_list_box(GtkWidget *w) { return GTK_LIST_BOX(w); }
+static inline GtkListBoxRow *mp_list_box_row(GtkWidget *w) { return GTK_LIST_BOX_ROW(w); }
+static inline GtkComboBox  *mp_combo_box(GtkWidget *w) { return GTK_COMBO_BOX(w); }
+static inline GtkComboBoxText *mp_combo_box_text(GtkWidget *w) { return GTK_COMBO_BOX_TEXT(w); }
+static inline GtkStack     *mp_stack(GtkWidget *w) { return GTK_STACK(w); }
 static inline GApplication *mp_gapp(GtkApplication *a) { return G_APPLICATION(a); }
 static inline GActionMap   *mp_action_map(GtkApplication *a) { return G_ACTION_MAP(a); }
 static inline GActionGroup *mp_action_group(GtkApplication *a) { return G_ACTION_GROUP(a); }
 static inline GAction      *mp_action(GSimpleAction *a) { return G_ACTION(a); }
 static inline GtkScrolledWindow *mp_scrolled_window(GtkWidget *w) { return GTK_SCROLLED_WINDOW(w); }
 static inline gboolean mp_is_button(GtkWidget *w) { return GTK_IS_BUTTON(w); }
+static inline void mp_accessible_label(GtkWidget *w, const char *label) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(w), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+}
+static inline void mp_accessible_description(GtkWidget *w, const char *description) {
+    gtk_accessible_update_property(GTK_ACCESSIBLE(w), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, description, -1);
+}
 static inline GDBusConnection *mp_dbus_connection(gpointer object) { return G_DBUS_CONNECTION(object); }
 
 /* ---- M1b delivery and setup --------------------------------------------- */

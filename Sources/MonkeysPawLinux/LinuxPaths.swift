@@ -10,10 +10,14 @@ struct LinuxPaths {
     private let home: URL
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment,
-         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) {
+         home: URL? = nil) {
         self.environment = environment
-        // NSHomeDirectory consults HOME and then passwd, including service accounts.
-        self.home = home
+        // g_get_home_dir() prefers HOME, falling back to the passwd home directory.
+        let configuredHome = environment["HOME"].flatMap { value -> URL? in
+            guard value.hasPrefix("/") else { return nil }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        self.home = home ?? configuredHome ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     }
 
     /// $XDG_CONFIG_HOME/monkeyspaw, else ~/.config/monkeyspaw.
@@ -26,6 +30,46 @@ struct LinuxPaths {
     var dataDirectory: URL {
         directory(environment: "XDG_DATA_HOME", fallback: ".local/share")
             .appendingPathComponent(AppIdentity.binaryName, isDirectory: true)
+    }
+
+    /// Matches Unix load_user_special_dirs in GLib 2.74.6, glib/gutils.c:
+    /// last accepted assignment wins; only the leading $HOME expands.
+    /// Backslashes, embedded $ and backticks stay literal, never shell code.
+    /// https://github.com/GNOME/glib/blob/2.74.6/glib/gutils.c
+    var documentsDirectory: URL {
+        let file = directory(environment: "XDG_CONFIG_HOME", fallback: ".config")
+            .appendingPathComponent("user-dirs.dirs")
+        var selected: URL?
+        if let source = try? String(contentsOf: file, encoding: .utf8) {
+            for line in source.split(separator: "\n") {
+                let parts = line.split(separator: "=", maxSplits: 1).map {
+                    $0.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+                }
+                guard parts.count == 2, parts[0] == "XDG_DOCUMENTS_DIR",
+                      var value = Self.quotedDirectory(parts[1]), !value.contains("\u{0}") else { continue }
+                let isRelative = value.hasPrefix("$HOME")
+                if isRelative { value = String(value.dropFirst(5)) }
+                if value.hasSuffix("/") { value.removeLast() }
+                let directory: URL
+                if isRelative {
+                    directory = home.appendingPathComponent(value, isDirectory: true)
+                } else {
+                    guard value.hasPrefix("/") else { continue }
+                    directory = URL(fileURLWithPath: value, isDirectory: true)
+                }
+                guard directory.path.hasPrefix("/") else { continue }
+                selected = directory
+            }
+        }
+        return selected ?? home.appendingPathComponent("Documents", isDirectory: true)
+    }
+
+    private static func quotedDirectory(_ source: String) -> String? {
+        guard source.first == "\"" else { return nil }
+        let value = source.dropFirst()
+        // GLib uses the final quote, preserving escapes and ignoring any suffix.
+        guard let end = value.lastIndex(of: "\"") else { return nil }
+        return String(value[..<end])
     }
 
     /// Runtime storage is optional until a driver can create a private fallback.

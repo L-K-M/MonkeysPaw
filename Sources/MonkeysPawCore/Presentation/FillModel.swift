@@ -121,6 +121,13 @@ public final class FillModel: @unchecked Sendable {
     public func focusNext() { moveFocus(by: 1) }
     public func focusPrevious() { moveFocus(by: -1) }
 
+    /// Pointer/native focus changes keep keyboard traversal in field order.
+    public func focusField(at position: Int) {
+        guard state == .editing, fields.indices.contains(position), focusIndex != position else { return }
+        focusIndex = position
+        onChange?()
+    }
+
     public func deliver(mode: DeliveryMode) {
         guard deliverEnabled else { return }
         let delivered = values
@@ -177,8 +184,7 @@ public final class FillModel: @unchecked Sendable {
 
     private func moveFocus(by offset: Int) {
         guard state == .editing, let focusIndex, !fields.isEmpty else { return }
-        self.focusIndex = (focusIndex + offset + fields.count) % fields.count
-        onChange?()
+        focusField(at: (focusIndex + offset + fields.count) % fields.count)
     }
 
     private func updatePreview() {

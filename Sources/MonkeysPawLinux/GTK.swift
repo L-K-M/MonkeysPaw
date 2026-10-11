@@ -37,6 +37,28 @@ enum GTK {
         init(_ call: @escaping (UInt32, UInt32) -> Bool) { self.call = call }
     }
 
+    private final class RowBox {
+        let call: (Int?) -> Void
+        init(_ call: @escaping (Int?) -> Void) { self.call = call }
+    }
+
+    /// List signals carry a nullable row between the instance and user data.
+    static func onRow(_ list: Widget, _ signal: String, _ handler: @escaping (Int?) -> Void) {
+        let box = Unmanaged.passRetained(RowBox(handler)).toOpaque()
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?,
+                                        UnsafeMutableRawPointer?) -> Void = { _, row, data in
+            guard let data else { return }
+            let index = row.map { Int(gtk_list_box_row_get_index(mp_list_box_row(
+                $0.assumingMemoryBound(to: GtkWidget.self)))) }
+            Unmanaged<RowBox>.fromOpaque(data).takeUnretainedValue().call(index)
+        }
+        let release: GClosureNotify = { data, _ in
+            guard let data else { return }
+            Unmanaged<RowBox>.fromOpaque(data).release()
+        }
+        mp_connect(list, signal, unsafeBitCast(trampoline, to: GCallback.self), box, release)
+    }
+
     private final class CommandLineBox {
         let call: (UnsafeMutablePointer<GApplicationCommandLine>) -> Int32
         init(_ call: @escaping (UnsafeMutablePointer<GApplicationCommandLine>) -> Int32) { self.call = call }
