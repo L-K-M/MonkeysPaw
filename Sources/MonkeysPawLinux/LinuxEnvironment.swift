@@ -98,7 +98,9 @@ final class LinuxEnvironment {
          }) {
         self.application = application
         self.launchURI = launchURI
-        log = CompositeLogSink(sinks: [StandardErrorLog(), FileLogSink(dataDirectory: LinuxPaths(environment: environment).dataDirectory)], policy: LogLevelPolicy(environmentValue: environment["MONKEYSPAW_LOG"]))
+        log = CompositeLogSink(
+            sinks: [StandardErrorLog(), FileLogSink(dataDirectory: LinuxPaths(environment: environment).dataDirectory)],
+            policy: LogLevelPolicy(environmentValue: environment["MONKEYSPAW_LOG"]))
         mainThread = GLibMainThread()
         runner = LinuxToolRunner(environment: environment)
         session = LinuxSessionProbe(environment: environment)
