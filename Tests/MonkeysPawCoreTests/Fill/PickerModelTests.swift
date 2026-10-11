@@ -133,6 +133,7 @@ final class PickerModelTests: XCTestCase {
         _ = try h.put("Existing")
         try h.open()
         h.picker.setQuery("zzzzz")
+        XCTAssertNil(PromptFlowHarness().picker.noMatches)
         let empty = try XCTUnwrap(h.picker.noMatches)
         XCTAssertEqual(empty.query, "zzzzz")
         XCTAssertEqual(empty.message, "No prompts match 'zzzzz'")

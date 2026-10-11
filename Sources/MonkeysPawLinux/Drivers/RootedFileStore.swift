@@ -88,9 +88,10 @@ final class RootedFileStore: FileStore {
                 _ = Glibc.close(descriptor)
                 _ = unlink(temporaryPath)
             }
-            guard fchmod(descriptor, mode_t(0o600)) == 0 else { throw FileStoreError.ioFailure }
-            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-            try handle.write(contentsOf: data)
+            guard fchmod(descriptor, mode_t(Limits.privateFileMode)) == 0 else { throw FileStoreError.ioFailure }
+            // Data.write consumes all bytes or throws; a FileHandle single
+            // write(2) could silently publish a truncated private file.
+            try data.write(to: URL(fileURLWithPath: temporaryPath))
             guard rename(temporaryPath, url.path) == 0 else { throw FileStoreError.ioFailure }
         }
     }

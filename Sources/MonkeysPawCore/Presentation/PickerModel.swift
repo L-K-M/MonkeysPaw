@@ -59,7 +59,10 @@ public final class PickerModel: @unchecked Sendable {
     public private(set) var isResolvingBuiltins = false
     /// Composition supplies folder availability; cached prompts remain usable.
     public var libraryAvailable = true { didSet { onChange?() } }
-    public var noMatches: PickerNoMatches? { results.isEmpty ? PickerNoMatches(query: query) : nil }
+    public var noMatches: PickerNoMatches? {
+        // Empty query on an empty library is not a no-match state (§11.5).
+        results.isEmpty && !query.isEmpty ? PickerNoMatches(query: query) : nil
+    }
 
     private let index: PromptIndex
     private let fill: FillService
