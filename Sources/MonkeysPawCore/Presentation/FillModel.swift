@@ -66,6 +66,10 @@ public final class FillModel: @unchecked Sendable {
     private let onCancel: () -> Void
     private let onDelivered: (DeliveryOutcome, [PromptPersistenceWarning]) -> Void
     private var builtins = PromptBuiltinValues()
+    private var retainsDraft = true
+
+    /// The held form can outlive an index refresh that selects another prompt.
+    var identity: PromptIdentity { entry.identity }
 
     init(entry: LibraryEntry, form: FillForm, draft: [String: String]?, preferredMode: DeliveryMode,
          fill: FillService, delivery: DeliveryService, index: PromptIndex, main: MainThread,
@@ -114,6 +118,7 @@ public final class FillModel: @unchecked Sendable {
         fields[position].value = value
         updatePreview()
         // Keep the draft current even if a platform blur hides the panel.
+        retainsDraft = true
         onDraft(values)
         onChange?()
     }
@@ -161,7 +166,7 @@ public final class FillModel: @unchecked Sendable {
 
     public func escape() {
         guard state == .editing else { return }
-        onDraft(values)
+        captureDraft()
         state = .closed
         onBack()
         onChange?()
@@ -169,17 +174,41 @@ public final class FillModel: @unchecked Sendable {
 
     public func cancel() {
         guard state == .editing else { return }
-        onDraft(values)
+        captureDraft()
         state = .closed
         onCancel()
         onChange?()
     }
 
-    /// A new picker open after blur retains values and retires this snapshot.
+    /// A new picker open after blur retains drafts unless reset, and retires
+    /// this snapshot.
     func deactivate() {
         guard state == .editing else { return }
-        onDraft(values)
+        captureDraft()
         state = .closed
+    }
+
+    /// Picker calls this only after forgetting persisted values succeeds. Keep
+    /// the held metadata, focus and builtin snapshot, including a pending read.
+    /// Drafts are cleared by the picker, so resetting must not republish them.
+    func resetToDefaults() {
+        guard state == .editing else { return }
+        let defaults = Dictionary(entry.document.effectiveFields.map { ($0.name, $0.defaultValue) },
+                                  uniquingKeysWith: { _, new in new })
+        for position in fields.indices {
+            fields[position].value = defaults[fields[position].name] ?? ""
+        }
+        retainsDraft = false
+        persistenceWarnings = []
+        updatePreview()
+        onChange?()
+    }
+
+    private func captureDraft() {
+        // Closing a reset form must not recreate the forgotten draft. Only a
+        // later edit starts a new draft, so reopening sees current defaults.
+        guard retainsDraft else { return }
+        onDraft(values)
     }
 
     private func moveFocus(by offset: Int) {

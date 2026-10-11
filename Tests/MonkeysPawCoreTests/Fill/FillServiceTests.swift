@@ -163,4 +163,84 @@ final class FillServiceTests: XCTestCase {
                                         values: ["g": "used"])
         XCTAssertEqual(try h.values.rememberedValues(for: entry.identity), ["g": "used"])
     }
+
+    func testForgetValuesRemovesStaleFieldsRestoresDefaultsAndPreservesOtherPrompt() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("---\nfields:\n  f:\n    default: fallback\n---\n{{f}}")
+        let other = try h.put("---\nfields:\n  g:\n    default: fresh\n---\n{{g}}", at: "b.md")
+        try h.values.record(identity: entry.identity, values: ["f": "", "removedField": "stale text"])
+        try h.values.record(identity: other.identity, values: ["g": "kept", "anotherOldField": "also kept"])
+        XCTAssertEqual(h.fill.form(for: entry).fields[0].prefill, "")
+
+        try h.fill.forgetValues(for: entry.identity)
+
+        let form = h.fill.form(for: entry)
+        XCTAssertEqual(form.fields[0].prefill, "fallback")
+        XCTAssertNil(form.warning)
+        XCTAssertEqual(try h.values.rememberedValues(for: entry.identity), [:])
+        XCTAssertEqual(h.fill.form(for: other).fields[0].prefill, "kept")
+        XCTAssertEqual(try h.values.rememberedValues(for: other.identity),
+                       ["g": "kept", "anotherOldField": "also kept"])
+        XCTAssertEqual(h.clock.readCount, 0)
+        XCTAssertEqual(h.delivery.clipboard.readCount, 0)
+    }
+
+    func testForgetAllValuesRestoresDefaultsForEveryPromptAndRecoversCorruption() throws {
+        let h = PromptFlowHarness()
+        let first = try h.put("---\nfields:\n  f:\n    default: first default\n---\n{{f}}")
+        let second = try h.put("---\nfields:\n  g:\n    default: second default\n---\n{{g}}", at: "b.md")
+        try h.values.record(identity: first.identity, values: ["f": "first remembered"])
+        try h.values.record(identity: second.identity, values: ["g": "second remembered"])
+
+        try h.fill.forgetAllValues()
+
+        XCTAssertEqual(h.fill.form(for: first).fields[0].prefill, "first default")
+        XCTAssertEqual(h.fill.form(for: second).fields[0].prefill, "second default")
+        XCTAssertNil(h.fill.form(for: first).warning)
+        XCTAssertNil(h.fill.form(for: second).warning)
+        XCTAssertEqual(try h.data.text(at: "values.json"), "{\"values\":{},\"version\":1}")
+        XCTAssertTrue(h.data.isPrivate(at: "values.json"))
+
+        try h.data.put("private corrupt text", at: "values.json")
+        XCTAssertEqual(h.fill.form(for: first).warning, .rememberedValuesUnavailable)
+        XCTAssertThrowsError(try h.fill.forgetValues(for: first.identity)) {
+            XCTAssertEqual($0 as? LibraryError, .operationFailed)
+        }
+        XCTAssertEqual(try h.data.text(at: "values.json"), "private corrupt text")
+        try h.fill.forgetAllValues()
+        XCTAssertNil(h.fill.form(for: first).warning)
+        XCTAssertEqual(h.fill.form(for: first).fields[0].prefill, "first default")
+        XCTAssertEqual(try h.data.text(at: "values.json"), "{\"values\":{},\"version\":1}")
+        XCTAssertTrue(h.data.isPrivate(at: "values.json"))
+    }
+
+    func testForgetAPIsPassThroughTypedFailuresWithoutChangingState() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("{{f}}")
+        try h.values.record(identity: entry.identity, values: ["f": "kept"])
+        let before = try h.data.read(at: "values.json")
+        let operations: [() throws -> Void] = [
+            { try h.fill.forgetValues(for: entry.identity) },
+            { try h.fill.forgetAllValues() }
+        ]
+        for operation in operations {
+            h.data.failNextWrite = true
+            XCTAssertThrowsError(try operation()) {
+                XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+            }
+            XCTAssertEqual(try h.data.read(at: "values.json"), before)
+        }
+
+        let accesses = h.data.accessCount
+        XCTAssertThrowsError(try h.fill.forgetValues(for: .local("private/path"))) {
+            XCTAssertEqual($0 as? LibraryError, .invalidIdentity)
+        }
+        XCTAssertEqual(h.data.accessCount, accesses)
+        h.data.onRead = { _ in throw FileStoreError.outsideRoot }
+        XCTAssertThrowsError(try h.fill.forgetValues(for: entry.identity)) {
+            XCTAssertEqual($0 as? FileStoreError, .outsideRoot)
+        }
+        h.data.onRead = nil
+        XCTAssertEqual(try h.data.read(at: "values.json"), before)
+    }
 }

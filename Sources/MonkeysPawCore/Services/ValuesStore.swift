@@ -5,7 +5,8 @@ import Foundation
 /// Empty delivered strings are remembered verbatim, repeating the last choice.
 /// Every operation, including read/merge/private replacement, holds one lock.
 /// Share one instance per app-data root, including identity migration callers.
-/// Corrupt, unsupported and over-cap state fails closed without pruning/reset.
+/// Read/modify operations fail closed on corrupt, unsupported or over-cap state.
+/// Explicit removeAll() discards existing state without requiring it to decode.
 public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     private struct Payload: Codable {
         var values: [String: [String: String]]
@@ -35,6 +36,23 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
             payload.values[key, default: [:]].merge(values) { _, delivered in delivered }
             try write(payload)
         }
+    }
+
+    /// Remove the whole identity map, including fields no longer in a prompt.
+    /// Missing identities are a no-op; rejected state remains untouched.
+    public func remove(identity: PromptIdentity) throws {
+        try locked {
+            let key = try identity.storageKey
+            var payload = try read()
+            guard payload.values.removeValue(forKey: key) != nil else { return }
+            try write(payload)
+        }
+    }
+
+    /// Explicit recovery also works when existing state cannot be read or decoded.
+    /// The private writer retains the driver's rooted path and file checks.
+    public func removeAll() throws {
+        try locked { try write(Payload(values: [:], version: 1)) }
     }
 
     @discardableResult

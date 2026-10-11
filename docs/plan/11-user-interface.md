@@ -180,7 +180,7 @@ completion does not claim durable progress.
 | Watcher error or event overflow | One path-free warning per error/overflow streak, defined in §4.6. Each delivered native batch triggers one coalesced full rescan, idle-coalesced on Linux. Linux GIO hides inotify overflow (§4.6). |
 | Picker: no matches | "No prompts match '<query>'" with actions: create a prompt titled `<query>`, write it with the assistant (once configured), open the library folder. |
 | Picker: prompt has validation errors | The preview lists the issues and offers Edit. No delivery. |
-| Fill form: `Esc` | Back to the picker. Typed values stay in memory for that prompt until delivery or quit. |
+| Fill form: `Esc` | Back to the picker. Typed values stay in memory for that prompt until delivery, an explicit forget action or quit. |
 | Panel loses focus (click elsewhere) | Hides after `BLUR_HIDE_MS = 300`, keeping typed values. No delivery and no refocus, because the user already chose a new target. |
 | Delivery fell back to copy-only | Notification "Copied. Press Ctrl+V" (Cmd+V on macOS). A successful paste is silent. |
 | Secret Service unreachable | The error names the ladder and offers the env-var or file tier. |
