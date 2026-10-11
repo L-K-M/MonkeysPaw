@@ -163,6 +163,12 @@ The server package must build without GTK headers, so `CGtk` and the Linux
 app sit outside `MonkeysPawCore`'s dependency closure. M0 proves this: the
 server Docker image builds in a container with no GTK.
 
+`seed/` holds the first-run Markdown prompts and an excluded root README.
+`python3 scripts/generate-seeds.py` deterministically embeds their relative
+paths and exact UTF-8 bytes in Core's checked-in `SeedCatalog.generated.swift`.
+Both apps link that catalog without resource bundles, Xcode resource phases
+or separate deb assets. Core tests fail on missing/extra prompts or byte drift.
+
 ### 4.5 Core service APIs (sketch)
 
 ```swift
