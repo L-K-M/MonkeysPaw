@@ -224,9 +224,14 @@ final class LinuxEnvironment {
         do {
             try index.apply(changes)
         } catch {
-            warnAboutLibrary()
-            do { try index.rebuild() }
-            catch { degradeLibrary(error as? FileStoreError) }
+            // Warn after the outcome is known: the warning latches once, and a
+            // failed rebuild must log its typed reason rather than a generic one.
+            do {
+                try index.rebuild()
+                warnAboutLibrary()
+            } catch {
+                degradeLibrary(error as? FileStoreError)
+            }
         }
     }
 

@@ -15,8 +15,8 @@ public final class PromptIndex: @unchecked Sendable {
     private let usage: UsageStore
     private let clock: WallClock
     private let lock = NSLock()
-    // String equality collapses canonically equivalent paths. M2b paths are
-    // byte-exact, so distinct POSIX files must have distinct index keys.
+    // String equality collapses canonically equivalent paths. RelativePath
+    // compares UTF-8 bytes, so distinct POSIX files keep distinct index keys.
     private var prompts = [RelativePath: IndexedPrompt]()
     private var useEvents = [PromptIdentity: [Date]]()
     private var onChange: (@Sendable () -> Void)?
