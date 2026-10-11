@@ -10,10 +10,10 @@ final class PromptIndexChangeTests: XCTestCase {
         let changes = IndexChanges()
         let index = h.index
         index.setOnChange(nil) // release the harness picker's ownership
-        index.setOnChange {
+        index.setOnChange { [weak index] in
             XCTAssertTrue(changes.isOwnerThread)
             // Search re-entry would deadlock if publication held the index lock.
-            changes.append(index.search("").map(\.relativePath))
+            changes.append(index?.search("").map(\.relativePath) ?? [])
         }
         try index.rebuild()
         XCTAssertEqual(changes.received, [["a.md", "b.md"]])
@@ -52,9 +52,9 @@ final class PromptIndexChangeTests: XCTestCase {
         index.setOnChange(nil)
         index.setOnChange { first.append([]) }
         index.setOnChange(nil)
-        index.setOnChange {
+        index.setOnChange { [weak index] in
             second.append([])
-            index.setOnChange(nil) // also safe to re-enter callback ownership
+            index?.setOnChange(nil) // also safe to re-enter callback ownership
         }
         try index.rebuild()
         try index.rebuild()
