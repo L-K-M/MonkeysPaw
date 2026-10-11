@@ -27,7 +27,9 @@ with `PRIVATE_FILE_MODE = 0600` on the temporary file before rename.
 preserving all other fields and identities. An empty supplied map is a no-op.
 Missing file or identity reads as an empty map. Corrupt, unsupported or
 over-cap state fails with `LibraryError.operationFailed`, without reset,
-truncation or pruning. Encoding above `Limits.valuesFileCapBytes = 1,048,576`
+truncation or pruning; recovery currently requires hand-deleting
+`<data>/values.json` (the M2e notes below document that path). Encoding above
+`Limits.valuesFileCapBytes = 1,048,576`
 bytes fails before writing. Typed FileStore errors remain typed; other errors
 are sanitized, and values are never logged. One NSLock serializes each
 read/merge/private-write cycle; composition shares one instance per data root.
