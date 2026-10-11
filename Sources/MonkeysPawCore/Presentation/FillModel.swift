@@ -138,6 +138,7 @@ public final class FillModel: @unchecked Sendable {
             main.run { [self] in
                 // Copy-only and paste fallback are deliveries too. Learning
                 // failures are visible, but cannot cancel the clipboard action.
+                guard state == .delivering else { return }
                 do {
                     try fill.rememberedOnDelivery(identity: entry.identity,
                                                   fields: entry.document.effectiveFields, values: delivered)

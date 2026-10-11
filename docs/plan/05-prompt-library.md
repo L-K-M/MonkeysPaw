@@ -27,8 +27,10 @@ with `PRIVATE_FILE_MODE = 0600` on the temporary file before rename.
 preserving all other fields and identities. An empty supplied map is a no-op.
 Missing file or identity reads as an empty map. Corrupt, unsupported or
 over-cap state fails with `LibraryError.operationFailed`, without reset,
-truncation or pruning; recovery currently requires hand-deleting
-`<data>/values.json` (the M2e notes below document that path). Encoding above
+truncation or pruning; recovery currently requires renaming
+`<data>/values.json` aside (for example to `values.json.corrupt`, keeping the
+rejected state inspectable) rather than deleting it; the M2e notes below
+document that path. Encoding above
 `Limits.valuesFileCapBytes = 1,048,576`
 bytes fails before writing. Typed FileStore errors remain typed; other errors
 are sanitized, and values are never logged. One NSLock serializes each
@@ -455,7 +457,9 @@ removed or renamed in a document; `remember: false` prevents prefill/new records
 without deleting previous text. All retained fields, including these stale
 fields, count against `Limits.valuesFileCapBytes`. No automatic pruning or
 removal API ships here. Until `remove(identity:)` and a clear-all API arrive,
-hand-delete `<data>/values.json` to reset remembered values. The versioned map
+rename `<data>/values.json` aside (for example to `values.json.corrupt`) to
+reset remembered values while keeping rejected state inspectable; deleting the
+file outright is equivalent when inspection is unnecessary. The versioned map
 format is forward-compatible with those additions.
 
 `ValuesStore.migrateKey(from:to:)` moves the whole field map atomically under
