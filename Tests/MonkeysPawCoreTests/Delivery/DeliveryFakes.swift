@@ -125,9 +125,20 @@ final class FakeFocus: FocusTracker {
 
 final class FakeClipboard: Clipboard {
     private(set) var text: String?
+    private(set) var readCount = 0
+    var readMode: FakeCompletionMode = .immediate
+    private var reads: [@Sendable (String?) -> Void] = []
     private let recorder: DeliveryRecorder
     init(_ recorder: DeliveryRecorder) { self.recorder = recorder }
     func readText() -> String? { text }
+    func readText(_ completion: @escaping @Sendable (String?) -> Void) {
+        readCount += 1
+        switch readMode {
+        case .immediate: completion(text.flatMap { $0.isEmpty ? nil : $0 })
+        case .deferred: reads.append(completion)
+        }
+    }
+    func completeRead(_ text: String?) { reads.removeFirst()(text) }
     func writeText(_ text: String) {
         self.text = text
         recorder.events.append(.write(text))

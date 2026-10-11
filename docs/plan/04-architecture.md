@@ -175,9 +175,15 @@ public final class LibraryService {
 }
 
 public final class FillService {
-    public func form(for prompt: Prompt) -> FillForm                    // fields + prefills
-    public func preview(_ prompt: Prompt, values: FieldValues) -> Rendered
-    public func render(_ prompt: Prompt, values: FieldValues) throws -> String
+    public func builtinSnapshot(for document: PromptDocument,
+        completion: @escaping @Sendable (PromptBuiltinValues) -> Void)
+    public func form(for entry: LibraryEntry) -> FillForm // fields + prefills + status
+    public func preview(_ document: PromptDocument, values: [String: String],
+        builtins: PromptBuiltinValues) -> FillPreview
+    public func render(_ document: PromptDocument, values: [String: String],
+        builtins: PromptBuiltinValues) throws -> String
+    public func rememberedOnDelivery(identity: PromptIdentity, fields: [PromptField],
+        values: [String: String]) throws
 }
 
 public enum DeliveryMode { case paste(PasteChord), copyOnly }
@@ -220,14 +226,14 @@ or returning an already assigned entry. A mismatch throws
 | `FocusTracker` | `arm()` captures the frontmost `NSRunningApplication` (pid and bundle id, not its name) before the panel shows. Restore uses `NSApp.yieldActivation(to:)` + `activate(options:)`, then verify and retry. Dismissal without delivery restores only if we are still frontmost; a user who clicked elsewhere is not yanked back. | none (compositor refocus) | Invoque `AppActivator.swift`; Vervellum `PanelController.swift:104-107, 338-352` |
 | `PasteInjector` | CGEvent Cmd+V after an AX-focus wait; AppleScript fallback | ladder §6.1: RemoteDesktop portal (GDBus), ydotool and xdotool (`Process`) | Invoque `InvoqueBridge.swift:528-654`; Copywraith `ydotool.rs` |
 | `HotkeyBackend` | Carbon `RegisterEventHotKey` (no permission) | ladder §6.1 over GDBus and `gsettings` | Vervellum `CarbonHotkey.swift`, `ShortcutInstaller.swift`; Copywraith `shortcuts/kde.rs` |
-| `Clipboard` | `NSPasteboard` | `GdkClipboard` (`gdk_clipboard_set_text`); the app stays resident, so it keeps ownership | Vervellum |
+| `Clipboard` | `NSPasteboard`; reads complete inline on the caller's AppKit UI thread | `GdkClipboard`; text reads use `gdk_clipboard_read_text_async` through a `GTask` shim returning once on the owning GTK context; the resident app retains write ownership | Vervellum; M2e |
 | `Notifier` | `UNUserNotificationCenter` | `GNotification` via `g_application_send_notification`: no actions, so it cannot steal focus. Under flatpak it goes through the notification portal with no extra permission. | Copywraith `notifications.rs` (behaviour); GIO |
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
-| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations | same, with Linux metadata stamps | M2b; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
+| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations; `writePrivate` creates a 0600 temporary file before writing/renaming | same, with Linux metadata stamps | M2b/M2e; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
 | `FileStoreWatcher` | `RootedFileWatcher`: recursive FSEvents stream with regular-file snapshot reconciliation | `RootedFileWatcher`: non-recursive GIO `GFileMonitor` per directory, with recursive attachment/reconciliation on the owning GLib main context (via the `CGtk` bindings) | M2c; raw relative-path events feed Core `LibraryWatcher`, whose injected `Scheduler` owns debounce |
 | `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
-| `PromptKeyedStore` | Core history and usage stores over app-data `FileStore` | same | M2b/M2d; usage joins now, remembered values join in the fill slice |
+| `PromptKeyedStore` | Core history, usage and remembered-values stores over app-data `FileStore` | same | M2b/M2d/M2e; usage and remembered values join now |
 | single instance / CLI | n/a (in-process hotkey) | `GtkApplication` D-Bus activation; actions `toggle`, `repeat`, `selftest` | Vervellum `LinuxApp.swift:239-325` |
 
 The §4.2 diagram keeps the sketch port names. `EntropySource` and
@@ -245,6 +251,12 @@ or a symlinked Linux home even before the root exists. Subsequent operations
 reject symlinked components in the canonical path; listing skips all
 symlinks. Stamps include device/inode, size, and nanosecond mtime
 and change time (plus birth time on macOS).
+
+M2e adds `writePrivate` without changing ordinary `write`. Both rooted drivers
+use a same-directory `mkstemp` file, pin its mode to 0600 with `fchmod` before
+writing any private bytes, then rename the completed file over the destination.
+Failure removes the temporary file and leaves the previous destination intact.
+Existing root/path/symlink checks apply. Core calls only the port.
 
 M2c adds `FileStoreWatcher` without changing `FileStore` or wiring the app.
 Both drivers mirror the store's POSIX canonicalization and ignore symlinks

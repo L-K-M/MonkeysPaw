@@ -19,6 +19,7 @@ public final class PromptIndex: @unchecked Sendable {
     // byte-exact, so distinct POSIX files must have distinct index keys.
     private var prompts = [Data: IndexedPrompt]()
     private var useEvents = [PromptIdentity: [Date]]()
+    private var onChange: (@Sendable () -> Void)?
 
     public init(service: LibraryService, usage: UsageStore, clock: WallClock) {
         self.service = service
@@ -26,10 +27,18 @@ public final class PromptIndex: @unchecked Sendable {
         self.clock = clock
     }
 
+    /// Single owner: assignment replaces the previous hook. Every successful
+    /// rebuild/apply invokes it once on the caller's thread, after releasing the
+    /// lock; failed publishes and recordUse stay quiet. Callers may re-enter
+    /// search and models must marshal through MainThread.
+    public func setOnChange(_ callback: (@Sendable () -> Void)?) {
+        locked { onChange = callback }
+    }
+
     /// Publish a complete rebuild only after all library and usage reads succeed.
     /// Invalid content stays visible exactly as LibraryService.entries() allows.
     public func rebuild() throws {
-        try locked {
+        let callback = try locked {
             var rebuilt = [Data: IndexedPrompt]()
             var events = [PromptIdentity: [Date]]()
             for entry in try service.entries() {
@@ -38,14 +47,16 @@ public final class PromptIndex: @unchecked Sendable {
             }
             prompts = rebuilt
             useEvents = events
+            return onChange
         }
+        callback?()
     }
 
     /// Apply a complete batch atomically in memory. Reload created/modified
     /// paths, silently dropping vanished files. Other I/O/conflict failures
     /// leave the last completed index intact and are reported to the caller.
     public func apply(_ set: LibraryChangeSet) throws {
-        try locked {
+        let callback = try locked {
             var updated = prompts
             var events = useEvents
             for path in set.deleted { updated.removeValue(forKey: Data(path.utf8)) }
@@ -61,7 +72,9 @@ public final class PromptIndex: @unchecked Sendable {
             let identities = Set(updated.values.map { $0.entry.identity })
             prompts = updated
             useEvents = events.filter { identities.contains($0.key) }
+            return onChange
         }
+        callback?()
     }
 
     public func search(_ query: String) -> [PromptSearchResult] {
@@ -91,6 +104,8 @@ public final class PromptIndex: @unchecked Sendable {
         }
     }
 
+    /// Deliberate quiet update: persistence succeeds before cached events change.
+    /// Search sees the new ranking; delivery models refresh their own results.
     public func recordUse(of identity: PromptIdentity) throws {
         try locked { useEvents[identity] = try usage.recordUse(identity: identity, at: clock.now()) }
     }
