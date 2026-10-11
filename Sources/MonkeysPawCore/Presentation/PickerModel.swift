@@ -184,6 +184,13 @@ public final class PickerModel: @unchecked Sendable {
         onChange?()
     }
 
+    /// Consume before handling: a handler can publish another change without
+    /// dismissing, and must not receive this intent again. Clearing is silent.
+    public func takeRequestedIntent() -> Intent? {
+        defer { requestedIntent = nil }
+        return requestedIntent
+    }
+
     public func escape() {
         switch state {
         case .fill:

@@ -24,7 +24,7 @@ enum Strings {
     static let newPromptBody = "Write your prompt here.\n"
     static let createPromptFailed = "Could not create the prompt. Check library and app-data permissions."
     static let pickerHint = "Return: use · ⌘Return: edit · ⌘L: library · ⌥Return: copy · Esc: close"
-    static let fillHint = "Tab: next field · Return: deliver · ⌘Return: paste · ⌥Return: copy · Esc: back"
+    static let fillHint = "Tab: next field · Return (single-line): deliver · ⌘Return: paste · ⌥Return: copy · Esc: back"
     static let noPasteTarget = "No paste target"
 
     static func pasteTarget(_ name: String) -> String { "→ " + name + " · Local library" }

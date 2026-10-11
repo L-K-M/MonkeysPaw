@@ -28,13 +28,15 @@ final class PickerFocusRequest {
         self.view = view
         if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
         keyObserver = nil
-        if let window = view.window {
-            // Native activation can settle after the deferred request. Retain
-            // that pending request until this window actually becomes key.
-            keyObserver = NotificationCenter.default.addObserver(
-                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
-            ) { [weak self] _ in self?.schedule() }
+        guard let window = view.window else {
+            pending = false
+            return
         }
+        // Native activation can settle after the deferred request. Retain
+        // that pending request until this window actually becomes key.
+        keyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in self?.schedule() }
         schedule()
     }
 
@@ -249,8 +251,13 @@ struct PickerChoiceInput: NSViewRepresentable {
                 button.menu?.addItem(item)
             }
         }
-        let selected = value.isEmpty ? 0 : options.firstIndex { $0.value == value }.map { $0 + 1 } ?? -1
-        button.selectItem(at: selected)
+        if value.isEmpty {
+            button.selectItem(at: 0)
+        } else if let position = options.firstIndex(where: { $0.value == value }) {
+            button.selectItem(at: position + 1)
+        } else {
+            button.select(nil)
+        }
         button.onFocus = onFocus
         button.isEnabled = context.environment.isEnabled
         button.identifier = NSUserInterfaceItemIdentifier(identifier)

@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          makePanelController: @escaping (MainThread, Scheduler, LogSink) -> PanelController = {
              PanelController(mainThread: $0, scheduler: $1, log: $2)
          }) {
+        precondition((libraryRoot == nil) == (dataRoot == nil), "Inject libraryRoot and dataRoot together")
         self.makeFocusTracker = makeFocusTracker
         self.scheduler = scheduler
         self.makePanelController = makePanelController
@@ -192,11 +193,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self, self.pickerModel?.libraryAvailable == true else { return }
                     switch update {
                     case .changes(let changes): self.apply(changes, to: index)
-                    case .rootUnavailable: self.degradeLibrary()
+                    case .rootUnavailable(let error): self.degradeLibrary(error)
                     }
                 }
             }
-        } catch { degradeLibrary() }
+        } catch { degradeLibrary(error as? FileStoreError) }
     }
 
     static func startLibrary(index: PromptIndex, watcher: LibraryWatcher?,
@@ -214,28 +215,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Health flushes pending reloads before its own signal. Protect the
             // cache when the physical root has vanished ahead of that flush.
             try (libraryFiles as? RootedFileStore)?.requireRoot()
-        } catch { degradeLibrary(); return }
+        } catch {
+            degradeLibrary(error as? FileStoreError)
+            return
+        }
         do { try index.apply(changes) }
         catch {
-            warnAboutLibrary()
-            do { try index.rebuild() }
-            catch { degradeLibrary() }
+            // Warn after the outcome is known: the warning latches once, and a
+            // failed rebuild must log its typed reason rather than a generic one.
+            do {
+                try index.rebuild()
+                warnAboutLibrary()
+            } catch {
+                degradeLibrary(error as? FileStoreError)
+            }
         }
     }
 
-    private func warnAboutLibrary() {
+    private func warnAboutLibrary(_ error: FileStoreError? = nil) {
         guard !libraryWarningLogged else { return }
         libraryWarningLogged = true
+        if let error {
+            log?.write(.warning, "Library unavailable (\(error.rawValue)); keeping cached prompts")
+            return
+        }
         log?.write(.warning, "Library unavailable or refresh failed; keeping cached prompts")
     }
 
-    private func degradeLibrary() {
+    private func degradeLibrary(_ error: FileStoreError? = nil) {
         watcher?.stop()
         pickerModel?.libraryAvailable = false
-        warnAboutLibrary()
+        warnAboutLibrary(error)
     }
 
     private func handle(_ intent: PickerModel.Intent) {
+        pickerModel?.dismiss()
         let url: URL
         switch intent {
         case .openLibrary: url = libraryDirectory
@@ -243,7 +257,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard (try? FileStorePath.validate(path)) != nil else { return }
             url = libraryDirectory.appendingPathComponent(path)
         }
-        pickerModel?.dismiss()
         mainThread.run { [weak self] in self?.launchURI(url) }
     }
 

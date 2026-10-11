@@ -137,6 +137,9 @@ final class PanelController: PanelWindow {
         // key panel. Scope it to this visible key window and remove it on hide.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
             guard let self, let panel, event.window === panel, panel.isKeyWindow else { return event }
+            // The monitor runs before the input method. Let the shared field
+            // editor and multiline text view confirm/cancel their composition.
+            if let client = panel.firstResponder as? NSTextInputClient, client.hasMarkedText() { return event }
             let kind = Self.focusedFieldKind(in: panel)
             // Keep native Return activation for focused action buttons.
             if panel.firstResponder is NSButton, kind == nil,
@@ -172,6 +175,7 @@ final class PanelController: PanelWindow {
               event.keyCode == 51 || characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
               let panel, panel.isVisible, panel.isKeyWindow, let content = panel.contentView,
               let query = Self.textField(in: content, matching: { $0.fieldKind == nil }),
+              !(panel.firstResponder is NSControl) || panel.firstResponder === query,
               panel.firstResponder !== query.currentEditor(),
               panel.makeFirstResponder(query), let editor = query.currentEditor() else { return false }
         // Refocusing a text field can select its whole value. Continue the

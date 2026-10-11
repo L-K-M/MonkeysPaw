@@ -28,7 +28,7 @@ final class PickerViewState: ObservableObject {
     }
 
     private func refresh() {
-        if model.state == .picker, let intent = model.requestedIntent {
+        if model.state == .picker, let intent = model.takeRequestedIntent() {
             requestedIntent(intent)
             return
         }

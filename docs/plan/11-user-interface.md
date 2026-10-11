@@ -66,7 +66,17 @@ and keep drafts. Toggling a visible non-key panel raises it. The footer resolves
 the captured pid to the remembered application's name without changing the
 focus tracker's pid/bundle-id identity.
 Typing after native result-list focus retakes search and continues the query.
-Pending text focus retries when the panel becomes key after deferred activation.
+Pending text focus retries when the panel becomes key after deferred activation;
+removing the native view or withdrawing the focus request cancels that retry.
+Printable keys on a focused native control keep its native behavior.
+
+On both desktops, active input-method composition keeps keys in the focused
+native text control. Return confirms conversion and Escape cancels composition
+without using a prompt, delivering a form or dismissing the panel. GTK tracks
+non-empty preedit per control; AppKit checks the first responder's marked text.
+Edit/Library requests are consumed once before their handler runs. Even an
+invalid edit path dismisses without launching, so later model changes remain
+renderable.
 
 macOS installs the picker hook, arms FSEvents, then rebuilds. Scheduler updates
 marshal through `MainThread`; a root preflight protects pending reloads after

@@ -252,6 +252,7 @@ final class LinuxEnvironment {
     }
 
     private func handle(_ intent: PickerModel.Intent) {
+        pickerModel.dismiss()
         let url: URL
         switch intent {
         case .openLibrary: url = libraryDirectory
@@ -259,7 +260,6 @@ final class LinuxEnvironment {
             guard (try? FileStorePath.validate(path)) != nil else { return }
             url = libraryDirectory.appendingPathComponent(path)
         }
-        pickerModel.dismiss()
         mainThread.run { [weak self] in
             self?.launchURI(url)
         }

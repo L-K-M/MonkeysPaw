@@ -81,12 +81,14 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.results.first?.favorite, true)
         XCTAssertEqual(picker.selectedPreview, .body("Body"))
         picker.editSelected()
+        XCTAssertNil(picker.requestedIntent)
         XCTAssertEqual(launched, [root.appendingPathComponent(path)])
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
 
         picker.open()
         picker.openLibrary()
+        XCTAssertNil(picker.requestedIntent)
         XCTAssertEqual(launched, [root.appendingPathComponent(path), root])
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
@@ -330,6 +332,126 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(fill.preview, .rendered("First\n"))
     }
 
+    func testSearchMarkedTextKeepsReturnAndEscapeOutOfPickerRouting() throws {
+        try files.write(Data("---\ntitle: かな\n---\nBody".utf8), at: "search.md")
+        let picker = try open()
+        let panel = try currentPanel()
+        let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        XCTAssertTrue(spin { self.isFocused(query, in: panel) })
+        let editor = try XCTUnwrap(query.currentEditor() as? NSTextView)
+        var routedKeys = 0
+        let route = controller.onKey
+        controller.onKey = { event, kind in
+            routedKeys += 1
+            return route?(event, kind) ?? false
+        }
+
+        for (code, characters): (UInt16, String) in [(36, "\r"), (53, "\u{1b}")] {
+            // Keep a matching selection when starting the next composition
+            // after Return has committed the previous one.
+            editor.unmarkText()
+            editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
+            editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0))
+            XCTAssertTrue(editor.hasMarkedText())
+            XCTAssertNotNil(picker.selectionIndex)
+            try sendKey(code: code, characters: characters, to: panel)
+            XCTAssertEqual(routedKeys, 0)
+            XCTAssertEqual(picker.state, .picker)
+            XCTAssertFalse(picker.isResolvingBuiltins)
+            XCTAssertTrue(controller.isVisible)
+        }
+        editor.unmarkText()
+    }
+
+    func testFillMarkedTextKeepsDeliveryAndEscapeOutOfTextRouting() throws {
+        try files.write(Data("---\nfields:\n  topic: {default: Topic}\n  detail: {type: multiline, default: Detail}\n---\n{{topic}} {{detail}}".utf8), at: "fields.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        let panel = try currentPanel()
+        XCTAssertTrue(spin { fill.deliverEnabled && self.find("fill-field-detail") != nil })
+        var routedKeys = 0
+        let route = controller.onKey
+        controller.onKey = { event, kind in
+            routedKeys += 1
+            return route?(event, kind) ?? false
+        }
+
+        for (position, name) in ["topic", "detail"].enumerated() {
+            fill.focusField(at: position)
+            let input = try XCTUnwrap(find("fill-field-" + name))
+            XCTAssertTrue(spin {
+                if let field = input as? NSTextField { return self.isFocused(field, in: panel) }
+                return panel.firstResponder === input
+            })
+            let editor = try XCTUnwrap(panel.firstResponder as? NSTextView)
+            for (code, characters): (UInt16, String) in [(36, "\r"), (53, "\u{1b}")] {
+                editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
+                editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
+                    replacementRange: NSRange(location: NSNotFound, length: 0))
+                XCTAssertTrue(editor.hasMarkedText())
+                let modifiers: NSEvent.ModifierFlags = name == "detail" && code == 36 ? .command : []
+                try sendKey(code: code, characters: characters, modifiers: modifiers, to: panel)
+                XCTAssertEqual(routedKeys, 0)
+                XCTAssertEqual(picker.state, .fill)
+                XCTAssertEqual(fill.state, .editing)
+                XCTAssertTrue(controller.isVisible)
+                editor.unmarkText()
+            }
+        }
+    }
+
+    func testSpaceOnFocusedUseButtonKeepsNativeFocusAndQuery() throws {
+        try files.write(Data("Body".utf8), at: "Alpha.md")
+        let picker = try open()
+        let panel = try currentPanel()
+        let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        XCTAssertTrue(spin { self.isFocused(query, in: panel) })
+        picker.setQuery("Al")
+        XCTAssertTrue(spin { query.stringValue == "Al" })
+        // Hosted runners need not enable Full Keyboard Access. This native Use
+        // button accepts focus explicitly and records the native key path.
+        let button = PickerKeyboardButton(title: Strings.usePrompt, target: nil, action: nil)
+        panel.contentView?.addSubview(button)
+        XCTAssertTrue(panel.makeFirstResponder(button))
+        try sendKey(code: 49, characters: " ", to: panel)
+        XCTAssertTrue(panel.firstResponder === button)
+        XCTAssertEqual(button.keysReceived, 1)
+        XCTAssertEqual(picker.query, "Al")
+        XCTAssertEqual(query.stringValue, "Al")
+    }
+
+    func testHandledIntentDoesNotRepeatOrBlockLaterPublication() throws {
+        let picker = try open()
+        var intents: [PickerModel.Intent] = []
+        let presentation = PickerViewState(model: picker, mainThread: DispatchMainThread(),
+            requestedIntent: { intents.append($0) }, createPrompt: { _ in })
+        var publications = 0
+        let subscription = presentation.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+        picker.openLibrary() // This handler deliberately leaves the panel open.
+        picker.setQuery("new query")
+        XCTAssertEqual(intents, [.openLibrary])
+        XCTAssertNil(picker.requestedIntent)
+        XCTAssertEqual(presentation.state, .picker)
+        XCTAssertGreaterThan(publications, 0)
+    }
+
+    func testObsoleteChoiceValueExplicitlyDeselectsPreviouslySelectedItem() throws {
+        try files.write(Data("---\nfields:\n  language: {type: choice, options: [Rust, Swift], default: Rust}\n---\n{{language}}".utf8), at: "choice.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        XCTAssertTrue(spin { self.find("fill-field-language") != nil })
+        let choice = try XCTUnwrap(find("fill-field-language") as? PickerChoiceButton)
+        XCTAssertEqual(choice.selectedItem?.representedObject as? String, "Rust")
+        fill.setValue("Java", name: "language")
+        XCTAssertTrue(spin { choice.selectedItem == nil })
+        XCTAssertEqual(fill.values["language"], "Java")
+        XCTAssertFalse(fill.deliverEnabled)
+    }
+
     func testTypingAfterNativeResultFocusContinuesSearch() throws {
         try files.write(Data("Body".utf8), at: "Alpha.md")
         try files.write(Data("Body".utf8), at: "Beta.md")
@@ -376,6 +498,43 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(panel.firstResponder === sink)
         panel.makeKey() // No controller show or SwiftUI revision to retry it.
         XCTAssertTrue(spin { self.isFocused(query, in: panel) })
+    }
+
+    func testRemovingViewCancelsPendingFocusBeforeWindowBecomesKey() throws {
+        _ = try open()
+        let panel = try currentPanel()
+        let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        XCTAssertTrue(spin { self.isFocused(query, in: panel) })
+        let field = PickerTextField(string: "Detached field")
+        let sink = PickerKeyboardSink(frame: .zero)
+        panel.contentView?.addSubview(field)
+        panel.contentView?.addSubview(sink)
+        XCTAssertTrue(panel.makeFirstResponder(sink))
+        panel.resignKey()
+        field.pickerFocus.update(view: field, wantsFocus: true, revision: 1)
+        pump(for: 0.02)
+        field.removeFromSuperview()
+        panel.contentView?.addSubview(field)
+        panel.makeKey()
+        pump(for: 0.02)
+        XCTAssertTrue(panel.firstResponder === sink)
+    }
+
+    func testNoLongerWantedFocusCancelsPendingRetry() throws {
+        _ = try open()
+        let panel = try currentPanel()
+        let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        XCTAssertTrue(spin { self.isFocused(query, in: panel) })
+        let sink = PickerKeyboardSink(frame: .zero)
+        panel.contentView?.addSubview(sink)
+        XCTAssertTrue(panel.makeFirstResponder(sink))
+        panel.resignKey()
+        query.pickerFocus.update(view: query, wantsFocus: true, revision: 999)
+        pump(for: 0.02)
+        query.pickerFocus.update(view: query, wantsFocus: false, revision: 999)
+        panel.makeKey()
+        pump(for: 0.02)
+        XCTAssertTrue(panel.firstResponder === sink)
     }
 
     func testTransientStatusClearsOnQueryAndReopen() throws {
@@ -452,6 +611,12 @@ final class MacPickerViewTests: XCTestCase {
 }
 
 private final class PickerKeyboardSink: NSView {
+    private(set) var keysReceived = 0
+    override var acceptsFirstResponder: Bool { true }
+    override func keyDown(with event: NSEvent) { keysReceived += 1 }
+}
+
+private final class PickerKeyboardButton: NSButton {
     private(set) var keysReceived = 0
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with event: NSEvent) { keysReceived += 1 }

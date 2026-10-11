@@ -37,6 +37,27 @@ enum GTK {
         init(_ call: @escaping (UInt32, UInt32) -> Bool) { self.call = call }
     }
 
+    private final class PreeditBox {
+        let call: (Bool) -> Void
+        init(_ call: @escaping (Bool) -> Void) { self.call = call }
+    }
+
+    /// GtkText and GtkTextView emit their preedit string before commit. Keep
+    /// only its presence; the native input method owns the composition text.
+    static func onPreeditChanged(_ widget: Widget, _ handler: @escaping (Bool) -> Void) {
+        let box = Unmanaged.passRetained(PreeditBox(handler)).toOpaque()
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?,
+                                        UnsafeMutableRawPointer?) -> Void = { _, text, data in
+            guard let data else { return }
+            Unmanaged<PreeditBox>.fromOpaque(data).takeUnretainedValue().call((text?.pointee ?? 0) != 0)
+        }
+        let release: GClosureNotify = { data, _ in
+            guard let data else { return }
+            Unmanaged<PreeditBox>.fromOpaque(data).release()
+        }
+        mp_connect(widget, "preedit-changed", unsafeBitCast(trampoline, to: GCallback.self), box, release)
+    }
+
     private final class RowBox {
         let call: (Int?) -> Void
         init(_ call: @escaping (Int?) -> Void) { self.call = call }

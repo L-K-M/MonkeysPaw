@@ -3,6 +3,32 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testRequestedIntentIsConsumedOnceAcrossChangeNotifications() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("Body")
+        try h.open()
+        let edit = PickerModel.Intent.edit(identity: entry.identity, relativePath: "a.md")
+
+        for expected in [edit, .openLibrary] {
+            var delivered: [PickerModel.Intent] = []
+            var notifications = 0
+            h.picker.onChange = {
+                notifications += 1
+                if let intent = h.picker.takeRequestedIntent() { delivered.append(intent) }
+            }
+            switch expected {
+            case .edit: h.picker.editSelected()
+            case .openLibrary: h.picker.openLibrary()
+            }
+            h.picker.setQuery("")
+
+            XCTAssertEqual(notifications, 2)
+            XCTAssertEqual(delivered, [expected])
+            XCTAssertNil(h.picker.requestedIntent)
+            XCTAssertEqual(h.picker.state, .picker)
+        }
+    }
+
     func testDismissClosesFillAndRetainsDraftOnReopen() throws {
         let h = PromptFlowHarness()
         let entry = try h.put("{{topic}}")
