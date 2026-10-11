@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "e",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "decomposed.md",
+      "path": "decomposed.md",
+      "uses": []
+    },
+    {
+      "source": "composed.md",
+      "path": "composed.md",
+      "uses": []
+    },
+    {
+      "source": "upper.md",
+      "path": "upper.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": []
+  }
+}

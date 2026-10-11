@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "==",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "shifted.md",
+      "path": "shifted.md",
+      "uses": []
+    },
+    {
+      "source": "separated.md",
+      "path": "separated.md",
+      "uses": []
+    },
+    {
+      "source": "exact.md",
+      "path": "exact.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "exact.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "separated.md",
+        "score": 2.857142857142857,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "shifted.md",
+        "score": 2.380952380952381,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

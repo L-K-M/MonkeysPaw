@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "n",
+  "now": "2026-03-15T12:00:00Z",
+  "prompts": [
+    {
+      "source": "never.md",
+      "path": "never.md",
+      "uses": []
+    },
+    {
+      "source": "old.md",
+      "path": "old.md",
+      "uses": [
+        "2026-02-15T12:00:00Z"
+      ]
+    },
+    {
+      "source": "half.md",
+      "path": "half.md",
+      "uses": [
+        "2026-03-01T12:00:00Z"
+      ]
+    },
+    {
+      "source": "fractional.md",
+      "path": "fractional.md",
+      "uses": [
+        "2026-03-08T12:00:00Z"
+      ]
+    },
+    {
+      "source": "recent.md",
+      "path": "recent.md",
+      "uses": [
+        "2026-03-15T12:00:00Z"
+      ]
+    },
+    {
+      "source": "future.md",
+      "path": "future.md",
+      "uses": [
+        "2026-03-16T12:00:00Z"
+      ]
+    },
+    {
+      "source": "mixed.md",
+      "path": "mixed.md",
+      "uses": [
+        "2026-03-15T12:00:00Z",
+        "2026-03-01T12:00:00Z",
+        "2026-02-15T12:00:00Z"
+      ]
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "mixed.md",
+        "score": 11,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "future.md",
+        "score": 8,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "recent.md",
+        "score": 8,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "fractional.md",
+        "score": 6.82842712474619,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "half.md",
+        "score": 6,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "old.md",
+        "score": 5,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "never.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

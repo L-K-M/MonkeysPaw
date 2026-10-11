@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "STRASSE",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "sharp-s.md",
+      "path": "sharp-s.md",
+      "uses": []
+    },
+    {
+      "source": "ascii.md",
+      "path": "ascii.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "ascii.md",
+        "score": 2.2222222222222223,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "sharp-s.md",
+        "score": 2.2222222222222223,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

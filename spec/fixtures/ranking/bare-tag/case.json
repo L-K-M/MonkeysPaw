@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "tag.md",
+      "path": "tag.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": []
+  }
+}

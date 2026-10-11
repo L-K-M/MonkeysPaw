@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "É",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "plain.md",
+      "path": "plain.md",
+      "uses": []
+    },
+    {
+      "source": "double.md",
+      "path": "double.md",
+      "uses": []
+    },
+    {
+      "source": "composed.md",
+      "path": "composed.md",
+      "uses": []
+    },
+    {
+      "source": "upper.md",
+      "path": "upper.md",
+      "uses": []
+    },
+    {
+      "source": "decomposed.md",
+      "path": "decomposed.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "decomposed.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "upper.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "composed.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "double.md",
+        "score": 3,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "n",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "favorite.md",
+      "path": "z-favorite.md",
+      "uses": []
+    },
+    {
+      "source": "plain.md",
+      "path": "plain.md",
+      "uses": []
+    },
+    {
+      "source": "half.md",
+      "path": "a-ordinary.md",
+      "uses": [
+        "2026-09-27T12:00:00Z"
+      ]
+    },
+    {
+      "source": "recent.md",
+      "path": "recent.md",
+      "uses": [
+        "2026-10-11T12:00:00Z"
+      ]
+    },
+    {
+      "source": "favorite-used.md",
+      "path": "favorite-used.md",
+      "uses": [
+        "2026-09-27T12:00:00Z"
+      ]
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "favorite-used.md",
+        "score": 9,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "recent.md",
+        "score": 8,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "a-ordinary.md",
+        "score": 6,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "z-favorite.md",
+        "score": 6,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "plain.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

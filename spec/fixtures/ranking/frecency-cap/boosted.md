@@ -1,0 +1,4 @@
+---
+title: "n"
+favorite: true
+---

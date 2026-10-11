@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#cod",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "code.md",
+      "path": "code.md",
+      "uses": []
+    },
+    {
+      "source": "codex.md",
+      "path": "codex.md",
+      "uses": []
+    },
+    {
+      "source": "text.md",
+      "path": "text.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": []
+  }
+}

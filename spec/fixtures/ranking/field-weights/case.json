@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "ab",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "body.md",
+      "path": "body.md",
+      "uses": []
+    },
+    {
+      "source": "folder.md",
+      "path": "ab/folder.md",
+      "uses": []
+    },
+    {
+      "source": "title.md",
+      "path": "title.md",
+      "uses": []
+    },
+    {
+      "source": "description.md",
+      "path": "description.md",
+      "uses": []
+    },
+    {
+      "source": "tag-folder.md",
+      "path": "ab/both.md",
+      "uses": []
+    },
+    {
+      "source": "tag.md",
+      "path": "tag.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "title.md",
+        "score": 2.857142857142857,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "tag.md",
+        "score": 1.4285714285714286,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "ab/both.md",
+        "score": 1.4285714285714286,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "ab/folder.md",
+        "score": 1.4285714285714286,
+        "matchedFields": [
+          "folder"
+        ]
+      },
+      {
+        "path": "description.md",
+        "score": 0.7142857142857143,
+        "matchedFields": [
+          "description"
+        ]
+      },
+      {
+        "path": "body.md",
+        "score": 0.35714285714285715,
+        "matchedFields": [
+          "body"
+        ]
+      }
+    ]
+  }
+}

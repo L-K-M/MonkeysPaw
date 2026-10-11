@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#CODE",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "partial.md",
+      "path": "partial.md",
+      "uses": []
+    },
+    {
+      "source": "plain.md",
+      "path": "plain.md",
+      "uses": []
+    },
+    {
+      "source": "favorite.md",
+      "path": "favorite.md",
+      "uses": []
+    },
+    {
+      "source": "used.md",
+      "path": "used.md",
+      "uses": [
+        "2026-10-11T12:00:00Z"
+      ]
+    },
+    {
+      "source": "text-only.md",
+      "path": "text-only.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "used.md",
+        "score": 2,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "favorite.md",
+        "score": 1.5,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "plain.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      }
+    ]
+  }
+}

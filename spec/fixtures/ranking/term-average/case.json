@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "  ab\tcd\n",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "missing.md",
+      "path": "missing.md",
+      "uses": []
+    },
+    {
+      "source": "description-body.md",
+      "path": "description-body.md",
+      "uses": []
+    },
+    {
+      "source": "title-both.md",
+      "path": "title-both.md",
+      "uses": []
+    },
+    {
+      "source": "split-tags.md",
+      "path": "split-tags.md",
+      "uses": []
+    },
+    {
+      "source": "title-tags.md",
+      "path": "title-tags.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "title-tags.md",
+        "score": 2.142857142857143,
+        "matchedFields": [
+          "title",
+          "tags"
+        ]
+      },
+      {
+        "path": "title-both.md",
+        "score": 2,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "description-body.md",
+        "score": 0.5357142857142857,
+        "matchedFields": [
+          "description",
+          "body"
+        ]
+      }
+    ]
+  }
+}

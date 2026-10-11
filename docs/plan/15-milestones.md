@@ -53,8 +53,9 @@
   replacing the canned Linux panel. Core dismiss retains drafts across blur
   and toggle-off; GTK tests exercise live search, native selection, each field
   kind, delivery, watcher refresh and unavailable-root behavior. The X11 smoke
-  now loads an isolated on-disk prompt. This does not close M2: watcher
-  root-health and path-identity correction, the macOS picker slice, the
+  now loads an isolated on-disk prompt. Ranking fixtures and strict Swift
+  dispatch add the fifth M2 conformance category for the M8 Kotlin port.
+  This does not close M2: the macOS picker slice, the
   settings/seeds/first-run slice (including folder selection), and the fixtures
   and release slice remain. X11, GNOME/KDE Wayland and fill-form owner checks
   in `docs/platform/linux.md` remain NOT RUN.
