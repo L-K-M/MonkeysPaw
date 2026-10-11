@@ -58,8 +58,11 @@ final class LinuxPanelLifecycleTests: XCTestCase {
     func testSetupRowsAndFixUseThePresentationModel() throws {
         let application = try GTKTestSupport.application()
         defer { GTKTestSupport.destroy(application) }
+        let tools = try FakeLinuxTools()
         let environment = LinuxEnvironment(application: application, environment: [
             "PATH": "/nonexistent", "XDG_CURRENT_DESKTOP": "KDE", "XDG_SESSION_TYPE": "wayland",
+            "XDG_DATA_HOME": tools.directory.path, "XDG_CONFIG_HOME": tools.directory.path,
+            "HOME": tools.directory.path,
         ])
         defer { environment.shutdown() }
         let model = environment.setupModel
@@ -101,7 +104,11 @@ final class LinuxPanelLifecycleTests: XCTestCase {
             return
         }
 
-        let environment = LinuxEnvironment(application: application)
+        let tools = try FakeLinuxTools()
+        let environment = LinuxEnvironment(application: application, environment: [
+            "PATH": tools.directory.path, "XDG_DATA_HOME": tools.directory.path,
+            "XDG_CONFIG_HOME": tools.directory.path, "HOME": tools.directory.path,
+        ])
         let panel = environment.panel
         panel.show()
 

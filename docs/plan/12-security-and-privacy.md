@@ -36,8 +36,16 @@
 
 | Component | Sinks | Level control |
 |---|---|---|
-| Desktop | stderr and `<data>/logs/monkeyspaw.log`, rotated at `LOG_FILE_MAX_BYTES = 1 MiB` × `LOG_FILE_KEEP = 5` | `warn` by default, `MONKEYSPAW_LOG=debug` |
+| Desktop | macOS unified log or Linux stderr, plus `<data>/logs/monkeyspaw.log`: `<ISO-8601 UTC timestamp> <level>: <message>\n`; rotate before exceeding `LOG_FILE_MAX_BYTES = 1 MiB`, retaining the active file plus `.1` through `.4` (`LOG_FILE_KEEP = 5` total) | `warning` by default; `MONKEYSPAW_LOG` accepts case-insensitive `debug`, `info`, `warning`/`warn`, `error`; unknown values keep the default |
 | Server | JSON to stdout (`docker compose logs`) | `MONKEYSPAW_LOG_LEVEL` |
 
-- **Never logged:** keys, tokens, passwords, prompt content, field values.
+- **File diagnostics:** create the logs directory at 0700 and files at 0600;
+  append across restarts and serialize records within each sink. Escape CR/LF
+  in messages as `\r`/`\n` so each record is one line. Oversized records retain
+  a UTF-8 scalar boundary prefix of the message and end with ` [truncated]`
+  plus a newline, with the entire record at most 1 MiB. A file failure disables
+  that sink for its lifetime, reports one path-free warning to stderr, and
+  leaves the other sinks running.
+- **Never logged:** keys, tokens, passwords, prompt content, field values,
+  provider/tool error bodies.
 - **Bug reports:** the `--selftest` output plus the log tail.

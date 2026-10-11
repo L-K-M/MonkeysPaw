@@ -57,7 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The hosted application's default delegate has production roots.
         // Only explicitly injected test graphs may access the filesystem.
         guard !Self.isRunningTests || rootsAreInjected else { return }
-        let log = OSLogSink()
+        let log = CompositeLogSink(
+            sinks: [OSLogSink(), FileLogSink(dataDirectory: dataDirectory)],
+            policy: LogLevelPolicy(environmentValue: ProcessInfo.processInfo.environment["MONKEYSPAW_LOG"]))
         self.log = log
         compose(log: log)
         startLibrary()
