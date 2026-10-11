@@ -39,9 +39,11 @@ final class RootedFileWatcher: FileStoreWatcher {
     private let queueKey = DispatchSpecificKey<Void>()
     private var monitor: Monitor?
     private var snapshot = FileWatchTree.Snapshot()
-    private var onEvent: (@Sendable (FileStoreEvent) -> Void)?
+    private var onEvent: (@Sendable (FileStoreWatchEvent) -> Void)?
     private var epoch: UInt64 = 0
     private var hasRescanFailure = false
+    private var rootUnavailable = false
+    private var hasOverflow = false
 
     init(root: URL, log: LogSink) throws {
         tree = try FileWatchTree(root: root)
@@ -52,7 +54,7 @@ final class RootedFileWatcher: FileStoreWatcher {
     deinit { stop() }
 
     /// Idempotent while running; a second start retains the first handler.
-    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws {
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws {
         try onQueue {
             guard self.onEvent == nil else { return }
             epoch &+= 1
@@ -63,7 +65,10 @@ final class RootedFileWatcher: FileStoreWatcher {
                 // Baseline after attachment closes the initial scan/arm gap.
                 // Changes between start() and this baseline are deliberately folded in.
                 snapshot = try tree.scan()
+                if let error = snapshot.rootError, error != .notFound { throw error }
+                rootUnavailable = snapshot.rootError != nil
                 hasRescanFailure = false
+                hasOverflow = false
             } catch {
                 stop()
                 throw error
@@ -76,6 +81,9 @@ final class RootedFileWatcher: FileStoreWatcher {
             guard onEvent != nil else { return }
             epoch &+= 1
             onEvent = nil
+            rootUnavailable = false
+            hasRescanFailure = false
+            hasOverflow = false
             let retiring = monitor
             monitor = nil
             // A consumer can stop inside this stream's callback. Retire it
@@ -88,11 +96,11 @@ final class RootedFileWatcher: FileStoreWatcher {
     @discardableResult
     private func arm(for snapshot: FileWatchTree.Snapshot) throws -> Bool {
         var directory = tree.root
-        while snapshot.nodes[directory.path]?.kind != .directory {
+        while snapshot.nodes[Data(directory.path.utf8)]?.kind != .directory {
             directory.deleteLastPathComponent()
         }
-        guard let node = snapshot.nodes[directory.path] else { throw FileStoreError.ioFailure }
-        if monitor?.path == directory.path, monitor?.identity == node.identity { return false }
+        guard let node = snapshot.nodes[Data(directory.path.utf8)] else { throw FileStoreError.ioFailure }
+        if monitor?.path.utf8.elementsEqual(directory.path.utf8) == true, monitor?.identity == node.identity { return false }
 
         let token = UUID()
         let callback = Callback(self, epoch: epoch, token: token)
@@ -106,15 +114,17 @@ final class RootedFileWatcher: FileStoreWatcher {
                 guard let info else { return }
                 Unmanaged<Callback>.fromOpaque(info).release()
             }, copyDescription: nil)
-        let changed: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let changed: FSEventStreamCallback = { _, info, count, _, flags, _ in
             guard let info else { return }
             let callback = Unmanaged<Callback>.fromOpaque(info).takeUnretainedValue()
-            callback.owner?.changed(epoch: callback.epoch, token: callback.token)
+            let combined = UnsafeBufferPointer(start: flags, count: count)
+                .reduce(FSEventStreamEventFlags(0)) { $0 | $1 }
+            callback.owner?.changed(epoch: callback.epoch, token: callback.token, flags: combined)
         }
         var flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagWatchRoot
             | kFSEventStreamCreateFlagNoDefer)
         // Ancestors need directory-level events only until the root appears.
-        if directory.path == tree.root.path {
+        if directory.path.utf8.elementsEqual(tree.root.path.utf8) {
             flags |= FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
         }
         guard let stream = FSEventStreamCreate(kCFAllocatorDefault, changed, &context,
@@ -135,8 +145,9 @@ final class RootedFileWatcher: FileStoreWatcher {
         return true
     }
 
-    private func changed(epoch expectedEpoch: UInt64, token: UUID) {
+    private func changed(epoch expectedEpoch: UInt64, token: UUID, flags: FSEventStreamEventFlags) {
         guard onEvent != nil, epoch == expectedEpoch, monitor?.token == token else { return }
+        noteEventFlags(flags)
         // Keep the last good baseline on transient I/O failure. The current
         // stream remains armed so a later native event can retry attachment.
         var next: FileWatchTree.Snapshot
@@ -144,19 +155,44 @@ final class RootedFileWatcher: FileStoreWatcher {
             next = try tree.scan()
             if try arm(for: next) { next = try tree.scan() }
         } catch {
-            if !hasRescanFailure {
-                log.write(.error, "library rescan failed; keeping last baseline: \(String(describing: error))")
-            }
-            hasRescanFailure = true
+            warnAboutRescan(error as? FileStoreError ?? .ioFailure)
             return
         }
+        if let error = next.rootError {
+            if error == .ioFailure { warnAboutRescan(error) }
+            guard !rootUnavailable else { return }
+            rootUnavailable = true
+            onEvent?(.rootUnavailable(error))
+            return
+        }
+        rootUnavailable = false
         hasRescanFailure = false
         let events = FileWatchTree.changes(from: snapshot, to: next)
         snapshot = next
         for event in events {
             guard epoch == expectedEpoch, let onEvent else { return }
-            onEvent(event)
+            onEvent(.file(event))
         }
+    }
+
+    /// Called on the watcher queue; internal for flag-policy regression tests.
+    func noteEventFlags(_ flags: FSEventStreamEventFlags) {
+        onQueue {
+            let mask = FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs
+                | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped)
+            let overflow = flags & mask != 0
+            if overflow && !hasOverflow {
+                log.write(.warning, "library event overflow; performing full rescan")
+            }
+            hasOverflow = overflow
+        }
+    }
+
+    private func warnAboutRescan(_ error: FileStoreError) {
+        if !hasRescanFailure {
+            log.write(.warning, "library rescan failed; keeping last baseline: \(error.rawValue)")
+        }
+        hasRescanFailure = true
     }
 
     private func onQueue<T>(_ work: () throws -> T) rethrows -> T {

@@ -14,6 +14,30 @@ final class LibraryWatcherTests: XCTestCase {
         return service
     }
 
+    func testCoalescingKeepsCanonicallyEquivalentPathsDistinct() throws {
+        let service = try start()
+        defer { service.stop() }
+        raw.send("é.md", .created)
+        raw.send("e\u{301}.md", .created)
+        raw.send("é.md", .modified)
+        scheduler.fireAll()
+        let batch = try XCTUnwrap(changes.first)
+        XCTAssertEqual(batch.created.count, 2)
+        XCTAssertEqual(batch.modified.count, 0)
+    }
+
+    func testNormalizationOnlyRenameKeepsDeletionAndCreationSeparate() throws {
+        let service = try start()
+        defer { service.stop() }
+        raw.send("e\u{301}.md", .deleted)
+        raw.send("é.md", .created)
+        scheduler.fireAll()
+        let batch = try XCTUnwrap(changes.first)
+        XCTAssertEqual(batch.deleted.count, 1)
+        XCTAssertEqual(batch.created.count, 1)
+        XCTAssertTrue(batch.modified.isEmpty)
+    }
+
     func testLabelsDeduplicateAndSeparateWindows() throws {
         let service = try start()
         defer { service.stop() }
@@ -84,7 +108,7 @@ final class LibraryWatcherTests: XCTestCase {
         for path in eligible + ignored { raw.send(path, .created) }
         XCTAssertEqual(scheduler.delays, Array(repeating: Limits.watchDebounce, count: eligible.count))
         scheduler.fireAll()
-        XCTAssertEqual(changes, [LibraryChangeSet(created: Set(eligible))])
+        XCTAssertEqual(changes, [LibraryChangeSet(created: Set(eligible.map { RelativePath($0) }))])
         for path in ignored { raw.send(path, .deleted) }
         XCTAssertEqual(scheduler.delays, Array(repeating: Limits.watchDebounce, count: eligible.count))
         scheduler.fireAll()
@@ -101,7 +125,7 @@ final class LibraryWatcherTests: XCTestCase {
         service.stop()
         XCTAssertEqual(raw.stops, 1)
         try service.start { [received] in received.append($0) }
-        oldCallback?(FileStoreEvent(relativePath: "stale.md", kind: .created))
+        oldCallback?(.file(FileStoreEvent(relativePath: "stale.md", kind: .created)))
         raw.send("new.md", .created)
         scheduler.fire(0)
         XCTAssertTrue(changes.isEmpty)
@@ -158,7 +182,8 @@ private final class WatchChanges: @unchecked Sendable {
         return stored
     }
 
-    func append(_ change: LibraryChangeSet) {
+    func append(_ update: LibraryWatchUpdate) {
+        guard case .changes(let change) = update else { return }
         lock.lock()
         defer { lock.unlock() }
         stored.append(change)
@@ -166,12 +191,12 @@ private final class WatchChanges: @unchecked Sendable {
 }
 
 private final class FakeFileStoreWatcher: FileStoreWatcher {
-    var callback: (@Sendable (FileStoreEvent) -> Void)?
+    var callback: (@Sendable (FileStoreWatchEvent) -> Void)?
     var failure: FileStoreError?
     var starts = 0
     var stops = 0
 
-    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws {
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws {
         starts += 1
         if let failure { throw failure }
         callback = onEvent
@@ -179,7 +204,7 @@ private final class FakeFileStoreWatcher: FileStoreWatcher {
 
     func stop() { stops += 1; callback = nil }
     func send(_ path: String, _ kind: FileStoreEvent.Kind) {
-        callback?(FileStoreEvent(relativePath: path, kind: kind))
+        callback?(.file(FileStoreEvent(relativePath: path, kind: kind)))
     }
 }
 

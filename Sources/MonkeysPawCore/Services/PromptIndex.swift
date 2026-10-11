@@ -17,7 +17,7 @@ public final class PromptIndex: @unchecked Sendable {
     private let lock = NSLock()
     // String equality collapses canonically equivalent paths. M2b paths are
     // byte-exact, so distinct POSIX files must have distinct index keys.
-    private var prompts = [Data: IndexedPrompt]()
+    private var prompts = [RelativePath: IndexedPrompt]()
     private var useEvents = [PromptIdentity: [Date]]()
     private var onChange: (@Sendable () -> Void)?
 
@@ -43,10 +43,10 @@ public final class PromptIndex: @unchecked Sendable {
     /// Invalid content stays visible exactly as LibraryService.entries() allows.
     public func rebuild() throws {
         let callback = try locked {
-            var rebuilt = [Data: IndexedPrompt]()
+            var rebuilt = [RelativePath: IndexedPrompt]()
             var events = [PromptIdentity: [Date]]()
             for entry in try service.entries() {
-                rebuilt[Data(entry.relativePath.utf8)] = indexed(entry)
+                rebuilt[RelativePath(entry.relativePath)] = indexed(entry)
                 if events[entry.identity] == nil { events[entry.identity] = try usage.useEvents(for: entry.identity) }
             }
             prompts = rebuilt
@@ -63,14 +63,14 @@ public final class PromptIndex: @unchecked Sendable {
         let callback = try locked {
             var updated = prompts
             var events = useEvents
-            for path in set.deleted { updated.removeValue(forKey: Data(path.utf8)) }
-            let changed = set.created.union(set.modified).sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+            for path in set.deleted { updated.removeValue(forKey: path) }
+            let changed = set.created.union(set.modified).sorted()
             for path in changed {
-                guard let entry = try currentEntry(at: path) else {
-                    updated.removeValue(forKey: Data(path.utf8))
+                guard let entry = try currentEntry(at: path.string) else {
+                    updated.removeValue(forKey: path)
                     continue
                 }
-                updated[Data(path.utf8)] = indexed(entry)
+                updated[path] = indexed(entry)
                 events[entry.identity] = try usage.useEvents(for: entry.identity)
             }
             let identities = Set(updated.values.map { $0.entry.identity })

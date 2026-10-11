@@ -324,6 +324,38 @@ final class LinuxPickerViewTests: XCTestCase {
             .contains(LinuxStrings.libraryUnavailable))
     }
 
+    func testEmptyRootLossShowsBannerAndRestorationRequiresRestart() throws {
+        try open()
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(environment.pickerModel.results.isEmpty)
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.pickerModel.libraryAvailable })
+        XCTAssertTrue(String(cString: gtk_label_get_text(mp_label(try widget("picker-status"))))
+            .contains(LinuxStrings.libraryUnavailable))
+        try files.write(Data("Restored".utf8), at: "restored.md")
+        let deadline = Date().addingTimeInterval(0.8)
+        _ = GTKTestSupport.spin { Date() >= deadline }
+        environment.pickerModel.dismiss()
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+        environment.pickerModel.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(environment.pickerModel.results.isEmpty)
+    }
+
+    func testRootLossDuringPendingModificationRetainsCachedPrompt() throws {
+        try files.write(Data("Cached".utf8), at: "cached.md")
+        try open()
+        try Data("Pending edit".utf8).write(to: root.appendingPathComponent("cached.md"))
+        // Let GIO observe the edit without reaching Core's 500 ms quiet window.
+        let deadline = Date().addingTimeInterval(0.3)
+        _ = GTKTestSupport.spin { Date() >= deadline }
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.pickerModel.libraryAvailable })
+        XCTAssertEqual(environment.pickerModel.results.count, 1)
+        XCTAssertEqual(environment.pickerModel.selectedPreview, .body("Cached"))
+    }
+
     func testServiceGraphKeepsOneRootWhenUserDirectoriesChangeBeforeStart() throws {
         try files.write(Data("First".utf8), at: "a.md")
         _ = environment.pickerModel // Compose stores before watcher startup.

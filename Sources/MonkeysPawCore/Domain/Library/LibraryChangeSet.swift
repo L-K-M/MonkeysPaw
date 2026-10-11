@@ -4,11 +4,11 @@
 /// `created`, `modified`, and `deleted` must be pairwise disjoint; debug builds
 /// assert this invariant.
 public struct LibraryChangeSet: Equatable, Sendable {
-    public let created: Set<String>
-    public let modified: Set<String>
-    public let deleted: Set<String>
+    public let created: Set<RelativePath>
+    public let modified: Set<RelativePath>
+    public let deleted: Set<RelativePath>
 
-    public init(created: Set<String> = [], modified: Set<String> = [], deleted: Set<String> = []) {
+    public init(created: Set<RelativePath> = [], modified: Set<RelativePath> = [], deleted: Set<RelativePath> = []) {
         assert(created.isDisjoint(with: modified) && created.isDisjoint(with: deleted)
                && modified.isDisjoint(with: deleted), "LibraryChangeSet path sets must be disjoint")
         self.created = created
@@ -17,4 +17,10 @@ public struct LibraryChangeSet: Equatable, Sendable {
     }
 
     public var isEmpty: Bool { created.isEmpty && modified.isEmpty && deleted.isEmpty }
+}
+
+/// Ordered watcher output: debounced prompt changes or immediate root health.
+public enum LibraryWatchUpdate: Equatable, Sendable {
+    case changes(LibraryChangeSet)
+    case rootUnavailable(FileStoreError)
 }

@@ -34,12 +34,13 @@ final class RootedFileWatcher: FileStoreWatcher {
 
     private let tree: FileWatchTree
     private let log: LogSink
-    private var monitors = [String: Monitor]()
-    private var pathsByIdentity = [String: String]()
+    private var monitors = [Data: Monitor]()
+    private var pathsByIdentity = [String: Data]()
     private var snapshot = FileWatchTree.Snapshot()
-    private var onEvent: (@Sendable (FileStoreEvent) -> Void)?
+    private var onEvent: (@Sendable (FileStoreWatchEvent) -> Void)?
     private var epoch: UInt64 = 0
     private var hasRescanFailure = false
+    private var rootUnavailable = false
     private var needsRescan = false
     private var rescanSource: guint = 0
 
@@ -50,12 +51,14 @@ final class RootedFileWatcher: FileStoreWatcher {
     deinit { stop() }
 
     /// Idempotent while running; a second start retains the first handler.
-    func start(_ onEvent: @escaping @Sendable (FileStoreEvent) -> Void) throws {
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws {
         guard self.onEvent == nil else { return }
         epoch &+= 1
         self.onEvent = onEvent
         do {
             snapshot = try tree.scan(arm: arm)
+            if let error = snapshot.rootError, error != .notFound { throw error }
+            rootUnavailable = snapshot.rootError != nil
             hasRescanFailure = false
             prune()
         } catch {
@@ -73,6 +76,8 @@ final class RootedFileWatcher: FileStoreWatcher {
             rescanSource = 0
         }
         needsRescan = false
+        rootUnavailable = false
+        hasRescanFailure = false
         for monitor in monitors.values { monitor.cancel() }
         monitors.removeAll()
         pathsByIdentity.removeAll()
@@ -84,12 +89,12 @@ final class RootedFileWatcher: FileStoreWatcher {
         // GIO shares an inotify watch for aliases of the same inode. On a
         // directory rename, retire its old-path subscription before creating
         // the new one; canceling the old alias afterwards can lose the watch.
-        if let oldPath = pathsByIdentity[node.identity], oldPath != url.path {
+        if let oldPath = pathsByIdentity[node.identity], oldPath != Data(url.path.utf8) {
             removeMonitor(at: oldPath)
         }
-        if let monitor = monitors[url.path] {
+        if let monitor = monitors[Data(url.path.utf8)] {
             if monitor.identity == node.identity, g_file_monitor_is_cancelled(monitor.value) == 0 { return }
-            removeMonitor(at: url.path)
+            removeMonitor(at: Data(url.path.utf8))
         }
 
         var error: UnsafeMutablePointer<GError>?
@@ -116,8 +121,8 @@ final class RootedFileWatcher: FileStoreWatcher {
             g_object_unref(value)
             throw FileStoreError.ioFailure
         }
-        monitors[url.path] = Monitor(value: value, signal: signal, identity: node.identity)
-        pathsByIdentity[node.identity] = url.path
+        monitors[Data(url.path.utf8)] = Monitor(value: value, signal: signal, identity: node.identity)
+        pathsByIdentity[node.identity] = Data(url.path.utf8)
     }
 
     private func changed(_ file: OpaquePointer?, other: OpaquePointer?, epoch expectedEpoch: UInt64) {
@@ -153,26 +158,40 @@ final class RootedFileWatcher: FileStoreWatcher {
         guard needsRescan else { return }
         needsRescan = false
 
-        // A raced-away directory is retried by its ancestor monitor. Keep the
-        // last good baseline on I/O failure rather than inventing deletions.
+        // GLib 2.80.0 inotify-path.c:ip_event_callback discards IN_Q_OVERFLOW,
+        // so GFileMonitor exposes no overflow flag. Full scans reconcile all
+        // delivered batches, including changes whose individual events were
+        // dropped; an overflow cannot produce a separate driver warning.
         let next: FileWatchTree.Snapshot
         do {
             next = try tree.scan(arm: arm)
         } catch {
-            if !hasRescanFailure {
-                log.write(.error, "library rescan failed; keeping last baseline: \(String(describing: error))")
-            }
-            hasRescanFailure = true
+            warnAboutRescan(error as? FileStoreError ?? .ioFailure)
             return
         }
+        if let error = next.rootError {
+            if error == .ioFailure { warnAboutRescan(error) }
+            guard !rootUnavailable else { return }
+            rootUnavailable = true
+            onEvent?(.rootUnavailable(error))
+            return
+        }
+        rootUnavailable = false
         hasRescanFailure = false
         let events = FileWatchTree.changes(from: snapshot, to: next)
         snapshot = next
         prune()
         for event in events {
             guard epoch == expectedEpoch, let onEvent else { return }
-            onEvent(event)
+            onEvent(.file(event))
         }
+    }
+
+    private func warnAboutRescan(_ error: FileStoreError) {
+        if !hasRescanFailure {
+            log.write(.warning, "library rescan failed; keeping last baseline: \(error.rawValue)")
+        }
+        hasRescanFailure = true
     }
 
     private func prune() {
@@ -181,7 +200,7 @@ final class RootedFileWatcher: FileStoreWatcher {
         }
     }
 
-    private func removeMonitor(at path: String) {
+    private func removeMonitor(at path: Data) {
         guard let monitor = monitors.removeValue(forKey: path) else { return }
         pathsByIdentity.removeValue(forKey: monitor.identity)
         monitor.cancel()

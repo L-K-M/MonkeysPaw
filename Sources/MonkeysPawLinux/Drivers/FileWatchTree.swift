@@ -8,6 +8,7 @@ import MonkeysPawCore
 /// native event. Like FileStore, checks guard accidents, not racing adversaries.
 final class FileWatchTree {
     private enum Location { case tree, rootComponent }
+    private struct RootUnavailable: Error { let reason: FileStoreError }
     struct Node: Equatable {
         enum Kind { case directory, file }
         let kind: Kind
@@ -16,8 +17,9 @@ final class FileWatchTree {
     }
 
     struct Snapshot {
-        var files = [String: Node]()
-        var nodes = [String: Node]()
+        var files = [RelativePath: Node]()
+        var nodes = [Data: Node]()
+        var rootError: FileStoreError? = .notFound
     }
 
     let root: URL
@@ -57,25 +59,40 @@ final class FileWatchTree {
 
         for part in root.pathComponents.dropFirst() {
             directory.appendPathComponent(part, isDirectory: true)
-            guard let node = try Self.node(at: directory), node.kind == .directory else { return snapshot }
+            let node: Node
+            do {
+                guard let existing = try Self.node(at: directory, location: .rootComponent) else { return snapshot }
+                node = existing
+            } catch {
+                snapshot.rootError = error as? FileStoreError ?? .ioFailure
+                return snapshot
+            }
             try include(directory, node: node, in: &snapshot, arm: arm)
         }
-        try collect(in: root, prefix: "", into: &snapshot, arm: arm)
+        do {
+            try collect(in: root, prefix: "", into: &snapshot, arm: arm)
+            snapshot.rootError = rootFailure()
+        } catch let error as RootUnavailable {
+            snapshot.rootError = error.reason
+        } catch {
+            guard let reason = rootFailure() else { throw error }
+            snapshot.rootError = reason
+        }
         return snapshot
     }
 
     /// Only root/ancestor events are relevant; a similarly named sibling is
     /// outside the root. Do not resolve event paths through symlinks.
     func containsOrIsAncestor(_ path: String) -> Bool {
-        path == root.path || path.hasPrefix(root.path + "/")
-            || root.path.hasPrefix(path == "/" ? "/" : path + "/")
+        path.utf8.elementsEqual(root.path.utf8) || path.utf8.starts(with: (root.path + "/").utf8)
+            || root.path.utf8.starts(with: (path == "/" ? "/" : path + "/").utf8)
     }
 
     /// Emits regular files only, ordered by UTF-8 path bytes. Directory nodes
     /// describe monitor topology and never appear in the diff.
     static func changes(from old: Snapshot, to new: Snapshot) -> [FileStoreEvent] {
         let paths = Set(old.files.keys).union(new.files.keys)
-        return paths.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }.compactMap { path in
+        return paths.sorted().compactMap { path in
             let kind: FileStoreEvent.Kind
             switch (old.files[path], new.files[path]) {
             case (nil, .some): kind = .created
@@ -83,14 +100,14 @@ final class FileWatchTree {
             case (let before?, let after?) where before != after: kind = .modified
             default: return nil
             }
-            return FileStoreEvent(relativePath: path, kind: kind)
+            return FileStoreEvent(relativePath: path.string, kind: kind)
         }
     }
 
     private func include(_ url: URL, node: Node, in snapshot: inout Snapshot,
                          arm: (URL, Node) throws -> Void) throws {
         try arm(url, node)
-        snapshot.nodes[url.path] = node
+        snapshot.nodes[Data(url.path.utf8)] = node
     }
 
     private func collect(in directory: URL, prefix: String, into snapshot: inout Snapshot,
@@ -98,8 +115,14 @@ final class FileWatchTree {
         let children: [URL]
         do { children = try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) }
         catch let error as NSError where error.domain == NSCocoaErrorDomain
-            && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) { return }
-        catch { throw FileStoreError.ioFailure }
+            && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) {
+            if prefix.isEmpty { throw RootUnavailable(reason: .notFound) }
+            return
+        }
+        catch {
+            if prefix.isEmpty { throw RootUnavailable(reason: .ioFailure) }
+            throw FileStoreError.ioFailure
+        }
 
         for url in children {
             let path = prefix + url.lastPathComponent
@@ -109,9 +132,18 @@ final class FileWatchTree {
             if node.kind == .directory {
                 try collect(in: url, prefix: path + "/", into: &snapshot, arm: arm)
             } else {
-                snapshot.files[path] = node
+                snapshot.files[RelativePath(path)] = node
             }
         }
+    }
+
+    /// Root loss can race enumeration after its first successful read. Recheck
+    /// before publishing so a partially collected tree cannot invent deletions.
+    private func rootFailure() -> FileStoreError? {
+        do {
+            guard try Self.node(at: root, location: .rootComponent) != nil else { return .notFound }
+            return Glibc.access(root.path, R_OK | X_OK) == 0 ? nil : .ioFailure
+        } catch { return error as? FileStoreError ?? .ioFailure }
     }
 
     private static func node(at url: URL, location: Location = .tree) throws -> Node? {

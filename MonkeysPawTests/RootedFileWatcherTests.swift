@@ -1,3 +1,4 @@
+import CoreServices
 import Darwin
 import Foundation
 import MonkeysPawCore
@@ -13,8 +14,13 @@ final class RootedFileWatcherTests: XCTestCase {
     private var outside: URL!
     private var store: RootedFileStore!
     private var service: LibraryWatcher?
-    private let received = WatcherEvents<LibraryChangeSet>()
-    private var changes: [LibraryChangeSet] { received.values }
+    private let received = WatcherEvents<LibraryWatchUpdate>()
+    private var changes: [LibraryChangeSet] {
+        received.values.compactMap { if case .changes(let set) = $0 { return set }; return nil }
+    }
+    private var health: [FileStoreError] {
+        received.values.compactMap { if case .rootUnavailable(let error) = $0 { return error }; return nil }
+    }
     private var consumed = 0
     private var quietWindow: TimeInterval { Limits.watchDebounce.timeInterval + 0.3 }
     private var subWindow: TimeInterval { min(Limits.watchDebounce.timeInterval / 5, 0.1) }
@@ -71,6 +77,35 @@ final class RootedFileWatcherTests: XCTestCase {
         expect(LibraryChangeSet(deleted: ["moved/deep/a.md"]))
     }
 
+    func testNormalizationOnlyRenameKeepsDeletionAndCreationSeparate() throws {
+        // APFS is normalization-insensitive: twin spellings cannot coexist.
+        // A rename can still change the spelling returned by enumeration.
+        try store.write(Data("Original".utf8), at: "e\u{301}.md")
+        let before = try XCTUnwrap(store.listFiles().first?.relativePath)
+        let target = before.utf8.elementsEqual("é.md".utf8) ? "e\u{301}.md" : "é.md"
+        try start()
+        // FileStore.move refuses an occupied destination, including an APFS alias.
+        XCTAssertEqual(rename(root.appendingPathComponent(before).path,
+                              root.appendingPathComponent(target).path), 0)
+        let after = try XCTUnwrap(store.listFiles().first?.relativePath)
+        XCTAssertFalse(before.utf8.elementsEqual(after.utf8))
+        expect(LibraryChangeSet(created: [RelativePath(after)], deleted: [RelativePath(before)]))
+    }
+
+    func testOverflowFlagsWarnOncePerStreakWithoutPaths() throws {
+        let log = WatcherLog()
+        let watcher = try RootedFileWatcher(root: root, log: log)
+        watcher.noteEventFlags(FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs))
+        watcher.noteEventFlags(FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped))
+        watcher.noteEventFlags(FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped))
+        XCTAssertEqual(log.values, [WatcherLog.Entry(level: .warning,
+            message: "library event overflow; performing full rescan")])
+        watcher.noteEventFlags(0)
+        watcher.noteEventFlags(FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped))
+        XCTAssertEqual(log.values.count, 2)
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .warning && !$0.message.contains(root.path) })
+    }
+
     func testMovesIntoAndOutOfRootIncludeDescendantsAndNotSiblingPaths() throws {
         let incoming = outside.appendingPathComponent("incoming")
         try manager.createDirectory(at: incoming.appendingPathComponent("deep"), withIntermediateDirectories: true)
@@ -115,9 +150,10 @@ final class RootedFileWatcherTests: XCTestCase {
         try manager.moveItem(at: populated, to: root)
         expect(LibraryChangeSet(created: ["deep/a.md"]))
         try manager.removeItem(at: root)
-        expect(LibraryChangeSet(deleted: ["deep/a.md"]))
+        XCTAssertTrue(spin { self.health == [.notFound] })
+        expectQuiet()
         try store.write(Data("Recreated".utf8), at: "again.md")
-        expect(LibraryChangeSet(created: ["again.md"]))
+        expect(LibraryChangeSet(created: ["again.md"], deleted: ["deep/a.md"]))
     }
 
     func testAtomicSavesAndDeleteCreateCoalesceAsModified() throws {
@@ -148,7 +184,7 @@ final class RootedFileWatcherTests: XCTestCase {
         let eligible = [".draft.md", "folder/.draft.md", "folder/README.md", "folder.md/a.md"]
         let ignored = ["README.md", "_private.md", "_dir/a.md", ".hidden/a.md", "folder/_x.md", "notes.txt", "UPPER.MD"]
         for path in eligible + ignored { try store.write(Data(), at: path) }
-        expect(LibraryChangeSet(created: Set(eligible)))
+        expect(LibraryChangeSet(created: Set(eligible.map { RelativePath($0) })))
 
         let secret = outside.appendingPathComponent("secret.md")
         try Data("Outside".utf8).write(to: secret)
@@ -198,12 +234,13 @@ final class RootedFileWatcherTests: XCTestCase {
         try start(at: nested)
         try manager.removeItem(at: parent)
         try manager.createSymbolicLink(at: parent, withDestinationURL: outside)
-        expect(LibraryChangeSet(deleted: ["a.md"]))
+        XCTAssertTrue(spin { self.health == [.outsideRoot] })
+        expectQuiet()
         try Data("Changed outside".utf8).write(to: outside.appendingPathComponent("a.md"))
         expectQuiet()
         try manager.removeItem(at: parent)
         try nestedStore.write(Data("Real tree".utf8), at: "b.md")
-        expect(LibraryChangeSet(created: ["b.md"]))
+        expect(LibraryChangeSet(created: ["b.md"], deleted: ["a.md"]))
     }
 
     func testStopRestartDiscardsPendingEventsAndTakesNewBaseline() throws {
@@ -335,7 +372,7 @@ final class RootedFileWatcherTests: XCTestCase {
         pump(for: quietWindow)
         let diagnosticPrefix = "library rescan failed; keeping last baseline"
         XCTAssertEqual(log.values.count, 1)
-        XCTAssertTrue(log.values.allSatisfy { $0.level == .error && $0.message.hasPrefix(diagnosticPrefix) })
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .warning && $0.message == diagnosticPrefix + ": ioFailure" })
         XCTAssertTrue(events.values.isEmpty, "Failed scans must not emit partial diffs or invented deletions.")
 
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
@@ -351,7 +388,7 @@ final class RootedFileWatcherTests: XCTestCase {
         try store.write(Data(), at: "fourth.md")
         pump(for: quietWindow)
         XCTAssertEqual(log.values.count, 2, "A successful scan starts a fresh failure streak.")
-        XCTAssertTrue(log.values.allSatisfy { $0.level == .error && $0.message.hasPrefix(diagnosticPrefix) })
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .warning && $0.message == diagnosticPrefix + ": ioFailure" })
         XCTAssertEqual(events.values.count, 3)
 
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
@@ -363,7 +400,7 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertEqual(events.values.count, 6)
         XCTAssertTrue(events.values.allSatisfy { $0.kind == .created })
         XCTAssertEqual(log.values.count, 2)
-        XCTAssertTrue(log.values.allSatisfy { $0.level == .error && $0.message.hasPrefix(diagnosticPrefix) })
+        XCTAssertTrue(log.values.allSatisfy { $0.level == .warning && $0.message == diagnosticPrefix + ": ioFailure" })
     }
 
     private func moveRawCallbackFixtureIntoRoot() throws {
@@ -412,8 +449,8 @@ final class RootedFileWatcherTests: XCTestCase {
 
     /// Real native loops may cross a debounce deadline under load. Check all
     /// labels through the sequence, then compare its net effect to the contract.
-    private func expectAggregate(_ expected: LibraryChangeSet, paths: Set<String>,
-                                 originallyPresent: Set<String> = [],
+    private func expectAggregate(_ expected: LibraryChangeSet, paths: Set<RelativePath>,
+                                 originallyPresent: Set<RelativePath> = [],
                                  file: StaticString = #filePath, line: UInt = #line) {
         pump(for: quietWindow)
         let batch = Array(changes.dropFirst(consumed))
@@ -424,7 +461,7 @@ final class RootedFileWatcherTests: XCTestCase {
         }
 
         var present = originallyPresent
-        var touched = Set<String>()
+        var touched = Set<RelativePath>()
         for change in batch {
             let labels = change.created.union(change.modified).union(change.deleted)
             check(labels.isSubset(of: paths), "Unexpected paths in \(batch)")
@@ -466,7 +503,13 @@ final class RootedFileWatcherTests: XCTestCase {
 
 /// macOS raw callbacks run on the watcher queue; the hosted test reads them
 /// on the main thread. Keeping this helper on Linux mirrors the same checks.
-private typealias RawEvents = WatcherEvents<FileStoreEvent>
+private final class RawEvents: @unchecked Sendable {
+    private let received = WatcherEvents<FileStoreWatchEvent>()
+    var values: [FileStoreEvent] {
+        received.values.compactMap { if case .file(let event) = $0 { return event }; return nil }
+    }
+    func append(_ event: FileStoreWatchEvent) { received.append(event) }
+}
 
 /// Only Sendable event values cross threads, through this locked buffer.
 private final class WatcherEvents<Event: Sendable>: @unchecked Sendable {

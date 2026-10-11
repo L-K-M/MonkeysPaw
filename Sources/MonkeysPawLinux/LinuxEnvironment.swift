@@ -188,9 +188,12 @@ final class LinuxEnvironment {
         // Establish the hook/view before a rebuild publishes its first results.
         _ = pickerModel
         do {
-            try Self.startLibrary(index: index, watcher: watcher) { [weak self, weak index] changes in
+            try Self.startLibrary(index: index, watcher: watcher) { [weak self, weak index] update in
                 guard let self, let index else { return }
-                self.apply(changes, to: index)
+                switch update {
+                case .changes(let changes): self.apply(changes, to: index)
+                case .rootUnavailable: self.degradeLibrary()
+                }
             }
         } catch {
             degradeLibrary()
@@ -198,7 +201,7 @@ final class LinuxEnvironment {
     }
 
     static func startLibrary(index: PromptIndex, watcher: LibraryWatcher?,
-                             onChange: @escaping @Sendable (LibraryChangeSet) -> Void) throws {
+                             onChange: @escaping @Sendable (LibraryWatchUpdate) -> Void) throws {
         guard let watcher else { throw FileStoreError.ioFailure }
         // Arm before rebuilding so saves cannot fall between the index scan
         // and the watcher's silent baseline. GLib batches cannot interleave
@@ -209,7 +212,9 @@ final class LinuxEnvironment {
 
     private func apply(_ changes: LibraryChangeSet, to index: PromptIndex) {
         do {
-            // Root loss keeps the index read-only in memory (§11.5).
+            // Health flushes earlier pending events first. The root can already
+            // be gone when those paths reload; avoid dropping cached modified
+            // entries before the following health update stops this graph.
             try (libraryFiles as? RootedFileStore)?.requireRoot()
         } catch {
             degradeLibrary()
@@ -256,7 +261,7 @@ final class LinuxEnvironment {
             let path = try library.availablePath(for: LinuxPromptCreation.relativePath(title: title, now: clock.now()))
             let document = try PromptCodec.newDocument(title: title, body: LinuxStrings.newPromptBody)
             let entry = try library.save(document, at: path)
-            do { try index.apply(LibraryChangeSet(created: [path])) }
+            do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
             catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
             handle(.edit(identity: entry.identity, relativePath: path))
         } catch {

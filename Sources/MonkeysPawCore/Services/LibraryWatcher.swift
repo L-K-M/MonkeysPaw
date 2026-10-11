@@ -25,8 +25,9 @@ public final class LibraryWatcher: @unchecked Sendable {
     private let scheduler: Scheduler
     private let lifecycleLock = NSRecursiveLock()
     private let stateLock = NSLock()
-    private var onChange: (@Sendable (LibraryChangeSet) -> Void)?
-    private var pending = [String: PendingChange]()
+    private var onChange: (@Sendable (LibraryWatchUpdate) -> Void)?
+    private var pending = [RelativePath: PendingChange]()
+    private var ready = [LibraryWatchUpdate]()
     private var epoch: UInt64 = 0
     private var generation: UInt64 = 0
 
@@ -41,8 +42,10 @@ public final class LibraryWatcher: @unchecked Sendable {
     /// callable from any thread.
     deinit { watcher.stop() }
 
-    /// Idempotent while running. The scheduler owns the delivery thread.
-    public func start(_ onChange: @escaping @Sendable (LibraryChangeSet) -> Void) throws {
+    /// Idempotent while running. All delivery uses the scheduler's thread.
+    /// Health schedules zero-delay delivery, flushing earlier pending files
+    /// first. No quiet window delays health, and later files cannot overtake it.
+    public func start(_ onChange: @escaping @Sendable (LibraryWatchUpdate) -> Void) throws {
         lifecycleLock.lock()
         defer { lifecycleLock.unlock() }
 
@@ -82,10 +85,27 @@ public final class LibraryWatcher: @unchecked Sendable {
         generation &+= 1
         onChange = nil
         pending.removeAll()
+        ready.removeAll()
         return wasRunning
     }
 
-    private func receive(_ event: FileStoreEvent, epoch expectedEpoch: UInt64) {
+    private func receive(_ update: FileStoreWatchEvent, epoch expectedEpoch: UInt64) {
+        if case .rootUnavailable(let error) = update {
+            stateLock.lock()
+            guard onChange != nil, epoch == expectedEpoch else { stateLock.unlock(); return }
+            let changes = drainPending()
+            if !changes.isEmpty { ready.append(.changes(changes)) }
+            ready.append(.rootUnavailable(error))
+            generation &+= 1
+            stateLock.unlock()
+
+            // Marshal health with zero delay rather than delivering on the raw
+            // driver's queue. Holding lifecycleLock there could deadlock stop(),
+            // which may wait for that driver queue while owning lifecycleLock.
+            scheduler.after(.zero) { [weak self] in self?.emitReady(epoch: expectedEpoch) }
+            return
+        }
+        guard case .file(let event) = update else { return }
         stateLock.lock()
         guard onChange != nil, epoch == expectedEpoch,
               (try? FileStorePath.validate(event.relativePath)) != nil,
@@ -94,11 +114,12 @@ public final class LibraryWatcher: @unchecked Sendable {
             return
         }
 
-        if var change = pending[event.relativePath] {
+        let path = RelativePath(event.relativePath)
+        if var change = pending[path] {
             change.present = event.kind != .deleted
-            pending[event.relativePath] = change
+            pending[path] = change
         } else {
-            pending[event.relativePath] = PendingChange(event.kind)
+            pending[path] = PendingChange(event.kind)
         }
         generation &+= 1
         let expectedGeneration = generation
@@ -116,15 +137,48 @@ public final class LibraryWatcher: @unchecked Sendable {
         defer { lifecycleLock.unlock() }
 
         stateLock.lock()
-        guard epoch == expectedEpoch, generation == expectedGeneration, let onChange else {
+        guard epoch == expectedEpoch, generation == expectedGeneration, onChange != nil else {
             stateLock.unlock()
             return
         }
 
-        var created = Set<String>()
-        var modified = Set<String>()
-        var deleted = Set<String>()
-        for (path, change) in pending where LibraryPath.isPrompt(path) {
+        var updates = ready
+        ready.removeAll()
+        let changes = drainPending()
+        if !changes.isEmpty { updates.append(.changes(changes)) }
+        stateLock.unlock()
+        deliver(updates, epoch: expectedEpoch)
+    }
+
+    private func emitReady(epoch expectedEpoch: UInt64) {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        stateLock.lock()
+        guard epoch == expectedEpoch, onChange != nil else { stateLock.unlock(); return }
+        let updates = ready
+        ready.removeAll()
+        stateLock.unlock()
+        deliver(updates, epoch: expectedEpoch)
+    }
+
+    /// Called under lifecycleLock, allowing consumer lifecycle re-entry. Check
+    /// the epoch before each update so a stop/restart during flush drops health
+    /// and any remaining output belonging to the previous run.
+    private func deliver(_ updates: [LibraryWatchUpdate], epoch expectedEpoch: UInt64) {
+        for update in updates {
+            stateLock.lock()
+            guard epoch == expectedEpoch, let onChange else { stateLock.unlock(); return }
+            stateLock.unlock()
+            onChange(update)
+        }
+    }
+
+    /// stateLock owns pending; validation already happened at ingestion.
+    private func drainPending() -> LibraryChangeSet {
+        var created = Set<RelativePath>()
+        var modified = Set<RelativePath>()
+        var deleted = Set<RelativePath>()
+        for (path, change) in pending {
             switch change.kind {
             case .created: created.insert(path)
             case .modified: modified.insert(path)
@@ -133,9 +187,6 @@ public final class LibraryWatcher: @unchecked Sendable {
             }
         }
         pending.removeAll()
-        stateLock.unlock()
-
-        let changes = LibraryChangeSet(created: created, modified: modified, deleted: deleted)
-        if !changes.isEmpty { onChange(changes) }
+        return LibraryChangeSet(created: created, modified: modified, deleted: deleted)
     }
 }

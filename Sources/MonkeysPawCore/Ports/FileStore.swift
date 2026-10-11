@@ -42,6 +42,10 @@ public struct StoredFile: Equatable, Sendable {
         self.relativePath = relativePath
         self.stamp = stamp
     }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.stamp == rhs.stamp && lhs.relativePath.utf8.elementsEqual(rhs.relativePath.utf8)
+    }
 }
 
 public enum FileStoreError: String, Error, Sendable {

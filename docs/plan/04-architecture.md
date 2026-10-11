@@ -285,6 +285,20 @@ describes root-change detection and snapshot reconciliation;
 [GIO's FileMonitor documentation](https://docs.gtk.org/gio/class.FileMonitor.html)
 specifies callback delivery on the creating thread's main context.
 
+Both drivers report root unavailability on the same ordered callback as file
+events, once per transition, without diffing root loss into file deletions.
+They retain the last good baseline. Core flushes earlier pending changes before
+health and delivers both through its scheduler; Linux composition stops the
+watcher and retains its cached index until restart. Its root check before
+applying a batch also protects earlier pending reloads flushed after root loss.
+FSEvents flags `MustScanSubDirs`, `UserDropped` and `KernelDropped` trigger one
+path-free warning per overflow streak and the usual full rescan. GLib
+[2.80.0's inotify backend](https://github.com/GNOME/glib/blob/2.80.0/gio/inotify/inotify-path.c#L497-L509)
+discards `IN_Q_OVERFLOW` before `GFileMonitor` delivery, exposing no overflow
+flag to the Linux driver. Full scans of delivered batches reconcile dropped
+individual events across the entire tree; an isolated overflow with no further
+delivered batch is not observable through this port and cannot be logged.
+
 Neither driver creates roots or emits its initial baseline. Start/stop are
 idempotent, stop releases monitoring resources, and a new start takes a
 fresh baseline. Core `LibraryWatcher` uses only raw events and `Scheduler`,

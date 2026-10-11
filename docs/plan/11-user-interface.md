@@ -123,9 +123,9 @@ Footers differ per OS:
 | State | Behaviour |
 |---|---|
 | Library folder missing or unreadable at start | Notification. The library step of first run reopens. The tray menu says "Library unavailable". |
-| Folder disappears while running | The watcher stops, the picker shows a banner, and the index stays in memory read-only. |
+| Folder disappears, becomes a non-directory or cannot be enumerated while running | An ordered root-health signal stops the watcher; the picker shows a banner and the index stays in memory read-only. Root loss emits no per-file deletions. Restoration requires a restart. |
 | Save fails (permissions, disk full) | Typed error in the editor. The draft is kept; Retry is offered. |
-| Watcher error or event overflow | Full rescan; one warning in the log. |
+| Watcher error or event overflow | Full rescan; one path-free warning per error/overflow streak. Linux GIO hides inotify overflow; every delivered batch still rescans the complete tree (§4.6). |
 | Picker: no matches | "No prompts match '<query>'" with actions: create a prompt titled `<query>`, write it with the assistant (once configured), open the library folder. |
 | Picker: prompt has validation errors | The preview lists the issues and offers Edit. No delivery. |
 | Fill form: `Esc` | Back to the picker. Typed values stay in memory for that prompt until delivery or quit. |
