@@ -81,7 +81,7 @@ final class PromptConformanceTests: XCTestCase {
             ("boolean schema", { $0["schema"] = true }),
             ("category", { $0["category"] = "format" }),
             ("envelope member", { $0["unknown"] = 1 }),
-            ("non-UTC now", { $0["now"] = "2026-10-11T12:00:00+00:00" }),
+            ("non-canonical UTC now", { $0["now"] = "2026-10-11T12:00:00+00:00" }),
             ("missing now", { $0.removeValue(forKey: "now") }),
             ("empty prompt set", { $0["prompts"] = [] }),
             ("prompt member", { fixture in
@@ -91,7 +91,7 @@ final class PromptConformanceTests: XCTestCase {
                 prompts[0] = prompt
                 fixture["prompts"] = prompts
             }),
-            ("non-UTC use", { fixture in
+            ("non-canonical UTC use", { fixture in
                 var prompts = try self.array(fixture["prompts"])
                 var prompt = try self.object(prompts[0])
                 prompt["uses"] = ["2026-10-11T12:00:00+00:00"]
@@ -171,7 +171,6 @@ final class PromptConformanceTests: XCTestCase {
         var cases = 0
 
         for category in directories {
-            guard categories.contains(category) else { throw CorpusError.unknownCategory }
             let directory = root.appendingPathComponent(category)
             try require(.directory, at: directory)
             let files = try manager.contentsOfDirectory(atPath: directory.path).sorted()
@@ -398,9 +397,17 @@ final class PromptConformanceTests: XCTestCase {
         }
     }
 
-    private func timestamp(_ value: Any?) throws -> Date {
+    // XCTest runs a class's tests serially; one formatter serves the corpus.
+    private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
+    /// Accepts only the canonical `YYYY-MM-DDTHH:mm:ssZ` spelling: the value
+    /// must round-trip unchanged, so `+00:00` and other offsets are rejected.
+    private func timestamp(_ value: Any?) throws -> Date {
+        let formatter = Self.timestampFormatter
         guard let text = value as? String, let date = formatter.date(from: text),
               formatter.string(from: date) == text else { throw CorpusError.unrecognizedCase }
         return date

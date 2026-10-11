@@ -67,7 +67,9 @@ exactly once. No other files are allowed, including orphan `.md` files or
 additional JSON files. `path` is a valid library-relative prompt path; it
 supplies the folder and filename fallback, independently of the source's
 physical filename. `prompts` must be nonempty, and prompt paths and
-identities must be unique. Source names can stay ASCII while paths and
+identities must be unique. Paths compare as exact UTF-8 bytes, and an idless
+prompt's identity hashes those raw bytes (§5.2), so canonically equivalent
+but byte-distinct paths are distinct prompts; never normalize them. Source names can stay ASCII while paths and
 titles represent canonically equivalent,
 byte-distinct spellings, even on filesystems that normalize filenames.
 Ranking sources must parse as renderable prompts.
@@ -83,8 +85,10 @@ clock. The Kotlin consumer must apply the same retention and §5.4 formulas.
 
 Result paths and order are compared by exact UTF-8 bytes. Scores use an
 **absolute tolerance of `1e-12`**, without rounding or relative tolerance;
-ordering never uses this tolerance. Ties compare the unnormalized stored
-title bytes, then path bytes, in ascending UTF-8 order. `matchedFields` uses
+ordering never uses this tolerance. Equal scores break ties in this order:
+for empty queries only, favourites before non-favourites; then the
+unnormalized stored title bytes; then path bytes, both in ascending UTF-8
+order. Nonempty queries apply the favourite only as the 1.5 score multiplier. `matchedFields` uses
 the declared order `title`, `tags`, `folder`, `description`, `body`, with no
 repeats. All terms must match; each takes its highest weighted field, then
 those scores are

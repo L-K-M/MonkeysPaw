@@ -160,6 +160,8 @@ enum PromptRanking {
 
     /// Pure §5.4 search over cached entries and retained usage events. The
     /// caller samples its clock once and owns persistence/usage retention.
+    /// Relative paths must be unique (as index keys are): the final path-byte
+    /// tie-break then makes the order total despite an unstable sort.
     static func rank<Inputs: Sequence>(_ prompts: Inputs, query: String,
                                       useEvents: [PromptIdentity: [Date]], at now: Date) -> [PromptSearchResult]
         where Inputs.Element == Input {
