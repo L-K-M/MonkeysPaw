@@ -21,6 +21,42 @@ final class RootedFileStoreTests: XCTestCase {
 
     override func tearDown() { try? manager.removeItem(at: directory) }
 
+    func testPrivateWriteCreatesAndReplacesWith0600UnderPermissiveUmask() throws {
+        let previousMask = umask(0)
+        defer { _ = umask(previousMask) }
+        let path = "state/values.json"
+        let url = root.appendingPathComponent(path)
+        try store.writePrivate(Data("first".utf8), at: path)
+        XCTAssertEqual(try store.read(at: path), Data("first".utf8))
+        XCTAssertEqual(try manager.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int, 0o600)
+        let stamp = try store.stamp(at: path)
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        try store.writePrivate(Data("replacement".utf8), at: path)
+        XCTAssertEqual(try store.read(at: path), Data("replacement".utf8))
+        XCTAssertEqual(try manager.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int, 0o600)
+        XCTAssertNotEqual(try store.stamp(at: path), stamp)
+        XCTAssertEqual(try manager.contentsOfDirectory(atPath: url.deletingLastPathComponent().path), ["values.json"])
+    }
+
+    func testPrivateWriteRejectsSymlinksDirectoriesAndUnsafePathsWithoutChangingTarget() throws {
+        try store.write(Data("inside".utf8), at: "a.md")
+        let target = outside.appendingPathComponent("private.json")
+        try Data("outside".utf8).write(to: target)
+        try manager.createSymbolicLink(at: root.appendingPathComponent("values.json"), withDestinationURL: target)
+        XCTAssertThrowsError(try store.writePrivate(Data("blocked".utf8), at: "values.json")) {
+            XCTAssertEqual($0 as? FileStoreError, .outsideRoot)
+        }
+        XCTAssertEqual(try Data(contentsOf: target), Data("outside".utf8))
+        try manager.createDirectory(at: root.appendingPathComponent("directory"), withIntermediateDirectories: false)
+        XCTAssertThrowsError(try store.writePrivate(Data(), at: "directory")) {
+            XCTAssertEqual($0 as? FileStoreError, .notRegularFile)
+        }
+        XCTAssertThrowsError(try store.writePrivate(Data(), at: "../private.json")) {
+            XCTAssertEqual($0 as? FileStoreError, .invalidPath)
+        }
+        XCTAssertFalse(try manager.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".monkeyspaw-private-") })
+    }
+
     func testRootInitRejectsFilesystemRoot() throws {
         for path in ["/", "//", "/..", "/./"] {
             XCTAssertThrowsError(try RootedFileStore(root: URL(fileURLWithPath: path)), path) {

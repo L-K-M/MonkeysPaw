@@ -2,7 +2,12 @@ import Foundation
 @testable import MonkeysPawCore
 
 final class MemoryFileStore: FileStore {
-    private struct File { let path: String; let bytes: Data; let stamp: FileStamp }
+    private struct File {
+        let path: String
+        let bytes: Data
+        let stamp: FileStamp
+        let isPrivate: Bool
+    }
     private var files = [Data: File]()
     private var generation = 0
     var failNextWrite = false
@@ -37,6 +42,16 @@ final class MemoryFileStore: FileStore {
     }
 
     func write(_ data: Data, at path: String) throws {
+        try store(data, at: path, isPrivate: false)
+    }
+
+    func writePrivate(_ data: Data, at path: String) throws {
+        try store(data, at: path, isPrivate: true)
+    }
+
+    func isPrivate(at path: String) -> Bool { files[Data(path.utf8)]?.isPrivate == true }
+
+    private func store(_ data: Data, at path: String, isPrivate: Bool) throws {
         accessCount += 1
         try FileStorePath.validate(path)
         if failNextWrite {
@@ -44,7 +59,8 @@ final class MemoryFileStore: FileStore {
             throw FileStoreError.ioFailure
         }
         generation += 1
-        files[Data(path.utf8)] = File(path: path, bytes: data, stamp: FileStamp("memory-\(generation)"))
+        files[Data(path.utf8)] = File(path: path, bytes: data, stamp: FileStamp("memory-\(generation)"),
+                                       isPrivate: isPrivate)
         onWrite?(path)
     }
 
@@ -66,7 +82,8 @@ final class MemoryFileStore: FileStore {
         if moveCount == failMoveNumber { throw FileStoreError.ioFailure }
         guard files[Data(destination.utf8)] == nil else { throw FileStoreError.alreadyExists }
         guard let file = files[Data(source.utf8)] else { throw FileStoreError.notFound }
-        files[Data(destination.utf8)] = File(path: destination, bytes: file.bytes, stamp: file.stamp)
+        files[Data(destination.utf8)] = File(path: destination, bytes: file.bytes, stamp: file.stamp,
+                                              isPrivate: file.isPrivate)
         files[Data(source.utf8)] = nil
     }
 
@@ -76,7 +93,11 @@ final class MemoryFileStore: FileStore {
 
 final class LibraryClock: WallClock {
     var date = Date(timeIntervalSince1970: 1.234)
-    func now() -> Date { date }
+    private(set) var readCount = 0
+    func now() -> Date {
+        readCount += 1
+        return date
+    }
 }
 
 final class LibraryEntropy: EntropySource {

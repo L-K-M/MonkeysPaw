@@ -13,6 +13,9 @@ public protocol FileStore {
     /// Complete a same-directory temporary file, then atomically replace the
     /// destination. Create parents; on failure leave the destination intact.
     func write(_ data: Data, at path: String) throws
+    /// The same atomic replacement, with mode 0600 on the temporary file
+    /// before writing private bytes or publishing the destination.
+    func writePrivate(_ data: Data, at path: String) throws
     func delete(at path: String) throws
     /// Move a regular file, creating parents. Never replace a destination.
     func move(from source: String, to destination: String) throws

@@ -71,6 +71,29 @@ final class RootedFileStore: FileStore {
         }
     }
 
+    func writePrivate(_ data: Data, at path: String) throws {
+        try sanitized {
+            guard let url = try locate(path, parents: .create) else { throw FileStoreError.invalidRoot }
+            if let attributes = try attributes(at: url) { try requireRegular(attributes) }
+
+            // mkstemp creates a private file. fchmod pins 0600 even under a
+            // restrictive umask, before any bytes are written or renamed.
+            var template = Array(url.deletingLastPathComponent()
+                .appendingPathComponent(".monkeyspaw-private-XXXXXX").path.utf8CString)
+            let descriptor = mkstemp(&template)
+            guard descriptor >= 0 else { throw FileStoreError.ioFailure }
+            let temporaryPath = String(cString: template)
+            defer {
+                _ = Darwin.close(descriptor)
+                _ = unlink(temporaryPath)
+            }
+            guard fchmod(descriptor, mode_t(0o600)) == 0 else { throw FileStoreError.ioFailure }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+            try handle.write(contentsOf: data)
+            guard rename(temporaryPath, url.path) == 0 else { throw FileStoreError.ioFailure }
+        }
+    }
+
     func delete(at path: String) throws {
         try sanitized {
             guard let url = try locate(path, parents: .existing), let attributes = try attributes(at: url) else {
