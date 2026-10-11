@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "ab",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "gapped.md",
+      "path": "gapped.md",
+      "uses": []
+    },
+    {
+      "source": "optimal.md",
+      "path": "optimal.md",
+      "uses": []
+    },
+    {
+      "source": "direct.md",
+      "path": "direct.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "direct.md",
+        "score": 2,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "optimal.md",
+        "score": 2,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "gapped.md",
+        "score": 1.6,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

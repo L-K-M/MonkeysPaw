@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "\t \n",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "plain.md",
+      "path": "plain.md",
+      "uses": []
+    },
+    {
+      "source": "favorite.md",
+      "path": "favorite.md",
+      "uses": []
+    },
+    {
+      "source": "used.md",
+      "path": "used.md",
+      "uses": [
+        "2026-10-11T12:00:00Z"
+      ]
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "used.md",
+        "score": 1,
+        "matchedFields": []
+      },
+      {
+        "path": "favorite.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "plain.md",
+        "score": 0,
+        "matchedFields": []
+      }
+    ]
+  }
+}

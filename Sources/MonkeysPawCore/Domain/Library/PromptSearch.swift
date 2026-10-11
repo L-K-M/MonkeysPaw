@@ -144,7 +144,48 @@ struct PromptSearchContent {
 }
 
 enum PromptRanking {
+    /// Value snapshot shared by the index and the portable conformance gate.
+    /// Normalized fields are built once per indexed entry, not per search.
+    struct Input {
+        let entry: LibraryEntry
+        let content: PromptSearchContent
+
+        init(_ entry: LibraryEntry) {
+            self.entry = entry
+            content = PromptSearchContent(entry)
+        }
+    }
+
     private static let secondsPerDay: Double = 86_400
+
+    /// Pure §5.4 search over cached entries and retained usage events. The
+    /// caller samples its clock once and owns persistence/usage retention.
+    static func rank<Inputs: Sequence>(_ prompts: Inputs, query: String,
+                                      useEvents: [PromptIdentity: [Date]], at now: Date) -> [PromptSearchResult]
+        where Inputs.Element == Input {
+        let parsed = PromptSearchQuery(query)
+        let results = prompts.compactMap { prompt -> PromptSearchResult? in
+            guard let match = prompt.content.match(parsed) else { return nil }
+            let frecency = frecency(events: useEvents[prompt.entry.identity] ?? [], at: now)
+            let boost = prompt.entry.document.frontMatter.favorite ? Limits.favoriteBoost : 1
+            let score = parsed.isEmpty ? frecency : match.score * (1 + frecency) * boost
+            return PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields)
+        }
+        return results.sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            if parsed.isEmpty {
+                let leftFavorite = lhs.entry.document.frontMatter.favorite
+                let rightFavorite = rhs.entry.document.frontMatter.favorite
+                if leftFavorite != rightFavorite { return leftFavorite }
+            }
+            let leftTitle = lhs.entry.document.frontMatter.title
+            let rightTitle = rhs.entry.document.frontMatter.title
+            if !leftTitle.utf8.elementsEqual(rightTitle.utf8) {
+                return leftTitle.utf8.lexicographicallyPrecedes(rightTitle.utf8)
+            }
+            return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
+        }
+    }
 
     /// §5.4: sum 2^(-age_days/14), capped at 32. Days are elapsed 24-hour
     /// periods, independent of calendars/DST. Future uses have age zero so a

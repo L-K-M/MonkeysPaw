@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#x",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "composed-title.md",
+      "path": "0.md",
+      "uses": []
+    },
+    {
+      "source": "composed-path.md",
+      "path": "é.md",
+      "uses": []
+    },
+    {
+      "source": "decomposed-path.md",
+      "path": "é.md",
+      "uses": []
+    },
+    {
+      "source": "lower-b.md",
+      "path": "b.md",
+      "uses": []
+    },
+    {
+      "source": "lower-a.md",
+      "path": "a.md",
+      "uses": []
+    },
+    {
+      "source": "upper.md",
+      "path": "upper.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "upper.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "a.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "b.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "é.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "é.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "0.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      }
+    ]
+  }
+}

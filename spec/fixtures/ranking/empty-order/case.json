@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "composed-title.md",
+      "path": "0.md",
+      "uses": []
+    },
+    {
+      "source": "composed-path.md",
+      "path": "é.md",
+      "uses": []
+    },
+    {
+      "source": "decomposed-path.md",
+      "path": "é.md",
+      "uses": []
+    },
+    {
+      "source": "lower-b.md",
+      "path": "b.md",
+      "uses": []
+    },
+    {
+      "source": "favorite.md",
+      "path": "favorite.md",
+      "uses": []
+    },
+    {
+      "source": "upper.md",
+      "path": "upper.md",
+      "uses": []
+    },
+    {
+      "source": "lower-a.md",
+      "path": "a.md",
+      "uses": []
+    },
+    {
+      "source": "old-favorite.md",
+      "path": "old-favorite.md",
+      "uses": [
+        "2026-09-27T12:00:00Z"
+      ]
+    },
+    {
+      "source": "recent.md",
+      "path": "recent.md",
+      "uses": [
+        "2026-10-11T12:00:00Z"
+      ]
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "recent.md",
+        "score": 1,
+        "matchedFields": []
+      },
+      {
+        "path": "old-favorite.md",
+        "score": 0.5,
+        "matchedFields": []
+      },
+      {
+        "path": "favorite.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "upper.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "a.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "b.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "é.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "é.md",
+        "score": 0,
+        "matchedFields": []
+      },
+      {
+        "path": "0.md",
+        "score": 0,
+        "matchedFields": []
+      }
+    ]
+  }
+}

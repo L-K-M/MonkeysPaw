@@ -6,18 +6,13 @@ import Foundation
 /// then parses, matches, scores and sorts without it.
 /// Share the LibraryService/UsageStore instances used for identity migrations.
 public final class PromptIndex: @unchecked Sendable {
-    private struct IndexedPrompt {
-        let entry: LibraryEntry
-        let content: PromptSearchContent
-    }
-
     private let service: LibraryService
     private let usage: UsageStore
     private let clock: WallClock
     private let lock = NSLock()
     // String equality collapses canonically equivalent paths. RelativePath
     // compares UTF-8 bytes, so distinct POSIX files keep distinct index keys.
-    private var prompts = [RelativePath: IndexedPrompt]()
+    private var prompts = [RelativePath: PromptRanking.Input]()
     private var useEvents = [PromptIdentity: [Date]]()
     private var onChange: (@Sendable () -> Void)?
 
@@ -43,10 +38,10 @@ public final class PromptIndex: @unchecked Sendable {
     /// Invalid content stays visible exactly as LibraryService.entries() allows.
     public func rebuild() throws {
         let callback = try locked {
-            var rebuilt = [RelativePath: IndexedPrompt]()
+            var rebuilt = [RelativePath: PromptRanking.Input]()
             var events = [PromptIdentity: [Date]]()
             for entry in try service.entries() {
-                rebuilt[RelativePath(entry.relativePath)] = indexed(entry)
+                rebuilt[RelativePath(entry.relativePath)] = PromptRanking.Input(entry)
                 if events[entry.identity] == nil { events[entry.identity] = try usage.useEvents(for: entry.identity) }
             }
             prompts = rebuilt
@@ -70,7 +65,7 @@ public final class PromptIndex: @unchecked Sendable {
                     updated.removeValue(forKey: path)
                     continue
                 }
-                updated[path] = indexed(entry)
+                updated[path] = PromptRanking.Input(entry)
                 events[entry.identity] = try usage.useEvents(for: entry.identity)
             }
             let identities = Set(updated.values.map { $0.entry.identity })
@@ -84,38 +79,13 @@ public final class PromptIndex: @unchecked Sendable {
     public func search(_ query: String) -> [PromptSearchResult] {
         // COW snapshots retain immutable published entries and normalized fields.
         let (snapshot, events, now) = locked { (prompts, useEvents, clock.now()) }
-        let parsed = PromptSearchQuery(query)
-        let results = snapshot.values.compactMap { prompt -> PromptSearchResult? in
-            guard let match = prompt.content.match(parsed) else { return nil }
-            let frecency = PromptRanking.frecency(events: events[prompt.entry.identity] ?? [], at: now)
-            let boost = prompt.entry.document.frontMatter.favorite ? Limits.favoriteBoost : 1
-            let score = parsed.isEmpty ? frecency : match.score * (1 + frecency) * boost
-            return PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields)
-        }
-        return results.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            if parsed.isEmpty {
-                let leftFavorite = lhs.entry.document.frontMatter.favorite
-                let rightFavorite = rhs.entry.document.frontMatter.favorite
-                if leftFavorite != rightFavorite { return leftFavorite }
-            }
-            let leftTitle = lhs.entry.document.frontMatter.title
-            let rightTitle = rhs.entry.document.frontMatter.title
-            if !leftTitle.utf8.elementsEqual(rightTitle.utf8) {
-                return leftTitle.utf8.lexicographicallyPrecedes(rightTitle.utf8)
-            }
-            return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
-        }
+        return PromptRanking.rank(snapshot.values, query: query, useEvents: events, at: now)
     }
 
     /// Deliberate quiet update: persistence succeeds before cached events change.
     /// Search sees the new ranking; delivery models refresh their own results.
     public func recordUse(of identity: PromptIdentity) throws {
         try locked { useEvents[identity] = try usage.recordUse(identity: identity, at: clock.now()) }
-    }
-
-    private func indexed(_ entry: LibraryEntry) -> IndexedPrompt {
-        IndexedPrompt(entry: entry, content: PromptSearchContent(entry))
     }
 
     private func currentEntry(at path: String) throws -> LibraryEntry? {

@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "cd",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "midword.md",
+      "path": "midword.md",
+      "uses": []
+    },
+    {
+      "source": "slash.md",
+      "path": "slash.md",
+      "uses": []
+    },
+    {
+      "source": "space.md",
+      "path": "space.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "space.md",
+        "score": 2,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "slash.md",
+        "score": 2,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "midword.md",
+        "score": 1.2,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

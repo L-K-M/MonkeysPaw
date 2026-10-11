@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#CODE #STRASSE #É ab",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "partial.md",
+      "path": "partial.md",
+      "uses": []
+    },
+    {
+      "source": "missing-tag.md",
+      "path": "missing-tag.md",
+      "uses": []
+    },
+    {
+      "source": "plain.md",
+      "path": "plain.md",
+      "uses": []
+    },
+    {
+      "source": "favorite.md",
+      "path": "favorite.md",
+      "uses": []
+    },
+    {
+      "source": "missing-text.md",
+      "path": "missing-text.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "favorite.md",
+        "score": 4.285714285714286,
+        "matchedFields": [
+          "title",
+          "tags"
+        ]
+      },
+      {
+        "path": "plain.md",
+        "score": 2.857142857142857,
+        "matchedFields": [
+          "title",
+          "tags"
+        ]
+      }
+    ]
+  }
+}

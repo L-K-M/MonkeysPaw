@@ -1,39 +1,206 @@
 import Foundation
 import XCTest
-import MonkeysPawCore
+@testable import MonkeysPawCore
 
 /// The corpus is enumerated, not a hand-picked list. Each JSON and source
 /// must be dispatched exactly once so future language consumers share a gate.
 final class PromptConformanceTests: XCTestCase {
-    private let categories: Set<String> = ["format", "grammar", "render", "validation"]
+    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking"]
+    private let rankingAccuracy = 1e-12
 
-    func testEveryFixture() throws {
-        let root = URL(fileURLWithPath: #filePath)
+    private var fixtureRoot: URL {
+        URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("spec/fixtures")
+    }
+
+    func testEveryFixture() throws {
+        let (cases, files) = try consumeCorpus(at: fixtureRoot)
+        print("Consumed \(cases) prompt fixtures (\(files) files).")
+    }
+
+    func testRejectsUnknownCategoriesAndFilesAndUnconsumedSources() throws {
+        let mutations: [(String, CorpusError, (URL) throws -> Void)] = [
+            ("unknown category", .unknownCategory, { root in
+                try FileManager.default.createDirectory(at: root.appendingPathComponent("unknown"),
+                                                        withIntermediateDirectories: false)
+            }),
+            ("missing category", .unknownCategory, { root in
+                try FileManager.default.removeItem(at: root.appendingPathComponent("ranking"))
+            }),
+            ("unknown content file", .unrecognizedFile, { root in
+                try Data().write(to: root.appendingPathComponent("format/extra.txt"))
+            }),
+            ("unconsumed content source", .unconsumedFiles, { root in
+                try Data().write(to: root.appendingPathComponent("format/orphan.md"))
+            }),
+            ("unknown ranking file", .unrecognizedFile, { root in
+                try Data().write(to: root.appendingPathComponent("ranking/field-weights/extra.txt"))
+            }),
+            ("additional ranking JSON", .unrecognizedFile, { root in
+                try Data().write(to: root.appendingPathComponent("ranking/field-weights/extra.json"))
+            }),
+            ("unconsumed ranking source", .unconsumedFiles, { root in
+                try Data().write(to: root.appendingPathComponent("ranking/field-weights/orphan.md"))
+            }),
+            ("missing ranking source", .missingSource, { root in
+                try FileManager.default.removeItem(at: root.appendingPathComponent("ranking/field-weights/title.md"))
+            }),
+            ("nested ranking directory", .unrecognizedFile, { root in
+                try FileManager.default.createDirectory(at: root.appendingPathComponent("ranking/field-weights/nested.md"),
+                                                        withIntermediateDirectories: false)
+            }),
+            ("source symlink", .unrecognizedFile, { root in
+                let source = root.appendingPathComponent("ranking/field-weights/title.md")
+                try FileManager.default.removeItem(at: source)
+                try FileManager.default.createSymbolicLink(atPath: source.path, withDestinationPath: "body.md")
+            })
+        ]
+        for (label, expected, mutate) in mutations {
+            try withTemporaryCorpus { root in
+                try mutate(root)
+                XCTAssertThrowsError(try consumeCorpus(at: root), label) {
+                    XCTAssertEqual($0 as? CorpusError, expected, label)
+                }
+            }
+        }
+    }
+
+    func testRejectsUnknownSchemaVersionsAndContentMembers() throws {
+        for category in categories.subtracting(["ranking"]).sorted() {
+            let files = try FileManager.default.contentsOfDirectory(atPath: fixtureRoot.appendingPathComponent(category).path)
+            let file = try XCTUnwrap(files.sorted().first { $0.hasSuffix(".json") })
+            try assertRejectsJSON(category + "/" + file, label: category + " schema") { $0["schema"] = 2 }
+            try assertRejectsJSON(category + "/" + file, label: category + " member") { $0["unknown"] = 1 }
+        }
+    }
+
+    func testRejectsInvalidRankingMembersTimesAndReferences() throws {
+        let mutations: [(String, (inout [String: Any]) throws -> Void)] = [
+            ("schema", { $0["schema"] = 2 }),
+            ("boolean schema", { $0["schema"] = true }),
+            ("category", { $0["category"] = "format" }),
+            ("envelope member", { $0["unknown"] = 1 }),
+            ("non-UTC now", { $0["now"] = "2026-10-11T12:00:00+00:00" }),
+            ("missing now", { $0.removeValue(forKey: "now") }),
+            ("empty prompt set", { $0["prompts"] = [] }),
+            ("prompt member", { fixture in
+                var prompts = try self.array(fixture["prompts"])
+                var prompt = try self.object(prompts[0])
+                prompt["unknown"] = 1
+                prompts[0] = prompt
+                fixture["prompts"] = prompts
+            }),
+            ("non-UTC use", { fixture in
+                var prompts = try self.array(fixture["prompts"])
+                var prompt = try self.object(prompts[0])
+                prompt["uses"] = ["2026-10-11T12:00:00+00:00"]
+                prompts[0] = prompt
+                fixture["prompts"] = prompts
+            }),
+            ("duplicate path", { fixture in
+                var prompts = try self.array(fixture["prompts"])
+                var prompt = try self.object(prompts[1])
+                prompt["path"] = try self.object(prompts[0])["path"]
+                prompts[1] = prompt
+                fixture["prompts"] = prompts
+            }),
+            ("expectation member", { fixture in
+                var expected = try self.object(fixture["expected"])
+                expected["unknown"] = 1
+                fixture["expected"] = expected
+            }),
+            ("result member", { fixture in
+                var expected = try self.object(fixture["expected"])
+                var results = try self.array(expected["results"])
+                var result = try self.object(results[0])
+                result["unknown"] = 1
+                results[0] = result
+                expected["results"] = results
+                fixture["expected"] = expected
+            }),
+            ("boolean score", { fixture in
+                var expected = try self.object(fixture["expected"])
+                var results = try self.array(expected["results"])
+                var result = try self.object(results[0])
+                result["score"] = true
+                results[0] = result
+                expected["results"] = results
+                fixture["expected"] = expected
+            })
+        ]
+        for (label, mutate) in mutations {
+            try assertRejectsJSON("ranking/field-weights/case.json", label: label, mutate: mutate)
+        }
+        try assertRejectsJSON("ranking/field-weights/case.json", label: "duplicate source",
+                              expectedError: .duplicateConsumption) { fixture in
+            var prompts = try self.array(fixture["prompts"])
+            var prompt = try self.object(prompts[1])
+            prompt["source"] = try self.object(prompts[0])["source"]
+            prompts[1] = prompt
+            fixture["prompts"] = prompts
+        }
+    }
+
+    private func assertRejectsJSON(_ path: String, label: String, expectedError: CorpusError = .unrecognizedCase,
+                                   mutate: (inout [String: Any]) throws -> Void) throws {
+        try withTemporaryCorpus { root in
+            let url = root.appendingPathComponent(path)
+            var fixture = try object(JSONSerialization.jsonObject(with: Data(contentsOf: url)))
+            try mutate(&fixture)
+            try JSONSerialization.data(withJSONObject: fixture).write(to: url)
+            XCTAssertThrowsError(try consumeCorpus(at: root), label) {
+                XCTAssertEqual($0 as? CorpusError, expectedError, label)
+            }
+        }
+    }
+
+    private func withTemporaryCorpus(_ work: (URL) throws -> Void) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ranking-contract-" + UUID().uuidString)
+        try FileManager.default.copyItem(at: fixtureRoot, to: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try work(root)
+    }
+
+    private func consumeCorpus(at root: URL) throws -> (cases: Int, files: Int) {
         let manager = FileManager.default
         let directories = try manager.contentsOfDirectory(atPath: root.path).sorted()
-        XCTAssertEqual(Set(directories), categories)
-        var consumed = Set<String>()
-        var allFiles = Set<String>()
+        guard Set(directories) == categories else { throw CorpusError.unknownCategory }
+        var consumed = Set<RelativePath>()
+        var allFiles = Set<RelativePath>()
         var cases = 0
 
         for category in directories {
             guard categories.contains(category) else { throw CorpusError.unknownCategory }
             let directory = root.appendingPathComponent(category)
+            try require(.directory, at: directory)
             let files = try manager.contentsOfDirectory(atPath: directory.path).sorted()
             guard !files.isEmpty else { throw CorpusError.emptyCategory }
 
+            if category == "ranking" {
+                for name in files {
+                    let caseDirectory = directory.appendingPathComponent(name)
+                    try require(.directory, at: caseDirectory)
+                    try consumeRanking(at: caseDirectory, relative: "ranking/" + name,
+                                       consumed: &consumed, allFiles: &allFiles)
+                    cases += 1
+                }
+                continue
+            }
+
             for file in files {
+                try require(.file, at: directory.appendingPathComponent(file))
                 guard file.hasSuffix(".md") || file.hasSuffix(".json") else {
                     throw CorpusError.unrecognizedFile
                 }
-                allFiles.insert(category + "/" + file)
+                allFiles.insert(RelativePath(category + "/" + file))
             }
 
             for file in files where file.hasSuffix(".json") {
                 let sourceFile = String(file.dropLast(5)) + ".md"
-                guard files.contains(sourceFile) else { throw CorpusError.missingSource }
+                guard files.contains(where: { $0.utf8.elementsEqual(sourceFile.utf8) }) else {
+                    throw CorpusError.missingSource
+                }
                 let data = try Data(contentsOf: directory.appendingPathComponent(file))
                 let fixture = try object(JSONSerialization.jsonObject(with: data))
                 let optional: Set<String> = category == "render" ? ["repeat", "values", "builtins"] : ["repeat"]
@@ -117,17 +284,137 @@ final class PromptConformanceTests: XCTestCase {
 
                 XCTAssertEqual(NSDictionary(dictionary: actual), NSDictionary(dictionary: expected),
                                category + "/" + file)
-                guard consumed.insert(category + "/" + file).inserted,
-                      consumed.insert(category + "/" + sourceFile).inserted else {
-                    throw CorpusError.duplicateConsumption
-                }
+                try consume(category + "/" + file, in: &consumed)
+                try consume(category + "/" + sourceFile, in: &consumed)
                 cases += 1
             }
         }
 
-        XCTAssertGreaterThan(cases, 0)
-        XCTAssertEqual(consumed, allFiles, "Every source and expected JSON must be consumed.")
-        print("Consumed \(cases) prompt fixtures (\(consumed.count) files).")
+        guard cases > 0, consumed == allFiles else { throw CorpusError.unconsumedFiles }
+        return (cases, consumed.count)
+    }
+
+    private func consumeRanking(at directory: URL, relative: String,
+                                consumed: inout Set<RelativePath>, allFiles: inout Set<RelativePath>) throws {
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        for file in files {
+            try require(.file, at: directory.appendingPathComponent(file))
+            guard file == "case.json" || file.hasSuffix(".md") else { throw CorpusError.unrecognizedFile }
+            allFiles.insert(RelativePath(relative + "/" + file))
+        }
+        guard files.contains("case.json") else { throw CorpusError.unrecognizedCase }
+        try consume(relative + "/case.json", in: &consumed)
+        let data = try Data(contentsOf: directory.appendingPathComponent("case.json"))
+        let fixture = try object(JSONSerialization.jsonObject(with: data))
+        try keys(fixture, required: ["schema", "category", "query", "now", "prompts", "expected"])
+        guard try integer(fixture["schema"]) == 1,
+              fixture["category"] as? String == "ranking",
+              let query = fixture["query"] as? String else { throw CorpusError.unrecognizedCase }
+        let now = try timestamp(fixture["now"])
+        let prompts = try array(fixture["prompts"])
+        guard !prompts.isEmpty else { throw CorpusError.unrecognizedCase }
+        var inputs = [PromptRanking.Input]()
+        var paths = Set<RelativePath>()
+        var identities = Set<PromptIdentity>()
+        var events = [PromptIdentity: [Date]]()
+        let clock = LibraryClock()
+        clock.date = now
+        let usage = UsageStore(files: MemoryFileStore(), clock: clock)
+
+        for value in prompts {
+            let prompt = try object(value)
+            try keys(prompt, required: ["source", "path", "uses"])
+            guard let source = prompt["source"] as? String, source.hasSuffix(".md"),
+                  !source.contains("/"),
+                  let path = prompt["path"] as? String else { throw CorpusError.unrecognizedCase }
+            guard files.contains(where: { $0.utf8.elementsEqual(source.utf8) }) else {
+                throw CorpusError.missingSource
+            }
+            try LibraryPath.validate(path)
+            guard paths.insert(RelativePath(path)).inserted else { throw CorpusError.unrecognizedCase }
+            try consume(relative + "/" + source, in: &consumed)
+            let bytes = try Data(contentsOf: directory.appendingPathComponent(source))
+            guard let text = String(data: bytes, encoding: .utf8) else { throw CorpusError.invalidUTF8 }
+            let document = PromptCodec.parse(text, filename: LibraryPath.filename(path))
+            guard document.canRender else { throw CorpusError.unrecognizedCase }
+            let entry = LibraryEntry(path: path, document: document, stamp: FileStamp("fixture"))
+            guard identities.insert(entry.identity).inserted else { throw CorpusError.unrecognizedCase }
+            inputs.append(PromptRanking.Input(entry))
+            // Uses are the full recording-order history. Exercise the real
+            // store's 1,024-event retention before the shared pure ranking path.
+            for use in try array(prompt["uses"]) {
+                try usage.recordUse(identity: entry.identity, at: timestamp(use))
+            }
+            events[entry.identity] = try usage.useEvents(for: entry.identity)
+        }
+
+        let expected = try object(fixture["expected"])
+        try keys(expected, required: ["results"])
+        let results = try array(expected["results"]).map { value -> (path: RelativePath, score: Double, fields: [String]) in
+            let result = try object(value)
+            try keys(result, required: ["path", "score", "matchedFields"])
+            guard let path = result["path"] as? String,
+                  paths.contains(RelativePath(path)),
+                  let fields = result["matchedFields"] as? [String],
+                  Set(fields).isSubset(of: ["title", "tags", "folder", "description", "body"]) else {
+                throw CorpusError.unrecognizedCase
+            }
+            return (RelativePath(path), try number(result["score"]), fields)
+        }
+        guard Set(results.map(\.path)).count == results.count else { throw CorpusError.unrecognizedCase }
+        let actual = PromptRanking.rank(inputs, query: query, useEvents: events, at: now)
+        XCTAssertEqual(actual.map { RelativePath($0.relativePath) }, results.map(\.path), relative)
+        for (actual, expected) in zip(actual, results) {
+            XCTAssertEqual(actual.score, expected.score, accuracy: rankingAccuracy, relative + "/" + expected.path.string)
+            XCTAssertEqual(actual.matchedFields.map(searchField), expected.fields, relative)
+        }
+        XCTAssertEqual(clock.readCount, 0, "Fixture times must be explicit.")
+    }
+
+    private func searchField(_ field: PromptSearchField) -> String {
+        switch field {
+        case .title: return "title"
+        case .tags: return "tags"
+        case .folder: return "folder"
+        case .description: return "description"
+        case .body: return "body"
+        }
+    }
+
+    private func consume(_ path: String, in consumed: inout Set<RelativePath>) throws {
+        guard consumed.insert(RelativePath(path)).inserted else { throw CorpusError.duplicateConsumption }
+    }
+
+    private enum FixtureKind { case directory, file }
+
+    private func require(_ kind: FixtureKind, at url: URL) throws {
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isSymbolicLink == false else { throw CorpusError.unrecognizedFile }
+        switch kind {
+        case .directory:
+            guard values.isDirectory == true else { throw CorpusError.unrecognizedFile }
+        case .file:
+            guard values.isRegularFile == true else { throw CorpusError.unrecognizedFile }
+        }
+    }
+
+    private func timestamp(_ value: Any?) throws -> Date {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        guard let text = value as? String, let date = formatter.date(from: text),
+              formatter.string(from: date) == text else { throw CorpusError.unrecognizedCase }
+        return date
+    }
+
+    private func array(_ value: Any?) throws -> [Any] {
+        guard let array = value as? [Any] else { throw CorpusError.unrecognizedCase }
+        return array
+    }
+
+    private func number(_ value: Any?) throws -> Double {
+        guard let number = value as? NSNumber, String(cString: number.objCType) != "c",
+              number.doubleValue.isFinite else { throw CorpusError.unrecognizedCase }
+        return number.doubleValue
     }
 
     private func metadata(_ value: FrontMatter) -> [String: Any] {
@@ -191,8 +478,8 @@ final class PromptConformanceTests: XCTestCase {
         }
     }
 
-    private enum CorpusError: Error {
+    private enum CorpusError: Error, Equatable {
         case unknownCategory, emptyCategory, unrecognizedFile, missingSource
-        case invalidUTF8, unrecognizedCase, duplicateConsumption
+        case invalidUTF8, unrecognizedCase, duplicateConsumption, unconsumedFiles
     }
 }
