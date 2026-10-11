@@ -88,6 +88,10 @@ public final class PickerModel: @unchecked Sendable {
         }
     }
 
+    // A released model must leave the hook clear: setOnChange asserts
+    // clear-before-install, so a stale closure would block a replacement owner.
+    deinit { index.setOnChange(nil) }
+
     public func open() {
         guard state != .delivering, fillModel?.state != .delivering else { return }
         fillModel?.deactivate()
