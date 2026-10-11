@@ -129,6 +129,28 @@ final class SeedServiceTests: XCTestCase {
         XCTAssertEqual(try service.seedIfEmpty().seededCount, SeedCatalog.prompts.count)
     }
 
+    func testHistoryMigrationCollisionIsAFailureRatherThanASkippedSeed() throws {
+        let seed = try XCTUnwrap(SeedCatalog.prompts.first)
+        let identity = PromptIdentity(path: seed.relativePath, id: nil)
+        let source = "history/" + (try identity.storageKey) + "/20261010T130700.123Z-000000.md"
+        let previous = Data("Previous revision".utf8)
+        let external = Data("Concurrent revision".utf8)
+        try data.write(previous, at: source)
+        var occupied: String?
+        data.onMove = { [data] _, destination in
+            data?.onMove = nil
+            occupied = destination
+            try data?.write(external, at: destination)
+        }
+        XCTAssertThrowsError(try service.seedIfEmpty()) {
+            XCTAssertEqual($0 as? FileStoreError, .alreadyExists)
+        }
+        XCTAssertTrue(try library.entries().isEmpty)
+        XCTAssertEqual(entropy.requests.count, 1)
+        XCTAssertEqual(try data.read(at: source), previous)
+        XCTAssertEqual(try data.read(at: XCTUnwrap(occupied)), external)
+    }
+
     func testUntypedStoreFailureIsSanitizedWithoutLeakingContentOrPaths() throws {
         let marker = "sensitive-path-and-content"
         files.onCreate = { _ in

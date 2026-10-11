@@ -21,7 +21,7 @@ public final class SeedService {
             do {
                 try library.create(document, at: seed.relativePath)
                 seeded += 1
-            } catch FileStoreError.alreadyExists {
+            } catch LibraryError.destinationOccupied {
                 skipped += 1
             }
         }

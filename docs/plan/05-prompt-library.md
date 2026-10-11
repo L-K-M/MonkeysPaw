@@ -91,6 +91,8 @@ followed, including a dangling symlink. Root and parent checks match `write`,
 rejecting symlinked ancestors. This is an atomic exclusive create, not a
 reservation probe or a promise of crash durability; existing check-then-act
 root safety remains unchanged (§4.6).
+Created files retain `mkstemp`'s 0600 mode. Filesystems without hard-link
+support return `ioFailure`; no replacement fallback is attempted.
 
 `LibraryService.entries()` includes malformed YAML, oversized sources and
 non-UTF-8 files as `LibraryEntry` values with error issues. The byte-oriented
@@ -228,7 +230,9 @@ M2b save and identity API:
   ULID assignment and reversible keyed-state migration, using
   `FileStore.create` instead of replacement. It never reads or snapshots an
   occupied destination. A failed publication rolls migrations back; an
-  occupied path returns `FileStoreError.alreadyExists`. New files have no
+  occupied library path returns `LibraryError.destinationOccupied`, distinct
+  from `FileStoreError.alreadyExists` during keyed-state migration, so seeding
+  skips only prompt-publication collisions. New files have no
   prior bytes to snapshot. Seeding is a real first save under §5.2: the
   catalog has no ids, while each installed prompt gets a fresh ULID and
   retains its exact body bytes.

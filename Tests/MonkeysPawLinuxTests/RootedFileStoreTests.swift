@@ -82,7 +82,6 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertFalse(try manager.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".monkeyspaw-create-") })
     }
 
-
     func testPrivateWriteCreatesAndReplacesWith0600UnderPermissiveUmask() throws {
         // umask is process-wide; this test requires serial in-process execution.
         let previousMask = umask(0)

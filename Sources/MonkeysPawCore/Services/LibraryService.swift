@@ -50,7 +50,7 @@ public final class LibraryService {
     }
 
     /// A real first save, including identity assignment, that atomically refuses
-    /// any occupied destination with FileStoreError.alreadyExists.
+    /// any occupied destination with LibraryError.destinationOccupied.
     @discardableResult
     public func create(_ document: PromptDocument, at path: String) throws -> LibraryEntry {
         try locked { try saveDocument(document, at: path, mode: .createOnly) }
@@ -226,7 +226,8 @@ public final class LibraryService {
                 guard try files.stamp(at: path) == current?.entry.stamp else { throw LibraryError.conflict }
                 try files.write(bytes, at: path)
             case .createOnly:
-                try files.create(bytes, at: path)
+                do { try files.create(bytes, at: path) }
+                catch FileStoreError.alreadyExists { throw LibraryError.destinationOccupied }
             }
         } catch {
             var recovered = true

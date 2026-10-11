@@ -17,6 +17,7 @@ final class MemoryFileStore: FileStore {
     var onRead: ((String) throws -> Void)?
     var onWrite: ((String) -> Void)?
     var onCreate: ((String) throws -> Void)?
+    var onMove: ((String, String) throws -> Void)?
     private(set) var accessCount = 0
     private(set) var listCount = 0
 
@@ -88,6 +89,7 @@ final class MemoryFileStore: FileStore {
         try FileStorePath.validate(destination)
         moveCount += 1
         if moveCount == failMoveNumber { throw FileStoreError.ioFailure }
+        try onMove?(source, destination)
         guard files[Data(destination.utf8)] == nil else { throw FileStoreError.alreadyExists }
         guard let file = files[Data(source.utf8)] else { throw FileStoreError.notFound }
         files[Data(destination.utf8)] = File(path: destination, bytes: file.bytes, stamp: file.stamp,

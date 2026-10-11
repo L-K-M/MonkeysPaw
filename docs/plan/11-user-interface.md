@@ -156,12 +156,14 @@ Footers differ per OS:
    It creates each catalog path exclusively and skips occupied destinations
    without replacing any bytes. This is a real first save, assigning fresh
    ULIDs and canonical front matter under §5.2; bodies remain byte-exact.
+
    - code review, commit message, explain an error, summarise, rewrite for
      tone, translate, critique a plan, write tests
    - a meta-prompt that drafts a prompt
    - extract action items; together they cover every field kind, both choice
      option forms, defaults, optional/remember semantics, implicit fields and
      clipboard/date/time builtins
+
    The result reports seeded and skipped-existing counts. Other failures use
    the library's typed, sanitized errors; paths and content are never logged.
    There is no batch transaction: a failure or crash after some creates leaves

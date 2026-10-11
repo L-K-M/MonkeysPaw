@@ -56,7 +56,7 @@ final class LibraryCreateTests: XCTestCase {
             let stamp = try files.stamp(at: path)
             files.onRead = { _ in XCTFail("Exclusive create must not read occupied bytes.") }
             XCTAssertThrowsError(try service.create(document, at: path)) {
-                XCTAssertEqual($0 as? FileStoreError, .alreadyExists)
+                XCTAssertEqual($0 as? LibraryError, .destinationOccupied)
             }
             files.onRead = nil
             XCTAssertEqual(try files.read(at: path), original)
@@ -75,7 +75,7 @@ final class LibraryCreateTests: XCTestCase {
             try files?.write(original, at: path)
         }
         XCTAssertThrowsError(try service.create(PromptCodec.parse("New", filename: path), at: path)) {
-            XCTAssertEqual($0 as? FileStoreError, .alreadyExists)
+            XCTAssertEqual($0 as? LibraryError, .destinationOccupied)
         }
         XCTAssertEqual(try files.read(at: path), original)
         XCTAssertEqual(keyed.values, [local: "Old keyed state"])
