@@ -91,8 +91,12 @@ followed, including a dangling symlink. Root and parent checks match `write`,
 rejecting symlinked ancestors. This is an atomic exclusive create, not a
 reservation probe or a promise of crash durability; existing check-then-act
 root safety remains unchanged (§4.6).
-Created files retain `mkstemp`'s 0600 mode. Filesystems without hard-link
-support return `ioFailure`; no replacement fallback is attempted.
+Before linking, `fchmod` sets the completed file's mode to `0666 & ~umask`,
+matching ordinary writes. Linux reads the mask from `/proc/self/status` without
+changing it. On macOS, or if Linux cannot read that field, adjacent
+`umask(0)`/restore calls briefly change the process-wide mask; unrelated file
+creation can race that window. Filesystems without hard-link support return
+`ioFailure`; no replacement fallback is attempted.
 
 `LibraryService.entries()` includes malformed YAML, oversized sources and
 non-UTF-8 files as `LibraryEntry` values with error issues. The byte-oriented
@@ -235,7 +239,8 @@ M2b save and identity API:
   skips only prompt-publication collisions. New files have no
   prior bytes to snapshot. Seeding is a real first save under §5.2: the
   catalog has no ids, while each installed prompt gets a fresh ULID and
-  retains its exact body bytes.
+  retains its exact body bytes. Exclusive creates and seeded prompts use
+  ordinary-write permissions (`0666 & ~umask`), as described in §5.1.
 - `PromptIdentity.local(hash)` is the lowercase pure-Swift SHA-256 of the
   exact relative path bytes and stays on this device. On first save,
   `LibraryService` uses injected `WallClock` and `EntropySource` ports to assign

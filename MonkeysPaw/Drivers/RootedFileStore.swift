@@ -96,6 +96,11 @@ final class RootedFileStore: FileStore {
                 _ = unlink(temporaryPath)
             }
             try data.write(to: URL(fileURLWithPath: temporaryPath))
+            // Darwin has no read-only umask API. These adjacent calls briefly
+            // change the process-wide mask; unrelated file creation can race.
+            let mask = umask(0)
+            _ = umask(mask)
+            guard fchmod(descriptor, 0o666 & ~mask) == 0 else { throw FileStoreError.ioFailure }
             // link publishes complete bytes and atomically refuses any existing
             // leaf, including directories and dangling symlinks, without following it.
             guard link(temporaryPath, url.path) == 0 else {

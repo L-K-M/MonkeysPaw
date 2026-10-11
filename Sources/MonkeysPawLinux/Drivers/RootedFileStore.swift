@@ -97,12 +97,29 @@ final class RootedFileStore: FileStore {
                 _ = unlink(temporaryPath)
             }
             try data.write(to: URL(fileURLWithPath: temporaryPath))
+            // mkstemp starts at 0600; match ordinary writes before publication.
+            guard fchmod(descriptor, 0o666 & ~currentUmask()) == 0 else { throw FileStoreError.ioFailure }
             // link publishes complete bytes and atomically refuses any existing
             // leaf, including directories and dangling symlinks, without following it.
             guard link(temporaryPath, url.path) == 0 else {
                 throw errno == EEXIST ? FileStoreError.alreadyExists : FileStoreError.ioFailure
             }
         }
+    }
+
+    private func currentUmask() -> mode_t {
+        // Linux exposes the mask without changing it for other threads.
+        if let status = try? String(contentsOfFile: "/proc/self/status", encoding: .utf8),
+           let line = status.split(separator: "\n").first(where: { $0.hasPrefix("Umask:") }),
+           let mask = mode_t(line.dropFirst("Umask:".count).trimmingCharacters(in: .whitespaces), radix: 8) {
+            return mask
+        }
+
+        // Without that field, these adjacent portable calls briefly change the
+        // process-wide mask; unrelated file creation can race this window.
+        let mask = umask(0)
+        _ = umask(mask)
+        return mask
     }
 
     func writePrivate(_ data: Data, at path: String) throws {

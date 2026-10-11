@@ -38,6 +38,24 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertEqual(try store.read(at: "nested/empty.md"), Data())
     }
 
+    func testExclusiveCreateMatchesOrdinaryWritePermissionsUnderUmasks() throws {
+        // umask is process-wide; this test requires serial in-process execution.
+        for mask in [mode_t(0o000), mode_t(0o077)] {
+            let previousMask = umask(mask)
+            defer { _ = umask(previousMask) }
+            let createdPath = "created-\(mask).md"
+            let writtenPath = "written-\(mask).md"
+            let bytes = Data("Complete bytes".utf8)
+
+            try store.create(bytes, at: createdPath)
+            try store.write(bytes, at: writtenPath)
+
+            let writtenMode = try posixPermissions(at: root.appendingPathComponent(writtenPath))
+            XCTAssertEqual(writtenMode, 0o666 & ~Int(mask))
+            XCTAssertEqual(try posixPermissions(at: root.appendingPathComponent(createdPath)), writtenMode)
+        }
+    }
+
     func testConcurrentExclusiveCreatesPublishExactlyOneCompleteFile() throws {
         try manager.createDirectory(at: root, withIntermediateDirectories: true)
         let writers = try [RootedFileStore(root: root), RootedFileStore(root: root)]

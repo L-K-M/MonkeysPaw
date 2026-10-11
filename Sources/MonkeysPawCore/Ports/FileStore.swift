@@ -18,7 +18,8 @@ public protocol FileStore {
     /// Complete a same-directory temporary file, then atomically publish only
     /// if the destination is absent. Create parents; never follow or replace an
     /// occupied leaf, including a symlink. Throw alreadyExists for any occupied
-    /// destination. Like write, this does not promise crash durability.
+    /// destination. Publish with ordinary-write permissions (0666 & ~umask).
+    /// Like write, this does not promise crash durability.
     func create(_ data: Data, at path: String) throws
     /// The same atomic replacement, with mode 0600 on the temporary file
     /// before writing private bytes or publishing the destination.

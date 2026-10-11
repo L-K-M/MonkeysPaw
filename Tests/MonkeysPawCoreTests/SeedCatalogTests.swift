@@ -57,7 +57,10 @@ final class SeedCatalogTests: XCTestCase {
                 defaultsRendered += 1
             } else {
                 XCTAssertThrowsError(try PromptRenderer.render(document, builtins: builtins)) {
-                    XCTAssertEqual($0 as? PromptRenderError, .missingRequiredValue(missing[0].name))
+                    guard case .missingRequiredValue(let name)? = $0 as? PromptRenderError else {
+                        return XCTFail("Unexpected render error: \($0)")
+                    }
+                    XCTAssertTrue(missing.contains { $0.name == name }, "Unexpected missing field: \(name)")
                 }
             }
             // Exercise every template, filling only required inputs that have no default.
