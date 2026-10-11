@@ -16,6 +16,7 @@ final class LinuxEnvironment {
     private let remoteDesktop: RemoteDesktopPasteInjector
     private let firstRun: LinuxFirstRunState
     private let paths: LinuxPaths
+    private let launchURI: (URL) -> Void
     private var libraryInitializationFailed = false
     private var libraryStarted = false
     private var libraryWarningLogged = false
@@ -24,6 +25,8 @@ final class LinuxEnvironment {
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application)
     private(set) lazy var pickerModel: PickerModel = {
+        // Establish the root before reading the initialization failure flag.
+        _ = libraryFiles
         let model = PickerModel(index: index, fill: fill, delivery: delivery, main: mainThread)
         model.libraryAvailable = !libraryInitializationFailed
         panel.bind(picker: model, session: session.currentSession(),
@@ -87,8 +90,13 @@ final class LinuxEnvironment {
     private let application: UnsafeMutablePointer<GtkApplication>
 
     init(application: UnsafeMutablePointer<GtkApplication>,
-         environment: [String: String] = ProcessInfo.processInfo.environment) {
+         environment: [String: String] = ProcessInfo.processInfo.environment,
+         launchURI: @escaping (URL) -> Void = { url in
+             // A dismissed panel may be unrealized before asynchronous handle export completes.
+             gtk_show_uri(nil, url.absoluteString, UInt32(GDK_CURRENT_TIME))
+         }) {
         self.application = application
+        self.launchURI = launchURI
         log = StandardErrorLog()
         mainThread = GLibMainThread()
         runner = LinuxToolRunner(environment: environment)
@@ -238,8 +246,7 @@ final class LinuxEnvironment {
         }
         pickerModel.dismiss()
         mainThread.run { [weak self] in
-            guard let self else { return }
-            gtk_show_uri(mp_window(self.panel.clipboardOwner), url.absoluteString, UInt32(GDK_CURRENT_TIME))
+            self?.launchURI(url)
         }
     }
 

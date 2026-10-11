@@ -219,7 +219,9 @@ final class LinuxPanel: PanelWindow {
             }
             initialFocus = queryEntry
             if wasFill { gtk_widget_grab_focus(queryEntry) }
-            let enabled = picker.selectionIndex.map { picker.results[$0].canRender } == true && !picker.isResolvingBuiltins
+            let enabled = picker.selectionIndex.map {
+                picker.results.indices.contains($0) && picker.results[$0].canRender
+            } == true && !picker.isResolvingBuiltins
             gtk_widget_set_sensitive(useButton, enabled ? 1 : 0)
             gtk_widget_set_sensitive(copyButton, enabled ? 1 : 0)
         }
@@ -315,6 +317,7 @@ final class LinuxPanel: PanelWindow {
             controls.append(FieldControl(name: field.name, kind: field.kind, widget: widget))
             gtk_box_append(mp_box(formBox), row)
         }
+        initialFocus = controls.first?.widget ?? queryEntry
     }
 
     private func update(_ control: FieldControl, value: String) {
@@ -418,6 +421,7 @@ final class LinuxPanel: PanelWindow {
 
     func hide() {
         blurRevision += 1
+        transientStatus = nil
         gtk_widget_set_visible(window, 0)
     }
 }

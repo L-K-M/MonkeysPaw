@@ -138,7 +138,7 @@ wait_for 'the X11 window manager' wm_ready
 # the owner account; the clipboard/self-test expected bytes remain unchanged.
 export XDG_CONFIG_HOME="$smoke_directory/config"
 export XDG_DATA_HOME="$smoke_directory/data"
-mkdir -p "$XDG_CONFIG_HOME" "$smoke_directory/documents/MonkeysPaw"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$smoke_directory/documents/MonkeysPaw"
 printf 'XDG_DOCUMENTS_DIR="%s/documents"\n' "$smoke_directory" > "$XDG_CONFIG_HOME/user-dirs.dirs"
 printf '%s' "Monkey's Paw test: if you can read this, delivery works." \
     > "$smoke_directory/documents/MonkeysPaw/test.md"
@@ -176,6 +176,7 @@ timeout "$smoke_test_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_swift" test --s
 
 # Exercise the real picker key handler, then Core's settle and the xdotool
 # backend. Automatic terminal-class selection is scheduled for M7.
+timeout "$smoke_call_timeout" xdotool key --clearmodifiers ctrl+a >/dev/null 2>&1
 timeout "$smoke_call_timeout" xdotool type --clearmodifiers --delay 0 'test' >/dev/null 2>&1
 timeout "$smoke_call_timeout" xdotool key --clearmodifiers ctrl+shift+Return >/dev/null 2>&1
 wait_for 'the exact library text in xterm through xdotool' delivery_received

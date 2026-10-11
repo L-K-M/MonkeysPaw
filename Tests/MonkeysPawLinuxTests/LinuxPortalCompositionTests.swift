@@ -83,7 +83,7 @@ final class LinuxPortalCompositionTests: XCTestCase {
         XCTAssertTrue(tools.arguments.isEmpty)
     }
 
-    func testPanelIntentUsesRealPortalInjectorAndFailureCacheFallsThrough() {
+    func testPickerIntentUsesRealPortalInjectorAndFailureCacheFallsThrough() {
         start()
         environment.pickerModel.open()
         environment.pickerModel.use(mode: .paste(.terminal))

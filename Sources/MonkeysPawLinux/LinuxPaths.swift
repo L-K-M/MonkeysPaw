@@ -12,6 +12,7 @@ struct LinuxPaths {
     init(environment: [String: String] = ProcessInfo.processInfo.environment,
          home: URL? = nil) {
         self.environment = environment
+        // g_get_home_dir() prefers HOME, falling back to the passwd home directory.
         let configuredHome = environment["HOME"].flatMap { value -> URL? in
             guard value.hasPrefix("/") else { return nil }
             return URL(fileURLWithPath: value, isDirectory: true)

@@ -51,14 +51,43 @@ final class LinuxPathsTests: XCTestCase {
     }
 
     func testDefaultInitializerReadsTheProcessEnvironment() {
-        let expected = LinuxPaths(environment: ProcessInfo.processInfo.environment,
-                                  home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
+        let environment = ProcessInfo.processInfo.environment
+        let expectedHome = environment["HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? NSHomeDirectory()
+        let expected = LinuxPaths(environment: environment,
+                                  home: URL(fileURLWithPath: expectedHome, isDirectory: true))
         let actual = LinuxPaths()
 
         XCTAssertEqual(actual.configDirectory, expected.configDirectory)
         XCTAssertEqual(actual.dataDirectory, expected.dataDirectory)
         XCTAssertEqual(actual.runtimeDirectory, expected.runtimeDirectory)
         XCTAssertEqual(actual.documentsDirectory, expected.documentsDirectory)
+    }
+
+    func testAbsoluteInjectedHomeIsUsedWithoutHomeOverride() throws {
+        try withDirectories { directory in
+            let paths = LinuxPaths(environment: ["HOME": directory.path])
+
+            XCTAssertEqual(paths.configDirectory, directory.appendingPathComponent(".config/monkeyspaw", isDirectory: true))
+            XCTAssertEqual(paths.dataDirectory, directory.appendingPathComponent(".local/share/monkeyspaw", isDirectory: true))
+            XCTAssertEqual(paths.documentsDirectory, directory.appendingPathComponent("Documents", isDirectory: true))
+        }
+    }
+
+    func testRelativeEmptyAndMissingHomeUseFoundationFallback() throws {
+        try withDirectories { directory in
+            let fallback = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            for environment in [["HOME": "relative/home"], ["HOME": ""], [:]] {
+                let paths = LinuxPaths(environment: environment)
+                XCTAssertEqual(paths.configDirectory, fallback.appendingPathComponent(".config/monkeyspaw", isDirectory: true))
+                XCTAssertEqual(paths.dataDirectory, fallback.appendingPathComponent(".local/share/monkeyspaw", isDirectory: true))
+
+                // Isolate user-dirs.dirs so the documents check exercises home fallback.
+                var documentsEnvironment = environment
+                documentsEnvironment["XDG_CONFIG_HOME"] = directory.path
+                let documentsPaths = LinuxPaths(environment: documentsEnvironment)
+                XCTAssertEqual(documentsPaths.documentsDirectory, fallback.appendingPathComponent("Documents", isDirectory: true))
+            }
+        }
     }
 
     func testDocumentsExpandsHomeInUserDirectories() throws {

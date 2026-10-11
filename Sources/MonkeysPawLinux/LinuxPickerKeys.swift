@@ -48,7 +48,12 @@ enum LinuxPickerKeys {
             }
         }
         switch modifiers {
-        case 0: return fieldKind == .text || fieldKind == .choice ? .deliverPreferred : nil
+        case 0:
+            switch fieldKind {
+            case .text, .choice: return .deliverPreferred
+            case .multiline: return nil
+            case nil: return nil
+            }
         case control: return .deliver(.paste(.standard))
         case control | shift: return .deliver(.paste(.terminal))
         case alt: return .deliver(.copyOnly)

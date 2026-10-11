@@ -12,6 +12,7 @@ final class LinuxPickerViewTests: XCTestCase {
     private var environment: LinuxEnvironment!
     private var files: RootedFileStore!
     private var root: URL!
+    private var launchedURLs: [URL] = []
 
     override func setUpWithError() throws {
         let address = try FakePortal.requirePrivateBus()
@@ -25,7 +26,13 @@ final class LinuxPickerViewTests: XCTestCase {
         files = try RootedFileStore(root: root)
         notifications = try FakePortal(address: address)
         try notifications.ownNotifications()
-        environment = LinuxEnvironment(application: application, environment: tools.environment)
+        launchedURLs = []
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            launchURI: { [weak self] url in
+                guard let self else { return }
+                XCTAssertFalse(self.environment.panel.isVisible)
+                self.launchedURLs.append(url)
+            })
     }
 
     override func tearDown() {
@@ -155,6 +162,51 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(try files.read(at: "Name.md"), Data("---\ntitle: Unrelated\n---\nExisting body".utf8))
     }
 
+    func testEditSelectedLaunchesFileURIAndDismissesPicker() throws {
+        let path = "folder name/Prompt #%.md"
+        try files.write(Data("Body".utf8), at: path)
+        try open()
+        XCTAssertEqual(environment.pickerModel.results.first?.relativePath, path)
+
+        environment.pickerModel.editSelected()
+        XCTAssertTrue(launchedURLs.isEmpty)
+        XCTAssertEqual(environment.pickerModel.state, .closed)
+        XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
+        XCTAssertEqual(launchedURLs, [root.appendingPathComponent(path)])
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testNativeOpenLibraryButtonLaunchesFolderURIAndDismissesPicker() throws {
+        try open()
+        mp_entry_set_text(try widget("picker-query"), "missing prompt")
+        let button = try widget("picker-open-folder")
+        XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
+        XCTAssertEqual(launchedURLs, [URL(fileURLWithPath: root.path, isDirectory: true)])
+        XCTAssertEqual(environment.pickerModel.state, .closed)
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testTransientCreationFailureStatusIsClearedWhenPickerReopens() throws {
+        try open()
+        let query = try widget("picker-query")
+        mp_entry_set_text(query, "new prompt")
+        environment.panel.showStatus(LinuxStrings.createPromptFailed)
+        let status = try widget("picker-status")
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(status))), LinuxStrings.createPromptFailed)
+        XCTAssertNotEqual(gtk_widget_get_visible(status), 0)
+
+        environment.pickerModel.dismiss()
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+        environment.pickerModel.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+        // Keep the query unchanged so its changed signal cannot clear the status.
+        XCTAssertEqual(environment.pickerModel.query, "new prompt")
+        XCTAssertEqual(String(cString: mp_entry_text(query)), "new prompt")
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(status))), "")
+        XCTAssertEqual(gtk_widget_get_visible(status), 0)
+    }
+
     func testReopeningWhileFillIsVisibleReturnsFocusToQueryAndKeepsDraft() throws {
         try files.write(Data("{{topic}}".utf8), at: "fields.md")
         try open()
@@ -173,8 +225,10 @@ final class LinuxPickerViewTests: XCTestCase {
         environment.pickerModel.escape()
         XCTAssertEqual(environment.pickerModel.state, .picker)
         let query = try widget("picker-query")
-        let focus = try XCTUnwrap(gtk_window_get_focus(mp_window(environment.panel.clipboardOwner)))
-        XCTAssertTrue(focus == query || gtk_widget_is_ancestor(focus, query) != 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let focus = gtk_window_get_focus(mp_window(self.environment.panel.clipboardOwner)) else { return false }
+            return focus == query || gtk_widget_is_ancestor(focus, query) != 0
+        })
     }
 
     func testRememberedChoiceOutsideCurrentOptionsBlocksDeliveryWithActionablePreview() throws {
@@ -236,8 +290,10 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(fill.focusIndex, 2)
         fill.focusNext()
         XCTAssertEqual(fill.focusIndex, 0)
-        let focus = try XCTUnwrap(gtk_window_get_focus(mp_window(environment.panel.clipboardOwner)))
-        XCTAssertTrue(focus == topic || gtk_widget_is_ancestor(focus, topic) != 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let focus = gtk_window_get_focus(mp_window(self.environment.panel.clipboardOwner)) else { return false }
+            return focus == topic || gtk_widget_is_ancestor(focus, topic) != 0
+        })
         environment.activateToggle()
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertEqual(fill.state, .closed)
@@ -311,8 +367,9 @@ final class LinuxPickerViewTests: XCTestCase {
         try open()
         mp_entry_set_text(try widget("picker-query"), query)
         XCTAssertEqual(environment.pickerModel.noMatches?.createTitle, query)
+        let createLabel = try XCTUnwrap(environment.pickerModel.noMatches?.createLabel)
         let button = try XCTUnwrap(findWidget {
-            mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == "Create a prompt"
+            mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == createLabel
         })
         XCTAssertNotEqual(gtk_widget_activate(button), 0)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.files.stamp(at: expectedPath)) != nil })
@@ -323,6 +380,8 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertNotNil(document.frontMatter.id)
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+        XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
+        XCTAssertEqual(launchedURLs, [root.appendingPathComponent(expectedPath)])
     }
 
     private func findWidget(matching predicate: (GTK.Widget) -> Bool) -> GTK.Widget? {

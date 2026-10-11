@@ -46,6 +46,10 @@ final class LinuxPickerKeysTests: XCTestCase {
         XCTAssertNil(route(GDK_KEY_l, modifiers: control, state: .fill))
         XCTAssertNil(route(GDK_KEY_Up, state: .fill, kind: .multiline))
         XCTAssertNil(route(GDK_KEY_Down, state: .fill, kind: .choice))
+        for key in [GDK_KEY_Up, GDK_KEY_Down] {
+            XCTAssertNil(route(key, state: .fill, kind: .text))
+            XCTAssertNil(route(key, state: .fill))
+        }
     }
 
     func testInactiveStatesNeverRouteKeys() {

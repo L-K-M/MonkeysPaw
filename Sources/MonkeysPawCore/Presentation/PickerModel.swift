@@ -55,6 +55,8 @@ public final class PickerModel: @unchecked Sendable {
     public private(set) var state = State.closed
     public private(set) var fillModel: FillModel?
     public private(set) var requestedIntent: Intent?
+    /// Survives reopening so delivery persistence failures remain visible;
+    /// cleared when the next use starts.
     public private(set) var persistenceWarnings: [PromptPersistenceWarning] = []
     public private(set) var isResolvingBuiltins = false
     /// Composition supplies folder availability; cached prompts remain usable.
