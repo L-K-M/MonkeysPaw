@@ -144,6 +144,132 @@ jobs:
           path: MacAppTests.xcresult
           if-no-files-found: ignore
 
+  macos-artifacts:
+    name: Universal macOS artifacts
+    runs-on: macos-26
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: /bin/bash -e -o pipefail {0}
+    env:
+      ARTIFACT_VERSION: '0.1.0'
+      ARTIFACT_BUILD_NUMBER: '42'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '26.0'
+      - name: Install dmg tooling
+        run: brew install create-dmg
+      # This job intentionally has no signing secrets and runs no hosted tests.
+      - name: Build and package universal app
+        run: /bin/bash scripts/package-macos.sh "$ARTIFACT_VERSION" "$ARTIFACT_BUILD_NUMBER"
+      - name: Verify and launch both packaged copies
+        run: |
+          set -euo pipefail
+
+          check_directory=$(mktemp -d "$RUNNER_TEMP/monkeyspaw-artifacts.XXXXXX")
+          mountpoint="$check_directory/mounted"
+          extracted="$check_directory/extracted"
+          image_attached=false
+          app_pid=
+
+          cleanup() {
+            local status=$?
+            if [[ -n "$app_pid" ]]; then
+              kill -KILL "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+            if [[ "$image_attached" == true ]]; then
+              /usr/bin/hdiutil detach "$mountpoint" || \
+                /usr/bin/hdiutil detach -force "$mountpoint" || status=1
+            fi
+            rm -rf "$check_directory"
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          verify_app() {
+            local app=$1
+            local architectures architecture
+            architectures=$(/usr/bin/lipo -archs "$app/Contents/MacOS/MonkeysPaw")
+            printf '%s: %s\n' "$app" "$architectures"
+            for architecture in arm64 x86_64; do
+              if [[ " $architectures " != *" $architecture "* ]]; then
+                printf 'Missing architecture: %s\n' "$architecture" >&2
+                return 1
+              fi
+            done
+            /usr/bin/codesign --verify --deep --strict "$app"
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == "$ARTIFACT_VERSION" ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" == "$ARTIFACT_BUILD_NUMBER" ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" == true ]]
+          }
+
+          smoke_launch() {
+            local app=$1
+            local attempt exit_status=0
+            # Track the exact packaged executable's PID, without LaunchServices
+            # reusing another installed copy or the build-directory app.
+            "$app/Contents/MacOS/MonkeysPaw" >/dev/null 2>&1 &
+            app_pid=$!
+            for (( attempt=0; attempt<5; attempt++ )); do
+              sleep 1
+              if ! kill -0 "$app_pid" 2>/dev/null; then
+                printf 'Packaged app exited during launch: %s\n' "$app" >&2
+                wait "$app_pid" 2>/dev/null || true
+                app_pid=
+                return 1
+              fi
+            done
+            kill -TERM "$app_pid"
+            for (( attempt=0; attempt<5; attempt++ )); do
+              if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            if kill -0 "$app_pid" 2>/dev/null; then
+              printf 'Packaged app did not terminate: %s\n' "$app" >&2
+              return 1
+            fi
+            wait "$app_pid" || exit_status=$?
+            app_pid=
+            # SIGTERM is expected; a crash signal is a failed smoke launch.
+            [[ "$exit_status" == 0 || "$exit_status" == 143 ]]
+          }
+
+          mkdir -p "$mountpoint" "$extracted"
+          image_attached=true
+          /usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "$mountpoint" \
+            "dist/MonkeysPaw-$ARTIFACT_VERSION.dmg"
+          [[ -d "$mountpoint/MonkeysPaw.app" ]]
+          [[ -L "$mountpoint/Applications" ]]
+          [[ "$(readlink "$mountpoint/Applications")" == /Applications ]]
+          /usr/bin/ditto -x -k "dist/MonkeysPaw-$ARTIFACT_VERSION.zip" "$extracted"
+          [[ -d "$extracted/MonkeysPaw.app" ]]
+          verify_app "$mountpoint/MonkeysPaw.app"
+          verify_app "$extracted/MonkeysPaw.app"
+          diff -rq "$mountpoint/MonkeysPaw.app" "$extracted/MonkeysPaw.app"
+
+          # Suppress first-run Setup on this disposable runner; exercise the
+          # resident LSUIElement app without requesting interactive permissions.
+          /usr/bin/defaults write ch.lkmc.MonkeysPaw hasShownDeliverySetup -bool true
+          smoke_launch "$mountpoint/MonkeysPaw.app"
+          smoke_launch "$extracted/MonkeysPaw.app"
+          /usr/bin/hdiutil detach "$mountpoint"
+          image_attached=false
+      - name: Upload dmg and zip for inspection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MonkeysPaw-macos-artifacts
+          path: |
+            dist/MonkeysPaw-${{ env.ARTIFACT_VERSION }}.dmg
+            dist/MonkeysPaw-${{ env.ARTIFACT_VERSION }}.zip
+          if-no-files-found: error
+          retention-days: 3
+
   server:
     name: Server build and tests
     runs-on: ubuntu-24.04

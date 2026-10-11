@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Build and sign a universal Release app, then package verified dmg and zip files.
+# Usage: scripts/package-macos.sh [version [build-number]]
+# Requires macOS, Xcode and create-dmg (brew install create-dmg).
+# With no arguments, use the committed Xcode version and build number.
+# An explicit version may have a v prefix; the optional second argument sets
+# the build number. Prerelease suffixes appear only in the artifact filenames.
+# MACOS_SIGNING_IDENTITY selects an installed identity; unset/empty means ad-hoc.
+# MACOS_SIGNING_KEYCHAIN optionally selects its keychain when using an identity.
+# CI callers must export signing variables only when their secrets are non-empty.
+# Uses xcodebuild directly: no lkm-build installation or certificate import needed.
+set -euo pipefail
+
+fail() {
+  printf '!! %s\n' "$*" >&2
+  exit 1
+}
+
+if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# //'
+  exit 0
+fi
+
+[[ $# -le 2 ]] || fail 'Usage: scripts/package-macos.sh [version [build-number]]'
+[[ "$(uname -s)" == Darwin ]] || fail 'package-macos.sh requires macOS and Xcode'
+command -v create-dmg >/dev/null 2>&1 || fail 'Install create-dmg with: brew install create-dmg'
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+project="$repo_root/MonkeysPaw.xcodeproj"
+version="${1:-$(awk '$1 == "MARKETING_VERSION" { sub(/;$/, "", $3); print $3; exit }' "$project/project.pbxproj")}"
+version="${version#v}"
+version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$'
+[[ "$version" =~ $version_pattern ]] || fail 'Version must be X.Y.Z, optionally with a prerelease suffix'
+marketing_version="${version%%-*}"
+build_number="${2:-$(awk '$1 == "CURRENT_PROJECT_VERSION" { sub(/;$/, "", $3); print $3; exit }' "$project/project.pbxproj")}"
+build_pattern='^[1-9][0-9]*(\.[0-9]+){0,2}$'
+[[ "$build_number" =~ $build_pattern ]] || fail 'Build number must have one to three numeric components, starting with a positive integer'
+
+work_directory=$(mktemp -d "${TMPDIR:-/tmp}/monkeyspaw-package.XXXXXX")
+trap 'rm -rf "$work_directory"' EXIT
+derived_data="$work_directory/DerivedData"
+staging_directory="$work_directory/image"
+app="$staging_directory/MonkeysPaw.app"
+mkdir -p "$staging_directory" "$work_directory/artifacts"
+
+printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$build_number"
+/usr/bin/xcodebuild \
+  -project "$project" -scheme MonkeysPaw -configuration Release \
+  -destination 'generic/platform=macOS' -derivedDataPath "$derived_data" \
+  ONLY_ACTIVE_ARCH=NO ARCHS="arm64 x86_64" \
+  MARKETING_VERSION="$marketing_version" CURRENT_PROJECT_VERSION="$build_number" \
+  CODE_SIGNING_ALLOWED=NO build
+
+built_app="$derived_data/Build/Products/Release/MonkeysPaw.app"
+[[ -d "$built_app" ]] || fail 'Release build did not produce MonkeysPaw.app'
+/usr/bin/ditto "$built_app" "$app"
+/usr/bin/lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/MonkeysPaw"
+
+signing_identity="${MACOS_SIGNING_IDENTITY:--}"
+# Xcode signing is disabled above, so explicitly retain the paste entitlement
+# and Hardened Runtime when signing the staged app, including ad-hoc builds.
+signing_arguments=(--force --sign "$signing_identity" --options runtime
+  --entitlements "$repo_root/MonkeysPaw/MonkeysPaw.entitlements")
+if [[ "$signing_identity" != - ]]; then
+  signing_arguments+=(--timestamp)
+  if [[ -n "${MACOS_SIGNING_KEYCHAIN:-}" ]]; then
+    signing_arguments+=(--keychain "$MACOS_SIGNING_KEYCHAIN")
+  fi
+fi
+/usr/bin/codesign "${signing_arguments[@]}" "$app"
+/usr/bin/codesign --verify --deep --strict "$app"
+
+zip="$work_directory/artifacts/MonkeysPaw-$version.zip"
+dmg="$work_directory/artifacts/MonkeysPaw-$version.dmg"
+printf '==> Packaging zip and dmg\n'
+/usr/bin/ditto -c -k --keepParent "$app" "$zip"
+
+dmg_arguments=(--volname "MonkeysPaw $version" --window-size 540 380
+  --icon-size 100 --icon MonkeysPaw.app 150 185 --app-drop-link 390 185)
+if [[ "${CI:-false}" == true ]]; then
+  # Finder's AppleScript styling needs a GUI session; keep CI headless.
+  dmg_arguments+=(--skip-jenkins)
+fi
+# create-dmg expects a folder containing the app, not the app bundle itself.
+# Its status can be unreliable on headless hosts. A fresh, verified image is
+# required even when it reports success; old dist files cannot satisfy this.
+if ! create-dmg "${dmg_arguments[@]}" "$dmg" "$staging_directory"; then
+  printf '!! create-dmg reported failure; checking the newly created image\n' >&2
+fi
+[[ -s "$dmg" ]] || fail 'create-dmg did not produce an image'
+/usr/bin/hdiutil verify "$dmg"
+[[ -s "$zip" ]] || fail 'ditto did not produce a zip'
+
+mkdir -p "$repo_root/dist"
+mv -f "$zip" "$dmg" "$repo_root/dist/"
+printf '==> Created dist/MonkeysPaw-%s.zip and dist/MonkeysPaw-%s.dmg\n' "$version" "$version"

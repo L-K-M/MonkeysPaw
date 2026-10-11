@@ -7,7 +7,7 @@ Rollout by milestone:
 |---|---|
 | M0 | ci.yml: Core tests (macOS + Linux), Linux app build (`swift:6.4-noble`), macOS app build (Xcode 26), server build + tests, server image build (`push: false`) with a `/api/health` check |
 | M1 | ci.yml `linux-app` job: GTK lifecycle under Xvfb, driver fakes, GDBus mock-bus tests |
-| M2 | release.yml: dmg (universal) + deb; scripts/build.sh |
+| M2 | ci.yml: macOS artifact proof; release.yml: dmg (universal) + zip + deb; scripts/package-macos.sh |
 | M5 | server image publish to ghcr; compose config check and compose smoke job; `spec/schema/` drift check |
 | M7 | flatpak repack and release upload |
 | M8 | ci.yml `android` job (wrapper validation, `:core:test`, unit tests, lint, debug + release assemble); release.yml APK job; dependabot `gradle` for `/android` |
@@ -31,9 +31,9 @@ Rollout by milestone:
   `ch.lkmc.monkeyspaw`; binary `monkeyspaw`; server image `monkeyspaw-server`.
   Product name `MonkeysPaw`, display name "Monkey's Paw" (Q5).
 - **Versioning.** `RELEASE_KIND=xcode` (Vervellum stub): `MARKETING_VERSION`
-  and the README marker are the committed version. CI derives the deb
-  version, the server `VERSION` build arg, and the image tags from the git
-  tag.
+  and the README marker are the committed version. Release CI derives the
+  macOS artifact version, the deb version, the server `VERSION` build arg,
+  and the image tags from the git tag without editing committed settings.
 - **Toolchains.** Linux CI uses `swift:6.4-noble`, the same image as the
   server builder. macOS uses Xcode 26.x, pinned in workflows. Swift tools
   version 5.9 manifests keep Swift 5 language mode for desktop targets
@@ -46,6 +46,16 @@ Rollout by milestone:
     cancels superseded PR runs only, and `timeout-minutes` on every job.
   - Actions are pinned to commit SHAs, with `persist-credentials: false`.
   - macOS job: `macos-26`, with Xcode pinned.
+  - `macos-artifacts` builds Release artifacts with test version `0.1.0`
+    and build number `42` on PRs and main, using Xcode 26.0 and system
+    `/bin/bash` for the script and shell checks. It checks both architectures,
+    strict code signatures, bundle versions and `LSUIElement`,
+    mounts the dmg read-only, checks the app and `/Applications` link,
+    extracts the zip and compares the app contents. Each packaged copy must
+    stay alive for five seconds before termination; the image is detached.
+    Both artifacts are uploaded for three days. Hosted tests remain in
+    `macos-app`; this gate does not prove Gatekeeper, real installation or
+    delivery on a Mac (§15 and `docs/platform/macos.md`).
   - Linux jobs run in the `swift:6.4-noble` container. The Linux Core test
     job is the portability gate.
   - The flatpak job runs on the bare runner, because bwrap needs a sysctl
@@ -69,6 +79,29 @@ Rollout by milestone:
   - Deb `Depends:` comes from `dpkg-shlibdeps` (Ubuntu 24.04's t64 renames),
     plus `libglib2.0-bin`. `Recommends:` `libsecret-tools`, `ydotool`,
     `xdotool`. Prerelease versions use a tilde.
+- **macOS packaging.** On a Mac with Xcode and `brew install create-dmg`,
+  run `scripts/package-macos.sh [version [build-number]]`. It calls
+  `xcodebuild` directly so CI does not need the external `lkm-build` engine
+  used by `scripts/build.sh`. Release builds use `ONLY_ACTIVE_ARCH=NO` and
+  `ARCHS="arm64 x86_64"`. Without arguments, versions come from the committed
+  project settings; an explicit version overrides `MARKETING_VERSION`, and
+  a second argument overrides `CURRENT_PROJECT_VERSION`. Tag CI can pass
+  `"${GITHUB_REF_NAME#v}"` and `"$GITHUB_RUN_NUMBER"`; prerelease suffixes stay
+  in artifact names while the bundle marketing version uses `X.Y.Z`.
+  - The app is signed ad-hoc by default, with Hardened Runtime and the
+    committed Apple Events entitlement. A non-empty
+    `MACOS_SIGNING_IDENTITY` selects an identity already installed in the
+    caller's keychain; a non-empty `MACOS_SIGNING_KEYCHAIN` optionally
+    selects that keychain. Certificate import and notarization are outside
+    this script. CI must export signing variables only when their secrets
+    are non-empty; the artifact proof job needs no signing secrets.
+  - `ditto -c -k --keepParent` produces `dist/MonkeysPaw-<version>.zip`.
+    `create-dmg` receives a staging folder containing `MonkeysPaw.app` and
+    adds the `/Applications` link, producing
+    `dist/MonkeysPaw-<version>.dmg`. CI skips Finder styling with
+    `--skip-jenkins`. A nonzero `create-dmg` status is tolerated only if a
+    newly created image exists and passes `hdiutil verify`; stale output
+    cannot satisfy this check. Only verified artifacts are copied to `dist/`.
 - **Linux floor.** Ubuntu 24.04+ (GTK 4.14), like Vervellum; the deb is
   built on noble. Ubuntu 22.04 (GTK 4.6) is Q8.
 - **Flatpak.** Runtime `org.gnome.Platform` 50. `finish-args`:
