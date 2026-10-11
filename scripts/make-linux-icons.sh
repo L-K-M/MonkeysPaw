@@ -19,7 +19,9 @@ except ImportError:
     sys.exit("!! Pillow is required (Ubuntu: apt install python3-pil)")
 
 root = Path(sys.argv[1])
-with Image.open(root / "media-sources/icon.png") as source:
+with Image.open(root / "media-sources/icon.png") as opened:
+    # Pillow ignores LANCZOS for palette/bilevel images; resample in RGBA.
+    source = opened.convert("RGBA")
     for size in (16, 24, 32, 48, 64, 128, 256, 512):
         directory = root / "packaging/icons/hicolor" / f"{size}x{size}" / "apps"
         directory.mkdir(parents=True, exist_ok=True)

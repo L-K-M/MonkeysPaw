@@ -34,6 +34,7 @@ deps_work=""
 if ! (set -o noclobber; printf 'enum PackagedBuildVersion { static let value = "%s" }\n' \
     "$VERSION" > "$VERSION_SOURCE") 2>/dev/null; then
     echo "!! Version source already exists: $VERSION_SOURCE" >&2
+    echo "!! Another package build may be running; if not, a killed build left it behind: delete it and retry." >&2
     exit 1
 fi
 cleanup() {

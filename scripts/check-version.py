@@ -32,8 +32,13 @@ def app_version(value):
 def deb_version(value):
     # Debian's last hyphen starts a revision, which sorts above the stable
     # version. A tilde instead makes the prerelease sort below that release.
+    # Later hyphens inside the prerelease would land in Debian's revision slot,
+    # so every hyphen becomes a tilde (v0.2.0-rc-1 -> 0.2.0~rc~1).
     version, separator, metadata = app_version(value).partition("+")
-    return version.replace("-", "~", 1) + separator + metadata
+    upstream, hyphen, prerelease = version.partition("-")
+    if hyphen:
+        upstream += "~" + prerelease.replace("-", "~")
+    return upstream + separator + metadata
 
 
 def check_versions(root):
@@ -45,7 +50,8 @@ def check_versions(root):
         raise ValueError("MARKETING_VERSION and the single README version marker must agree")
 
     app_version(markers[0])
-    for tag, expected in (("v0.1.0", "0.1.0"), ("v0.1.0-beta.1", "0.1.0~beta.1")):
+    for tag, expected in (("v0.1.0", "0.1.0"), ("v0.1.0-beta.1", "0.1.0~beta.1"),
+                          ("v0.2.0-rc-1", "0.2.0~rc~1")):
         if deb_version(tag) != expected:
             raise ValueError(f"Deb version mapping failed for {tag}")
 

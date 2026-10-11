@@ -88,7 +88,9 @@ Rollout by milestone:
   - Uploaded assets are downloaded back and byte-compared (Vervellum).
   - Deb `Depends:` comes from `dpkg-shlibdeps` (Ubuntu 24.04's t64 renames),
     plus `libglib2.0-bin`. `Recommends:` `libsecret-tools`, `ydotool`,
-    `xdotool`. Prerelease versions use a tilde.
+    `xdotool`. Prerelease versions use a tilde (every prerelease hyphen
+    becomes `~`), so they sort below the release; dpkg compares digit runs
+    numerically (`~beta.9` < `~beta.10`).
 - **macOS packaging.** On a Mac with Xcode and `brew install create-dmg`,
   run `scripts/package-macos.sh [version [build-number]]`. It calls
   `xcodebuild` directly so CI does not need the external `lkm-build` engine
