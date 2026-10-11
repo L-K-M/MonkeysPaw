@@ -83,17 +83,22 @@ private final class IndexFileWatcher: FileStoreWatcher {
 
 private final class IndexScheduler: Scheduler {
     private var time: Duration = .zero
-    private var pending = [(deadline: Duration, work: () -> Void)]()
+    private var sequence = 0
+    private var pending = [(deadline: Duration, sequence: Int, work: () -> Void)]()
     private(set) var delays = [Duration]()
 
     func after(_ delay: Duration, _ work: @escaping () -> Void) {
         delays.append(delay)
-        pending.append((time + delay, work))
+        pending.append((time + delay, sequence, work))
+        sequence += 1
     }
 
     func advance(_ elapsed: Duration) {
         time += elapsed
-        let ready = pending.filter { $0.deadline <= time }.sorted { $0.deadline < $1.deadline }
+        // A real clock fires equal deadlines in registration order; sorted is
+        // not guaranteed stable, so ties break on the insertion sequence.
+        let ready = pending.filter { $0.deadline <= time }
+            .sorted { ($0.deadline, $0.sequence) < ($1.deadline, $1.sequence) }
         pending.removeAll { $0.deadline <= time }
         // Work scheduled by these callbacks waits until the next advance.
         for timer in ready { timer.work() }
