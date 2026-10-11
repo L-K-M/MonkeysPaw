@@ -124,7 +124,7 @@ final class FakeFocus: FocusTracker {
     }
 }
 
-final class FakeClipboard: Clipboard {
+final class FakeClipboard: Clipboard, @unchecked Sendable {
     private let lock = NSLock()
     private var storedText: String?
     private var numberOfReads = 0
