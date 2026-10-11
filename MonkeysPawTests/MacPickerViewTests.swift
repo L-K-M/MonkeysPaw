@@ -36,7 +36,7 @@ final class MacPickerViewTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func start(scheduler: Scheduler = DispatchScheduler()) throws -> PickerModel {
+    private func start(scheduler: MonkeysPawCore.Scheduler = DispatchScheduler()) throws -> PickerModel {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, launchURI: { [weak self] in self?.launched.append($0) },
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in
@@ -52,7 +52,7 @@ final class MacPickerViewTests: XCTestCase {
         return try XCTUnwrap(delegate.pickerModel)
     }
 
-    private func open(scheduler: Scheduler = DispatchScheduler()) throws -> PickerModel {
+    private func open(scheduler: MonkeysPawCore.Scheduler = DispatchScheduler()) throws -> PickerModel {
         let picker = try start(scheduler: scheduler)
         delegate.togglePicker()
         XCTAssertTrue(spin { self.controller.isActiveAndVisible })
@@ -457,13 +457,13 @@ private final class PickerKeyboardSink: NSView {
     override func keyDown(with event: NSEvent) { keysReceived += 1 }
 }
 
-private struct BackgroundPickerScheduler: Scheduler {
+private struct BackgroundPickerScheduler: MonkeysPawCore.Scheduler {
     func after(_ delay: Duration, _ work: @escaping () -> Void) {
         DispatchQueue.global().asyncAfter(deadline: .now() + delay.timeInterval, execute: work)
     }
 }
 
-private final class ObservedPickerScheduler: Scheduler {
+private final class ObservedPickerScheduler: MonkeysPawCore.Scheduler {
     private let lock = NSLock()
     private var observed = false
     var sawDebounce: Bool {
