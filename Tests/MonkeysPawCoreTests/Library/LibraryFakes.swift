@@ -16,6 +16,7 @@ final class MemoryFileStore: FileStore {
     var moveCount = 0
     var onRead: ((String) throws -> Void)?
     var onWrite: ((String) -> Void)?
+    var onCreate: ((String) throws -> Void)?
     private(set) var accessCount = 0
     private(set) var listCount = 0
 
@@ -42,6 +43,13 @@ final class MemoryFileStore: FileStore {
     }
 
     func write(_ data: Data, at path: String) throws {
+        try store(data, at: path, isPrivate: false)
+    }
+
+    func create(_ data: Data, at path: String) throws {
+        try FileStorePath.validate(path)
+        try onCreate?(path)
+        guard files[Data(path.utf8)] == nil else { throw FileStoreError.alreadyExists }
         try store(data, at: path, isPrivate: false)
     }
 

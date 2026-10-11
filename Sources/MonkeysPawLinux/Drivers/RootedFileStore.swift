@@ -84,6 +84,27 @@ final class RootedFileStore: FileStore {
         }
     }
 
+    func create(_ data: Data, at path: String) throws {
+        try sanitized {
+            guard let url = try locate(path, parents: .create) else { throw FileStoreError.invalidRoot }
+            var template = Array(url.deletingLastPathComponent()
+                .appendingPathComponent(".monkeyspaw-create-XXXXXX").path.utf8CString)
+            let descriptor = mkstemp(&template)
+            guard descriptor >= 0 else { throw FileStoreError.ioFailure }
+            let temporaryPath = String(cString: template)
+            defer {
+                _ = Glibc.close(descriptor)
+                _ = unlink(temporaryPath)
+            }
+            try data.write(to: URL(fileURLWithPath: temporaryPath))
+            // link publishes complete bytes and atomically refuses any existing
+            // leaf, including directories and dangling symlinks, without following it.
+            guard link(temporaryPath, url.path) == 0 else {
+                throw errno == EEXIST ? FileStoreError.alreadyExists : FileStoreError.ioFailure
+            }
+        }
+    }
+
     func writePrivate(_ data: Data, at path: String) throws {
         try sanitized {
             guard let url = try locate(path, parents: .create) else { throw FileStoreError.invalidRoot }

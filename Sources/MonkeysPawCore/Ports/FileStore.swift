@@ -2,7 +2,8 @@ import Foundation
 
 /// A rooted tree used for both library files and app-data files (§4.6).
 /// Operations are synchronous. Callers serialize access to a pair of roots.
-/// Drivers reject symlinks and nonregular files, including in path components.
+/// Reads/replacements reject symlinks and nonregular files; all operations
+/// reject symlinked parents. Exclusive create treats any existing leaf as occupied.
 /// Per-component checks and the atomic-write window are check-then-act: they
 /// defend accidents, not a racing local adversary. Unlink bounds deletion;
 /// full fd-relative hardening is deferred.
@@ -14,6 +15,11 @@ public protocol FileStore {
     /// destination. Create parents; on failure leave the destination intact.
     /// Atomic replacement alone does not promise crash durability.
     func write(_ data: Data, at path: String) throws
+    /// Complete a same-directory temporary file, then atomically publish only
+    /// if the destination is absent. Create parents; never follow or replace an
+    /// occupied leaf, including a symlink. Throw alreadyExists for any occupied
+    /// destination. Like write, this does not promise crash durability.
+    func create(_ data: Data, at path: String) throws
     /// The same atomic replacement, with mode 0600 on the temporary file
     /// before writing private bytes or publishing the destination.
     /// Additionally fsync the completed temporary file before rename; a failed

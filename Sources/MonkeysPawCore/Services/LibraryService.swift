@@ -4,6 +4,11 @@ import Foundation
 /// Calls are synchronous and serialized within this instance. A composition
 /// root must share one service per pair of roots; external edits use stamps.
 public final class LibraryService {
+    private enum SaveMode {
+        case replace(expectedStamp: FileStamp?)
+        case createOnly
+    }
+
     private struct LoadedFile {
         let bytes: Data
         let entry: LibraryEntry
@@ -41,7 +46,14 @@ public final class LibraryService {
     @discardableResult
     public func save(_ document: PromptDocument, at path: String,
                      expectedStamp: FileStamp? = nil) throws -> LibraryEntry {
-        try locked { try saveDocument(document, at: path, expectedStamp: expectedStamp) }
+        try locked { try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp)) }
+    }
+
+    /// A real first save, including identity assignment, that atomically refuses
+    /// any occupied destination with FileStoreError.alreadyExists.
+    @discardableResult
+    public func create(_ document: PromptDocument, at path: String) throws -> LibraryEntry {
+        try locked { try saveDocument(document, at: path, mode: .createOnly) }
     }
 
     /// Later sync push calls this before transmitting an unassigned prompt.
@@ -54,13 +66,13 @@ public final class LibraryService {
             let loaded = try requireCurrent(at: path)
             if let expectedStamp, expectedStamp != loaded.entry.stamp { throw LibraryError.conflict }
             guard loaded.entry.document.frontMatter.id == nil else { return loaded.entry }
-            return try saveDocument(loaded.entry.document, at: path, expectedStamp: loaded.entry.stamp)
+            return try saveDocument(loaded.entry.document, at: path, mode: .replace(expectedStamp: loaded.entry.stamp))
         }
     }
 
     /// Probe Name.md, Name 2.md, Name 3.md, ... without reserving a name.
     /// Use a draft without id for a distinct copy identity. A caller should
-    /// recheck a chosen name before save; this helper is not an exclusive create.
+    /// use create(_:at:) to claim it without replacement; this probe reserves nothing.
     public func availablePath(for path: String) throws -> String {
         try locked {
             try LibraryPath.validate(path)
@@ -158,7 +170,7 @@ public final class LibraryService {
             if case .assigned(let id) = revision.identity {
                 document = try PromptCodec.assigningIdentity(id, to: document)
             }
-            return try saveDocument(document, at: path, expectedStamp: expectedStamp)
+            return try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp))
         }
     }
 
@@ -173,12 +185,18 @@ public final class LibraryService {
             }
     }
 
-    private func saveDocument(_ draft: PromptDocument, at path: String,
-                              expectedStamp: FileStamp?) throws -> LibraryEntry {
+    private func saveDocument(_ draft: PromptDocument, at path: String, mode: SaveMode) throws -> LibraryEntry {
         try LibraryPath.validate(path)
         _ = try PromptCodec.write(draft)
-        let current = try readCurrent(at: path)
-        if let expectedStamp, expectedStamp != current?.entry.stamp { throw LibraryError.conflict }
+        let current: LoadedFile?
+        switch mode {
+        case .replace(let expectedStamp):
+            current = try readCurrent(at: path)
+            if let expectedStamp, expectedStamp != current?.entry.stamp { throw LibraryError.conflict }
+        case .createOnly:
+            // Publication, rather than a read/probe, decides whether this path is occupied.
+            current = nil
+        }
         if let current, current.entry.document.isReadOnly {
             throw PromptWriteError.unsupportedFormat(current.entry.document.frontMatter.format)
         }
@@ -202,9 +220,14 @@ public final class LibraryService {
             if let current {
                 snapshot = try historyStore.snapshot(current.bytes, for: targetIdentity, at: date)
             }
-            // Recheck after staging history/migration, before replacing bytes.
-            guard try files.stamp(at: path) == current?.entry.stamp else { throw LibraryError.conflict }
-            try files.write(bytes, at: path)
+            switch mode {
+            case .replace:
+                // Recheck after staging history/migration, before replacing bytes.
+                guard try files.stamp(at: path) == current?.entry.stamp else { throw LibraryError.conflict }
+                try files.write(bytes, at: path)
+            case .createOnly:
+                try files.create(bytes, at: path)
+            }
         } catch {
             var recovered = true
             if let snapshot {

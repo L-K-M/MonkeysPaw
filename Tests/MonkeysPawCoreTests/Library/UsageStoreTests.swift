@@ -236,6 +236,10 @@ private final class UsageFaultStore: FileStore {
         if operation == .write { throw error }
         try backing.write(data, at: path)
     }
+    func create(_ data: Data, at path: String) throws {
+        if operation == .write { throw error }
+        try backing.create(data, at: path)
+    }
     func delete(at path: String) throws { try backing.delete(at: path) }
     func writePrivate(_ data: Data, at path: String) throws {
         if operation == .write { throw error }
