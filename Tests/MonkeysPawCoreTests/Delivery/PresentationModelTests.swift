@@ -224,7 +224,7 @@ final class SetupModelTests: XCTestCase {
         XCTAssertEqual(h.probe.fixes, [.hotkey])
     }
 
-    func testSelfTestUsesExistingSessionWhilePanelGestureOwnsConsent() {
+    func testSelfTestUsesExistingSessionWhileDeliveryGestureOwnsConsent() {
         let h = Harness(session: .gnomeWayland)
         h.delivery.service.deliver(DeliveryStrings.testPrompt, mode: .paste(.standard)) { _ in }
         h.delivery.scheduler.advance(by: Limits.settleDelayLinux)

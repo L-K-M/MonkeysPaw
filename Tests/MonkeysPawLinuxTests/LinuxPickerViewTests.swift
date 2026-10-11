@@ -91,6 +91,9 @@ final class LinuxPickerViewTests: XCTestCase {
     func testSearchPreeditKeepsReturnAndEscapeNativeUntilCompositionEnds() throws {
         try files.write(Data("Body".utf8), at: "a.md")
         try open()
+        // A failing regression may start asynchronous delivery. Drain it before
+        // tearDown destroys the native clipboard owner.
+        defer { _ = GTKTestSupport.spin { self.environment.pickerModel.state != .delivering } }
         let query = try widget("picker-query")
         let text = try XCTUnwrap(mp_entry_text_delegate(query))
         mp_test_emit_preedit_changed(text, "かな")
@@ -253,6 +256,37 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(launchedURLs, [URL(fileURLWithPath: root.path, isDirectory: true)])
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testUnavailableLibraryShortcutsKeepPickerQueryAndSelection() throws {
+        try files.write(Data("Cached Alpha".utf8), at: "cached-alpha.md")
+        try files.write(Data("Cached Beta".utf8), at: "cached-beta.md")
+        try open()
+        let picker = environment.pickerModel
+        let query = try widget("picker-query")
+        mp_entry_set_text(query, "cached")
+        let list = try widget("picker-results")
+        gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), 1))
+        XCTAssertEqual(picker.selectionIndex, 1)
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(GTKTestSupport.spin { !picker.libraryAvailable })
+
+        for key in [GDK_KEY_l, GDK_KEY_Return] {
+            XCTAssertTrue(sendKey(key, modifiers: GDK_CONTROL_MASK))
+            var uiDrained = false
+            environment.mainThread.run { uiDrained = true }
+            XCTAssertTrue(GTKTestSupport.spin { uiDrained })
+            XCTAssertNil(picker.requestedIntent)
+            XCTAssertEqual(picker.state, .picker)
+            XCTAssertTrue(environment.panel.isVisible)
+            XCTAssertTrue(launchedURLs.isEmpty)
+            XCTAssertEqual(picker.query, "cached")
+            XCTAssertEqual(String(cString: mp_entry_text(query)), "cached")
+            XCTAssertEqual(picker.selectionIndex, 1)
+            let status = try widget("picker-status")
+            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(status))), LinuxStrings.libraryUnavailable)
+            XCTAssertNotEqual(gtk_widget_get_visible(status), 0)
+        }
     }
 
     func testTransientCreationFailureStatusIsClearedWhenPickerReopens() throws {

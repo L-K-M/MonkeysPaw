@@ -63,6 +63,12 @@ struct PickerView: View {
 }
 
 private struct PickerResultsView: View {
+    private struct IndexedResult: Identifiable {
+        let position: Int
+        let row: PickerResultRow
+        var id: RelativePath { RelativePath(row.relativePath) }
+    }
+
     @ObservedObject var presentation: PickerViewState
 
     var body: some View {
@@ -70,12 +76,16 @@ private struct PickerResultsView: View {
             PickerEmptyView(presentation: presentation)
         } else {
             List(selection: selection) {
-                ForEach(presentation.model.results.indices, id: \.self) { position in
-                    PickerResultView(row: presentation.model.results[position]).tag(position)
+                ForEach(indexedResults) { result in
+                    PickerResultView(row: result.row).tag(result.position)
                 }
             }
             .accessibilityLabel(Strings.promptResults)
         }
+    }
+
+    private var indexedResults: [IndexedResult] {
+        presentation.model.results.enumerated().map { IndexedResult(position: $0.offset, row: $0.element) }
     }
 
     private var selection: Binding<Int?> {

@@ -28,12 +28,10 @@ final class PickerViewState: ObservableObject {
     }
 
     private func refresh() {
-        if model.state == .picker, let intent = model.takeRequestedIntent() {
-            requestedIntent(intent)
-            return
-        }
+        let intent = model.state == .picker ? model.takeRequestedIntent() : nil
         if state != model.state { focusRevision &+= 1 }
         state = model.state // Republishes field values, selection and preview too.
+        if let intent { requestedIntent(intent) }
     }
 
     func didShow() {
@@ -60,8 +58,9 @@ final class PickerViewState: ObservableObject {
         }
         let resolving = model.isResolvingBuiltins
             || (model.state == .fill && model.fillModel?.builtinsResolved == false)
-        let messages = [model.libraryAvailable ? nil : Strings.libraryUnavailable,
-                        resolving ? Strings.preparingPreview : nil, transientStatus].compactMap { $0 }
+        var messages = [model.libraryAvailable ? nil : Strings.libraryUnavailable,
+                        resolving ? Strings.preparingPreview : nil].compactMap { $0 }
+        if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
         return (messages + warnings.map(Strings.persistenceWarning)).joined(separator: "\n")
     }
 

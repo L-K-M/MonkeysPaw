@@ -252,14 +252,22 @@ final class LinuxEnvironment {
     }
 
     private func handle(_ intent: PickerModel.Intent) {
-        pickerModel.dismiss()
+        guard pickerModel.libraryAvailable else {
+            panel.showStatus(LinuxStrings.libraryUnavailable)
+            return
+        }
+
         let url: URL
         switch intent {
         case .openLibrary: url = libraryDirectory
         case .edit(_, let path):
-            guard (try? FileStorePath.validate(path)) != nil else { return }
+            guard (try? FileStorePath.validate(path)) != nil else {
+                panel.showStatus(LinuxStrings.promptFileUnavailable)
+                return
+            }
             url = libraryDirectory.appendingPathComponent(path)
         }
+        pickerModel.dismiss()
         mainThread.run { [weak self] in
             self?.launchURI(url)
         }

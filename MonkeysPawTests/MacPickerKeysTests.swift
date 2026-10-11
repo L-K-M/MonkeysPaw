@@ -1,30 +1,38 @@
 import AppKit
+import Carbon.HIToolbox
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPaw
 
 final class MacPickerKeysTests: XCTestCase {
     func testPickerTable() {
-        let cases: [(UInt16, String?, NSEvent.ModifierFlags, MacPickerKeys.Intent)] = [
-            (126, nil, [], .moveUp), (125, nil, [], .moveDown),
-            (53, nil, [], .escape), (37, "l", .command, .openLibrary),
-            (37, "L", .command, .openLibrary),
+        let cases: [(Int, String?, NSEvent.ModifierFlags, MacPickerKeys.Intent)] = [
+            (kVK_UpArrow, nil, [], .moveUp), (kVK_DownArrow, nil, [], .moveDown),
+            (kVK_Escape, nil, [], .escape), (kVK_ANSI_L, "l", .command, .openLibrary),
+            (kVK_ANSI_L, "L", .command, .openLibrary),
+            (kVK_ANSI_L, "д", .command, .openLibrary),
+            (kVK_ANSI_L, nil, .command, .openLibrary),
+            (kVK_ANSI_A, "l", .command, .openLibrary),
         ]
         for (code, text, flags, expected) in cases {
-            XCTAssertEqual(route(code, text: text, flags: flags, state: .picker), expected)
+            for kind: FieldKind? in [nil, .text, .choice, .multiline] {
+                XCTAssertEqual(route(code, text: text, flags: flags, state: .picker, kind: kind), expected)
+            }
         }
-        for code: UInt16 in [36, 76] {
-            XCTAssertEqual(route(code, state: .picker), .use(.paste(.standard)))
-            XCTAssertEqual(route(code, flags: .command, state: .picker), .edit)
-            XCTAssertEqual(route(code, flags: .option, state: .picker), .use(.copyOnly))
+        for code in [kVK_Return, kVK_ANSI_KeypadEnter] {
+            for kind: FieldKind? in [nil, .text, .choice, .multiline] {
+                XCTAssertEqual(route(code, state: .picker, kind: kind), .use(.paste(.standard)))
+                XCTAssertEqual(route(code, flags: .command, state: .picker, kind: kind), .edit)
+                XCTAssertEqual(route(code, flags: .option, state: .picker, kind: kind), .use(.copyOnly))
+            }
         }
     }
 
     func testFillTableAndNativeMultilineReturn() {
-        XCTAssertEqual(route(48, state: .fill), .focusNext)
-        XCTAssertEqual(route(48, flags: .shift, state: .fill), .focusPrevious)
-        XCTAssertEqual(route(53, state: .fill), .escape)
-        for code: UInt16 in [36, 76] {
+        XCTAssertEqual(route(kVK_Tab, state: .fill), .focusNext)
+        XCTAssertEqual(route(kVK_Tab, flags: .shift, state: .fill), .focusPrevious)
+        XCTAssertEqual(route(kVK_Escape, state: .fill), .escape)
+        for code in [kVK_Return, kVK_ANSI_KeypadEnter] {
             for kind: FieldKind in [.text, .choice] {
                 XCTAssertEqual(route(code, state: .fill, kind: kind), .deliverPreferred)
             }
@@ -35,8 +43,8 @@ final class MacPickerKeysTests: XCTestCase {
                 XCTAssertEqual(route(code, flags: .option, state: .fill, kind: kind), .deliver(.copyOnly))
             }
         }
-        XCTAssertNil(route(37, text: "l", flags: .command, state: .fill))
-        for code: UInt16 in [125, 126] {
+        XCTAssertNil(route(kVK_ANSI_L, text: "l", flags: .command, state: .fill))
+        for code in [kVK_DownArrow, kVK_UpArrow] {
             for kind: FieldKind? in [nil, .text, .choice, .multiline] {
                 XCTAssertNil(route(code, state: .fill, kind: kind))
             }
@@ -45,7 +53,8 @@ final class MacPickerKeysTests: XCTestCase {
 
     func testInactiveStatesNeverRoute() {
         for state: PickerModel.State in [.closed, .delivering, .done(.copiedOnly(.requested))] {
-            for code: UInt16 in [36, 76, 48, 53, 125, 126, 37] {
+            for code in [kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab, kVK_Escape,
+                         kVK_DownArrow, kVK_UpArrow, kVK_ANSI_L] {
                 for flags: NSEvent.ModifierFlags in [[], .command, .option, .shift, [.command, .shift]] {
                     XCTAssertNil(route(code, text: "l", flags: flags, state: state, kind: .text))
                 }
@@ -54,21 +63,25 @@ final class MacPickerKeysTests: XCTestCase {
     }
 
     func testIncidentalFlagsAndUnboundChords() {
-        for flags: NSEvent.ModifierFlags in [.capsLock, [.numericPad, .function], [.capsLock, .numericPad, .function]] {
-            XCTAssertEqual(route(36, flags: flags, state: .picker), .use(.paste(.standard)))
-            XCTAssertEqual(route(36, flags: flags.union(.command), state: .fill, kind: .multiline), .deliver(.paste(.standard)))
+        for flags: NSEvent.ModifierFlags in [.capsLock, .function, [.numericPad, .function], [.capsLock, .numericPad, .function]] {
+            XCTAssertEqual(route(kVK_Return, flags: flags, state: .picker), .use(.paste(.standard)))
+            XCTAssertEqual(route(kVK_Return, flags: flags, state: .fill, kind: .text), .deliverPreferred)
+            XCTAssertEqual(route(kVK_Return, flags: flags.union(.command), state: .fill, kind: .multiline), .deliver(.paste(.standard)))
         }
         for state: PickerModel.State in [.picker, .fill] {
             for flags: NSEvent.ModifierFlags in [.shift, .control, [.command, .shift], [.option, .command], [.control, .shift]] {
-                XCTAssertNil(route(36, flags: flags, state: state, kind: .text))
+                for code in [kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab, kVK_Escape, kVK_DownArrow, kVK_UpArrow] {
+                    if state == .fill, code == kVK_Tab, flags == .shift { continue }
+                    XCTAssertNil(route(code, flags: flags, state: state, kind: .text))
+                }
             }
         }
-        XCTAssertNil(route(0, text: "a", state: .picker))
-        XCTAssertNil(route(48, state: .picker))
+        XCTAssertNil(route(kVK_ANSI_A, text: "a", state: .picker))
+        XCTAssertNil(route(kVK_Tab, state: .picker))
     }
 
-    private func route(_ code: UInt16, text: String? = nil, flags: NSEvent.ModifierFlags = [],
+    private func route(_ code: Int, text: String? = nil, flags: NSEvent.ModifierFlags = [],
                        state: PickerModel.State, kind: FieldKind? = nil) -> MacPickerKeys.Intent? {
-        MacPickerKeys.intent(keyCode: code, characters: text, modifiers: flags, state: state, fieldKind: kind)
+        MacPickerKeys.intent(keyCode: UInt16(code), characters: text, modifiers: flags, state: state, fieldKind: kind)
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import MonkeysPawCore
 
 /// Pure routing; incidental device flags do not change a binding.
@@ -16,17 +17,19 @@ enum MacPickerKeys {
         let flags = modifiers.intersection(.deviceIndependentFlagsMask)
             .subtracting([.capsLock, .numericPad, .function])
 
-        if keyCode == 53, flags.isEmpty { return .escape }
+        if keyCode == UInt16(kVK_Escape), flags.isEmpty { return .escape }
         if state == .picker {
-            if keyCode == 126, flags.isEmpty { return .moveUp }
-            if keyCode == 125, flags.isEmpty { return .moveDown }
-            if characters?.lowercased() == "l", flags == .command { return .openLibrary }
-        } else if keyCode == 48 {
+            if keyCode == UInt16(kVK_UpArrow), flags.isEmpty { return .moveUp }
+            if keyCode == UInt16(kVK_DownArrow), flags.isEmpty { return .moveDown }
+            if flags == .command, keyCode == UInt16(kVK_ANSI_L) || characters?.lowercased() == "l" {
+                return .openLibrary
+            }
+        } else if keyCode == UInt16(kVK_Tab) {
             if flags.isEmpty { return .focusNext }
             if flags == .shift { return .focusPrevious }
         }
 
-        guard keyCode == 36 || keyCode == 76 else { return nil } // Return / keypad Enter.
+        guard keyCode == UInt16(kVK_Return) || keyCode == UInt16(kVK_ANSI_KeypadEnter) else { return nil }
         if state == .picker {
             switch flags {
             case []: return .use(.paste(.standard))

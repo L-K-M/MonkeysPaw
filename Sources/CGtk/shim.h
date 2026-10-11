@@ -46,7 +46,8 @@ static inline GtkBox       *mp_box(GtkWidget *w)       { return GTK_BOX(w); }
 static inline GtkLabel     *mp_label(GtkWidget *w)     { return GTK_LABEL(w); }
 static inline GtkEntry     *mp_entry(GtkWidget *w)     { return GTK_ENTRY(w); }
 static inline GtkWidget    *mp_entry_text_delegate(GtkWidget *w) {
-    return GTK_WIDGET(gtk_editable_get_delegate(GTK_EDITABLE(w)));
+    GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(w));
+    return delegate != NULL ? GTK_WIDGET(delegate) : NULL;
 }
 static inline GtkTextView  *mp_text_view(GtkWidget *w) { return GTK_TEXT_VIEW(w); }
 static inline GtkListBox   *mp_list_box(GtkWidget *w) { return GTK_LIST_BOX(w); }

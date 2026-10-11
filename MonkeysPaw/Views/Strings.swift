@@ -19,6 +19,7 @@ enum Strings {
     static let library = "Library"
     static let emptyLibrary = "Your library is empty. Open the library folder to add a prompt."
     static let libraryUnavailable = "Library unavailable. Cached prompts remain available. Check the folder and restart to retry."
+    static let promptFileUnavailable = "This prompt's file is unavailable."
     static let assistantNotConfigured = "Set up a provider in Settings"
     static let preparingPreview = "Preparing preview…"
     static let newPromptBody = "Write your prompt here.\n"

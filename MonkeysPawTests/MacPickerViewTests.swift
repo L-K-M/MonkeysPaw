@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import MonkeysPawCore
 import XCTest
@@ -17,6 +18,7 @@ final class MacPickerViewTests: XCTestCase {
     private var originalWindows: Set<ObjectIdentifier> = []
 
     override func setUpWithError() throws {
+        try super.setUpWithError()
         originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         root = directory.appendingPathComponent("library", isDirectory: true)
@@ -25,6 +27,7 @@ final class MacPickerViewTests: XCTestCase {
     }
 
     override func tearDown() {
+        defer { super.tearDown() }
         delegate?.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         delegate?.pickerModel?.dismiss()
         controller?.hide()
@@ -112,6 +115,35 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.state, .closed)
     }
 
+    func testUnavailableLibraryShortcutsKeepPickerQueryAndSelection() throws {
+        try files.write(Data("Cached Alpha".utf8), at: "cached-alpha.md")
+        try files.write(Data("Cached Beta".utf8), at: "cached-beta.md")
+        let picker = try open()
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        let panel = try currentPanel()
+        let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        presentation.setQuery("cached")
+        picker.selectResult(at: 1)
+        XCTAssertEqual(picker.selectionIndex, 1)
+        XCTAssertTrue(spin { query.stringValue == "cached" })
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(spin { !picker.libraryAvailable })
+
+        for (code, characters) in [(kVK_ANSI_L, "l"), (kVK_Return, "\r")] {
+            try sendKey(code: UInt16(code), characters: characters, modifiers: .command, to: panel)
+            XCTAssertNil(picker.requestedIntent)
+            XCTAssertEqual(picker.state, .picker)
+            XCTAssertEqual(presentation.state, .picker)
+            XCTAssertTrue(controller.isVisible)
+            XCTAssertTrue(launched.isEmpty)
+            XCTAssertEqual(picker.query, "cached")
+            XCTAssertEqual(query.stringValue, "cached")
+            XCTAssertEqual(picker.selectionIndex, 1)
+            XCTAssertEqual(presentation.transientStatus, Strings.libraryUnavailable)
+            XCTAssertEqual(presentation.status, Strings.libraryUnavailable)
+        }
+    }
+
     func testExternalSaveReachesPickerWithinOneSecondThroughFSEvents() throws {
         let picker = try open()
         let started = ProcessInfo.processInfo.systemUptime
@@ -141,13 +173,22 @@ final class MacPickerViewTests: XCTestCase {
     func testRootRemovalKeepsCacheAndRequiresRestart() throws {
         try files.write(Data("Cached".utf8), at: "cached.md")
         let picker = try open()
+        // Keep an independent stream alive to prove FSEvents saw restoration.
+        let restored = expectation(description: "FSEvents observed the restored prompt")
+        let observer = try RootedFileWatcher(root: root, log: OSLogSink())
+        try observer.start { event in
+            if event == .file(FileStoreEvent(relativePath: "restored.md", kind: .created)) { restored.fulfill() }
+        }
+        defer { observer.stop() }
         try FileManager.default.removeItem(at: root)
         XCTAssertTrue(spin { !picker.libraryAvailable })
         XCTAssertEqual(picker.results.count, 1)
         XCTAssertEqual(picker.selectedPreview, .body("Cached"))
         XCTAssertTrue(try XCTUnwrap(delegate.pickerPresentation).status.contains(Strings.libraryUnavailable))
         try files.write(Data("Restored".utf8), at: "restored.md")
-        pump(for: 0.8)
+        wait(for: [restored], timeout: 3)
+        XCTAssertFalse(picker.libraryAvailable)
+        XCTAssertEqual(picker.results.map(\.relativePath), ["cached.md"])
         picker.dismiss()
         picker.open()
         XCTAssertFalse(picker.libraryAvailable)
@@ -332,6 +373,40 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(fill.preview, .rendered("First\n"))
     }
 
+    func testMultilineTypingCanBeUndoneWithCommandZ() throws {
+        // Injected test graphs skip the application's main menu. Supply its
+        // Undo item so Command-Z follows the native responder chain.
+        let originalMenu = NSApp.mainMenu
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu()
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
+        defer { NSApp.mainMenu = originalMenu }
+        try files.write(Data("---\nfields:\n  detail: {type: multiline, default: First}\n---\n{{detail}}".utf8), at: "multiline.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        let panel = try currentPanel()
+        XCTAssertTrue(spin {
+            guard let detail = self.find("fill-field-detail") else { return false }
+            return panel.firstResponder === detail
+        })
+        let detail = try XCTUnwrap(find("fill-field-detail") as? PickerMultilineTextView)
+        XCTAssertTrue(detail.allowsUndo)
+        detail.setSelectedRange(NSRange(location: detail.string.utf16.count, length: 0))
+        try sendKey(code: UInt16(kVK_ANSI_X), characters: "x", to: panel)
+        XCTAssertEqual(detail.string, "Firstx")
+        XCTAssertEqual(fill.values["detail"], "Firstx")
+        detail.breakUndoCoalescing()
+        try sendKey(code: UInt16(kVK_ANSI_Z), characters: "z", modifiers: .command, to: panel)
+        XCTAssertTrue(spin { detail.string == "First" && fill.values["detail"] == "First" })
+        XCTAssertEqual(picker.state, .fill)
+        XCTAssertEqual(fill.preview, .rendered("First"))
+    }
+
     func testSearchMarkedTextKeepsReturnAndEscapeOutOfPickerRouting() throws {
         try files.write(Data("---\ntitle: かな\n---\nBody".utf8), at: "search.md")
         let picker = try open()
@@ -447,12 +522,16 @@ final class MacPickerViewTests: XCTestCase {
     func testHandledIntentDoesNotRepeatOrBlockLaterPublication() throws {
         let picker = try open()
         var intents: [PickerModel.Intent] = []
-        let presentation = PickerViewState(model: picker, mainThread: DispatchMainThread(),
-            requestedIntent: { intents.append($0) }, createPrompt: { _ in })
         var publications = 0
+        let presentation = PickerViewState(model: picker, mainThread: DispatchMainThread(),
+            requestedIntent: {
+                XCTAssertGreaterThan(publications, 0, "Publish before handling an intent that keeps the panel open")
+                intents.append($0)
+            }, createPrompt: { _ in })
         let subscription = presentation.objectWillChange.sink { publications += 1 }
         defer { subscription.cancel() }
         picker.openLibrary() // This handler deliberately leaves the panel open.
+        XCTAssertGreaterThan(publications, 0)
         picker.setQuery("new query")
         XCTAssertEqual(intents, [.openLibrary])
         XCTAssertNil(picker.requestedIntent)

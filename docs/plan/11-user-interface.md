@@ -74,9 +74,10 @@ On both desktops, active input-method composition keeps keys in the focused
 native text control. Return confirms conversion and Escape cancels composition
 without using a prompt, delivering a form or dismissing the panel. GTK tracks
 non-empty preedit per control; AppKit checks the first responder's marked text.
-Edit/Library requests are consumed once before their handler runs. Even an
-invalid edit path dismisses without launching, so later model changes remain
-renderable.
+Edit/Library requests are consumed once before their handler runs. An invalid
+edit path or unavailable library keeps the panel open with a status, preserving
+the query and selection. Valid requests dismiss before launching. macOS
+publishes the current view state before handling the request.
 
 macOS installs the picker hook, arms FSEvents, then rebuilds. Scheduler updates
 marshal through `MainThread`; a root preflight protects pending reloads after

@@ -164,6 +164,7 @@ struct PickerMultilineInput: NSViewRepresentable {
         text.textContainer?.widthTracksTextView = true
         text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         text.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        text.allowsUndo = true
         text.delegate = context.coordinator
         scroll.documentView = text
         return scroll

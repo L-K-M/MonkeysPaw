@@ -240,9 +240,10 @@ final class LinuxPanel: PanelWindow {
         gtk_label_set_text(mp_label(hint), inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
         var warnings = picker.persistenceWarnings
         for warning in picker.fillModel?.persistenceWarnings ?? [] where !warnings.contains(warning) { warnings.append(warning) }
-        let messages = [picker.libraryAvailable ? nil : LinuxStrings.libraryUnavailable,
-                        picker.isResolvingBuiltins ? LinuxStrings.resolvingBuiltins : nil, transientStatus]
-            .compactMap { $0 } + warnings.map(LinuxStrings.persistenceWarning)
+        var messages = [picker.libraryAvailable ? nil : LinuxStrings.libraryUnavailable,
+                        picker.isResolvingBuiltins ? LinuxStrings.resolvingBuiltins : nil].compactMap { $0 }
+        if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
+        messages += warnings.map(LinuxStrings.persistenceWarning)
         gtk_label_set_text(mp_label(status), messages.joined(separator: "\n"))
         gtk_widget_set_visible(status, messages.isEmpty ? 0 : 1)
     }
@@ -369,7 +370,8 @@ final class LinuxPanel: PanelWindow {
         return controls.firstIndex { $0.widget == focus || gtk_widget_is_ancestor(focus, $0.widget) != 0 }
     }
 
-    private func observePreedit(in widget: GTK.Widget) -> Preedit {
+    private func observePreedit(in widget: GTK.Widget?) -> Preedit? {
+        guard let widget else { return nil }
         let preedit = Preedit()
         GTK.onPreeditChanged(widget) { preedit.isActive = $0 }
         return preedit
