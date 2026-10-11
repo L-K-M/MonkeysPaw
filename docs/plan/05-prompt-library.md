@@ -8,7 +8,7 @@
 | Settings | macOS `~/Library/Application Support/ch.lkmc.MonkeysPaw/settings.json`; Linux `$XDG_CONFIG_HOME/monkeyspaw/settings.json`. Every app-owned JSON file carries a `version` field and migrates forward on load. | no |
 | History | `<data>/history/<prompt-id>/<UTC-timestamp>-<sequence>.md` (`Limits.historyCapPerPrompt = 50`). Synced prompts also have server revisions. | no |
 | Logs | `<data>/logs/monkeyspaw.log` (§12) | no |
-| Usage (ranking, last delivery) | `<data>/usage.json` | no |
+| Usage (ranking, last delivery) | `<data>/usage/<identity-key>` (versioned JSON) | no |
 | Remembered values | `<data>/values.json`, `PRIVATE_FILE_MODE = 0600` | no |
 | Sync state | `<data>/sync/state.json` (§9.2) | no |
 | Portal restore token | `<data>/portal.json` (§6.3) | no |
@@ -185,8 +185,9 @@ M2b save and identity API:
   `LibraryError.identityMismatch`. Reassigning an assigned file performs
   no write and creates no revision.
 - `PromptKeyedStore.migrateKey(from:to:)` moves keyed state before the
-  library write. History participates now; later usage/values stores are
-  injected through the service initializer. Unassigned moves migrate
+  library write. History and M2d's usage store participate now; values joins
+  in the fill slice. Usage is injected through the service initializer.
+  Unassigned moves migrate
   path-hash to path-hash; assignment migrates path-hash to ULID. Assigned
   moves change no key. Occupied destination keys fail with
   `keyedStateConflict`, preserving both states rather than merging or
@@ -290,17 +291,66 @@ Fill service; these pure APIs never read the clock, time zone or clipboard.
 
 ### 5.4 Index, search, ranking
 
-- **Index.** An in-memory index of every prompt (title, tags, folder,
-  description, body), rebuilt on watcher events. A few thousand files load in
-  well under a second.
-- **Fuzzy matching.** Implemented in Core: subsequence match with bonuses for
-  word starts and consecutive runs. Weights: title > tags/folder >
-  description > body. A `#tag` token filters.
+- **Index.** Core's `PromptIndex` caches every prompt's title, tags, folder,
+  description and body in memory, including invalid entries and their issues
+  as returned by `LibraryService.entries()`. `rebuild()` replaces the whole
+  index. `apply(_:)` drops deleted paths and reloads created/modified paths
+  through `load(at:)`; it drops vanished files, retrying once for a stamp/read
+  conflict to detect deletion during a load. Other read/conflict failures
+  are explicit and retain the last completed index. A rebuild or batch is
+  published only when all reads succeed. Path keys and tie-breaks use exact
+  UTF-8 bytes. A few thousand files load in well under a second; M2d measures
+  a 3,000-entry in-memory FileStore rebuild; its three-second smoke bound
+  gives slower CI hosts headroom, and the measured time is recorded separately.
+  Disk performance still depends on the selected filesystem. Watcher-to-index
+  composition is proven with fakes; production app wiring is the picker slice.
+- **Fuzzy matching.** All whitespace-separated ordinary terms must be
+  subsequences, possibly in different fields. Fields and terms use Unicode
+  case folding with the fixed `en_US_POSIX` locale, then NFC; accents remain
+  significant. Lengths and positions count normalized Unicode scalars.
+  For a term of length `m` in a field of length `n`, maximize
+  `raw = m + 2W + C` over alignments. `W` counts matched word starts (position
+  zero or following a non-alphanumeric scalar); `C` counts consecutive
+  matched pairs. The normalized score is
+  `raw / (4m - 1) × (1 + m/n) / 2`, in `(0, 1]`. The denominator bounds all
+  bonuses and the length factor favours short fields. Dynamic programming
+  chooses the best alignment rather than the first subsequence.
+  Field weights are title **4**, each tag/folder **2**, description **1**,
+  body **0.5**. Each term takes its highest weighted field score; `match` is
+  the average across ordinary terms. Equal field scores prefer the declared
+  field order (title, tags, folder, description, body). A `#tag` token is an
+  exact tag filter after the same normalization, with no numeric bonus;
+  multiple filters all must match, and a bare `#` matches nothing. Queries
+  containing only matching filters use `match = 1`.
 - **Ranking.** `score = match × (1 + frecency)`, where
-  `frecency = Σ 2^(−age_days / 14)` over recorded uses, capped at
-  `FRECENCY_CAP = 32`. Favourites get `FAVORITE_BOOST = 1.5`. An empty query
-  sorts by frecency, then favourites, then title. Unit-tested with an
-  injected clock.
+  `frecency = Σ 2^(−age_days / Limits.frecencyHalfLifeDays)` over retained
+  uses, capped at `Limits.frecencyCap = 32`. The half-life is **14** elapsed
+  24-hour days, independent of calendars/DST. Future uses have age zero
+  after a backwards clock adjustment. Favourites multiply nonempty-query
+  scores by `Limits.favoriteBoost = 1.5`. Empty/whitespace-only queries sort
+  by frecency descending, then favourites first, then title; their result
+  score is frecency. Other queries sort by score descending. All ties sort
+  by title, then relative path, using ascending UTF-8 byte order. Search
+  samples the injected `WallClock` once, so cached uses decay on every query.
+- **Usage.** `UsageStore` reads/writes the app-data `FileStore` at
+  `usage/<identity-key>` (no extension), using the same path-hash/ULID keys
+  as history. Version 1 is deterministic sorted-key JSON:
+  `{"events":[Unix seconds as doubles],"version":1}`. Timestamps must be
+  finite; events retain recording order. `recordUse(identity:at:)` uses an
+  explicit timestamp or the injected `WallClock`, appends, atomically
+  replaces the file, and retains the last `Limits.usageEventCap = 1,024`
+  events. At one use/day, discarded events are over 73 half-lives old,
+  contributing less than `1e-22` each; dense recent bursts already saturate
+  the cap of 32. This is a bounded-history approximation, not age-based
+  pruning or a guarantee about every possible usage distribution.
+  Missing state reads as no events. Corrupt/unsupported state fails with
+  `LibraryError.operationFailed`, never resetting recorded uses. FileStore
+  errors remain typed; no OS error text is exposed or logged.
+  `PromptKeyedStore` migration moves the entire file unchanged and refuses
+  occupied destinations with `keyedStateConflict`, permitting the existing
+  assignment/move rollback machinery to reverse it. `PromptIndex.recordUse`
+  updates its cached events only after persistence succeeds. Neither service
+  owns a driver or has a production caller in M2d.
 
 ### 5.5 History, external edits, import
 

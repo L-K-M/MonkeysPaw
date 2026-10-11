@@ -2,8 +2,8 @@ import Foundation
 @testable import MonkeysPawCore
 
 final class MemoryFileStore: FileStore {
-    private struct File { let bytes: Data; let stamp: FileStamp }
-    private var files = [String: File]()
+    private struct File { let path: String; let bytes: Data; let stamp: FileStamp }
+    private var files = [Data: File]()
     private var generation = 0
     var failNextWrite = false
     var failNextDelete = false
@@ -18,20 +18,21 @@ final class MemoryFileStore: FileStore {
         accessCount += 1
         listCount += 1
         // Deliberately unsorted to prove service ordering.
-        return files.map { StoredFile(relativePath: $0.key, stamp: $0.value.stamp) }.sorted { $0.relativePath > $1.relativePath }
+        return files.values.map { StoredFile(relativePath: $0.path, stamp: $0.stamp) }
+            .sorted { $0.relativePath > $1.relativePath }
     }
 
     func stamp(at path: String) throws -> FileStamp? {
         accessCount += 1
         try FileStorePath.validate(path)
-        return files[path]?.stamp
+        return files[Data(path.utf8)]?.stamp
     }
 
     func read(at path: String) throws -> Data {
         accessCount += 1
         try FileStorePath.validate(path)
         try onRead?(path)
-        guard let file = files[path] else { throw FileStoreError.notFound }
+        guard let file = files[Data(path.utf8)] else { throw FileStoreError.notFound }
         return file.bytes
     }
 
@@ -43,7 +44,7 @@ final class MemoryFileStore: FileStore {
             throw FileStoreError.ioFailure
         }
         generation += 1
-        files[path] = File(bytes: data, stamp: FileStamp("memory-\(generation)"))
+        files[Data(path.utf8)] = File(path: path, bytes: data, stamp: FileStamp("memory-\(generation)"))
         onWrite?(path)
     }
 
@@ -54,7 +55,7 @@ final class MemoryFileStore: FileStore {
             failNextDelete = false
             throw FileStoreError.ioFailure
         }
-        guard files.removeValue(forKey: path) != nil else { throw FileStoreError.notFound }
+        guard files.removeValue(forKey: Data(path.utf8)) != nil else { throw FileStoreError.notFound }
     }
 
     func move(from source: String, to destination: String) throws {
@@ -63,10 +64,10 @@ final class MemoryFileStore: FileStore {
         try FileStorePath.validate(destination)
         moveCount += 1
         if moveCount == failMoveNumber { throw FileStoreError.ioFailure }
-        guard files[destination] == nil else { throw FileStoreError.alreadyExists }
-        guard let file = files[source] else { throw FileStoreError.notFound }
-        files[destination] = file
-        files[source] = nil
+        guard files[Data(destination.utf8)] == nil else { throw FileStoreError.alreadyExists }
+        guard let file = files[Data(source.utf8)] else { throw FileStoreError.notFound }
+        files[Data(destination.utf8)] = File(path: destination, bytes: file.bytes, stamp: file.stamp)
+        files[Data(source.utf8)] = nil
     }
 
     func put(_ source: String, at path: String) throws { try write(Data(source.utf8), at: path) }
