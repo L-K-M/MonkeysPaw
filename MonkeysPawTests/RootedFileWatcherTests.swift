@@ -511,8 +511,20 @@ final class RootedFileWatcherTests: XCTestCase {
 /// on the main thread. Keeping this helper on Linux mirrors the same checks.
 private final class RawEvents: @unchecked Sendable {
     private let received = WatcherEvents<FileStoreWatchEvent>()
+    /// The raw driver reports every regular file. Foundation's atomic writes
+    /// briefly create `<name>.sb-<hex>-<random>` siblings, which a rescan may or
+    /// may not catch; drop them so exact assertions see only the test's files.
     var values: [FileStoreEvent] {
-        received.values.compactMap { if case .file(let event) = $0 { return event }; return nil }
+        received.values.compactMap { update -> FileStoreEvent? in
+            guard case .file(let event) = update, !Self.isAtomicWriteTemporary(event.relativePath) else { return nil }
+            return event
+        }
+    }
+
+    private static func isAtomicWriteTemporary(_ path: String) -> Bool {
+        let name = path.split(separator: "/").last.map(String.init) ?? path
+        guard let marker = name.range(of: ".sb-", options: .backwards) else { return false }
+        return !name[marker.upperBound...].isEmpty && !name[..<marker.lowerBound].isEmpty
     }
     func append(_ event: FileStoreWatchEvent) { received.append(event) }
 }
