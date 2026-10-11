@@ -94,6 +94,13 @@ final class RootedFileStore: FileStore {
             try data.write(to: URL(fileURLWithPath: temporaryPath))
             guard fsync(descriptor) == 0 else { throw FileStoreError.ioFailure }
             guard rename(temporaryPath, url.path) == 0 else { throw FileStoreError.ioFailure }
+            // Persist the directory entry too; best-effort, since some
+            // filesystems reject directory fsync.
+            let dirFd = Glibc.open(url.deletingLastPathComponent().path, O_RDONLY)
+            if dirFd >= 0 {
+                _ = fsync(dirFd)
+                _ = Glibc.close(dirFd)
+            }
         }
     }
 
