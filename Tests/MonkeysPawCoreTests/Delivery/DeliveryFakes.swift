@@ -1,3 +1,4 @@
+import Foundation
 import MonkeysPawCore
 
 enum DeliveryEvent: Equatable {
@@ -123,14 +124,58 @@ final class FakeFocus: FocusTracker {
     }
 }
 
-final class FakeClipboard: Clipboard {
-    private(set) var text: String?
+final class FakeClipboard: Clipboard, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedText: String?
+    private var numberOfReads = 0
+    private var mode: FakeCompletionMode = .immediate
+    private var reads: [@Sendable (String?) -> Void] = []
     private let recorder: DeliveryRecorder
+
+    var text: String? { locked { storedText } }
+    var readCount: Int { locked { numberOfReads } }
+    var readMode: FakeCompletionMode {
+        get { locked { mode } }
+        set { locked { mode = newValue } }
+    }
+
     init(_ recorder: DeliveryRecorder) { self.recorder = recorder }
+
+    // Synchronous test helper returns raw text, including empty strings.
     func readText() -> String? { text }
+
+    // The port read models nil-for-empty pasteboard semantics.
+    func readText(_ completion: @escaping @Sendable (String?) -> Void) {
+        lock.lock()
+        numberOfReads += 1
+        switch mode {
+        case .immediate:
+            let value = storedText.flatMap { $0.isEmpty ? nil : $0 }
+            lock.unlock()
+            completion(value)
+        case .deferred:
+            reads.append(completion)
+            lock.unlock()
+        }
+    }
+
+    func completeRead(_ text: String?) {
+        let completion = locked {
+            precondition(!reads.isEmpty, "No pending clipboard read to complete.")
+            return reads.removeFirst()
+        }
+        completion(text)
+    }
+
     func writeText(_ text: String) {
-        self.text = text
+        locked { storedText = text }
         recorder.events.append(.write(text))
+    }
+
+    private func locked<T>(_ work: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return work()
     }
 }
 

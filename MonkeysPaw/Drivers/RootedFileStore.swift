@@ -71,6 +71,38 @@ final class RootedFileStore: FileStore {
         }
     }
 
+    func writePrivate(_ data: Data, at path: String) throws {
+        try sanitized {
+            guard let url = try locate(path, parents: .create) else { throw FileStoreError.invalidRoot }
+            if let attributes = try attributes(at: url) { try requireRegular(attributes) }
+
+            // mkstemp creates a private file. fchmod pins 0600 even under a
+            // restrictive umask, before any bytes are written or renamed.
+            var template = Array(url.deletingLastPathComponent()
+                .appendingPathComponent(".monkeyspaw-private-XXXXXX").path.utf8CString)
+            let descriptor = mkstemp(&template)
+            guard descriptor >= 0 else { throw FileStoreError.ioFailure }
+            let temporaryPath = String(cString: template)
+            defer {
+                _ = Darwin.close(descriptor)
+                _ = unlink(temporaryPath)
+            }
+            guard fchmod(descriptor, mode_t(Limits.privateFileMode)) == 0 else { throw FileStoreError.ioFailure }
+            // Data.write consumes all bytes or throws; a FileHandle single
+            // write(2) could silently publish a truncated private file.
+            try data.write(to: URL(fileURLWithPath: temporaryPath))
+            guard fsync(descriptor) == 0 else { throw FileStoreError.ioFailure }
+            guard rename(temporaryPath, url.path) == 0 else { throw FileStoreError.ioFailure }
+            // Persist the directory entry too; best-effort, since some
+            // filesystems reject directory fsync.
+            let dirFd = Darwin.open(url.deletingLastPathComponent().path, O_RDONLY | O_CLOEXEC)
+            if dirFd >= 0 {
+                _ = fsync(dirFd)
+                _ = Darwin.close(dirFd)
+            }
+        }
+    }
+
     func delete(at path: String) throws {
         try sanitized {
             guard let url = try locate(path, parents: .existing), let attributes = try attributes(at: url) else {

@@ -60,6 +60,51 @@ static inline void mp_clipboard_set_text(GtkWidget *owner, const char *text) {
     gdk_clipboard_set_text(gtk_widget_get_clipboard(owner), text);
 }
 
+typedef void (*MPClipboardRead)(const char *, gpointer);
+typedef struct {
+    MPClipboardRead callback;
+    gpointer data;
+    GDestroyNotify destroy;
+} MPClipboardReadBox;
+
+static inline void mp_clipboard_read_box_free(gpointer data) {
+    MPClipboardReadBox *box = data;
+    if (box->destroy) box->destroy(box->data);
+    g_free(box);
+}
+
+static inline void mp_clipboard_read_complete(GObject *source, GAsyncResult *result, gpointer data) {
+    GTask *task = G_TASK(data);
+    GError *error = NULL;
+    char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(source), result, &error);
+    if (error) {
+        g_clear_error(&error);
+        g_clear_pointer(&text, g_free);
+    }
+    g_task_return_pointer(task, text, g_free);
+    g_object_unref(task);
+}
+
+static inline void mp_clipboard_read_deliver(GObject *source, GAsyncResult *result, gpointer data) {
+    GTask *task = G_TASK(result);
+    MPClipboardReadBox *box = g_task_get_task_data(task);
+    char *text = g_task_propagate_pointer(task, NULL);
+    box->callback(text && *text ? text : NULL, box->data);
+    g_free(text);
+}
+
+/* Call on the owning GTK thread. GTask returns once on its captured
+ * thread-default context. The destroy notify releases Swift's callback box. */
+static inline void mp_clipboard_read_text(GtkWidget *owner, MPClipboardRead callback,
+                                          gpointer data, GDestroyNotify destroy) {
+    GdkClipboard *clipboard = gtk_widget_get_clipboard(owner);
+    GTask *task = g_task_new(clipboard, NULL, mp_clipboard_read_deliver, NULL);
+    MPClipboardReadBox *box = g_new(MPClipboardReadBox, 1);
+    *box = (MPClipboardReadBox){callback, data, destroy};
+    g_task_set_task_data(task, box, mp_clipboard_read_box_free);
+    gdk_clipboard_read_text_async(clipboard, NULL, mp_clipboard_read_complete, task);
+}
+
 static inline void mp_notify(GtkApplication *app, const char *title, const char *body) {
     GNotification *notification = g_notification_new(title);
     g_notification_set_body(notification, body);

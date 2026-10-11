@@ -90,6 +90,12 @@ public enum Limits {
     /// bursts already saturate the frecency cap. This bounds the stored tail.
     public static let usageEventCap: Int = 1_024
 
+    /// §5.1: reject remembered-value state larger than 1 MiB, without pruning.
+    public static let valuesFileCapBytes: Int = 1_048_576
+
+    /// §5.1 PRIVATE_FILE_MODE: POSIX mode pinned on private temp files.
+    public static let privateFileMode: Int = 0o600
+
     /// §5.4: use contributions decay by half every 14 elapsed 24-hour days.
     public static let frecencyHalfLifeDays: Double = 14
     /// §5.4: bound the total contribution of retained use events.
