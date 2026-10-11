@@ -76,11 +76,13 @@ jobs:
       - name: Test filesystem permissions as an unprivileged user
         run: |
           useradd --create-home --shell /bin/bash monkeyspaw-tests
-          # Reuse the compiled tests; SwiftPM still needs its workspace lock.
-          chown -R monkeyspaw-tests:monkeyspaw-tests .build
           test "$(id -u monkeyspaw-tests)" -ne 0
-          runuser -u monkeyspaw-tests -- swift test --skip-build --filter \
-            'RootedFileStoreTests/testInitializationErrorsDoNotExposeOSPaths|RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring|RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce'
+          # Run the built bundle directly: SwiftPM's workspace lock in /tmp
+          # belongs to root. Fail unless all three tests run without skipping.
+          runuser -u monkeyspaw-tests -- .build/debug/MonkeysPawPackageTests.xctest \
+            'MonkeysPawLinuxTests.RootedFileStoreTests/testInitializationErrorsDoNotExposeOSPaths,MonkeysPawLinuxTests.RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring,MonkeysPawLinuxTests.RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce' \
+            | tee permission-tests.log
+          grep -q 'Executed 3 tests, with 0 failures' permission-tests.log
       - name: Smoke X11 delivery and CLI self-test
         env:
           GSETTINGS_BACKEND: memory

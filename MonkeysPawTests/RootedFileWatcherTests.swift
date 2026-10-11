@@ -79,7 +79,6 @@ final class RootedFileWatcherTests: XCTestCase {
 
     func testNormalizationOnlyRenameKeepsDeletionAndCreationSeparate() throws {
         // APFS is normalization-insensitive: twin spellings cannot coexist.
-        // A rename can still change the spelling returned by enumeration.
         try store.write(Data("Original".utf8), at: "e\u{301}.md")
         let before = try XCTUnwrap(store.listFiles().first?.relativePath)
         let target = before.utf8.elementsEqual("é.md".utf8) ? "e\u{301}.md" : "é.md"
@@ -88,7 +87,14 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertEqual(rename(root.appendingPathComponent(before).path,
                               root.appendingPathComponent(target).path), 0)
         let after = try XCTUnwrap(store.listFiles().first?.relativePath)
-        XCTAssertFalse(before.utf8.elementsEqual(after.utf8))
+
+        // Default APFS resolves both spellings to one file, so POSIX rename is a
+        // no-op and must publish nothing. A volume that changes the stored
+        // spelling must report it as a separate deletion and creation.
+        guard !before.utf8.elementsEqual(after.utf8) else {
+            expectQuiet()
+            return
+        }
         expect(LibraryChangeSet(created: [RelativePath(after)], deleted: [RelativePath(before)]))
     }
 
