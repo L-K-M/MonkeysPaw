@@ -72,7 +72,7 @@ still builds all test targets, so filtering alone cannot isolate Core from GTK.
 
 - M1 delivery drivers live in `MonkeysPaw/Drivers/`; `PanelController` is
   the `PanelWindow` driver. Only `AppDelegate` constructs drivers and wires
-  them into Core services. Views call `PanelModel` or `SetupModel` intents.
+  them into Core services. Views call `PickerModel`, `FillModel` or `SetupModel` intents.
 - The Xcode project links the root local package product `MonkeysPawCore`.
   Only `MonkeysPaw/` and `MonkeysPawTests/` use synchronized groups. Keep
   source and resource build phases empty; new files need no pbxproj entries.

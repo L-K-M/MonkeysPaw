@@ -19,6 +19,7 @@ final class PromptPanel: NSPanel {
 
     // The controller owns hiding so cancellation follows the same UI-thread path.
     var onCancel: (() -> Void)?
+    var onEscape: (() -> Void)?
 
     convenience init(content: NSView) {
         self.init(contentRect: NSRect(x: 0, y: 0,
@@ -44,7 +45,7 @@ final class PromptPanel: NSPanel {
     }
 
     override func cancelOperation(_ sender: Any?) {
-        onCancel?()
+        if let onEscape { onEscape() } else { onCancel?() }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -58,8 +59,8 @@ final class PromptPanel: NSPanel {
         }
 
         // Borderless panels cannot use the usual close action. Handle ⌘W before
-        // menu dispatch and use Escape's cancel path to hide the reusable panel.
-        cancelOperation(nil)
+        // menu dispatch. Close dismisses a fill form too; Escape goes back.
+        onCancel?()
         return true
     }
 

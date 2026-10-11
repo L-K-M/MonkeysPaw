@@ -13,8 +13,8 @@
 
 Per OS:
 
-- **macOS.** SwiftUI for windows and forms. AppKit for the NSPanel and an
-  `NSTextView`-backed composer, because a SwiftUI `TextField` cannot
+- **macOS.** SwiftUI for windows and forms. AppKit for the NSPanel and native
+  `NSTextField`/`NSTextView` search and fill inputs, because a SwiftUI `TextField` cannot
   reliably retake focus in a reused hosting view (Vervellum). Menu-bar
   agent (`LSUIElement`); the activation policy turns `.regular` only while
   Settings or Library is open.
@@ -52,10 +52,48 @@ show a banner; failed watcher batches attempt one full rescan before stopping,
 and root loss retains the cached index. Delivery owns the panel hide. Delivery
 persistence warnings stay visible in the next picker until another use starts.
 
-The macOS picker slice, the settings/seeds/first-run slice (including
-library-folder setup), and the fixtures and release slice remain outstanding M2
-work. Real compositor and paste-target checks remain owner-run in
-`docs/platform/linux.md`.
+M2h supplies the macOS picker and fill view over the same models. `AppDelegate`
+composes the library, watcher, index, remembered values and shared pasteboard
+clipboard, using `~/Documents/MonkeysPaw` and the bundle identifier's Application
+Support directory. AppKit text and multiline controls retake focus whenever
+the reusable panel appears; native focus changes and Tab follow model field
+order. Choice controls display labels and render their associated values; descriptions sit
+under their controls, and previews show Core validation messages. Return uses
+the picker-selected mode outside multiline input; multiline Return stays a
+newline, Cmd+Return selects standard paste and Option+Return copies. Escape
+returns from fill to picker; blur, Cmd+W and toggling a key panel off dismiss
+and keep drafts. Toggling a visible non-key panel raises it. The footer resolves
+the captured pid to the remembered application's name without changing the
+focus tracker's pid/bundle-id identity.
+Typing after native result-list focus retakes search and continues the query.
+Pending text focus retries when the panel becomes key after deferred activation;
+removing the native view or withdrawing the focus request cancels that retry.
+Printable keys on a focused native control keep its native behavior.
+
+On both desktops, active input-method composition keeps keys in the focused
+native text control. Return confirms conversion and Escape cancels composition
+without using a prompt, delivering a form or dismissing the panel. GTK tracks
+non-empty preedit per control; AppKit checks the first responder's marked text.
+Edit/Library requests are consumed once before their handler runs. An invalid
+edit path or unavailable library keeps the panel open with a status, preserving
+the query and selection. Valid requests dismiss before launching. macOS
+publishes the current view state before handling the request.
+
+macOS installs the picker hook, arms FSEvents, then rebuilds. Scheduler updates
+marshal through `MainThread`; a root preflight protects pending reloads after
+physical root loss. Root health stops monitoring, shows the unavailable banner
+and preserves cached prompts until restart. Before M3, Edit/Library launch the
+file/folder's default handler after dismissing; no-match creation uses the shared
+single-filename rules, preserves the exact query as its title and opens the
+saved file. The assistant remains disabled with its Settings hint. Hosted tests
+use temporary roots and a recording launcher, including a measured one-second
+external-save deadline through real FSEvents. Their compile and execution proof
+requires the `macos-app` CI job; hardware checks stay NOT RUN in
+`docs/platform/macos.md`.
+
+The settings/seeds/first-run slice (including library-folder setup) and the
+fixtures and release slice remain outstanding M2 work. Real compositor and
+paste-target checks remain owner-run in `docs/platform/linux.md`.
 
 ```
 ┌ Monkey's Paw ─────────────────────────────────────────────────┐

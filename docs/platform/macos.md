@@ -3,6 +3,10 @@
 Owner-run checks for M1a (§6 and §15). These checks have not been run on the
 Linux implementation host. Record results against the exact build tested.
 
+M2h replaces the canned delivery panel with the picker and fill form. The M1a
+matrix below records the original delivery gate; use the picker checklist at
+the end for the current app. All M2h owner checks are **NOT RUN**.
+
 - Commit:
 - macOS version:
 - Mac model / processor:
@@ -105,3 +109,49 @@ return to the same target field.
 - Devin's first review identified blur refocusing our own Setup/self-test windows
   and failure to relinquish unused activation. Hosted regression tests were added
   before the fixes, but their failing/passing runs require macOS and remain for CI.
+
+## M2h picker and fill form: NOT RUN
+
+The implementation host cannot compile the macOS app. Record the `macos-app`
+CI run, exact commit and external-save timing attachment from
+`MacPickerViewTests` before running this hardware matrix. CI success does not
+establish real paste, Spaces, TCC or VoiceOver behavior.
+
+- Commit / `macos-app` CI run:
+- External-save-to-picker elapsed seconds from hosted test:
+- macOS / hardware / signing identity / date / tester:
+
+Create a fieldless prompt and a prompt with text, multiline and choice fields
+under `~/Documents/MonkeysPaw/`. Give the fields descriptions, choice labels
+with distinct values, and defaults. Grant Accessibility through unchanged
+Setup and run the paste self-test. Place the caret in each target below, summon
+with Control+Option+P, search, pick with Return, fill if needed and deliver.
+For Terminal, check the text without submitting it, then clear with Control+C.
+
+| Target | Normal window | Full-screen Space | Field / exact text / details |
+|---|---|---|---|
+| TextEdit | NOT RUN | NOT RUN | |
+| Safari | NOT RUN | NOT RUN | |
+| Terminal | NOT RUN | NOT RUN | |
+
+- [ ] NOT RUN: the remembered target's app name appears in the footer.
+- [ ] NOT RUN: search, favourites, folder/tags, arrow selection and preview work.
+- [ ] NOT RUN: selecting a result or tabbing into the list, then typing, continues search.
+- [ ] NOT RUN: repeated summon cycles focus search and accept typing immediately.
+- [ ] NOT RUN: the key panel toggles off; a visible non-key panel raises on toggle.
+- [ ] NOT RUN: the panel opens over the current full-screen Space at the cursor.
+- [ ] NOT RUN: each field kind updates live preview; descriptions appear below controls.
+- [ ] NOT RUN: pointer focus and Tab/Shift+Tab wrap in body first-use order.
+- [ ] NOT RUN: Return in multiline inserts a newline; Cmd+Return pastes and Option+Return copies.
+- [ ] NOT RUN: picker Option+Return carries copy-only into fill's Return/Deliver action.
+- [ ] NOT RUN: required/invalid choice values block delivery with an actionable message.
+- [ ] NOT RUN: Escape from fill keeps the draft and returns to picker; another Escape closes.
+- [ ] NOT RUN: Cmd+W/Cancel/toggle-off close fill and keep its draft for reopening.
+- [ ] NOT RUN: clicking another app hides after about 300 ms, keeps its focus and retains the draft.
+- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in its default editor; Cmd+L opens the folder.
+- [ ] NOT RUN: a no-match title creates a safe free filename while retaining the exact title; the new file opens for editing.
+- [ ] NOT RUN: the disabled assistant action displays its Settings hint.
+- [ ] NOT RUN: an external editor save reaches the picker within one second; record elapsed time.
+- [ ] NOT RUN: moving/removing the library shows the unavailable banner, retains cached prompts and requires restart after restoration.
+- [ ] NOT RUN: delivery hides once and pastes once in the same target; fallback keeps the clipboard and gives Cmd+V guidance.
+- [ ] NOT RUN: VoiceOver identifies search, results, field kinds/descriptions, preview and actions inside the panel.

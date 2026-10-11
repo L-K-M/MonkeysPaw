@@ -45,6 +45,10 @@ static inline GtkButton    *mp_button(GtkWidget *w)  { return GTK_BUTTON(w); }
 static inline GtkBox       *mp_box(GtkWidget *w)       { return GTK_BOX(w); }
 static inline GtkLabel     *mp_label(GtkWidget *w)     { return GTK_LABEL(w); }
 static inline GtkEntry     *mp_entry(GtkWidget *w)     { return GTK_ENTRY(w); }
+static inline GtkWidget    *mp_entry_text_delegate(GtkWidget *w) {
+    GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(w));
+    return delegate != NULL ? GTK_WIDGET(delegate) : NULL;
+}
 static inline GtkTextView  *mp_text_view(GtkWidget *w) { return GTK_TEXT_VIEW(w); }
 static inline GtkListBox   *mp_list_box(GtkWidget *w) { return GTK_LIST_BOX(w); }
 static inline GtkListBoxRow *mp_list_box_row(GtkWidget *w) { return GTK_LIST_BOX_ROW(w); }
@@ -192,6 +196,29 @@ static inline gulong mp_connect(gpointer instance,
                                 gpointer user_data,
                                 GClosureNotify destroy) {
     return g_signal_connect_data(instance, signal, handler, user_data, destroy, (GConnectFlags)0);
+}
+
+/* Test bridges for C variadics. Keys enter the installed capture controller,
+ * including its Swift trampoline, rather than calling panel intents directly. */
+static inline void mp_test_emit_preedit_changed(GtkWidget *w, const char *text) {
+    g_signal_emit_by_name(w, "preedit-changed", text);
+}
+
+static inline gboolean mp_test_emit_key_pressed(GtkWidget *w, guint key, GdkModifierType modifiers) {
+    GListModel *controllers = gtk_widget_observe_controllers(w);
+    gboolean handled = FALSE;
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+        GtkEventController *controller = g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_KEY(controller) &&
+            gtk_event_controller_get_propagation_phase(controller) == GTK_PHASE_CAPTURE) {
+            g_signal_emit_by_name(controller, "key-pressed", key, 0, modifiers, &handled);
+            g_object_unref(controller);
+            break;
+        }
+        g_object_unref(controller);
+    }
+    g_object_unref(controllers);
+    return handled;
 }
 
 /* GFileMonitor is non-recursive; the driver attaches one per directory.

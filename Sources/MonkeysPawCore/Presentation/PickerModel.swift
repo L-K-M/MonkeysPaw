@@ -36,8 +36,7 @@ public struct PickerNoMatches: Equatable, Sendable {
     public let openLibraryLabel = "Open the library folder"
 }
 
-/// UI-thread intents/state reads and a single-owner onChange hook, matching
-/// PanelModel. Index and snapshot callbacks marshal through MainThread before
+/// UI-thread intents/state reads and a single-owner onChange hook. Index and snapshot callbacks marshal through MainThread before
 /// touching model state. @unchecked Sendable supports those crossings only.
 /// No watcher ownership, app wiring or platform view lives in this slice.
 public final class PickerModel: @unchecked Sendable {
@@ -183,6 +182,13 @@ public final class PickerModel: @unchecked Sendable {
         guard state == .picker else { return }
         requestedIntent = .openLibrary
         onChange?()
+    }
+
+    /// Consume before handling: a handler can publish another change without
+    /// dismissing, and must not receive this intent again. Clearing is silent.
+    public func takeRequestedIntent() -> Intent? {
+        defer { requestedIntent = nil }
+        return requestedIntent
     }
 
     public func escape() {

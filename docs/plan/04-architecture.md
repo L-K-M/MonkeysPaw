@@ -57,7 +57,9 @@ Rules:
   forwards search, selection, focus and delivery intents. `LinuxEnvironment`
   owns the library/index/watcher service graph and the shared GTK clipboard;
   view callbacks forward file/folder launch and prompt-creation actions there.
-  `PanelModel` remains in Core for the macOS front end until the macOS picker slice.
+  The macOS picker (M2h) uses the same Core models; `AppDelegate` owns its
+  library graph, file/folder launcher and prompt creation. Both front ends
+  have replaced the canned M1 panel.
 
 - **Each layer calls only the layer directly below it.** Views never touch a
   service, the clipboard, files, keys, or HTTP. Presentation models never
@@ -290,7 +292,7 @@ specifies callback delivery on the creating thread's main context.
 Both drivers report root unavailability on the same ordered callback as file
 events, once per transition, without diffing root loss into file deletions.
 They retain the last good baseline. Core flushes earlier pending changes before
-health and delivers both through its scheduler; Linux composition stops the
+health and delivers both through its scheduler; desktop composition stops the
 watcher and retains its cached index until restart. Its root check before
 applying a batch also protects earlier pending reloads flushed after root loss.
 A streak is consecutive failed or overflow callbacks: a successful scan ends

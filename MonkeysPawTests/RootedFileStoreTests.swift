@@ -21,6 +21,21 @@ final class RootedFileStoreTests: XCTestCase {
 
     override func tearDown() { try? manager.removeItem(at: directory) }
 
+    func testCreateRootAndRequireRootDoNotCreateSentinelOrRecoverMissingRoot() throws {
+        XCTAssertThrowsError(try store.requireRoot()) {
+            XCTAssertEqual($0 as? FileStoreError, .notFound)
+        }
+        try store.createRoot()
+        try store.createRoot()
+        XCTAssertNoThrow(try store.requireRoot())
+        XCTAssertEqual(try manager.contentsOfDirectory(atPath: root.path), [])
+        try manager.removeItem(at: root)
+        XCTAssertThrowsError(try store.requireRoot()) {
+            XCTAssertEqual($0 as? FileStoreError, .notFound)
+        }
+        XCTAssertFalse(manager.fileExists(atPath: root.path))
+    }
+
     func testPrivateWriteCreatesAndReplacesWith0600UnderPermissiveUmask() throws {
         // umask is process-wide; this test requires serial in-process execution.
         let previousMask = umask(0)

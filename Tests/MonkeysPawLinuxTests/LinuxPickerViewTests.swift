@@ -88,6 +88,75 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { clipboard.value == "Snapshot" })
     }
 
+    func testSearchPreeditKeepsReturnAndEscapeNativeUntilCompositionEnds() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try open()
+        // A failing regression may start asynchronous delivery. Drain it before
+        // tearDown destroys the native clipboard owner.
+        defer { _ = GTKTestSupport.spin { self.environment.pickerModel.state != .delivering } }
+        let query = try widget("picker-query")
+        let text = try XCTUnwrap(mp_entry_text_delegate(query))
+        mp_test_emit_preedit_changed(text, "かな")
+
+        XCTAssertFalse(sendKey(GDK_KEY_Return))
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertFalse(environment.pickerModel.isResolvingBuiltins)
+        XCTAssertTrue(environment.panel.isVisible)
+        XCTAssertFalse(sendKey(GDK_KEY_Escape))
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertTrue(environment.panel.isVisible)
+
+        mp_test_emit_preedit_changed(text, "")
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        XCTAssertTrue(GTKTestSupport.spin {
+            if case .done = self.environment.pickerModel.state { return true }
+            return false
+        })
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testFillPreeditKeepsDeliveryAndEscapeNativeForBothTextKinds() throws {
+        // A failing regression may start asynchronous delivery. Drain it before
+        // tearDown destroys the native clipboard owner.
+        defer { _ = GTKTestSupport.spin { self.environment.pickerModel.state != .delivering } }
+        try files.write(Data("---\nfields:\n  topic: {default: Topic}\n  detail: {type: multiline, default: Detail}\n---\n{{topic}} {{detail}}".utf8), at: "fields.md")
+        try open()
+        environment.pickerModel.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(environment.pickerModel.fillModel)
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+
+        for name in ["topic", "detail"] {
+            let control = try widget("fill-field-" + name)
+            XCTAssertNotEqual(gtk_widget_grab_focus(control), 0)
+            let input = name == "topic" ? try XCTUnwrap(mp_entry_text_delegate(control)) : control
+            mp_test_emit_preedit_changed(input, "かな")
+            // Ctrl+Return would deliver even from a multiline field.
+            XCTAssertFalse(sendKey(GDK_KEY_Return, modifiers: GDK_CONTROL_MASK))
+            if name == "topic" { XCTAssertFalse(sendKey(GDK_KEY_Return)) }
+            XCTAssertFalse(sendKey(GDK_KEY_Escape))
+            XCTAssertEqual(environment.pickerModel.state, .fill)
+            XCTAssertEqual(fill.state, .editing)
+            XCTAssertTrue(environment.panel.isVisible)
+            mp_test_emit_preedit_changed(input, "")
+        }
+
+        XCTAssertTrue(sendKey(GDK_KEY_Escape))
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertTrue(environment.panel.isVisible)
+    }
+
+    func testPreeditInUnfocusedControlDoesNotBlockPickerKeys() throws {
+        try files.write(Data("{{topic}}".utf8), at: "fields.md")
+        try open()
+        let query = try widget("picker-query")
+        mp_test_emit_preedit_changed(try XCTUnwrap(mp_entry_text_delegate(query)), "かな")
+        let use = try widget("picker-use")
+        XCTAssertNotEqual(gtk_widget_grab_focus(use), 0)
+        XCTAssertTrue(sendKey(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertEqual(environment.pickerModel.state, .fill)
+        XCTAssertEqual(environment.pickerModel.fillModel?.preferredMode, .copyOnly)
+    }
+
     func testToggleRaisesVisibleInactivePickerInsteadOfClosingIt() throws {
         try files.write(Data("Body".utf8), at: "a.md")
         try open()
@@ -169,6 +238,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(environment.pickerModel.results.first?.relativePath, path)
 
         environment.pickerModel.editSelected()
+        XCTAssertNil(environment.pickerModel.requestedIntent)
         XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
@@ -182,9 +252,41 @@ final class LinuxPickerViewTests: XCTestCase {
         let button = try widget("picker-open-folder")
         XCTAssertNotEqual(gtk_widget_activate(button), 0)
         XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
+        XCTAssertNil(environment.pickerModel.requestedIntent)
         XCTAssertEqual(launchedURLs, [URL(fileURLWithPath: root.path, isDirectory: true)])
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testUnavailableLibraryShortcutsKeepPickerQueryAndSelection() throws {
+        try files.write(Data("Cached Alpha".utf8), at: "cached-alpha.md")
+        try files.write(Data("Cached Beta".utf8), at: "cached-beta.md")
+        try open()
+        let picker = environment.pickerModel
+        let query = try widget("picker-query")
+        mp_entry_set_text(query, "cached")
+        let list = try widget("picker-results")
+        gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), 1))
+        XCTAssertEqual(picker.selectionIndex, 1)
+        try FileManager.default.removeItem(at: root)
+        XCTAssertTrue(GTKTestSupport.spin { !picker.libraryAvailable })
+
+        for key in [GDK_KEY_l, GDK_KEY_Return] {
+            XCTAssertTrue(sendKey(key, modifiers: GDK_CONTROL_MASK))
+            var uiDrained = false
+            environment.mainThread.run { uiDrained = true }
+            XCTAssertTrue(GTKTestSupport.spin { uiDrained })
+            XCTAssertNil(picker.requestedIntent)
+            XCTAssertEqual(picker.state, .picker)
+            XCTAssertTrue(environment.panel.isVisible)
+            XCTAssertTrue(launchedURLs.isEmpty)
+            XCTAssertEqual(picker.query, "cached")
+            XCTAssertEqual(String(cString: mp_entry_text(query)), "cached")
+            XCTAssertEqual(picker.selectionIndex, 1)
+            let status = try widget("picker-status")
+            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(status))), LinuxStrings.libraryUnavailable)
+            XCTAssertNotEqual(gtk_widget_get_visible(status), 0)
+        }
     }
 
     func testTransientCreationFailureStatusIsClearedWhenPickerReopens() throws {
@@ -404,6 +506,10 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
         XCTAssertEqual(environment.pickerModel.state, .picker)
         _ = try widget("picker-query")
+    }
+
+    private func sendKey(_ key: Int32, modifiers: GdkModifierType = GdkModifierType(rawValue: 0)) -> Bool {
+        mp_test_emit_key_pressed(environment.panel.clipboardOwner, UInt32(key), modifiers) != 0
     }
 
     private func widget(_ name: String) throws -> GTK.Widget {

@@ -5,10 +5,15 @@ import MonkeysPawCore
 /// GTK renders Core state and forwards intents. Environment callbacks own
 /// leave-the-panel actions; this view never opens files or calls services.
 final class LinuxPanel: PanelWindow {
+    private final class Preedit {
+        var isActive = false
+    }
+
     private struct FieldControl {
         let name: String
         let kind: FieldKind
         let widget: GTK.Widget
+        let preedit: Preedit?
     }
 
     private let window: GTK.Widget
@@ -22,6 +27,7 @@ final class LinuxPanel: PanelWindow {
     private var renderedFocus: Int?
     private var controls: [FieldControl] = []
     private var transientStatus: String?
+    private var queryPreedit: Preedit?
 
     private var queryEntry: GTK.Widget!
     private var stack: GTK.Widget!
@@ -65,6 +71,7 @@ final class LinuxPanel: PanelWindow {
                      gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(content, 12) }
 
         queryEntry = gtk_entry_new()!
+        queryPreedit = observePreedit(in: mp_entry_text_delegate(queryEntry))
         gtk_widget_set_name(queryEntry, "picker-query")
         gtk_entry_set_placeholder_text(mp_entry(queryEntry), LinuxStrings.searchPrompts)
         mp_accessible_label(queryEntry, LinuxStrings.searchPrompts)
@@ -159,7 +166,7 @@ final class LinuxPanel: PanelWindow {
         GTK.onNotify(UnsafeMutableRawPointer(window), "focus-widget") { [weak self] in self?.fieldFocusChanged() }
         picker.onChange = { [weak self, weak picker] in
             guard let self, let picker else { return }
-            if picker.state == .picker, let intent = picker.requestedIntent {
+            if picker.state == .picker, let intent = picker.takeRequestedIntent() {
                 requestedIntent(intent)
                 return
             }
@@ -233,9 +240,10 @@ final class LinuxPanel: PanelWindow {
         gtk_label_set_text(mp_label(hint), inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
         var warnings = picker.persistenceWarnings
         for warning in picker.fillModel?.persistenceWarnings ?? [] where !warnings.contains(warning) { warnings.append(warning) }
-        let messages = [picker.libraryAvailable ? nil : LinuxStrings.libraryUnavailable,
-                        picker.isResolvingBuiltins ? LinuxStrings.resolvingBuiltins : nil, transientStatus]
-            .compactMap { $0 } + warnings.map(LinuxStrings.persistenceWarning)
+        var messages = [picker.libraryAvailable ? nil : LinuxStrings.libraryUnavailable,
+                        picker.isResolvingBuiltins ? LinuxStrings.resolvingBuiltins : nil].compactMap { $0 }
+        if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
+        messages += warnings.map(LinuxStrings.persistenceWarning)
         gtk_label_set_text(mp_label(status), messages.joined(separator: "\n"))
         gtk_widget_set_visible(status, messages.isEmpty ? 0 : 1)
     }
@@ -274,9 +282,11 @@ final class LinuxPanel: PanelWindow {
             let row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
             gtk_box_append(mp_box(row), GTK.label(field.label))
             let widget: GTK.Widget
+            let preedit: Preedit?
             switch field.kind {
             case .text:
                 widget = gtk_entry_new()!
+                preedit = observePreedit(in: mp_entry_text_delegate(widget))
                 mp_entry_set_text(widget, field.value)
                 GTK.onSignal(widget, "changed") { [weak self, weak fill] in
                     guard let self, !self.isRendering else { return }
@@ -285,6 +295,7 @@ final class LinuxPanel: PanelWindow {
                 gtk_box_append(mp_box(row), widget)
             case .multiline:
                 widget = gtk_text_view_new()!
+                preedit = observePreedit(in: widget)
                 gtk_text_view_set_wrap_mode(mp_text_view(widget), GTK_WRAP_WORD_CHAR)
                 let buffer = gtk_text_view_get_buffer(mp_text_view(widget))!
                 gtk_text_buffer_set_text(buffer, field.value, -1)
@@ -295,6 +306,7 @@ final class LinuxPanel: PanelWindow {
                 gtk_box_append(mp_box(row), scrolled(widget))
             case .choice:
                 widget = gtk_combo_box_text_new()!
+                preedit = nil
                 for option in field.options { gtk_combo_box_text_append(mp_combo_box_text(widget), option.value, option.label) }
                 gtk_combo_box_set_active_id(mp_combo_box(widget), field.value)
                 GTK.onSignal(widget, "changed") { [weak self, weak fill] in
@@ -314,7 +326,7 @@ final class LinuxPanel: PanelWindow {
                 gtk_box_append(mp_box(row), label)
                 mp_accessible_description(widget, description)
             }
-            controls.append(FieldControl(name: field.name, kind: field.kind, widget: widget))
+            controls.append(FieldControl(name: field.name, kind: field.kind, widget: widget, preedit: preedit))
             gtk_box_append(mp_box(formBox), row)
         }
         initialFocus = controls.first?.widget ?? queryEntry
@@ -358,13 +370,30 @@ final class LinuxPanel: PanelWindow {
         return controls.firstIndex { $0.widget == focus || gtk_widget_is_ancestor(focus, $0.widget) != 0 }
     }
 
+    private func observePreedit(in widget: GTK.Widget?) -> Preedit? {
+        guard let widget else { return nil }
+        let preedit = Preedit()
+        GTK.onPreeditChanged(widget) { preedit.isActive = $0 }
+        return preedit
+    }
+
+    private var focusedHasPreedit: Bool {
+        guard let focus = gtk_window_get_focus(mp_window(window)) else { return false }
+        if focus == queryEntry || gtk_widget_is_ancestor(focus, queryEntry) != 0 {
+            return queryPreedit?.isActive == true
+        }
+        return focusedControl.map { controls[$0].preedit?.isActive == true } ?? false
+    }
+
     private func fieldFocusChanged() {
         guard !isRendering, let position = focusedControl else { return }
         picker?.fillModel?.focusField(at: position)
     }
 
     private func keyPressed(_ key: UInt32, modifiers: UInt32) -> Bool {
-        guard let picker else { return false }
+        // Capture runs before GtkText/GtkTextView's input method. Composition
+        // keys must reach the focused native control without picker intents.
+        guard let picker, !focusedHasPreedit else { return false }
         let kind = focusedControl.map { controls[$0].kind }
         guard let intent = LinuxPickerKeys.intent(for: key, modifiers: modifiers, state: picker.state, fieldKind: kind) else { return false }
         if intent == .use(.paste(.standard)), let focus = gtk_window_get_focus(mp_window(window)), mp_is_button(focus) != 0 {
