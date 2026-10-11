@@ -83,7 +83,11 @@ public final class FillService: @unchecked Sendable {
                                      values delivered: [String: String]) throws {
         var remembered = [String: String]()
         for field in fields where field.remember {
-            remembered[field.name] = delivered[field.name] ?? field.defaultValue
+            // Only verbatim delivered text is remembered; an absent value must
+            // not pin the declared default forever (remembered text wins over
+            // defaults even after the prompt's default changes).
+            guard let deliveredValue = delivered[field.name] else { continue }
+            remembered[field.name] = deliveredValue
         }
         try values.record(identity: identity, values: remembered)
     }

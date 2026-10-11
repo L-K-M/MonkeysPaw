@@ -11,7 +11,8 @@ final class FillServiceTests: XCTestCase {
         XCTAssertEqual(h.clock.readCount, 1)
         XCTAssertEqual(snapshots.received, [PromptBuiltinValues(date: "1969-12-31", time: "19:00")])
         XCTAssertEqual(h.delivery.clipboard.readCount, 0)
-        XCTAssertEqual(try h.fill.render(entry.document, values: [:], builtins: snapshots.received[0]),
+        XCTAssertEqual(try h.fill.render(entry.document, values: [:],
+                                         builtins: try XCTUnwrap(snapshots.received.first)),
                        "1969-12-31 19:00")
         let east = PromptFlowHarness(zone: TimeZone(secondsFromGMT: 5 * 3_600 + 30 * 60)!)
         let next = try east.put("{{time}}")
@@ -43,7 +44,8 @@ final class FillServiceTests: XCTestCase {
         let snapshots = BuiltinSnapshots()
         h.fill.builtinSnapshot(for: entry.document) { snapshots.append($0) }
         XCTAssertEqual(snapshots.received.count, 1)
-        XCTAssertEqual(try h.fill.render(entry.document, values: [:], builtins: snapshots.received[0]), "AB")
+        XCTAssertEqual(try h.fill.render(entry.document, values: [:],
+                                         builtins: try XCTUnwrap(snapshots.received.first)), "AB")
         h.delivery.clipboard.writeText("")
         h.fill.builtinSnapshot(for: entry.document) { snapshots.append($0) }
         XCTAssertEqual(snapshots.received.count, 2)
@@ -152,5 +154,13 @@ final class FillServiceTests: XCTestCase {
         try h.fill.rememberedOnDelivery(identity: forgotten.identity, fields: forgotten.document.effectiveFields,
                                         values: ["f": "no"])
         XCTAssertEqual(try h.data.read(at: "values.json"), before)
+    }
+
+    func testRememberedOnDeliverySkipsUndeliveredFieldsInsteadOfStoringDefaults() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("---\nfields:\n  f:\n    default: declared\n---\n{{f}} {{g}}")
+        try h.fill.rememberedOnDelivery(identity: entry.identity, fields: entry.document.effectiveFields,
+                                        values: ["g": "used"])
+        XCTAssertEqual(try h.values.rememberedValues(for: entry.identity), ["g": "used"])
     }
 }
