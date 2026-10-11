@@ -97,7 +97,6 @@ public final class PickerModel: @unchecked Sendable {
         fillModel?.deactivate()
         fillModel = nil
         invalidateSnapshot()
-        persistenceWarnings = []
         requestedIntent = nil
         state = .picker
         refresh(resetSelection: true)
@@ -115,9 +114,15 @@ public final class PickerModel: @unchecked Sendable {
 
     public func moveSelection(_ direction: SelectionDirection) {
         guard state == .picker, let selectionIndex, !results.isEmpty else { return }
-        invalidateSnapshot()
         let offset = direction == .up ? -1 : 1
-        self.selectionIndex = min(max(selectionIndex + offset, 0), results.count - 1)
+        selectResult(at: min(max(selectionIndex + offset, 0), results.count - 1))
+    }
+
+    /// Native result lists select rows directly, including by pointer input.
+    public func selectResult(at position: Int) {
+        guard state == .picker, results.indices.contains(position) else { return }
+        invalidateSnapshot()
+        selectionIndex = position
         updateSelectedPreview()
         onChange?()
     }
@@ -165,6 +170,20 @@ public final class PickerModel: @unchecked Sendable {
         switch state {
         case .fill:
             fillModel?.escape()
+        case .picker, .done:
+            close()
+        case .delivering, .closed:
+            break
+        }
+    }
+
+    /// Blur and toggle-off close the entire panel while retaining a fill draft.
+    /// Escape remains a separate intent: from fill it returns to the picker.
+    public func dismiss() {
+        switch state {
+        case .fill:
+            fillModel?.deactivate()
+            close()
         case .picker, .done:
             close()
         case .delivering, .closed:

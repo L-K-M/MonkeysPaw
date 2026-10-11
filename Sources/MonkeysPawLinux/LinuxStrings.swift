@@ -5,7 +5,42 @@ import MonkeysPawCore
 enum LinuxStrings {
     static let installShortcut = "Install the GNOME shortcut in Setup"
     static let shortcutFailed = "Could not install the GNOME shortcut. Bind: " + GnomeKeybindingInstaller.command
-    static let panelHint = "Return: paste · Ctrl+Shift+Return: terminal paste · Esc: cancel"
+    static let pickerHint = "Return: use · Ctrl+Return: edit · Ctrl+L: library · Esc: close\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only"
+    static let fillHint = "Tab: next field · Return: deliver · Ctrl+Return: standard paste\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only · Esc: back"
+    static let searchPrompts = "Search prompts"
+    static let preview = "Preview"
+    static let usePrompt = "Use"
+    static let deliver = "Deliver"
+    static let copy = "Copy"
+    static let cancel = "Cancel"
+    static let edit = "Edit"
+    static let library = "Library"
+    static let emptyLibrary = "Your library is empty. Open the library folder to add a prompt."
+    static let libraryUnavailable = "Library unavailable. Cached prompts remain available. Check the folder and restart to retry."
+    static let assistantNotConfigured = "Set up a provider in Settings"
+    static let resolvingBuiltins = "Reading clipboard…"
+    static let preparingPreview = "Preparing preview…"
+    static let rememberedValuesUnavailable = "Remembered values unavailable. Defaults are shown."
+    static let rememberedValuesNotSaved = "Delivered, but your field values could not be saved."
+    static let usageNotSaved = "Delivered, but your recent use could not be saved."
+    static let newPromptBody = "Write your prompt here.\n"
+    static let createPromptFailed = "Could not create the prompt. Check library and app-data permissions."
+
+    static func persistenceWarning(_ warning: PromptPersistenceWarning) -> String {
+        switch warning {
+        case .rememberedValuesUnavailable: return rememberedValuesUnavailable
+        case .rememberedValuesNotSaved: return rememberedValuesNotSaved
+        case .usageNotSaved: return usageNotSaved
+        }
+    }
+
+    static func pickerSession(_ session: DesktopSession) -> String {
+        switch session {
+        case .gnomeX11, .kdeX11, .otherX11: return "→ X11 · Local library"
+        case .flatpak: return "→ Flatpak · Local library"
+        default: return "→ Wayland · Local library"
+        }
+    }
     static let setup = "Setup"
     static let testPaste = "Test paste"
     static let selfTestTitle = "Monkey's Paw: Test paste"

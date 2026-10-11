@@ -3,6 +3,65 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testDismissClosesFillAndRetainsDraftOnReopen() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("{{topic}}")
+        try h.open()
+        let form = try h.openForm()
+        form.setValue("kept draft", name: "topic")
+
+        h.picker.dismiss()
+        XCTAssertEqual(h.picker.state, .closed)
+        XCTAssertEqual(form.state, .closed)
+        XCTAssertNil(h.picker.fillModel)
+        XCTAssertTrue(h.delivery.recorder.events.contains(.hide))
+        form.deliver(mode: .copyOnly)
+        XCTAssertNil(h.delivery.clipboard.readText())
+        XCTAssertEqual(try h.usage.useEvents(for: entry.identity), [])
+
+        h.picker.open()
+        XCTAssertEqual(try h.openForm().fields[0].value, "kept draft")
+    }
+
+    func testDirectSelectionValidatesPositionAndUpdatesPreview() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("First", at: "a.md")
+        _ = try h.put("Second", at: "b.md")
+        try h.open()
+        h.picker.selectResult(at: 1)
+        XCTAssertEqual(h.picker.selectionIndex, 1)
+        XCTAssertEqual(h.picker.selectedPreview, .body("Second"))
+        h.picker.selectResult(at: -1)
+        h.picker.selectResult(at: 2)
+        XCTAssertEqual(h.picker.selectionIndex, 1)
+        h.picker.dismiss()
+        h.picker.selectResult(at: 0)
+        XCTAssertEqual(h.picker.selectionIndex, 1)
+    }
+
+    func testDismissDoesNothingDuringFieldlessOrFillDelivery() throws {
+        for source in ["Body", "{{topic}}"] {
+            let h = PromptFlowHarness()
+            _ = try h.put(source)
+            try h.open()
+            h.picker.use(mode: .copyOnly)
+            if let form = h.picker.fillModel {
+                form.setValue("filled", name: "topic")
+                form.deliver(mode: .copyOnly)
+            }
+            XCTAssertEqual(h.picker.state, .delivering)
+            let events = h.delivery.recorder.events
+
+            h.picker.dismiss()
+            XCTAssertEqual(h.picker.state, .delivering)
+            XCTAssertEqual(h.delivery.recorder.events, events)
+            h.settle()
+            XCTAssertEqual(h.picker.state, .done(.copiedOnly(.requested)))
+            h.picker.dismiss()
+            XCTAssertEqual(h.picker.state, .closed)
+        }
+    }
+
     func testEscapeDismissesCompletedFieldlessDeliveryButNotPendingDelivery() throws {
         let h = PromptFlowHarness()
         _ = try h.put("Body")
@@ -296,5 +355,10 @@ final class PickerModelTests: XCTestCase {
         XCTAssertEqual(h.picker.persistenceWarnings, [.usageNotSaved])
         XCTAssertEqual(try h.usage.useEvents(for: entry.identity), [])
         XCTAssertEqual(h.index.search("").first?.score, 0)
+        h.picker.open()
+        XCTAssertEqual(h.picker.persistenceWarnings, [.usageNotSaved])
+        h.picker.use(mode: .copyOnly)
+        XCTAssertEqual(h.picker.persistenceWarnings, [])
+        h.settle()
     }
 }

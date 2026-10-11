@@ -3,6 +3,25 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class FillModelTests: XCTestCase {
+    func testNativeFocusKeepsTraversalInFieldOrderAndRejectsInvalidPositions() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("{{a}} {{b}} {{c}}")
+        try h.open()
+        let form = try h.openForm()
+        form.focusField(at: 2)
+        XCTAssertEqual(form.focusIndex, 2)
+        form.focusNext()
+        XCTAssertEqual(form.focusIndex, 0)
+        form.focusPrevious()
+        XCTAssertEqual(form.focusIndex, 2)
+        form.focusField(at: -1)
+        form.focusField(at: 3)
+        XCTAssertEqual(form.focusIndex, 2)
+        h.picker.dismiss()
+        form.focusField(at: 0)
+        XCTAssertEqual(form.focusIndex, 2)
+    }
+
     func testDuplicateFormFieldNamesKeepLastValueWithoutTrapping() throws {
         let h = PromptFlowHarness()
         let entry = try h.put("{{f}}")

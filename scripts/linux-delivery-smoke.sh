@@ -134,6 +134,15 @@ openbox --sm-disable >"$smoke_directory/wm.log" 2>&1 &
 smoke_wm_pid=$!
 wait_for 'the X11 window manager' wm_ready
 
+# M2f reads a real library. Keep its prompt and learning state isolated from
+# the owner account; the clipboard/self-test expected bytes remain unchanged.
+export XDG_CONFIG_HOME="$smoke_directory/config"
+export XDG_DATA_HOME="$smoke_directory/data"
+mkdir -p "$XDG_CONFIG_HOME" "$smoke_directory/documents/MonkeysPaw"
+printf 'XDG_DOCUMENTS_DIR="%s/documents"\n' "$smoke_directory" > "$XDG_CONFIG_HOME/user-dirs.dirs"
+printf '%s' "Monkey's Paw test: if you can read this, delivery works." \
+    > "$smoke_directory/documents/MonkeysPaw/test.md"
+
 "$smoke_binary" --gapplication-service >"$smoke_directory/app.stdout" 2>"$smoke_directory/app.stderr" &
 smoke_app_pid=$!
 wait_for 'D-Bus actions on the resident app' app_ready
@@ -155,7 +164,7 @@ timeout "$smoke_test_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_swift" test --s
     --filter '^MonkeysPawLinuxTests\.LinuxFocusTrackerX11SmokeTests/testCapturesXtermClass$'
 
 timeout "$smoke_call_timeout" gapplication action "$smoke_app_id" toggle
-wait_for 'the canned picker' panel_ready
+wait_for 'the library picker' panel_ready
 timeout "$smoke_call_timeout" xdotool windowactivate --sync "$smoke_panel_window" >/dev/null 2>&1
 smoke_panel_class=$(timeout "$smoke_call_timeout" xprop -id "$smoke_panel_window" WM_CLASS 2>/dev/null)
 if [[ "${smoke_panel_class,,}" != "wm_class(string) = \"$smoke_app_id\", \"$smoke_app_id\"" ]]; then
@@ -167,8 +176,9 @@ timeout "$smoke_test_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_swift" test --s
 
 # Exercise the real picker key handler, then Core's settle and the xdotool
 # backend. Automatic terminal-class selection is scheduled for M7.
+timeout "$smoke_call_timeout" xdotool type --clearmodifiers --delay 0 'test' >/dev/null 2>&1
 timeout "$smoke_call_timeout" xdotool key --clearmodifiers ctrl+shift+Return >/dev/null 2>&1
-wait_for 'the exact canned text in xterm through xdotool' delivery_received
+wait_for 'the exact library text in xterm through xdotool' delivery_received
 printf 'X11 toggle, terminal confirmation, compositor refocus and paste passed.\n'
 
 # Also prove that a forwarded CLI diagnostic returns JSON to its own stdout,

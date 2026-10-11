@@ -15,19 +15,62 @@ final class LinuxEnvironment {
     private let portal: LinuxPortalTransport
     private let remoteDesktop: RemoteDesktopPasteInjector
     private let firstRun: LinuxFirstRunState
+    private let paths: LinuxPaths
+    private var libraryInitializationFailed = false
+    private var libraryStarted = false
+    private var libraryWarningLogged = false
 
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application)
-    private(set) lazy var panelModel: PanelModel = {
-        let model = PanelModel(delivery: delivery)
-        panel.bind(model: model) { [weak self] in self?.showSetup() }
+    private(set) lazy var pickerModel: PickerModel = {
+        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: mainThread)
+        model.libraryAvailable = !libraryInitializationFailed
+        panel.bind(picker: model, session: session.currentSession(),
+            openSetup: { [weak self] in self?.showSetup() },
+            requestedIntent: { [weak self] in self?.handle($0) },
+            createPrompt: { [weak self] in self?.createPrompt(titled: $0) })
         return model
+    }()
+
+    // Stores, watcher and URI intents must all retain the same selected root.
+    private lazy var libraryDirectory = paths.documentsDirectory
+        .appendingPathComponent("MonkeysPaw", isDirectory: true)
+    private lazy var libraryFiles: FileStore = {
+        do {
+            let files = try RootedFileStore(root: libraryDirectory)
+            try files.createRoot()
+            return files
+        } catch {
+            libraryInitializationFailed = true
+            warnAboutLibrary()
+            return UnavailableFileStore()
+        }
+    }()
+    private lazy var dataFiles: FileStore = {
+        do { return try RootedFileStore(root: paths.dataDirectory) }
+        catch {
+            log.write(.warning, "App data unavailable; remembered values and usage cannot be saved")
+            return UnavailableFileStore()
+        }
+    }()
+    private lazy var clock = SystemClock()
+    private lazy var values = ValuesStore(files: dataFiles)
+    private lazy var usage = UsageStore(files: dataFiles, clock: clock)
+    private lazy var library = LibraryService(library: libraryFiles, data: dataFiles,
+        clock: clock, entropy: SystemEntropy(), keyedStores: [values, usage])
+    private lazy var index = PromptIndex(service: library, usage: usage, clock: clock)
+    private lazy var clipboard = GTKClipboard(owner: panel.clipboardOwner)
+    private lazy var fill = FillService(values: values, clipboard: clipboard, clock: clock,
+        timeZone: { TimeZone.current })
+    private lazy var watcher: LibraryWatcher? = {
+        guard let raw = try? RootedFileWatcher(root: libraryDirectory, log: log) else { return nil }
+        return LibraryWatcher(watcher: raw, scheduler: scheduler)
     }()
 
     private lazy var delivery = DeliveryService(
         panel: panel, focus: LinuxFocusTracker(session: session, runner: runner),
-        clipboard: GTKClipboard(owner: panel.clipboardOwner),
+        clipboard: clipboard,
         injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
         notifier: GTKNotifier(application: application, session: session), session: session,
         scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache())
@@ -51,12 +94,13 @@ final class LinuxEnvironment {
         runner = LinuxToolRunner(environment: environment)
         session = LinuxSessionProbe(environment: environment)
         scheduler = GLibScheduler()
-        firstRun = LinuxFirstRunState(paths: LinuxPaths(environment: environment))
+        paths = LinuxPaths(environment: environment)
+        firstRun = LinuxFirstRunState(paths: paths)
         portal = LinuxPortalTransport(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
         let portalWindow = PortalWindow(application: application)
         let desktop = session.currentSession()
         remoteDesktop = RemoteDesktopPasteInjector(transport: portal,
-            tokens: PortalTokenStore(paths: LinuxPaths(environment: environment)),
+            tokens: PortalTokenStore(paths: paths),
             session: desktop, mainThread: mainThread, parent: portalWindow.parent)
         switch desktop {
         case .kdeWayland, .kdeX11:
@@ -64,7 +108,7 @@ final class LinuxEnvironment {
             let shortcutPortal = PortalHotkeyBackend(transport: portal, fallback: ManualHotkeyBackend(),
                 runner: runner, migration: .none, mainThread: mainThread, parent: portalWindow.parent)
             hotkey = KDEPortalHotkeyBackend(native: native, portal: shortcutPortal, transport: portal,
-                choices: KDEHotkeyChoiceStore(paths: LinuxPaths(environment: environment)))
+                choices: KDEHotkeyChoiceStore(paths: paths))
         default:
             let fallback: LinuxHotkeyBackend
             let migration: PortalHotkeyBackend.Migration
@@ -83,6 +127,7 @@ final class LinuxEnvironment {
 
     /// Start only in the registered primary, not remote invocations or unit tests.
     func start() {
+        startLibrary()
         hotkey.onChange = { [weak self] in self?.setupModel.refresh() }
         remoteDesktop.onChange = { [weak self] in self?.setupModel.refresh() }
         switch session.currentSession() {
@@ -105,7 +150,7 @@ final class LinuxEnvironment {
     }
 
     func presentFromLauncher() {
-        if firstRun.needsSetup { showSetup() } else { panelModel.show() }
+        if firstRun.needsSetup { showSetup() } else { startLibrary(); pickerModel.open() }
     }
 
     private func showSetup() {
@@ -118,16 +163,92 @@ final class LinuxEnvironment {
     }
 
     private func togglePicker(origin: ToggleOrigin = .manual) {
-        // A buried picker needs presenting, matching M0b's toggle semantics.
-        if panel.isActiveAndVisible {
-            panelModel.cancel()
+        startLibrary()
+        if panel.isVisible {
+            pickerModel.dismiss()
         } else {
             panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken() : nil)
-            panelModel.show()
+            pickerModel.open()
+        }
+    }
+
+    private func startLibrary() {
+        guard !libraryStarted else { return }
+        libraryStarted = true
+        // Establish the hook/view before a rebuild publishes its first results.
+        _ = pickerModel
+        do {
+            try index.rebuild()
+            guard let watcher else { throw FileStoreError.ioFailure }
+            try watcher.start { [weak self, weak index] changes in
+                guard let self, let index else { return }
+                self.apply(changes, to: index)
+            }
+        } catch {
+            degradeLibrary()
+        }
+    }
+
+    private func apply(_ changes: LibraryChangeSet, to index: PromptIndex) {
+        do {
+            // Root loss keeps the index read-only in memory (§11.5).
+            try (libraryFiles as? RootedFileStore)?.requireRoot()
+        } catch {
+            degradeLibrary()
+            return
+        }
+        do {
+            try index.apply(changes)
+        } catch {
+            warnAboutLibrary()
+            do { try index.rebuild() }
+            catch { degradeLibrary() }
+        }
+    }
+
+    private func warnAboutLibrary() {
+        guard !libraryWarningLogged else { return }
+        libraryWarningLogged = true
+        log.write(.warning, "Library unavailable or refresh failed; keeping cached prompts")
+    }
+
+    private func degradeLibrary() {
+        watcher?.stop()
+        pickerModel.libraryAvailable = false
+        warnAboutLibrary()
+    }
+
+    private func handle(_ intent: PickerModel.Intent) {
+        let url: URL
+        switch intent {
+        case .openLibrary: url = libraryDirectory
+        case .edit(_, let path):
+            guard (try? FileStorePath.validate(path)) != nil else { return }
+            url = libraryDirectory.appendingPathComponent(path)
+        }
+        pickerModel.dismiss()
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            gtk_show_uri(mp_window(self.panel.clipboardOwner), url.absoluteString, UInt32(GDK_CURRENT_TIME))
+        }
+    }
+
+    private func createPrompt(titled title: String) {
+        guard pickerModel.libraryAvailable else { return }
+        do {
+            let path = try library.availablePath(for: LinuxPromptCreation.relativePath(title: title, now: clock.now()))
+            let document = PromptCodec.parse(LinuxStrings.newPromptBody, filename: path)
+            let entry = try library.save(document, at: path)
+            try index.apply(LibraryChangeSet(created: [path]))
+            handle(.edit(identity: entry.identity, relativePath: path))
+        } catch {
+            panel.showStatus(LinuxStrings.createPromptFailed)
+            log.write(.warning, "Could not create a prompt; check library and app-data permissions")
         }
     }
 
     func shutdown() {
+        if libraryStarted { watcher?.stop() }
         hotkey.shutdown()
         remoteDesktop.shutdown()
         portal.shutdown()

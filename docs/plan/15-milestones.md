@@ -37,6 +37,15 @@
 
 **Ordering.**
 
+- M2f lands the Linux picker/fill view and production library composition,
+  replacing the canned Linux panel. Core dismiss retains drafts across blur
+  and toggle-off; GTK tests exercise live search, native selection, each field
+  kind, delivery, watcher refresh and unavailable-root behavior. The X11 smoke
+  now loads an isolated on-disk prompt. This does not close M2: the macOS picker
+  (M2g), seeds/settings/first-run folder selection (M2h), remaining fixtures and
+  release packaging remain. X11, GNOME/KDE Wayland and fill-form owner checks
+  in `docs/platform/linux.md` remain NOT RUN.
+
 - M2 starts with M2a, a focused source-to-render foundation: pure Core
   values parse Markdown front matter and the body, validate content,
   resolve fields in first-use order, render with supplied field/builtin

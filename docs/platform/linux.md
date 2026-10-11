@@ -1,4 +1,37 @@
-# Linux delivery checks (M1b)
+# Linux picker and delivery checks
+
+## Picker and fill (M2f, NOT RUN)
+
+Run these on X11 and on GNOME/KDE Wayland. Record the desktop/compositor,
+tool versions and date. These owner checks are not completed by Xvfb tests.
+
+- [ ] Add a Markdown prompt under the XDG documents directory's `MonkeysPaw`
+  folder (default `~/Documents/MonkeysPaw`). From a browser/editor field,
+  press the hotkey, type a live search, select with arrows or the pointer and
+  press Return. The rendered prompt reaches the previous field.
+- [ ] Save an external edit while the picker is open. The result and preview
+  refresh within one second without losing the search or selected prompt.
+- [ ] From a terminal, use Ctrl+Shift+Return. For a fielded prompt, the form
+  retains terminal paste for its Deliver button and single-line Return.
+  Confirm text arrives without submitting it; Ctrl+Return explicitly chooses
+  standard paste and Alt+Return copies only.
+- [ ] Fill text, multiline and choice fields, including label/value choices
+  and descriptions. Check live preview, mouse focus, Tab/Shift+Tab order and
+  remembered values after delivery. Return inside multiline adds a newline;
+  Ctrl+Return, Ctrl+Shift+Return and Alt+Return deliver from that field.
+- [ ] Escape from fill returns to the picker with typed values retained.
+  Toggle-off and native close dismiss fill; reopening restores its draft.
+- [ ] Click another window while filling. The panel hides after 300 ms,
+  leaves focus in that window and restores typed values on the next form open.
+- [ ] Search for no matches. Open the library folder, create a prompt and
+  verify its safe filename opens in the default editor. The assistant action
+  is disabled and shows the Settings hint. Ctrl+Return edits a selected file;
+  Ctrl+L opens the folder and dismisses the picker.
+- [ ] Make the library unavailable at startup, then remove it while running.
+  The app stays usable and shows the banner; cached prompts remain available
+  after removal. Restore the folder and restart to resume watching.
+
+## Delivery plumbing (M1b)
 
 M1b adds local X11 and wlroots delivery with one canned prompt. These checks
 are owner-run and have **not** been completed on the implementation host.

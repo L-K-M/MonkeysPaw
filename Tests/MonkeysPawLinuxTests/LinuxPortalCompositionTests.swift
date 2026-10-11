@@ -21,6 +21,8 @@ final class LinuxPortalCompositionTests: XCTestCase {
         tools = try PortalSessionTestSupport.tools()
         tools.environment["XDG_CURRENT_DESKTOP"] = "GNOME"
         tools.environment["XDG_SESSION_TYPE"] = "wayland"
+        let root = LinuxPaths(environment: tools.environment).documentsDirectory.appendingPathComponent("MonkeysPaw")
+        try RootedFileStore(root: root).write(Data(DeliveryStrings.testPrompt.utf8), at: "test.md")
         environment = LinuxEnvironment(application: application, environment: tools.environment)
     }
 
@@ -83,21 +85,22 @@ final class LinuxPortalCompositionTests: XCTestCase {
 
     func testPanelIntentUsesRealPortalInjectorAndFailureCacheFallsThrough() {
         start()
-        environment.panelModel.confirm(mode: .paste(.terminal))
+        environment.pickerModel.open()
+        environment.pickerModel.use(mode: .paste(.terminal))
         XCTAssertTrue(GTKTestSupport.spin { self.portal.ordinaryCalls.filter { $0.method == "NotifyKeyboardKeysym" }.count == 6 })
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.panelModel.state == .done(.pasted(.remoteDesktopPortal)) })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.remoteDesktopPortal)) })
         XCTAssertEqual(portal.ordinaryCalls.map { portal.keys($0).0 }, [0xffe3, 0xffe1, 0x76, 0x76, 0xffe1, 0xffe3])
         XCTAssertTrue(tools.arguments.isEmpty)
-        environment.panelModel.show()
+        environment.pickerModel.open()
         portal.methodError = "org.freedesktop.portal.Error.Failed"
-        environment.panelModel.confirm(mode: .paste(.standard))
-        XCTAssertTrue(GTKTestSupport.spin { if case .done = self.environment.panelModel.state { return true }; return false })
+        environment.pickerModel.use(mode: .paste(.standard))
+        XCTAssertTrue(GTKTestSupport.spin { if case .done = self.environment.pickerModel.state { return true }; return false })
         let calls = portal.ordinaryCalls.count
-        environment.panelModel.show()
-        environment.panelModel.confirm(mode: .paste(.standard))
-        XCTAssertTrue(GTKTestSupport.spin { if case .done = self.environment.panelModel.state { return true }; return false })
+        environment.pickerModel.open()
+        environment.pickerModel.use(mode: .paste(.standard))
+        XCTAssertTrue(GTKTestSupport.spin { if case .done = self.environment.pickerModel.state { return true }; return false })
         XCTAssertEqual(portal.ordinaryCalls.count, calls)
-        guard case .done(.copiedOnly(.backendsFailed(let failures))) = environment.panelModel.state else {
+        guard case .done(.copiedOnly(.backendsFailed(let failures))) = environment.pickerModel.state else {
             return XCTFail("Expected copy fallback")
         }
         XCTAssertEqual(failures.map(\.backend), [.remoteDesktopPortal, .ydotool])
@@ -122,8 +125,9 @@ final class LinuxPortalCompositionTests: XCTestCase {
         tools.environment["FLATPAK_ID"] = AppIdentity.linuxAppID
         environment = LinuxEnvironment(application: application, environment: tools.environment)
         start()
-        environment.panelModel.confirm(mode: .paste(.standard))
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.panelModel.state == .done(.pasted(.remoteDesktopPortal)) })
+        environment.pickerModel.open()
+        environment.pickerModel.use(mode: .paste(.standard))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.remoteDesktopPortal)) })
         XCTAssertEqual(environment.setupModel.session, .flatpak(host: .gnomeWayland))
         XCTAssertEqual(row(.ydotool)?.status, .notApplicable)
         XCTAssertTrue(tools.arguments.isEmpty)
