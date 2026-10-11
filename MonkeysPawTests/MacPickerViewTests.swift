@@ -705,7 +705,11 @@ final class MacPickerViewTests: XCTestCase {
 
     private func keyEvent(code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags,
                           to panel: PromptPanel) throws -> NSEvent {
-        try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+        if !panel.isKeyWindow { panel.makeKey() }
+        let becameKey = spin { panel.isKeyWindow }
+        _ = try XCTUnwrap(becameKey ? panel : nil, "Picker panel could not become key before a test key event")
+
+        return try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil,
             characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
     }

@@ -65,14 +65,31 @@ public final class LibraryService {
         try locked {
             try LibraryPath.validate(path)
             if try isAvailable(path) { return path }
-            let stem = String(path.dropLast(3))
+            // A leading combining mark can share a grapheme with the slash.
+            let scalars = path.unicodeScalars
+            let filenameStart = scalars.lastIndex(of: "/").map { scalars.index(after: $0) } ?? scalars.startIndex
+            let directory = String(path[..<filenameStart])
+            let stem = path[filenameStart...].dropLast(3)
             for suffix in 2..<(2 + Limits.libraryCopyCandidateCap) {
-                let candidate = stem + " \(suffix).md"
+                let candidate = directory + Self.copyFilename(stem: stem, suffix: suffix)
                 try LibraryPath.validate(candidate)
                 if try isAvailable(candidate) { return candidate }
             }
             throw LibraryError.copyLimitReached
         }
+    }
+
+    private static func copyFilename(stem: Substring, suffix: Int) -> String {
+        let ending = " \(suffix).md"
+        var remainingBytes = Limits.promptFilenameMaxBytes - ending.utf8.count
+        // Count whole characters to preserve graphemes and their UTF-8 scalars.
+        let prefix = stem.prefix { character in
+            let byteCount = String(character).utf8.count
+            guard byteCount <= remainingBytes else { return false }
+            remainingBytes -= byteCount
+            return true
+        }
+        return String(prefix) + ending
     }
 
     @discardableResult
