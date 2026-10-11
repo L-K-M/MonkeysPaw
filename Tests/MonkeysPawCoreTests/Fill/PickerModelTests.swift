@@ -3,6 +3,25 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testEscapeDismissesCompletedFieldlessDeliveryButNotPendingDelivery() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("Body")
+        try h.open()
+        h.picker.use(mode: .copyOnly)
+        h.picker.escape()
+        XCTAssertEqual(h.picker.state, .delivering)
+        XCTAssertFalse(h.delivery.recorder.events.contains(.hide))
+        h.settle()
+        XCTAssertEqual(h.picker.state, .done(.copiedOnly(.requested)))
+        let eventsBeforeDismiss = h.delivery.recorder.events.count
+        h.picker.escape()
+        h.delivery.main.drain()
+        XCTAssertEqual(h.picker.state, .closed)
+        XCTAssertEqual(Array(h.delivery.recorder.events.dropFirst(eventsBeforeDismiss)), [
+            .hide, .restore(try XCTUnwrap(h.delivery.focus.target))
+        ])
+    }
+
     func testEscapeQueuesDismissalAfterPendingShowAndRestoresCapturedTarget() throws {
         let h = PromptFlowHarness(mainMode: .deferred)
         _ = try h.put("Body")
@@ -27,7 +46,6 @@ final class PickerModelTests: XCTestCase {
             { h.picker.use(mode: .paste(.standard)) } // Return
         ]
         keys.forEach { $0() }
-        XCTAssertEqual(keys.count, 2)
         XCTAssertEqual(h.picker.state, .delivering)
         XCTAssertEqual(h.delivery.clipboard.readText(), "First body")
         XCTAssertEqual(h.delivery.clipboard.readCount, 0)
@@ -51,7 +69,6 @@ final class PickerModelTests: XCTestCase {
             { try XCTUnwrap(h.picker.fillModel).deliver(mode: .paste(.standard)) }
         ]
         try keys.forEach { try $0() }
-        XCTAssertEqual(keys.count, 3)
         XCTAssertEqual(h.delivery.clipboard.readText(), "Explain Swift")
         h.settle()
         XCTAssertEqual(h.picker.state, .done(.pasted(.cgEvent)))
@@ -211,16 +228,21 @@ final class PickerModelTests: XCTestCase {
         let h = PromptFlowHarness(mainMode: .deferred)
         _ = try h.put("Body", at: "b.md")
         try h.open()
-        h.picker.onChange = { XCTAssertTrue(h.delivery.main.isRunning) }
+        var callbackRanOnMain = false
+        h.picker.onChange = { callbackRanOnMain = h.delivery.main.isRunning }
         _ = try h.put("Earlier", at: "a.md")
         try h.index.apply(LibraryChangeSet(created: ["a.md"]))
         XCTAssertEqual(h.picker.results.map(\.relativePath), ["b.md"])
+        XCTAssertFalse(callbackRanOnMain)
         h.delivery.main.drain()
+        XCTAssertTrue(callbackRanOnMain)
         XCTAssertEqual(h.picker.results.map(\.relativePath), ["a.md", "b.md"])
         XCTAssertEqual(h.picker.selectionIndex, 1)
+        callbackRanOnMain = false
         try h.library.delete(at: "b.md")
         try h.index.apply(LibraryChangeSet(deleted: ["b.md"]))
         h.delivery.main.drain()
+        XCTAssertTrue(callbackRanOnMain)
         XCTAssertEqual(h.picker.selectionIndex, 0)
         XCTAssertEqual(h.picker.selectedPreview, .body("Earlier"))
     }

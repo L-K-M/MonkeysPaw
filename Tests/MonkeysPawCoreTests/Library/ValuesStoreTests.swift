@@ -117,11 +117,15 @@ final class ValuesStoreTests: XCTestCase {
         XCTAssertEqual(try files.read(at: "values.json"), original)
         for operation in [{ try self.store.rememberedValues(for: .local("private/path")) },
                           { try self.store.record(identity: .local("private/path"), values: ["f": "v"]); return [:] }] {
-            XCTAssertThrowsError(try operation()) { XCTAssertEqual($0 as? LibraryError, .invalidIdentity) }
+            XCTAssertThrowsError(try operation()) {
+                XCTAssertEqual($0 as? LibraryError, .invalidIdentity)
+                XCTAssertEqual(String(describing: $0), "invalidIdentity")
+            }
         }
         files.onRead = { _ in throw NSError(domain: "private value/path", code: 1) }
         XCTAssertThrowsError(try store.rememberedValues(for: identity)) {
             XCTAssertEqual($0 as? LibraryError, .operationFailed)
+            XCTAssertEqual(String(describing: $0), "operationFailed")
         }
     }
 

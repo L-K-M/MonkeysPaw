@@ -175,9 +175,13 @@ public final class LibraryService {
 }
 
 public final class FillService {
+    // Always completes; failed inputs deliberately resolve as empty values.
+    // This fallback is the snapshot contract, with no separate error channel.
     public func builtinSnapshot(for document: PromptDocument,
         completion: @escaping @Sendable (PromptBuiltinValues) -> Void)
-    public func form(for entry: LibraryEntry) -> FillForm // fields + prefills + status
+    // Entry supplies remembered-values identity and status; preview/render
+    // below need only its document.
+    public func form(for entry: LibraryEntry) -> FillForm
     public func preview(_ document: PromptDocument, values: [String: String],
         builtins: PromptBuiltinValues) -> FillPreview
     public func render(_ document: PromptDocument, values: [String: String],
@@ -230,7 +234,7 @@ or returning an already assigned entry. A mismatch throws
 | `Notifier` | `UNUserNotificationCenter` | `GNotification` via `g_application_send_notification`: no actions, so it cannot steal focus. Under flatpak it goes through the notification portal with no extra permission. | Copywraith `notifications.rs` (behaviour); GIO |
 | `SecretStore` | Keychain, one item with a JSON map | env → `secret-tool` (stdin) → 0600 file | Vervellum `KeychainStore.swift`, `LinuxSecretStore.swift` |
 | `HTTPTransporting` | `URLSession` delegate transport (in Core) | same | Vervellum `HTTPTransport.swift` |
-| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations; `writePrivate` creates a 0600 temporary file before writing/renaming | same, with Linux metadata stamps | M2b/M2e; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
+| `FileStore` | `RootedFileStore`: Foundation atomic replacement and rooted file operations; `writePrivate` creates a 0600 temporary file, writes and fsyncs it before rename | same, with Linux metadata stamps | M2b/M2e; stands in for the sketch's `PromptStore` / `StateStore` ports; two instances, for library and app data |
 | `FileStoreWatcher` | `RootedFileWatcher`: recursive FSEvents stream with regular-file snapshot reconciliation | `RootedFileWatcher`: non-recursive GIO `GFileMonitor` per directory, with recursive attachment/reconciliation on the owning GLib main context (via the `CGtk` bindings) | M2c; raw relative-path events feed Core `LibraryWatcher`, whose injected `Scheduler` owns debounce |
 | `WallClock` / `EntropySource` | Core `SystemClock` / `SystemEntropy` | same | Foundation / stdlib; injected into identity/history lifecycle |
 | `PromptKeyedStore` | Core history, usage and remembered-values stores over app-data `FileStore` | same | M2b/M2d/M2e; usage and remembered values join now |

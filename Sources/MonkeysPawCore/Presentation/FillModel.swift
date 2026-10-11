@@ -52,7 +52,7 @@ public final class FillModel: @unchecked Sendable {
     }
     public var canCopyOnly: Bool { deliverEnabled }
     public var values: [String: String] {
-        Dictionary(uniqueKeysWithValues: fields.map { ($0.name, $0.value) })
+        Dictionary(fields.map { ($0.name, $0.value) }, uniquingKeysWith: { _, new in new })
     }
 
     private let entry: LibraryEntry
@@ -90,7 +90,7 @@ public final class FillModel: @unchecked Sendable {
         canRender = form.canRender
         isReadOnly = form.isReadOnly
         persistenceWarnings = form.warning.map { [$0] } ?? []
-        let initial = Dictionary(uniqueKeysWithValues: fields.map { ($0.name, $0.value) })
+        let initial = Dictionary(fields.map { ($0.name, $0.value) }, uniquingKeysWith: { _, new in new })
         preview = fill.preview(entry.document, values: initial, builtins: builtins)
     }
 

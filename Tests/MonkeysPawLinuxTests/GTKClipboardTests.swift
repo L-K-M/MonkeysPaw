@@ -34,6 +34,10 @@ final class GTKClipboardTests: XCTestCase {
         let unavailable = ClipboardReads()
         clipboard.readText { unavailable.append($0) }
         XCTAssertTrue(GTKTestSupport.spin { unavailable.values.count == 1 })
+        XCTAssertEqual(unavailable.values.count, 1)
+        if let value = unavailable.values.first, value != nil {
+            throw XCTSkip("The clipboard manager still serves text after ownership is cleared; nil-value assertion skipped.")
+        }
         XCTAssertEqual(unavailable.values, [nil])
     }
 

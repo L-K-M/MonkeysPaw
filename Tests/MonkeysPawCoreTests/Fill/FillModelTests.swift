@@ -3,6 +3,25 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class FillModelTests: XCTestCase {
+    func testDuplicateFormFieldNamesKeepLastValueWithoutTrapping() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("{{f}}")
+        let field = try XCTUnwrap(entry.document.effectiveFields.first)
+        let form = FillForm(fields: [FillFormField(field, prefill: "first"),
+                                     FillFormField(field, prefill: "last")],
+                            issues: entry.issues, canRender: entry.document.canRender,
+                            isReadOnly: entry.document.isReadOnly, warning: nil)
+        let model = FillModel(entry: entry, form: form, draft: nil, preferredMode: .copyOnly,
+                              fill: h.fill, delivery: h.delivery.service, index: h.index,
+                              main: h.delivery.main, onDraft: { _ in }, onDelivering: {},
+                              onBack: {}, onCancel: {}, onDelivered: { _, _ in })
+        XCTAssertEqual(model.values, ["f": "last"])
+        XCTAssertEqual(model.preview, .rendered("last"))
+        model.open()
+        XCTAssertEqual(model.preview, .rendered("last"))
+        XCTAssertTrue(model.deliverEnabled)
+    }
+
     func testFormOnChangeOwnershipDoesNotBreakPickerDeliveryState() throws {
         let h = PromptFlowHarness()
         _ = try h.put("{{f}}")

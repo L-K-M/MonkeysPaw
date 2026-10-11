@@ -260,8 +260,8 @@ Field declaration (`fields.<name>`):
 | `remember` | bool. Prefill with the last value used. | `true` |
 
 Built-in values are reserved names with no form control. They resolve when
-the form opens (for repeat, at invoke time) and appear in the read-only
-preview:
+the form opens, at use for a fieldless prompt, or at invoke time for repeat,
+and appear in the read-only preview:
 
 | Name | Value |
 |---|---|
@@ -306,15 +306,16 @@ content validation. Date/time/clipboard snapshots are supplied by the
 Fill service (M2e); these pure APIs never read the clock, time zone or clipboard.
 
 `FillService` samples its injected `WallClock` and local-time-zone source once
-at form open, formats Gregorian date/time with `en_US_POSIX`, and requests
-clipboard text only when `.clipboard` appears in the template. The snapshot
-always completes via `Clipboard.readText`; nil/empty clipboard resolves to
-an empty string. GTK reads asynchronously and returns on the creating GTK
-context; macOS reads inline on the AppKit UI thread. A form is immediately
-interactive; delivery and copy stay disabled until the snapshot returns through
-`MainThread`. While waiting, preview either renders text independent of builtins
-or names the missing builtin; it updates on snapshot arrival without resetting
-typed fields. Builtins never refresh on ordinary field edits.
+at form open, or at use for a fieldless prompt, formats Gregorian date/time
+with `en_US_POSIX`, and requests clipboard text only when `.clipboard` appears
+in the template. `Clipboard.readText` completes exactly once; nil, empty or
+failed clipboard reads resolve to an empty string, so failure never leaves
+delivery disabled. The snapshot always completes. GTK reads asynchronously
+and returns on the creating GTK context; macOS reads inline on the AppKit UI
+thread. A form is immediately interactive; delivery and copy stay disabled until
+the snapshot returns through `MainThread`. While waiting, preview either renders
+text independent of builtins or names the missing builtin; it updates on snapshot
+arrival without resetting typed fields. Builtins never refresh on ordinary field edits.
 
 Forms use `effectiveFields` in body first-use order. For remember-fields,
 remembered text wins over a declared default, even when empty; `remember: false`
@@ -339,11 +340,14 @@ user's last choice repeats. Non-remembered fields are not recorded.
   are explicit and retain the last completed index and its loaded events.
   A rebuild or batch is published only when all reads succeed; callers must
   surface failures, including an initial rebuild that leaves the index empty.
-  `setOnChange` has one owner and replaces its previous callback. Each successful
-  rebuild/apply invokes it once on the caller's thread after releasing the lock;
-  failures never notify. Models marshal it through `MainThread`. `recordUse`
-  deliberately stays quiet even though it changes cached ranking; the delivery
-  path refreshes its own results after recording usage.
+  `setOnChange` has one owner. Debug builds assert that the previous hook is
+  cleared before installing a nonnil replacement; clearing with nil is always
+  allowed. Each successful rebuild/apply reads the latest installed callback
+  under the lock when its publish finishes, then invokes that captured callback
+  once on the caller's thread after unlocking. This is latest-writer-wins at
+  publish time. Failures never notify. Models marshal it through `MainThread`.
+  `recordUse` deliberately stays quiet even though it changes cached ranking;
+  the delivery path refreshes its own results after recording usage.
   Path keys and tie-breaks use exact UTF-8 bytes. A few thousand files load
   in well under a second; M2d measures
   a 3,000-entry in-memory FileStore rebuild; its three-second smoke bound
@@ -416,10 +420,15 @@ render defaults when possible, otherwise show the template body until use;
 mere selection never reads clipboard/remembered text. No-match state carries
 the query and create/write/open-folder labels. Edit/library intents are recorded
 as data for later wiring; folder availability is a composition-supplied input.
+Date/time and any used clipboard builtin share one snapshot at form open or
+at use for a fieldless prompt. The clipboard port completes exactly once;
+failure resolves to empty text and cannot leave delivery disabled.
 
-Session drafts are keyed by identity and updated on every field edit. Esc goes
-back to picker; cancel closes the panel. Picker dismissal uses the existing
-`DeliveryService.dismiss` queue, which hides through its injected `PanelWindow`
+Session drafts are keyed by identity and updated on every field edit. Esc from
+a form goes back to picker; cancel closes the panel. Esc from picker or a
+completed delivery closes it; delivery in progress cannot be dismissed.
+Picker dismissal uses the existing `DeliveryService.dismiss` queue, which hides
+through its injected `PanelWindow`
 and retains §4.6's guarded focus restoration. This prevents a pending show from
 reopening a closed picker. Blur hiding belongs to the platform
 timer, while a later open retains the same values. Drafts survive closing and
@@ -430,16 +439,31 @@ The picker carries terminal/copy mode into the form's `preferredMode`; explicit
 form delivery accepts standard paste, terminal paste or copy-only.
 
 Learning happens after DeliveryService completes, including requested copy and
-paste fallback: remember-fields first, then `PromptIndex.recordUse`. Failures do
-not cancel the user's delivery, but expose sanitized `rememberedValuesNotSaved`
-or `usageNotSaved` warnings. Successful usage persistence updates cached ranking
+paste fallback: remember-fields first, then `PromptIndex.recordUse`. The writes
+are independent: a failed remember write still attempts `recordUse`, and a
+failed usage write retains any successful remember write. Failures do not
+cancel the user's delivery, but expose sanitized `rememberedValuesNotSaved` or
+`usageNotSaved` warnings. Successful usage persistence updates cached ranking
 before the picker refreshes. Models retain no logs of prompt text or values.
 Remembered-state reads and learning writes remain synchronous on the model's
 UI thread in this Core slice, matching the requested form/store API. The 1 MiB
 cap bounds values work; a slow filesystem may still delay UI callbacks. Worker
 plumbing and production composition are outside M2e. Merge also retains fields
 removed or renamed in a document; `remember: false` prevents prefill/new records
-without deleting previous text. No automatic pruning or removal API ships here.
+without deleting previous text. All retained fields, including these stale
+fields, count against `Limits.valuesFileCapBytes`. No automatic pruning or
+removal API ships here. Until `remove(identity:)` and a clear-all API arrive,
+hand-delete `<data>/values.json` to reset remembered values. The versioned map
+format is forward-compatible with those additions.
+
+`ValuesStore.migrateKey(from:to:)` moves the whole field map atomically under
+the store lock. Each store operation holds that lock independently;
+`LibraryService`'s own lock serializes its migration, library write and rollback
+sequence. Reversal moves the current destination map wholesale back to the
+source, so records written to the destination between migration and reversal
+return with it without loss. A new source-key record in that interval makes
+reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
+`LibraryError.recoveryRequired`.
 
 ### 5.5 History, external edits, import
 

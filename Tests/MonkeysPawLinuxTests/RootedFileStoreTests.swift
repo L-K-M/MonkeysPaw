@@ -23,18 +23,19 @@ final class RootedFileStoreTests: XCTestCase {
     override func tearDown() { try? manager.removeItem(at: directory) }
 
     func testPrivateWriteCreatesAndReplacesWith0600UnderPermissiveUmask() throws {
+        // umask is process-wide; this test requires serial in-process execution.
         let previousMask = umask(0)
         defer { _ = umask(previousMask) }
         let path = "state/values.json"
         let url = root.appendingPathComponent(path)
         try store.writePrivate(Data("first".utf8), at: path)
         XCTAssertEqual(try store.read(at: path), Data("first".utf8))
-        XCTAssertEqual(try manager.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int, 0o600)
+        XCTAssertEqual(try posixPermissions(at: url), 0o600)
         let stamp = try store.stamp(at: path)
         try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
         try store.writePrivate(Data("replacement".utf8), at: path)
         XCTAssertEqual(try store.read(at: path), Data("replacement".utf8))
-        XCTAssertEqual(try manager.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int, 0o600)
+        XCTAssertEqual(try posixPermissions(at: url), 0o600)
         XCTAssertNotEqual(try store.stamp(at: path), stamp)
         XCTAssertEqual(try manager.contentsOfDirectory(atPath: url.deletingLastPathComponent().path), ["values.json"])
     }
@@ -366,6 +367,14 @@ final class RootedFileStoreTests: XCTestCase {
             XCTAssertFalse(String(describing: $0).contains(self.directory.path))
             XCTAssertFalse($0.localizedDescription.contains(self.directory.path))
         }
+    }
+
+    private func posixPermissions(at url: URL) throws -> Int? {
+        let permissions = try manager.attributesOfItem(atPath: url.path)[.posixPermissions]
+        if let value = permissions as? Int { return value }
+        if let value = permissions as? UInt16 { return Int(value) }
+        if let value = permissions as? UInt32 { return Int(value) }
+        return nil
     }
 
     private func assertOutsideRoot(_ operation: () throws -> Void, file: StaticString = #filePath, line: UInt = #line) {

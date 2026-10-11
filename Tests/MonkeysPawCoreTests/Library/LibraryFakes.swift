@@ -93,6 +93,7 @@ final class MemoryFileStore: FileStore {
 
 final class LibraryClock: WallClock {
     var date = Date(timeIntervalSince1970: 1.234)
+    // Single-threaded test counter; callers must serialize clock access.
     private(set) var readCount = 0
     func now() -> Date {
         readCount += 1

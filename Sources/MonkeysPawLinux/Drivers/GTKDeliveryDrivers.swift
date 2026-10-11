@@ -14,6 +14,9 @@ struct GTKClipboard: Clipboard {
     /// The shim returns on this GTK thread's owning context, without dispatch.
     func readText(_ completion: @escaping @Sendable (String?) -> Void) {
         let box = Unmanaged.passRetained(ReadBox(completion)).toOpaque()
+        // mp_clipboard_read_text calls back exactly once (NULL on failure),
+        // before running the destroy notify exactly once. No cancellable exists;
+        // dropping the callback leaks ReadBox and leaves snapshots unresolved.
         mp_clipboard_read_text(owner, { text, data in
             guard let data else { return }
             let value = text.map { String(cString: $0) }

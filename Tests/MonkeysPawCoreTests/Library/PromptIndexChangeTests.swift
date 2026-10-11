@@ -9,6 +9,7 @@ final class PromptIndexChangeTests: XCTestCase {
         let used = try h.put("Beta", at: "b.md")
         let changes = IndexChanges()
         let index = h.index
+        index.setOnChange(nil) // release the harness picker's ownership
         index.setOnChange {
             XCTAssertTrue(changes.isOwnerThread)
             // Search re-entry would deadlock if publication held the index lock.
@@ -31,6 +32,7 @@ final class PromptIndexChangeTests: XCTestCase {
         let h = PromptFlowHarness()
         _ = try h.put("Before")
         let changes = IndexChanges()
+        h.index.setOnChange(nil)
         h.index.setOnChange { changes.append(["published"]) }
         try h.index.rebuild()
         try h.library.put("After", at: "a.md")
@@ -42,12 +44,14 @@ final class PromptIndexChangeTests: XCTestCase {
         XCTAssertEqual(h.index.search("after").count, 0)
     }
 
-    func testHookHasOneOwnerAndCanReplaceItselfOrUnsubscribe() throws {
+    func testHookCanTransferOwnershipAfterClearAndUnsubscribe() throws {
         let h = PromptFlowHarness()
         let first = IndexChanges()
         let second = IndexChanges()
         let index = h.index
+        index.setOnChange(nil)
         index.setOnChange { first.append([]) }
+        index.setOnChange(nil)
         index.setOnChange {
             second.append([])
             index.setOnChange(nil) // also safe to re-enter callback ownership
@@ -60,6 +64,7 @@ final class PromptIndexChangeTests: XCTestCase {
 
     func testIndexDoesNotKeepItsPickerOwnerAlive() {
         let h = PromptFlowHarness()
+        h.index.setOnChange(nil)
         weak var owner: PickerModel?
         do {
             let picker = PickerModel(index: h.index, fill: h.fill, delivery: h.delivery.service,

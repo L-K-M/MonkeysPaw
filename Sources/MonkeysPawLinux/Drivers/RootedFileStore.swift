@@ -92,6 +92,7 @@ final class RootedFileStore: FileStore {
             // Data.write consumes all bytes or throws; a FileHandle single
             // write(2) could silently publish a truncated private file.
             try data.write(to: URL(fileURLWithPath: temporaryPath))
+            guard fsync(descriptor) == 0 else { throw FileStoreError.ioFailure }
             guard rename(temporaryPath, url.path) == 0 else { throw FileStoreError.ioFailure }
         }
     }

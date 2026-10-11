@@ -158,12 +158,14 @@ public final class PickerModel: @unchecked Sendable {
     }
 
     public func escape() {
-        if state == .fill {
+        switch state {
+        case .fill:
             fillModel?.escape()
-            return
+        case .picker, .done:
+            close()
+        case .delivering, .closed:
+            break
         }
-        guard state == .picker else { return }
-        close()
     }
 
     private var selectedEntry: LibraryEntry? {
@@ -204,7 +206,9 @@ public final class PickerModel: @unchecked Sendable {
         let text: String
         do { text = try fill.render(entry.document, values: [:], builtins: builtins) }
         catch {
-            selectedPreview = .issues(entry.issues)
+            // The entry already passed canRender; unexpected renderer failures
+            // still leave its template body visible.
+            selectedPreview = .body(entry.document.body)
             onChange?()
             return
         }

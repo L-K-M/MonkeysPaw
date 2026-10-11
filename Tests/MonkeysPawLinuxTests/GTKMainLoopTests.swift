@@ -22,6 +22,7 @@ final class GTKMainLoopTests: XCTestCase {
         // GTK/X11 can queue higher-priority work before this idle. Verify its
         // completion, without assuming the first iteration dispatches it.
         XCTAssertTrue(GTKTestSupport.spin { callCount == 1 })
+        XCTAssertEqual(callCount, 1)
         XCTAssertNil(lifetime)
 
         _ = g_main_context_iteration(nil, 0)

@@ -27,12 +27,16 @@ public final class PromptIndex: @unchecked Sendable {
         self.clock = clock
     }
 
-    /// Single owner: assignment replaces the previous hook. Every successful
-    /// rebuild/apply invokes it once on the caller's thread, after releasing the
-    /// lock; failed publishes and recordUse stay quiet. Callers may re-enter
-    /// search and models must marshal through MainThread.
+    /// Single owner: clear the hook before installing a replacement; debug
+    /// builds assert this contract. Successful rebuild/apply captures the current
+    /// hook under the publish lock and invokes it once after unlocking, on the
+    /// caller's thread. Failed publishes and recordUse stay quiet. Callers may
+    /// re-enter search and models must marshal through MainThread.
     public func setOnChange(_ callback: (@Sendable () -> Void)?) {
-        locked { onChange = callback }
+        locked {
+            assert(onChange == nil || callback == nil)
+            onChange = callback
+        }
     }
 
     /// Publish a complete rebuild only after all library and usage reads succeed.
