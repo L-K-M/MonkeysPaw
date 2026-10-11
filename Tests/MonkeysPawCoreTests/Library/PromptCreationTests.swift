@@ -12,7 +12,7 @@ final class PromptCreationTests: XCTestCase {
             XCTAssertFalse(path.hasPrefix("."))
             XCTAssertTrue(path.hasSuffix(".md"))
         }
-        XCTAssertEqual(PromptCreation.relativePath(title: "New prompt", now: Date()), "New prompt.md")
+        XCTAssertEqual(PromptCreation.relativePath(title: "New prompt", now: Date(timeIntervalSince1970: 10)), "New prompt.md")
     }
 
     func testIgnoredEmptyAndOverlongNamesUseTimestampFallback() {
