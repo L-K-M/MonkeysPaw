@@ -5,7 +5,7 @@
 | What | Where | Synced? |
 |---|---|---|
 | Prompts | Library folder, default `~/Documents/MonkeysPaw/` (Linux: XDG documents dir). Any folder can be chosen. | By the sync server (§9) or by the user's git / Syncthing / iCloud |
-| Settings | macOS `~/Library/Application Support/ch.lkmc.MonkeysPaw/settings.json`; Linux `$XDG_CONFIG_HOME/monkeyspaw/settings.json`. Every app-owned JSON file carries a `version` field and migrates forward on load. | no |
+| Settings | macOS `~/Library/Application Support/ch.lkmc.MonkeysPaw/settings.json`; Linux `$XDG_CONFIG_HOME/monkeyspaw/settings.json`. Version 1 schema and fail-closed loading below. Every app-owned JSON file carries a `version` field and migrates forward on load. | no |
 | History | `<data>/history/<prompt-id>/<UTC-timestamp>-<sequence>.md` (`Limits.historyCapPerPrompt = 50`). Synced prompts also have server revisions. | no |
 | Logs | `<data>/logs/monkeyspaw.log` (§12) | no |
 | Usage (ranking, last delivery) | `<data>/usage/<identity-key>` (versioned JSON) | no |
@@ -17,6 +17,28 @@
 `<data>` = macOS `~/Library/Application Support/ch.lkmc.MonkeysPaw/`, Linux
 `$XDG_DATA_HOME/monkeyspaw/`. Under flatpak both resolve inside
 `~/.var/app/ch.lkmc.monkeyspaw/`.
+
+`SettingsStore` uses a dedicated config-root `FileStore` and sorted-key JSON:
+`{"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false},"libraryFolderPath":null,"version":1}`.
+`libraryFolderPath` is an absolute POSIX path or null for the platform default,
+which composition computes. Paths are preserved verbatim; control characters
+are rejected. The document holds only this choice and first-run progress, never
+secrets, prompt content or field values. Unknown keys at the root and inside
+`firstRun` are retained internally and preserved on rewrite, without becoming
+part of the settings API.
+
+Missing settings use defaults. Older versions pass through an ordered chain of
+single-version migrations on load, then persist as the current version on the
+next successful change; version 1 is the first shipped schema. Future versions,
+corrupt documents, unsupported older versions and read failures report typed
+`SettingsError` values, use defaults in memory and make the store read-only for
+its lifetime. They are never overwritten; recovery requires restoring readable
+supported settings and recreating the store. Each update rereads the file to
+detect a newer or corrupt document introduced during the session. One NSLock
+serializes reads and changes; composition shares one store per config root.
+Atomic `FileStore.write` must succeed before the in-memory value changes. Write
+failure is retryable and retains both the previous file and in-memory value.
+Paths, contents and underlying error bodies are never logged.
 
 `ValuesStore` stores version 1 sorted-key JSON in the single `values.json`:
 `{"values":{<identity-key>:{<field-name>:<value>}},"version":1}`. Keys use the

@@ -156,6 +156,20 @@ Footers differ per OS:
    - together they cover every field type
 5. A one-screen tour of the picker and fill form.
 
+Settings version 1 records `setupPresented`, `libraryFolderCompleted` and
+`seedsOffered` independently (§5.1). Accepting the default folder completes the
+library step too. Composition supplies the legacy M1 Setup fact from macOS
+`hasShownDeliverySetup` or Linux `<config>/setup-shown` only when settings are
+missing: it marks Setup presented in memory, leaves the library step pending,
+and is saved with the next successful settings change. Folder changes, including
+returning to the default, keep every first-run flag. The later seeding slice must
+record the offer successfully before copying seeds, so it cannot repeat after a
+restart. A read-only settings error is surfaced by `SettingsModel`. While
+settings are read-only, the model reports `needsSetupPresentation`,
+`needsLibraryFolderStep` and `needsSeedOffer` as false. The UI shows the error
+instead of repeating onboarding that cannot persist each launch. A failed
+completion does not claim durable progress.
+
 ### 11.5 Error and empty states
 
 | State | Behaviour |

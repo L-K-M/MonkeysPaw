@@ -37,6 +37,9 @@
 
 **Ordering.**
 
+- I1 adds Core settings persistence and the General/onboarding model, including
+  legacy Setup import; later slices wire the desktop settings, folder step and seeds.
+
 - I4 closes the inherited desktop logging gap before M2 release acceptance:
   a shared file sink, bounded rotation and the environment-selected threshold.
 
