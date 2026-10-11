@@ -1,5 +1,7 @@
 /// General/onboarding state. Call synchronous intents on the UI thread;
 /// onChange runs inline there, with no asynchronous service callbacks (§4.2).
+/// Read-only settings suppress onboarding queries because progress cannot
+/// persist; the UI shows the read-only error instead of repeating first run.
 public final class SettingsModel {
     /// This hook has one owner, the front end's view. Assignment replaces it.
     public var onChange: (() -> Void)?
@@ -10,9 +12,9 @@ public final class SettingsModel {
     public var libraryFolderPath: String? { state.document.libraryFolderPath }
     public var firstRun: FirstRunProgress { state.document.firstRun }
     public var isReadOnly: Bool { state.isReadOnly }
-    public var needsSetupPresentation: Bool { !firstRun.setupPresented }
-    public var needsLibraryFolderStep: Bool { !firstRun.libraryFolderCompleted }
-    public var needsSeedOffer: Bool { !firstRun.seedsOffered }
+    public var needsSetupPresentation: Bool { !isReadOnly && !firstRun.setupPresented }
+    public var needsLibraryFolderStep: Bool { !isReadOnly && !firstRun.libraryFolderCompleted }
+    public var needsSeedOffer: Bool { !isReadOnly && !firstRun.seedsOffered }
 
     private let settings: SettingsService
 

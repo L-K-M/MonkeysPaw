@@ -46,8 +46,10 @@ public final class SettingsStore: @unchecked Sendable {
         return cached
     }
 
-    /// Publish only after atomic replacement succeeds. Reread before changing
-    /// anything so a file replaced by a newer app during this run is protected.
+    /// Publish only after atomic replacement succeeds. Reread before each
+    /// change to reject newer or corrupt settings already on disk. A replacement
+    /// between that read and the write can still be overwritten; FileStore has
+    /// no compare-and-swap.
     func update(_ change: (SettingsDocument) throws -> SettingsDocument) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -75,16 +77,15 @@ public final class SettingsStore: @unchecked Sendable {
         catch let error as FileStoreError { throw SettingsError.readFailed(error) }
         catch { throw SettingsError.readFailed(.ioFailure) }
 
-        let object = try loader.load(bytes)
+        let (object, sourceVersion) = try loader.load(bytes)
         do {
             let normalized = try JSONSerialization.data(withJSONObject: object)
             let payload = try JSONDecoder().decode(Payload.self, from: normalized)
             guard payload.version == SettingsDocument.currentVersion else { throw SettingsError.corruptFile }
             let document = try SettingsDocument(libraryFolderPath: payload.libraryFolderPath,
                                                 firstRun: payload.firstRun)
-            let originalVersion = try JSONDecoder().decode(SettingsVersion.self, from: bytes).version
             return Loaded(document: document, object: object,
-                          needsRewrite: originalVersion != SettingsDocument.currentVersion)
+                          needsRewrite: sourceVersion != SettingsDocument.currentVersion)
         } catch { throw SettingsError.corruptFile }
     }
 
@@ -105,6 +106,8 @@ public final class SettingsStore: @unchecked Sendable {
         catch { throw SettingsError.writeFailed(.ioFailure) }
     }
 
+    // A load/read failure is deliberately one-way for this instance: it stays
+    // read-only until the app restarts or composition creates a new store.
     @discardableResult
     private func failClosed(_ error: Error) -> SettingsError {
         let sanitized = error as? SettingsError ?? .readFailed(.ioFailure)
@@ -128,23 +131,23 @@ struct SettingsLoader {
     let currentVersion: Int
     let migrations: [SettingsMigration]
 
-    func load(_ bytes: Data) throws -> [String: Any] {
+    func load(_ bytes: Data) throws -> (object: [String: Any], sourceVersion: Int) {
         do {
-            let version = try JSONDecoder().decode(SettingsVersion.self, from: bytes).version
-            guard version <= currentVersion else { throw SettingsError.futureVersion(version) }
-            guard version >= 0 else { throw SettingsError.unsupportedVersion(version) }
+            let sourceVersion = try JSONDecoder().decode(SettingsVersion.self, from: bytes).version
+            guard sourceVersion <= currentVersion else { throw SettingsError.futureVersion(sourceVersion) }
+            guard sourceVersion >= 0 else { throw SettingsError.unsupportedVersion(sourceVersion) }
             guard var object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else {
                 throw SettingsError.corruptFile
             }
 
-            for olderVersion in version..<currentVersion {
+            for olderVersion in sourceVersion..<currentVersion {
                 guard let migration = migrations.first(where: { $0.fromVersion == olderVersion }) else {
                     throw SettingsError.unsupportedVersion(olderVersion)
                 }
                 object = try migration.transform(object)
                 object["version"] = olderVersion + 1
             }
-            return object
+            return (object, sourceVersion)
         } catch let error as SettingsError { throw error }
         catch { throw SettingsError.corruptFile }
     }

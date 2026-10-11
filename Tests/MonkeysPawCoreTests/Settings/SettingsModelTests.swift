@@ -40,10 +40,12 @@ final class SettingsModelTests: XCTestCase {
         let model = SettingsModel(settings: SettingsService(store: SettingsStore(files: files)))
         model.setLibraryFolder("/valid")
         let original = try files.read(at: "settings.json")
+        let before = model.state
 
         for path in ["", "relative/path", "~/Documents", "file:///folder", "C:\\folder", "/bad\0path", "/bad\npath"] {
             model.setLibraryFolder(path)
             XCTAssertEqual(model.error, .invalidLibraryFolder)
+            XCTAssertEqual(model.state, before)
             XCTAssertEqual(model.libraryFolderPath, "/valid")
             XCTAssertFalse(model.isReadOnly)
             XCTAssertEqual(try files.read(at: "settings.json"), original)
@@ -87,13 +89,22 @@ final class SettingsModelTests: XCTestCase {
 
     func testReadOnlyStateIsVisibleImmediatelyAndEveryIntentRetainsTheRejectedFile() throws {
         for (original, expected) in [(#"{"version":2}"#, SettingsError.futureVersion(2)),
-                                    ("corrupt", .corruptFile)] {
+                                    ("corrupt", .corruptFile),
+                                    (#"{"version":1,"firstRun":{"setupPresented":false,"libraryFolderCompleted":false,"seedsOffered":false}}"#,
+                                     .readFailed(.ioFailure))] {
             let files = MemoryFileStore()
             try files.put(original, at: "settings.json")
+            if case .readFailed = expected {
+                files.onRead = { _ in throw FileStoreError.ioFailure }
+            }
             let model = SettingsModel(settings: SettingsService(store: SettingsStore(files: files)))
+            files.onRead = nil
             XCTAssertTrue(model.isReadOnly)
             XCTAssertEqual(model.error, expected)
             XCTAssertEqual(model.state.readOnlyError, expected)
+            XCTAssertFalse(model.needsSetupPresentation)
+            XCTAssertFalse(model.needsLibraryFolderStep)
+            XCTAssertFalse(model.needsSeedOffer)
             let intents = [ { model.setLibraryFolder("/chosen") }, { model.clearLibraryFolder() },
                             { model.markSetupPresented() }, { model.completeLibraryFolderStep() },
                             { model.markSeedsOffered() }, { model.refresh() } ]
@@ -101,6 +112,9 @@ final class SettingsModelTests: XCTestCase {
                 intent()
                 XCTAssertEqual(model.error, expected)
                 XCTAssertEqual(model.state.document, SettingsDocument())
+                XCTAssertFalse(model.needsSetupPresentation)
+                XCTAssertFalse(model.needsLibraryFolderStep)
+                XCTAssertFalse(model.needsSeedOffer)
                 XCTAssertEqual(try files.text(at: "settings.json"), original)
             }
         }

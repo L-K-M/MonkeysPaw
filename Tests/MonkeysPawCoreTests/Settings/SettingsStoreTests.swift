@@ -5,7 +5,7 @@ import XCTest
 final class SettingsStoreTests: XCTestCase {
     private let defaultsJSON = #"{"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false},"libraryFolderPath":null,"version":1}"#
 
-    func testMissingFileUsesDefaultsWithoutCreatingAnything() throws {
+    func testMissingFileUsesDefaultsUntilFirstSuccessfulIntentWritesSettings() throws {
         let files = MemoryFileStore()
         let settings = SettingsService(store: SettingsStore(files: files))
 
@@ -124,11 +124,12 @@ final class SettingsStoreTests: XCTestCase {
         let result = try loader.load(Data(#"{"version":1,"old":"kept","unknown":true}"#.utf8))
 
         XCTAssertEqual(visited, [1, 2])
-        XCTAssertEqual(result["version"] as? Int, 3)
-        XCTAssertEqual(result["new"] as? String, "kept")
-        XCTAssertEqual(result["unknown"] as? Bool, true)
-        XCTAssertNil(result["old"])
-        XCTAssertNil(result["middle"])
+        XCTAssertEqual(result.sourceVersion, 1)
+        XCTAssertEqual(result.object["version"] as? Int, 3)
+        XCTAssertEqual(result.object["new"] as? String, "kept")
+        XCTAssertEqual(result.object["unknown"] as? Bool, true)
+        XCTAssertNil(result.object["old"])
+        XCTAssertNil(result.object["middle"])
     }
 
     func testMissingMigrationLinkAndFailedTransformFailClosed() throws {
@@ -204,18 +205,23 @@ final class SettingsStoreTests: XCTestCase {
     }
 
     func testReadFailuresAreTypedOrSanitizedAndRemainReadOnlyUntilRecreated() throws {
-        let failures: [Error] = [FileStoreError.invalidRoot, NSError(domain: "private path/body", code: 1)]
+        let privateDomain = "private path/body"
+        let privateBody = "opaque untrusted error body"
+        let failures: [Error] = [FileStoreError.invalidRoot,
+            NSError(domain: privateDomain, code: 1, userInfo: [NSLocalizedDescriptionKey: privateBody])]
         for failure in failures {
             let files = MemoryFileStore()
             files.onRead = { _ in throw failure }
             let settings = SettingsService(store: SettingsStore(files: files))
             let expected = SettingsError.readFailed(failure as? FileStoreError ?? .ioFailure)
             XCTAssertEqual(settings.snapshot.readOnlyError, expected)
-            XCTAssertFalse(String(describing: expected).contains("private"))
 
             files.onRead = nil
             XCTAssertThrowsError(try settings.markSetupPresented()) {
                 XCTAssertEqual($0 as? SettingsError, expected)
+                let description = String(describing: $0)
+                XCTAssertFalse(description.contains(privateDomain))
+                XCTAssertFalse(description.contains(privateBody))
             }
             XCTAssertNil(try files.stamp(at: "settings.json"))
             let recovered = SettingsService(store: SettingsStore(files: files))
@@ -311,6 +317,44 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(object["futureOption"] as? String, "kept")
         XCTAssertEqual((object["firstRun"] as? [String: Any])?["futureProgress"] as? Int, 7)
         XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, settings.snapshot)
+    }
+
+    func testSetLibraryFolderRejectsRelativePathsAndControlCharactersWithoutChangingStoredFile() throws {
+        let files = MemoryFileStore()
+        let settings = SettingsService(store: SettingsStore(files: files))
+        try settings.setLibraryFolder("/valid")
+        let original = try files.read(at: "settings.json")
+        let before = settings.snapshot
+        var writes = 0
+        files.onWrite = { _ in writes += 1 }
+
+        for path in ["relative/path", "/bad\u{0}path", "/bad\npath"] {
+            XCTAssertThrowsError(try settings.setLibraryFolder(path)) {
+                XCTAssertEqual($0 as? SettingsError, .invalidLibraryFolder)
+            }
+            XCTAssertEqual(settings.snapshot, before)
+            XCTAssertEqual(try files.read(at: "settings.json"), original)
+        }
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testSettingAndClearingLibraryFolderKeepEveryCompletedFirstRunFlag() throws {
+        let files = MemoryFileStore()
+        let settings = SettingsService(store: SettingsStore(files: files))
+        try settings.markSetupPresented()
+        try settings.completeLibraryFolderStep()
+        try settings.markSeedsOffered()
+        let completed = FirstRunProgress(
+            setupPresented: true, libraryFolderCompleted: true, seedsOffered: true)
+        XCTAssertEqual(settings.snapshot.document.firstRun, completed)
+
+        let paths: [String?] = ["/another", nil]
+        for path in paths {
+            try settings.setLibraryFolder(path)
+            XCTAssertEqual(settings.snapshot.document.libraryFolderPath, path)
+            XCTAssertEqual(settings.snapshot.document.firstRun, completed)
+            XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, settings.snapshot)
+        }
     }
 
     func testConcurrentChangesKeepEveryProgressFlag() throws {
