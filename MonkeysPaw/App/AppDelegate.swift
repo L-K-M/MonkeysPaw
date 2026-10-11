@@ -7,17 +7,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let makeFocusTracker: (MainThread, Scheduler) -> WorkspaceFocusTracker
     private let scheduler: Scheduler
     private let makePanelController: (MainThread, Scheduler, LogSink) -> PanelController
+    private let mainThread: MainThread = DispatchMainThread()
+    private let libraryDirectory: URL
+    private let dataDirectory: URL
+    private let rootsAreInjected: Bool
+    private let launchURI: (URL) -> Void
     private var panelController: PanelController?
-    private var panelPresentation: PanelViewState?
+    private(set) var pickerPresentation: PickerViewState?
     private var setupWindow: SetupWindowController?
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
     private var statusItem: NSStatusItem?
-    private(set) var panelModel: PanelModel?
+    private(set) var pickerModel: PickerModel?
     private(set) var setupModel: SetupModel?
+    private var libraryFiles: FileStore?
+    private var library: LibraryService?
+    private var index: PromptIndex?
+    private var watcher: LibraryWatcher?
+    private var libraryStarted = false
+    private var libraryWarningLogged = false
+    private var log: LogSink?
+    private let clock = SystemClock()
 
     /// Hosted tests replace workspace/AX access while exercising the real UI wiring.
-    init(makeFocusTracker: @escaping (MainThread, Scheduler) -> WorkspaceFocusTracker = {
+    init(libraryRoot: URL? = nil, dataRoot: URL? = nil,
+         launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
+         makeFocusTracker: @escaping (MainThread, Scheduler) -> WorkspaceFocusTracker = {
         WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
     }, scheduler: Scheduler = DispatchScheduler(),
          makePanelController: @escaping (MainThread, Scheduler, LogSink) -> PanelController = {
@@ -26,12 +41,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.makeFocusTracker = makeFocusTracker
         self.scheduler = scheduler
         self.makePanelController = makePanelController
+        rootsAreInjected = libraryRoot != nil && dataRoot != nil
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        libraryDirectory = libraryRoot ?? home.appendingPathComponent("Documents/MonkeysPaw", isDirectory: true)
+        dataDirectory = dataRoot ?? home.appendingPathComponent(
+            "Library/Application Support/" + AppIdentity.macOSBundleID, isDirectory: true)
+        self.launchURI = launchURI
         super.init()
     }
 
+    deinit { watcher?.stop() }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The hosted application's default delegate has production roots.
+        // Only explicitly injected test graphs may access the filesystem.
+        guard !Self.isRunningTests || rootsAreInjected else { return }
         let log = OSLogSink()
+        self.log = log
         compose(log: log)
+        startLibrary()
         // Graph construction is safe under hosted XCTest. Native registrations,
         // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
@@ -40,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let accelerator = Accelerator.defaultBinding(for: .togglePicker) {
             shortcuts?.configure([.togglePicker: accelerator]) { [weak self] action in
                 guard action == .togglePicker else { return }
-                self?.togglePanel()
+                self?.togglePicker()
             }
         }
 
@@ -56,13 +84,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) { watcher?.stop() }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         // Returning from System Settings refreshes grants and registration state.
         setupModel?.refresh()
     }
 
     private func compose(log: LogSink) {
-        let mainThread = DispatchMainThread()
+        let mainThread = self.mainThread
         let scheduler = self.scheduler
         let focus = makeFocusTracker(mainThread, scheduler)
         let panel = makePanelController(mainThread, scheduler, log)
@@ -84,13 +114,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let probe = MacSetupProbe(hotkeys: hotkeys, mainThread: mainThread)
         let setup = SetupService(probe: probe, session: session, shortcuts: shortcuts,
                                  selfTest: selfTest, mainThread: mainThread)
-        let model = PanelModel(delivery: delivery)
-        let presentation = PanelViewState(model: model)
+        let files: FileStore
+        var libraryAvailable = true
+        do {
+            let rooted = try RootedFileStore(root: libraryDirectory)
+            try rooted.createRoot()
+            files = rooted
+        } catch {
+            files = UnavailableFileStore()
+            libraryAvailable = false
+            warnAboutLibrary()
+        }
+        let data: FileStore
+        do { data = try RootedFileStore(root: dataDirectory) }
+        catch {
+            data = UnavailableFileStore()
+            log.write(.warning, "App data unavailable; remembered values and usage cannot be saved")
+        }
+        let values = ValuesStore(files: data)
+        let usage = UsageStore(files: data, clock: clock)
+        let library = LibraryService(library: files, data: data, clock: clock,
+            entropy: SystemEntropy(), keyedStores: [values, usage])
+        let index = PromptIndex(service: library, usage: usage, clock: clock)
+        let fill = FillService(values: values, clipboard: clipboard, clock: clock, timeZone: { TimeZone.current })
+        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: mainThread)
+        model.libraryAvailable = libraryAvailable
+        let presentation = PickerViewState(model: model, mainThread: mainThread,
+            requestedIntent: { [weak self] in self?.handle($0) },
+            createPrompt: { [weak self] in self?.createPrompt(titled: $0) })
         panel.rootView = { [weak presentation] in
             guard let presentation else { return AnyView(EmptyView()) }
-            return AnyView(PanelView(presentation: presentation))
+            return AnyView(PickerView(presentation: presentation))
         }
-        panel.onCancel = { [weak model] in model?.cancel() }
+        panel.onCancel = { [weak model] in model?.dismiss() }
+        panel.onEscape = { [weak model] in model?.escape() }
+        panel.onShow = { [weak presentation] in presentation?.didShow() }
+        panel.onKey = { [weak presentation, weak panel] event, kind in
+            if presentation?.route(event, fieldKind: kind) == true { return true }
+            guard presentation?.model.state == .picker else { return false }
+            return panel?.forwardTypingToSearch(event) ?? false
+        }
+        focus.onCapture = { [weak presentation] in
+            presentation?.pasteTarget = Self.pasteTargetName(for: $0)
+        }
         panel.onHide = { reason in
             switch reason {
             case .delivery: focus.prepareForRestore(.delivery)
@@ -100,13 +166,107 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         panelController = panel
-        panelPresentation = presentation
-        panelModel = model
+        pickerPresentation = presentation
+        pickerModel = model
+        libraryFiles = files
+        self.library = library
+        self.index = index
+        if let raw = try? RootedFileWatcher(root: libraryDirectory, log: log) {
+            watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
+        }
         focusTracker = focus
         self.shortcuts = shortcuts
         let setupModel = SetupModel(setup: setup)
         self.setupModel = setupModel
         setupWindow = SetupWindowController(model: setupModel)
+    }
+
+    private func startLibrary() {
+        guard !libraryStarted, let index, let pickerModel else { return }
+        libraryStarted = true
+        guard pickerModel.libraryAvailable else { degradeLibrary(); return }
+        do {
+            // compose installed the picker/index hook before this first publish.
+            try Self.startLibrary(index: index, watcher: watcher) { [weak self] update in
+                self?.mainThread.run { [weak self] in
+                    guard let self, self.pickerModel?.libraryAvailable == true else { return }
+                    switch update {
+                    case .changes(let changes): self.apply(changes, to: index)
+                    case .rootUnavailable: self.degradeLibrary()
+                    }
+                }
+            }
+        } catch { degradeLibrary() }
+    }
+
+    static func startLibrary(index: PromptIndex, watcher: LibraryWatcher?,
+                             onChange: @escaping @Sendable (LibraryWatchUpdate) -> Void) throws {
+        guard let watcher else { throw FileStoreError.ioFailure }
+        // Arm before rebuilding: an external save cannot fall into a silent
+        // baseline after the scan. AppKit batches return through MainThread,
+        // so they cannot interleave with this synchronous initial rebuild.
+        try watcher.start(onChange)
+        try index.rebuild()
+    }
+
+    private func apply(_ changes: LibraryChangeSet, to index: PromptIndex) {
+        do {
+            // Health flushes pending reloads before its own signal. Protect the
+            // cache when the physical root has vanished ahead of that flush.
+            try (libraryFiles as? RootedFileStore)?.requireRoot()
+        } catch { degradeLibrary(); return }
+        do { try index.apply(changes) }
+        catch {
+            warnAboutLibrary()
+            do { try index.rebuild() }
+            catch { degradeLibrary() }
+        }
+    }
+
+    private func warnAboutLibrary() {
+        guard !libraryWarningLogged else { return }
+        libraryWarningLogged = true
+        log?.write(.warning, "Library unavailable or refresh failed; keeping cached prompts")
+    }
+
+    private func degradeLibrary() {
+        watcher?.stop()
+        pickerModel?.libraryAvailable = false
+        warnAboutLibrary()
+    }
+
+    private func handle(_ intent: PickerModel.Intent) {
+        let url: URL
+        switch intent {
+        case .openLibrary: url = libraryDirectory
+        case .edit(_, let path):
+            guard (try? FileStorePath.validate(path)) != nil else { return }
+            url = libraryDirectory.appendingPathComponent(path)
+        }
+        pickerModel?.dismiss()
+        mainThread.run { [weak self] in self?.launchURI(url) }
+    }
+
+    private func createPrompt(titled title: String) {
+        guard pickerModel?.libraryAvailable == true, let library, let index else { return }
+        do {
+            let path = try library.availablePath(for: PromptCreation.relativePath(title: title, now: clock.now()))
+            let document = try PromptCodec.newDocument(title: title, body: Strings.newPromptBody)
+            let entry = try library.save(document, at: path)
+            do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
+            catch { log?.write(.warning, "Prompt saved; immediate index refresh failed") }
+            handle(.edit(identity: entry.identity, relativePath: path))
+        } catch {
+            pickerPresentation?.showStatus(Strings.createPromptFailed)
+            log?.write(.warning, "Could not create a prompt; check library and app-data permissions")
+        }
+    }
+
+    static func pasteTargetName(for target: DeliveryTarget?) -> String {
+        guard let target, case .macOS(let pid, let bundleID) = target,
+              let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
+              app.bundleIdentifier == bundleID, let name = app.localizedName else { return Strings.noPasteTarget }
+        return name
     }
 
     private func installMainMenu() {
@@ -159,15 +319,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showPanel() {
-        guard panelController?.isVisible != true else { return }
-        panelModel?.show()
+        pickerModel?.open()
     }
 
-    private func togglePanel() {
-        if panelController?.isVisible == true {
-            panelModel?.cancel()
+    func togglePicker() {
+        if panelController?.isActiveAndVisible == true {
+            pickerModel?.dismiss()
         } else {
-            panelModel?.show()
+            pickerModel?.open()
         }
     }
 

@@ -43,6 +43,18 @@ final class RootedFileStore: FileStore {
         }
     }
 
+    /// Composition prepares the default library without writing a sentinel.
+    func createRoot() throws {
+        try sanitized { _ = try rootExists(parents: .create) }
+    }
+
+    /// Pending reloads after root loss must not remove cached index entries.
+    func requireRoot() throws {
+        try sanitized {
+            guard try rootExists(parents: .existing) else { throw FileStoreError.notFound }
+        }
+    }
+
     func stamp(at path: String) throws -> FileStamp? {
         try sanitized {
             guard let url = try locate(path, parents: .existing), let attributes = try attributes(at: url) else {

@@ -19,7 +19,7 @@ public struct FillFieldState: Equatable, Sendable {
 }
 
 /// Intents, state reads and onChange ownership belong to the injected UI
-/// thread, just like PanelModel. Async snapshots return through MainThread.
+/// thread, just like PickerModel. Async snapshots return through MainThread.
 /// @unchecked Sendable permits those callbacks, not cross-thread intents.
 /// Forms are interactive immediately; delivery waits for the builtin snapshot.
 public final class FillModel: @unchecked Sendable {

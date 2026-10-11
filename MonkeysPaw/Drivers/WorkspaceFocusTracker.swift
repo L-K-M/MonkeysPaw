@@ -7,6 +7,9 @@ import MonkeysPawCore
 final class WorkspaceFocusTracker: FocusTracker {
     enum RestorationMode { case dismissal, delivery, blur }
 
+    /// Composition resolves the display name; captured identities stay pid/bundle id.
+    var onCapture: ((DeliveryTarget?) -> Void)?
+
     /// The workspace seam carries identities, never retained native applications.
     struct Source {
         let frontmost: () -> DeliveryTarget?
@@ -92,7 +95,11 @@ final class WorkspaceFocusTracker: FocusTracker {
         // A new summon supersedes an older activation retry, like Invoque's generation.
         cancelPendingRestoration()
         guard let target = source.frontmost(),
-              case .macOS(let pid, _) = target, pid != ownPID else { return nil }
+              case .macOS(let pid, _) = target, pid != ownPID else {
+            onCapture?(nil)
+            return nil
+        }
+        onCapture?(target)
         return target
     }
 

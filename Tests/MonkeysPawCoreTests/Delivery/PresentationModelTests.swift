@@ -1,65 +1,6 @@
 import MonkeysPawCore
 import XCTest
 
-final class PanelModelTests: XCTestCase {
-    func testConfirmDeliversCannedPromptAndTransitionsThroughDelivering() {
-        let h = DeliveryHarness()
-        h.arm()
-        let model = PanelModel(delivery: h.service)
-        var states: [PanelModel.State] = []
-        model.onChange = { states.append(model.state) }
-        XCTAssertEqual(model.state, .idle)
-        XCTAssertEqual(model.prompt, "Monkey's Paw test: if you can read this, delivery works.")
-        model.confirm(mode: .paste(.terminal))
-        XCTAssertEqual(model.state, .delivering)
-        XCTAssertEqual(h.clipboard.readText(), model.prompt)
-        model.confirm(mode: .paste(.standard))
-        model.cancel()
-        XCTAssertEqual(h.scheduler.delays.count, 1)
-        XCTAssertFalse(h.recorder.events.contains(.hide))
-        h.settle()
-        XCTAssertEqual(model.state, .done(.pasted(.cgEvent)))
-        XCTAssertEqual(states, [.delivering, .done(.pasted(.cgEvent))])
-        XCTAssertEqual(h.injectors[.cgEvent]?.chords, [.terminal])
-    }
-
-    func testCopyIntentAndReopeningResetTheModel() {
-        let h = DeliveryHarness()
-        let model = PanelModel(delivery: h.service)
-        model.show()
-        model.confirm(mode: .copyOnly)
-        h.settle()
-        XCTAssertEqual(model.state, .done(.copiedOnly(.requested)))
-        model.show()
-        XCTAssertEqual(model.state, .idle)
-        XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
-    }
-
-    func testCancelHidesAndRestoresWithoutWritingClipboard() throws {
-        let h = DeliveryHarness()
-        let model = PanelModel(delivery: h.service)
-        model.show()
-        h.recorder.events.removeAll()
-        model.cancel()
-        XCTAssertEqual(h.recorder.events, [.hide, .restore(try XCTUnwrap(h.focus.target))])
-        XCTAssertEqual(model.state, .idle)
-        XCTAssertNil(h.clipboard.readText())
-    }
-
-    func testFallbackOutcomeAndOnChangeReturnThroughMainThread() {
-        let h = DeliveryHarness(session: .wlroots)
-        h.injectors[.ydotool]?.result = .failed(.toolMissing)
-        let model = PanelModel(delivery: h.service)
-        var state: PanelModel.State?
-        model.onChange = { XCTAssertTrue(h.main.isRunning); state = model.state }
-        h.main.run { model.confirm(mode: .paste(.standard)) }
-        h.settle()
-        XCTAssertEqual(state, .done(.copiedOnly(.backendsFailed([
-            BackendFailure(backend: .ydotool, reason: .toolMissing),
-        ]))))
-    }
-}
-
 final class SetupModelTests: XCTestCase {
     private struct Harness {
         let delivery: DeliveryHarness
@@ -285,8 +226,7 @@ final class SetupModelTests: XCTestCase {
 
     func testSelfTestUsesExistingSessionWhilePanelGestureOwnsConsent() {
         let h = Harness(session: .gnomeWayland)
-        let panel = PanelModel(delivery: h.delivery.service)
-        panel.confirm(mode: .paste(.standard))
+        h.delivery.service.deliver(DeliveryStrings.testPrompt, mode: .paste(.standard)) { _ in }
         h.delivery.scheduler.advance(by: Limits.settleDelayLinux)
         XCTAssertEqual(h.delivery.injectors[.remoteDesktopPortal]?.consents, [.userInitiated])
         h.model.runSelfTest()

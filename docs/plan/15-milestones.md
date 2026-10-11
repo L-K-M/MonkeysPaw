@@ -37,6 +37,18 @@
 
 **Ordering.**
 
+- M2h follows M2g's root-health and exact-path correction with the macOS
+  picker/fill view and production composition, replacing the canned panel
+  and retiring Core `PanelModel`. AppKit inputs retain native focus in the
+  reused panel; a scoped local key monitor handles the macOS map. Hosted
+  temporary-root tests cover startup ordering, launches/creation, field
+  descriptions, blur/toggle drafts and cached root-loss behavior, plus an
+  external save measured against a one-second FSEvents-to-picker deadline.
+  This Linux host cannot compile or execute those tests: `macos-app` on
+  macos-26 with Xcode 26.0 is the required proof. The picker/fill owner
+  checklist in `docs/platform/macos.md` remains NOT RUN. M2 stays open for
+  Settings, seeds, library onboarding, fixtures and release acceptance.
+
 - M2f lands the Linux picker/fill view and production library composition,
   replacing the canned Linux panel. Core dismiss retains drafts across blur
   and toggle-off; GTK tests exercise live search, native selection, each field

@@ -3,6 +3,21 @@ import XCTest
 @testable import MonkeysPaw
 
 final class PromptPanelTests: XCTestCase {
+    func testEscapeAndCloseHaveSeparateIntents() throws {
+        let panel = PromptPanel(content: NSView())
+        defer { panel.close() }
+        var escapes = 0
+        var closes = 0
+        panel.onEscape = { escapes += 1 }
+        panel.onCancel = { closes += 1 }
+        panel.cancelOperation(nil)
+        XCTAssertEqual(escapes, 1)
+        XCTAssertEqual(closes, 0)
+        XCTAssertTrue(panel.performKeyEquivalent(with: try commandWEvent(for: panel, modifiers: .command)))
+        XCTAssertEqual(escapes, 1)
+        XCTAssertEqual(closes, 1)
+    }
+
     func testPreservesFloatingPanelRecipe() {
         let panel = PromptPanel(content: NSView())
         defer { panel.close() }

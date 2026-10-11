@@ -4,14 +4,25 @@ import XCTest
 @testable import MonkeysPaw
 
 final class AppDelegateTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     func testHostedLaunchBuildsGraphWithoutWindowsOrNativeHotkeys() throws {
         XCTAssertTrue(AppDelegate.isRunningTests)
         let windows = NSApp.windows.map(ObjectIdentifier.init)
-        let delegate = AppDelegate()
+        let delegate = AppDelegate(libraryRoot: directory.appendingPathComponent("library"),
+                                   dataRoot: directory.appendingPathComponent("data"), launchURI: { _ in })
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
 
-        XCTAssertNotNil(delegate.panelModel)
+        XCTAssertNotNil(delegate.pickerModel)
         let model = try XCTUnwrap(delegate.setupModel)
         XCTAssertEqual(model.session, .macOS)
         XCTAssertEqual(model.rows.first(where: { $0.kind == .hotkey })?.registration?.status, .unbound)
@@ -35,7 +46,9 @@ final class AppDelegateTests: XCTestCase {
         var activations: [DeliveryTarget] = []
         var panelController: PanelController?
         var keyWindowReads = 0
-        let delegate = AppDelegate(makeFocusTracker: { mainThread, scheduler in
+        let delegate = AppDelegate(libraryRoot: directory.appendingPathComponent("library"),
+                                   dataRoot: directory.appendingPathComponent("data"), launchURI: { _ in },
+                                   makeFocusTracker: { mainThread, scheduler in
             WorkspaceFocusTracker(
                 source: .init(frontmost: { frontmost }, activate: {
                     activations.append($0)
@@ -56,8 +69,8 @@ final class AppDelegateTests: XCTestCase {
             return controller
         })
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
-        let model = try XCTUnwrap(delegate.panelModel)
-        model.show()
+        let model = try XCTUnwrap(delegate.pickerModel)
+        model.open()
         let controller = try XCTUnwrap(panelController)
         XCTAssertTrue(controller.isVisible)
         let panel = try XCTUnwrap(NSApp.windows.compactMap { $0 as? PromptPanel }.first {
@@ -73,7 +86,7 @@ final class AppDelegateTests: XCTestCase {
         _ = delegate.perform(Selector(("showSetup")))
         XCTAssertGreaterThan(keyWindowReads, 0)
         XCTAssertFalse(controller.isVisible)
-        XCTAssertEqual(model.state, .idle)
+        XCTAssertEqual(model.state, .closed)
         XCTAssertTrue(activations.isEmpty, "Opening Setup must never activate the captured app")
 
         let mainLoopDrained = expectation(description: "Deferred native window work completes")
@@ -83,14 +96,14 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertTrue(activations.isEmpty, "Deferred blur and restoration work must not activate either")
 
         // A second cancellation proves DeliveryService cleared the armed target.
-        model.cancel()
+        model.dismiss()
         scheduler.drain()
         XCTAssertTrue(activations.isEmpty)
 
         // A fresh summon resets the owned-window intent. Ordinary Escape still
-        // restores through PanelModel and DeliveryService without real keys.
+        // restores through PickerModel and DeliveryService without real keys.
         frontmost = target
-        model.show()
+        model.open()
         frontmost = .macOS(processID: ownPID, bundleID: "test.own")
         panel.cancelOperation(nil)
         scheduler.drain()
@@ -102,7 +115,8 @@ final class AppDelegateTests: XCTestCase {
         defer {
             for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
         }
-        let delegate = AppDelegate()
+        let delegate = AppDelegate(libraryRoot: directory.appendingPathComponent("library"),
+                                   dataRoot: directory.appendingPathComponent("data"), launchURI: { _ in })
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         _ = delegate.perform(Selector(("showSetup")))
 
