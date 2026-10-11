@@ -268,7 +268,7 @@ final class LinuxEnvironment {
     private func createPrompt(titled title: String) {
         guard pickerModel.libraryAvailable else { return }
         do {
-            let path = try library.availablePath(for: LinuxPromptCreation.relativePath(title: title, now: clock.now()))
+            let path = try library.availablePath(for: PromptCreation.relativePath(title: title, now: clock.now()))
             let document = try PromptCodec.newDocument(title: title, body: LinuxStrings.newPromptBody)
             let entry = try library.save(document, at: path)
             do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }

@@ -135,6 +135,9 @@ public enum Limits {
     /// §8.4: bound a complete relative prompt path to 1,024 UTF-8 bytes.
     public static let maxPathBytes: Int = kibibyte
 
+    /// Desktop creation uses one filename within the common POSIX NAME_MAX.
+    public static let promptFilenameMaxBytes: Int = 255
+
     /// §12: rotate each desktop log at 1 MiB to bound diagnostic storage.
     public static let logFileMaxBytes: Int = mebibyte
 
