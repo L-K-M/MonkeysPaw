@@ -85,6 +85,18 @@ public enum Limits {
     /// §5.1: retain 50 local revisions per prompt to bound history storage.
     public static let historyCapPerPrompt: Int = 50
 
+    /// §5.4: retain the last 1,024 recorded uses. At one use/day, a discarded
+    /// event is over 73 half-lives old (< 1e-22 contribution); recent dense
+    /// bursts already saturate the frecency cap. This bounds the stored tail.
+    public static let usageEventCap: Int = 1_024
+
+    /// §5.4: use contributions decay by half every 14 elapsed 24-hour days.
+    public static let frecencyHalfLifeDays: Double = 14
+    /// §5.4: bound the total contribution of retained use events.
+    public static let frecencyCap: Double = 32
+    /// §5.4: multiply nonempty-query scores for favourites.
+    public static let favoriteBoost: Double = 1.5
+
     /// §5.5: bounded six-digit collision sequence within one UTC millisecond.
     public static let historySequenceMax: Int = 999_999
     /// Four-digit UTC years keep revision filenames lexically sortable.
