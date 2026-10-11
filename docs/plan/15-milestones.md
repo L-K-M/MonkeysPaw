@@ -37,6 +37,9 @@
 
 **Ordering.**
 
+- I4 closes the inherited desktop logging gap before M2 release acceptance:
+  a shared file sink, bounded rotation and the environment-selected threshold.
+
 - M2h follows M2g's root-health and exact-path correction with the macOS
   picker/fill view and production composition, replacing the canned panel
   and retiring Core `PanelModel`. AppKit inputs retain native focus in the

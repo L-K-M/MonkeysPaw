@@ -39,6 +39,6 @@ public struct StandardErrorLog: LogSink {
         Self.lock.lock()
         defer { Self.lock.unlock() }
 
-        output.write(line)
+        try? output.write(contentsOf: line)
     }
 }

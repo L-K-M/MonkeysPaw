@@ -3,6 +3,13 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class StandardErrorLogTests: XCTestCase {
+    func testUnavailableStderrDoesNotCrash() throws {
+        let pipe = Pipe()
+        let log = StandardErrorLog(output: pipe.fileHandleForWriting)
+        try pipe.fileHandleForWriting.close()
+        log.write(.warning, "File logging unavailable")
+    }
+
     func testFormatsLevelsAndMessages() throws {
         let pipe = Pipe()
         let log = StandardErrorLog(output: pipe.fileHandleForWriting)
