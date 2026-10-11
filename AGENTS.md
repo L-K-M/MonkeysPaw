@@ -46,6 +46,7 @@ Run these commands from the repository root:
 | Validate Xcode object IDs without Xcode | `python3 scripts/check-pbxproj.py` |
 | Build Core without GTK | `swift build --target MonkeysPawCore` |
 | Build Linux app | `swift build --product monkeyspaw` |
+| Build Linux deb (Ubuntu 24.04) | `packaging/build-deb.sh 0.1.0` (or omit the version with `GITHUB_REF_NAME` set) |
 | Test Core and Linux app | `swift test` |
 | Test portal transport on a required private bus (no display) | `dbus-run-session -- env MONKEYSPAW_REQUIRE_PORTAL_BUS=1 swift test --filter LinuxPortalTransportTests` |
 | Test Linux app with a required display and private bus (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 MONKEYSPAW_REQUIRE_PORTAL_BUS=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |

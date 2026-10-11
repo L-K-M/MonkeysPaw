@@ -36,6 +36,8 @@ jobs:
           }
       - name: Validate Xcode object references
         run: python3 scripts/check-pbxproj.py
+      - name: Check committed versions and Debian version mapping
+        run: python3 scripts/check-version.py
       - name: Build Core
         run: swift build --target MonkeysPawCore
       # swift test builds every test target, even with --filter. Compile Core
@@ -99,6 +101,80 @@ jobs:
             bash scripts/linux-delivery-smoke.sh .build/debug/monkeyspaw
       - name: Validate desktop entry
         run: desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop
+
+  deb:
+    name: Ubuntu 24.04 Debian package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: swift:6.4-noble
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Debian package build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libgtk-4-dev pkg-config python3 dpkg-dev binutils desktop-file-utils shellcheck
+      - name: Check packaging scripts
+        run: |
+          shellcheck packaging/build-deb.sh scripts/make-linux-icons.sh
+          python3 scripts/check-version.py
+      - name: Build a prerelease package
+        # A fixed version exercises the tilde mapping without bumping the repo.
+        run: packaging/build-deb.sh v0.1.0-beta.1
+      - name: Inspect package metadata and payload
+        run: |
+          set -euo pipefail
+          deb="dist/monkeyspaw_0.1.0~beta.1_$(dpkg --print-architecture).deb"
+          dpkg-deb --info "$deb"
+          test "$(dpkg-deb --field "$deb" Package)" = monkeyspaw
+          test "$(dpkg-deb --field "$deb" Version)" = '0.1.0~beta.1'
+          test "$(dpkg-deb --field "$deb" Architecture)" = "$(dpkg --print-architecture)"
+          test "$(dpkg-deb --field "$deb" Section)" = utils
+          test "$(dpkg-deb --field "$deb" Priority)" = optional
+          test "$(dpkg-deb --field "$deb" Maintainer)" = 'L-K-M <noreply@lkmc.ch>'
+          test "$(dpkg-deb --field "$deb" Recommends)" = 'libsecret-tools, ydotool, xdotool'
+          test "$(dpkg-deb --field "$deb" Installed-Size)" -gt 0
+          test -n "$(dpkg-deb --field "$deb" Description)"
+          depends="$(dpkg-deb --field "$deb" Depends)"
+          for dependency in libgtk-4-1 libglib2.0-0t64 libglib2.0-bin; do
+            grep -Eq "(^|, )${dependency}( |,|$)" <<< "$depends"
+          done
+
+          dpkg-deb --contents "$deb"
+          payload="$RUNNER_TEMP/monkeyspaw-deb"
+          dpkg-deb --extract "$deb" "$payload"
+          test -x "$payload/usr/bin/monkeyspaw"
+          cmp packaging/linux/ch.lkmc.monkeyspaw.desktop \
+            "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          cmp packaging/linux/ch.lkmc.monkeyspaw.service \
+            "$payload/usr/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
+          cmp packaging/debian/copyright "$payload/usr/share/doc/monkeyspaw/copyright"
+          test -s "$payload/usr/share/doc/monkeyspaw/changelog.gz"
+          for size in 16 24 32 48 64 128 256 512; do
+            icon="icons/hicolor/${size}x${size}/apps/ch.lkmc.monkeyspaw.png"
+            cmp "packaging/$icon" "$payload/usr/share/$icon"
+          done
+
+          readelf -d "$payload/usr/bin/monkeyspaw"
+          dynamic="$(ldd "$payload/usr/bin/monkeyspaw")"
+          printf '%s\n' "$dynamic"
+          if grep -Eq 'lib(swift|Foundation|CoreFoundation|dispatch|BlocksRuntime|_)|not found' <<< "$dynamic"; then
+            echo 'Swift/Foundation must be static and system libraries must resolve' >&2
+            exit 1
+          fi
+      - name: Install and check the packaged version
+        run: |
+          set -euo pipefail
+          apt-get install -y --no-install-recommends ./dist/*.deb
+          command -v gapplication
+          version="$(/usr/bin/monkeyspaw --version)"
+          printf '%s\n' "$version"
+          test "$version" = 'monkeyspaw 0.1.0-beta.1'
 
   core-macos:
     name: Core on macOS
