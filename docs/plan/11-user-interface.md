@@ -284,15 +284,30 @@ subscribe independently with removable observer tokens; updates, notification
 requests and onboarding publications use the injected `MainThread`, under both
 inline and queued delivery. `OnboardingStrings` owns the shared path-free copy.
 
+### 11.6 Accessibility and language
+
+- **Accessibility.**
+  - Native controls on both OSes carry accessibility labels.
+  - VoiceOver works inside the non-activating NSPanel; this is checked
+    explicitly.
+  - AT-SPI on Linux comes from GTK.
+  - Focus is always visible. Reduced motion is respected.
+- **Language.** v1 is English only. User-visible strings live in one table
+  per front end (`Strings.swift`) so extraction is mechanical later.
+
 ### 11.7 Library window (M3)
 
 These defaults resolve §17 Q14–Q20; the owner may override them.
 
 - **Browse.** A reusable window (macOS: `.regular` while open; Linux:
-  hide-on-close) with a sidebar of All, Favourites, Recent (by last use),
-  folders and tags, a list, and the selected prompt's editor. Conflicts and
-  groups join the sidebar with sync (M6). Toggling a favourite saves
-  `favourite` in front matter. The picker's Library control and the menu or
+  hide-on-close) with a sidebar of All, Favourites, Recent, folders and
+  tags, a list, and the selected prompt's editor. Recent orders by the last
+  delivery or copy recorded in the app-data usage store (§5.4); using a
+  prompt never writes its file. Conflicts and groups join the sidebar with
+  sync (M6). Toggling a favourite saves `favourite` in front matter through
+  the same service as the editor: on the prompt open with unsaved edits it
+  changes the editor's text instead, and the app's own saves refresh the
+  editor's stamp, so they never trigger a conflict. The picker's Library control and the menu or
   tray open this window instead of the file manager.
 - **Edit · Preview · Fields · History.** Edit shows the raw file, front
   matter and body, with live validation from the same codec and validator as
@@ -304,11 +319,12 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
 - **Saving and conflicts.** Saves pass the editor's load stamp. If the file
   changes on disk while you have unsaved edits, the conflict dialog opens at
   once: keep mine (save over theirs), take theirs (reload), or save mine as a
-  copy. A deletion on disk offers keep mine (recreate) or discard. A stale
+  copy. A deletion on disk offers keep mine (recreate), save mine as a copy,
+  or discard. A stale
   save opens the same dialog. Without unsaved edits the editor reloads
   silently. The app never merges.
-- **Unsaved edits.** Changing selection, closing the window, deleting, or
-  quitting asks Save / Discard / Cancel. A library switch from Settings is
+- **Unsaved edits.** Changing selection, closing the window, renaming,
+  moving, deleting, or quitting asks Save / Discard / Cancel. A library switch from Settings is
   refused with a message while an edit is unsaved. Intents wait for a save in
   flight to finish.
 - **Rename, move, delete.** Rename edits the filename; the title stays in
@@ -324,14 +340,3 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
 - **Tour.** New installs see a one-screen tour of the picker and fill form
   right after the seed step. Closing it counts as done. Upgrades from v0.1.0
   are marked done.
-
-### 11.6 Accessibility and language
-
-- **Accessibility.**
-  - Native controls on both OSes carry accessibility labels.
-  - VoiceOver works inside the non-activating NSPanel; this is checked
-    explicitly.
-  - AT-SPI on Linux comes from GTK.
-  - Focus is always visible. Reduced motion is respected.
-- **Language.** v1 is English only. User-visible strings live in one table
-  per front end (`Strings.swift`) so extraction is mechanical later.
