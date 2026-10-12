@@ -21,7 +21,10 @@ final class FakeHotkeyBackend: HotkeyBackend {
         return registration
     }
 
-    func unregister(_ registration: HotkeyRegistration) { unregistered.append(registration) }
+    func unregister(_ registration: HotkeyRegistration) {
+        unregistered.append(registration)
+        currentRegistrations = currentRegistrations.filter { $0.value != registration }
+    }
     func fire(_ action: HotkeyAction = .togglePicker) { callbacks[action]?() }
 }
 

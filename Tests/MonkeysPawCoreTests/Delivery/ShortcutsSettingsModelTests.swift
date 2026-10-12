@@ -99,6 +99,101 @@ final class ShortcutsSettingsModelTests: XCTestCase {
         XCTAssertEqual(h.settings?.togglePicker.changePath, .inApp)
     }
 
+    func testUnchangedRefreshesDoNotNotifyButVerificationTransitionsDo() throws {
+        let h = Harness(session: .macOS, mainMode: .deferred)
+        try h.configureCarbon()
+        var changes: [ShortcutVerification] = []
+        h.settings?.onChange = {
+            XCTAssertTrue(h.delivery.main.isRunning)
+            if let verification = h.settings?.togglePicker.verification { changes.append(verification) }
+        }
+
+        h.settings?.refresh()
+        h.setupModel?.refresh()
+        h.delivery.main.drain()
+        XCTAssertTrue(changes.isEmpty)
+
+        h.settings?.beginVerification()
+        h.delivery.main.drain()
+        XCTAssertEqual(changes, [.waiting])
+        h.settings?.refresh()
+        h.delivery.main.drain()
+        XCTAssertEqual(changes, [.waiting])
+
+        h.backend.fire()
+        h.delivery.main.drain()
+        XCTAssertEqual(changes, [.waiting, .verified])
+        h.settings?.refresh()
+        h.setupModel?.refresh()
+        h.delivery.main.drain()
+        XCTAssertEqual(changes, [.waiting, .verified])
+    }
+
+    func testVerificationSurvivesEqualRegistrationsReconstructedByEveryProbeRead() throws {
+        let cases: [(DesktopSession, HotkeyMechanism)] = [
+            (.macOS, .carbon), (.gnomeWayland, .globalShortcutsPortal),
+            (.gnomeX11, .gnomeCustomKeybinding), (.kdeWayland, .kglobalaccel),
+        ]
+        for (session, mechanism) in cases {
+            let h = Harness(session: session, mainMode: .deferred)
+            h.delivery.main.drain()
+            h.backend.mechanism = mechanism
+            var reads = 0
+            h.probe.liveHotkey = { [weak backend = h.backend] in
+                guard let registration = backend?.currentRegistrations[.togglePicker] else { return nil }
+                reads += 1
+                return HotkeyRegistration(id: registration.id, mechanism: registration.mechanism,
+                    status: registration.status, detail: registration.detail,
+                    configuration: registration.configuration,
+                    alternativeConfiguration: registration.alternativeConfiguration)
+            }
+            let accelerator = try Accelerator("Ctrl+Alt+P")
+            h.shortcuts.configure([.togglePicker: accelerator]) { _ in }
+            h.delivery.main.drain()
+            let registration = try XCTUnwrap(h.backend.currentRegistrations[.togglePicker])
+            let initialReads = reads
+
+            h.settings?.beginVerification()
+            h.settings?.refresh()
+            h.setupModel?.refresh()
+            h.delivery.main.drain()
+            XCTAssertEqual(h.settings?.togglePicker.verification, .waiting, "\(mechanism)")
+            h.backend.fire()
+            h.delivery.main.drain()
+            h.settings?.refresh()
+            h.delivery.main.drain()
+
+            XCTAssertEqual(reads, initialReads + 5, "\(mechanism)")
+            XCTAssertEqual(h.settings?.togglePicker.verification, .verified, "\(mechanism)")
+            XCTAssertEqual(h.setupHotkey?.status, .ok, "\(mechanism)")
+            XCTAssertEqual(h.settings?.togglePicker.registration, registration)
+            XCTAssertEqual(h.settings?.togglePicker.binding,
+                mechanism == .carbon ? .accelerator(accelerator) : .reported(h.backend.detail))
+        }
+    }
+
+    func testSetupRefreshNotifiesObserversAndUpdatesModelsBeforeCompletion() {
+        let h = Harness(mainMode: .deferred)
+        h.delivery.main.drain()
+        var events: [String] = []
+        h.setup.addObserver { _ in
+            XCTAssertTrue(h.delivery.main.isRunning)
+            events.append("observer")
+        }
+        h.probe.hotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal,
+            status: .needsAction, detail: "Attach portal", configuration: .attachPortal)
+        h.setup.refresh { snapshot in
+            XCTAssertTrue(h.delivery.main.isRunning)
+            events.append("done")
+            XCTAssertEqual(h.settings?.togglePicker.registration,
+                snapshot.rows.first(where: { $0.kind == .hotkey })?.registration)
+            XCTAssertEqual(h.settings?.togglePicker.changePath, .setup(.hotkey))
+        }
+        XCTAssertTrue(events.isEmpty)
+        h.delivery.main.drain()
+        XCTAssertEqual(events, ["observer", "done"])
+    }
+
     func testSetupObserverRemovalStopsItsCallbackWithoutRemovingTheOtherObserver() {
         let h = Harness(mainMode: .deferred)
         h.delivery.main.drain()
@@ -233,8 +328,12 @@ final class ShortcutsSettingsModelTests: XCTestCase {
     }
 
     func testSystemAndManualMechanismsRejectInAppRebinding() {
-        for mechanism in [HotkeyMechanism.globalShortcutsPortal, .gnomeCustomKeybinding, .kglobalaccel, .manual] {
-            let h = Harness()
+        let cases: [(DesktopSession, HotkeyMechanism)] = [
+            (.gnomeWayland, .globalShortcutsPortal), (.gnomeX11, .gnomeCustomKeybinding),
+            (.kdeWayland, .kglobalaccel), (.wlroots, .manual),
+        ]
+        for (session, mechanism) in cases {
+            let h = Harness(session: session)
             h.backend.mechanism = mechanism
             h.refreshRegistration(mechanism)
             h.settings?.setAccelerator("Ctrl+Alt+E")
@@ -283,6 +382,55 @@ final class ShortcutsSettingsModelTests: XCTestCase {
             XCTAssertEqual(h.probe.fixes, [kind], "\(mechanism): \(configuration as Any)")
             XCTAssertEqual(h.settings?.togglePicker.registrationStatus, .needsAction)
         }
+    }
+
+    func testPlatformChangeNotifiesFinalInstructionsOnceForEachChangePath() {
+        let cases: [(DesktopSession, HotkeyMechanism, HotkeyConfiguration?, String?, SetupRow.Kind?)] = [
+            (.macOS, .carbon, nil, nil, nil),
+            (.gnomeWayland, .globalShortcutsPortal, .systemSettings, nil, .hotkey),
+            (.gnomeWayland, .globalShortcutsPortal, .attachPortal, nil, .hotkey),
+            (.gnomeX11, .gnomeCustomKeybinding, nil,
+                "Change the key in GNOME Settings → Keyboard → View and Customize Shortcuts", nil),
+            (.flatpak(host: .kdeWayland), .globalShortcutsPortal, nil, SetupStrings.kdeShortcut, nil),
+            (.flatpak(host: .wlroots), .globalShortcutsPortal, nil,
+                "Change the key in your desktop's keyboard shortcut settings", nil),
+            (.wlroots, .manual, nil, "User key", nil),
+        ]
+        for (session, mechanism, configuration, instructions, fix) in cases {
+            let h = Harness(session: session, mainMode: .deferred)
+            h.refreshRegistration(mechanism, detail: "User key", configuration: configuration)
+            h.probe.fixMode = .deferred
+            var changes = 0
+            h.settings?.onChange = {
+                XCTAssertTrue(h.delivery.main.isRunning)
+                XCTAssertEqual(h.settings?.instructions, instructions)
+                changes += 1
+            }
+
+            h.settings?.performPlatformChange()
+            h.delivery.main.drain()
+
+            XCTAssertEqual(changes, 1, "\(mechanism): \(configuration as Any)")
+            XCTAssertEqual(h.settings?.instructions, instructions)
+            XCTAssertEqual(h.probe.fixes, fix.map { [$0] } ?? [])
+        }
+    }
+
+    func testPlatformChangeUsesThePathUpdatedByItsRefresh() {
+        let h = Harness(mainMode: .deferred)
+        h.refreshRegistration(detail: "User key")
+        h.settings?.performPlatformChange()
+        h.delivery.main.drain()
+        XCTAssertNotNil(h.settings?.instructions)
+        h.probe.hotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal,
+            status: .needsAction, detail: "Attach portal", configuration: .attachPortal)
+
+        h.settings?.performPlatformChange()
+        h.delivery.main.drain()
+
+        XCTAssertEqual(h.probe.fixes, [.hotkey])
+        XCTAssertEqual(h.settings?.togglePicker.changePath, .setup(.hotkey))
+        XCTAssertNil(h.settings?.instructions)
     }
 
     func testRegisteredGNOMEFallbackAndPortalV1GiveGuidanceWithoutReinstallingOrRebinding() {

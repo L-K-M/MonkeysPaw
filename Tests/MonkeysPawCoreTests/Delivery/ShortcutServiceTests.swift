@@ -60,11 +60,33 @@ final class ShortcutServiceTests: XCTestCase {
         XCTAssertEqual(firstChanges, 1)
         XCTAssertEqual(secondChanges, 3)
 
-        service.removeObserver(second)
-        service.removeObserver(first)
         service.configure([:]) { _ in }
         h.main.drain()
-        XCTAssertEqual(secondChanges, 3)
+        XCTAssertEqual(firstChanges, 1)
+        XCTAssertEqual(secondChanges, 4)
+        XCTAssertTrue(backend.currentRegistrations.isEmpty)
+        service.removeObserver(second)
+        h.main.drain()
+    }
+
+    func testRemovingAnAlreadyRemovedObserverIsANoOp() throws {
+        let h = DeliveryHarness()
+        h.main.mode = .deferred
+        let backend = FakeHotkeyBackend()
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var firstChanges = 0
+        var secondChanges = 0
+        let first = service.addObserver { firstChanges += 1; XCTAssertTrue(h.main.isRunning) }
+        service.addObserver { secondChanges += 1; XCTAssertTrue(h.main.isRunning) }
+        service.removeObserver(first)
+        h.main.drain()
+
+        service.removeObserver(first)
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        h.main.drain()
+
+        XCTAssertEqual(firstChanges, 0)
+        XCTAssertEqual(secondChanges, 1)
     }
 
     func testObserverCanRemoveItselfDuringNotification() throws {

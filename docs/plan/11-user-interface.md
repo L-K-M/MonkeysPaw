@@ -18,8 +18,9 @@ backend conflict/failure detail, and a **Press your shortcut now** verification
 intent. macOS Carbon offers in-app rebinding. Linux offers the applicable
 system settings action, explicit Setup action, or desktop/manual instructions
 described in §6.1. Opening settings or completing a change request never turns
-verification green. Repeat last prompt remains visibly unbound and disabled
-until M7. Core supplies this contract independently of the later native windows.
+verification green. Repeat last prompt is displayed unbound, inactive and
+unavailable for configuration until M7. Core supplies this contract
+independently of the later native windows.
 
 Per OS:
 

@@ -90,12 +90,12 @@ public final class ShortcutsSettingsModel {
         setup.refresh { [weak self] _ in
             guard let self else { return }
             self.instructions = nil
+            defer { self.onChange?() }
             switch self.togglePicker.changePath {
             case .systemSettings(let action), .setup(let action):
                 self.setup.performFix(for: action)
             case .systemSettingsGuidance(let text), .manualInstructions(let text):
                 self.instructions = text
-                self.onChange?()
             case .unavailable, .inApp: break
             }
         }
@@ -113,9 +113,11 @@ public final class ShortcutsSettingsModel {
         case .unbound, .failed: verification = .notStarted
         case .registered, .needsAction: verification = shortcuts.verification(for: .togglePicker)
         }
-        togglePicker = ActionState(action: .togglePicker, binding: binding(for: registration),
+        let state = ActionState(action: .togglePicker, binding: binding(for: registration),
             registration: registration, verification: verification,
             changePath: changePath(for: registration, session: snapshot.session))
+        guard state != togglePicker else { return }
+        togglePicker = state
         onChange?()
     }
 
@@ -155,9 +157,8 @@ public final class ShortcutsSettingsModel {
         switch session {
         case .flatpak(let host): return systemGuidance(for: host)
         case .kdeWayland, .kdeX11: return SetupStrings.kdeShortcut
-        case .gnomeWayland, .gnomeX11:
-            return "Change the key in GNOME Settings → Keyboard → View and Customize Shortcuts"
-        default: return "Change the key in your desktop's keyboard shortcut settings"
+        case .gnomeWayland, .gnomeX11: return SetupStrings.gnomeShortcut
+        default: return SetupStrings.genericShortcutSettings
         }
     }
 }

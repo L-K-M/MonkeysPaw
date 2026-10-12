@@ -47,6 +47,8 @@ public final class SetupService {
     public func refresh(done: @escaping (SetupSnapshot) -> Void) {
         mainThread.run {
             let snapshot = self.snapshot()
+            // Notify observers before `done`: ShortcutsSettingsModel's
+            // performPlatformChange reads its updated changePath there.
             for observer in Array(self.observers.values) { observer(snapshot) }
             done(snapshot)
         }
