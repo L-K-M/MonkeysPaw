@@ -16,7 +16,7 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     private let files: FileStore
     private let clock: WallClock
     private let lock = NSLock()
-    private let observers = ChangeObservers()
+    private let observers = ChangeObservers<Void>()
     // Populated by the index's validated reads and successful writes. Browsing
     // never scans app data or performs usage I/O on a presentation refresh.
     private var cachedEvents: [PromptIdentity: [Date]] = [:]

@@ -6,6 +6,12 @@ import Foundation
 /// then parses, matches, scores and sorts without it.
 /// Share the LibraryService/UsageStore instances used for identity migrations.
 public final class PromptIndex: @unchecked Sendable {
+    private struct Publication {
+        let observers: [UUID]
+        let changeObservers: [UUID]
+        let change: PromptIndexChange
+    }
+
     private let service: LibraryService
     private let usage: UsageStore
     private let clock: WallClock
@@ -14,7 +20,9 @@ public final class PromptIndex: @unchecked Sendable {
     // compares UTF-8 bytes, so distinct POSIX files keep distinct index keys.
     private var prompts = [RelativePath: PromptRanking.Input]()
     private var useEvents = [PromptIdentity: [Date]]()
-    private let observers = ChangeObservers()
+    private let observers = ChangeObservers<Void>()
+    private let changeObservers = ChangeObservers<PromptIndexChange>()
+    private var version: UInt64 = 0
     private var compatibilityObserver: UUID?
 
     public init(service: LibraryService, usage: UsageStore, clock: WallClock) {
@@ -33,7 +41,17 @@ public final class PromptIndex: @unchecked Sendable {
         observers.add(observer)
     }
 
-    public func removeObserver(_ token: UUID) { observers.remove(token) }
+    /// The editor uses the same removable registry contract with a captured
+    /// change payload, rather than guessing which paths a later cache contains.
+    @discardableResult
+    func addObserver(_ observer: @escaping @Sendable (PromptIndexChange) -> Void) -> UUID {
+        changeObservers.add(observer)
+    }
+
+    public func removeObserver(_ token: UUID) {
+        observers.remove(token)
+        changeObservers.remove(token)
+    }
 
     /// Compatibility for native composition until its M3 migration. Replacing
     /// or clearing this one subscription never removes independent subscribers.
@@ -48,25 +66,30 @@ public final class PromptIndex: @unchecked Sendable {
     /// Publish a complete rebuild only after all library and usage reads succeed.
     /// Invalid content stays visible exactly as LibraryService.entries() allows.
     public func rebuild() throws {
-        let subscribers = try locked {
+        let publication = try locked {
             var rebuilt = [RelativePath: PromptRanking.Input]()
             var events = [PromptIdentity: [Date]]()
             for entry in try service.entries() {
                 rebuilt[RelativePath(entry.relativePath)] = PromptRanking.Input(entry)
                 if events[entry.identity] == nil { events[entry.identity] = try usage.useEvents(for: entry.identity) }
             }
+            let oldPaths = Set(prompts.keys)
+            let newPaths = Set(rebuilt.keys)
+            let modified = oldPaths.intersection(newPaths).filter { prompts[$0]?.entry.stamp != rebuilt[$0]?.entry.stamp }
+            let changes = LibraryChangeSet(created: newPaths.subtracting(oldPaths), modified: Set(modified),
+                                           deleted: oldPaths.subtracting(newPaths))
             prompts = rebuilt
             useEvents = events
-            return observers.capture()
+            return capturePublication(changes)
         }
-        observers.publish(subscribers)
+        publish(publication)
     }
 
     /// Apply a complete batch atomically in memory. Reload created/modified
     /// paths, silently dropping vanished files. Other I/O/conflict failures
     /// leave the last completed index intact and are reported to the caller.
     public func apply(_ set: LibraryChangeSet) throws {
-        let subscribers = try locked {
+        let publication = try locked {
             var updated = prompts
             var events = useEvents
             for path in set.deleted { updated.removeValue(forKey: path) }
@@ -82,9 +105,9 @@ public final class PromptIndex: @unchecked Sendable {
             let identities = Set(updated.values.map { $0.entry.identity })
             prompts = updated
             useEvents = events.filter { identities.contains($0.key) }
-            return observers.capture()
+            return capturePublication(set)
         }
-        observers.publish(subscribers)
+        publish(publication)
     }
 
     public func search(_ query: String) -> [PromptSearchResult] {
@@ -97,15 +120,22 @@ public final class PromptIndex: @unchecked Sendable {
     /// normalizing files. The browser orders sections independently of ranking.
     func browseContents() -> [PromptRanking.Input] { locked { Array(prompts.values) } }
 
+    /// Memory-only lookup for publishing a saved editor entry.
+    func cachedEntry(at path: String) -> LibraryEntry? { locked { prompts[RelativePath(path)]?.entry } }
+
+    func editingSnapshot(at path: String) -> (version: UInt64, stamp: FileStamp?) {
+        locked { (version, prompts[RelativePath(path)]?.entry.stamp) }
+    }
+
     /// Publish a completed metadata save without more I/O. A watcher may have
     /// already published a newer file or deletion; never replace that snapshot
     /// with the save's older result. Native editor work will own this hand-off.
     func acceptSaved(_ entry: LibraryEntry, replacing previous: LibraryEntry) {
-        let subscribers: [UUID] = locked {
+        let publication: Publication? = locked {
             let path = RelativePath(previous.relativePath)
             guard RelativePath(entry.relativePath) == path,
                   let current = prompts[path]?.entry, current.identity == previous.identity,
-                  current.stamp == previous.stamp else { return [] }
+                  current.stamp == previous.stamp else { return nil }
             prompts[path] = PromptRanking.Input(entry)
             let cached = usage.cachedUseEvents()
             // Keep known usage if the cache ever lacks this identity.
@@ -113,9 +143,24 @@ public final class PromptIndex: @unchecked Sendable {
             if entry.identity != previous.identity, !prompts.values.contains(where: { $0.entry.identity == previous.identity }) {
                 useEvents[previous.identity] = nil
             }
-            return observers.capture()
+            return capturePublication(LibraryChangeSet(modified: [path]))
         }
-        observers.publish(subscribers)
+        if let publication { publish(publication) }
+    }
+
+    /// Called only with the index lock held. Payload and subscriber membership
+    /// belong to this commit even if a callback makes another publication.
+    private func capturePublication(_ set: LibraryChangeSet) -> Publication {
+        version &+= 1
+        var stamps: [RelativePath: FileStamp] = [:]
+        for path in set.created.union(set.modified) { stamps[path] = prompts[path]?.entry.stamp }
+        return Publication(observers: observers.capture(), changeObservers: changeObservers.capture(),
+                           change: PromptIndexChange(changes: set, stamps: stamps, version: version))
+    }
+
+    private func publish(_ publication: Publication) {
+        observers.publish(publication.observers)
+        changeObservers.publish(publication.changeObservers, event: publication.change)
     }
 
     /// Deliberate quiet update: persistence succeeds before cached events change.

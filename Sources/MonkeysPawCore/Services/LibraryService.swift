@@ -14,6 +14,14 @@ public final class LibraryService: PromptFavoriteEditing {
         let entry: LibraryEntry
     }
 
+    private struct CommittedHistoryFailure: Error {
+        let entry: LibraryEntry
+    }
+
+    private struct CommittedExternalReplacement: Error {
+        let currentStamp: FileStamp
+    }
+
     private let files: FileStore
     private let historyStore: HistoryStore
     private let keyedStores: [PromptKeyedStore]
@@ -39,6 +47,39 @@ public final class LibraryService: PromptFavoriteEditing {
 
     public func load(at path: String) throws -> LibraryEntry {
         try locked { try requireCurrent(at: path).entry }
+    }
+
+    func loadForEditing(at path: String) throws -> LoadedPrompt {
+        try locked {
+            let loaded = try requireCurrent(at: path)
+            return LoadedPrompt(bytes: loaded.bytes, entry: loaded.entry)
+        }
+    }
+
+    /// Keep the editor's preflight and save under the library lock. A nil stamp
+    /// explicitly permits overwrite/recreation, as in the synchronous API.
+    func saveForEditing(_ document: PromptDocument, at path: String,
+                        expectedStamp: FileStamp?) throws -> PromptSaveOutcome {
+        try locked {
+            let current = try readCurrent(at: path)
+            if let expectedStamp {
+                guard let current else { return .deleted }
+                guard expectedStamp == current.entry.stamp else { return .conflict(currentStamp: current.entry.stamp) }
+            }
+            if let current, let reason = LoadedPrompt.readOnlyReason(for: current.entry.document) {
+                return .readOnly(reason)
+            }
+            return try editingCommit {
+                try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp))
+            }
+        }
+    }
+
+    func createCopyForEditing(_ document: PromptDocument, near path: String) throws -> PromptSaveOutcome {
+        try locked {
+            let copy = try PromptCodec.removingIdentity(from: document)
+            return try editingCommit { try createDocument(copy, near: path) }
+        }
     }
 
     /// Supply the load/list stamp to reject stale edits, including deletion.
@@ -80,18 +121,22 @@ public final class LibraryService: PromptFavoriteEditing {
         try locked {
             let path = PromptCreation.relativePath(title: title, now: clock.now())
             let document = try PromptCodec.newDocument(title: title, body: body)
-            var startingSuffix = 1
-            for _ in 0..<Limits.libraryCreateAttemptCap {
-                let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
-                do {
-                    return try saveDocument(document, at: candidate.path, mode: .createOnly)
-                } catch LibraryError.destinationOccupied {
-                    // Move forward even if the external file disappears before the next probe.
-                    startingSuffix = candidate.suffix + 1
-                }
-            }
-            throw LibraryError.copyLimitReached
+            return try createDocument(document, near: path)
         }
+    }
+
+    private func createDocument(_ document: PromptDocument, near path: String) throws -> LibraryEntry {
+        var startingSuffix = 1
+        for _ in 0..<Limits.libraryCreateAttemptCap {
+            let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
+            do {
+                return try saveDocument(document, at: candidate.path, mode: .createOnly)
+            } catch LibraryError.destinationOccupied {
+                // Move forward even if the external file disappears before the next probe.
+                startingSuffix = candidate.suffix + 1
+            }
+        }
+        throw LibraryError.copyLimitReached
     }
 
     /// Later sync push calls this before transmitting an unassigned prompt.
@@ -280,9 +325,21 @@ public final class LibraryService: PromptFavoriteEditing {
             throw error
         }
 
+        // Capture our committed version before retention can fail or an
+        // external writer can replace it during app-data maintenance.
+        let committed = try requireCurrent(at: path)
+        guard committed.bytes == bytes else {
+            throw CommittedExternalReplacement(currentStamp: committed.entry.stamp)
+        }
         do { try historyStore.prune(for: targetIdentity) }
-        catch { throw LibraryError.historyMaintenanceFailed }
-        return try requireCurrent(at: path).entry
+        catch { throw CommittedHistoryFailure(entry: committed.entry) }
+        return committed.entry
+    }
+
+    private func editingCommit(_ work: () throws -> LibraryEntry) throws -> PromptSaveOutcome {
+        do { return .saved(try work()) }
+        catch let error as CommittedHistoryFailure { return .savedButHistoryMaintenanceFailed(error.entry) }
+        catch let error as CommittedExternalReplacement { return .conflict(currentStamp: error.currentStamp) }
     }
 
     private func readCurrent(at path: String) throws -> LoadedFile? {
@@ -328,6 +385,8 @@ public final class LibraryService: PromptFavoriteEditing {
         lock.lock()
         defer { lock.unlock() }
         do { return try work() }
+        catch is CommittedHistoryFailure { throw LibraryError.historyMaintenanceFailed }
+        catch is CommittedExternalReplacement { throw LibraryError.conflict }
         catch let error as FileStoreError { throw error }
         catch let error as LibraryError { throw error }
         catch let error as PromptWriteError { throw error }

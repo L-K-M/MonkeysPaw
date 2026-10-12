@@ -131,6 +131,29 @@ public enum PromptCodec {
         return parse(try write(updated), filename: metadata.title + ".md")
     }
 
+    /// A copy keeps metadata/body but receives its own first-save identity.
+    static func removingIdentity(from document: PromptDocument) throws -> PromptDocument {
+        guard document.frontMatter.id != nil else {
+            // An unchanged draft must still fail before copy-name probing.
+            _ = try write(document)
+            return document
+        }
+        let front = document.frontMatter
+        let metadata = FrontMatter(title: front.title, description: front.description, tags: front.tags,
+                                   favorite: front.favorite, isPrivate: front.isPrivate,
+                                   fields: front.fields, format: front.format)
+        let header = document.preservedHeader.map { header in
+            let pairs = header.mapping?.filter { PortableYAML.string($0.key) != "id" }
+                .map { ($0.key, $0.value) } ?? []
+            return Node(pairs, Tag(.map), .block)
+        }
+        let updated = PromptDocument(source: document.source, body: document.body, frontMatter: metadata,
+                                     template: document.template, preservedHeader: header,
+                                     decodingIssues: document.decodingIssues,
+                                     declarationLocations: document.declarationLocations)
+        return parse(try write(updated), filename: front.title + ".md")
+    }
+
     /// Metadata-only edit through the canonical writer, preserving body bytes,
     /// unknown keys and optional-key presence. Invalid/future files fail closed.
     static func settingFavorite(_ favorite: Bool, in document: PromptDocument,
