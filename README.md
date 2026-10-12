@@ -29,6 +29,15 @@ then install with `sudo apt install ./monkeyspaw_<version>_<arch>.deb` and run
 `scripts/build.sh deb`; see the
 [packaging requirements](docs/plan/14-repository-packaging-ci-release.md).
 
+Prerelease deb filenames use `~` in place of the version's hyphen. For
+`v0.1.0-beta.1` on amd64, download `monkeyspaw_0.1.0~beta.1_amd64.deb`
+and its `.deb.sha256`, then run:
+
+```sh
+sha256sum -c monkeyspaw_0.1.0~beta.1_amd64.deb.sha256
+sudo apt install ./monkeyspaw_0.1.0~beta.1_amd64.deb
+```
+
 ## Install on macOS
 
 Download `MonkeysPaw-<version>.dmg`, `.zip` and `.sha256` from the
