@@ -132,10 +132,21 @@ How each provider is asked for the schema:
 
 Parsing and validation:
 
+- A single Core schema description supplies both request JSON Schema and
+  local validation of parsed JSON values. Every object requires every key
+  and rejects additional properties; duplicate object keys, duplicate field
+  names, invalid enums and wrong types fail before file conversion
+  ([§19 B25](19-m4-m5-decisions.md)). Empty `options` means no options for
+  non-choice fields; an empty `default` means no prefill. Content issues use
+  the existing placeholder grammar and validator and remain visible on drafts.
 - **Tolerant parsing** for endpoints without schema support: strip code
   fences and `<think>` blocks, then fall back to a brace-balanced scan
-  (Vervellum `decodeJSONObject`). The result is then validated against the
-  schema and the template validator.
+  (Vervellum `decodeJSONObject`). Recovery ignores wrappers only outside
+  JSON strings, selects the first balanced top-level object, and still
+  strictly validates it. Input is bounded to 2 MiB, nesting to 32 levels.
+  A top-level array is not an object. Review quotes use exact UTF-8 byte
+  matching against the input snapshot; empty or unmatched quotes are marked
+  unmatched and never highlight unrelated text.
 - **Stop reasons.**
   - `max_tokens` or `model_context_window_exceeded` (Anthropic), or
     `finish_reason: length` (OpenAI) → `truncated`.
