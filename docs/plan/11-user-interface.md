@@ -27,6 +27,8 @@ and any read-only settings or library-switch error. You can choose another
 folder, return to the default, or reveal the active folder in your file manager.
 Views call `GeneralSettingsModel`; its `LibraryLocationControl` port delegates
 graph replacement and folder reveal to the platform composition root.
+General also offers **Forget all values** with confirmation through
+`RememberedValuesSettingsModel`, including while the picker panel is closed.
 
 Per OS:
 
