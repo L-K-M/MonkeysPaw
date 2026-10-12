@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchURI: (URL) -> Void
     private let revealLibraryURI: (URL) -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
+    private let forgetAllConfirmation: SettingsWindowController.ForgetAllConfirmation
     private let windowActivation: WindowActivationCoordinator
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
@@ -51,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settingsModel: SettingsModel?
     private(set) var generalSettingsModel: GeneralSettingsModel?
     private(set) var shortcutsSettingsModel: ShortcutsSettingsModel?
+    private(set) var rememberedValuesSettingsModel: RememberedValuesSettingsModel?
     private var dataFiles: FileStore?
     private var values: ValuesStore?
     private var usage: UsageStore?
@@ -72,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
+         forgetAllConfirmation: @escaping SettingsWindowController.ForgetAllConfirmation = SettingsWindowController.confirmForgetAll,
          setActivationPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          activateApplication: @escaping () -> Void = { NSApp.activate() },
          makeFocusTracker: @escaping (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker = {
@@ -100,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.launchURI = launchURI
         revealLibraryURI = revealLibrary
         self.folderChooser = folderChooser
+        self.forgetAllConfirmation = forgetAllConfirmation
         windowActivation = WindowActivationCoordinator(mainThread: mainThread,
             setPolicy: setActivationPolicy, activate: activateApplication)
         // Injected graphs never read or write the user's legacy preferences.
@@ -226,9 +230,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let general = GeneralSettingsModel(settings: settingsModel,
             library: SettingsLibraryLocation(owner: self), mainThread: mainThread)
         let shortcutSettings = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
+        let rememberedValues = RememberedValuesSettingsModel(control: SettingsRememberedValuesControl(owner: self),
+                                                            mainThread: mainThread)
         generalSettingsModel = general
         shortcutsSettingsModel = shortcutSettings
+        rememberedValuesSettingsModel = rememberedValues
         settingsWindow = SettingsWindowController(general: general, shortcuts: shortcutSettings,
+            rememberedValues: rememberedValues, forgetAllConfirmation: forgetAllConfirmation,
             mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
             openSetup: { [weak self] in self?.showSetup() })
     }
@@ -602,6 +610,19 @@ private final class SettingsLibraryLocation: LibraryLocationControl {
     }
 
     func revealLibrary() { owner?.revealLibrary() }
+}
+
+/// Resolve the active picker at confirmation time, including with a closed
+/// panel. Settings must not keep an old picker's drafts alive across a switch.
+private final class SettingsRememberedValuesControl: RememberedValuesControl {
+    private weak var owner: AppDelegate?
+
+    init(owner: AppDelegate) { self.owner = owner }
+
+    func forgetAllValues() -> RememberedValuesOutcome {
+        guard let picker = owner?.pickerModel else { return .libraryFailure(.operationFailed) }
+        return picker.forgetAllValues()
+    }
 }
 
 /// Library callbacks cross the UI queue through a port tied to this generation.

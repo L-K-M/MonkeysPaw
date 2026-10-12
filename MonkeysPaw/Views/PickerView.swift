@@ -18,6 +18,7 @@ struct PickerView: View {
             if !presentation.status.isEmpty {
                 Text(presentation.status).font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel(presentation.status)
+                    .accessibilityIdentifier("picker-status")
             }
             PickerActionsView(presentation: presentation)
             Text(presentation.state == .fill ? Strings.fillHint : Strings.pickerHint)
@@ -176,6 +177,12 @@ private struct PickerActionsView: View {
                     .disabled(presentation.model.selectionIndex == nil).accessibilityLabel(Strings.edit)
                 Button(Strings.library) { presentation.model.openLibrary() }
                     .accessibilityLabel(Strings.library)
+            }
+            if presentation.showsForgetValues {
+                Button(Strings.forgetValues, action: presentation.forgetSelectedValues)
+                    .disabled(!presentation.canForgetValues)
+                    .accessibilityLabel(Strings.forgetValues)
+                    .accessibilityIdentifier("picker-forget-values")
             }
             Spacer()
             Button(Strings.cancel) { presentation.model.dismiss() }.accessibilityLabel(Strings.cancel)

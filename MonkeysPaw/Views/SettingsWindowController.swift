@@ -5,25 +5,40 @@ import SwiftUI
 /// Owns the native window and chooser; the SwiftUI view sees presentation only.
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     typealias FolderChooser = (NSWindow, @escaping (URL?) -> Void) -> (() -> Void)
+    enum ForgetAllResponse { case confirmed, cancelled }
+    typealias ForgetAllConfirmation = (NSWindow, @escaping (ForgetAllResponse) -> Void) -> (() -> Void)
 
     let presentation: SettingsViewState
     private(set) var window: NSWindow?
     private let mainThread: MainThread
     private let activation: WindowActivationCoordinator
     private let folderChooser: FolderChooser
+    private let forgetAllConfirmation: ForgetAllConfirmation
     private var chooserRequest: UUID?
     private var cancelChooser: (() -> Void)?
+    private var confirmationRequest: UUID?
+    private var cancelConfirmation: (() -> Void)?
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
+         rememberedValues: RememberedValuesSettingsModel,
+         forgetAllConfirmation: @escaping ForgetAllConfirmation,
          mainThread: MainThread, activation: WindowActivationCoordinator,
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
+                                         rememberedValues: rememberedValues,
                                          mainThread: mainThread, openSetup: openSetup)
         self.mainThread = mainThread
         self.activation = activation
         self.folderChooser = folderChooser
+        self.forgetAllConfirmation = forgetAllConfirmation
         super.init()
         presentation.onChooseFolder = { [weak self] in self?.chooseFolder() }
+        presentation.onRememberedValuesChange = { [weak self] in self?.updateForgetAllConfirmation() }
+    }
+
+    deinit {
+        cancelConfirmation?()
+        presentation.cancelForgetAll()
     }
 
     func show() {
@@ -43,6 +58,51 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let cancel = cancelChooser
         cancelChooser = nil
         presentation.isChoosingFolder = false
+        cancel?()
+        endForgetAllConfirmation()
+        presentation.cancelForgetAll()
+    }
+
+    private func updateForgetAllConfirmation() {
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            guard self.presentation.rememberedValues.confirmation == .forgetAll else {
+                self.endForgetAllConfirmation()
+                return
+            }
+            guard let window = self.window, window.isVisible else {
+                self.presentation.cancelForgetAll()
+                return
+            }
+            guard self.confirmationRequest == nil else { return }
+
+            let request = UUID()
+            self.confirmationRequest = request
+            let cancel = self.forgetAllConfirmation(window) { [weak self] response in
+                self?.mainThread.run { [weak self] in
+                    guard let self, self.confirmationRequest == request else { return }
+                    self.confirmationRequest = nil
+                    self.cancelConfirmation = nil
+                    guard self.window?.isVisible == true else {
+                        self.presentation.cancelForgetAll()
+                        return
+                    }
+                    switch response {
+                    case .confirmed: self.presentation.confirmForgetAll()
+                    case .cancelled: self.presentation.cancelForgetAll()
+                    }
+                }
+            }
+            // Test confirmations can respond inline, as the folder chooser can.
+            if self.confirmationRequest == request { self.cancelConfirmation = cancel }
+        }
+    }
+
+    private func endForgetAllConfirmation() {
+        // Revoke the response before ending the sheet, which may complete inline.
+        confirmationRequest = nil
+        let cancel = cancelConfirmation
+        cancelConfirmation = nil
         cancel?()
     }
 
@@ -91,5 +151,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { response in done(response == .OK ? panel.url : nil) }
         return { panel.cancel(nil) }
+    }
+
+    static func confirmForgetAll(in window: NSWindow, done: @escaping (ForgetAllResponse) -> Void) -> (() -> Void) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = RememberedValuesStrings.confirmationTitle
+        alert.informativeText = RememberedValuesStrings.confirmationMessage
+        let forget = alert.addButton(withTitle: RememberedValuesStrings.forgetAll)
+        forget.hasDestructiveAction = true
+        forget.setAccessibilityLabel(RememberedValuesStrings.forgetAll)
+        let cancel = alert.addButton(withTitle: RememberedValuesStrings.cancel)
+        cancel.setAccessibilityLabel(RememberedValuesStrings.cancel)
+        alert.beginSheetModal(for: window) { response in
+            done(response == .alertFirstButtonReturn ? .confirmed : .cancelled)
+        }
+        return {
+            guard alert.window.sheetParent === window else { return }
+            window.endSheet(alert.window, returnCode: .cancel)
+        }
     }
 }

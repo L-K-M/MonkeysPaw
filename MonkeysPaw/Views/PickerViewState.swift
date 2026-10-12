@@ -60,6 +60,31 @@ final class PickerViewState: ObservableObject {
         transientStatus = message
     }
 
+    var showsForgetValues: Bool {
+        if model.fillModel != nil { return true }
+        guard let position = model.selectionIndex else { return false }
+        return model.results.indices.contains(position)
+    }
+
+    var canForgetValues: Bool {
+        showsForgetValues && forgetValuesState != .delivering
+    }
+
+    private var forgetValuesState: PickerModel.State {
+        Self.forgetValuesState(picker: model.state, fill: model.fillModel?.state)
+    }
+
+    /// The action and its refusal copy must agree even if only the form is delivering.
+    static func forgetValuesState(picker: PickerModel.State, fill: FillModel.State?) -> PickerModel.State {
+        fill == .delivering ? .delivering : picker
+    }
+
+    func forgetSelectedValues() {
+        guard isCurrent(), showsForgetValues else { return }
+        transientStatus = nil
+        model.forgetSelectedValues()
+    }
+
     var status: String {
         var warnings = model.persistenceWarnings
         for warning in model.fillModel?.persistenceWarnings ?? [] where !warnings.contains(warning) {
@@ -70,7 +95,11 @@ final class PickerViewState: ObservableObject {
         var messages = [model.libraryAvailable ? nil : Strings.libraryUnavailable,
                         resolving ? Strings.preparingPreview : nil].compactMap { $0 }
         if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
-        return (messages + warnings.map(Strings.persistenceWarning)).joined(separator: "\n")
+        messages += warnings.map(Strings.persistenceWarning)
+        if let error = model.forgetValuesError {
+            messages.append(Strings.forgetValuesError(error, state: forgetValuesState))
+        }
+        return messages.joined(separator: "\n")
     }
 
     var preview: String {
