@@ -64,7 +64,11 @@ Rules:
 - **Each layer calls only the layer directly below it.** Views never touch a
   service, the clipboard, files, keys, or HTTP. Presentation models never
   touch drivers. Services see drivers only through port protocols.
-  Domain and Ports form one layer under Services.
+  Domain and Ports form one layer under Services. One narrow exception:
+  replacing the library graph is a composition intent, so
+  `GeneralSettingsModel` calls the `LibraryLocationControl` port that each
+  composition root implements; composition alone validates, restarts and
+  persists the folder choice.
 - **Portability rule** (Vervellum). Nothing in `MonkeysPawCore` imports
   AppKit, SwiftUI, Combine, `os`, `Security`, or `CGtk`. Two Linux traps
   that must never appear in Core:

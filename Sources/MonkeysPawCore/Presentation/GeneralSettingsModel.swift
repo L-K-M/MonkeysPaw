@@ -55,11 +55,16 @@ public final class GeneralSettingsModel {
         // Retain accepted mutations/reveals until the queued operation runs,
         // even if the settings view closes before the main loop drains it.
         mainThread.run {
-            if Self.sameFolder(path, self.library.activeLibraryPath) {
-                self.saveActiveFolder()
+            // A saved running folder is a no-op. An unsaved one (failed save or
+            // failed startup) restarts through composition, which saves only
+            // after a healthy start. The default is selected by intent, so both
+            // platforms apply their default rules.
+            let saved = self.settings.libraryFolderPath ?? self.library.defaultLibraryPath
+            if Self.sameFolder(path, self.library.activeLibraryPath), Self.sameFolder(saved, path) {
+                self.publish(path: self.library.activeLibraryPath, message: nil)
                 return
             }
-            self.switchLibrary(to: path)
+            self.switchLibrary(to: Self.sameFolder(path, self.library.defaultLibraryPath) ? nil : path)
         }
     }
 
@@ -98,23 +103,6 @@ public final class GeneralSettingsModel {
         case .switched, .settingsNotSaved, .libraryUnavailable: activePath = library.activeLibraryPath
         }
         publish(path: activePath, message: outcome == .switched ? nil : outcome)
-    }
-
-    /// Re-choosing the running folder retries a failed save, like the default
-    /// intent, without replacing the graph. An already-saved folder is a no-op.
-    private func saveActiveFolder() {
-        let active = library.activeLibraryPath
-        let saved = settings.libraryFolderPath ?? library.defaultLibraryPath
-        guard !Self.sameFolder(saved, active) else {
-            publish(path: active, message: nil)
-            return
-        }
-
-        isReadingSettings = true
-        if Self.sameFolder(active, library.defaultLibraryPath) { settings.clearLibraryFolder() }
-        else { settings.setLibraryFolder(active) }
-        isReadingSettings = false
-        publish(path: active, message: settings.error.map { .settingsNotSaved($0) })
     }
 
     private func publish(path: String, message: LibrarySwitchOutcome?) {

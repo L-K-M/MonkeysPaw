@@ -63,13 +63,14 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.state.settingsError, h.settings.error)
         XCTAssertEqual(model.state.lastSwitchMessage, .settingsNotSaved(.writeFailed(.ioFailure)))
 
-        // Re-choosing the running folder retries only the failed save, with
-        // the active spelling, and never replaces the graph again.
+        // Re-choosing the unsaved running folder retries through composition,
+        // which owns the save-only-after-a-healthy-start rule.
+        h.library.outcome = .switched
         model.chooseFolder("/new/.")
-        XCTAssertEqual(h.library.switches.count, 1)
+        XCTAssertEqual(h.library.switches.count, 2)
         XCTAssertNil(model.state.lastSwitchMessage)
         XCTAssertNil(model.state.settingsError)
-        XCTAssertEqual(h.settings.libraryFolderPath, "/new")
+        XCTAssertEqual(h.settings.libraryFolderPath, "/new/.")
 
         h.library.outcome = .switched
         model.chooseFolder("/another")
@@ -130,32 +131,44 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertEqual(h.library.switches.count, 1)
     }
 
-    func testReChoosingActiveFolderRetriesAFailedSaveWithoutSwitching() {
+    func testReChoosingAnUnsavedActiveFolderRetriesThroughComposition() {
         let h = GeneralSettingsHarness()
         h.settings.setLibraryFolder("/saved")
         let model = h.makeModel()
-        var changes = 0
-        model.onChange = { changes += 1 }
 
-        h.files.failNextWrite = true
-        model.chooseFolder("/active/")
-        XCTAssertEqual(model.state.lastSwitchMessage, .settingsNotSaved(.writeFailed(.ioFailure)))
-        XCTAssertEqual(model.state.settingsError, .writeFailed(.ioFailure))
+        // A→B whose startup failed leaves B running but unsaved. Choosing B
+        // again must restart it through composition, never save it directly.
+        h.library.outcome = .libraryUnavailable(.ioFailure)
+        model.chooseFolder("/b")
+        model.chooseFolder("/b/")
+        XCTAssertEqual(h.library.switches, ["/b", "/b/"])
         XCTAssertEqual(h.settings.libraryFolderPath, "/saved")
-        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(model.state.lastSwitchMessage, .libraryUnavailable(.ioFailure))
 
-        model.chooseFolder("/active")
+        h.library.outcome = .switched
+        model.chooseFolder("/b")
+        XCTAssertEqual(h.library.switches.count, 3)
+        XCTAssertEqual(h.settings.libraryFolderPath, "/b")
         XCTAssertNil(model.state.lastSwitchMessage)
-        XCTAssertNil(model.state.settingsError)
-        XCTAssertEqual(h.settings.libraryFolderPath, "/active")
-        XCTAssertTrue(h.library.switches.isEmpty)
-        XCTAssertEqual(changes, 2)
 
-        // The default is saved as the absence of a choice.
-        h.library.activeLibraryPath = "/default"
-        model.chooseFolder("/default")
+        // Once saved, the running folder is a no-op again.
+        model.chooseFolder("/b")
+        XCTAssertEqual(h.library.switches.count, 3)
+    }
+
+    func testChoosingTheDefaultPathSelectsTheDefaultByIntent() {
+        let h = GeneralSettingsHarness()
+        h.settings.setLibraryFolder("/active")
+        let model = h.makeModel()
+
+        // Both platforms then apply their default rules (creation, symlink).
+        model.chooseFolder("/default/")
+        XCTAssertEqual(h.library.switches, [nil])
         XCTAssertNil(h.settings.libraryFolderPath)
-        XCTAssertTrue(h.library.switches.isEmpty)
+        XCTAssertTrue(model.state.isDefaultLibrary)
+
+        model.chooseFolder("/default")
+        XCTAssertEqual(h.library.switches, [nil])
     }
 
     func testCanonicalUnicodeTwinsAndCaseChangesAreSwitchesWithOriginalSpelling() {
