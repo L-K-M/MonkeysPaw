@@ -2,6 +2,87 @@ import MonkeysPawCore
 import XCTest
 
 final class ShortcutServiceTests: XCTestCase {
+    func testFailedRegistrationCannotBeginVerification() throws {
+        let h = DeliveryHarness()
+        let backend = FakeHotkeyBackend()
+        backend.status = .failed
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        var changes = 0
+        service.addObserver { changes += 1 }
+
+        service.beginVerification()
+
+        XCTAssertEqual(service.verification(for: .togglePicker), .notStarted)
+        XCTAssertEqual(changes, 0)
+    }
+
+    func testCarbonRebindWithoutConfiguredActivationHandlerReportsUnavailable() {
+        let h = DeliveryHarness()
+        h.main.mode = .deferred
+        let backend = FakeHotkeyBackend()
+        backend.mechanism = .carbon
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var results: [Result<HotkeyRegistration, ShortcutRebindError>] = []
+
+        service.setPickerAccelerator("Ctrl+Alt+P") {
+            results.append($0)
+            XCTAssertTrue(h.main.isRunning)
+        }
+        XCTAssertTrue(results.isEmpty)
+        h.main.drain()
+
+        XCTAssertEqual(results, [.failure(.unavailable)])
+        XCTAssertTrue(backend.registered.isEmpty)
+    }
+
+    func testObserverRemovalLeavesOtherSubscriptionsActiveOnMainThread() throws {
+        let h = DeliveryHarness()
+        h.main.mode = .deferred
+        let backend = FakeHotkeyBackend()
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var firstChanges = 0
+        var secondChanges = 0
+        let first = service.addObserver { firstChanges += 1; XCTAssertTrue(h.main.isRunning) }
+        let second = service.addObserver { secondChanges += 1; XCTAssertTrue(h.main.isRunning) }
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        XCTAssertEqual(firstChanges, 0)
+        XCTAssertEqual(secondChanges, 0)
+        h.main.drain()
+        XCTAssertEqual(firstChanges, 1)
+        XCTAssertEqual(secondChanges, 1)
+
+        service.removeObserver(first)
+        service.beginVerification()
+        h.main.drain()
+        backend.fire()
+        h.main.drain()
+        XCTAssertEqual(firstChanges, 1)
+        XCTAssertEqual(secondChanges, 3)
+
+        service.removeObserver(second)
+        service.removeObserver(first)
+        service.configure([:]) { _ in }
+        h.main.drain()
+        XCTAssertEqual(secondChanges, 3)
+    }
+
+    func testObserverCanRemoveItselfDuringNotification() throws {
+        let h = DeliveryHarness()
+        let backend = FakeHotkeyBackend()
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var changes = 0
+        var token: UUID?
+        token = service.addObserver {
+            changes += 1
+            if let token { service.removeObserver(token) }
+        }
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+        service.beginVerification()
+        backend.fire()
+        XCTAssertEqual(changes, 1)
+    }
+
     func testNewSessionRevisionRejectsQueuedProofFromTheSameMechanism() throws {
         let h = DeliveryHarness()
         let backend = FakeHotkeyBackend()
@@ -64,7 +145,7 @@ final class ShortcutServiceTests: XCTestCase {
         let backend = FakeHotkeyBackend()
         let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
         var changes = 0
-        service.onChange = { changes += 1; XCTAssertTrue(h.main.isRunning) }
+        service.addObserver { changes += 1; XCTAssertTrue(h.main.isRunning) }
         service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
         backend.fire()
         XCTAssertEqual(service.verification(for: .togglePicker), .notStarted)

@@ -11,6 +11,16 @@
 | Settings | General · Shortcuts · Delivery · Assistant · Account (sign in, devices, groups, members, invites) |
 | Setup | §6.4 |
 
+M2 Settings contains **General · Shortcuts**; the other tabs follow their
+milestones. Shortcuts renders the shared `ShortcutsSettingsModel`: the current
+toggle-picker binding (or unknown/unbound), registration mechanism and status,
+backend conflict/failure detail, and a **Press your shortcut now** verification
+intent. macOS Carbon offers in-app rebinding. Linux offers the applicable
+system settings action, explicit Setup action, or desktop/manual instructions
+described in §6.1. Opening settings or completing a change request never turns
+verification green. Repeat last prompt remains visibly unbound and disabled
+until M7. Core supplies this contract independently of the later native windows.
+
 Per OS:
 
 - **macOS.** SwiftUI for windows and forms. AppKit for the NSPanel and native
