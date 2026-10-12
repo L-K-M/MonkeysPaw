@@ -472,6 +472,56 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(contents(source), "Body 👋 e\u{301}")
     }
 
+    func testCopyAdoptionAtDeletedOriginalPathRetiresNativeUndo() throws {
+        let original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal"
+        try files.write(Data(original.utf8), at: "a.md")
+        let window = try open("a.md")
+        let source = try widget("library-source", in: window)
+        let selection = environment.editorModel.state.prompt
+        replace(source, with: original.replacingOccurrences(of: "Original", with: "Mine"))
+        XCTAssertNotEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
+        try files.delete(at: "a.md")
+        try waitForConflict(.deleted)
+        try respond(.conflict(.saveAsCopy))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.lastCopy != nil
+            && self.environment.editorModel.state.conflict == nil })
+        drain()
+        let copy = try XCTUnwrap(environment.editorModel.state.lastCopy)
+        XCTAssertNotEqual(copy.identity, selection?.identity)
+        // Shared Core may reuse a deleted original path. The new session must
+        // still retire undo commands containing the original prompt's id.
+        XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
+        XCTAssertEqual(contents(source), environment.editorModel.state.source)
+    }
+
+    func testNewerNativeDraftDuringSaveKeepsCloseGuardPending() throws {
+        holdWork()
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let source = try widget("library-source", in: window)
+        replace(source, with: "Submitted")
+        try click("library-save", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .saving })
+        replace(source, with: "Newer draft")
+        gtk_window_close(mp_window(window))
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision?.action == .close })
+        drain()
+        XCTAssertTrue(environment.editorModel.state.isDirty)
+        XCTAssertEqual(contents(source), "Newer draft")
+        XCTAssertEqual(PromptCodec.parseFile(try files.read(at: "a.md"), filename: "a.md").body, "Submitted")
+        try respond(.decision(.cancel))
+        XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertEqual(environment.editorModel.state.source, "Newer draft")
+        quit()
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        try respond(.decision(.save))
+        XCTAssertEqual(quitCount, 0)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.quitCount == 1 })
+        XCTAssertEqual(PromptCodec.parseFile(try files.read(at: "a.md"), filename: "a.md").body, "Newer draft")
+    }
+
     func testSourcePreeditKeepsNativeKeysAndDefersRefreshUntilCommit() throws {
         try files.write(Data("Original".utf8), at: "a.md")
         let window = try open("a.md")

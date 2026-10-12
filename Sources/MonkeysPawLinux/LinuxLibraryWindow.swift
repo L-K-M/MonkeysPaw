@@ -171,9 +171,12 @@ final class LinuxLibraryWindow {
         editorObserver = editor.addObserver { [weak self, weak editor] state in
             guard let self, let editor, self.editor === editor else { return }
             let previous = self.previousPrompt
-            if previous?.relativePath != state.prompt?.relativePath { self.sourceRevision &+= 1 }
+            let adoptedCopy = state.prompt != previous && state.prompt == state.lastCopy
+            // A copy is a new session even when Core reuses a deleted path.
+            // First-save identity assignment in the original keeps its undo.
+            if previous?.relativePath != state.prompt?.relativePath || adoptedCopy { self.sourceRevision &+= 1 }
             self.previousPrompt = state.prompt
-            if state.prompt != previous, state.prompt == state.lastCopy, let prompt = state.prompt {
+            if adoptedCopy, let prompt = state.prompt {
                 self.copySelection = prompt
                 self.browser?.setFilter("")
                 self.browser?.selectSection(.all)
