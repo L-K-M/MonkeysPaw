@@ -31,6 +31,28 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(try store.useEvents(for: destination), [explicit])
     }
 
+    func testUsageSubscribersReadCommittedCacheAndRemovalDoesNotStealOtherObservers() throws {
+        let first = UsageSnapshots()
+        let second = UsageSnapshots()
+        let tested = store!
+        let one = tested.addObserver { [weak tested] in first.append(tested?.cachedUseEvents() ?? [:]) }
+        let two = tested.addObserver { [weak tested] in second.append(tested?.cachedUseEvents() ?? [:]) }
+        try tested.recordUse(identity: identity)
+        XCTAssertEqual(first.values.first?[identity], [clock.date])
+        XCTAssertEqual(second.values.count, 1)
+        tested.removeObserver(one)
+        try tested.recordUse(identity: identity)
+        XCTAssertEqual(first.values.count, 1)
+        XCTAssertEqual(second.values.count, 2)
+        files.failNextWrite = true
+        XCTAssertThrowsError(try tested.recordUse(identity: identity))
+        XCTAssertEqual(second.values.count, 2)
+        XCTAssertEqual(tested.cachedUseEvents()[identity], [clock.date, clock.date])
+        tested.removeObserver(two)
+        try tested.recordUse(identity: identity)
+        XCTAssertEqual(second.values.count, 2)
+    }
+
     func testCapKeepsLastRecordedEventsIncludingRepeatedAndEarlierDates() throws {
         let existing = (0..<Limits.usageEventCap).map(Double.init)
         let bytes = try JSONSerialization.data(withJSONObject: ["version": 1, "events": existing])
@@ -213,6 +235,21 @@ final class UsageStoreTests: XCTestCase {
     }
 
     private func path(_ identity: PromptIdentity) throws -> String { "usage/" + (try identity.storageKey) }
+}
+
+private final class UsageSnapshots: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshots: [[PromptIdentity: [Date]]] = []
+    var values: [[PromptIdentity: [Date]]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshots
+    }
+    func append(_ snapshot: [PromptIdentity: [Date]]) {
+        lock.lock()
+        defer { lock.unlock() }
+        snapshots.append(snapshot)
+    }
 }
 
 private final class UsageFaultStore: FileStore {

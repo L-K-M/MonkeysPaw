@@ -14,7 +14,8 @@ public final class PromptIndex: @unchecked Sendable {
     // compares UTF-8 bytes, so distinct POSIX files keep distinct index keys.
     private var prompts = [RelativePath: PromptRanking.Input]()
     private var useEvents = [PromptIdentity: [Date]]()
-    private var onChange: (@Sendable () -> Void)?
+    private let observers = ChangeObservers()
+    private var compatibilityObserver: UUID?
 
     public init(service: LibraryService, usage: UsageStore, clock: WallClock) {
         self.service = service
@@ -22,22 +23,32 @@ public final class PromptIndex: @unchecked Sendable {
         self.clock = clock
     }
 
-    /// Single owner: clear the hook before installing a replacement; debug
-    /// builds assert this contract. Successful rebuild/apply captures the current
-    /// hook under the publish lock and invokes it once after unlocking, on the
-    /// caller's thread. Failed publishes and recordUse stay quiet. Callers may
-    /// re-enter search and models must marshal through MainThread.
+    /// Successful rebuild/apply captures the latest subscribers at publication,
+    /// then notifies on the caller's thread after unlocking. Failed publications
+    /// and recordUse stay quiet. Models marshal through MainThread. Registration
+    /// does not notify; removal cancels invocations not already in progress,
+    /// including later subscribers in the same publication.
+    @discardableResult
+    public func addObserver(_ observer: @escaping @Sendable () -> Void) -> UUID {
+        observers.add(observer)
+    }
+
+    public func removeObserver(_ token: UUID) { observers.remove(token) }
+
+    /// Compatibility for native composition until its M3 migration. Replacing
+    /// or clearing this one subscription never removes independent subscribers.
+    @available(*, deprecated, message: "Use addObserver(_:) and removeObserver(_:)")
     public func setOnChange(_ callback: (@Sendable () -> Void)?) {
         locked {
-            assert(onChange == nil || callback == nil)
-            onChange = callback
+            if let compatibilityObserver { observers.remove(compatibilityObserver) }
+            compatibilityObserver = callback.map { observers.add($0) }
         }
     }
 
     /// Publish a complete rebuild only after all library and usage reads succeed.
     /// Invalid content stays visible exactly as LibraryService.entries() allows.
     public func rebuild() throws {
-        let callback = try locked {
+        let subscribers = try locked {
             var rebuilt = [RelativePath: PromptRanking.Input]()
             var events = [PromptIdentity: [Date]]()
             for entry in try service.entries() {
@@ -46,16 +57,16 @@ public final class PromptIndex: @unchecked Sendable {
             }
             prompts = rebuilt
             useEvents = events
-            return onChange
+            return observers.capture()
         }
-        callback?()
+        observers.publish(subscribers)
     }
 
     /// Apply a complete batch atomically in memory. Reload created/modified
     /// paths, silently dropping vanished files. Other I/O/conflict failures
     /// leave the last completed index intact and are reported to the caller.
     public func apply(_ set: LibraryChangeSet) throws {
-        let callback = try locked {
+        let subscribers = try locked {
             var updated = prompts
             var events = useEvents
             for path in set.deleted { updated.removeValue(forKey: path) }
@@ -71,9 +82,9 @@ public final class PromptIndex: @unchecked Sendable {
             let identities = Set(updated.values.map { $0.entry.identity })
             prompts = updated
             useEvents = events.filter { identities.contains($0.key) }
-            return onChange
+            return observers.capture()
         }
-        callback?()
+        observers.publish(subscribers)
     }
 
     public func search(_ query: String) -> [PromptSearchResult] {
@@ -82,10 +93,40 @@ public final class PromptIndex: @unchecked Sendable {
         return PromptRanking.rank(snapshot.values, query: query, useEvents: events, at: now)
     }
 
+    /// Shared immutable content for the browser's matcher, without reloading or
+    /// normalizing files. The browser orders sections independently of ranking.
+    func browseContents() -> [PromptRanking.Input] { locked { Array(prompts.values) } }
+
+    /// Publish a completed metadata save without more I/O. A watcher may have
+    /// already published a newer file or deletion; never replace that snapshot
+    /// with the save's older result. Native editor work will own this hand-off.
+    func acceptSaved(_ entry: LibraryEntry, replacing previous: LibraryEntry) {
+        let subscribers: [UUID] = locked {
+            let path = RelativePath(previous.relativePath)
+            guard RelativePath(entry.relativePath) == path,
+                  let current = prompts[path]?.entry, current.identity == previous.identity,
+                  current.stamp == previous.stamp else { return [] }
+            prompts[path] = PromptRanking.Input(entry)
+            let cached = usage.cachedUseEvents()
+            // Keep known usage if the cache ever lacks this identity.
+            useEvents[entry.identity] = cached[entry.identity] ?? useEvents[entry.identity] ?? []
+            if entry.identity != previous.identity, !prompts.values.contains(where: { $0.entry.identity == previous.identity }) {
+                useEvents[previous.identity] = nil
+            }
+            return observers.capture()
+        }
+        observers.publish(subscribers)
+    }
+
     /// Deliberate quiet update: persistence succeeds before cached events change.
     /// Search sees the new ranking; delivery models refresh their own results.
     public func recordUse(of identity: PromptIdentity) throws {
-        try locked { useEvents[identity] = try usage.recordUse(identity: identity, at: clock.now()) }
+        let notify = try locked {
+            let recorded = try usage.recordUseDeferringNotification(identity: identity, at: clock.now())
+            useEvents[identity] = recorded.events
+            return recorded.notify
+        }
+        notify()
     }
 
     private func currentEntry(at path: String) throws -> LibraryEntry? {

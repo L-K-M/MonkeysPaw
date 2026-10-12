@@ -90,6 +90,9 @@ public enum Limits {
     /// bursts already saturate the frecency cap. This bounds the stored tail.
     public static let usageEventCap: Int = 1_024
 
+    /// §11.7: show at most 100 prompts in Recent, by last retained use time.
+    public static let libraryRecentCap: Int = 100
+
     /// §5.1: reject remembered-value state larger than 1 MiB, without pruning.
     public static let valuesFileCapBytes: Int = 1_048_576
 

@@ -303,14 +303,28 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
 
 - **Browse.** A reusable window (macOS: `.regular` while open; Linux:
   hide-on-close) with a sidebar of All, Favourites, Recent, folders and tags, a
-  list, and the selected prompt's editor. Recent orders by the last delivery
-  or copy recorded in the app-data usage store (§5.4); using a prompt never
-  writes its file. Conflicts and groups join the sidebar with sync (M6).
-  Toggling a favourite saves `favourite` in front matter through the same
+  list, and the selected prompt's editor. Core's `LibraryBrowserModel` owns
+  these sections, counts, selection and text filter. Folder counts include
+  descendants; tags and the filter use the picker's matching rules. Counts
+  are independent of the text filter. Lists order by title and exact path
+  bytes; Recent instead orders by the newest retained delivery or copy
+  timestamp in the app-data usage store (§5.4), with the same tie-breaks and
+  at most `Limits.libraryRecentCap = 100` entries before filtering. Using a
+  prompt never writes its file. Selection follows assigned identity across
+  renames, with exact path bytes disambiguating duplicate ids; an ambiguous
+  identity or deletion clears it. Changing section or filter retains an
+  existing selection even if its row is hidden, without choosing another
+  prompt. Invalid and future-format entries remain visible with their state.
+  Conflicts and groups join the sidebar with sync (M6).
+  Toggling a favourite saves `favorite` (§5.2's file key) through the same
   service as the editor. If that prompt is open with unsaved edits, the
   toggle changes the editor's text instead, and the app's own saves refresh
   the editor's stamp, so they never trigger a conflict. The picker's Library
   control and the menu or tray open this window instead of the file manager.
+  C1 exposes `toggleFavorite` through the narrow `PromptFavoriteEditing` port,
+  with stamped saves and typed outcomes. The later C2/C3 editor slice must
+  intercept a dirty buffer and refresh the editor's stamp after its own save;
+  C1 adds neither an editor buffer nor asynchronous editing work.
 - **Edit · Preview · Fields · History.** Edit shows the raw file, front
   matter and body, with live validation from the same codec and validator as
   the picker. Fields lists the parsed fields read-only. Preview renders with

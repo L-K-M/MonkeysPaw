@@ -426,12 +426,16 @@ relative path; assigned ULIDs keep their own keys.
   are explicit and retain the last completed index and its loaded events.
   A rebuild or batch is published only when all reads succeed; callers must
   surface failures, including an initial rebuild that leaves the index empty.
-  `setOnChange` has one owner. Debug builds assert that the previous hook is
-  cleared before installing a nonnil replacement; clearing with nil is always
-  allowed. Each successful rebuild/apply reads the latest installed callback
-  under the lock when its publish finishes, then invokes that captured callback
-  once on the caller's thread after unlocking. This is latest-writer-wins at
-  publish time. Failures never notify. Models marshal it through `MainThread`.
+  `addObserver` returns a removable token; independent picker and Library
+  subscribers share every publish. Each successful rebuild/apply captures the
+  latest subscriber membership under the publish lock, then invokes callbacks
+  on the caller's thread after unlocking. Removal cancels callbacks not already
+  taken for invocation, including later subscribers in that publication; an
+  invocation in progress may finish. A subscriber added during notification
+  waits for the next publish. Failures never notify. Models read the latest
+  completed state through `MainThread`, retaining composition's retired-graph
+  rejection inside that hop. The deprecated `setOnChange` shim replaces or
+  clears only its own subscription until native M3 composition migrates.
   `recordUse` deliberately stays quiet even though it changes cached ranking;
   the delivery path refreshes its own results after recording usage.
   Path keys and tie-breaks use exact UTF-8 bytes. A few thousand files load
@@ -496,6 +500,13 @@ relative path; assigned ULIDs keep their own keys.
   assignment/move rollback machinery to reverse it. `PromptIndex.recordUse`
   updates its cached events only after persistence succeeds. Neither service
   owns a driver or has a production caller in M2d.
+
+M3 C1 retains validated usage reads and successful writes in memory for browsing.
+An independent usage subscription updates Recent after delivery or copy while
+`PromptIndex.recordUse` keeps its content subscribers quiet. Browser refreshes
+and filters do no filesystem work; index publication picks up identity-key
+migrations. The browser shares the index's usage store and the picker's guarded
+`MainThread`; retiring it removes both subscriptions and rejects queued work.
 
 Library switches keep the same app-data values and usage stores. Since
 path-hash keys omit the root, equal relative paths without assigned ids share

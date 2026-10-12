@@ -1,3 +1,5 @@
+import Foundation
+
 public struct PickerResultRow: Equatable, Sendable {
     public let identity: PromptIdentity
     public let relativePath: String
@@ -90,6 +92,7 @@ public final class PickerModel: @unchecked Sendable {
     private let fill: FillService
     private let delivery: DeliveryService
     private let main: MainThread
+    private var indexObserver: UUID?
     private var matches: [PromptSearchResult] = []
     private var drafts: [PromptIdentity: [String: String]] = [:]
     private var snapshotGeneration: UInt64 = 0
@@ -100,7 +103,7 @@ public final class PickerModel: @unchecked Sendable {
         self.fill = fill
         self.delivery = delivery
         self.main = main
-        index.setOnChange { [weak self] in
+        indexObserver = index.addObserver { [weak self] in
             guard let self else { return }
             self.main.run { [weak self] in
                 guard let self else { return }
@@ -110,9 +113,9 @@ public final class PickerModel: @unchecked Sendable {
         }
     }
 
-    // A released model must leave the hook clear: setOnChange asserts
-    // clear-before-install, so a stale closure would block a replacement owner.
-    deinit { index.setOnChange(nil) }
+    deinit {
+        if let indexObserver { index.removeObserver(indexObserver) }
+    }
 
     public func open() {
         guard state != .delivering, fillModel?.state != .delivering else { return }
