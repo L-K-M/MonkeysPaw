@@ -23,7 +23,7 @@ Core package, the server health endpoint, and build and test infrastructure.
 ## Install on Linux
 
 On Ubuntu 24.04 or newer, download the `.deb` and its `.deb.sha256` from a
-release. Run `sha256sum -c <filename>.deb.sha256` in the download directory,
+release. Run `sha256sum -c monkeyspaw_<version>_<arch>.deb.sha256` in the download directory,
 then install with `sudo apt install ./monkeyspaw_<version>_<arch>.deb` and run
 `monkeyspaw`. To build a local package, run
 `scripts/build.sh deb`; see the

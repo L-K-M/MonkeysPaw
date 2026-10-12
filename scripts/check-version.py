@@ -5,6 +5,7 @@
     python3 scripts/check-version.py --app-version v0.1.0-beta.1
     python3 scripts/check-version.py --deb-version v0.1.0-beta.1
     python3 scripts/check-version.py --check-tag v0.1.0
+    python3 scripts/check-version.py --committed-version
 """
 
 import argparse
@@ -42,7 +43,7 @@ def deb_version(value):
     return upstream + separator + metadata
 
 
-def check_versions(root, tag=None):
+def check_versions(root, tag=None, quiet=False):
     project = (root / "MonkeysPaw.xcodeproj/project.pbxproj").read_text()
     versions = re.findall(r"\bMARKETING_VERSION\s*=\s*([^;\s]+)\s*;", project)
     readme = (root / "README.md").read_text()
@@ -59,7 +60,10 @@ def check_versions(root, tag=None):
         # but no build metadata. Reject it before starting either build.
         if "+" in version:
             raise ValueError("Release tags cannot include build metadata (+...)")
-        numeric_core = re.match(r"[0-9]+\.[0-9]+\.[0-9]+", version)[0]
+        core = re.match(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+        if core is None:
+            raise ValueError(f"Release tag {tag} has no numeric X.Y.Z core")
+        numeric_core = core[0]
         if numeric_core != markers[0]:
             raise ValueError(f"Tag {tag} has numeric core {numeric_core}, "
                              f"but committed version is {markers[0]}")
@@ -69,7 +73,9 @@ def check_versions(root, tag=None):
         if deb_version(tag) != expected:
             raise ValueError(f"Deb version mapping failed for {tag}")
 
-    print(f"==> Committed version {markers[0]} and tag-to-deb mapping agree")
+    if not quiet:
+        print(f"==> Committed version {markers[0]} and tag-to-deb mapping agree")
+    return markers[0]
 
 
 def main():
@@ -78,12 +84,16 @@ def main():
     mode.add_argument("--app-version", metavar="VERSION")
     mode.add_argument("--deb-version", metavar="VERSION")
     mode.add_argument("--check-tag", metavar="TAG")
+    mode.add_argument("--committed-version", action="store_true",
+                      help="validate the committed versions and print the single value")
     arguments = parser.parse_args()
     try:
         if arguments.app_version is not None:
             print(app_version(arguments.app_version))
         elif arguments.deb_version is not None:
             print(deb_version(arguments.deb_version))
+        elif arguments.committed_version:
+            print(check_versions(Path(__file__).resolve().parent.parent, None, quiet=True))
         else:
             check_versions(Path(__file__).resolve().parent.parent, arguments.check_tag)
     except (OSError, ValueError) as error:

@@ -49,6 +49,8 @@ for argument in "$@"; do
     mac|deb) targets+=("$argument"); explicit=true ;;
     --no-open) no_open=true ;;
     -h|--help) usage; exit 0 ;;
+    --clean|--debug|--run|--install|--zip|--dmg)
+      printf '!! %s belongs to the app engine: use scripts/build.sh app %s\n' "$argument" "$argument" >&2; exit 2 ;;
     *) printf '!! Unknown argument: %s (see --help)\n' "$argument" >&2; exit 2 ;;
   esac
 done
@@ -59,8 +61,8 @@ fi
 repo_root="$(cd "$(dirname "$script_path")/.." && pwd)" || exit 1
 cd "$repo_root" || exit 1
 host="$(uname -s)" || exit 1
-version="$(awk '$1 == "MARKETING_VERSION" { sub(/;$/, "", $3); gsub(/"/, "", $3); print $3; exit }' \
-  MonkeysPaw.xcodeproj/project.pbxproj)" || exit 1
+# check-version.py also rejects diverging Debug/Release or README versions.
+version="$(python3 scripts/check-version.py --committed-version)" || exit 1
 [[ -n "$version" ]] || { echo '!! Missing committed version' >&2; exit 1; }
 
 reason=
@@ -105,7 +107,7 @@ for target in "${targets[@]}"; do
   printf '==> Building %s\n' "$target"
   case "$target" in
     mac) build_command=(/bin/bash scripts/package-macos.sh) ;;
-    deb) build_command=(packaging/build-deb.sh "$version") ;;
+    deb) build_command=(/bin/bash packaging/build-deb.sh "$version") ;;
   esac
   if "${build_command[@]}"; then
     results+=("$target: ok (dist/)")
