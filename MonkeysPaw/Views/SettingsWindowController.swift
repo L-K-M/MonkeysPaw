@@ -54,11 +54,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             self.presentation.isChoosingFolder = true
             let cancel = self.folderChooser(window) { [weak self] url in
                 self?.mainThread.run { [weak self] in
-                    guard let self, self.chooserRequest == request, self.window?.isVisible == true else { return }
+                    guard let self, self.chooserRequest == request else { return }
                     self.chooserRequest = nil
                     self.cancelChooser = nil
                     self.presentation.isChoosingFolder = false
-                    if let url { self.presentation.generalModel.chooseFolder(url.path) }
+                    // A hidden (for example minimized) window still ends the
+                    // request so Choose works again, but applies no late result.
+                    guard self.window?.isVisible == true, let url else { return }
+                    self.presentation.generalModel.chooseFolder(url.path)
                 }
             }
             // Injected choosers may finish synchronously.
