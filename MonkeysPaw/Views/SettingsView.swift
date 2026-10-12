@@ -60,7 +60,7 @@ final class SettingsViewState: ObservableObject {
     var generalMessages: [String] {
         let switchMessage = general.lastSwitchMessage.flatMap { outcome in
             if outcome == .deliveryInFlight, let message = librarySwitchMessage?() { return message }
-            return GeneralSettingsStrings.message(outcome)
+            return GeneralSettingsStrings.message(for: outcome)
         }
         return Self.generalMessages(for: general.lastSwitchMessage, switchMessage: switchMessage,
             settingsError: general.settingsError)

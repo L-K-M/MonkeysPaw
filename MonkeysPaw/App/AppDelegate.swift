@@ -193,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isShutDown else { return .terminateNow }
         guard !terminationPending else { return .terminateLater }
         guard let editor = editorModel,
-              editor.state.isDirty || editor.state.status == .saving || editor.state.pendingDecision != nil else {
+              editor.state.isDirty || editor.state.status == .saving || editor.state.pendingDecision != nil
+                || !editor.state.queuedActions.isEmpty else {
             return .terminateNow
         }
         terminationPending = true
