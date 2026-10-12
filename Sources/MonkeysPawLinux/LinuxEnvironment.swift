@@ -11,6 +11,44 @@ final class LinuxEnvironment {
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case persistenceFailed(SettingsError)
+
+        var settingsOutcome: LibrarySwitchOutcome {
+            switch self {
+            case .switched: return .switched
+            case .deliveryInFlight: return .deliveryInFlight
+            case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
+            case .libraryUnavailable(let error): return .libraryUnavailable(error)
+            case .persistenceFailed(let error): return .settingsNotSaved(error)
+            }
+        }
+    }
+
+    /// General retains its port; a weak adapter avoids retaining the entire
+    /// composition root through the model that the root itself owns.
+    private final class LibraryLocation: LibraryLocationControl {
+        private weak var environment: LinuxEnvironment?
+        let defaultLibraryPath: String
+        var activeLibraryPath: String { environment?.libraryGraph.directory.path ?? defaultLibraryPath }
+
+        init(environment: LinuxEnvironment, defaultLibraryPath: String) {
+            self.environment = environment
+            self.defaultLibraryPath = defaultLibraryPath
+        }
+
+        func switchLibrary(to path: String?) -> LibrarySwitchOutcome {
+            guard let environment else { return .libraryUnavailable(.ioFailure) }
+            // Validate before URL(fileURLWithPath:) can turn a relative spelling
+            // into an absolute path. The rooted store owns filesystem checks.
+            if let path, (try? SettingsDocument(libraryFolderPath: path)) == nil {
+                return .invalidTarget(.rejectedByStore(.invalidRoot))
+            }
+            return environment.switchLibrary(to: path.map { URL(fileURLWithPath: $0, isDirectory: true) }).settingsOutcome
+        }
+
+        func revealLibrary() {
+            guard let environment else { return }
+            environment.launchURI(environment.libraryGraph.directory)
+        }
     }
 
     /// Every library callback checks its generation on the GLib thread, even
@@ -76,6 +114,7 @@ final class LinuxEnvironment {
     private let paths: LinuxPaths
     private let launchURI: (URL) -> Void
     private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
+    private let folderChooser: LinuxFolderChoosing
 
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
@@ -105,6 +144,9 @@ final class LinuxEnvironment {
         legacyFirstRun: firstRun.needsSetup ? .setupNotPresented : .setupPresented)
     private lazy var settings = SettingsService(store: settingsStore)
     private(set) lazy var settingsModel = SettingsModel(settings: settings)
+    private(set) lazy var generalSettingsModel = GeneralSettingsModel(settings: settingsModel,
+        library: LibraryLocation(environment: self, defaultLibraryPath: defaultLibraryDirectory.path),
+        mainThread: mainThread)
     private lazy var dataFiles: FileStore = {
         do { return try RootedFileStore(root: paths.dataDirectory) }
         catch {
@@ -128,11 +170,14 @@ final class LinuxEnvironment {
         target: GTKSelfTestTarget(application: application), delivery: delivery,
         session: session, scheduler: scheduler, mainThread: mainThread)
     private lazy var shortcuts = ShortcutService(backend: hotkey, scheduler: scheduler, mainThread: mainThread)
-    private(set) lazy var setupModel = SetupModel(setup: SetupService(
+    private lazy var setup = SetupService(
         probe: LinuxSetupProbe(application: application, runner: runner, hotkey: hotkey,
                                session: session, mainThread: mainThread, remoteDesktop: remoteDesktop),
-        session: session, shortcuts: shortcuts, selfTest: selfTest, mainThread: mainThread))
+        session: session, shortcuts: shortcuts, selfTest: selfTest, mainThread: mainThread)
+    private(set) lazy var setupModel = SetupModel(setup: setup)
+    private(set) lazy var shortcutsSettingsModel = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
     private lazy var setupWindow = LinuxSetupWindow(application: application, model: setupModel)
+    private var currentSettingsWindow: LinuxSettingsWindow?
 
     private let application: UnsafeMutablePointer<GtkApplication>
 
@@ -140,6 +185,7 @@ final class LinuxEnvironment {
          environment: [String: String] = ProcessInfo.processInfo.environment,
          scheduler: Scheduler? = nil,
          libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
+         folderChooser: LinuxFolderChoosing? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
              gtk_show_uri(nil, url.absoluteString, UInt32(GDK_CURRENT_TIME))
@@ -147,6 +193,7 @@ final class LinuxEnvironment {
         self.application = application
         self.launchURI = launchURI
         self.libraryWatcherFactory = libraryWatcherFactory
+        self.folderChooser = folderChooser ?? GTKFolderChooser()
         log = CompositeLogSink(
             sinks: [StandardErrorLog(), FileLogSink(dataDirectory: LinuxPaths(environment: environment).dataDirectory)],
             policy: LogLevelPolicy(environmentValue: environment["MONKEYSPAW_LOG"]))
@@ -211,6 +258,14 @@ final class LinuxEnvironment {
 
     func presentFromLauncher() {
         if settingsModel.needsSetupPresentation { showSetup() } else { startLibrary(); pickerModel.open() }
+    }
+
+    func showSettings() {
+        if currentSettingsWindow == nil {
+            currentSettingsWindow = LinuxSettingsWindow(application: application,
+                general: generalSettingsModel, shortcuts: shortcutsSettingsModel, chooser: folderChooser)
+        }
+        currentSettingsWindow?.show()
     }
 
     private func showSetup() {
@@ -438,6 +493,7 @@ final class LinuxEnvironment {
     }
 
     func shutdown() {
+        currentSettingsWindow?.hide()
         currentLibraryGraph?.stop()
         hotkey.shutdown()
         remoteDesktop.shutdown()

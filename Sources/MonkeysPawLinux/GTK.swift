@@ -63,6 +63,26 @@ enum GTK {
         init(_ call: @escaping (Int?) -> Void) { self.call = call }
     }
 
+    private final class ResponseBox {
+        let call: (Int32) -> Void
+        init(_ call: @escaping (Int32) -> Void) { self.call = call }
+    }
+
+    /// GtkNativeDialog responses carry a response id before user data.
+    static func onResponse(_ dialog: UnsafeMutableRawPointer, _ handler: @escaping (Int32) -> Void) {
+        let box = Unmanaged.passRetained(ResponseBox(handler)).toOpaque()
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, gint,
+                                        UnsafeMutableRawPointer?) -> Void = { _, response, data in
+            guard let data else { return }
+            Unmanaged<ResponseBox>.fromOpaque(data).takeUnretainedValue().call(response)
+        }
+        let release: GClosureNotify = { data, _ in
+            guard let data else { return }
+            Unmanaged<ResponseBox>.fromOpaque(data).release()
+        }
+        mp_connect(dialog, "response", unsafeBitCast(trampoline, to: GCallback.self), box, release)
+    }
+
     /// List signals carry a nullable row between the instance and user data.
     static func onRow(_ list: Widget, _ signal: String, _ handler: @escaping (Int?) -> Void) {
         let box = Unmanaged.passRetained(RowBox(handler)).toOpaque()

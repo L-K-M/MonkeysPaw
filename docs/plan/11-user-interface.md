@@ -44,6 +44,9 @@ Per OS:
   - `GtkNotebook` for tabs
   - `GtkApplication` actions for menus
 
+  Choose **Settings…** in your launcher's desktop actions to open the reusable
+  General and Shortcuts window. Closing it hides it for the next opening.
+
   Plainer than macOS by design. The tray uses a StatusNotifierItem where
   available. The hotkey is the primary entry point, because stock GNOME
   hides tray icons.

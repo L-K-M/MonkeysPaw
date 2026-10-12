@@ -8,6 +8,7 @@ import MonkeysPawCore
 enum ActionName: String {
     case toggle
     case selftest
+    case settings
     case quit
 }
 
@@ -103,6 +104,8 @@ public enum MonkeysPawLinuxApp {
         g_action_map_add_action(mp_action_map(application), mp_action(toggle))
         g_object_unref(UnsafeMutableRawPointer(toggle))
 
+        installSettingsAction(application: application, environment: environment)
+
         let selftest = g_simple_action_new(ActionName.selftest.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(selftest)) {
             environment.runSelfTest { report in
@@ -197,6 +200,15 @@ public enum MonkeysPawLinuxApp {
         return argv.withUnsafeMutableBufferPointer {
             g_application_run(gapp, Int32(arguments.count), $0.baseAddress)
         }
+    }
+
+    static func installSettingsAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment) {
+        let settings = g_simple_action_new(ActionName.settings.rawValue, nil)!
+        GTK.onActionActivated(UnsafeMutableRawPointer(settings)) { [weak environment] in
+            environment?.showSettings()
+        }
+        g_action_map_add_action(mp_action_map(application), mp_action(settings))
+        g_object_unref(UnsafeMutableRawPointer(settings))
     }
 
     private static func reportJSON(_ report: SelfTestReport) -> String? {

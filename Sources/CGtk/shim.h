@@ -55,6 +55,9 @@ static inline GtkListBoxRow *mp_list_box_row(GtkWidget *w) { return GTK_LIST_BOX
 static inline GtkComboBox  *mp_combo_box(GtkWidget *w) { return GTK_COMBO_BOX(w); }
 static inline GtkComboBoxText *mp_combo_box_text(GtkWidget *w) { return GTK_COMBO_BOX_TEXT(w); }
 static inline GtkStack     *mp_stack(GtkWidget *w) { return GTK_STACK(w); }
+static inline GtkNotebook  *mp_notebook(GtkWidget *w) { return GTK_NOTEBOOK(w); }
+static inline GtkNativeDialog *mp_native_dialog(GtkFileChooserNative *d) { return GTK_NATIVE_DIALOG(d); }
+static inline GtkFileChooser *mp_file_chooser(GtkFileChooserNative *d) { return GTK_FILE_CHOOSER(d); }
 static inline GApplication *mp_gapp(GtkApplication *a) { return G_APPLICATION(a); }
 static inline GActionMap   *mp_action_map(GtkApplication *a) { return G_ACTION_MAP(a); }
 static inline GActionGroup *mp_action_group(GtkApplication *a) { return G_ACTION_GROUP(a); }
@@ -202,6 +205,10 @@ static inline gulong mp_connect(gpointer instance,
  * including its Swift trampoline, rather than calling panel intents directly. */
 static inline void mp_test_emit_preedit_changed(GtkWidget *w, const char *text) {
     g_signal_emit_by_name(w, "preedit-changed", text);
+}
+
+static inline void mp_test_emit_native_response(GtkFileChooserNative *dialog, gint response) {
+    g_signal_emit_by_name(dialog, "response", response);
 }
 
 static inline gboolean mp_test_emit_key_pressed(GtkWidget *w, guint key, GdkModifierType modifiers) {
