@@ -47,7 +47,7 @@ final class GeneralSettingsModelTests: XCTestCase {
             XCTAssertEqual(h.library.switches.count, 1)
             XCTAssertEqual(h.library.switches[0], "/chosen")
             if outcome == .switched { XCTAssertNil(GeneralSettingsStrings.message(for: outcome)) }
-            else { XCTAssertFalse(GeneralSettingsStrings.message(for: outcome)!.isEmpty) }
+            else { XCTAssertFalse(GeneralSettingsStrings.message(for: outcome)?.isEmpty ?? true, "\(outcome)") }
         }
     }
 
@@ -63,13 +63,13 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertEqual(model.state.settingsError, h.settings.error)
         XCTAssertEqual(model.state.lastSwitchMessage, .settingsNotSaved(.writeFailed(.ioFailure)))
 
-        // A same-folder success clears the switch message without claiming that
-        // the outstanding settings failure was saved or retrying composition.
+        // Re-choosing the running folder retries only the failed save, with
+        // the active spelling, and never replaces the graph again.
         model.chooseFolder("/new/.")
         XCTAssertEqual(h.library.switches.count, 1)
         XCTAssertNil(model.state.lastSwitchMessage)
-        XCTAssertEqual(model.state.settingsError, .writeFailed(.ioFailure))
-        XCTAssertEqual(h.settings.libraryFolderPath, "/saved")
+        XCTAssertNil(model.state.settingsError)
+        XCTAssertEqual(h.settings.libraryFolderPath, "/new")
 
         h.library.outcome = .switched
         model.chooseFolder("/another")
@@ -105,7 +105,7 @@ final class GeneralSettingsModelTests: XCTestCase {
 
     func testAlreadyActiveFolderIsNoOpSuccessForEachNormalizedSpelling() {
         let h = GeneralSettingsHarness()
-        h.settings.setLibraryFolder("/saved")
+        h.settings.setLibraryFolder("/active")
         let model = h.makeModel()
         let accesses = h.files.accessCount
         var changes = 0
@@ -119,7 +119,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertTrue(h.library.switches.isEmpty)
         XCTAssertEqual(h.files.accessCount, accesses)
         XCTAssertEqual(changes, 0)
-        XCTAssertEqual(h.settings.libraryFolderPath, "/saved")
+        XCTAssertEqual(h.settings.libraryFolderPath, "/active")
 
         h.library.outcome = .deliveryInFlight
         model.chooseFolder("/other")
@@ -128,6 +128,34 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertEqual(changes, 2)
         XCTAssertNil(model.state.lastSwitchMessage)
         XCTAssertEqual(h.library.switches.count, 1)
+    }
+
+    func testReChoosingActiveFolderRetriesAFailedSaveWithoutSwitching() {
+        let h = GeneralSettingsHarness()
+        h.settings.setLibraryFolder("/saved")
+        let model = h.makeModel()
+        var changes = 0
+        model.onChange = { changes += 1 }
+
+        h.files.failNextWrite = true
+        model.chooseFolder("/active/")
+        XCTAssertEqual(model.state.lastSwitchMessage, .settingsNotSaved(.writeFailed(.ioFailure)))
+        XCTAssertEqual(model.state.settingsError, .writeFailed(.ioFailure))
+        XCTAssertEqual(h.settings.libraryFolderPath, "/saved")
+        XCTAssertEqual(changes, 1)
+
+        model.chooseFolder("/active")
+        XCTAssertNil(model.state.lastSwitchMessage)
+        XCTAssertNil(model.state.settingsError)
+        XCTAssertEqual(h.settings.libraryFolderPath, "/active")
+        XCTAssertTrue(h.library.switches.isEmpty)
+        XCTAssertEqual(changes, 2)
+
+        // The default is saved as the absence of a choice.
+        h.library.activeLibraryPath = "/default"
+        model.chooseFolder("/default")
+        XCTAssertNil(h.settings.libraryFolderPath)
+        XCTAssertTrue(h.library.switches.isEmpty)
     }
 
     func testCanonicalUnicodeTwinsAndCaseChangesAreSwitchesWithOriginalSpelling() {
@@ -139,7 +167,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         for path in ["/cafe\u{301}", "/Café", "/café", "/literal/../spelling"] {
             model.chooseFolder(path)
             XCTAssertEqual(Array(model.state.activeLibraryPath.utf8), Array(path.utf8))
-            XCTAssertEqual(Array(h.library.switches.last!!.utf8), Array(path.utf8))
+            XCTAssertEqual((h.library.switches.last ?? nil).map { Array($0.utf8) }, Array(path.utf8))
         }
         XCTAssertEqual(h.library.switches.count, 4)
         XCTAssertEqual(changes, 4)
@@ -356,6 +384,7 @@ final class GeneralSettingsModelTests: XCTestCase {
             h.settings.setLibraryFolder("/saved")
             h.main.mode = .deferred
             var model: GeneralSettingsModel? = h.makeModel()
+            weak var released = model
             item.intent(model!)
             model = nil
             XCTAssertTrue(h.library.switches.isEmpty)
@@ -366,6 +395,7 @@ final class GeneralSettingsModelTests: XCTestCase {
             XCTAssertEqual(h.settings.libraryFolderPath, item.saved)
             XCTAssertEqual(h.library.reveals, item.reveals)
             XCTAssertEqual(h.library.switches.count, item.reveals == 0 ? 1 : 0)
+            XCTAssertNil(released, "The queued intent releases the model once it runs")
         }
     }
 

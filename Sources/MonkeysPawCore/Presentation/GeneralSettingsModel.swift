@@ -56,7 +56,7 @@ public final class GeneralSettingsModel {
         // even if the settings view closes before the main loop drains it.
         mainThread.run {
             if Self.sameFolder(path, self.library.activeLibraryPath) {
-                self.publish(path: self.library.activeLibraryPath, message: nil)
+                self.saveActiveFolder()
                 return
             }
             self.switchLibrary(to: path)
@@ -98,6 +98,23 @@ public final class GeneralSettingsModel {
         case .switched, .settingsNotSaved, .libraryUnavailable: activePath = library.activeLibraryPath
         }
         publish(path: activePath, message: outcome == .switched ? nil : outcome)
+    }
+
+    /// Re-choosing the running folder retries a failed save, like the default
+    /// intent, without replacing the graph. An already-saved folder is a no-op.
+    private func saveActiveFolder() {
+        let active = library.activeLibraryPath
+        let saved = settings.libraryFolderPath ?? library.defaultLibraryPath
+        guard !Self.sameFolder(saved, active) else {
+            publish(path: active, message: nil)
+            return
+        }
+
+        isReadingSettings = true
+        if Self.sameFolder(active, library.defaultLibraryPath) { settings.clearLibraryFolder() }
+        else { settings.setLibraryFolder(active) }
+        isReadingSettings = false
+        publish(path: active, message: settings.error.map { .settingsNotSaved($0) })
     }
 
     private func publish(path: String, message: LibrarySwitchOutcome?) {
