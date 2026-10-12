@@ -36,6 +36,9 @@ public enum PromptHistoryOutcome: Sendable {
 public enum PromptCommandOutcome: Sendable {
     case updated(LibraryEntry)
     case updatedButHistoryMaintenanceFailed(LibraryEntry)
+    /// The physical move committed. This last known source now belongs to the
+    /// destination; its checked current state may differ or be unavailable.
+    case relocated(LibraryEntry, current: PromptLoadOutcome)
     case deleted
     case missing
     case destinationOccupied

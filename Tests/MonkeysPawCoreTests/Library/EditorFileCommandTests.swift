@@ -334,4 +334,118 @@ final class EditorFileCommandTests: XCTestCase {
             else { XCTAssertEqual(browser.selection, e.model.state.prompt) }
         }
     }
+
+    func testWatcherMovePublicationBeforeRebindCannotCloseMovedEditor() throws {
+        for queuedMain in [false, true] {
+            for command in [HistoryTestCommand.rename, .move] {
+                let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                let original = try e.open(historyCommandSource)
+                let before = try e.h.library.load(at: "a.md")
+                let revision = try historySnapshot(e.h, identity: original.identity)
+                let browser = LibraryBrowserModel(index: e.h.index, usage: e.h.usage,
+                    favorites: e.h.library, main: e.h.main, editor: e.model)
+                e.ui { browser.selectPrompt(original) }
+                e.h.main.releaseAll()
+                e.h.files.onRead = { path in
+                    guard path == command.destination else { return }
+                    e.h.files.onRead = nil
+                    let entry = LibraryEntry(path: path, document: before.document,
+                        stamp: try XCTUnwrap(e.h.files.stamp(at: path)))
+                    let version = e.h.index.editingSnapshot(at: "a.md").version
+                    e.h.index.acceptCommand(entry, at: "a.md", expectedVersion: version)
+                    // Model the main loop draining the watcher's move while
+                    // the worker is still checking the destination bytes.
+                    e.h.main.releaseAll()
+                }
+                var result: PromptCommandOutcome?
+                e.ui { command.run(e.model, revision: revision) { result = $0 } }
+                e.settle()
+                XCTAssertNotNil(result?.committedEntry)
+                XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath(command.destination))
+                XCTAssertEqual(e.model.state.source, historyCommandSource)
+                XCTAssertEqual(browser.selection, e.model.state.prompt)
+                XCTAssertNil(e.model.state.conflict)
+            }
+        }
+    }
+
+    func testPostMoveExternalReplacementConflictChoicesUseDestinationWithoutDuplicateID() throws {
+        for command in [HistoryTestCommand.rename, .move] {
+            for choice in [EditorConflictChoice.keepMine, .takeTheirs] {
+                let e = EditorHarness()
+                let original = try e.open(historyCommandSource)
+                let revision = try historySnapshot(e.h, identity: original.identity)
+                let external = historyCommandSource.replacingOccurrences(of: "Original", with: "External")
+                e.h.files.onRead = { path in
+                    guard path == command.destination else { return }
+                    e.h.files.onRead = nil
+                    try e.h.files.put(external, at: path)
+                }
+                e.ui { command.run(e.model, revision: revision) { _ in } }
+                e.settle()
+                XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath(command.destination))
+                XCTAssertEqual(e.model.state.conflict?.kind, .modified)
+                XCTAssertEqual(e.model.state.conflict?.theirsSource, external)
+                e.ui { e.model.resolveConflict(choice) }
+                e.settle()
+                XCTAssertNil(try e.h.files.stamp(at: "a.md"))
+                XCTAssertEqual(try e.h.files.text(at: command.destination), choice == .keepMine ? historyCommandSource : external)
+                let entries = try e.h.library.entries()
+                XCTAssertEqual(entries.count, 1)
+                XCTAssertEqual(entries.first?.identity, original.identity)
+                XCTAssertNil(e.model.state.conflict)
+            }
+        }
+    }
+
+    func testPostMoveDeletionKeepMineRecreatesOnlyDestination() throws {
+        for command in [HistoryTestCommand.rename, .move] {
+            let e = EditorHarness()
+            let original = try e.open(historyCommandSource)
+            let revision = try historySnapshot(e.h, identity: original.identity)
+            e.h.files.onRead = { path in
+                guard path == command.destination else { return }
+                e.h.files.onRead = nil
+                try e.h.files.delete(at: path)
+            }
+            e.ui { command.run(e.model, revision: revision) { _ in } }
+            e.settle()
+            XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath(command.destination))
+            XCTAssertEqual(e.model.state.conflict?.kind, .deleted)
+            e.ui { e.model.resolveConflict(.keepMine) }
+            e.settle()
+            XCTAssertNil(try e.h.files.stamp(at: "a.md"))
+            XCTAssertEqual(try e.h.files.text(at: command.destination), historyCommandSource)
+            XCTAssertEqual(try e.h.library.load(at: command.destination).identity, original.identity)
+        }
+    }
+
+    func testMoveRemovesStaleSourcePublicationButKeepsRecreatedSource() throws {
+        for recreated in [false, true] {
+            let e = EditorHarness()
+            let original = try e.open(historyCommandSource)
+            let before = try e.h.library.load(at: "a.md")
+            let browser = LibraryBrowserModel(index: e.h.index, usage: e.h.usage,
+                favorites: e.h.library, main: e.h.main, editor: e.model)
+            e.ui { browser.selectPrompt(original) }
+            e.h.files.onRead = { path in
+                guard path == "renamed.md" else { return }
+                e.h.files.onRead = nil
+                let source: LibraryEntry
+                if recreated {
+                    try e.h.files.put("Recreated", at: "a.md")
+                    source = LibraryEntry(path: "a.md", document: PromptCodec.parse("Recreated", filename: "a.md"),
+                        stamp: try XCTUnwrap(e.h.files.stamp(at: "a.md")))
+                } else { source = before }
+                let version = e.h.index.editingSnapshot(at: "a.md").version
+                e.h.index.acceptCommand(source, at: "a.md", expectedVersion: version)
+            }
+            e.ui { e.model.rename(to: "renamed.md") }
+            e.settle()
+            XCTAssertEqual(browser.rows.contains { $0.relativePath == RelativePath("a.md") }, recreated)
+            XCTAssertEqual(browser.selection, e.model.state.prompt)
+            XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("renamed.md"))
+            XCTAssertNil(e.model.state.conflict)
+        }
+    }
 }

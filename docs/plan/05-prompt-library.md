@@ -632,6 +632,11 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   required editor stamp, reject missing and read-only prompts, and reuse the
   library's reversible identity-keyed migrations. Only destination collisions
   report `destinationOccupied`; a keyed-state collision remains a failure.
+  Rebinding discards deferred notifications accepted for the old path. If
+  destination verification diverges after the physical move, `relocated`
+  carries the last known source at its new path and the checked destination
+  state. Conflict choices and recovery then act on that destination, without
+  recreating the vacated source or duplicating its assigned identity.
 - **Notifications.** External notifications use the open path's immutable
   index change payload, with no UI-thread file reads. Separate delete/recreate
   publications remain separate under queued delivery; one coalesced watch

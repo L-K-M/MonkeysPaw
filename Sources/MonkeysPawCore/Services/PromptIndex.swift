@@ -153,7 +153,8 @@ public final class PromptIndex: @unchecked Sendable {
     /// Reconcile each path independently: a newer destination publication must
     /// survive without keeping the old source row. Newer source recreations
     /// also survive, and unrelated publications cannot hide the command.
-    func acceptCommand(_ entry: LibraryEntry?, at source: String, expectedVersion: UInt64) {
+    func acceptCommand(_ entry: LibraryEntry?, at source: String, expectedVersion: UInt64,
+                       expectedSourceStamp: FileStamp? = nil) {
         let publication: Publication? = locked {
             let sourcePath = RelativePath(source)
             let destination = entry.map { RelativePath($0.relativePath) } ?? sourcePath
@@ -161,14 +162,18 @@ public final class PromptIndex: @unchecked Sendable {
             var deleted: Set<RelativePath> = []
             var created: Set<RelativePath> = []
             var modified: Set<RelativePath> = []
-            if pathVersions[sourcePath, default: 0] <= expectedVersion,
+            // A publication may have read the source before the physical move
+            // but committed later. Its unchanged stamp is safe to replace;
+            // a recreated source has a different incarnation and must survive.
+            let sameSource = expectedSourceStamp.map { prompts[sourcePath]?.entry.stamp == $0 } == true
+            if pathVersions[sourcePath, default: 0] <= expectedVersion || sameSource,
                entry == nil || destination != sourcePath {
                 prompts.removeValue(forKey: sourcePath)
                 // Keep a deletion publication even without a cached row: an
                 // earlier command must not later resurrect this missing path.
                 deleted.insert(sourcePath)
             }
-            if let entry, pathVersions[destination, default: 0] <= expectedVersion {
+            if let entry, pathVersions[destination, default: 0] <= expectedVersion || (destination == sourcePath && sameSource) {
                 let existed = prompts[destination] != nil
                 prompts[destination] = PromptRanking.Input(entry)
                 useEvents[entry.identity] = usage.cachedUseEvents()[entry.identity] ?? useEvents[entry.identity] ?? []

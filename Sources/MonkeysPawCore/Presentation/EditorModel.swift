@@ -782,6 +782,16 @@ extension EditorModel {
             return
         }
         switch outcome {
+        case .relocated(let baseline, let current):
+            accept(LoadedPrompt(bytes: Data(baseline.document.source.utf8), entry: baseline))
+            switch current {
+            case .loaded(let loaded): openConflict(stamp: loaded.stamp)
+            case .deleted: openConflict(stamp: nil)
+            case .failed(let failure):
+                state.status = .failed(.editing(failure))
+                load(.reconcileCopy)
+            }
+            if historyRequested { loadHistory() }
         case .deleted: resetEditor()
         case .missing: openConflict(stamp: nil)
         case .conflict(let stamp): openConflict(stamp: stamp)

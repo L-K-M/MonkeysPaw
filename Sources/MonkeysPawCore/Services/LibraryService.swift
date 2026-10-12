@@ -22,6 +22,11 @@ public final class LibraryService: PromptFavoriteEditing {
         }
     }
 
+    private enum MoveResult {
+        case moved(LibraryEntry)
+        case changed(LibraryEntry, PromptLoadOutcome)
+    }
+
     private struct LoadedFile {
         let bytes: Data
         let entry: LibraryEntry
@@ -252,16 +257,32 @@ public final class LibraryService: PromptFavoriteEditing {
     @discardableResult
     public func move(from source: String, to destination: String) throws -> LibraryEntry {
         try locked {
-            do { return try moveFile(try requireCurrent(at: source), to: destination) }
+            do {
+                switch try moveFile(try requireCurrent(at: source), to: destination) {
+                case .moved(let entry): return entry
+                case .changed(_, let current):
+                    switch current {
+                    case .loaded: throw LibraryError.conflict
+                    case .deleted: throw FileStoreError.notFound
+                    case .failed(let failure):
+                        switch failure {
+                        case .fileStore(let error): throw error
+                        case .library(let error): throw error
+                        case .write(let error): throw error
+                        case .identity(let error): throw error
+                        }
+                    }
+                }
+            }
             // Preserve the synchronous API's existing occupied-path error.
             catch LibraryError.destinationOccupied { throw FileStoreError.alreadyExists }
         }
     }
 
-    private func moveFile(_ loaded: LoadedFile, to destination: String) throws -> LibraryEntry {
+    private func moveFile(_ loaded: LoadedFile, to destination: String) throws -> MoveResult {
         try LibraryPath.validate(destination)
         let source = loaded.entry.relativePath
-        if source.utf8.elementsEqual(destination.utf8) { return loaded.entry }
+        if source.utf8.elementsEqual(destination.utf8) { return .moved(loaded.entry) }
         guard try isAvailable(destination) else { throw LibraryError.destinationOccupied }
         let targetIdentity = PromptIdentity(path: destination, id: loaded.entry.document.frontMatter.id)
         var migrated = [PromptKeyedStore]()
@@ -274,9 +295,28 @@ public final class LibraryService: PromptFavoriteEditing {
             try rollback(migrated, from: targetIdentity, to: loaded.entry.identity)
             throw error
         }
-        let moved = try requireCurrent(at: destination)
-        guard moved.bytes == loaded.bytes else { throw LibraryError.conflict }
-        return moved.entry
+        let current = checkedMovedFile(at: destination)
+        if case .loaded(let moved) = current, moved.sourceBytes == loaded.bytes { return .moved(moved.entry) }
+        let baseline = LibraryEntry(path: destination,
+            document: PromptCodec.parseFile(loaded.bytes, filename: LibraryPath.filename(destination)), stamp: loaded.entry.stamp)
+        return .changed(baseline, current)
+    }
+
+    /// The file has already moved, so failures belong to its destination. Retry
+    /// one changing read to distinguish a stable replacement from deletion.
+    private func checkedMovedFile(at path: String) -> PromptLoadOutcome {
+        for attempt in 0..<2 {
+            do {
+                let file = try requireCurrent(at: path)
+                return .loaded(LoadedPrompt(bytes: file.bytes, entry: file.entry))
+            }
+            catch LibraryError.conflict where attempt == 0 { continue }
+            catch FileStoreError.notFound { return .deleted }
+            catch let error as FileStoreError { return .failed(.fileStore(error)) }
+            catch let error as LibraryError { return .failed(.library(error)) }
+            catch { return .failed(.library(.operationFailed)) }
+        }
+        return .failed(.library(.conflict))
     }
 
     /// History survives deletion; restore can resurrect this identity later.
@@ -308,7 +348,10 @@ public final class LibraryService: PromptFavoriteEditing {
     func moveForEditing(at path: String, to destination: String,
                         expectedStamp: FileStamp) throws -> PromptCommandOutcome {
         try command(at: path, expectedStamp: expectedStamp) { loaded in
-            .updated(try moveFile(loaded, to: destination))
+            switch try moveFile(loaded, to: destination) {
+            case .moved(let entry): return .updated(entry)
+            case .changed(let baseline, let current): return .relocated(baseline, current: current)
+            }
         }
     }
 

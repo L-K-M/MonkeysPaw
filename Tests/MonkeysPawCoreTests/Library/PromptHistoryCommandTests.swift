@@ -237,4 +237,56 @@ final class PromptHistoryCommandTests: XCTestCase {
         XCTAssertEqual(moved.committedEntry.map { RelativePath($0.relativePath) }, RelativePath("to/\u{301}renamed.md"))
         XCTAssertEqual(try h.files.text(at: "to/\u{301}renamed.md"), historyCommandSource)
     }
+
+    func testCommittedMoveReturnsDestinationObservationAndKeepsSessionThere() throws {
+        for observation in 0..<3 {
+            let h = PromptEditingHarness()
+            let (session, loaded) = try h.open(historyCommandSource)
+            h.files.onRead = { path in
+                guard path == "renamed.md" else { return }
+                if observation == 2 { throw FileStoreError.ioFailure }
+                h.files.onRead = nil
+                if observation == 0 { try h.files.put(historyCommandSource + "External", at: path) }
+                else { try h.files.delete(at: path) }
+            }
+            let result = try commandResult(h) { h.editor.rename(to: "renamed.md", session: session,
+                expectedStamp: loaded.stamp, completion: $0) }
+            guard case .relocated(let baseline, let current) = result else { return XCTFail("Expected checked relocation.") }
+            XCTAssertEqual(baseline.relativePath, "renamed.md")
+            XCTAssertEqual(baseline.identity, loaded.entry.identity)
+            XCTAssertEqual(baseline.document.source, historyCommandSource)
+            XCTAssertNil(result.committedEntry, "A divergent destination cannot be treated as an ordinary successful update.")
+            switch (observation, current) {
+            case (0, .loaded(let external)):
+                XCTAssertEqual(external.source, historyCommandSource + "External")
+                XCTAssertEqual(external.stamp, try h.files.stamp(at: "renamed.md"))
+            case (1, .deleted): break
+            case (2, .failed(let failure)): XCTAssertEqual(failure, .fileStore(.ioFailure))
+            default: XCTFail("Incorrect destination observation.")
+            }
+            h.files.onRead = nil
+            var reloaded: PromptLoadOutcome?
+            h.marker.ui { h.editor.load(session: session) { reloaded = $0 } }
+            if observation == 1 {
+                guard case .deleted = reloaded else { return XCTFail("Expected missing destination.") }
+            } else {
+                guard case .loaded(let current) = reloaded else { return XCTFail("Expected destination reload.") }
+                XCTAssertEqual(current.entry.relativePath, "renamed.md")
+            }
+            XCTAssertNil(try h.files.stamp(at: "a.md"))
+        }
+    }
+
+    func testMissingHistoryMigrationFileDoesNotReportLivePromptMissing() throws {
+        let h = PromptEditingHarness()
+        let (session, loaded) = try h.open()
+        let revision = try historySnapshot(h, identity: loaded.entry.identity)
+        h.data.onMove = { _, _ in throw FileStoreError.notFound }
+        let result = try commandResult(h) { h.editor.rename(to: "renamed.md", session: session,
+            expectedStamp: loaded.stamp, completion: $0) }
+        guard case .failed(let failure) = result else { return XCTFail("An app-data failure cannot report prompt deletion.") }
+        XCTAssertEqual(failure, .fileStore(.notFound))
+        XCTAssertEqual(try h.files.text(at: "a.md"), "Original")
+        XCTAssertEqual(try h.library.history(for: loaded.entry.identity), [revision])
+    }
 }

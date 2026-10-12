@@ -382,6 +382,8 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   These commands and `delete()` use `PromptEditingService`, the editor's load
   stamp and typed outcomes. An occupied destination is refused, never replaced;
   stale stamps open the same conflict, and read-only formats are refused.
+  A change detected after the physical move keeps the editor at the
+  destination; keep mine, take theirs or recreation applies to that path.
   Keyed values, usage and history follow §5.2's identity migration.
   `LibraryBrowserModel` follows the committed rename/move only while that
   editor prompt remains selected, including an unassigned path-hash move.
