@@ -244,9 +244,12 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         defer { server.stop() }
         for headers in [["Authorization": "key\r\nInjected: value"], ["Bad Name": "value"],
                         ["Authorization": "one", "authorization": "two"]] {
-            await assertError(.invalidRequest, request: try HTTPRequest(url: server.url(), method: .get,
-                headers: headers, deadline: .now.advanced(by: .seconds(3))))
+            XCTAssertThrowsError(try HTTPRequest(url: server.url(), method: .get,
+                headers: headers, deadline: .now.advanced(by: .seconds(3)))) {
+                XCTAssertEqual($0 as? HTTPTransportError, .invalidRequest)
+            }
         }
+
         await assertError(.invalidRequest, request: try HTTPRequest(url: server.url(), method: .get,
             body: Data([1]), deadline: .now.advanced(by: .seconds(3))))
         XCTAssertEqual(server.connectionCount, 0)

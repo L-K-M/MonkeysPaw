@@ -40,16 +40,7 @@ public struct URLSessionHTTPTransport: HTTPTransporting {
         guard scheme == "https" || ProviderSettings.isLoopback(host) else {
             throw HTTPTransportError.insecureURL
         }
-        // Do not let Foundation turn a header value into an injected header.
-        let token = Set("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".utf8)
-        var names = Set<String>()
-        for (name, value) in request.headers {
-            guard !name.isEmpty, name.utf8.allSatisfy(token.contains),
-                  names.insert(name.lowercased()).inserted,
-                  !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
-                throw HTTPTransportError.invalidRequest
-            }
-        }
+
         // swift-corelibs-foundation rejects GET bodies; reject consistently
         // before creating a session on either platform.
         guard request.method != .get || request.body == nil else { throw HTTPTransportError.invalidRequest }

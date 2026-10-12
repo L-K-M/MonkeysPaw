@@ -67,7 +67,7 @@ re-entry or Clear before it can be used.
   - Redirects refused, so `Authorization` cannot leak to another host.
   - Request construction rejects empty or non-token header names, duplicate
     names ignoring case, and control characters in values (including CR/LF/NUL)
-    with `HTTPTransportError.invalidRequest`; adapters enforce the same rules.
+    with `HTTPTransportError.invalidRequest` before any adapter consumes headers.
   - `RESPONSE_CAP = 2 MiB` for LLM calls. Sync uses
     `SYNC_RESPONSE_CAP = 16 MiB` on the same transport.
     The request selects the cap; delegate callbacks cancel receipt as soon
