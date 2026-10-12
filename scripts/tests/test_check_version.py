@@ -37,7 +37,7 @@ class ReleaseVersionTests(unittest.TestCase):
 
     def test_committed_version_cli_prints_only_one_version_line(self):
         script = self.root / "scripts/check-version.py"
-        script.parent.mkdir()
+        script.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(checker.__file__, script)
 
         result = subprocess.run(

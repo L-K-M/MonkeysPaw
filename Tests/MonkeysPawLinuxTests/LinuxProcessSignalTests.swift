@@ -27,8 +27,10 @@ final class LinuxProcessSignalTests: XCTestCase {
         StandardErrorLog(output: pipe.fileHandleForWriting).write(.warning, "File logging unavailable")
 
         var byte: UInt8 = 0
-        XCTAssertEqual(Glibc.write(pipe.fileHandleForWriting.fileDescriptor, &byte, 1), -1)
-        XCTAssertEqual(errno, EPIPE)
+        let written = Glibc.write(pipe.fileHandleForWriting.fileDescriptor, &byte, 1)
+        let writeError = errno
+        XCTAssertEqual(written, -1)
+        XCTAssertEqual(writeError, EPIPE)
     }
 }
 #endif

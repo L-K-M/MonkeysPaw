@@ -71,6 +71,8 @@ public enum MonkeysPawLinuxApp {
     static func ignoreBrokenPipeSignal() {
         // Closed log pipes or helpers that stop reading stdin must surface
         // EPIPE to the writer instead of terminating the app with SIGPIPE.
+        // Foundation's Process passes the ignored disposition to helper
+        // tools; their stdout is always drained, so none relies on SIGPIPE.
         _ = Glibc.signal(SIGPIPE, SIG_IGN)
     }
 
