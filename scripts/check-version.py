@@ -4,6 +4,7 @@
     python3 scripts/check-version.py
     python3 scripts/check-version.py --app-version v0.1.0-beta.1
     python3 scripts/check-version.py --deb-version v0.1.0-beta.1
+    python3 scripts/check-version.py --check-tag v0.1.0
 """
 
 import argparse
@@ -41,7 +42,7 @@ def deb_version(value):
     return upstream + separator + metadata
 
 
-def check_versions(root):
+def check_versions(root, tag=None):
     project = (root / "MonkeysPaw.xcodeproj/project.pbxproj").read_text()
     versions = re.findall(r"\bMARKETING_VERSION\s*=\s*([^;\s]+)\s*;", project)
     readme = (root / "README.md").read_text()
@@ -50,6 +51,19 @@ def check_versions(root):
         raise ValueError("MARKETING_VERSION and the single README version marker must agree")
 
     app_version(markers[0])
+    if tag is not None:
+        if not tag.startswith("v"):
+            raise ValueError("Release tag must start with v")
+        version = app_version(tag)
+        # The macOS packager accepts a numeric version and prerelease suffix,
+        # but no build metadata. Reject it before starting either build.
+        if "+" in version:
+            raise ValueError("Release tags cannot include build metadata (+...)")
+        numeric_core = re.match(r"[0-9]+\.[0-9]+\.[0-9]+", version)[0]
+        if numeric_core != markers[0]:
+            raise ValueError(f"Tag {tag} has numeric core {numeric_core}, "
+                             f"but committed version is {markers[0]}")
+
     for tag, expected in (("v0.1.0", "0.1.0"), ("v0.1.0-beta.1", "0.1.0~beta.1"),
                           ("v0.2.0-rc-1", "0.2.0~rc~1")):
         if deb_version(tag) != expected:
@@ -63,6 +77,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--app-version", metavar="VERSION")
     mode.add_argument("--deb-version", metavar="VERSION")
+    mode.add_argument("--check-tag", metavar="TAG")
     arguments = parser.parse_args()
     try:
         if arguments.app_version is not None:
@@ -70,7 +85,7 @@ def main():
         elif arguments.deb_version is not None:
             print(deb_version(arguments.deb_version))
         else:
-            check_versions(Path(__file__).resolve().parent.parent)
+            check_versions(Path(__file__).resolve().parent.parent, arguments.check_tag)
     except (OSError, ValueError) as error:
         print(f"!! {error}", file=sys.stderr)
         return 1

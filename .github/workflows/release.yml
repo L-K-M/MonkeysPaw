@@ -1,0 +1,281 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify artifacts without publishing a release
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
+      - scripts/package-macos.sh
+      - scripts/build.sh
+      - scripts/check-version.py
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Each build/verification job drops write permission; only publishing needs it.
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tests:
+    name: Test the release commit
+    permissions:
+      contents: read
+    # The local workflow is resolved from this exact commit. Its runner jobs
+    # already have timeouts; GitHub does not allow a timeout on a workflow call.
+    uses: ./.github/workflows/ci.yml
+
+  verify:
+    name: Verify release version
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check tag against committed settings
+        id: version
+        env:
+          PUBLISH_REQUESTED: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        run: |
+          python3 scripts/check-version.py
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            python3 scripts/check-version.py --check-tag "$GITHUB_REF_NAME"
+            version="${GITHUB_REF_NAME#v}"
+            tag="$GITHUB_REF_NAME"
+          else
+            if [[ "$PUBLISH_REQUESTED" == true ]]; then
+              echo '::error::Publishing requires an existing v* tag; select a tag or enable dry_run'
+              exit 1
+            fi
+            # PRs and branch dry runs package the committed development version.
+            version=$(sed -n 's/.*<!-- version -->\(.*\)<!-- \/version -->.*/\1/p' README.md)
+            tag="v$version"
+          fi
+          prerelease=false
+          if [[ "$tag" == *-* ]]; then prerelease=true; fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$PUBLISH_REQUESTED"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Build release deb
+    needs: [tests, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container: swift:6.4-noble
+    env:
+      RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+    outputs:
+      deb_file: ${{ steps.package.outputs.deb_file }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Debian package build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libgtk-4-dev pkg-config python3 dpkg-dev binutils desktop-file-utils shellcheck
+      - name: Check build scripts
+        run: |
+          shellcheck scripts/build.sh packaging/build-deb.sh
+          for script in scripts/build.sh packaging/build-deb.sh; do bash -n "$script"; done
+          scripts/build.sh --help
+      - name: Package the tag version
+        id: package
+        run: |
+          # RELEASE_TAG is GITHUB_REF_NAME for tags, or v<committed version>
+          # for PR/branch dry runs; the builder accepts either form.
+          packaging/build-deb.sh "$RELEASE_TAG"
+          deb_version=$(python3 scripts/check-version.py --deb-version "$RELEASE_TAG")
+          deb_file="monkeyspaw_${deb_version}_$(dpkg --print-architecture).deb"
+          test -s "dist/$deb_file"
+          (cd dist && sha256sum -c "$deb_file.sha256")
+          echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
+      - name: Upload deb and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MonkeysPaw-release-deb
+          path: |
+            dist/${{ steps.package.outputs.deb_file }}
+            dist/${{ steps.package.outputs.deb_file }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+      - name: Download the uploaded deb artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MonkeysPaw-release-deb
+          path: ${{ runner.temp }}/deb-roundtrip
+      - name: Byte-compare against original deb outputs
+        env:
+          DEB_FILE: ${{ steps.package.outputs.deb_file }}
+        run: |
+          for file in "$DEB_FILE" "$DEB_FILE.sha256"; do
+            cmp "dist/$file" "$RUNNER_TEMP/deb-roundtrip/$file"
+          done
+          (cd "$RUNNER_TEMP/deb-roundtrip" && sha256sum -c "$DEB_FILE.sha256")
+
+  macos:
+    name: Build release macOS artifacts
+    needs: [tests, verify, linux]
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: /bin/bash -e -o pipefail {0}
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '26.0'
+      - name: Install dmg and lint tooling
+        run: brew install create-dmg shellcheck
+      - name: Check build scripts with system Bash
+        run: |
+          shellcheck scripts/build.sh scripts/package-macos.sh
+          for script in scripts/build.sh scripts/package-macos.sh; do /bin/bash -n "$script"; done
+      - name: Package the tag version
+        env:
+          SIGNING_IDENTITY_SECRET: ${{ github.event_name != 'pull_request' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+          SIGNING_KEYCHAIN_SECRET: ${{ github.event_name != 'pull_request' && secrets.MACOS_SIGNING_KEYCHAIN || '' }}
+        run: |
+          # Empty secrets must leave signing env unset, selecting ad-hoc signing.
+          # PR builds never receive signing secrets, including same-repo PRs.
+          if [[ -n "$SIGNING_IDENTITY_SECRET" ]]; then
+            export MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY_SECRET"
+            if [[ -n "$SIGNING_KEYCHAIN_SECRET" ]]; then
+              export MACOS_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN_SECRET"
+            fi
+          fi
+          /bin/bash scripts/package-macos.sh "$VERSION" "$GITHUB_RUN_NUMBER"
+          (cd dist && shasum -a 256 -c "MonkeysPaw-$VERSION.sha256")
+      - name: Upload dmg, zip and checksum manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MonkeysPaw-release-macos
+          path: |
+            dist/MonkeysPaw-${{ env.VERSION }}.dmg
+            dist/MonkeysPaw-${{ env.VERSION }}.zip
+            dist/MonkeysPaw-${{ env.VERSION }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+      - name: Download the uploaded macOS artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MonkeysPaw-release-macos
+          path: ${{ runner.temp }}/macos-roundtrip
+      - name: Byte-compare against original macOS outputs
+        run: |
+          for extension in dmg zip sha256; do
+            file="MonkeysPaw-$VERSION.$extension"
+            cmp "dist/$file" "$RUNNER_TEMP/macos-roundtrip/$file"
+          done
+          (cd "$RUNNER_TEMP/macos-roundtrip" && shasum -a 256 -c "MonkeysPaw-$VERSION.sha256")
+
+  artifacts:
+    name: Verify all release assets
+    needs: [tests, verify, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+    steps:
+      - name: Assemble verified workflow artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: MonkeysPaw-release-*
+          merge-multiple: true
+          path: dist
+      - name: Require every asset and verify checksums
+        run: |
+          for file in "$DEB_FILE" "$DEB_FILE.sha256" \
+            "MonkeysPaw-$VERSION.dmg" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.sha256"; do
+            test -s "dist/$file"
+          done
+          files=(dist/*)
+          test "${#files[@]}" -eq 5
+          (cd dist && sha256sum -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256")
+
+  publish:
+    name: Publish verified draft
+    needs: [tests, verify, linux, macos, artifacts]
+    if: github.event_name != 'pull_request' && needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+    # No checkout or repository scripts execute with the write-enabled token.
+    steps:
+      - name: Fetch the verified build outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: MonkeysPaw-release-*
+          merge-multiple: true
+          path: dist
+      - name: Create draft and attach every asset
+        run: |
+          files=(dist/*)
+          test "${#files[@]}" -eq 5
+          (cd dist && sha256sum -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256")
+          gh release create "$RELEASE_TAG" "${files[@]}" --verify-tag --draft \
+            --title "Monkey's Paw $VERSION" --generate-notes \
+            --prerelease="$PRERELEASE" --latest=false
+      - name: Download and byte-compare every draft asset
+        run: |
+          # GH_TOKEN authorizes draft lookup and downloads from asset API URLs.
+          gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-assets"
+          for file in dist/*; do
+            cmp "$file" "$RUNNER_TEMP/release-assets/$(basename "$file")"
+          done
+          downloaded=("$RUNNER_TEMP/release-assets/"*)
+          test "${#downloaded[@]}" -eq 5
+      - name: Publish only after every comparison passes
+        run: |
+          latest=true
+          if [[ "$PRERELEASE" == true ]]; then latest=false; fi
+          gh release edit "$RELEASE_TAG" --verify-tag --draft=false \
+            --prerelease="$PRERELEASE" --latest="$latest"
