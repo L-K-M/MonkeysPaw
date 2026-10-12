@@ -169,9 +169,9 @@ Parsing and validation:
 snapshot, or an improvement snapshot/instruction/selected findings, plus optional
 effort, and returns a typed artifact or review with optional token counts.
 Stop outcomes precede artifact decoding, so valid-looking truncated or declined
-JSON cannot become a draft. Protocol failures are body-free typed errors:
+JSON cannot become a draft. Protocol failures use typed errors without provider bodies:
 401/403 → authentication, 404 → modelNotFound, 429 → rateLimited with optional
-parsed Retry-After seconds (delta seconds or an HTTP date), 529 → overloaded,
+parsed Retry-After seconds (delta seconds or an IMF-fixdate), 529 → overloaded,
 and other non-200 statuses → providerFailure with the status code only.
 Missing or malformed Retry-After values supply no delay; past dates supply zero.
 The client does not schedule retries from that metadata. Transport failures and

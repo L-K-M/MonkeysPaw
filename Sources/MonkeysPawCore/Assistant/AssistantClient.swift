@@ -71,7 +71,8 @@ public struct AssistantResponse: Equatable, Sendable, CustomStringConvertible,
 }
 
 /// A8 owns pagination policy; a client decodes one model-list page per call.
-public struct AssistantModelPage: Equatable, Sendable {
+public struct AssistantModelPage: Equatable, Sendable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable {
     public let models: [ModelDescriptor]
     public let hasMore: Bool
     public let firstID: String?
@@ -84,6 +85,10 @@ public struct AssistantModelPage: Equatable, Sendable {
         self.firstID = firstID
         self.lastID = lastID
     }
+
+    public var description: String { "<assistant model page redacted>" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: ["page": description]) }
 }
 
 /// Protocol clients return strictly decoded values or body-free AssistantError.

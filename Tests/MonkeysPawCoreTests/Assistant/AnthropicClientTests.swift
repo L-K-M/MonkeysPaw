@@ -188,6 +188,14 @@ final class AnthropicClientTests: XCTestCase {
         }
     }
 
+    func testModelPageDiagnosticsRedactProviderEchoedKeyAndMetadata() async throws {
+        let sentinel = UUID().uuidString
+        let transport = AnthropicStubTransport(response: try jsonResponse(["data": [["id": sentinel, "display_name": sentinel]],
+            "has_more": true, "first_id": sentinel, "last_id": sentinel]))
+        let page = try await AnthropicClient(transport: transport).listModels(using: connection(key: sentinel))
+        assertRedacted(page, sentinel: sentinel)
+    }
+
     func testEveryHTTPStatusMappingIsBodyFreeAndNeverRetriesEitherOperation() async throws {
         let cases: [(Int, AssistantError)] = [(401, .authentication), (403, .authentication), (404, .modelNotFound),
             (429, .rateLimited(retryAfter: 30)), (529, .overloaded)]
