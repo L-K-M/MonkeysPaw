@@ -383,6 +383,7 @@ final class LinuxEnvironment {
     }
 
     private func showOnboarding() {
+        guard !isShutDown, pickerModel.state != .delivering else { return }
         currentSettingsWindow?.hide()
         if currentOnboardingWindow == nil {
             // Each native view owns its General onChange hook. Both instances
