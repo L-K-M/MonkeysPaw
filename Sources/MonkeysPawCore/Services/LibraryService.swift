@@ -18,6 +18,10 @@ public final class LibraryService: PromptFavoriteEditing {
         let entry: LibraryEntry
     }
 
+    private struct CommittedExternalReplacement: Error {
+        let currentStamp: FileStamp
+    }
+
     private let files: FileStore
     private let historyStore: HistoryStore
     private let keyedStores: [PromptKeyedStore]
@@ -324,7 +328,9 @@ public final class LibraryService: PromptFavoriteEditing {
         // Capture our committed version before retention can fail or an
         // external writer can replace it during app-data maintenance.
         let committed = try requireCurrent(at: path)
-        guard committed.bytes == bytes else { throw LibraryError.conflict }
+        guard committed.bytes == bytes else {
+            throw CommittedExternalReplacement(currentStamp: committed.entry.stamp)
+        }
         do { try historyStore.prune(for: targetIdentity) }
         catch { throw CommittedHistoryFailure(entry: committed.entry) }
         return committed.entry
@@ -333,6 +339,7 @@ public final class LibraryService: PromptFavoriteEditing {
     private func editingCommit(_ work: () throws -> LibraryEntry) throws -> PromptSaveOutcome {
         do { return .saved(try work()) }
         catch let error as CommittedHistoryFailure { return .savedButHistoryMaintenanceFailed(error.entry) }
+        catch let error as CommittedExternalReplacement { return .conflict(currentStamp: error.currentStamp) }
     }
 
     private func readCurrent(at path: String) throws -> LoadedFile? {
@@ -379,6 +386,7 @@ public final class LibraryService: PromptFavoriteEditing {
         defer { lock.unlock() }
         do { return try work() }
         catch is CommittedHistoryFailure { throw LibraryError.historyMaintenanceFailed }
+        catch is CommittedExternalReplacement { throw LibraryError.conflict }
         catch let error as FileStoreError { throw error }
         catch let error as LibraryError { throw error }
         catch let error as PromptWriteError { throw error }

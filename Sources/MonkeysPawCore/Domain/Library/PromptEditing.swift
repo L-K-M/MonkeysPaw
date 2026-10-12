@@ -3,6 +3,12 @@ import Foundation
 /// Opaque lifetime of one editor path, separate from its eventual prompt id.
 public struct PromptEditingSession: Hashable, Sendable {
     let token: UUID
+    let isInactive: Bool
+
+    init(token: UUID, isInactive: Bool = false) {
+        self.token = token
+        self.isInactive = isInactive
+    }
 }
 
 public enum PromptReadOnlyReason: Equatable, Sendable {
@@ -23,9 +29,17 @@ public struct LoadedPrompt: Sendable {
 
     init(bytes: Data, entry: LibraryEntry) {
         sourceBytes = bytes
-        source = bytes.count <= Limits.maxPromptBytes ? String(data: bytes, encoding: .utf8) : nil
         self.entry = entry
-        readOnlyReason = Self.readOnlyReason(for: entry.document)
+        if bytes.count > Limits.maxPromptBytes {
+            source = nil
+            readOnlyReason = .sourceTooLarge
+        } else if let text = String(data: bytes, encoding: .utf8) {
+            source = text
+            readOnlyReason = Self.readOnlyReason(for: entry.document)
+        } else {
+            source = nil
+            readOnlyReason = .invalidUTF8
+        }
     }
 
     static func readOnlyReason(for document: PromptDocument) -> PromptReadOnlyReason? {

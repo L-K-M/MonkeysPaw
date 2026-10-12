@@ -43,13 +43,19 @@ final class EditingMainThread: MainThread {
     init(_ marker: EditingThreadMarker) { self.marker = marker }
 
     func run(_ work: @escaping () -> Void) {
-        beforeRun?()
         if isHeld { pending.append(work) }
-        else { marker.ui(work) }
+        else {
+            beforeRun?()
+            marker.ui(work)
+        }
     }
 
     func releaseAll() {
-        while !pending.isEmpty { marker.ui(pending.removeFirst()) }
+        while !pending.isEmpty {
+            let work = pending.removeFirst()
+            beforeRun?()
+            marker.ui(work)
+        }
     }
 }
 
@@ -60,6 +66,7 @@ final class EditingFileStore: FileStore {
     let marker: EditingThreadMarker
     var onList: (() throws -> Void)?
     var onDelete: ((String) throws -> Void)?
+    var beforeWrite: ((String) throws -> Void)?
 
     init(_ memory: MemoryFileStore, marker: EditingThreadMarker) {
         self.memory = memory
@@ -70,7 +77,7 @@ final class EditingFileStore: FileStore {
     func listFiles() throws -> [StoredFile] { check(); try onList?(); return try memory.listFiles() }
     func stamp(at path: String) throws -> FileStamp? { check(); return try memory.stamp(at: path) }
     func read(at path: String) throws -> Data { check(); return try memory.read(at: path) }
-    func write(_ data: Data, at path: String) throws { check(); try memory.write(data, at: path) }
+    func write(_ data: Data, at path: String) throws { check(); try beforeWrite?(path); try memory.write(data, at: path) }
     func create(_ data: Data, at path: String) throws { check(); try memory.create(data, at: path) }
     func writePrivate(_ data: Data, at path: String) throws { check(); try memory.writePrivate(data, at: path) }
     func delete(at path: String) throws { check(); try onDelete?(path); try memory.delete(at: path) }

@@ -605,23 +605,38 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
 
 ### 5.5 History, external edits, import
 
-`PromptEditingService` wraps `LibraryService` for the M3 editor. Load, save and
-exclusive copy run on `BackgroundWork`, with typed results on `MainThread`.
-`LoadedPrompt` retains exact source bytes, optional UTF-8 text, the parsed
-document/issues, stamp and read-only reason. Normal saves pass that stamp;
-conflicts carry the current stamp, and a vanished path reports `deleted`.
-Copies strip the source id, receive a fresh ULID and use the same bounded
-exclusive-create policy as picker creation. Both committed save outcomes carry
-the canonical entry and its stamp; `savedButHistoryMaintenanceFailed` preserves
-that result when retention fails. The synchronous API still throws
-`historyMaintenanceFailed`. Editor sessions bind exact path bytes: retirement
-skips work not started and drops queued replies; an executing write may finish.
-Graph deactivation also removes the index subscription. External notifications
-use the open path's immutable index change payload, with no UI-thread file reads.
-Separate delete/recreate publications remain separate under queued delivery;
-one coalesced watch modification remains a modification. While a save is in
-flight, notifications wait for its result so its own committed stamp can be
-excluded; subsequent external stamps and deletion are still reported.
+`PromptEditingService` wraps `LibraryService` for the M3 editor.
+
+- **Threading.** Load, save and exclusive copy run on `BackgroundWork`, with
+  typed results on `MainThread`.
+- **Loaded result.** `LoadedPrompt` retains exact source bytes, optional UTF-8
+  text, the parsed document/issues, stamp and read-only reason. Normal saves
+  pass that stamp; conflicts carry the current stamp, and a vanished path
+  reports `deleted`. Unavailable text always has a read-only reason.
+- **Copies.** Copies strip the source id, receive a fresh ULID and use the
+  same bounded exclusive-create policy as picker creation.
+- **Committed outcomes.** Both committed save outcomes carry the canonical
+  entry and its stamp; `savedButHistoryMaintenanceFailed` preserves that
+  result when retention fails. The synchronous API still throws
+  `historyMaintenanceFailed`. A replacement detected during post-write
+  verification reports `conflict(currentStamp:)` with the external stamp;
+  external bytes are never presented as a committed editor entry.
+- **Sessions.** Editor sessions bind exact path bytes: retirement skips work
+  not started and drops queued replies; an executing write may finish. Graph
+  deactivation also removes the index subscription. Tokens created after
+  deactivation immediately complete requests with
+  `failed(.library(.operationFailed))`, without file work. Previously live
+  tokens remain retired and drop replies.
+- **Notifications.** External notifications use the open path's immutable
+  index change payload, with no UI-thread file reads. Separate delete/recreate
+  publications remain separate under queued delivery; one coalesced watch
+  modification remains a modification. While a save is in flight,
+  notifications wait for its result so its own committed stamp can be
+  excluded; subsequent external stamps and deletion are still reported.
+  A checked missing load supersedes earlier parked publications, while later
+  recreations survive. Reload replies cannot rewind newer observed state.
+  If a publication races a missing probe, load checks the path once more;
+  continued change returns `failed(.library(.conflict))` for retry.
 
 - **History.** Before every save overwriting an existing file, copy its
   exact previous bytes to `<data>/history/<prompt-id>/`. A new file has

@@ -30,6 +30,11 @@ public final class PromptEditingService: @unchecked Sendable {
         var committedStamps: [FileStamp] = []
     }
 
+    private struct LoadRead {
+        let outcome: PromptLoadOutcome
+        let indexVersion: UInt64
+    }
+
     private let library: LibraryService
     private let index: PromptIndex
     private let work: BackgroundWork
@@ -52,14 +57,15 @@ public final class PromptEditingService: @unchecked Sendable {
     }
 
     /// Binds a token to exact path bytes. Registration is quiet and does no I/O.
+    /// A token created after deactivation immediately completes requests with
+    /// failed(.library(.operationFailed)); previously live tokens stay retired.
     public func beginSession(at path: String,
                              onExternalChange: @escaping (PromptExternalChange) -> Void = { _ in }) -> PromptEditingSession {
-        let token = PromptEditingSession(token: UUID())
         locked {
-            guard isActive else { return }
-            sessions[token] = Session(path: path, onExternalChange: onExternalChange)
+            let token = PromptEditingSession(token: UUID(), isInactive: !isActive)
+            if isActive { sessions[token] = Session(path: path, onExternalChange: onExternalChange) }
+            return token
         }
-        return token
     }
 
     /// Drops queued requests and replies. A write already executing may finish;
@@ -79,9 +85,12 @@ public final class PromptEditingService: @unchecked Sendable {
     }
 
     public func load(session: PromptEditingSession, completion: @escaping (PromptLoadOutcome) -> Void) {
+        guard !session.isInactive else { return completion(.failed(.library(.operationFailed))) }
         submit(session, operation: { service, path in
             let snapshot = service.index.editingSnapshot(at: path)
             service.locked {
+                // Only the initial load folds the cache baseline. Reloads still
+                // read disk, but cannot supersede a publication newer than that read.
                 guard var state = service.sessions[session], case .unloaded = state.file else { return }
                 if state.indexVersion <= snapshot.version {
                     state.observedStamp = snapshot.stamp
@@ -90,17 +99,29 @@ public final class PromptEditingService: @unchecked Sendable {
                 }
                 service.sessions[session] = state
             }
-            do { return PromptLoadOutcome.loaded(try service.library.loadForEditing(at: path)) }
-            catch FileStoreError.notFound { return .deleted }
-            catch { return .failed(Self.failure(error)) }
-        }, completion: { service, result in
+            return service.readForLoad(at: path, indexVersion: snapshot.version)
+        }, completion: { service, read in
             let pending = service.locked { () -> PromptExternalChange? in
                 guard var state = service.sessions[session] else { return nil }
-                switch result {
+                let hasNewerPublication = state.indexVersion > read.indexVersion
+                switch read.outcome {
                 case .loaded(let loaded):
-                    state.file = .present(loaded.stamp)
-                    if state.observedStamp == nil { state.observedStamp = loaded.stamp }
-                case .deleted: state.file = .missing(previousStamp: state.observedStamp)
+                    if !hasNewerPublication {
+                        state.file = .present(loaded.stamp)
+                        if state.observedStamp == nil { state.observedStamp = loaded.stamp }
+                        state.pendingInitialChange = nil
+                    } else if case .unloaded = state.file {
+                        state.file = .present(loaded.stamp)
+                    }
+                case .deleted:
+                    if !hasNewerPublication {
+                        state.file = .missing(previousStamp: state.observedStamp)
+                        state.observedStamp = nil
+                        state.indexVersion = read.indexVersion
+                        state.pendingInitialChange = nil
+                    } else if case .unloaded = state.file {
+                        state.file = .missing(previousStamp: nil)
+                    }
                 case .failed: return nil
                 }
                 let pending = state.pendingInitialChange
@@ -108,7 +129,7 @@ public final class PromptEditingService: @unchecked Sendable {
                 service.sessions[session] = state
                 return pending.flatMap { state.file.matches($0.newStamp) ? nil : $0 }
             }
-            completion(result)
+            completion(read.outcome)
             if let pending { service.deliver(pending, to: session) }
         })
     }
@@ -117,6 +138,7 @@ public final class PromptEditingService: @unchecked Sendable {
     /// nil explicitly permits keep-mine overwrite or recreation (§5.5).
     public func save(_ source: String, session: PromptEditingSession, expectedStamp: FileStamp?,
                      completion: @escaping (PromptSaveOutcome) -> Void) {
+        guard !session.isInactive else { return completion(.failed(.library(.operationFailed))) }
         let live = locked { () -> Bool in
             guard var state = sessions[session] else { return false }
             state.savesInFlight += 1
@@ -140,6 +162,7 @@ public final class PromptEditingService: @unchecked Sendable {
     /// A copy does not change the original session's path, stamp or history.
     public func createCopy(_ source: String, near path: String, session: PromptEditingSession,
                            completion: @escaping (PromptSaveOutcome) -> Void) {
+        guard !session.isInactive else { return completion(.failed(.library(.operationFailed))) }
         submit(session, operation: { service, _ in
             service.writeSource(source, at: path) { document in
                 try service.library.createCopyForEditing(document, near: path)
@@ -159,6 +182,32 @@ public final class PromptEditingService: @unchecked Sendable {
                 completion(self, result)
             }
         }
+    }
+
+    private func readForLoad(at path: String, indexVersion: UInt64) -> LoadRead {
+        let outcome = checkedLoad(at: path)
+        guard case .deleted = outcome else { return LoadRead(outcome: outcome, indexVersion: indexVersion) }
+        let snapshot = index.editingSnapshot(at: path)
+        guard snapshot.version > indexVersion, snapshot.stamp != nil else {
+            return LoadRead(outcome: .deleted, indexVersion: snapshot.version)
+        }
+
+        // A publication may follow the missing probe before its call returns.
+        // Recheck once so an actual recreation is loaded and an older parked
+        // publication is superseded only by a subsequent checked missing read.
+        let rechecked = checkedLoad(at: path)
+        guard case .deleted = rechecked else { return LoadRead(outcome: rechecked, indexVersion: snapshot.version) }
+        let latest = index.editingSnapshot(at: path)
+        if latest.version > snapshot.version, latest.stamp != nil, latest.stamp != snapshot.stamp {
+            return LoadRead(outcome: .failed(.library(.conflict)), indexVersion: latest.version)
+        }
+        return LoadRead(outcome: .deleted, indexVersion: latest.version)
+    }
+
+    private func checkedLoad(at path: String) -> PromptLoadOutcome {
+        do { return .loaded(try library.loadForEditing(at: path)) }
+        catch FileStoreError.notFound { return .deleted }
+        catch { return .failed(Self.failure(error)) }
     }
 
     private func saveSource(_ source: String, at path: String, expectedStamp: FileStamp?) -> PromptSaveOutcome {
@@ -195,6 +244,7 @@ public final class PromptEditingService: @unchecked Sendable {
             state.savesInFlight -= 1
             if let entry = result.committedEntry {
                 state.file = .present(entry.stamp)
+                if state.observedStamp == nil { state.observedStamp = entry.stamp }
                 state.committedStamps.append(entry.stamp)
             }
             if case .deleted = result { state.file = .missing(previousStamp: state.observedStamp) }

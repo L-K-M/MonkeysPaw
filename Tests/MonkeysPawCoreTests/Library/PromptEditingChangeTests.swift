@@ -218,7 +218,7 @@ final class PromptEditingChangeTests: XCTestCase {
         h.marker.ui { h.editor.load(session: session) { _ in } }
         try h.files.put("Unrelated", at: "other.md")
         try h.index.apply(LibraryChangeSet(created: [RelativePath("other.md")]))
-        XCTAssertTrue(changes.isEmpty, "An unindexed open path did not disappear when another path changed.")
+        XCTAssertTrue(changes.isEmpty, "An unrelated-path change must not be published to the open session.")
         try h.files.delete(at: "a.md")
         try h.index.apply(LibraryChangeSet(deleted: [RelativePath("a.md")]))
         XCTAssertEqual(changes, [PromptExternalChange(kind: .deleted, newStamp: nil)])

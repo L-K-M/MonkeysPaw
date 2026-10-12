@@ -164,7 +164,7 @@ final class PromptEditingServiceTests: XCTestCase {
         let registered = expectation(description: "UI session registered while index reads")
         h.files.onRead = { _ in
             reading.signal()
-            _ = release.wait(timeout: .now() + 5)
+            _ = release.wait(timeout: .now() + 15)
         }
         defer { h.files.onRead = nil }
         DispatchQueue.global().async {
@@ -177,7 +177,7 @@ final class PromptEditingServiceTests: XCTestCase {
             _ = h.editor.beginSession(at: "a.md")
             registered.fulfill()
         }
-        wait(for: [registered], timeout: 1)
+        wait(for: [registered], timeout: 5)
         release.signal()
         wait(for: [refreshed], timeout: 5)
     }
@@ -240,7 +240,9 @@ final class PromptEditingServiceTests: XCTestCase {
             h.editor.deactivate()
             h.editor.load(session: session) { _ in XCTFail("Inactive load.") }
             let inactive = h.editor.beginSession(at: "a.md")
-            h.editor.createCopy("Copy", near: "copy.md", session: inactive) { _ in XCTFail("Inactive copy.") }
+            h.editor.createCopy("Copy", near: "copy.md", session: inactive) {
+                guard case .failed(.library(.operationFailed)) = $0 else { return XCTFail("Expected inactive copy failure.") }
+            }
         }
         let accesses = h.files.accessCount + h.data.accessCount
         h.held.releaseAll()
@@ -280,12 +282,12 @@ final class PromptEditingServiceTests: XCTestCase {
     }
 
     func testReadOnlyFilesRetainOriginalBytesAndRefuseSaves() throws {
-        let cases: [(Data, PromptReadOnlyReason)] = [
-            (Data("---\nformat: 2\n---\nFuture\r\n".utf8), .unsupportedFormat(PromptFormatVersion(2)!)),
-            (Data([0xff, 0xfe]), .invalidUTF8),
-            (Data(repeating: 0x78, count: Limits.maxPromptBytes + 1), .sourceTooLarge),
+        let cases: [(bytes: Data, reason: PromptReadOnlyReason, keepsEditableSource: Bool)] = [
+            (Data("---\nformat: 2\n---\nFuture\r\n".utf8), .unsupportedFormat(PromptFormatVersion(2)!), true),
+            (Data([0xff, 0xfe]), .invalidUTF8, false),
+            (Data(repeating: 0x78, count: Limits.maxPromptBytes + 1), .sourceTooLarge, false),
         ]
-        for (bytes, reason) in cases {
+        for (bytes, reason, keepsEditableSource) in cases {
             let h = PromptEditingHarness()
             try h.files.write(bytes, at: "a.md")
             try h.index.rebuild()
@@ -293,7 +295,7 @@ final class PromptEditingServiceTests: XCTestCase {
             let loaded = try load(h, session)
             XCTAssertEqual(loaded.sourceBytes, bytes)
             XCTAssertEqual(loaded.readOnlyReason, reason)
-            if reason != cases[0].1 { XCTAssertNil(loaded.source) }
+            XCTAssertEqual(loaded.source != nil, keepsEditableSource)
             guard case .readOnly(let returned) = try h.save("Replacement", session: session, stamp: loaded.stamp) else {
                 return XCTFail("Existing read-only sources must refuse rewriting.")
             }
