@@ -27,10 +27,10 @@ final class EditorGuardTests: XCTestCase {
     }
 
     func testEveryDiscardTriggerCanSaveBeforeProceeding() throws {
-        for index in 0..<8 {
+        for action in try actions(EditorHarness()) {
             let e = EditorHarness(heldWork: true)
             try e.open()
-            let action = try actions(e)[index]
+            try e.put("Other", at: "b.md")
             var results: [EditorGuardResult] = []
             e.ui { e.model.edit("Mine"); e.model.request(action) { results.append($0) } }
             try e.decide(.save)
@@ -45,20 +45,28 @@ final class EditorGuardTests: XCTestCase {
     }
 
     func testEveryDiscardTriggerCanDiscardBeforeProceeding() throws {
-        for index in 0..<8 {
+        for action in try actions(EditorHarness()) {
             let e = EditorHarness()
             let original = try e.open()
-            let action = try actions(e)[index]
+            try e.put("Other", at: "b.md")
             var results: [EditorGuardResult] = []
             e.ui { e.model.edit("Mine"); e.model.request(action) { results.append($0) } }
             try e.decide(.discard)
             XCTAssertEqual(results, [.allowed])
             XCTAssertFalse(e.model.state.isDirty)
             XCTAssertEqual(try e.h.files.text(at: "a.md"), "Original")
-            if [.rename, .move, .delete, .quit, .revert].contains(action) {
+            switch action {
+            case .rename, .move, .delete, .quit, .revert:
                 XCTAssertEqual(e.model.state.prompt, original)
                 XCTAssertEqual(e.model.state.source, "Original")
+            case .open(let selection):
+                XCTAssertEqual(e.model.state.prompt, selection)
+                XCTAssertEqual(e.model.state.source, "Other")
+            case .close, .librarySwitch:
+                XCTAssertNil(e.model.state.prompt)
+                XCTAssertNil(e.model.state.source)
             }
+            XCTAssertNil(e.model.state.pendingDecision)
         }
     }
 
@@ -86,10 +94,10 @@ final class EditorGuardTests: XCTestCase {
     }
 
     func testEveryTriggerWaitsForSaveInFlightAndSuccessfulSaveAllowsIt() throws {
-        for index in 0..<8 {
+        for action in try actions(EditorHarness()) {
             let e = EditorHarness(heldWork: true)
             try e.open()
-            let action = try actions(e)[index]
+            try e.put("Other", at: "b.md")
             var results: [EditorGuardResult] = []
             e.ui { e.model.edit("Mine"); e.model.save(); e.model.request(action) { results.append($0) } }
             XCTAssertEqual(e.model.state.queuedActions, [action])

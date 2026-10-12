@@ -57,11 +57,21 @@ final class EditorRebaseTests: XCTestCase {
             XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("a 3.md"))
             XCTAssertFalse(e.model.state.isDirty)
             XCTAssertEqual(try e.h.files.text(at: "a 2.md"), "External replacement")
+            let copied = try e.h.files.text(at: "a 3.md")
+            XCTAssertEqual(copied, e.model.state.source)
+            XCTAssertEqual(PromptCodec.parse(copied, filename: "a 3.md").body, newerDraft ? "Newer draft" : "Copy draft")
+            XCTAssertEqual(e.model.state.lastCopy, e.model.state.prompt)
         }
     }
 
     func testPostCommitCopyReplacementPreservesOriginalConflictAndGuard() throws {
-        let e = EditorHarness(heldWork: true, queuedMain: true)
+        for queuedMain in [false, true] {
+            try assertCopyFailurePreservesConflictAndGuard(queuedMain: queuedMain)
+        }
+    }
+
+    private func assertCopyFailurePreservesConflictAndGuard(queuedMain: Bool) throws {
+        let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
         let original = try e.open()
         var results: [EditorGuardResult] = []
         e.ui { e.model.edit("Mine"); e.model.request(.quit) { results.append($0) } }
@@ -97,24 +107,31 @@ final class EditorRebaseTests: XCTestCase {
         h.main.isHeld = true
         let entry = LibraryEntry(path: "copy.md", document: PromptCodec.parse("Copy", filename: "copy.md"),
                                  stamp: FileStamp("committed-copy"))
-        var replies = 0
+        var loadReplies = 0
+        var saveReplies = 0
+        var copyReplies = 0
         h.marker.ui {
             h.editor.deactivate()
             let session = h.editor.beginSession(forCommitted: entry) { _ in XCTFail("Inactive session observed a change.") }
             h.editor.load(session: session) {
                 guard case .failed(.library(.operationFailed)) = $0 else { return XCTFail("Expected inactive load failure.") }
                 XCTAssertTrue(h.marker.isUI)
-                replies += 1
+                loadReplies += 1
             }
-            let completed: (PromptSaveOutcome) -> Void = {
+            h.editor.save("Mine", session: session, expectedStamp: entry.stamp) {
                 guard case .failed(.library(.operationFailed)) = $0 else { return XCTFail("Expected inactive write failure.") }
                 XCTAssertTrue(h.marker.isUI)
-                replies += 1
+                saveReplies += 1
             }
-            h.editor.save("Mine", session: session, expectedStamp: entry.stamp, completion: completed)
-            h.editor.createCopy("Mine", near: "copy.md", session: session, completion: completed)
+            h.editor.createCopy("Mine", near: "copy.md", session: session) {
+                guard case .failed(.library(.operationFailed)) = $0 else { return XCTFail("Expected inactive copy failure.") }
+                XCTAssertTrue(h.marker.isUI)
+                copyReplies += 1
+            }
         }
-        XCTAssertEqual(replies, 3)
+        XCTAssertEqual(loadReplies, 1)
+        XCTAssertEqual(saveReplies, 1)
+        XCTAssertEqual(copyReplies, 1)
         XCTAssertTrue(h.held.pending.isEmpty)
         XCTAssertTrue(h.main.pending.isEmpty)
         XCTAssertEqual(h.files.accessCount + h.data.accessCount, 0)

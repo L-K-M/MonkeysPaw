@@ -64,8 +64,8 @@ final class EditorModelTests: XCTestCase {
     }
 
     func testPreviewUsesDefaultsMarkersClockAndTokensWithoutClipboardReads() throws {
-        let e = EditorHarness(offset: 19_800)
-        e.clipboard.writeText("Private clipboard")
+        let zone = try XCTUnwrap(TimeZone(secondsFromGMT: 19_800))
+        let e = EditorHarness(timeZone: { zone })
         let source = "---\nfields:\n  a:\n    default: '{{clipboard}}'\n  choice:\n    type: choice\n    options: [one, two]\n---\n{{a}} {{choice}} {{missing}} {{date}} {{time}} {{clipboard}} \\{{literal}} {{#if x}}"
         try e.open(source)
         XCTAssertEqual(e.model.state.preview,
@@ -76,8 +76,6 @@ final class EditorModelTests: XCTestCase {
         XCTAssertTrue(e.model.state.preview.contains("1970-01-02 05:30 {clipboard}"))
         e.ui { e.model.save() }
         XCTAssertEqual(e.model.state.status, .saved)
-        XCTAssertEqual(e.clipboard.readCount, 0)
-        XCTAssertEqual(e.clipboard.text, "Private clipboard")
     }
 
     func testSaveRefreshesCanonicalSourceIdentityStampAndOwnWritesStayQuiet() throws {
@@ -128,14 +126,16 @@ final class EditorModelTests: XCTestCase {
         XCTAssertEqual(e.model.state.status, .failed(.invalid(e.model.state.issues)))
         XCTAssertTrue(e.model.state.isDirty)
         XCTAssertEqual(try e.h.files.text(at: "a.md"), "Original")
-        XCTAssertTrue(try e.h.library.history(for: e.model.state.prompt!.identity).isEmpty)
+        let identity = try XCTUnwrap(e.model.state.prompt?.identity)
+        XCTAssertTrue(try e.h.library.history(for: identity).isEmpty)
     }
 
     func testDiskReadOnlyReasonsRefuseEditsAndSaveWithoutIO() throws {
+        let futureFormat = try XCTUnwrap(PromptFormatVersion(2))
         let cases: [(Data, PromptReadOnlyReason)] = [
             (Data([0xff]), .invalidUTF8),
             (Data(repeating: 65, count: Limits.maxPromptBytes + 1), .sourceTooLarge),
-            (Data("---\nformat: 2\n---\nFuture".utf8), .unsupportedFormat(PromptFormatVersion(2)!))
+            (Data("---\nformat: 2\n---\nFuture".utf8), .unsupportedFormat(futureFormat))
         ]
         for (bytes, reason) in cases {
             let e = EditorHarness()
@@ -143,18 +143,18 @@ final class EditorModelTests: XCTestCase {
             try e.h.index.rebuild()
             let selection = e.selection(try e.h.library.load(at: "a.md"))
             e.ui { e.model.open(selection) }
-            XCTAssertEqual(e.model.state.readOnlyReason, reason)
-            XCTAssertFalse(e.model.state.canEdit)
-            XCTAssertFalse(e.model.state.canSave)
-            if reason != .unsupportedFormat(PromptFormatVersion(2)!) { XCTAssertNil(e.model.state.source) }
+            XCTAssertEqual(e.model.state.readOnlyReason, reason, "reason: \(reason)")
+            XCTAssertFalse(e.model.state.canEdit, "reason: \(reason)")
+            XCTAssertFalse(e.model.state.canSave, "reason: \(reason)")
+            if reason != .unsupportedFormat(futureFormat) { XCTAssertNil(e.model.state.source, "reason: \(reason)") }
             let accessCount = e.h.files.accessCount
             let source = e.model.state.source
             e.ui { e.model.edit("Replacement"); e.model.save() }
-            XCTAssertEqual(e.model.state.status, .failed(.readOnly(reason)))
-            XCTAssertEqual(e.model.state.source, source)
-            XCTAssertFalse(e.model.state.isDirty)
-            XCTAssertEqual(e.h.files.accessCount, accessCount)
-            XCTAssertEqual(try e.h.files.read(at: "a.md"), bytes)
+            XCTAssertEqual(e.model.state.status, .failed(.readOnly(reason)), "reason: \(reason)")
+            XCTAssertEqual(e.model.state.source, source, "reason: \(reason)")
+            XCTAssertFalse(e.model.state.isDirty, "reason: \(reason)")
+            XCTAssertEqual(e.h.files.accessCount, accessCount, "reason: \(reason)")
+            XCTAssertEqual(try e.h.files.read(at: "a.md"), bytes, "reason: \(reason)")
         }
     }
 
@@ -171,7 +171,8 @@ final class EditorModelTests: XCTestCase {
         XCTAssertEqual(e.model.state.stamp, try e.h.files.stamp(at: "a.md"))
         XCTAssertEqual(e.model.state.source, try e.h.files.text(at: "a.md"))
         e.h.dataFiles.onList = nil
-        e.ui { e.model.edit(e.model.state.source! + " Next"); e.model.save() }
+        let committed = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(committed + " Next"); e.model.save() }
         XCTAssertFalse(e.model.state.historyMaintenanceFailed)
         XCTAssertNil(e.model.state.conflict)
     }
@@ -198,14 +199,16 @@ final class EditorModelTests: XCTestCase {
         let e = EditorHarness()
         let original = try e.open("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal")
         let originalBytes = try e.h.files.read(at: "a.md")
-        e.ui { e.model.edit(e.model.state.source! + " Mine"); e.model.saveAsCopy() }
+        let originalSource = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(originalSource + " Mine"); e.model.saveAsCopy() }
         XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("a 2.md"))
         XCTAssertEqual(e.model.state.lastCopy, e.model.state.prompt)
         XCTAssertNotEqual(e.model.state.prompt?.identity, original.identity)
         XCTAssertEqual(e.model.state.status, .saved)
         XCTAssertFalse(e.model.state.isDirty)
         XCTAssertEqual(try e.h.files.read(at: "a.md"), originalBytes)
-        e.ui { e.model.edit(e.model.state.source! + " Next"); e.model.save() }
+        let committed = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(committed + " Next"); e.model.save() }
         XCTAssertNil(e.model.state.conflict)
         XCTAssertTrue(try e.h.files.text(at: "a 2.md").hasSuffix("Mine Next"))
         try e.change("External original")

@@ -17,19 +17,20 @@ final class EditorFavoriteTests: XCTestCase {
         XCTAssertEqual(e.h.files.accessCount, accesses)
         XCTAssertEqual(try e.h.files.text(at: "a.md"), source)
         XCTAssertTrue(e.model.state.isDirty)
-        let draft = PromptCodec.parse(e.model.state.source!, filename: "a.md")
+        let draft = PromptCodec.parse(try XCTUnwrap(e.model.state.source), filename: "a.md")
         XCTAssertTrue(draft.frontMatter.favorite)
         XCTAssertEqual(draft.body, "  Body {{a}} {{clipboard}}\r\nEdited\r\n")
         XCTAssertTrue(draft.source.contains("model:"))
         XCTAssertFalse(browser.rows[0].favorite, "A draft must not optimistically change the committed index.")
         e.ui { result = browser.toggleFavorite() }
-        XCTAssertFalse(PromptCodec.parse(e.model.state.source!, filename: "a.md").frontMatter.favorite)
-        e.ui { _ = browser.toggleFavorite(); e.model.save() }
+        guard case .editedBuffer = result else { return XCTFail("Expected the second toggle in the buffer.") }
+        XCTAssertFalse(PromptCodec.parse(try XCTUnwrap(e.model.state.source), filename: "a.md").frontMatter.favorite)
+        e.ui { result = browser.toggleFavorite(); e.model.save() }
+        guard case .editedBuffer = result else { return XCTFail("Expected the third toggle in the buffer.") }
         XCTAssertTrue(browser.rows[0].favorite)
         XCTAssertEqual(browser.selection, e.model.state.prompt)
         XCTAssertEqual(browser.selectedEntry?.stamp, e.model.state.stamp)
         XCTAssertNil(e.model.state.conflict)
-        XCTAssertEqual(e.clipboard.readCount, 0)
     }
 
     func testCleanOpenFavoriteUsesAsyncEditorSaveAndRefreshesOwnStamp() throws {
@@ -45,12 +46,13 @@ final class EditorFavoriteTests: XCTestCase {
         XCTAssertEqual(e.model.state.status, .saving)
         XCTAssertEqual(try e.h.files.text(at: "a.md"), "Original")
         e.h.held.releaseAll()
-        e.ui { e.model.edit(e.model.state.source! + " Later edit") }
+        let submitted = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(submitted + " Later edit") }
         e.settle()
         XCTAssertTrue(e.model.state.isDirty)
         XCTAssertNil(e.model.state.conflict)
         XCTAssertEqual(e.model.state.stamp, try e.h.files.stamp(at: "a.md"))
-        XCTAssertTrue(browser.selectedEntry?.document.frontMatter.favorite == true)
+        XCTAssertTrue(try XCTUnwrap(browser.selectedEntry?.document).frontMatter.favorite)
         e.ui { e.model.save() }
         e.settle()
         XCTAssertFalse(e.model.state.isDirty)
@@ -68,7 +70,7 @@ final class EditorFavoriteTests: XCTestCase {
         guard case .editedBuffer = result else { return XCTFail("Save-in-flight toggle wrote a second file.") }
         e.settle()
         XCTAssertTrue(e.model.state.isDirty)
-        XCTAssertTrue(PromptCodec.parse(e.model.state.source!, filename: "a.md").frontMatter.favorite)
+        XCTAssertTrue(PromptCodec.parse(try XCTUnwrap(e.model.state.source), filename: "a.md").frontMatter.favorite)
         XCTAssertFalse(PromptCodec.parse(try e.h.files.text(at: "a.md"), filename: "a.md").frontMatter.favorite)
         e.ui { e.model.save() }
         e.settle()
@@ -119,7 +121,7 @@ final class EditorFavoriteTests: XCTestCase {
         let e = EditorHarness()
         let selection = try e.put("Original")
         var editor: EditorModel? = EditorModel(editing: e.h.editor, clock: e.h.clock,
-            timeZone: { TimeZone(secondsFromGMT: 0)! }, main: e.h.main)
+            timeZone: { .gmt }, main: e.h.main)
         let favorites = LibraryService(library: e.h.files, data: e.h.data, clock: e.h.clock,
                                        entropy: e.h.entropy, keyedStores: [e.h.keyed])
         let browser = LibraryBrowserModel(index: e.h.index, usage: e.h.usage,
@@ -142,7 +144,9 @@ final class EditorFavoriteTests: XCTestCase {
                 favorites: e.h.library, main: e.h.main, editor: e.model)
             e.ui { browser.selectPrompt(original) }
             e.settle()
-            e.ui { _ = browser.toggleFavorite() }
+            var result: PromptFavoriteOutcome?
+            e.ui { result = browser.toggleFavorite() }
+            guard case .savePending = result else { return XCTFail("Expected the editor's async save.") }
             e.h.held.releaseAll()
             e.ui { browser.selectPrompt(clearSelection ? nil : other) }
             e.settle()
@@ -158,14 +162,17 @@ final class EditorFavoriteTests: XCTestCase {
             favorites: e.h.library, main: e.h.main, editor: e.model)
         e.ui { browser.selectPrompt(selection) }
         e.h.files.failNextWrite = true
-        e.ui { _ = browser.toggleFavorite() }
+        var result: PromptFavoriteOutcome?
+        e.ui { result = browser.toggleFavorite() }
+        guard case .savePending = result else { return XCTFail("Expected a save attempt for the clean buffer.") }
         e.settle()
         XCTAssertEqual(e.model.state.status, .failed(.editing(.fileStore(.ioFailure))))
         XCTAssertTrue(e.model.state.isDirty)
         XCTAssertEqual(browser.selection, selection)
         XCTAssertFalse(browser.rows[0].favorite)
-        e.ui { _ = browser.toggleFavorite() }
-        XCTAssertFalse(PromptCodec.parse(e.model.state.source!, filename: "a.md").frontMatter.favorite)
+        e.ui { result = browser.toggleFavorite() }
+        guard case .editedBuffer = result else { return XCTFail("A failed save must leave the toggle in the dirty buffer.") }
+        XCTAssertFalse(PromptCodec.parse(try XCTUnwrap(e.model.state.source), filename: "a.md").frontMatter.favorite)
         XCTAssertEqual(try e.h.files.text(at: "a.md"), "Original")
     }
 }

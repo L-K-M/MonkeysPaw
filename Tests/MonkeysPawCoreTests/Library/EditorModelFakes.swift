@@ -5,13 +5,11 @@ import XCTest
 final class EditorHarness {
     let h: PromptEditingHarness
     let model: EditorModel
-    let clipboard = FakeClipboard(DeliveryRecorder())
-
-    init(heldWork: Bool = false, queuedMain: Bool = false, offset: Int = 0) {
+    init(heldWork: Bool = false, queuedMain: Bool = false, timeZone: @escaping () -> TimeZone = { .gmt }) {
         h = PromptEditingHarness(heldWork: heldWork)
         h.clock.date = Date(timeIntervalSince1970: 0)
         model = EditorModel(editing: h.editor, clock: h.clock,
-                            timeZone: { TimeZone(secondsFromGMT: offset)! }, main: h.main)
+                            timeZone: timeZone, main: h.main)
         h.main.isHeld = queuedMain
     }
 
@@ -32,11 +30,14 @@ final class EditorHarness {
 
     func ui(_ work: () -> Void) { h.marker.ui(work) }
 
-    func settle() {
-        while !h.held.pending.isEmpty || !h.main.pending.isEmpty {
-            h.held.releaseAll()
-            h.main.releaseAll()
+    func settle(file: StaticString = #filePath, line: UInt = #line) {
+        let maximumSteps = 1_000
+        for _ in 0..<maximumSteps {
+            if h.held.pending.isEmpty && h.main.pending.isEmpty { return }
+            if !h.held.pending.isEmpty { h.held.releaseNext() }
+            if !h.main.pending.isEmpty { h.main.releaseNext() }
         }
+        XCTFail("Editor queues did not settle within \(maximumSteps) steps.", file: file, line: line)
     }
 
     func change(_ source: String?, at path: String = "a.md") throws {

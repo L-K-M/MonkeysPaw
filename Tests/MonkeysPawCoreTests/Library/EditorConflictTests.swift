@@ -21,7 +21,8 @@ final class EditorConflictTests: XCTestCase {
         XCTAssertNil(e.model.state.conflict)
         XCTAssertFalse(e.model.state.isDirty)
         XCTAssertTrue(try e.h.files.text(at: "a.md").hasSuffix("Mine"))
-        let revision = try XCTUnwrap(e.h.library.history(for: e.model.state.prompt!.identity).first)
+        let identity = try XCTUnwrap(e.model.state.prompt?.identity)
+        let revision = try XCTUnwrap(e.h.library.history(for: identity).first)
         XCTAssertEqual(String(decoding: try HistoryStore(files: e.h.data).read(revision), as: UTF8.self), "Theirs")
     }
 
@@ -42,7 +43,8 @@ final class EditorConflictTests: XCTestCase {
     func testModifiedConflictSaveAsCopyPreservesTheirsAndAdoptsDistinctIdentity() throws {
         let e = EditorHarness()
         let original = try e.open("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal")
-        e.ui { e.model.edit(e.model.state.source! + " Mine") }
+        let source = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(source + " Mine") }
         try e.change("Theirs")
         e.ui { e.model.resolveConflict(.saveAsCopy) }
         XCTAssertEqual(try e.h.files.text(at: "a.md"), "Theirs")
@@ -68,7 +70,8 @@ final class EditorConflictTests: XCTestCase {
         XCTAssertNil(e.model.state.conflict)
         XCTAssertEqual(e.model.state.stamp, try e.h.files.stamp(at: "a.md"))
         try e.h.index.apply(LibraryChangeSet(created: ["a.md"]))
-        e.ui { e.model.edit(e.model.state.source! + " New") }
+        let committed = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(committed + " New") }
         try e.change(nil)
         XCTAssertEqual(e.model.state.conflict?.kind, .deleted)
         XCTAssertTrue(e.model.state.isDirty)
@@ -78,7 +81,8 @@ final class EditorConflictTests: XCTestCase {
         for choice in [EditorConflictChoice.saveAsCopy, .discard] {
             let e = EditorHarness()
             let original = try e.open("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal")
-            e.ui { e.model.edit(e.model.state.source! + " Mine") }
+            let source = try XCTUnwrap(e.model.state.source)
+            e.ui { e.model.edit(source + " Mine") }
             try e.change(nil)
             e.ui { e.model.resolveConflict(choice) }
             XCTAssertFalse(e.model.state.isDirty)
@@ -89,7 +93,7 @@ final class EditorConflictTests: XCTestCase {
             } else {
                 XCTAssertNotEqual(e.model.state.prompt?.identity, original.identity)
                 XCTAssertEqual(e.model.state.lastCopy, e.model.state.prompt)
-                XCTAssertTrue(e.model.state.source!.hasSuffix("Original Mine"))
+                XCTAssertTrue(try XCTUnwrap(e.model.state.source).hasSuffix("Original Mine"))
             }
         }
     }

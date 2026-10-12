@@ -115,6 +115,7 @@ public final class EditorModel: @unchecked Sendable {
     private var observerOrder: [UUID] = []
     private var lastPublishedState = EditorState()
     private var isPublishing = false
+    private var previewFormatters: (zone: TimeZone, date: DateFormatter, time: DateFormatter)?
 
     public init(editing: PromptEditingService, clock: WallClock,
                 timeZone: @escaping () -> TimeZone, main: MainThread) {
@@ -148,11 +149,14 @@ public final class EditorModel: @unchecked Sendable {
         guard isActive else { return }
         retireSession()
         isActive = false
+        let abandoned = (pendingRequest.map { [$0] } ?? []) + requests
         requests = []
         pendingRequest = nil
+        savesDecision = false
         observers = [:]
         observerOrder = []
         onChange = nil
+        main.run { abandoned.forEach { $0.completion(.inactive) } }
     }
 
     public func open(_ selection: LibraryPromptSelection) {
@@ -209,6 +213,7 @@ public final class EditorModel: @unchecked Sendable {
     public func save() {
         guard isActive, state.status != .loading, state.status != .saving else { return }
         if let reason = state.readOnlyReason {
+            savesDecision = false
             state.status = .failed(.readOnly(reason))
             changed()
             return
@@ -225,9 +230,13 @@ public final class EditorModel: @unchecked Sendable {
         guard isActive, state.status != .saving, let conflict = state.conflict,
               conflict.choices.contains(choice) else { return }
         switch choice {
-        case .keepMine: startSave(.original, expectedStamp: conflict.stamp)
+        case .keepMine:
+            savesDecision = pendingRequest != nil
+            startSave(.original, expectedStamp: conflict.stamp)
         case .takeTheirs: load(.takeTheirs)
-        case .saveAsCopy: saveAsCopy()
+        case .saveAsCopy:
+            savesDecision = pendingRequest != nil
+            saveAsCopy()
         case .discard:
             resetEditor()
             resumeDecisionAfterDiscard()
@@ -339,7 +348,7 @@ public final class EditorModel: @unchecked Sendable {
                 resumeDecisionAfterDiscard()
             }
         case .deleted:
-            if state.isDirty || state.conflict != nil {
+            if state.isDirty || state.conflict != nil || purpose == .reconcileCopy {
                 state.conflict = EditorConflict(kind: .deleted, stamp: nil)
                 if purpose != .inspectConflict { state.status = .idle }
             } else { resetEditor() }
@@ -429,6 +438,9 @@ public final class EditorModel: @unchecked Sendable {
             if savesDecision, !state.isDirty { finishDecision(.allowed) }
             else { savesDecision = false }
         } else {
+            // A failed decision save leaves its dialog visible. Only another
+            // dialog save or an explicit conflict choice may approve its action.
+            savesDecision = false
             switch outcome {
             case .conflict(let stamp):
                 // A copy conflict belongs to its destination, so it cannot
@@ -448,6 +460,8 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func restoreBaseline() {
+        // Discard returns to the loaded text and stamp. If disk changed during
+        // a conflict, a later save reopens that conflict through the stale stamp.
         loadGeneration &+= 1
         if let baseline { accept(baseline) }
         state.isDirty = false
@@ -460,6 +474,10 @@ public final class EditorModel: @unchecked Sendable {
         while isActive, state.status != .saving, pendingRequest == nil, !requests.isEmpty {
             let request = requests.removeFirst()
             updateQueuedActions()
+            if case .open(let selection) = request.decision.action, selection == state.prompt {
+                request.completion(.allowed)
+                continue
+            }
             if state.isDirty {
                 pendingRequest = request
                 state.pendingDecision = request.decision
@@ -523,18 +541,11 @@ public final class EditorModel: @unchecked Sendable {
             state.previewFailure = document.isReadOnly ? .unsupportedFormat(document.frontMatter.format) : .invalidPrompt
             return
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = timeZone()
+        let formatters = formattersForPreview()
         let now = clock.now()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let date = formatter.string(from: now)
-        formatter.dateFormat = "HH:mm"
-        let time = formatter.string(from: now)
-        let defaults = Dictionary(uniqueKeysWithValues: effective.map {
-            ($0.name, $0.defaultValue.isEmpty ? "{\($0.name)}" : $0.defaultValue)
-        })
+        let date = formatters.date.string(from: now)
+        let time = formatters.time.string(from: now)
+        let defaults = Self.previewDefaults(for: effective)
         // Preview has deliberately different empty/choice rules from delivery:
         // a missing default remains a literal marker, even for a choice. Use
         // the codec's single-pass tokens, never FillService.builtinSnapshot.
@@ -551,6 +562,32 @@ public final class EditorModel: @unchecked Sendable {
                 }
             }
         }.joined()
+    }
+
+    /// Match effectiveFields' first-declaration rule even for duplicate input.
+    static func previewDefaults(for fields: [PromptField]) -> [String: String] {
+        var defaults: [String: String] = [:]
+        for field in fields where defaults[field.name] == nil {
+            defaults[field.name] = field.defaultValue.isEmpty ? "{\(field.name)}" : field.defaultValue
+        }
+        return defaults
+    }
+
+    private func formattersForPreview() -> (date: DateFormatter, time: DateFormatter) {
+        let zone = timeZone()
+        if let cached = previewFormatters, cached.zone == zone { return (cached.date, cached.time) }
+        func formatter(_ format: String) -> DateFormatter {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = zone
+            formatter.dateFormat = format
+            return formatter
+        }
+        let date = formatter("yyyy-MM-dd")
+        let time = formatter("HH:mm")
+        previewFormatters = (zone, date, time)
+        return (date, time)
     }
 
     private static func selection(_ entry: LibraryEntry) -> LibraryPromptSelection {

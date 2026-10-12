@@ -8,23 +8,23 @@ final class EditorLifetimeTests: XCTestCase {
             let e = EditorHarness(heldWork: true, queuedMain: queued)
             var snapshots: [EditorState] = []
             var changes = 0
-            e.model.onChange = { changes += 1; XCTAssertTrue(e.h.marker.isUI) }
-            e.model.addObserver { snapshots.append($0); XCTAssertTrue(e.h.marker.isUI) }
+            e.model.onChange = { changes += 1; XCTAssertTrue(e.h.marker.isUI, "queued: \(queued)") }
+            e.model.addObserver { snapshots.append($0); XCTAssertTrue(e.h.marker.isUI, "queued: \(queued)") }
             try e.open()
-            XCTAssertEqual(e.model.state.source, "Original")
-            XCTAssertFalse(snapshots.isEmpty)
+            XCTAssertEqual(e.model.state.source, "Original", "queued: \(queued)")
+            XCTAssertFalse(snapshots.isEmpty, "queued: \(queued)")
             e.ui { e.model.edit("Mine"); e.model.save() }
-            XCTAssertEqual(e.model.state.status, .saving)
+            XCTAssertEqual(e.model.state.status, .saving, "queued: \(queued)")
             e.h.held.releaseAll()
-            if queued { XCTAssertEqual(e.model.state.status, .saving) }
+            if queued { XCTAssertEqual(e.model.state.status, .saving, "queued: \(queued)") }
             e.settle()
-            XCTAssertEqual(e.model.state.status, .saved)
+            XCTAssertEqual(e.model.state.status, .saved, "queued: \(queued)")
             var results: [EditorGuardResult] = []
-            e.ui { e.model.request(.quit) { results.append($0); XCTAssertTrue(e.h.marker.isUI) } }
-            if queued { XCTAssertTrue(results.isEmpty) }
+            e.ui { e.model.request(.quit) { results.append($0); XCTAssertTrue(e.h.marker.isUI, "queued: \(queued)") } }
+            if queued { XCTAssertTrue(results.isEmpty, "queued: \(queued)") }
             e.settle()
-            XCTAssertEqual(results, [.allowed])
-            XCTAssertGreaterThan(changes, 1)
+            XCTAssertEqual(results, [.allowed], "queued: \(queued)")
+            XCTAssertGreaterThan(changes, 1, "queued: \(queued)")
         }
     }
 
@@ -94,7 +94,7 @@ final class EditorLifetimeTests: XCTestCase {
             try h.index.rebuild()
             let entry = try h.library.load(at: "a.md")
             var model: EditorModel? = EditorModel(editing: h.editor, clock: h.clock,
-                timeZone: { TimeZone(secondsFromGMT: 0)! }, main: h.main)
+                timeZone: { .gmt }, main: h.main)
             weak var released = model
             h.marker.ui { model?.open(LibraryPromptSelection(identity: entry.identity, relativePath: "a.md")) }
             if save {
@@ -117,7 +117,7 @@ final class EditorLifetimeTests: XCTestCase {
         try h.index.rebuild()
         let entry = try h.library.load(at: "a.md")
         var model: EditorModel? = EditorModel(editing: h.editor, clock: h.clock,
-            timeZone: { TimeZone(secondsFromGMT: 0)! }, main: h.main)
+            timeZone: { .gmt }, main: h.main)
         h.marker.ui { model?.open(LibraryPromptSelection(identity: entry.identity, relativePath: "a.md")) }
         h.main.isHeld = true
         model?.onChange = { XCTFail("Released model notified a view.") }

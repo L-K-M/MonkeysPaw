@@ -50,13 +50,13 @@ final class EditingMainThread: MainThread {
         }
     }
 
-    func releaseAll() {
-        while !pending.isEmpty {
-            let work = pending.removeFirst()
-            beforeRun?()
-            marker.ui(work)
-        }
+    func releaseNext() {
+        let work = pending.removeFirst()
+        beforeRun?()
+        marker.ui(work)
     }
+
+    func releaseAll() { while !pending.isEmpty { releaseNext() } }
 }
 
 /// Covers every filesystem entry point, including history enumeration and

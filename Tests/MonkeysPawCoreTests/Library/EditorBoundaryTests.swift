@@ -10,13 +10,14 @@ final class EditorBoundaryTests: XCTestCase {
             e.ui { e.model.edit("Copy"); e.model.saveAsCopy() }
             e.h.held.releaseNext()
             XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("a 2.md"))
-            e.ui { e.model.edit(e.model.state.source! + " New edit") }
+            let committed = try XCTUnwrap(e.model.state.source)
+            e.ui { e.model.edit(committed + " New edit") }
             try e.change(deletion ? nil : "Theirs", at: "a 2.md")
             XCTAssertEqual(e.model.state.conflict?.kind, deletion ? .deleted : .modified,
                 "Adopting a committed copy must register its known stamp before another worker runs.")
             e.settle()
             if !deletion { XCTAssertEqual(e.model.state.conflict?.theirsSource, "Theirs") }
-            XCTAssertTrue(e.model.state.source!.hasSuffix("Copy New edit"))
+            XCTAssertTrue(try XCTUnwrap(e.model.state.source).hasSuffix("Copy New edit"))
         }
     }
 
@@ -60,12 +61,13 @@ final class EditorBoundaryTests: XCTestCase {
         try e.open()
         e.ui { e.model.edit("Copy"); e.model.saveAsCopy() }
         e.h.held.releaseNext()
-        e.ui { e.model.edit(e.model.state.source! + " New edit") }
+        let committed = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(committed + " New edit") }
         try e.h.index.apply(LibraryChangeSet(created: ["a 2.md"]))
         e.settle()
         XCTAssertNil(e.model.state.conflict)
         XCTAssertTrue(e.model.state.isDirty)
-        XCTAssertTrue(e.model.state.source!.hasSuffix("Copy New edit"))
+        XCTAssertTrue(try XCTUnwrap(e.model.state.source).hasSuffix("Copy New edit"))
     }
 
     func testReentrantOpenCannotRunBeforeResolvingEarlierFileCommandGuard() throws {
