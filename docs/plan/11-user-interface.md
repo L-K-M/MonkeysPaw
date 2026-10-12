@@ -22,6 +22,12 @@ verification green. Repeat last prompt is displayed unbound, inactive and
 unavailable for configuration until M7. Core supplies this contract
 independently of the later native windows.
 
+Settings → General shows your active library folder, whether it is the default,
+and any read-only settings or library-switch error. You can choose another
+folder, return to the default, or reveal the active folder in your file manager.
+Views call `GeneralSettingsModel`; its `LibraryLocationControl` port delegates
+graph replacement and folder reveal to the platform composition root.
+
 Per OS:
 
 - **macOS.** SwiftUI for windows and forms. AppKit for the NSPanel and native
