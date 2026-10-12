@@ -67,7 +67,16 @@ final class PickerViewState: ObservableObject {
     }
 
     var canForgetValues: Bool {
-        showsForgetValues && model.state != .delivering && model.fillModel?.state != .delivering
+        showsForgetValues && forgetValuesState != .delivering
+    }
+
+    private var forgetValuesState: PickerModel.State {
+        Self.forgetValuesState(picker: model.state, fill: model.fillModel?.state)
+    }
+
+    /// The action and its refusal copy must agree even if only the form is delivering.
+    static func forgetValuesState(picker: PickerModel.State, fill: FillModel.State?) -> PickerModel.State {
+        fill == .delivering ? .delivering : picker
     }
 
     func forgetSelectedValues() {
@@ -88,7 +97,7 @@ final class PickerViewState: ObservableObject {
         if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
         messages += warnings.map(Strings.persistenceWarning)
         if let error = model.forgetValuesError {
-            messages.append(Strings.forgetValuesError(error, state: model.state))
+            messages.append(Strings.forgetValuesError(error, state: forgetValuesState))
         }
         return messages.joined(separator: "\n")
     }

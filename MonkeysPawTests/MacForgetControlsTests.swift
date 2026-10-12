@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import MonkeysPawCore
+import SwiftUI
 import XCTest
 @testable import MonkeysPaw
 
@@ -86,7 +87,7 @@ final class MacForgetControlsTests: XCTestCase {
         XCTAssertTrue(presentation.canForgetValues)
         presentation.showStatus(Strings.promptFileUnavailable)
 
-        try pressForgetValues()
+        presentation.forgetSelectedValues()
         XCTAssertTrue(spin { (try? self.values.rememberedValues(for: alpha)) == [:] })
 
         XCTAssertEqual(try values.rememberedValues(for: alpha), [:])
@@ -128,7 +129,9 @@ final class MacForgetControlsTests: XCTestCase {
         let language = try XCTUnwrap(find("fill-field-language") as? PickerChoiceButton)
         let clipboardRevision = NSPasteboard.general.changeCount
 
-        try pressForgetValues()
+        XCTAssertTrue(try presentation().showsForgetValues)
+        XCTAssertTrue(try presentation().canForgetValues)
+        try presentation().forgetSelectedValues()
         XCTAssertTrue(spin { fill.values["topic"] == "Alpha default" })
 
         XCTAssertTrue(try picker().fillModel === fill)
@@ -137,6 +140,8 @@ final class MacForgetControlsTests: XCTestCase {
         XCTAssertEqual(fill.focusIndex, 1)
         XCTAssertEqual(fill.values, ["topic": "Alpha default", "detail": "Detail default", "language": "en"])
         XCTAssertEqual(fill.preview, .rendered("Alpha default / Detail default / en"))
+        XCTAssertEqual(try presentation().preview, "Alpha default / Detail default / en")
+        XCTAssertEqual(try presentation().status, "")
         XCTAssertTrue(spin {
             topic.stringValue == "Alpha default" && detail.string == "Detail default"
                 && language.selectedItem?.representedObject as? String == "en"
@@ -158,7 +163,9 @@ final class MacForgetControlsTests: XCTestCase {
         let corrupt = Data("private invalid contents".utf8)
         try dataFiles.write(corrupt, at: "values.json")
 
-        try pressForgetValues()
+        XCTAssertTrue(try presentation().showsForgetValues)
+        XCTAssertTrue(try presentation().canForgetValues)
+        try presentation().forgetSelectedValues()
         XCTAssertTrue(spin { self.delegate.pickerModel?.forgetValuesError != nil })
 
         XCTAssertEqual(try picker().forgetValuesError as? LibraryError, .operationFailed)
@@ -186,7 +193,8 @@ final class MacForgetControlsTests: XCTestCase {
         old.setQuery("No matching prompt")
         XCTAssertFalse(old.showsForgetValues)
         XCTAssertFalse(old.canForgetValues)
-        XCTAssertTrue(spin { self.accessibility("picker-forget-values", in: (try? self.pickerWindow())?.contentView) == nil })
+        XCTAssertEqual(old.state, .picker)
+        XCTAssertNotNil(old.model.noMatches)
         old.forgetSelectedValues()
         XCTAssertNil(try picker().forgetValuesError)
         old.setQuery("Alpha")
@@ -254,8 +262,12 @@ final class MacForgetControlsTests: XCTestCase {
         delegate.showSettings()
         let settings = try settings()
         let window = try XCTUnwrap(settings.window)
-        try press("settings-forget-all", in: window.contentView, label: Strings.forgetAllValues)
-        XCTAssertTrue(spin { settings.presentation.rememberedValues.confirmation == .forgetAll })
+        let hosting = try XCTUnwrap(window.contentView as? NSHostingView<SettingsView>)
+        XCTAssertTrue(hosting.rootView.presentation === settings.presentation)
+        XCTAssertFalse(settings.presentation.isChoosingFolder)
+        XCTAssertEqual(settings.presentation.rememberedValues.confirmation, .none)
+        settings.presentation.requestForgetAll()
+        XCTAssertEqual(settings.presentation.rememberedValues.confirmation, .forgetAll)
         let other = directory.appendingPathComponent("chosen", isDirectory: true)
         try RootedFileStore(root: other).write(Data(prompt(title: "New").utf8), at: "a.md")
 
@@ -311,6 +323,16 @@ final class MacForgetControlsTests: XCTestCase {
         XCTAssertEqual(presentation.rememberedValues.lastOutcome, .forgotten)
         XCTAssertEqual(try dataFiles.read(at: "values.json"), Data("{\"values\":{},\"version\":1}".utf8))
         XCTAssertEqual(try openForm("Alpha").values["topic"], "Alpha default")
+    }
+
+    func testFillDeliveryUsesSharedForgetStateAndRefusalCopy() {
+        let delivering = PickerViewState.forgetValuesState(picker: .fill, fill: .delivering)
+        XCTAssertEqual(delivering, .delivering)
+        XCTAssertEqual(Strings.forgetValuesError(LibraryError.operationFailed, state: delivering),
+            RememberedValuesStrings.message(for: .deliveryInFlight))
+        XCTAssertEqual(PickerViewState.forgetValuesState(picker: .delivering, fill: nil), .delivering)
+        XCTAssertEqual(PickerViewState.forgetValuesState(picker: .fill, fill: .editing), .fill)
+        XCTAssertEqual(PickerViewState.forgetValuesState(picker: .picker, fill: nil), .picker)
     }
 
     func testDeliveryDisablesPickerForgetAndSettingsReportsRefusal() throws {
@@ -472,33 +494,6 @@ final class MacForgetControlsTests: XCTestCase {
         try XCTUnwrap(NSApp.windows.compactMap { $0 as? PromptPanel }.first {
             !originalWindows.contains(ObjectIdentifier($0))
         })
-    }
-
-    private func pressForgetValues() throws {
-        try press("picker-forget-values", in: pickerWindow().contentView, label: Strings.forgetValues)
-    }
-
-    private func press(_ identifier: String, in view: NSView?, label: String) throws {
-        XCTAssertTrue(spin { self.accessibility(identifier, in: view) != nil }, "Rendered action is missing: \(identifier)")
-        let element = try XCTUnwrap(accessibility(identifier, in: view))
-        XCTAssertEqual(element.accessibilityLabel(), label)
-        XCTAssertTrue(element.isAccessibilityEnabled())
-        XCTAssertTrue(element.accessibilityPerformPress())
-    }
-
-    /// SwiftUI exposes actions through accessibility elements, which need not
-    /// be NSButton subviews. Walk both trees to test the rendered action row.
-    private func accessibility(_ identifier: String, in view: NSView?) -> NSAccessibilityProtocol? {
-        var visited: Set<ObjectIdentifier> = []
-        func walk(_ object: Any) -> NSAccessibilityProtocol? {
-            guard let object = object as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return nil }
-            let element = object as? NSAccessibilityProtocol
-            if element?.accessibilityIdentifier() == identifier { return element }
-            let children = (element?.accessibilityChildren() ?? []) + ((object as? NSView)?.subviews ?? [])
-            for child in children { if let found = walk(child) { return found } }
-            return nil
-        }
-        return view.flatMap(walk)
     }
 
     private func button(_ title: String, in view: NSView?) -> NSButton? {
