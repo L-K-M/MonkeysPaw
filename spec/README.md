@@ -6,9 +6,9 @@ sync paths and sync canonical form. LLMs and wire DTOs arrive with their
 respective slices.
 
 `fixtures/` contains exactly eight categories: `format`, `grammar`,
-`render`, `validation`, `ranking`, `import`, `paths` and `canonical`. The consumer
-enumerates all directories and files, rejects unknown categories, files,
-schema versions and case members, and requires every input and
+`render`, `validation`, `ranking`, `import`, `paths` and `canonical`. The
+consumer enumerates all directories and files, rejects unknown categories,
+files, schema versions and case members, and requires every input and
 expectation to be consumed once. Symlinks and
 unexpected nested directories are rejected. The corpus itself is the
 enumeration; there is no hand-selected case list.
@@ -372,19 +372,19 @@ and Turkic alternatives in the normal offline Swift test suite.
 
 M5 adds `canonical/<case>/`, consumed by `CanonicalFixtureCorpus` in
 `CanonicalConformanceTests` and dispatched by the generic consumer. The
-generic content-envelope tests skip `canonical`, as they do `ranking`;
-the category's own mutation tests enforce its complete contract. A case
-directory contains exactly `case.json`, its referenced UTF-8 Markdown
-`source`, and optionally one separately referenced adoption candidate.
-Every file is consumed exactly once. Unknown files, orphan or missing
-sources, duplicate references, symlinks, empty categories/cases and nested
-directories are rejected. The category's root `.gitattributes` is required
-and consumed once as regular fixture metadata. It disables text conversion
-and whitespace diagnostics for raw Markdown vectors, whose body bytes
-deliberately include CRLF and trailing whitespace. Other dotted entries
-are ignored as filesystem metadata, at both category and case levels,
-following the import consumer pattern. Hidden cases are never enumerated;
-nonhidden unknown/orphan files remain errors.
+generic content-envelope tests skip `canonical`, as they do `ranking`,
+`import` and `paths`; the category's own mutation tests enforce its complete
+contract. A case directory contains exactly `case.json`, its referenced
+UTF-8 Markdown `source`, and optionally one separately referenced adoption candidate.
+Every fixture file is consumed exactly once. Unknown visible files, orphan
+or missing sources, duplicate references, symlinks, empty categories/cases
+and nested directories are rejected. Dot-prefixed filesystem metadata,
+including `.DS_Store`, `._*` and `.gitattributes`, is ignored at the category
+and case levels, following the import and paths consumer convention. Hidden cases
+are never enumerated. The category's committed `.gitattributes` is Git
+metadata, outside corpus enumeration; the consumer works without it. It
+disables text conversion and whitespace diagnostics for raw Markdown
+vectors, whose body bytes deliberately include CRLF and trailing whitespace.
 
 ```json
 {

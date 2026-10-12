@@ -17,12 +17,10 @@ enum CanonicalFixtureCorpus {
 
     static func consume(at root: URL) throws -> (cases: Int, files: [String]) {
         try require(.typeDirectory, at: root)
-        let entries = try FileManager.default.contentsOfDirectory(atPath: root.path)
-        guard entries.contains(".gitattributes") else { throw Failure.invalidCorpus }
-        try require(.typeRegular, at: root.appendingPathComponent(".gitattributes"))
-        let names = entries.filter { !$0.hasPrefix(".") }.sorted()
+        let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { !$0.hasPrefix(".") }.sorted()
         guard !names.isEmpty else { throw Failure.invalidCorpus }
-        var consumed = [".gitattributes"]
+        var consumed = [String]()
         for name in names {
             let directory = root.appendingPathComponent(name)
             try require(.typeDirectory, at: directory)
@@ -190,7 +188,7 @@ final class CanonicalConformanceTests: XCTestCase {
             try FileManager.default.copyItem(at: copy.appendingPathComponent("empty"),
                                             to: copy.appendingPathComponent(".hidden"))
             for directory in [copy, copy.appendingPathComponent("group-strip")] {
-                for name in [".DS_Store", "._source.md"] {
+                for name in [".DS_Store", "._source.md", ".gitattributes"] {
                     try Data([0xff]).write(to: directory.appendingPathComponent(name))
                 }
             }
@@ -204,9 +202,33 @@ final class CanonicalConformanceTests: XCTestCase {
         }
     }
 
-    func testRejectsUnknownMissingOrphanLinkedAndNestedFiles() throws {
+    func testGitMetadataIsOptionalAndIgnored() throws {
+        let baseline = try CanonicalFixtureCorpus.consume(at: root)
         let mutations: [(URL) throws -> Void] = [
             { try FileManager.default.removeItem(at: $0.appendingPathComponent(".gitattributes")) },
+            { copy in
+                let attributes = copy.appendingPathComponent(".gitattributes")
+                try FileManager.default.removeItem(at: attributes)
+                try FileManager.default.createSymbolicLink(atPath: attributes.path, withDestinationPath: "group-strip/source.md")
+            },
+            { copy in
+                let attributes = copy.appendingPathComponent(".gitattributes")
+                try FileManager.default.removeItem(at: attributes)
+                try FileManager.default.createDirectory(at: attributes, withIntermediateDirectories: false)
+            }
+        ]
+        for mutation in mutations {
+            try withCopy { copy in
+                try mutation(copy)
+                let actual = try CanonicalFixtureCorpus.consume(at: copy)
+                XCTAssertEqual(actual.cases, baseline.cases)
+                XCTAssertEqual(actual.files, baseline.files)
+            }
+        }
+    }
+
+    func testRejectsUnknownMissingOrphanLinkedAndNestedFiles() throws {
+        let mutations: [(URL) throws -> Void] = [
             { try Data().write(to: $0.appendingPathComponent("unknown.txt")) },
             { try Data().write(to: $0.appendingPathComponent("group-strip/unknown.txt")) },
             { try Data().write(to: $0.appendingPathComponent("group-strip/orphan.md")) },
@@ -216,11 +238,6 @@ final class CanonicalConformanceTests: XCTestCase {
             { try FileManager.default.removeItem(at: $0.appendingPathComponent("group-strip/case.json")) },
             { try FileManager.default.createDirectory(at: $0.appendingPathComponent("group-strip/nested.md"), withIntermediateDirectories: false) },
             { try FileManager.default.createDirectory(at: $0.appendingPathComponent("empty-case"), withIntermediateDirectories: false) },
-            { copy in
-                let attributes = copy.appendingPathComponent(".gitattributes")
-                try FileManager.default.removeItem(at: attributes)
-                try FileManager.default.createSymbolicLink(atPath: attributes.path, withDestinationPath: "group-strip/source.md")
-            },
             { copy in
                 let source = copy.appendingPathComponent("group-strip/source.md")
                 try FileManager.default.removeItem(at: source)
@@ -232,7 +249,7 @@ final class CanonicalConformanceTests: XCTestCase {
                 try FileManager.default.createSymbolicLink(atPath: directory.path, withDestinationPath: "plain-bom")
             },
             { copy in
-                for name in try FileManager.default.contentsOfDirectory(atPath: copy.path) where name != ".gitattributes" {
+                for name in try FileManager.default.contentsOfDirectory(atPath: copy.path) where !name.hasPrefix(".") {
                     try FileManager.default.removeItem(at: copy.appendingPathComponent(name))
                 }
             }

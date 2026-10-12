@@ -26,14 +26,14 @@ final class PromptConformanceTests: XCTestCase {
             for category in categories {
                 let directory = root.appendingPathComponent(category)
                 directories.append(directory)
-                if category == "import" || category == "ranking" {
+                if ["import", "ranking", "paths", "canonical"].contains(category) {
                     let cases = try FileManager.default.contentsOfDirectory(atPath: directory.path)
                         .filter { !$0.hasPrefix(".") }
                     directories += cases.map { directory.appendingPathComponent($0) }
                 }
             }
             for directory in directories {
-                for name in [".DS_Store", "._metadata"] {
+                for name in [".DS_Store", "._metadata", ".gitattributes"] {
                     try Data([0xff]).write(to: directory.appendingPathComponent(name))
                 }
             }
