@@ -139,7 +139,7 @@ public final class ImportService {
     }
 
     private func validateSourcePath(_ path: String) throws {
-        guard path.hasPrefix("/"), !path.contains("\\"),
+        guard path.utf8.first == 47, !path.utf8.contains(92),
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw ImportSkipReason.invalidPath
         }

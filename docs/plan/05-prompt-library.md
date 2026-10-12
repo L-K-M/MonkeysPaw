@@ -737,6 +737,8 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   following symlinks and rejects symlinked components when reading; Core
   validates returned relative paths and reports symlinks/nonregular entries
   as skips. Ignored library paths are refused rather than created invisibly.
+  Slash/backslash checks and ignored `_`/`.` prefixes use bytes or scalars,
+  even when a combining mark shares the delimiter or prefix's grapheme.
   Files and reports sort by exact source-path UTF-8 bytes, independently of
   selection/enumeration order. Each file has a created path or typed skip,
   mapped fields, preserved keys, presentation losses and warnings; failures

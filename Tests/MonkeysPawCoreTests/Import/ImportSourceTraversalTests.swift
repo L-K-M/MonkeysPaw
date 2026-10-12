@@ -23,7 +23,8 @@ final class ImportSourceTraversalTests: XCTestCase {
         XCTAssertEqual(entries.filter { $0.kind == .symbolicLink }.count, 2)
         XCTAssertFalse(entries.contains { $0.relativePath.contains("secret") })
         for path in [selected.appendingPathComponent("linked.md").path,
-                     selected.appendingPathComponent("linked-folder/secret.md").path] {
+                     selected.appendingPathComponent("linked-folder/secret.md").path,
+                     selected.appendingPathComponent("linked-folder/\u{301}secret.md").path] {
             XCTAssertThrowsError(try sources.readFile(at: path, maximumBytes: Limits.importFileCapBytes)) {
                 XCTAssertEqual($0 as? ImportSourceError, .symbolicLink)
             }
@@ -101,8 +102,8 @@ private final class TestImportFileReader: ImportSourceReading {
 
     private func rejectSymlinks(in path: String) throws {
         var prefix = ""
-        for component in path.split(separator: "/") {
-            prefix += "/" + component
+        for component in path.unicodeScalars.split(separator: "/") {
+            prefix += "/" + String(String.UnicodeScalarView(component))
             let type = try FileManager.default.attributesOfItem(atPath: prefix)[.type] as? FileAttributeType
             if type == .typeSymbolicLink { throw ImportSourceError.symbolicLink }
         }

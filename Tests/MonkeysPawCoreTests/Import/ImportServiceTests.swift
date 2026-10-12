@@ -179,7 +179,8 @@ final class ImportServiceTests: XCTestCase {
         graph.sources.listError = .ioFailure
         XCTAssertEqual(graph.run(.folder("/selected"))?.failure, .source(.ioFailure))
         XCTAssertTrue(graph.sources.reads.isEmpty)
-        for target in ["", "../escape", "/absolute", ".hidden", "_drafts", "A//B", "A/../B", "A\\B"] {
+        for target in ["", "../escape", "/absolute", ".hidden", "_drafts", "A//B", "A/../B", "A\\B",
+                       "/\u{301}absolute", "A//\u{301}B", "A\\\u{301}B", "_\u{301}drafts", ".\u{301}hidden"] {
             let report = try XCTUnwrap(graph.run(.files(["/source/A.md"]), into: target))
             XCTAssertEqual(report.failure, .invalidPath, target)
             XCTAssertTrue(report.files.isEmpty)

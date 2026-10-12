@@ -72,11 +72,11 @@ public enum FileStoreError: String, Error, Sendable {
 /// checks still belong to the driver. This is not M5's sync path policy.
 public enum FileStorePath {
     public static func validate(_ path: String) throws {
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        let parts = path.utf8.split(separator: 47, omittingEmptySubsequences: false)
         guard !path.isEmpty, path.utf8.count <= Limits.maxPathBytes,
-              !path.contains("\\"),
+              !path.utf8.contains(92),
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-              parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+              parts.allSatisfy({ !$0.isEmpty && !$0.elementsEqual([46]) && !$0.elementsEqual([46, 46]) }) else {
             throw FileStoreError.invalidPath
         }
     }

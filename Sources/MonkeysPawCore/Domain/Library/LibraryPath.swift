@@ -9,8 +9,8 @@ enum LibraryPath {
         // boundaries are slash scalars, including for import destinations.
         let parts = path.unicodeScalars.split(separator: "/").map { String(String.UnicodeScalarView($0)) }
         guard let filename = parts.last, filename.hasSuffix(".md"),
-              !parts.contains(where: { $0.hasPrefix("_") }),
-              !parts.dropLast().contains(where: { $0.hasPrefix(".") }) else { return false }
+              !parts.contains(where: { $0.utf8.first == 95 }),
+              !parts.dropLast().contains(where: { $0.utf8.first == 46 }) else { return false }
         return path != "README.md"
     }
 
