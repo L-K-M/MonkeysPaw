@@ -282,7 +282,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertTrue(settings.needsSeedOffer)
         XCTAssertFalse(FileManager.default.fileExists(atPath: data.appendingPathComponent("settings.json").path))
         XCTAssertEqual(delegate.switchLibrary(to: try otherLibrary()), .switched)
-        XCTAssertEqual(settings.firstRun, FirstRunProgress(setupPresented: true))
+        XCTAssertEqual(settings.firstRun, FirstRunProgress(setupPresented: true, tourCompleted: true))
     }
 
     func testSetupPresentationRecordsSettingsAndDowngradeFlag() throws {

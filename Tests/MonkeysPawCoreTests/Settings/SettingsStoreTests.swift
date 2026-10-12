@@ -3,7 +3,27 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SettingsStoreTests: XCTestCase {
-    private let defaultsJSON = #"{"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false},"libraryFolderPath":null,"version":1}"#
+    private let defaultsJSON = #"{"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false,"tourCompleted":false},"libraryFolderPath":null,"version":1}"#
+
+    func testPreTourSettingsInferCompletionFromSetupWhileFreshDefaultsStayPending() throws {
+        for setupPresented in [false, true] {
+            let files = MemoryFileStore()
+            let original = """
+                {"version":1,"firstRun":{"setupPresented":\(setupPresented),
+                "libraryFolderCompleted":true,"seedsOffered":true}}
+                """
+            try files.put(original, at: "settings.json")
+            let settings = SettingsService(store: SettingsStore(files: files))
+            let progress = try XCTUnwrap(JSONSerialization.jsonObject(with:
+                JSONEncoder().encode(settings.snapshot.document.firstRun)) as? [String: Any])
+            XCTAssertEqual(progress["tourCompleted"] as? Bool, setupPresented)
+            XCTAssertFalse(settings.snapshot.isReadOnly)
+            XCTAssertEqual(try files.text(at: "settings.json"), original)
+        }
+        let fresh = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            JSONEncoder().encode(SettingsDocument().firstRun)) as? [String: Any])
+        XCTAssertEqual(fresh["tourCompleted"] as? Bool, false)
+    }
 
     func testMissingFileUsesDefaultsUntilFirstSuccessfulIntentWritesSettings() throws {
         let files = MemoryFileStore()
@@ -21,6 +41,49 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(try files.listFiles().map(\.relativePath), ["settings.json"])
     }
 
+    func testExplicitTourFlagWinsOverUpgradeRuleAndSurvivesSetupAndFolderChanges() throws {
+        for setupPresented in [false, true] {
+            for completed in [false, true] {
+                let files = MemoryFileStore()
+                try files.put("""
+                    {"version":1,"firstRun":{"setupPresented":\(setupPresented),
+                    "libraryFolderCompleted":true,"seedsOffered":true,"tourCompleted":\(completed)}}
+                    """, at: "settings.json")
+                let settings = SettingsService(store: SettingsStore(files: files))
+                XCTAssertEqual(settings.snapshot.document.firstRun.tourCompleted, completed)
+                try settings.markSetupPresented()
+                try settings.setLibraryFolder("/chosen")
+                try settings.setLibraryFolder(nil)
+                XCTAssertEqual(settings.snapshot.document.firstRun.tourCompleted, completed)
+                XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, settings.snapshot)
+            }
+        }
+    }
+
+    func testTourCompletionWritesVersionOneBeforePublicationAndIsIdempotent() throws {
+        let files = MemoryFileStore()
+        let settings = SettingsService(store: SettingsStore(files: files))
+        try settings.markSetupPresented()
+        try settings.completeLibraryFolderStep()
+        try settings.markSeedsOffered()
+        XCTAssertFalse(settings.snapshot.document.firstRun.tourCompleted)
+        let previous = settings.snapshot
+        var writes = 0
+        files.onWrite = { _ in writes += 1 }
+        files.failNextWrite = true
+        XCTAssertThrowsError(try settings.completeTour()) {
+            XCTAssertEqual($0 as? SettingsError, .writeFailed(.ioFailure))
+        }
+        XCTAssertEqual(settings.snapshot, previous)
+        XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, previous)
+        try settings.completeTour()
+        try settings.completeTour()
+        XCTAssertEqual(writes, 1)
+        XCTAssertTrue(settings.snapshot.document.firstRun.tourCompleted)
+        XCTAssertEqual(settings.snapshot.document.version, 1)
+        XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, settings.snapshot)
+    }
+
     func testCurrentVersionLoadsChosenFolderAndIndependentProgressWithoutRewriting() throws {
         let files = MemoryFileStore()
         let original = #"{"version":1,"libraryFolderPath":"/chosen library","firstRun":{"setupPresented":true,"libraryFolderCompleted":true,"seedsOffered":false}}"#
@@ -32,7 +95,7 @@ final class SettingsStoreTests: XCTestCase {
 
         XCTAssertEqual(settings.snapshot.document.libraryFolderPath, "/chosen library")
         XCTAssertEqual(settings.snapshot.document.firstRun,
-                       FirstRunProgress(setupPresented: true, libraryFolderCompleted: true))
+                       FirstRunProgress(setupPresented: true, libraryFolderCompleted: true, tourCompleted: true))
         XCTAssertNil(settings.snapshot.readOnlyError)
         try settings.markSetupPresented()
         XCTAssertEqual(writes, 0)
@@ -43,7 +106,7 @@ final class SettingsStoreTests: XCTestCase {
         let files = MemoryFileStore()
         let settings = SettingsService(store: SettingsStore(files: files, legacyFirstRun: .setupPresented))
 
-        XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true))
+        XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true, tourCompleted: true))
         XCTAssertNil(try files.stamp(at: "settings.json"))
         try settings.setLibraryFolder("/existing library")
 
@@ -82,7 +145,7 @@ final class SettingsStoreTests: XCTestCase {
 
         XCTAssertEqual(versions, [0])
         XCTAssertEqual(settings.snapshot.document.libraryFolderPath, "/legacy")
-        XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true))
+        XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true, tourCompleted: true))
         XCTAssertEqual(try files.text(at: "settings.json"), original)
 
         let before = settings.snapshot
@@ -183,6 +246,9 @@ final class SettingsStoreTests: XCTestCase {
             #"{"version":1,"libraryFolderPath":"relative/path","firstRun":{"setupPresented":false,"libraryFolderCompleted":false,"seedsOffered":false}}"#,
             #"{"version":1,"libraryFolderPath":"/bad\u0000path","firstRun":{"setupPresented":false,"libraryFolderCompleted":false,"seedsOffered":false}}"#,
             #"{"version":1,"firstRun":{"setupPresented":1,"libraryFolderCompleted":false,"seedsOffered":false}}"#,
+            #"{"version":1,"firstRun":{"setupPresented":true,"libraryFolderCompleted":true,"seedsOffered":true,"tourCompleted":null}}"#,
+            #"{"version":1,"firstRun":{"setupPresented":true,"libraryFolderCompleted":true,"seedsOffered":true,"tourCompleted":1}}"#,
+            #"{"version":1,"firstRun":{"setupPresented":true,"libraryFolderCompleted":true,"seedsOffered":true,"tourCompleted":"true"}}"#,
             #"{"version":0}"#, #"{"version":-1}"#
         ]
         for original in invalid {
@@ -312,7 +378,8 @@ final class SettingsStoreTests: XCTestCase {
 
         XCTAssertEqual(settings.snapshot.document.libraryFolderPath, "/external")
         XCTAssertEqual(settings.snapshot.document.firstRun,
-                       FirstRunProgress(setupPresented: true, libraryFolderCompleted: true, seedsOffered: true))
+                       FirstRunProgress(setupPresented: true, libraryFolderCompleted: true,
+                                        seedsOffered: true, tourCompleted: true))
         let object = try json(files)
         XCTAssertEqual(object["futureOption"] as? String, "kept")
         XCTAssertEqual((object["firstRun"] as? [String: Any])?["futureProgress"] as? Int, 7)
@@ -344,8 +411,9 @@ final class SettingsStoreTests: XCTestCase {
         try settings.markSetupPresented()
         try settings.completeLibraryFolderStep()
         try settings.markSeedsOffered()
+        try settings.completeTour()
         let completed = FirstRunProgress(
-            setupPresented: true, libraryFolderCompleted: true, seedsOffered: true)
+            setupPresented: true, libraryFolderCompleted: true, seedsOffered: true, tourCompleted: true)
         XCTAssertEqual(settings.snapshot.document.firstRun, completed)
 
         let paths: [String?] = ["/another", nil]
@@ -361,18 +429,20 @@ final class SettingsStoreTests: XCTestCase {
         let files = MemoryFileStore()
         let settings = SettingsService(store: SettingsStore(files: files))
         // FileStore access occurs only under SettingsStore's lock until the barrier.
-        DispatchQueue.concurrentPerform(iterations: 40) { number in
+        DispatchQueue.concurrentPerform(iterations: 50) { number in
             do {
-                switch number % 4 {
+                switch number % 5 {
                 case 0: try settings.setLibraryFolder("/folder\(number)")
                 case 1: try settings.markSetupPresented()
                 case 2: try settings.completeLibraryFolderStep()
-                default: try settings.markSeedsOffered()
+                case 3: try settings.markSeedsOffered()
+                default: try settings.completeTour()
                 }
             } catch { XCTFail("Concurrent settings change failed.") }
         }
         XCTAssertEqual(settings.snapshot.document.firstRun,
-                       FirstRunProgress(setupPresented: true, libraryFolderCompleted: true, seedsOffered: true))
+                       FirstRunProgress(setupPresented: true, libraryFolderCompleted: true,
+                                        seedsOffered: true, tourCompleted: true))
         XCTAssertNotNil(settings.snapshot.document.libraryFolderPath)
         XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, settings.snapshot)
     }
@@ -384,6 +454,6 @@ final class SettingsStoreTests: XCTestCase {
     private func allChanges(_ settings: SettingsService) -> [() throws -> Void] {
         [ { try settings.setLibraryFolder("/new") }, { try settings.setLibraryFolder(nil) },
           { try settings.markSetupPresented() }, { try settings.completeLibraryFolderStep() },
-          { try settings.markSeedsOffered() } ]
+          { try settings.markSeedsOffered() }, { try settings.completeTour() } ]
     }
 }

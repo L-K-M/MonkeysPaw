@@ -1,6 +1,6 @@
 import Foundation
 
-/// First-run steps 1, 2 and 4 (§11.4). Construct/release on the UI thread;
+/// First-run steps 1, 2, 4 and 5 (§11.4). Construct/release on the UI thread;
 /// intents and publications use MainThread. Setup itself remains in SetupModel.
 /// Composition retains one instance so recovery survives closing its window.
 public final class OnboardingModel {
@@ -8,6 +8,7 @@ public final class OnboardingModel {
         case setup
         case libraryFolder
         case seedOffer
+        case tour
         /// No step is currently eligible, including suppressed read-only steps.
         case complete
     }
@@ -38,6 +39,9 @@ public final class OnboardingModel {
     private var statusObserver: UUID?
     private var isPerformingIntent = false
     private var recoveryFolderRequired: Bool
+    // Recovery suppresses the tour for this whole session, even after the
+    // replacement folder is accepted. It never consumes a pending tour flag.
+    private var isRecoverySession: Bool
     private var lastSwitchMessage: LibrarySwitchOutcome?
     private var seedSummary: SeedSummary?
     private var seedingFailure: SeedFailure?
@@ -59,6 +63,7 @@ public final class OnboardingModel {
         self.hasConfiguredSyncServer = hasConfiguredSyncServer
         self.seedIfEmpty = seedIfEmpty
         recoveryFolderRequired = status.needsLibraryFolderStep
+        isRecoverySession = status.needsLibraryFolderStep
         let initialStep: Step = settings.isReadOnly ? .complete
             : settings.needsSetupPresentation ? .setup
             : settings.needsLibraryFolderStep || status.needsLibraryFolderStep ? .libraryFolder : .complete
@@ -75,7 +80,10 @@ public final class OnboardingModel {
             // Status observers already run through MainThread. Latch recovery
             // until a folder completion succeeds, even if a graph becomes healthy
             // before its choice/progress can be saved.
-            if health == .unavailableAtStartup { self.recoveryFolderRequired = true }
+            if health == .unavailableAtStartup {
+                self.recoveryFolderRequired = true
+                self.isRecoverySession = true
+            }
             guard !self.isPerformingIntent else { return }
             self.publish()
         }
@@ -149,6 +157,18 @@ public final class OnboardingModel {
         }
     }
 
+    /// The native view calls this for both Done and closing the tour.
+    /// Settings commit the flag before perform publishes the next step.
+    public func completeTour() {
+        mainThread.run {
+            guard !self.isPerformingIntent, self.state.step == .tour,
+                  self.settings.needsTourPresentation, self.status.libraryAvailable,
+                  !self.settings.needsSetupPresentation, !self.settings.needsLibraryFolderStep,
+                  !self.recoveryFolderRequired, !self.isRecoverySession else { return }
+            self.perform { self.settings.completeTour() }
+        }
+    }
+
     /// Recheck server/emptiness predicates and changes made through the shared
     /// settings service. A non-empty library does not consume the offer flag.
     public func refresh() {
@@ -200,10 +220,12 @@ public final class OnboardingModel {
         if !settings.isReadOnly {
             if settings.needsSetupPresentation { step = .setup }
             else if settings.needsLibraryFolderStep || recoveryFolderRequired { step = .libraryFolder }
-            else if settings.needsSeedOffer, status.libraryAvailable, !hasConfiguredSyncServer() {
-                do {
-                    if try isLibraryEmpty() { step = .seedOffer }
-                } catch { failure = SeedFailure(sanitizing: error) }
+            else if status.libraryAvailable {
+                let afterSeeds: Step = settings.needsTourPresentation && !isRecoverySession ? .tour : .complete
+                if settings.needsSeedOffer, !hasConfiguredSyncServer() {
+                    do { step = try isLibraryEmpty() ? .seedOffer : afterSeeds }
+                    catch { failure = SeedFailure(sanitizing: error) }
+                } else { step = afterSeeds }
             }
         }
         let next = State(step: step, isReadOnly: settings.isReadOnly,

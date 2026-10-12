@@ -62,12 +62,22 @@ final class LinuxOnboardingTests: XCTestCase {
         XCTAssertEqual(summary.seededCount, SeedCatalog.prompts.count)
         XCTAssertEqual(summary.skippedExistingCount, 0)
         XCTAssertEqual(try label("onboarding-seed-summary", in: onboarding), OnboardingStrings.seedSummary(summary))
-        XCTAssertEqual(environment.onboardingModel.state.step, .complete)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        XCTAssertEqual(try label("onboarding-tour-title", in: onboarding), OnboardingStrings.tourTitle)
+        XCTAssertEqual(try label("onboarding-tour-help", in: onboarding), OnboardingStrings.tourHelp)
+        let done = try settingsWidget("onboarding-done", in: onboarding)
+        XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(done))), OnboardingStrings.completeTour)
+        XCTAssertNotEqual(gtk_widget_get_visible(done), 0)
+        XCTAssertNotEqual(gtk_widget_get_visible(onboarding), 0)
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
         XCTAssertTrue(environment.settingsModel.firstRun.seedsOffered)
         let files = try RootedFileStore(root: defaultFolder)
         let before = try SeedCatalog.prompts.map { try files.read(at: $0.relativePath) }
-        try click("onboarding-close", in: onboarding)
-        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(onboarding) == 0 })
+        try click("onboarding-done", in: onboarding)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.onboardingModel.state.step == .complete && gtk_widget_get_visible(onboarding) == 0
+        })
+        XCTAssertTrue(environment.settingsModel.firstRun.tourCompleted)
         environment.activateToggle()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.results.count == SeedCatalog.prompts.count })
         XCTAssertTrue(environment.panel.isVisible)
@@ -85,14 +95,111 @@ final class LinuxOnboardingTests: XCTestCase {
         try click("onboarding-use-default", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .seedOffer })
         try click("onboarding-decline-seeds", in: window)
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .complete })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .tour })
         XCTAssertTrue(environment.settingsModel.firstRun.seedsOffered)
         XCTAssertNil(environment.onboardingModel.state.seedSummary)
         XCTAssertTrue(try RootedFileStore(root: defaultFolder).listFiles().isEmpty)
+        try click("onboarding-done", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .complete })
         try relaunch()
         environment.presentFromLauncher()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isVisible })
         XCTAssertTrue(windows(titled: LinuxStrings.onboarding).isEmpty)
+    }
+
+    func testRestartResumesPendingTourAndClosingCompletesIt() throws {
+        _ = try tourStep()
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
+        try relaunch()
+        environment.presentFromLauncher()
+        let window = try visibleWindow(titled: LinuxStrings.onboarding)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        XCTAssertEqual(try label("onboarding-tour-help", in: window), OnboardingStrings.tourHelp)
+        XCTAssertTrue(windows(titled: LinuxStrings.setup).isEmpty)
+        gtk_window_close(mp_window(window))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.onboardingModel.state.step == .complete && gtk_widget_get_visible(window) == 0
+        })
+        XCTAssertTrue(environment.settingsModel.firstRun.tourCompleted)
+        let saved = SettingsService(store: SettingsStore(files: try RootedFileStore(root: paths.configDirectory)))
+        XCTAssertTrue(saved.snapshot.document.firstRun.tourCompleted)
+        try relaunch()
+        environment.presentFromLauncher()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isVisible })
+        XCTAssertTrue(windows(titled: LinuxStrings.onboarding).isEmpty)
+    }
+
+    func testTourWriteFailureKeepsDoneAndClosePendingUntilRetry() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
+        let window = try tourStep()
+        let files = try RootedFileStore(root: paths.configDirectory)
+        let before = try files.read(at: "settings.json")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: paths.configDirectory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.configDirectory.path) }
+        try click("onboarding-done", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.settingsError == .writeFailed(.ioFailure) })
+        // Drain queued refreshes and their publications, not just the first
+        // error render. The message must stay visible until completion retries.
+        drainUI()
+        drainUI()
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        XCTAssertEqual(environment.onboardingModel.state.settingsError, .writeFailed(.ioFailure))
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
+        XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertEqual(try label("onboarding-settings-error", in: window),
+            GeneralSettingsStrings.settingsError(.writeFailed(.ioFailure)))
+        XCTAssertEqual(try files.read(at: "settings.json"), before)
+        gtk_window_close(mp_window(window))
+        drainUI()
+        drainUI()
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        XCTAssertEqual(environment.onboardingModel.state.settingsError, .writeFailed(.ioFailure))
+        XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+        let errorLabel = try settingsWidget("onboarding-settings-error", in: window)
+        XCTAssertNotEqual(gtk_widget_get_visible(errorLabel), 0)
+        XCTAssertEqual(try label("onboarding-settings-error", in: window),
+            GeneralSettingsStrings.settingsError(.writeFailed(.ioFailure)))
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
+        XCTAssertEqual(try files.read(at: "settings.json"), before)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.configDirectory.path)
+        try relaunch()
+        environment.presentFromLauncher()
+        let resumed = try visibleWindow(titled: LinuxStrings.onboarding)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        gtk_window_close(mp_window(resumed))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.onboardingModel.state.step == .complete && gtk_widget_get_visible(resumed) == 0
+        })
+        XCTAssertTrue(environment.settingsModel.firstRun.tourCompleted)
+        XCTAssertNil(environment.onboardingModel.state.settingsError)
+    }
+
+    func testHidingTourForSettingsAndShuttingDownKeepItPending() throws {
+        let window = try tourStep()
+        environment.showSettings()
+        _ = try visibleWindow(titled: LinuxStrings.settings)
+        XCTAssertEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
+        environment.presentFromLauncher()
+        XCTAssertEqual(try visibleWindow(titled: LinuxStrings.onboarding), window)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        try relaunch()
+        environment.presentFromLauncher()
+        _ = try visibleWindow(titled: LinuxStrings.onboarding)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
+    }
+
+    func testDestroyedTourIgnoresDetachedDoneAndDoesNotCompleteIt() throws {
+        let window = try tourStep()
+        let done = try settingsWidget("onboarding-done", in: window)
+        g_object_ref(done)
+        defer { g_object_unref(done) }
+        gtk_window_destroy(mp_window(window))
+        _ = gtk_widget_activate(done)
+        drainUI()
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
+        XCTAssertFalse(environment.settingsModel.firstRun.tourCompleted)
     }
 
     func testChoosingAnEmptyFolderSeedsOnlyTheCurrentGraphAndKeepsSettingsObservers() throws {
@@ -160,7 +267,7 @@ final class LinuxOnboardingTests: XCTestCase {
         try RootedFileStore(root: defaultFolder).write(Data("---\nfields: [\n---\nInvalid".utf8), at: "invalid.md")
         let window = try folderStep()
         try click("onboarding-use-default", in: window)
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .complete })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .tour })
         XCTAssertFalse(environment.settingsModel.firstRun.seedsOffered)
         XCTAssertNil(environment.onboardingModel.state.seedSummary)
         XCTAssertEqual(try RootedFileStore(root: defaultFolder).listFiles().map(\.relativePath), ["invalid.md"])
@@ -305,9 +412,11 @@ final class LinuxOnboardingTests: XCTestCase {
         let failure = try XCTUnwrap(environment.onboardingModel.state.seedFailure)
         XCTAssertEqual(try label("onboarding-seed-failure", in: window), OnboardingStrings.seedFailure(failure))
         XCTAssertTrue(environment.settingsModel.firstRun.seedsOffered)
-        XCTAssertEqual(environment.onboardingModel.state.step, .complete)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
         XCTAssertTrue(try RootedFileStore(root: defaultFolder).listFiles().isEmpty)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: defaultFolder.path)
+        try click("onboarding-done", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .complete })
         try relaunch()
         environment.presentFromLauncher()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isVisible })
@@ -330,7 +439,7 @@ final class LinuxOnboardingTests: XCTestCase {
         XCTAssertTrue(try RootedFileStore(root: defaultFolder).listFiles().isEmpty)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.configDirectory.path)
         try click("onboarding-decline-seeds", in: window)
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .complete })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .tour })
     }
 
     func testCancelledAndStaleChooserResponsesCannotSwitchAfterClosingAndReopening() throws {
@@ -359,7 +468,7 @@ final class LinuxOnboardingTests: XCTestCase {
         XCTAssertNil(environment.settingsModel.libraryFolderPath)
         chooser.requests[2].done(second.path)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.settingsModel.libraryFolderPath == second.path })
-        XCTAssertEqual(environment.onboardingModel.state.step, .complete)
+        XCTAssertEqual(environment.onboardingModel.state.step, .tour)
     }
 
     func testDestroyedWindowIgnoresQueuedChooserAndDetachedButtons() throws {
@@ -525,6 +634,7 @@ final class LinuxOnboardingTests: XCTestCase {
         environment.settingsModel.markSetupPresented()
         environment.settingsModel.completeLibraryFolderStep()
         environment.settingsModel.markSeedsOffered()
+        environment.settingsModel.completeTour()
     }
 
     private func folderStep() throws -> GTK.Widget {
@@ -532,6 +642,15 @@ final class LinuxOnboardingTests: XCTestCase {
         environment.presentFromLauncher()
         let window = try visibleWindow(titled: LinuxStrings.onboarding)
         XCTAssertEqual(environment.onboardingModel.state.step, .libraryFolder)
+        return window
+    }
+
+    private func tourStep() throws -> GTK.Widget {
+        let window = try folderStep()
+        try click("onboarding-use-default", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .seedOffer })
+        try click("onboarding-decline-seeds", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .tour })
         return window
     }
 

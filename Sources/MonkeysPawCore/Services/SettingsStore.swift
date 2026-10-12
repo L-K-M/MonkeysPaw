@@ -70,7 +70,8 @@ public final class SettingsStore: @unchecked Sendable {
         let bytes: Data
         do { bytes = try files.read(at: path) }
         catch FileStoreError.notFound {
-            let progress = FirstRunProgress(setupPresented: legacyFirstRun == .setupPresented)
+            let alreadyInstalled = legacyFirstRun == .setupPresented
+            let progress = FirstRunProgress(setupPresented: alreadyInstalled, tourCompleted: alreadyInstalled)
             let defaults = try SettingsDocument(libraryFolderPath: nil, firstRun: progress)
             return Loaded(document: defaults, object: [:], needsRewrite: true)
         }
@@ -95,6 +96,7 @@ public final class SettingsStore: @unchecked Sendable {
         progress["setupPresented"] = document.firstRun.setupPresented
         progress["libraryFolderCompleted"] = document.firstRun.libraryFolderCompleted
         progress["seedsOffered"] = document.firstRun.seedsOffered
+        progress["tourCompleted"] = document.firstRun.tourCompleted
         object["firstRun"] = progress
         object["libraryFolderPath"] = document.libraryFolderPath.map { $0 as Any } ?? NSNull()
         object["version"] = document.version

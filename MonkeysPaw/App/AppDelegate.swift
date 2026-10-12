@@ -208,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentedOnboardingStep = step
         switch step {
         case .setup: showSetup()
-        case .libraryFolder, .seedOffer: showOnboarding()
+        case .libraryFolder, .seedOffer, .tour: showOnboarding()
         case .complete: pickerModel?.open()
         }
         return false
@@ -363,7 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentedOnboardingStep = step
         switch step {
         case .setup: showSetup()
-        case .libraryFolder, .seedOffer:
+        case .libraryFolder, .seedOffer, .tour:
             guard onboardingWindow?.window?.isVisible != true else { return }
             showOnboarding()
         case .complete: break // Keep a seed result visible until Done.

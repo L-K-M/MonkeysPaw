@@ -17,6 +17,7 @@ public final class SettingsModel {
     public var needsSetupPresentation: Bool { !isReadOnly && !firstRun.setupPresented }
     public var needsLibraryFolderStep: Bool { !isReadOnly && !firstRun.libraryFolderCompleted }
     public var needsSeedOffer: Bool { !isReadOnly && !firstRun.seedsOffered }
+    public var needsTourPresentation: Bool { !isReadOnly && !firstRun.tourCompleted }
 
     private let settings: SettingsService
     private var observers: [UUID: (SettingsSnapshot, SettingsError?) -> Void] = [:]
@@ -69,6 +70,10 @@ public final class SettingsModel {
 
     public func markSeedsOffered() {
         perform { try settings.markSeedsOffered() }
+    }
+
+    public func completeTour() {
+        perform { try settings.completeTour() }
     }
 
     private func perform(_ intent: () throws -> Void) {

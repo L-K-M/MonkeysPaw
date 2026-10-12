@@ -12,9 +12,11 @@ final class LinuxOnboardingWindow {
     private var isDestroyed = false
     private var isChoosing = false
     private var chooserRevision = 0
+    private var renderedStep: OnboardingModel.Step?
 
     private var folderPage: GTK.Widget!
     private var seedPage: GTK.Widget!
+    private var tourPage: GTK.Widget!
     private var completePage: GTK.Widget!
     private var libraryPath: GTK.Widget!
     private var libraryDefault: GTK.Widget!
@@ -26,6 +28,7 @@ final class LinuxOnboardingWindow {
     private var seedFailure: GTK.Widget!
     private var completeMessage: GTK.Widget!
     private var libraryStatus: GTK.Widget!
+    private var closeButton: GTK.Widget!
 
     private var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
     private var isFolderStep: Bool {
@@ -40,6 +43,7 @@ final class LinuxOnboardingWindow {
         self.chooser = chooser
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
+        GTK.onCloseRequested(window) { [weak self] in self?.close() }
         gtk_widget_set_name(window, "onboarding-window")
         gtk_window_set_title(mp_window(window), LinuxStrings.onboarding)
         gtk_window_set_default_size(mp_window(window), Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
@@ -58,24 +62,28 @@ final class LinuxOnboardingWindow {
         let content = pageBox()
         folderPage = libraryFolderPage()
         seedPage = seedOfferPage()
+        tourPage = tourContent()
         completePage = completionPage()
-        for page in [folderPage!, seedPage!, completePage!] { gtk_box_append(mp_box(content), page) }
+        for page in [folderPage!, seedPage!, tourPage!, completePage!] { gtk_box_append(mp_box(content), page) }
         settingsError = namedLabel("onboarding-settings-error", in: content)
         libraryStatus = namedLabel("onboarding-library-status", in: content)
-        let close = GTK.button(LinuxStrings.close) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.hide()
+        closeButton = GTK.button(LinuxStrings.close) { [weak self] in
+            self?.close()
         }
-        gtk_widget_set_name(close, "onboarding-close")
-        gtk_box_append(mp_box(content), close)
+        gtk_widget_set_name(closeButton, "onboarding-close")
+        gtk_box_append(mp_box(content), closeButton)
         let scroll = gtk_scrolled_window_new()!
         gtk_scrolled_window_set_child(mp_scrolled_window(scroll), content)
         gtk_window_set_child(mp_window(window), scroll)
 
         model.onChange = { [weak self] in
             guard let self, !self.isDestroyed else { return }
-            // Onboarding can replace the graph without going through General.
-            self.general.refresh()
+            // Folder intents can replace the graph without going through
+            // General. A tour write failure must retain its settings error;
+            // refreshing General here would clear that transient error.
+            if self.model.state.step == .libraryFolder || self.renderedStep == .libraryFolder {
+                self.general.refresh()
+            }
             self.render()
         }
         general.onChange = { [weak self] in self?.render() }
@@ -100,6 +108,12 @@ final class LinuxOnboardingWindow {
         guard !isDestroyed else { return }
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
+    }
+
+    private func close() {
+        guard isVisible else { return }
+        if model.state.step == .tour { model.completeTour() }
+        else { hide() }
     }
 
     private func libraryFolderPage() -> GTK.Widget {
@@ -158,15 +172,30 @@ final class LinuxOnboardingWindow {
         return page
     }
 
+    private func tourContent() -> GTK.Widget {
+        let page = pageBox()
+        let title = namedLabel("onboarding-tour-title", in: page)
+        gtk_label_set_text(mp_label(title), OnboardingStrings.tourTitle)
+        let help = namedLabel("onboarding-tour-help", in: page)
+        gtk_label_set_text(mp_label(help), OnboardingStrings.tourHelp)
+        return page
+    }
+
     private func render() {
         guard !isDestroyed else { return }
         let state = model.state
+        let previousStep = renderedStep
+        renderedStep = state.step
         if !canCompleteFolder { cancelFolderChoice() }
         // Setup has its own window. Rendering never presents this one, so
         // suppressed read-only steps cannot reopen onboarding automatically.
         gtk_widget_set_visible(folderPage, isFolderStep ? 1 : 0)
         gtk_widget_set_visible(seedPage, state.step == .seedOffer ? 1 : 0)
-        gtk_widget_set_visible(completePage, state.step == .complete ? 1 : 0)
+        gtk_widget_set_visible(tourPage, state.step == .tour ? 1 : 0)
+        gtk_widget_set_visible(completePage, state.step == .tour || state.step == .complete ? 1 : 0)
+        gtk_button_set_label(mp_button(closeButton), state.step == .tour ? OnboardingStrings.completeTour : LinuxStrings.close)
+        gtk_widget_set_name(closeButton, state.step == .tour ? "onboarding-done" : "onboarding-close")
+        gtk_window_set_default_widget(mp_window(window), state.step == .tour ? closeButton : nil)
         renderFolder()
 
         let error = state.settingsError ?? general.state.settingsError
@@ -175,8 +204,12 @@ final class LinuxOnboardingWindow {
         setMessage(seedSummary, state.seedSummary.map(OnboardingStrings.seedSummary))
         setMessage(seedFailure, state.seedFailure.map(OnboardingStrings.seedFailure))
         let hasResult = state.seedSummary != nil || state.seedFailure != nil
-        setMessage(completeMessage, !state.isReadOnly && state.libraryStatus == .available && error == nil && !hasResult
+        setMessage(completeMessage, state.step == .complete && !state.isReadOnly
+            && state.libraryStatus == .available && error == nil && !hasResult
             ? LinuxStrings.onboardingComplete : nil)
+        // Keep legacy seed results visible, but dismiss a tour only after its
+        // completion is published. A failed settings write stays on the tour.
+        if previousStep == .tour && state.step == .complete { hide() }
     }
 
     private func renderFolder() {

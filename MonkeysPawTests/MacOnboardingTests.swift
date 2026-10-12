@@ -98,12 +98,14 @@ final class MacOnboardingTests: XCTestCase {
         return files
     }
 
-    private func saveProgress(folder: URL? = nil, folderCompleted: Bool = true, seedsOffered: Bool = true) throws {
+    private func saveProgress(folder: URL? = nil, folderCompleted: Bool = true,
+                              seedsOffered: Bool = true, tourCompleted: Bool = true) throws {
         let service = SettingsService(store: SettingsStore(files: try files(at: data)))
         try service.setLibraryFolder(folder?.path)
         try service.markSetupPresented()
         if folderCompleted { try service.completeLibraryFolderStep() }
         if seedsOffered { try service.markSeedsOffered() }
+        if tourCompleted { try service.completeTour() }
     }
 
     func testSetupCloseAfterTerminationCannotResumeOnboarding() throws {
@@ -250,19 +252,24 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertTrue(presentation.canOfferSeeds)
         presentation.acceptSeeds()
         XCTAssertTrue(spin { presentation.state.seedSummary != nil })
-        XCTAssertEqual(try model().state.step, .complete)
+        XCTAssertEqual(try model().state.step, .tour)
         let summary = try XCTUnwrap(model().state.seedSummary)
         XCTAssertEqual(summary.seededCount, 10)
         XCTAssertEqual(summary.skippedExistingCount, 0)
         XCTAssertEqual(delegate.pickerModel?.results.count, 10)
         XCTAssertTrue(delegate.pickerModel?.results.contains { $0.relativePath == "code/explain-an-error.md" } == true)
-        XCTAssertEqual(presentation.state.step, .complete)
+        XCTAssertEqual(presentation.state.step, .tour)
         XCTAssertEqual(presentation.state.seedSummary, summary)
+        XCTAssertTrue(presentation.canCompleteTour)
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
         let seeded = try files(at: root).listFiles().map { ($0.relativePath, try files(at: root).read(at: $0.relativePath)) }
         try model().acceptSeeds()
         for (path, bytes) in seeded { XCTAssertEqual(try files(at: root).read(at: path), bytes) }
-        presentation.close()
-        XCTAssertTrue(spin { !onboarding.isVisible })
+        presentation.completeTour()
+        XCTAssertTrue(spin { presentation.state.step == .complete && !onboarding.isVisible })
+        XCTAssertFalse(presentation.canCompleteTour)
+        XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
         XCTAssertEqual(policies, [])
         XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
 
@@ -278,6 +285,154 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertEqual(delegate.pickerModel?.results.count, 10)
         XCTAssertEqual(legacyWrites, 1)
         XCTAssertTrue(notifications.isEmpty)
+    }
+
+    func testTourCloseIntentCompletesItAndDoesNotRepeat() throws {
+        let presentation = try tourStep()
+        let onboarding = try window()
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        presentation.close()
+        XCTAssertTrue(spin { presentation.state.step == .complete && !onboarding.isVisible })
+        XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        let saved = SettingsService(store: SettingsStore(files: try files(at: data)))
+        XCTAssertTrue(saved.snapshot.document.firstRun.tourCompleted)
+        start()
+        delegate.beginOnboarding()
+        XCTAssertEqual(try model().state.step, .complete)
+        XCTAssertNil(try controller().window)
+        XCTAssertTrue(try files(at: root).listFiles().isEmpty)
+    }
+
+    func testNativeCloseCompletesTourResumedAfterRestart() throws {
+        _ = try tourStep()
+        start()
+        delegate.beginOnboarding()
+        let presentation = try presentation()
+        let onboarding = try window()
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertTrue(presentation.canCompleteTour)
+        onboarding.performClose(nil)
+        XCTAssertTrue(spin { presentation.state.step == .complete && !onboarding.isVisible })
+        XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertEqual(policies, [])
+    }
+
+    func testDirectCloseCompletesTourAfterNativeWindowTeardown() throws {
+        try saveProgress(tourCompleted: false)
+        start()
+        delegate.beginOnboarding()
+        let presentation = try presentation()
+        let onboarding = try window()
+        XCTAssertEqual(presentation.state.step, .tour)
+        onboarding.close() // NSWindow.close bypasses windowShouldClose.
+        XCTAssertTrue(spin { presentation.state.step == .complete && !onboarding.isVisible })
+        XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+    }
+
+    func testFirstDirectTourCloseWriteFailureRetainsErrorAfterRoutingAndRetry() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
+        let presentation = try tourStep()
+        let onboarding = try window()
+        let config = try files(at: data)
+        let before = try config.read(at: "settings.json")
+        let failure = SettingsError.writeFailed(.ioFailure)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: data.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path) }
+        // Direct close must be the first failed intent: a pre-existing error
+        // deduplicates publication and can hide a routing refresh regression.
+        onboarding.close()
+        drainMainQueue()
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertEqual(presentation.state.settingsError, failure)
+        XCTAssertEqual(presentation.messages, [GeneralSettingsStrings.settingsError(failure)])
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertEqual(try config.read(at: "settings.json"), before)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path)
+        presentation.completeTour()
+        XCTAssertTrue(spin { presentation.state.step == .complete && !onboarding.isVisible })
+        XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertNil(presentation.state.settingsError)
+    }
+
+    func testTourWriteFailureKeepsDoneAndBothNativeClosePathsPendingUntilRetry() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
+        let presentation = try tourStep()
+        let onboarding = try window()
+        let config = try files(at: data)
+        let before = try config.read(at: "settings.json")
+        let failure = SettingsError.writeFailed(.ioFailure)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: data.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path) }
+        presentation.completeTour()
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertEqual(presentation.state.settingsError, failure)
+        XCTAssertEqual(presentation.messages, [GeneralSettingsStrings.settingsError(failure)])
+        XCTAssertTrue(presentation.canCompleteTour)
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertEqual(try config.read(at: "settings.json"), before)
+        onboarding.performClose(nil)
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertEqual(presentation.state.settingsError, failure)
+        onboarding.close()
+        drainMainQueue()
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertEqual(presentation.messages, [GeneralSettingsStrings.settingsError(failure)])
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertEqual(try config.read(at: "settings.json"), before)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path)
+        start()
+        delegate.beginOnboarding()
+        let resumed = try self.presentation()
+        let resumedWindow = try window()
+        XCTAssertEqual(resumed.state.step, .tour)
+        resumedWindow.performClose(nil)
+        XCTAssertTrue(spin { resumed.state.step == .complete && !resumedWindow.isVisible })
+        XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertNil(resumed.state.settingsError)
+    }
+
+    func testNonEmptyFreshLibraryReachesTourWithoutOfferingSeeds() throws {
+        try files(at: root).write(Data("Keep this prompt".utf8), at: "kept.md")
+        start()
+        delegate.beginOnboarding()
+        try setupWindow().close()
+        XCTAssertTrue(spin { self.delegate.onboardingWindow?.window?.isVisible == true })
+        let presentation = try presentation()
+        presentation.useDefaultFolder()
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
+        XCTAssertTrue(presentation.canCompleteTour)
+        presentation.completeTour()
+        XCTAssertEqual(presentation.state.step, .complete)
+        XCTAssertEqual(try files(at: root).read(at: "kept.md"), Data("Keep this prompt".utf8))
+    }
+
+    func testTerminationKeepsPendingTourAndRetiresQueuedDirectCloseCompletion() throws {
+        let presentation = try tourStep()
+        try window().close()
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        drainMainQueue()
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.tourCompleted)
+        XCTAssertNil(try controller().window)
+    }
+
+    private func tourStep() throws -> OnboardingViewState {
+        start()
+        delegate.beginOnboarding()
+        try setupWindow().close()
+        XCTAssertTrue(spin { self.delegate.onboardingWindow?.window?.isVisible == true })
+        let presentation = try presentation()
+        presentation.useDefaultFolder()
+        XCTAssertEqual(presentation.state.step, .seedOffer)
+        presentation.declineSeeds()
+        XCTAssertEqual(presentation.state.step, .tour)
+        XCTAssertTrue(presentation.canCompleteTour)
+        return presentation
     }
 
     func testLegacyInstallShowsFolderAndDecliningNeverCopiesAfterRestart() throws {

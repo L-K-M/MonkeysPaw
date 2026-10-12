@@ -220,17 +220,29 @@ Footers differ per OS:
    even if copying then fails, so the offer never repeats after a restart.
    A later recovery folder step clears the shown result. A prompt arriving after
    the offer can make the service return zero for both counts.
-5. A one-screen tour of the picker and fill form.
+5. New installs see a one-screen tour of the global hotkey, picker search,
+   fill form (Tab, Return and Escape), and Copy versus Deliver. It follows
+   the seed offer, whether accepted or declined, or the folder step when
+   seeds are not offered. `OnboardingModel.completeTour()` handles both
+   finishing and closing the tour. It persists `firstRun.tourCompleted`
+   before publishing completion; a failed write leaves `.tour` pending with
+   the typed settings error. A restart resumes the pending tour. Read-only
+   settings and a library recovery session never show it.
 
-Settings version 1 records `setupPresented`, `libraryFolderCompleted` and
-`seedsOffered` independently (§5.1). Accepting the default folder completes the
-library step too. Composition supplies the legacy M1 Setup fact from macOS
-`hasShownDeliverySetup` or Linux `<config>/setup-shown` only when settings are
-missing: it marks Setup presented in memory, leaves the library step pending,
-and is saved with the next successful settings change. Folder changes, including
+Settings version 1 records `setupPresented`, `libraryFolderCompleted`,
+`seedsOffered` and `tourCompleted` independently (§5.1). The optional
+`tourCompleted` key defaults to `setupPresented` only when absent from an
+existing file, marking upgrades from v0.1.0 done. Fresh defaults have an
+explicit false value, preserved when Setup is presented; a present value
+must be a boolean. Unknown keys still survive every rewrite. Accepting the
+default folder completes the library step too. Composition supplies the legacy
+M1 Setup fact from macOS `hasShownDeliverySetup` or Linux `<config>/setup-shown`
+only when settings are missing: it marks Setup and the tour done in memory
+for an existing install, leaves the library step pending, and is saved with
+the next successful settings change. Folder changes, including
 returning to the default, keep every first-run flag. `OnboardingModel` resumes
-at the first incomplete eligible step: Setup presented, folder, then seed offer.
-Sync sign-in and the tour remain deferred to M6 and M3. Folder intents share
+at the first incomplete eligible step: Setup presented, folder, seed offer,
+then tour. Sync sign-in remains deferred to M6. Folder intents share
 General's `LibraryLocationControl` composition exception (§4.2); validation,
 graph replacement and folder persistence remain in composition. Only a
 successful switch or a saved, already-active healthy folder permits
@@ -240,9 +252,9 @@ resolve the active graph at call time, so choosing another folder also changes
 the seed eligibility check and copy destination. A read-only settings error
 is surfaced by `SettingsModel` and `OnboardingModel`. While
 settings are read-only, the model reports `needsSetupPresentation`,
-`needsLibraryFolderStep` and `needsSeedOffer` as false. The UI shows the error
-instead of repeating onboarding that cannot persist each launch. A failed
-completion does not claim durable progress.
+`needsLibraryFolderStep`, `needsSeedOffer` and `needsTourPresentation` as false.
+The UI shows the error instead of repeating onboarding that cannot persist
+each launch. A failed completion does not claim durable progress.
 
 Both desktops wire the shared settings model: macOS to the app-data
 `settings.json`, Linux to its config root (§5.1). Each imports its legacy M1
@@ -359,5 +371,12 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   exclusive creation with alternate names, assign fresh ids when an id is
   already taken, and never overwrite.
 - **Tour.** New installs see a one-screen tour of the picker and fill form
-  right after the seed step. Closing it counts as done. Upgrades from v0.1.0
-  are marked done.
+  right after accepting or declining seeds, or after the folder step when
+  seeds are not offered. `firstRun.tourCompleted` is an optional version-1
+  settings flag. Fresh installs start false; an older settings file without
+  it infers completion from `setupPresented`, so upgrades from v0.1.0 are
+  marked done. Closing counts as done through `completeTour()`, which saves
+  the flag before publishing completion. A write failure keeps the tour
+  pending with the typed settings error, and a restart resumes it. Read-only
+  settings skip the tour. Library recovery suppresses it for the session,
+  without consuming a pending flag.

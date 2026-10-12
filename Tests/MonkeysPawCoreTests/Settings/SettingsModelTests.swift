@@ -60,6 +60,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertTrue(model.needsSetupPresentation)
         XCTAssertTrue(model.needsLibraryFolderStep)
         XCTAssertTrue(model.needsSeedOffer)
+        XCTAssertTrue(model.needsTourPresentation)
 
         model.markSetupPresented()
         XCTAssertFalse(model.needsSetupPresentation)
@@ -69,6 +70,8 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertNil(model.libraryFolderPath)
         XCTAssertFalse(model.needsLibraryFolderStep)
         model.markSeedsOffered()
+        XCTAssertTrue(model.needsTourPresentation)
+        model.completeTour()
         model.setLibraryFolder("/another")
         model.clearLibraryFolder()
 
@@ -76,6 +79,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertFalse(reopened.needsSetupPresentation)
         XCTAssertFalse(reopened.needsLibraryFolderStep)
         XCTAssertFalse(reopened.needsSeedOffer)
+        XCTAssertFalse(reopened.needsTourPresentation)
         XCTAssertNil(reopened.error)
     }
 
@@ -85,6 +89,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertFalse(model.needsSetupPresentation)
         XCTAssertTrue(model.needsLibraryFolderStep)
         XCTAssertTrue(model.needsSeedOffer)
+        XCTAssertFalse(model.needsTourPresentation)
     }
 
     func testReadOnlyStateIsVisibleImmediatelyAndEveryIntentRetainsTheRejectedFile() throws {
@@ -105,9 +110,10 @@ final class SettingsModelTests: XCTestCase {
             XCTAssertFalse(model.needsSetupPresentation)
             XCTAssertFalse(model.needsLibraryFolderStep)
             XCTAssertFalse(model.needsSeedOffer)
+            XCTAssertFalse(model.needsTourPresentation)
             let intents = [ { model.setLibraryFolder("/chosen") }, { model.clearLibraryFolder() },
                             { model.markSetupPresented() }, { model.completeLibraryFolderStep() },
-                            { model.markSeedsOffered() }, { model.refresh() } ]
+                            { model.markSeedsOffered() }, { model.completeTour() }, { model.refresh() } ]
             for intent in intents {
                 intent()
                 XCTAssertEqual(model.error, expected)
@@ -115,6 +121,7 @@ final class SettingsModelTests: XCTestCase {
                 XCTAssertFalse(model.needsSetupPresentation)
                 XCTAssertFalse(model.needsLibraryFolderStep)
                 XCTAssertFalse(model.needsSeedOffer)
+                XCTAssertFalse(model.needsTourPresentation)
                 XCTAssertEqual(try files.text(at: "settings.json"), original)
             }
         }
@@ -225,11 +232,12 @@ final class SettingsModelTests: XCTestCase {
     func testDocumentAndPersistedSchemaContainOnlyLibraryChoiceAndFirstRunFlags() throws {
         // The public document has no arbitrary string map or content/secret API.
         let document = try SettingsDocument(libraryFolderPath: "/library", firstRun:
-            FirstRunProgress(setupPresented: true, libraryFolderCompleted: true, seedsOffered: true))
+            FirstRunProgress(setupPresented: true, libraryFolderCompleted: true,
+                             seedsOffered: true, tourCompleted: true))
         XCTAssertEqual(document.version, 1)
         XCTAssertEqual(document.libraryFolderPath, "/library")
         XCTAssertEqual(document.firstRun, FirstRunProgress(
-            setupPresented: true, libraryFolderCompleted: true, seedsOffered: true))
+            setupPresented: true, libraryFolderCompleted: true, seedsOffered: true, tourCompleted: true))
 
         let files = MemoryFileStore()
         let model = SettingsModel(settings: SettingsService(store: SettingsStore(files: files)))
@@ -237,11 +245,12 @@ final class SettingsModelTests: XCTestCase {
         model.markSetupPresented()
         model.completeLibraryFolderStep()
         model.markSeedsOffered()
+        model.completeTour()
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with:
             files.read(at: "settings.json")) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["version", "libraryFolderPath", "firstRun"])
         let progress = try XCTUnwrap(object["firstRun"] as? [String: Bool])
-        XCTAssertEqual(Set(progress.keys), ["setupPresented", "libraryFolderCompleted", "seedsOffered"])
+        XCTAssertEqual(Set(progress.keys), ["setupPresented", "libraryFolderCompleted", "seedsOffered", "tourCompleted"])
         XCTAssertTrue(progress.values.allSatisfy { $0 })
     }
 }

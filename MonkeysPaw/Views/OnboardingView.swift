@@ -23,8 +23,10 @@ final class OnboardingViewState: ObservableObject {
         model.onChange = { [weak self] in
             mainThread.run { [weak self] in
                 guard let self else { return }
+                let previousStep = self.state.step
                 self.state = self.model.state
                 self.onChange?()
+                if previousStep == .tour && self.state.step == .complete { self.onClose?() }
             }
         }
     }
@@ -35,6 +37,7 @@ final class OnboardingViewState: ObservableObject {
     }
 
     var canOfferSeeds: Bool { state.step == .seedOffer && state.libraryStatus == .available && !state.isReadOnly }
+    var canCompleteTour: Bool { state.step == .tour && state.libraryStatus == .available && !state.isReadOnly }
 
     var messages: [String] {
         var messages = SettingsViewState.generalMessages(for: state.lastSwitchMessage,
@@ -54,8 +57,12 @@ final class OnboardingViewState: ObservableObject {
     func useDefaultFolder() { if canChooseFolder { model.useDefaultFolder() } }
     func acceptSeeds() { if canOfferSeeds { model.acceptSeeds() } }
     func declineSeeds() { if canOfferSeeds { model.declineSeeds() } }
+    func completeTour() { if canCompleteTour { model.completeTour() } }
     func showSettings() { openSettings() }
-    func close() { onClose?() }
+    func close() {
+        if state.step == .tour { completeTour() }
+        else { onClose?() }
+    }
 }
 
 struct OnboardingView: View {
@@ -74,9 +81,16 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
-                Button(Strings.settings, action: presentation.showSettings)
+                if presentation.state.step != .tour {
+                    Button(Strings.settings, action: presentation.showSettings)
+                }
                 Spacer()
-                if presentation.state.step == .complete {
+                if presentation.state.step == .tour {
+                    Button(OnboardingStrings.completeTour, action: presentation.completeTour)
+                        .disabled(!presentation.canCompleteTour)
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("onboarding-done")
+                } else if presentation.state.step == .complete {
                     Button(Strings.done, action: presentation.close)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("onboarding-done")
@@ -121,15 +135,27 @@ struct OnboardingView: View {
                     .disabled(!presentation.canOfferSeeds)
                     .accessibilityIdentifier("onboarding-decline-seeds")
             }
+        case .tour:
+            Text(OnboardingStrings.tourTitle).font(.title2)
+                .accessibilityIdentifier("onboarding-tour-title")
+            Text(OnboardingStrings.tourHelp).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("onboarding-tour-help")
+            seedResult
         case .complete:
             Text(Strings.onboardingTitle).font(.title2)
-            if let summary = presentation.state.seedSummary {
-                Text(OnboardingStrings.seedSummary(summary))
-                    .accessibilityLabel(OnboardingStrings.seedSummary(summary))
-                    .accessibilityIdentifier("onboarding-seed-summary")
+            if presentation.state.seedSummary != nil {
+                seedResult
             } else if presentation.messages.isEmpty {
                 Text(Strings.onboardingComplete)
             }
+        }
+    }
+
+    @ViewBuilder private var seedResult: some View {
+        if let summary = presentation.state.seedSummary {
+            Text(OnboardingStrings.seedSummary(summary))
+                .accessibilityLabel(OnboardingStrings.seedSummary(summary))
+                .accessibilityIdentifier("onboarding-seed-summary")
         }
     }
 }

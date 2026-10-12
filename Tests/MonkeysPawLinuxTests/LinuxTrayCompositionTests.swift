@@ -28,6 +28,7 @@ final class LinuxTrayCompositionTests: XCTestCase {
         environment.settingsModel.markSetupPresented()
         environment.settingsModel.completeLibraryFolderStep()
         environment.settingsModel.markSeedsOffered()
+        environment.settingsModel.completeTour()
         let quit = g_simple_action_new(ActionName.quit.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(quit)) { [weak self] in self?.quitRequests += 1 }
         g_action_map_add_action(mp_action_map(application), mp_action(quit))
