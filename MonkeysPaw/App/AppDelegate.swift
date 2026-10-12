@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var onboardingModel: OnboardingModel?
     private var libraryStatusObserver: UUID?
     private var libraryMenuItems: [NSMenuItem] = []
+    private var isShutDown = false
     private var onboardingStarted = false
     private var presentedOnboardingStep: OnboardingModel.Step?
     private var notifier: UserNotificationNotifier?
@@ -137,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The hosted application's default delegate has production roots.
         // Only explicitly injected test graphs may access the filesystem.
-        guard !Self.isRunningTests || rootsAreInjected else { return }
+        guard !isShutDown, !Self.isRunningTests || rootsAreInjected else { return }
         let log = CompositeLogSink(
             sinks: [OSLogSink(), FileLogSink(dataDirectory: dataDirectory)],
             policy: LogLevelPolicy(environmentValue: ProcessInfo.processInfo.environment["MONKEYSPAW_LOG"]))
@@ -167,19 +168,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) { tearDown() }
 
     private func tearDown() {
+        guard !isShutDown else { return }
+        isShutDown = true
         watcher?.stop()
         onboardingStarted = false
-        setupWindow?.onClose = nil
+        presentedOnboardingStep = nil
+        setupWindow?.tearDown()
         onboardingWindow?.tearDown()
         windowActivation.tearDown()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        guard !isShutDown else { return }
         // Returning from System Settings refreshes grants and registration state.
         setupModel?.refresh()
         shortcutsSettingsModel?.refresh()
         generalSettingsModel?.refresh()
         onboardingModel?.refresh()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !isShutDown, let onboardingModel else { return false }
+        // This launcher request owns routing the refreshed step, even if a
+        // model publication occurs inline while refreshing.
+        onboardingStarted = false
+        onboardingModel.refresh()
+        onboardingStarted = true
+        if setupWindow?.isVisible == true {
+            showSetup()
+            return false
+        }
+
+        let step = onboardingModel.state.step
+        presentedOnboardingStep = step
+        switch step {
+        case .setup: showSetup()
+        case .libraryFolder, .seedOffer: showOnboarding()
+        case .complete: pickerModel?.open()
+        }
+        return false
     }
 
     private func compose(log: LogSink) {
@@ -292,6 +319,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             activateApplication: activateApplication, folderChooser: folderChooser,
             openSettings: { [weak self] in self?.showSettings() })
         window.onStateChange = { [weak self] in self?.presentPendingOnboarding() }
+        window.onClose = { [weak self] in
+            guard let self, !self.isShutDown else { return }
+            self.presentedOnboardingStep = nil
+        }
         onboardingWindow = window
     }
 
@@ -311,13 +342,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hosted launch constructs models without opening windows. Tests explicitly
     /// enter this same launch flow with isolated roots and injected drivers.
     func beginOnboarding() {
+        guard !isShutDown else { return }
         onboardingModel?.refresh()
         onboardingStarted = true
         presentPendingOnboarding()
     }
 
     private func presentPendingOnboarding() {
-        guard onboardingStarted, let onboardingModel else { return }
+        guard !isShutDown, onboardingStarted, let onboardingModel else { return }
         let step = onboardingModel.state.step
         // Setup records progress when shown, but remains the first screen until
         // you close it. Its close callback runs after native window teardown.
@@ -328,14 +360,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .setup: showSetup()
         case .libraryFolder, .seedOffer:
             guard onboardingWindow?.window?.isVisible != true else { return }
-            focusTracker?.cancelPendingRestoration()
-            panelController?.cancelForOwnedWindow()
-            pickerModel?.dismiss()
-            panelController?.hide()
-            delivery?.invalidatePendingPresentation()
-            onboardingWindow?.show()
+            showOnboarding()
         case .complete: break // Keep a seed result visible until Done.
         }
+    }
+
+    private func showOnboarding() {
+        focusTracker?.cancelPendingRestoration()
+        panelController?.cancelForOwnedWindow()
+        pickerModel?.dismiss()
+        panelController?.hide()
+        delivery?.invalidatePendingPresentation()
+        onboardingWindow?.show()
     }
 
     /// UI-thread composition intent for the later General/onboarding views.
@@ -344,7 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// launch, without saving the choice; another switch or a relaunch recovers.
     func switchLibrary(to url: URL?) -> LibrarySwitchResult {
         assert(Thread.isMainThread, "Library replacement is main-thread-confined")
-        guard let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
+        guard !isShutDown, let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
         guard pickerModel.state != .delivering else { return .deliveryInFlight }
         pickerModel.dismiss()
 
@@ -685,6 +721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() {
+        guard !isShutDown else { return }
         // Revoke older retries and suppress this cancellation's restore before
         // presenting Setup. Native key-window transitions may still be pending.
         focusTracker?.cancelPendingRestoration()
@@ -696,7 +733,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings() {
         mainThread.run { [weak self] in
-            guard let self else { return }
+            guard let self, !self.isShutDown else { return }
             self.focusTracker?.cancelPendingRestoration()
             self.panelController?.cancelForOwnedWindow()
             // A summon or dismissal may be queued behind an older restore.

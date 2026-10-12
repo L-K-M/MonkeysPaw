@@ -77,6 +77,11 @@ final class MacOnboardingTests: XCTestCase {
     private func model() throws -> OnboardingModel { try XCTUnwrap(delegate.onboardingModel) }
     private func controller() throws -> OnboardingWindowController { try XCTUnwrap(delegate.onboardingWindow) }
     private func window() throws -> NSWindow { try XCTUnwrap(controller().window) }
+    private func setupWindow() throws -> NSWindow {
+        try XCTUnwrap(NSApp.windows.first {
+            !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.setupTitle
+        })
+    }
     private func presentation() throws -> OnboardingViewState {
         // Headless hosts build SwiftUI's accessibility tree lazily. Check the
         // actual hosted view's binding, then drive its state and intents.
@@ -99,6 +104,122 @@ final class MacOnboardingTests: XCTestCase {
         try service.markSetupPresented()
         if folderCompleted { try service.completeLibraryFolderStep() }
         if seedsOffered { try service.markSeedsOffered() }
+    }
+
+    func testSetupCloseAfterTerminationCannotResumeOnboarding() throws {
+        start()
+        delegate.beginOnboarding()
+        let setup = try setupWindow()
+        let setupController = try XCTUnwrap(setup.delegate as? SetupWindowController)
+        let continuation = try XCTUnwrap(setupController.onClose)
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        XCTAssertNil(setupController.onClose)
+        XCTAssertNil(setup.delegate)
+        XCTAssertFalse(setup.isVisible)
+
+        setup.close()
+        continuation() // Even an already-retained continuation must be inert.
+        delegate.beginOnboarding()
+        delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        drainMainQueue()
+        XCTAssertNil(try controller().window)
+        XCTAssertEqual(delegate.pickerModel?.state, .closed)
+    }
+
+    func testQueuedSetupCloseCannotResumeAfterTermination() throws {
+        start()
+        delegate.beginOnboarding()
+        try setupWindow().close() // The next-step continuation is now queued.
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        drainMainQueue()
+        XCTAssertNil(try controller().window)
+    }
+
+    func testClosedFolderStepResumesAtSameStepOnReopen() throws {
+        start(legacy: .setupPresented)
+        delegate.beginOnboarding()
+        let onboarding = try window()
+        onboarding.close()
+        try model().refresh()
+        XCTAssertFalse(onboarding.isVisible, "Closing must leave the step pending without reopening it immediately")
+
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertTrue(try window() === onboarding)
+        XCTAssertEqual(try model().state.step, .libraryFolder)
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.libraryFolderCompleted)
+
+        onboarding.close()
+        delegate.beginOnboarding()
+        XCTAssertTrue(onboarding.isVisible, "A close must clear presentation bookkeeping for the same pending step")
+    }
+
+    func testCompletedFirstRunReopenOpensPickerWithoutOnboarding() throws {
+        try saveProgress()
+        start()
+        delegate.beginOnboarding()
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertEqual(try model().state.step, .complete)
+        XCTAssertNil(try controller().window)
+        XCTAssertEqual(delegate.pickerModel?.state, .picker)
+    }
+
+    func testExplicitSetupMenuRequestKeepsSetupForPendingOnboarding() throws {
+        start(legacy: .setupPresented)
+        delegate.beginOnboarding()
+        let onboarding = try window()
+        onboarding.close()
+        let menu = delegate.makeStatusMenu()
+        let setupItem = try XCTUnwrap(menu.items.first { $0.title == Strings.setup })
+        let action = try XCTUnwrap(setupItem.action)
+        XCTAssertTrue(NSApp.sendAction(action, to: setupItem.target, from: setupItem))
+        let setup = try setupWindow()
+        XCTAssertTrue(setup.isVisible)
+        XCTAssertFalse(onboarding.isVisible)
+
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
+        XCTAssertTrue(setup.isVisible)
+        XCTAssertFalse(onboarding.isVisible)
+        setup.close()
+        drainMainQueue()
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertEqual(try model().state.step, .libraryFolder)
+    }
+
+    func testShowHidesVisibleOnboardingWhenSettingsReturnToSetup() throws {
+        start(legacy: .setupPresented)
+        delegate.beginOnboarding()
+        let controller = try controller()
+        let onboarding = try window()
+        controller.onStateChange = nil // Isolate show() from composition routing.
+        let reset = Data(#"{"version":1,"libraryFolderPath":null,"firstRun":{"setupPresented":false,"libraryFolderCompleted":false,"seedsOffered":false}}"#.utf8)
+        try files(at: data).write(reset, at: "settings.json")
+        try XCTUnwrap(delegate.settingsModel).clearLibraryFolder() // Reread the replaced settings.
+        XCTAssertEqual(controller.presentation.state.step, .setup)
+        XCTAssertTrue(onboarding.isVisible)
+
+        controller.show()
+        XCTAssertFalse(onboarding.isVisible)
+        try model().markSetupPresented()
+        controller.show()
+        XCTAssertTrue(try window() === onboarding)
+        XCTAssertTrue(onboarding.isVisible, "A later eligible step reuses the hidden window")
+    }
+
+    func testShowHidesVisibleOnboardingWhenReadOnlyChangeHookIsUnavailable() throws {
+        start(legacy: .setupPresented)
+        delegate.beginOnboarding()
+        let controller = try controller()
+        let onboarding = try window()
+        controller.presentation.onChange = nil // show() must also enforce eligibility itself.
+        try files(at: data).write(Data(#"{"version":999}"#.utf8), at: "settings.json")
+        try XCTUnwrap(delegate.settingsModel).clearLibraryFolder()
+        XCTAssertTrue(controller.presentation.state.isReadOnly)
+        XCTAssertTrue(onboarding.isVisible)
+
+        controller.show()
+        XCTAssertFalse(onboarding.isVisible)
     }
 
     func testFreshLaunchPresentsSetupThenFolderSeedsOnceAndNoWindowAfterRestart() throws {
@@ -144,6 +265,11 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertTrue(spin { !onboarding.isVisible })
         XCTAssertEqual(policies, [])
         XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
+
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertFalse(onboarding.isVisible)
+        XCTAssertEqual(delegate.pickerModel?.state, .picker)
+        delegate.pickerModel?.dismiss()
 
         start()
         delegate.beginOnboarding()
@@ -254,7 +380,9 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertFalse(onboarding.isVisible, "Refresh must respect a dismissed recovery window")
         XCTAssertEqual(try model().state.step, .libraryFolder)
         XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.libraryFolderCompleted)
-        try controller().show()
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertTrue(onboarding.isVisible)
+        XCTAssertTrue(try window() === onboarding)
         let readable = directory.appendingPathComponent("readable", isDirectory: true)
         try files(at: readable).write(Data("Recovered".utf8), at: "recovered.md")
         try presentation().chooseFolder()
@@ -546,6 +674,12 @@ final class MacOnboardingTests: XCTestCase {
 
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         XCTAssertEqual(chooserCancellations, 1)
+    }
+
+    private func drainMainQueue() {
+        let drained = expectation(description: "Deferred native window work completes")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 2)
     }
 
     private func spin(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {

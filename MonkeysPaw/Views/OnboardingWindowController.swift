@@ -7,6 +7,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     let presentation: OnboardingViewState
     private(set) var window: NSWindow?
     var onStateChange: (() -> Void)?
+    var onClose: (() -> Void)?
     private let mainThread: MainThread
     private let activateApplication: () -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
@@ -41,6 +42,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         // Native windows and hosting views can outlive composition. Revoke work
         // at the owner's teardown rather than waiting for this controller to die.
         onStateChange = nil
+        onClose = nil
         presentation.onChange = nil
         presentation.onChooseFolder = nil
         presentation.onClose = nil
@@ -54,7 +56,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         mainThread.run { [weak self] in
             guard let self else { return }
             self.presentation.model.refresh()
-            guard !self.presentation.state.isReadOnly, self.presentation.state.step != .setup else { return }
+            guard !self.presentation.state.isReadOnly, self.presentation.state.step != .setup else {
+                self.window?.close()
+                return
+            }
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
             self.window = window
@@ -71,7 +76,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         presentation.updateLibraryPaths(active: active, default: defaultPath)
     }
 
-    func windowWillClose(_ notification: Notification) { endChooser() }
+    func windowWillClose(_ notification: Notification) {
+        endChooser()
+        onClose?()
+    }
 
     private func endChooser() {
         // Revoke before cancellation: an injected or native sheet may reply inline.

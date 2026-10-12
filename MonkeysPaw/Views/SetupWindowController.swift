@@ -14,6 +14,14 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
+    func tearDown() {
+        // Closing for teardown must not advance the first-run flow.
+        onClose = nil
+        window?.delegate = nil
+        window?.close()
+        window = nil
+    }
+
     func windowWillClose(_ notification: Notification) {
         // Let AppKit finish closing Setup before raising the next first-run step.
         DispatchQueue.main.async { [weak self] in self?.onClose?() }
