@@ -78,3 +78,11 @@ public struct PromptExternalChange: Equatable, Sendable {
     /// Nil only for a deleted path.
     public let newStamp: FileStamp?
 }
+
+/// Captured with index publication, before callbacks can reenter or a newer
+/// publication replaces the cache. Only changed paths have stamps here.
+struct PromptIndexChange: Sendable {
+    let changes: LibraryChangeSet
+    let stamps: [RelativePath: FileStamp]
+    let version: UInt64
+}

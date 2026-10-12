@@ -110,6 +110,9 @@ Rules:
   Values in this plan are their initial values.
 - **Thread rules** (Copywraith and Vervellum lessons):
   - Panel and window operations run on the UI thread.
+  - `PromptEditingService` runs file and codec work through the serial,
+    nonblocking `BackgroundWork` port and returns immutable results through
+    `MainThread`; platform workers never use the dispatch main queue on Linux.
   - Paste injection runs off the UI thread and is never awaited inline by a
     view.
   - Hotkeys fire on key *release*, with a toggle debounce.

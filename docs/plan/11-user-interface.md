@@ -332,7 +332,13 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   time, and a `{clipboard}` placeholder; browsing or typing never reads the
   clipboard. Non-UTF-8, oversized and future-format files open read-only.
   History lists revisions newest first with restore (§5.5).
-- **Saving and conflicts.** Saves pass the editor's load stamp. If the file
+- **Saving and conflicts.** Saves pass the editor's load stamp. The editor
+  loads and saves through Core's `PromptEditingService`; file and codec work
+  runs off the UI thread, and session-tagged typed completions and external
+  changes return through `MainThread`. Retiring a session or library graph
+  drops late replies. A committed history-maintenance warning carries the
+  saved entry and stamp, so the editor can clear dirty state and show the
+  warning without retrying the write. If the file
   changes on disk while you have unsaved edits, the conflict dialog opens at
   once: keep mine (save over theirs), take theirs (reload), or save mine as
   a copy. A deletion on disk offers keep mine (recreate), save mine as a

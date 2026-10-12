@@ -1,0 +1,282 @@
+import Foundation
+
+/// One editor service per library graph. Requests, session retirement and
+/// deactivate originate on the UI thread; all file/codec work uses the serial
+/// work port. Completions and external changes use MainThread. The lock also
+/// protects session membership from worker and index callback threads.
+public final class PromptEditingService: @unchecked Sendable {
+    private enum OpenFile {
+        case unloaded, missing(previousStamp: FileStamp?), present(FileStamp)
+
+        func matches(_ stamp: FileStamp?) -> Bool {
+            switch self {
+            case .unloaded: return true
+            case .missing: return stamp == nil
+            case .present(let loaded): return loaded == stamp
+            }
+        }
+    }
+
+    private struct Session {
+        let path: String
+        let onExternalChange: (PromptExternalChange) -> Void
+        var file = OpenFile.unloaded
+        var observedStamp: FileStamp?
+        var indexVersion: UInt64 = 0
+        // A publication after the initial checked read waits for its result.
+        var pendingInitialChange: PromptExternalChange?
+        var savesInFlight = 0
+        var deferredChanges: [PromptExternalChange] = []
+        var committedStamps: [FileStamp] = []
+    }
+
+    private let library: LibraryService
+    private let index: PromptIndex
+    private let work: BackgroundWork
+    private let main: MainThread
+    private let lock = NSLock()
+    private var isActive = true
+    private var sessions: [PromptEditingSession: Session] = [:]
+    private var indexObserver: UUID?
+
+    public init(library: LibraryService, index: PromptIndex, work: BackgroundWork, main: MainThread) {
+        self.library = library
+        self.index = index
+        self.work = work
+        self.main = main
+        indexObserver = index.addObserver { [weak self] change in self?.indexChanged(change) }
+    }
+
+    deinit {
+        if let indexObserver { index.removeObserver(indexObserver) }
+    }
+
+    /// Binds a token to exact path bytes. Registration is quiet and does no I/O.
+    public func beginSession(at path: String,
+                             onExternalChange: @escaping (PromptExternalChange) -> Void = { _ in }) -> PromptEditingSession {
+        let token = PromptEditingSession(token: UUID())
+        locked {
+            guard isActive else { return }
+            sessions[token] = Session(path: path, onExternalChange: onExternalChange)
+        }
+        return token
+    }
+
+    /// Drops queued requests and replies. A write already executing may finish;
+    /// its completion cannot reach a retired editor.
+    public func retire(_ session: PromptEditingSession) { locked { sessions[session] = nil } }
+
+    /// Composition retires the whole graph before replacing its library root.
+    public func deactivate() {
+        let observer = locked { () -> UUID? in
+            isActive = false
+            sessions.removeAll()
+            let observer = indexObserver
+            indexObserver = nil
+            return observer
+        }
+        if let observer { index.removeObserver(observer) }
+    }
+
+    public func load(session: PromptEditingSession, completion: @escaping (PromptLoadOutcome) -> Void) {
+        submit(session, operation: { service, path in
+            let snapshot = service.index.editingSnapshot(at: path)
+            service.locked {
+                guard var state = service.sessions[session], case .unloaded = state.file else { return }
+                if state.indexVersion <= snapshot.version {
+                    state.observedStamp = snapshot.stamp
+                    state.indexVersion = snapshot.version
+                    state.pendingInitialChange = nil
+                }
+                service.sessions[session] = state
+            }
+            do { return PromptLoadOutcome.loaded(try service.library.loadForEditing(at: path)) }
+            catch FileStoreError.notFound { return .deleted }
+            catch { return .failed(Self.failure(error)) }
+        }, completion: { service, result in
+            let pending = service.locked { () -> PromptExternalChange? in
+                guard var state = service.sessions[session] else { return nil }
+                switch result {
+                case .loaded(let loaded):
+                    state.file = .present(loaded.stamp)
+                    if state.observedStamp == nil { state.observedStamp = loaded.stamp }
+                case .deleted: state.file = .missing(previousStamp: state.observedStamp)
+                case .failed: return nil
+                }
+                let pending = state.pendingInitialChange
+                state.pendingInitialChange = nil
+                service.sessions[session] = state
+                return pending.flatMap { state.file.matches($0.newStamp) ? nil : $0 }
+            }
+            completion(result)
+            if let pending { service.deliver(pending, to: session) }
+        })
+    }
+
+    /// Saves at the session's bound path. Use its load stamp for normal saves;
+    /// nil explicitly permits keep-mine overwrite or recreation (§5.5).
+    public func save(_ source: String, session: PromptEditingSession, expectedStamp: FileStamp?,
+                     completion: @escaping (PromptSaveOutcome) -> Void) {
+        let live = locked { () -> Bool in
+            guard var state = sessions[session] else { return false }
+            state.savesInFlight += 1
+            sessions[session] = state
+            return true
+        }
+        guard live else { return }
+        submit(session, operation: { service, path in
+            let previous = service.index.cachedEntry(at: path)
+            let outcome = service.saveSource(source, at: path, expectedStamp: expectedStamp)
+            if let entry = outcome.committedEntry, let previous {
+                service.index.acceptSaved(entry, replacing: previous)
+            }
+            return outcome
+        }, completion: { service, result in
+            service.completeSave(result, session: session, completion: completion)
+        })
+    }
+
+    /// Uses exclusive create with bounded alternate names and a fresh identity.
+    /// A copy does not change the original session's path, stamp or history.
+    public func createCopy(_ source: String, near path: String, session: PromptEditingSession,
+                           completion: @escaping (PromptSaveOutcome) -> Void) {
+        submit(session, operation: { service, _ in
+            service.writeSource(source, at: path) { document in
+                try service.library.createCopyForEditing(document, near: path)
+            }
+        }, completion: { _, result in completion(result) })
+    }
+
+    private func submit<Result>(_ session: PromptEditingSession,
+                                operation: @escaping (PromptEditingService, String) -> Result,
+                                completion: @escaping (PromptEditingService, Result) -> Void) {
+        guard path(for: session) != nil else { return }
+        work.run { [weak self] in
+            guard let self, let path = self.path(for: session) else { return }
+            let result = operation(self, path)
+            self.main.run { [weak self] in
+                guard let self, self.path(for: session) != nil else { return }
+                completion(self, result)
+            }
+        }
+    }
+
+    private func saveSource(_ source: String, at path: String, expectedStamp: FileStamp?) -> PromptSaveOutcome {
+        writeSource(source, at: path) { document in
+            do { return try library.saveForEditing(document, at: path, expectedStamp: expectedStamp) }
+            catch LibraryError.conflict {
+                // Includes deletion during the library's stamp/read or staging
+                // checks. Read again on this worker to distinguish the outcomes.
+                do { return .conflict(currentStamp: try library.loadForEditing(at: path).stamp) }
+                catch FileStoreError.notFound { return .deleted }
+            }
+        }
+    }
+
+    private func writeSource(_ source: String, at path: String,
+                             write: (PromptDocument) throws -> PromptSaveOutcome) -> PromptSaveOutcome {
+        let document = PromptCodec.parse(source, filename: LibraryPath.filename(path))
+        if document.isReadOnly { return .readOnly(.unsupportedFormat(document.frontMatter.format)) }
+        let issues = document.issues
+        guard !issues.contains(where: { $0.severity == .error }) else { return .invalid(issues) }
+        do { return try write(document) }
+        catch PromptWriteError.sourceTooLarge { return .invalid([PromptIssue(.sourceTooLarge)]) }
+        catch let error as PromptWriteError {
+            if case .unsupportedFormat(let version) = error { return .readOnly(.unsupportedFormat(version)) }
+            return .failed(.write(error))
+        }
+        catch { return .failed(Self.failure(error)) }
+    }
+
+    private func completeSave(_ result: PromptSaveOutcome, session: PromptEditingSession,
+                              completion: (PromptSaveOutcome) -> Void) {
+        let deferred = locked { () -> [PromptExternalChange] in
+            guard var state = sessions[session] else { return [] }
+            state.savesInFlight -= 1
+            if let entry = result.committedEntry {
+                state.file = .present(entry.stamp)
+                state.committedStamps.append(entry.stamp)
+            }
+            if case .deleted = result { state.file = .missing(previousStamp: state.observedStamp) }
+            var changes: [PromptExternalChange] = []
+            if state.savesInFlight == 0 {
+                changes = state.deferredChanges.filter { change in
+                    !state.committedStamps.contains { $0 == change.newStamp }
+                }
+                state.deferredChanges = []
+                state.committedStamps = []
+            }
+            sessions[session] = state
+            return changes
+        }
+        completion(result)
+        for change in deferred { deliver(change, to: session) }
+    }
+
+    private func indexChanged(_ change: PromptIndexChange) {
+        let paths = change.changes.created.union(change.changes.modified).union(change.changes.deleted)
+        let watching = locked { sessions.compactMap { paths.contains(RelativePath($0.value.path)) ? $0.key : nil } }
+        for session in watching {
+            main.run { [weak self] in self?.observe(change, session: session) }
+        }
+    }
+
+    private func observe(_ publication: PromptIndexChange, session: PromptEditingSession) {
+        let change = locked { () -> PromptExternalChange? in
+            guard var state = sessions[session], publication.version > state.indexVersion else { return nil }
+            state.indexVersion = publication.version
+            defer { sessions[session] = state }
+            let stamp = publication.stamps[RelativePath(state.path)]
+            guard state.observedStamp != stamp else { return nil }
+            let kind: PromptExternalChange.Kind
+            if stamp == nil { kind = .deleted }
+            else if state.observedStamp == nil { kind = .recreated }
+            else if case .missing(let previous) = state.file, previous == state.observedStamp { kind = .recreated }
+            else { kind = .modified }
+            state.observedStamp = stamp
+            let change = PromptExternalChange(kind: kind, newStamp: stamp)
+            if case .unloaded = state.file {
+                state.pendingInitialChange = change
+                return nil
+            }
+            guard !state.file.matches(stamp) else { return nil }
+            if state.savesInFlight > 0 {
+                state.deferredChanges.append(change)
+                return nil
+            }
+            return change
+        }
+        if let change { deliver(change, to: session) }
+    }
+
+    private func deliver(_ change: PromptExternalChange, to session: PromptEditingSession) {
+        let callback = locked { () -> ((PromptExternalChange) -> Void)? in
+            guard var state = sessions[session] else { return nil }
+            if state.savesInFlight > 0 {
+                state.deferredChanges.append(change)
+                sessions[session] = state
+                return nil
+            }
+            return state.onExternalChange
+        }
+        callback?(change)
+    }
+
+    private func path(for session: PromptEditingSession) -> String? { locked { sessions[session]?.path } }
+
+    private static func failure(_ error: Error) -> PromptEditingFailure {
+        switch error {
+        case let error as FileStoreError: return .fileStore(error)
+        case let error as LibraryError: return .library(error)
+        case let error as PromptWriteError: return .write(error)
+        case let error as ULIDGenerationError: return .identity(error)
+        default: return .library(.operationFailed)
+        }
+    }
+
+    private func locked<T>(_ work: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return work()
+    }
+}
