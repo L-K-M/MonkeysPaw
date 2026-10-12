@@ -187,6 +187,28 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(presentation.editorState.prompt, copy)
     }
 
+    func testReopeningSavedCopyPreservesFilterAndSection() throws {
+        let source = "---\ntitle: Kept title\nfavorite: true\n---\nOriginal"
+        let presentation = try open(source)
+        presentation.edit(source + " plus")
+        presentation.saveAsCopy()
+        work.drain()
+        let copy = try XCTUnwrap(presentation.editorState.lastCopy)
+        watchers[0].emit(.file(FileStoreEvent(relativePath: copy.relativePath.string, kind: .created)))
+        work.drain()
+        XCTAssertEqual(presentation.snapshot.selection, copy)
+        presentation.selectSection(.favourites)
+        presentation.setFilter("Kept")
+        try window().close()
+        XCTAssertNil(presentation.editorState.prompt)
+        XCTAssertNil(presentation.editorState.lastCopy, "Core currently clears lastCopy on close")
+        delegate.showLibrary()
+        work.drain()
+        XCTAssertEqual(presentation.editorState.prompt, copy)
+        XCTAssertEqual(presentation.snapshot.filter, "Kept")
+        XCTAssertEqual(presentation.snapshot.selectedSection, .favourites)
+    }
+
     func testDeletionConflictKeepMineRecreates() throws {
         let presentation = try externalConflict(.deleted)
         XCTAssertEqual(try dialog().dialog.responses,
@@ -266,6 +288,47 @@ final class MacLibraryEditorTests: XCTestCase {
         work.drain()
         XCTAssertFalse(window.isVisible)
         XCTAssertEqual(try body(), "Saved before close")
+    }
+
+    func testUnavailableLibraryDoesNotAutoOpenOrSelectCachedRows() throws {
+        try put("Second", at: "two.md")
+        let presentation = try open()
+        let target = try XCTUnwrap(presentation.snapshot.rows.first { $0.relativePath == "two.md" }?.selection)
+        try window().close()
+        presentation.setLibraryAvailable(false)
+        presentation.didShow()
+        presentation.selectPath("two.md")
+        presentation.moveSelection(.down)
+        presentation.openPrompt(target)
+        presentation.setFilter("one")
+        work.drain()
+        XCTAssertNil(presentation.editorState.prompt)
+        XCTAssertEqual(presentation.editorState.status, .idle)
+        XCTAssertEqual(presentation.snapshot.selection?.relativePath, "one.md")
+        presentation.setLibraryAvailable(true)
+        presentation.didShow()
+        work.drain()
+        XCTAssertEqual(presentation.editorState.source, "Original")
+    }
+
+    func testDeletedPromptDoesNotAutoReopenFromStaleBrowserUpdates() throws {
+        let presentation = try open()
+        // A reread can discover deletion before the watcher updates the index.
+        try files.delete(at: "one.md")
+        presentation.revert()
+        work.drain()
+        XCTAssertNil(presentation.editorState.prompt)
+        XCTAssertEqual(presentation.snapshot.selection?.relativePath, "one.md")
+        presentation.setFilter("one")
+        XCTAssertNil(presentation.editorState.prompt, "A browser publication must not reopen the deleted prompt")
+        presentation.editor.request(.rename)
+        XCTAssertNil(presentation.editorState.prompt, "An editor publication must not reopen the deleted prompt")
+        work.drain()
+        XCTAssertEqual(presentation.editorState.status, .idle)
+        try put("Restored")
+        delegate.showLibrary()
+        work.drain()
+        XCTAssertEqual(presentation.editorState.source, "Restored", "A fresh presentation can retry the retained selection")
     }
 
     func testRevertDiscardAndFailedDecisionSavePreserveTheGuard() throws {
@@ -380,6 +443,7 @@ final class MacLibraryEditorTests: XCTestCase {
     }
 
     func testModelDrivenSaveRewriteRetainsNativeUndoHistory() throws {
+        XCTAssertTrue(Thread.isMainThread)
         let presentation = try open()
         let coordinator = LibrarySourceEditor.Coordinator(onEdit: presentation.edit)
         let scroll = LibrarySourceEditor.makeScrollView(coordinator: coordinator)
@@ -409,18 +473,32 @@ final class MacLibraryEditorTests: XCTestCase {
             isEditable: true, onEdit: presentation.edit)
         undo.endUndoGrouping()
         XCTAssertEqual(text.string, saved)
+        XCTAssertEqual(presentation.editorState.source, saved)
+        XCTAssertFalse(presentation.editorState.isDirty, "A model-driven rewrite must not republish a draft")
         XCTAssertEqual(text.selectedRange(), NSRange(location: (saved as NSString).length, length: 0),
             "The injected header must not move the body caret into YAML")
-        XCTAssertTrue(text.undoManager?.canUndo == true)
-        XCTAssertTrue(NSApp.sendAction(Selector(("undo:")), to: text, from: nil))
-        waitForSource("Original plus", in: presentation)
+        XCTAssertTrue(undo.canUndo)
+        // UndoManager publishes didUndo/didRedo synchronously, so the native
+        // text, model source and dirty state must agree before the call returns.
+        undo.undo()
         XCTAssertEqual(text.string, "Original plus", "Undo first removes the model-driven normalization")
         XCTAssertEqual(presentation.editorState.source, "Original plus")
-        XCTAssertTrue(text.undoManager?.canUndo == true, "The earlier native typing action remains undoable")
-        XCTAssertTrue(NSApp.sendAction(Selector(("undo:")), to: text, from: nil))
-        waitForSource("Original", in: presentation)
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertTrue(undo.canUndo, "The earlier native typing action remains undoable")
+        undo.undo()
         XCTAssertEqual(text.string, "Original")
         XCTAssertEqual(presentation.editorState.source, "Original")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertTrue(undo.canRedo)
+        undo.redo()
+        XCTAssertEqual(text.string, "Original plus")
+        XCTAssertEqual(presentation.editorState.source, "Original plus")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertTrue(undo.canRedo)
+        undo.redo()
+        XCTAssertEqual(text.string, saved)
+        XCTAssertEqual(presentation.editorState.source, saved)
+        XCTAssertFalse(presentation.editorState.isDirty)
     }
 
     func testQuitWithOnlyQueuedActionsRepliesAfterTheyDrain() throws {
@@ -503,15 +581,6 @@ final class MacLibraryEditorTests: XCTestCase {
         let drained = expectation(description: "AppKit deferred termination reply")
         DispatchQueue.main.async { drained.fulfill() }
         wait(for: [drained], timeout: 2)
-    }
-
-    private func waitForSource(_ source: String, in presentation: LibraryViewState) {
-        // Wait for AppKit's textDidChange publication after native Undo,
-        // without synthesizing callbacks or requiring a key window.
-        let published = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            presentation.editorState.source == source
-        }, object: nil)
-        wait(for: [published], timeout: 2)
     }
 
     func testSettingsRefusesDirtyAndSavingLibrarySwitchesAndRetiresPendingOldLoads() throws {
@@ -605,6 +674,7 @@ final class MacLibraryEditorTests: XCTestCase {
     }
 
     func testNativeSourceEditorUndoAndMarkedTextSurviveStateRefreshes() throws {
+        XCTAssertTrue(Thread.isMainThread)
         let presentation = try open()
         let coordinator = LibrarySourceEditor.Coordinator(onEdit: presentation.edit)
         let scroll = LibrarySourceEditor.makeScrollView(coordinator: coordinator)
@@ -624,11 +694,22 @@ final class MacLibraryEditorTests: XCTestCase {
         text.breakUndoCoalescing()
         undo.endUndoGrouping()
         XCTAssertEqual(presentation.editorState.source, "Original plus")
+        XCTAssertTrue(presentation.editorState.isDirty)
         XCTAssertTrue(undo.canUndo)
-        XCTAssertTrue(NSApp.sendAction(Selector(("undo:")), to: text, from: nil))
-        waitForSource("Original", in: presentation)
+        undo.undo()
         XCTAssertEqual(text.string, "Original")
         XCTAssertEqual(presentation.editorState.source, "Original")
+        XCTAssertFalse(presentation.editorState.isDirty)
+        XCTAssertTrue(undo.canRedo)
+        undo.redo()
+        XCTAssertEqual(text.string, "Original plus")
+        XCTAssertEqual(presentation.editorState.source, "Original plus")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(text.string, "Original")
+        XCTAssertEqual(presentation.editorState.source, "Original")
+        XCTAssertFalse(presentation.editorState.isDirty)
         undo.groupsByEvent = true
         text.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
             replacementRange: NSRange(location: 8, length: 0))
@@ -651,6 +732,8 @@ final class MacLibraryEditorTests: XCTestCase {
             isEditable: true, onEdit: { replacementEdits.append($0) })
         XCTAssertFalse(text.hasMarkedText())
         XCTAssertEqual(text.string, "New library")
+        XCTAssertFalse(undo.canUndo)
+        XCTAssertFalse(undo.canRedo)
         XCTAssertTrue(replacementEdits.isEmpty)
         coordinator.deactivate()
         text.insertText(" retired", replacementRange: NSRange(location: 11, length: 0))

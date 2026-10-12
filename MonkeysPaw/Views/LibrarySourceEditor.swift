@@ -76,13 +76,26 @@ struct LibrarySourceEditor: NSViewRepresentable {
         private var revision: UInt64 = 0
         private var isActive = true
         private var isUpdating = false
+        private weak var textView: NSTextView?
         private let undo = UndoManager()
 
-        init(onEdit: @escaping (String) -> Void) { self.onEdit = onEdit }
+        init(onEdit: @escaping (String) -> Void) {
+            self.onEdit = onEdit
+            super.init()
+            // Native undo/redo can replace text without textDidChange. Publish
+            // the completed operation synchronously from this view's manager.
+            NotificationCenter.default.addObserver(self, selector: #selector(undoOrRedoDidChange(_:)),
+                name: .NSUndoManagerDidUndoChange, object: undo)
+            NotificationCenter.default.addObserver(self, selector: #selector(undoOrRedoDidChange(_:)),
+                name: .NSUndoManagerDidRedoChange, object: undo)
+        }
+
+        deinit { NotificationCenter.default.removeObserver(self) }
 
         func update(_ text: NSTextView, source: String, path: RelativePath?, revision: UInt64 = 0,
                     isEditable: Bool, onEdit: @escaping (String) -> Void) {
             guard isActive else { return }
+            textView = text
             let changedSession = self.path != path || self.revision != revision
             if changedSession {
                 // Retire native input before assigning the new model callback.
@@ -157,6 +170,11 @@ struct LibrarySourceEditor: NSViewRepresentable {
 
         func undoManager(for view: NSTextView) -> UndoManager? { undo }
 
+        @objc private func undoOrRedoDidChange(_ notification: Notification) {
+            guard let textView else { return }
+            publish(textView)
+        }
+
         func publish(_ text: NSTextView) {
             // Track marked text as a draft too, so a mouse close or app quit
             // cannot bypass the discard guard. update never overwrites it.
@@ -167,6 +185,8 @@ struct LibrarySourceEditor: NSViewRepresentable {
         func deactivate() {
             isActive = false
             onEdit = { _ in }
+            NotificationCenter.default.removeObserver(self)
+            textView = nil
             undo.removeAllActions()
         }
     }

@@ -37,6 +37,7 @@ final class LibraryViewState: ObservableObject {
     private var isClosingEditor = false
     private var isPresented = false
     private var revealAfterOpen: [LibraryPromptSelection] = []
+    private var lastClosedPromptPath: RelativePath?
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, revealLibrary: @escaping () -> Void) {
@@ -81,6 +82,7 @@ final class LibraryViewState: ObservableObject {
         editorTab = .edit
         copySelection = nil
         isClosingEditor = false
+        lastClosedPromptPath = nil
         activeLibraryPath = libraryPath
         libraryAvailable = available
         favoriteOutcome = nil
@@ -109,6 +111,7 @@ final class LibraryViewState: ObservableObject {
     func didShow() {
         guard isActive else { return }
         isPresented = true
+        lastClosedPromptPath = nil
         refresh()
         focusRevision &+= 1
         if editor.state.prompt == nil, let selection = snapshot.selection { select(selection) }
@@ -144,7 +147,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     private func select(_ selection: LibraryPromptSelection, context: OpenContext = .library) {
-        guard isActive else { return }
+        guard isActive, libraryAvailable else { return }
         // Upgrade a pending Library selection when Picker requests the same
         // target, without asking the user to cancel two identical decisions.
         if context == .picker, !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
@@ -152,6 +155,7 @@ final class LibraryViewState: ObservableObject {
         guard editor.state.pendingDecision?.action != action,
               !editor.state.queuedActions.contains(action) else { return }
         let revision = bindingRevision
+        // EditorModel.request completes through its injected MainThread.
         editor.request(action) { [weak self] result in
             guard let self, self.isActive, self.bindingRevision == revision else { return }
             let reveal = self.revealAfterOpen.contains(selection)
@@ -179,6 +183,7 @@ final class LibraryViewState: ObservableObject {
         guard isActive else { completion(.inactive); return }
         isClosingEditor = true
         let revision = bindingRevision
+        // EditorModel.request completes through its injected MainThread.
         editor.request(.close) { [weak self] result in
             guard let self, self.isActive, self.bindingRevision == revision else { completion(.inactive); return }
             if result == .allowed { self.isPresented = false }
@@ -232,7 +237,8 @@ final class LibraryViewState: ObservableObject {
                     self.copySelection = nil
                     self.model.selectPrompt(copy)
                 } else if self.isPresented, !self.isClosingEditor, self.editor.state.prompt == nil,
-                          let selection = state.selection {
+                          let selection = state.selection,
+                          selection.relativePath != self.lastClosedPromptPath {
                     self.select(selection)
                 }
             }
@@ -244,7 +250,13 @@ final class LibraryViewState: ObservableObject {
                       self.bindingRevision == revision, self.editor === editor else { return }
                 let previousPrompt = self.editorState.prompt
                 if previousPrompt?.relativePath != state.prompt?.relativePath { self.sourceRevision &+= 1 }
-                let adoptedCopy = state.prompt != previousPrompt && state.prompt == state.lastCopy
+                // External deletion and conflict discard can clear the editor
+                // before the browser retires its selected row.
+                if let previousPrompt, state.prompt == nil {
+                    self.lastClosedPromptPath = previousPrompt.relativePath
+                }
+                let adoptedCopy = previousPrompt != nil
+                    && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
                 self.refreshPreview()
                 // Copy adoption selects a new path. An external deletion keeps
@@ -259,7 +271,7 @@ final class LibraryViewState: ObservableObject {
                     }
                 } else if self.isPresented, !self.isClosingEditor, state.prompt == nil,
                           let selection = self.model.selection,
-                          selection.relativePath != previousPrompt?.relativePath {
+                          selection.relativePath != self.lastClosedPromptPath {
                     self.select(selection)
                 }
                 self.onEditorChange?()

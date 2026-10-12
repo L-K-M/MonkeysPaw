@@ -422,6 +422,18 @@ state and injected sheet/worker ports, exercise native NSTextView controls,
 and count an injected clipboard's reads and writes. They do not prove real
 IME behavior, keyboard focus, VoiceOver, Spaces or sheet appearance.
 
+Hosted undo tests call the text view's `undoManager.undo()` and `redo()`
+after closing explicit undo groups, as described in Apple's
+[Performing Undo and Redo](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/UndoArchitecture/Articles/PerformingUndo.html).
+The coordinator observes that manager's
+[did-undo](https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/nsundomanagerdidundochange)
+and [did-redo](https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/nsundomanagerdidredochange)
+notifications to publish native replacements even when `textDidChange`
+does not fire. Apple's [notification delivery contract](https://developer.apple.com/library/archive/documentation/General/Conceptual/DevPedia-CocoaCore/Notification.html)
+is synchronous; these main-thread tests assert native text, model source
+and dirty state immediately, without a predicate polling UI state from a
+worker thread. They also cover redo back to the saved, clean source.
+
 - Commit / `macos-app` CI run / hosted-test results:
 - macOS / hardware / input source / keyboard navigation setting:
 - VoiceOver / clipboard read-count tracing method:
@@ -435,7 +447,7 @@ not record prompt text, field values or clipboard contents in this checklist.
 
 | Check | Result | Details |
 |---|---|---|
-| Selection opens Edit with exact raw source, monospace text, native undo/redo, cut/copy/paste/select-all and multiline scrolling; a save that adds an id header preserves the body caret and both normalization and prior typing remain undoable | NOT RUN | |
+| Selection opens Edit with exact raw source, monospace text, native undo/redo, cut/copy/paste/select-all and multiline scrolling; a save that adds an id header preserves the body caret and both normalization and prior typing remain undoable; undo/redo immediately update Preview and the unsaved indicator, and redo back to saved text clears it | NOT RUN | |
 | Edit, Preview and Fields tabs remain usable on resize; diagnostics below Edit update during typing and identify severity/location; Fields shows parsed declarations and implicit fields read-only | NOT RUN | |
 | Preview uses defaults or field names, real date/time and a literal {clipboard}; opening, typing and all tab changes make zero clipboard reads or writes | NOT RUN | |
 | Non-UTF-8, oversized and future-format prompts show distinct read-only reasons and disable source edits, Save and Save as Copy | NOT RUN | |

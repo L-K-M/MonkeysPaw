@@ -143,9 +143,9 @@ struct LibraryView: View {
                         .accessibilityIdentifier("library-save-copy")
                 }
                 TabView(selection: $presentation.editorTab) {
-                    source.tabItem { Text("Edit") }.tag(LibraryViewState.EditorTab.edit)
-                    preview.tabItem { Text("Preview") }.tag(LibraryViewState.EditorTab.preview)
-                    fields.tabItem { Text("Fields") }.tag(LibraryViewState.EditorTab.fields)
+                    source.tabItem { Text(EditorStrings.editTab) }.tag(LibraryViewState.EditorTab.edit)
+                    preview.tabItem { Text(EditorStrings.previewTab) }.tag(LibraryViewState.EditorTab.preview)
+                    fields.tabItem { Text(EditorStrings.fieldsTab) }.tag(LibraryViewState.EditorTab.fields)
                 }
                 Text(EditorStrings.status(presentation.editorState)).font(.caption)
                     .accessibilityIdentifier("library-editor-status")
@@ -182,11 +182,12 @@ struct LibraryView: View {
     private var fields: some View {
         ScrollView([.horizontal, .vertical]) {
             if presentation.editorState.fields.isEmpty {
-                Text("No fields in this prompt.").foregroundStyle(.secondary)
+                Text(EditorStrings.noFields).foregroundStyle(.secondary)
             } else {
                 Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 12) {
                     GridRow {
-                        Text("Name / label"); Text("Type"); Text("Default"); Text("Options"); Text("Behavior")
+                        Text(EditorStrings.fieldName); Text(EditorStrings.fieldType)
+                        Text(EditorStrings.fieldDefault); Text(EditorStrings.fieldOptions); Text(EditorStrings.fieldBehaviorHeader)
                     }.font(.headline)
                     ForEach(Array(presentation.editorState.fields.enumerated()), id: \.offset) { item in
                         GridRow {
@@ -195,10 +196,10 @@ struct LibraryView: View {
                                 Text(verbatim: item.element.label)
                                 if let description = item.element.description { Text(verbatim: description).font(.caption) }
                             }
-                            Text(item.element.kind.rawValue)
+                            Text(EditorStrings.fieldKind(item.element.kind))
                             Text(verbatim: item.element.defaultValue)
                             Text(verbatim: item.element.options.map { $0.label + " = " + $0.value }.joined(separator: "\n"))
-                            Text(fieldBehavior(item.element))
+                            Text(EditorStrings.fieldBehavior(item.element))
                         }
                     }
                 }
@@ -206,13 +207,8 @@ struct LibraryView: View {
             }
         }
         .padding(12)
-        .accessibilityLabel("Parsed prompt fields")
+        .accessibilityLabel(EditorStrings.parsedFields)
         .accessibilityIdentifier("library-fields")
-    }
-
-    private func fieldBehavior(_ field: PromptField) -> String {
-        [field.optional ? "Optional" : "Required", field.remember ? "Remembered" : "Not remembered",
-         field.isImplicit ? "Implicit" : "Declared"].joined(separator: "\n")
     }
 
     private var preview: some View {

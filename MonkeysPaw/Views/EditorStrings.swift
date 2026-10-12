@@ -5,7 +5,30 @@ enum EditorStrings {
     static let save = "Save"
     static let revert = "Revert"
     static let saveAsCopy = "Save as Copy"
+    static let editTab = "Edit"
+    static let previewTab = "Preview"
+    static let fieldsTab = "Fields"
+    static let noFields = "No fields in this prompt."
+    static let fieldName = "Name / label"
+    static let fieldType = "Type"
+    static let fieldDefault = "Default"
+    static let fieldOptions = "Options"
+    static let fieldBehaviorHeader = "Behavior"
+    static let parsedFields = "Parsed prompt fields"
     static let librarySwitchRefused = "Save or discard your Library edits before switching folders. Wait for any save to finish."
+
+    static func fieldKind(_ kind: FieldKind) -> String {
+        switch kind {
+        case .text: return "Text"
+        case .multiline: return "Multiline"
+        case .choice: return "Choice"
+        }
+    }
+
+    static func fieldBehavior(_ field: PromptField) -> String {
+        [field.optional ? "Optional" : "Required", field.remember ? "Remembered" : "Not remembered",
+         field.isImplicit ? "Implicit" : "Declared"].joined(separator: "\n")
+    }
 
     static func readOnly(_ reason: PromptReadOnlyReason) -> String {
         switch reason {
