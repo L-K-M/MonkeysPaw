@@ -129,9 +129,11 @@ external-save deadline through real FSEvents. Their compile and execution proof
 requires the `macos-app` CI job; hardware checks stay NOT RUN in
 `docs/platform/macos.md`.
 
-Both native pickers, the five-category conformance corpus and the release
-workflow are merged. Native Settings, onboarding/recovery, Forget controls,
-Linux tray, the v0.1.0 tag and owner-run platform checks remain open M2 work.
+Both native pickers, General and Shortcuts Settings, onboarding/recovery,
+Forget controls, Linux tray, the five-category conformance corpus and the
+release workflow are merged. The v0.1.0 tag and owner-run platform checks
+remain open M2 work; the Library window, editor, history, import and tour
+follow in M3.
 
 ```
 ┌ Monkey's Paw ─────────────────────────────────────────────────┐

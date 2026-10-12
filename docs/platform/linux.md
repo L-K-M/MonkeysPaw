@@ -1,5 +1,48 @@
 # Linux picker and delivery checks
 
+## Release deb installation (M2, NOT RUN)
+
+Use an amd64 Ubuntu 24.04+ desktop for the release's amd64 package. Candidate
+checks use the Release workflow's `dry_run=true` artifacts from the exact
+main commit; after publication repeat with the `v0.1.0` release downloads.
+Keep a separate record for each candidate and published build.
+
+- Commit / CI run / Release workflow run:
+- Artifact version / `.deb` SHA-256:
+- Ubuntu / desktop / compositor / architecture:
+- Date / tester / launch and delivery results:
+
+1. Download `monkeyspaw_0.1.0_amd64.deb` and its
+   `monkeyspaw_0.1.0_amd64.deb.sha256` into the same directory. Confirm
+   `dpkg --print-architecture` reports `amd64`.
+2. In that directory run
+   `sha256sum -c monkeyspaw_0.1.0_amd64.deb.sha256`. Require **OK** and record
+   the hash before installing.
+3. Run `sudo apt install ./monkeyspaw_0.1.0_amd64.deb`. Record dependency or
+   installation failures; then run `monkeyspaw --version` and require
+   `monkeyspaw 0.1.0`.
+4. Launch `monkeyspaw` from the terminal and from the desktop launcher.
+   Complete pending Setup, folder and seed steps. Run the picker/fill and
+   delivery checks below from this installed copy.
+5. Quit through the tray where present, or run
+   `gapplication action ch.lkmc.monkeyspaw quit`. Relaunch from the desktop
+   launcher. Confirm saved folder, completed onboarding and
+   remembered values persist; check the version and deliver again. A second
+   ordinary launch while resident must reopen pending onboarding or raise
+   the picker, as described in the recovery rows below.
+6. Quit, then run `sudo apt remove monkeyspaw`. Confirm
+   `dpkg-query -W -f='${db:Status-Status}\n' monkeyspaw` no longer reports
+   `installed`, and `/usr/bin/monkeyspaw`, the desktop launcher and D-Bus
+   service entry are removed. Record retained user library/config/data
+   separately; package removal must not delete your prompts.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Download and checksum | The exact candidate/release deb and manifest are recorded; `sha256sum -c` reports OK. | NOT RUN |
+| Install and version | apt succeeds; the installed `monkeyspaw --version` reports `monkeyspaw 0.1.0`. | NOT RUN |
+| Launch and relaunch | Terminal/desktop launch, onboarding, saved state and installed-copy delivery work through steps 4–5. | NOT RUN |
+| Uninstall | Package-managed binary, desktop and service entries disappear; user prompts and state remain. | NOT RUN |
+
 ## Tray (M2, NOT RUN)
 
 Record the commit, date, desktop/compositor, GTK and tray host versions.
@@ -94,6 +137,88 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
 - [ ] Make the library unavailable at startup, then remove it while running.
   The app stays usable and shows the banner; cached prompts remain available
   after removal. Restore the folder and restart to resume watching.
+
+## Orca, visible focus and reduced motion (M2, NOT RUN)
+
+- Commit / CI run / artifact version / SHA-256:
+- Desktop / compositor / GTK / Orca / AT-SPI versions:
+- Accessibility and animation settings / date / tester:
+
+1. Enable Orca through the desktop's accessibility settings. Use a library
+   with a fieldless prompt and a prompt containing text, multiline and choice
+   fields, descriptions, defaults and a required empty field.
+2. Summon the picker and navigate search, results and preview with the
+   keyboard and Orca. Open fill, traverse each field with Tab/Shift+Tab,
+   change a choice and read the preview and required-field message. Inspect
+   Deliver, Copy, Cancel, Forget values and Settings, including disabled
+   states. Escape returns to picker without delivery.
+3. Open Settings. Navigate General and Shortcuts, read the active folder,
+   shortcut binding/status and errors, then inspect Choose, Use Default,
+   Open Folder, Open Setup and the Forget all confirmation and Cancel.
+4. In isolated XDG directories, follow the onboarding/recovery rows above
+   with Orca: Setup, folder path/chooser/default, seed Add/Skip, result/Done
+   and recovery/error messages. Confirm Settings remains reachable.
+5. Turn Orca off and repeat keyboard navigation across picker/fill,
+   Settings and onboarding. Inspect the focus indicator on every reachable
+   control. Disable desktop animations/reduce motion using the desktop's
+   setting, record the effective GTK animation setting, and repeat summon,
+   dismiss, picker-to-fill, tab changes and onboarding steps.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Orca picker and fill | Search/results, field kinds, labels/descriptions, choice values, preview, actions, disabled states and validation are announced and usable. | NOT RUN |
+| Orca Settings and onboarding | Tabs, folder/shortcut state, actions, confirmation, progress and failures are announced and operable with the keyboard. | NOT RUN |
+| Visible focus (§11.6) | Keyboard focus remains visible throughout picker/fill, Settings, confirmation and onboarding, including reverse traversal. | NOT RUN |
+| Reduced motion (§11.6) | With desktop animations disabled, app transitions add no motion; controls and focus remain usable. | NOT RUN |
+
+## Input-method composition (M2, NOT RUN)
+
+- Commit / CI run / artifact version / SHA-256:
+- Desktop / compositor / GTK / IBus or Fcitx version / engine / layout:
+- Date / tester:
+
+1. Configure a real IBus or Fcitx conversion engine, such as Japanese Mozc,
+   through the desktop/input-method settings. Confirm composition works in
+   another native app first. Run on X11 and each claimed Wayland desktop;
+   record which input-method framework and engine were exercised.
+2. In picker search, type text that produces visible uncommitted preedit
+   and a candidate list. Press Return to commit a candidate: the query
+   updates, the picker stays open and no prompt is used. Start composition
+   again and press Escape: composition cancels without dismissing the panel.
+3. Open a prompt with text and multiline fields. In each field, repeat
+   Return-to-commit and Escape-to-cancel while preedit is active. Confirm
+   there is no delivery, clipboard write or return to picker. Committed
+   characters appear once in the field and live preview.
+4. After composition ends, multiline Return adds a newline. Escape returns
+   to picker retaining the draft; reopen and verify the committed text
+   remains, then Ctrl+Return delivers.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Real IBus/Fcitx search | Candidate Return/Escape stays with the input method; committed search works and the picker remains open. | NOT RUN |
+| Text and multiline composition | Both native controls commit/cancel without app actions; ordinary delivery/cancel keys resume after preedit ends. | NOT RUN |
+
+## Conditional clipboard privacy (M2, NOT RUN)
+
+- Commit / CI run / artifact version / SHA-256:
+- Desktop / compositor / GTK / read-count tracing method:
+- Date / tester / per-step read counts:
+
+Use harmless test clipboard text. Create fieldless and fielded prompts with
+and without `{{clipboard}}`; include two occurrences of that builtin in the
+same prompt. Count app reads with a debugger breakpoint/trace on
+`gdk_clipboard_read_text_async` in the resident process, without recording
+arguments or clipboard contents. If read-count tracing is unavailable,
+leave the count checks NOT RUN; unchanged output alone cannot prove one read.
+Change the external clipboard with a background writer while the form stays
+open; switching focus to another app would hide it and require a new form open.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Search and selection (§5.3) | Reset the count, summon/search and select each prompt without using it: zero clipboard reads, including selection of a clipboard prompt. | NOT RUN |
+| No clipboard builtin | Open/edit/deliver the fielded prompt and use the fieldless prompt without `{{clipboard}}`: zero reads. | NOT RUN |
+| One snapshot per form open | Open the clipboard form: one read supplies both builtin occurrences. Change fields and update the clipboard in the background; preview keeps the original snapshot without another read. Escape and reopen the form: one new read uses the new text. Deliver without another read. | NOT RUN |
+| One snapshot per fieldless use | Use the fieldless clipboard prompt: one read supplies both occurrences. Copy new test text externally and use it again: one new read. | NOT RUN |
 
 ## Delivery plumbing (M1b)
 
