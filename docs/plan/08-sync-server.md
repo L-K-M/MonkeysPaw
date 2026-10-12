@@ -136,7 +136,7 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 | `POST /api/v1/auth/logout` | Revokes this device's token; `200 {}` |
 | `POST /api/v1/auth/register` `{invite_token, username, password, device_name}` | Consumes an invite; group invites join their group with its role, and account-only invites create an ungrouped account. Returns `{device_token, user}`. |
 | `POST /api/v1/auth/password` `{current_password, new_password}` | Change own password; revokes all other devices; `200 {}` (B9) |
-| `GET /api/v1/me` | `{user, groups, devices}`; caller device metadata only (B9) |
+| `GET /api/v1/me` | `{user, groups, devices}`; caller's own devices only, including revoked devices (B9) |
 | `DELETE /api/v1/me/devices/{id}` | Revoke a caller device; `200 {}` (B9) |
 | `POST /api/v1/sync/pull` `{database_id, cursors: {scope_key: cursor}}` | Per-scope feed (§8.4). Cursors are opaque strings: a seq, or `snap:…` for an unfinished snapshot. |
 | `GET /api/v1/prompts/{id}` | `{id, rev, scope, group_id?, path, content}`, or 404 out of scope or tombstoned (B13) |
@@ -186,6 +186,11 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   disabled_at}`; display name and disabled time are explicit nullable values.
   Devices expose `{id, name, created_at, last_seen_at, revoked_at, is_current}`;
   last-seen/revoked times are nullable. No password/token hash is exposed.
+  `/me` is also the own-device list; `is_current` identifies the calling
+  device. Groups include only the caller's current memberships in live
+  groups, including for admins. Revoking a missing or another user's device
+  returns 404; revoking an already revoked own device returns `200 {}`.
+  Revoking the current device or logging out makes subsequent requests 401.
 - Admin create takes `{username, password, display_name?, account_kind?}`,
   defaults to member, and returns user metadata. Admin patch takes a nonempty
   subset of `{display_name, password, disabled, account_kind}`. Omitted values
@@ -209,11 +214,13 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   and the group branch requires both.
 - Usernames in every request and response, including login, are 1–64 lowercase
   ASCII letters, digits, dots, underscores or hyphens, beginning with a letter
-  or digit. DTOs reject uppercase rather than normalize it; stored usernames
-  use the same rule for uniqueness (B7). Names are 1–255 Unicode scalars and
-  display names 0–255. All password fields are at most 72 decoded UTF-8 bytes
-  to avoid bcrypt truncation; new passwords require at least 12 scalars, while
-  login/current-password strings are nonempty.
+  or digit. DTOs reject uppercase rather than normalize it; services also
+  lowercase defensively, and stored usernames use the same rule for uniqueness
+  (B7). Names are 1–255 Unicode scalars and display names 0–255. All password
+  fields are at most 72 decoded UTF-8 bytes to avoid bcrypt truncation and
+  reject NUL; new passwords require at least 12 scalars (400 otherwise), while
+  login/current-password strings are nonempty and unusable supplied passwords
+  fail authentication without accepting a truncated prefix.
 - PUT additionally accepts optional `origin: edit|llm|restore`, default edit.
   Revision metadata is `{rev, author_id, created_at, origin, scope, group_id?,
   path}`; lists use `{revisions}`. Reading a revision adds `id` and `content`.
@@ -335,7 +342,14 @@ enforced by later server slices, not by an unbounded Foundation JSON encoder.
 
 - **Passwords.** bcrypt cost `BCRYPT_COST = 12`, stored as a self-describing
   string so a later Argon2id move is a lazy re-hash on login. Minimum length
-  `PASSWORD_MIN_LENGTH = 12`.
+  `PASSWORD_MIN_LENGTH = 12` Unicode scalars; maximum `PASSWORD_MAX_BYTES = 72`
+  UTF-8 bytes, with NUL rejected to avoid C-string truncation. Bcrypt runs on
+  the NIO blocking thread pool. Unknown usernames still verify against a
+  fixed cost-12 dummy hash; disabled accounts verify before returning 401.
+  Usernames are validated as bounded ASCII before lowercasing, with the same
+  canonical spelling used for account lookup and uniqueness. Password change
+  verifies the current password, then rechecks the session and verified hash
+  inside the transaction that replaces the hash and revokes other devices.
 - **Device tokens.**
   - 32 random bytes, base64url. The server stores only SHA-256(token) and
     looks tokens up by hash.
@@ -344,7 +358,17 @@ enforced by later server slices, not by an unbounded Foundation JSON encoder.
   - Clients keep the token in the OS secret store.
 - **Bootstrap.** On an empty `users` table, the server creates an admin from
   `MONKEYSPAW_ADMIN_USERNAME` and the compose secret file
-  `MONKEYSPAW_ADMIN_PASSWORD_FILE`. Once users exist, both are ignored.
+  `MONKEYSPAW_ADMIN_PASSWORD_FILE`. The username defaults to `admin`. A direct
+  `MONKEYSPAW_ADMIN_PASSWORD` environment value is supported when no file is
+  configured. A configured file is authoritative; unreadable/invalid files
+  never fall back to the environment value. Remove at most one terminal LF
+  or CRLF from a file, preserving password spaces. Missing, unreadable, empty
+  or invalid credentials fail startup before the listener starts. Creation
+  rechecks the empty table inside the write transaction. Once any users exist,
+  all bootstrap inputs are ignored without validation or secret-file access,
+  including after restart or when every user is disabled. Bootstrap never
+  issues a device token, and credential-bearing server descriptions redact
+  their values.
 - **Invites.** Single-use and hashed at rest. `INVITE_TTL_DAYS = 7` is the
   default and the maximum.
   - The link is `monkeyspaw://join?server=<MONKEYSPAW_PUBLIC_URL>&token=<t>`.

@@ -1,12 +1,28 @@
 import Hummingbird
 import Logging
 
-/// The server composition root; health needs no services or database yet (§8.3).
+/// Health-only composition is also used by the liveness tests.
 public func buildApplication(configuration: ServerConfiguration) -> some ApplicationProtocol {
-    let router = Router()
+    makeApplication(configuration: configuration)
+}
+
+public func buildApplication(configuration: ServerConfiguration, database: ServerDatabase) -> some ApplicationProtocol {
+    makeApplication(configuration: configuration, accounts: AccountService(database: database),
+                    sessions: SessionService(database: database))
+}
+
+func makeApplication(
+    configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil
+) -> some ApplicationProtocol {
+    let router = Router(context: ServerRequestContext.self)
+    router.add(middleware: APIErrorMiddleware())
 
     router.get("/api/health") { _, _ in
         HealthResponse(status: "ok", version: configuration.version)
+    }
+
+    if let accounts, let sessions {
+        AccountRoutes(accounts: accounts, sessions: sessions).add(to: router)
     }
 
     return Application(

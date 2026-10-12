@@ -14,7 +14,14 @@ struct ServerAccountMigrationTests {
                     'Device', 'hash', \(bind: PersistenceTestRepository.time), \(bind: PersistenceTestRepository.time), NULL)
                 """)
             let identity = try await MetaRepository(database: repository.database).databaseID()
+            let accounts = AccountRepository(database: repository.database)
+            let original = try #require(await accounts.read { accounts, _ in try await accounts.user(id: PersistenceTestRepository.user) })
             try await repository.database.migrate()
+            let migrated = try #require(await accounts.read { accounts, _ in try await accounts.user(id: PersistenceTestRepository.user) })
+            #expect(migrated.metadata == original.metadata)
+            let keepsHash = migrated.passwordHash == original.passwordHash
+            #expect(keepsHash)
+            #expect(try await repository.string("SELECT last_seen_at FROM devices", column: "last_seen_at") == PersistenceTestRepository.time)
             try await repository.execute("UPDATE users SET display_name = NULL")
             try await repository.execute("UPDATE devices SET last_seen_at = NULL")
             try await repository.database.migrate()
@@ -28,4 +35,24 @@ struct ServerAccountMigrationTests {
             #expect(violations == 0)
         }
     }
+
+    @Test func failedUpgradeRollsBackRebuiltTablesAndCanRetry() async throws {
+        try await withPersistenceDatabase(migrations: [.foundation]) { repository in
+            try await repository.seed()
+            let failing = ServerMigration(name: ServerMigration.nullableAccountMetadata.name) { sql in
+                try await ServerMigration.nullableAccountMetadata.prepare(sql)
+                throw UpgradeFailure()
+            }
+            await #expect(throws: UpgradeFailure.self) { try await repository.database.migrate([failing]) }
+            #expect(try await repository.count("schema_migrations") == 1)
+            #expect(try await repository.count("users") == 2)
+            #expect(try await repository.count("groups") == 2)
+            await repository.reject("UPDATE users SET display_name = NULL")
+            try await repository.database.migrate()
+            try await repository.execute("UPDATE users SET display_name = NULL")
+            #expect(try await repository.count("schema_migrations") == 2)
+        }
+    }
 }
+
+private struct UpgradeFailure: Error {}
