@@ -236,8 +236,16 @@ risk, so it is contained by contract:
   diverges.
 - **Wire contract.** SyncAPI DTOs are defined once in Swift (`SyncAPI`).
   - A `dump-schema` executable in the server package writes JSON Schemas to
-    `spec/schema/`. CI regenerates them and fails on any diff.
+    `spec/schema/`: `swift run --package-path server dump-schema <output-dir>`.
+    It renders the shared `SyncAPI.schemas` descriptions as JSON Schema
+    2020-12, one file per named contract, with sorted keys and a final newline.
+    CI regenerates into a fresh directory and recursively compares every
+    file, including the generated README, failing on changed, missing or
+    extra files. No database, GTK or running server is required.
   - The Kotlin DTOs are validated against those schemas in tests.
+    The [schema README](../../spec/schema/README.md) documents the additional
+    UTF-8, Gregorian calendar and cross-field checks required by the `x-`
+    annotations; a generic schema validator alone does not enforce them.
   - Route-level behaviour (status codes, error shapes) is pinned by the
     server tests and by `sync/*.json` scenario fixtures: event sequences with
     the expected requests and final state, run by both clients' engines.

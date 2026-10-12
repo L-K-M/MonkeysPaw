@@ -73,6 +73,13 @@ Rollout by milestone:
     delivery on a Mac (§15 and `docs/platform/macos.md`).
   - Linux jobs run in the `swift:6.4-noble` container. The Linux Core test
     job is the portability gate.
+  - The existing server job builds/tests the server package, then runs
+    `swift run --package-path server dump-schema` into a temporary directory.
+    `diff -ru spec/schema "$schema_dir"` fails on any changed, missing or
+    extra file, including the generated README and untracked files. The
+    directory is removed on exit; schema rendering needs no database, GTK
+    or network. Regeneration instructions and contract annotations live in
+    [spec/schema/README.md](../../spec/schema/README.md).
   - The `deb` job builds a fixed prerelease, inspects control fields and
     installed paths, requires noble's `libglib2.0-0t64` plus
     `libglib2.0-bin`, rejects dynamic Swift/Foundation dependencies, installs

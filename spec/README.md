@@ -521,6 +521,21 @@ member rejection would need a separate lexical decoding contract.
 | `.reference(name)` | A named definition reference, never a sample-value inference. |
 | `SyncAPI.rateLimitHeaders` | Required `Retry-After` for 429, referencing `RetryAfter` (JSON integer for tooling, decimal seconds in HTTP). |
 
+M5 S2 renders every named description with
+`swift run --package-path server dump-schema spec/schema`. The committed
+JSON Schema 2020-12 files and generated README are under
+[`schema/`](schema/README.md); sibling references resolve through the local
+catalog's stable `$id`s without network access. Null branches and required
+members independently describe nullability and omission. Required const/enum
+discriminators and distinct required fields select closed `oneOf` branches.
+The existing server CI job regenerates into a fresh temporary directory and
+compares recursively, failing on changed, missing or extra files. Server
+Schema tests verify deterministic bytes, exact catalog/file coverage, CLI
+failure behavior, and every DTO fixture against the emitted schema keywords
+plus the documented `x-` checks, independently comparing strict Codable.
+The test validator supports only the emitted subset; it is not a general
+JSON Schema engine. It retains exact Int64s and Unicode scalar lengths.
+
 Descriptions also drive the strict Codable object validation on **both**
 decode and encode; unknown properties cannot silently disappear, and directly
 constructed invalid values cannot be sent. They contain no transport/database
