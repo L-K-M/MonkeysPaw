@@ -75,6 +75,33 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertEqual(try manager.contentsOfDirectory(atPath: root.path), ["race.md"])
     }
 
+    func testConcurrentExclusiveCreatesLeaveProcessUmaskUnchanged() throws {
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let paths = (0..<128).map { "mask-\($0).md" }
+        let writers = try paths.map { _ in try RootedFileStore(root: root) }
+        let bytes = Data("Complete bytes".utf8)
+        let outcomes = ExclusiveCreateOutcomes()
+        // Read-only observations cannot clear the mask while workers run.
+        let initialMask = try processUmask()
+
+        DispatchQueue.concurrentPerform(iterations: paths.count) { index in
+            do {
+                try writers[index].create(bytes, at: paths[index])
+                outcomes.record(nil)
+            } catch {
+                outcomes.record(error as? FileStoreError ?? .ioFailure)
+            }
+        }
+
+        XCTAssertEqual(try processUmask(), initialMask)
+        XCTAssertEqual(outcomes.errors.filter { $0 == nil }.count, paths.count)
+        for path in paths {
+            XCTAssertEqual(try store.read(at: path), bytes)
+            XCTAssertEqual(try posixPermissions(at: root.appendingPathComponent(path)), 0o666 & ~Int(initialMask))
+        }
+        XCTAssertEqual(Set(try manager.contentsOfDirectory(atPath: root.path)), Set(paths))
+    }
+
     func testExclusiveCreateRefusesOccupiedLeavesAndRejectsSymlinkedParents() throws {
         try store.create(Data("Inside".utf8), at: "a.md")
         let target = outside.appendingPathComponent("secret.md")
@@ -447,6 +474,12 @@ final class RootedFileStoreTests: XCTestCase {
             XCTAssertFalse(String(describing: $0).contains(self.directory.path))
             XCTAssertFalse($0.localizedDescription.contains(self.directory.path))
         }
+    }
+
+    private func processUmask() throws -> mode_t {
+        let status = try String(contentsOfFile: "/proc/self/status", encoding: .utf8)
+        let line = try XCTUnwrap(status.split(separator: "\n").first { $0.hasPrefix("Umask:") })
+        return try XCTUnwrap(mode_t(line.dropFirst("Umask:".count).trimmingCharacters(in: .whitespaces), radix: 8))
     }
 
     private func posixPermissions(at url: URL) throws -> Int? {

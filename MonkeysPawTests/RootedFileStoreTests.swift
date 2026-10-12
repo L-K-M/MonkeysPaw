@@ -89,6 +89,37 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertEqual(try manager.contentsOfDirectory(atPath: root.path), ["race.md"])
     }
 
+    func testConcurrentExclusiveCreatesLeaveProcessUmaskUnchanged() throws {
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let paths = (0..<128).map { "mask-\($0).md" }
+        let writers = try paths.map { _ in try RootedFileStore(root: root) }
+        let bytes = Data("Complete bytes".utf8)
+        let outcomes = ExclusiveCreateOutcomes()
+        // umask is process-wide; set/read it only before or after all workers.
+        // This hosted test requires serial in-process execution.
+        let expectedMask = mode_t(0o077)
+        let previousMask = umask(expectedMask)
+        defer { _ = umask(previousMask) }
+
+        DispatchQueue.concurrentPerform(iterations: paths.count) { index in
+            do {
+                try writers[index].create(bytes, at: paths[index])
+                outcomes.record(nil)
+            } catch {
+                outcomes.record(error as? FileStoreError ?? .ioFailure)
+            }
+        }
+
+        let completedMask = umask(expectedMask)
+        XCTAssertEqual(completedMask, expectedMask)
+        XCTAssertEqual(outcomes.errors.filter { $0 == nil }.count, paths.count)
+        for path in paths {
+            XCTAssertEqual(try store.read(at: path), bytes)
+            XCTAssertEqual(try posixPermissions(at: root.appendingPathComponent(path)), 0o600)
+        }
+        XCTAssertEqual(Set(try manager.contentsOfDirectory(atPath: root.path)), Set(paths))
+    }
+
     func testExclusiveCreateRefusesOccupiedLeavesAndRejectsSymlinkedParents() throws {
         try store.create(Data("Inside".utf8), at: "a.md")
         let target = outside.appendingPathComponent("secret.md")

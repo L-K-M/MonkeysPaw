@@ -15,11 +15,13 @@ public protocol FileStore {
     /// destination. Create parents; on failure leave the destination intact.
     /// Atomic replacement alone does not promise crash durability.
     func write(_ data: Data, at path: String) throws
-    /// Complete a same-directory temporary file, then atomically publish only
-    /// if the destination is absent. Create parents; never follow or replace an
-    /// occupied leaf, including a symlink. Throw alreadyExists for any occupied
-    /// destination. Publish with ordinary-write permissions (0666 & ~umask).
-    /// Like write, this does not promise crash durability.
+    /// Write complete bytes through a same-directory temporary descriptor and
+    /// fsync before atomically publishing only if the destination is absent.
+    /// Create parents; never follow or replace an occupied leaf, including a
+    /// symlink. Throw alreadyExists for any occupied destination. The kernel
+    /// applies ordinary-write permissions (0666 & ~umask) without reading or
+    /// changing the process-wide mask. The directory entry is not synced, so
+    /// this does not promise crash durability.
     func create(_ data: Data, at path: String) throws
     /// The same atomic replacement, with mode 0600 on the temporary file
     /// before writing private bytes or publishing the destination.
