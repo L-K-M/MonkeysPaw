@@ -227,3 +227,27 @@ previous shortcut and reports Failed, so record a working shortcut again.
 | Close Settings while Setup is key; activation policy returns to accessory and Setup remains usable | NOT RUN | |
 | Open Settings with the picker armed, then close; no old paste target is reactivated and a fresh summon still works | NOT RUN | |
 | VoiceOver identifies both tabs, folder path, recorder and actions; keyboard focus stays visible | NOT RUN | |
+
+## M2 Forget values controls: NOT RUN
+
+The Linux implementation host cannot compile or run these macOS controls.
+Record the exact build and `MacForgetControlsTests` hosted results before
+running these owner checks. Use two prompts with remembered fields, defaults
+and session drafts; include text, multiline, choice and `remember: false`
+fields. Forgetting must leave the clipboard and usage history unchanged.
+
+- Commit / `macos-app` CI run and hosted-test result:
+- macOS / hardware / signing identity / date / tester:
+
+| Check | Result | Details |
+|---|---|---|
+| Picker action row: Forget values clears only the selected prompt's remembered fields and draft; another prompt keeps both | NOT RUN | |
+| Fill action row: Forget values keeps the form open and resets all native fields and preview to defaults without delivery | NOT RUN | |
+| Search with no selection hides Forget values; delivery disables it and an attempted forget reports the wait message | NOT RUN | |
+| A corrupt or unreadable values.json gives a path-free failure for Forget values and retains the fields and draft; retry after repair succeeds | NOT RUN | |
+| Settings → General: Forget all values… opens a native confirmation sheet; Cancel and Escape keep values and drafts | NOT RUN | |
+| Confirm Forget all with the picker closed; values.json becomes empty private version-1 state and both prompts reopen with defaults | NOT RUN | |
+| Keep Settings open across a library switch, then confirm Forget all; the current library's picker loses its drafts | NOT RUN | |
+| Block app-data writes and confirm Forget all; the error preserves state; restore writes and retry, including with unreadable or corrupt values.json | NOT RUN | |
+| Close Settings during confirmation and reopen; no pending confirmation or late response clears values | NOT RUN | |
+| VoiceOver identifies both Forget actions, the sheet's destructive action, Cancel and outcome messages; existing picker shortcuts and visible focus still work | NOT RUN | |
