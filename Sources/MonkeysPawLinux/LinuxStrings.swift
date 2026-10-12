@@ -15,6 +15,8 @@ enum LinuxStrings {
     static let cancel = "Cancel"
     static let edit = "Edit"
     static let library = "Library"
+    static let forgetValues = "Forget values"
+    static let forgetAllValues = RememberedValuesStrings.forgetAll + "…"
     static let emptyLibrary = "Your library is empty. Open the library folder to add a prompt."
     static let libraryUnavailable = "Library unavailable. Cached prompts remain available. Check the folder and restart to retry."
     static let promptFileUnavailable = "This prompt's file is unavailable."
@@ -33,6 +35,16 @@ enum LinuxStrings {
         case .rememberedValuesNotSaved: return rememberedValuesNotSaved
         case .usageNotSaved: return usageNotSaved
         }
+    }
+
+    static func forgetValuesError(_ error: Error, state: PickerModel.State) -> String {
+        if state == .delivering, error as? LibraryError == .operationFailed {
+            return RememberedValuesStrings.message(for: .deliveryInFlight)
+        }
+        if let error = error as? FileStoreError {
+            return RememberedValuesStrings.message(for: .fileStoreFailure(error))
+        }
+        return RememberedValuesStrings.message(for: .libraryFailure(error as? LibraryError ?? .operationFailed))
     }
 
     static func pickerSession(_ session: DesktopSession) -> String {

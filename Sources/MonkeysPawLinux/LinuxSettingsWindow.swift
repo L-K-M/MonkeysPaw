@@ -8,6 +8,7 @@ final class LinuxSettingsWindow {
     private let window: GTK.Widget
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
+    private let rememberedValues: RememberedValuesSettingsModel
     private let chooser: LinuxFolderChoosing
     private let openSetup: () -> Void
     private var isDestroyed = false
@@ -20,6 +21,9 @@ final class LinuxSettingsWindow {
     private var settingsError: GTK.Widget!
     private var chooseButton: GTK.Widget!
     private var defaultButton: GTK.Widget!
+    private var forgetAllButton: GTK.Widget!
+    private var forgetConfirmation: GTK.Widget!
+    private var forgetMessage: GTK.Widget!
     private var toggleBinding: GTK.Widget!
     private var toggleRegistration: GTK.Widget!
     private var toggleVerification: GTK.Widget!
@@ -32,9 +36,11 @@ final class LinuxSettingsWindow {
     private var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
     init(application: UnsafeMutablePointer<GtkApplication>, general: GeneralSettingsModel,
-         shortcuts: ShortcutsSettingsModel, chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void) {
+         shortcuts: ShortcutsSettingsModel, rememberedValues: RememberedValuesSettingsModel,
+         chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void) {
         self.general = general
         self.shortcuts = shortcuts
+        self.rememberedValues = rememberedValues
         self.chooser = chooser
         self.openSetup = openSetup
         window = gtk_application_window_new(application)!
@@ -45,12 +51,15 @@ final class LinuxSettingsWindow {
             guard let self else { return }
             self.isDestroyed = true
             self.cancelFolderChoice()
+            self.rememberedValues.cancelForgetAll()
             self.general.onChange = nil
             self.shortcuts.onChange = nil
+            self.rememberedValues.onChange = nil
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isVisible else { return }
             self.cancelFolderChoice()
+            self.rememberedValues.cancelForgetAll()
         }
 
         let notebook = gtk_notebook_new()!
@@ -60,14 +69,18 @@ final class LinuxSettingsWindow {
         gtk_window_set_child(mp_window(window), notebook)
         general.onChange = { [weak self] in self?.renderGeneral() }
         shortcuts.onChange = { [weak self] in self?.renderShortcuts() }
+        rememberedValues.onChange = { [weak self] in self?.renderRememberedValues() }
         renderGeneral()
         renderShortcuts()
+        renderRememberedValues()
     }
 
     deinit {
         chooser.cancel()
         general.onChange = nil
         shortcuts.onChange = nil
+        rememberedValues.onChange = nil
+        rememberedValues.cancelForgetAll()
     }
 
     func show() {
@@ -81,6 +94,7 @@ final class LinuxSettingsWindow {
         guard !isDestroyed else { return }
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
+        rememberedValues.cancelForgetAll()
     }
 
     private func generalPage() -> GTK.Widget {
@@ -108,6 +122,37 @@ final class LinuxSettingsWindow {
         gtk_box_append(mp_box(page), buttons)
         libraryMessage = namedLabel("settings-library-message", in: page)
         settingsError = namedLabel("settings-general-error", in: page)
+        forgetAllButton = GTK.button(LinuxStrings.forgetAllValues) { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.rememberedValues.requestForgetAll()
+        }
+        gtk_widget_set_name(forgetAllButton, "settings-forget-all")
+        mp_accessible_label(forgetAllButton, LinuxStrings.forgetAllValues)
+        gtk_widget_set_halign(forgetAllButton, GTK_ALIGN_START)
+        gtk_box_append(mp_box(page), forgetAllButton)
+        forgetConfirmation = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+        gtk_widget_set_name(forgetConfirmation, "settings-forget-confirmation")
+        gtk_box_append(mp_box(forgetConfirmation), GTK.label(RememberedValuesStrings.confirmationTitle))
+        let confirmationMessage = namedLabel("settings-forget-confirmation-message", in: forgetConfirmation)
+        gtk_label_set_text(mp_label(confirmationMessage), RememberedValuesStrings.confirmationMessage)
+        let confirmButtons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        let confirm = GTK.button(RememberedValuesStrings.forgetAll) { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.rememberedValues.confirmForgetAll()
+        }
+        gtk_widget_set_name(confirm, "settings-confirm-forget-all")
+        mp_accessible_label(confirm, RememberedValuesStrings.forgetAll)
+        let cancel = GTK.button(RememberedValuesStrings.cancel) { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.rememberedValues.cancelForgetAll()
+        }
+        gtk_widget_set_name(cancel, "settings-cancel-forget-all")
+        mp_accessible_label(cancel, RememberedValuesStrings.cancel)
+        gtk_box_append(mp_box(confirmButtons), cancel)
+        gtk_box_append(mp_box(confirmButtons), confirm)
+        gtk_box_append(mp_box(forgetConfirmation), confirmButtons)
+        gtk_box_append(mp_box(page), forgetConfirmation)
+        forgetMessage = namedLabel("settings-forget-message", in: page)
         return scrolled(page)
     }
 
@@ -182,6 +227,15 @@ final class LinuxSettingsWindow {
         setMessage(shortcutInstructions, instructions)
         let canVerify = state.registrationStatus == .registered || state.registrationStatus == .needsAction
         gtk_widget_set_sensitive(verifyButton, canVerify ? 1 : 0)
+    }
+
+    private func renderRememberedValues() {
+        guard !isDestroyed else { return }
+        let state = rememberedValues.state
+        let confirming = state.confirmation == .forgetAll
+        gtk_widget_set_visible(forgetConfirmation, confirming ? 1 : 0)
+        gtk_widget_set_sensitive(forgetAllButton, confirming ? 0 : 1)
+        setMessage(forgetMessage, state.message)
     }
 
     private func chooseFolder() {

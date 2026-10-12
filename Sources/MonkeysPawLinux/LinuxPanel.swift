@@ -47,6 +47,7 @@ final class LinuxPanel: PanelWindow {
     private var actions: GTK.Widget!
     private var useButton: GTK.Widget!
     private var copyButton: GTK.Widget!
+    private var forgetButton: GTK.Widget!
     private var editButton: GTK.Widget!
     private var libraryButton: GTK.Widget!
 
@@ -196,6 +197,13 @@ final class LinuxPanel: PanelWindow {
         }
         gtk_widget_set_name(useButton, "picker-use")
         gtk_widget_set_name(copyButton, "picker-copy")
+        forgetButton = GTK.button(LinuxStrings.forgetValues) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            self.transientStatus = nil
+            picker.forgetSelectedValues()
+        }
+        gtk_widget_set_name(forgetButton, "picker-forget-values")
+        mp_accessible_label(forgetButton, LinuxStrings.forgetValues)
         editButton = GTK.button(LinuxStrings.edit) { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             picker.editSelected()
@@ -209,7 +217,7 @@ final class LinuxPanel: PanelWindow {
             openSettings()
         }
         gtk_widget_set_name(settingsButton, "picker-settings")
-        for button in [useButton!, copyButton!, editButton!, libraryButton!,
+        for button in [useButton!, copyButton!, forgetButton!, editButton!, libraryButton!,
                        GTK.button(LinuxStrings.cancel, { [weak self, weak picker] in
                            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
                            picker.dismiss()
@@ -251,6 +259,10 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_sensitive(queryEntry, picker.state == .picker ? 1 : 0)
         gtk_widget_set_sensitive(stack, editing ? 1 : 0)
         gtk_widget_set_sensitive(actions, editing ? 1 : 0)
+        let hasPrompt = picker.fillModel != nil || picker.selectionIndex.map { picker.results.indices.contains($0) } == true
+        gtk_widget_set_visible(forgetButton, hasPrompt ? 1 : 0)
+        gtk_widget_set_sensitive(forgetButton, editing ? 1 : 0)
+        renderStatus(picker)
         guard editing else { return }
 
         if String(cString: mp_entry_text(queryEntry)) != picker.query { mp_entry_set_text(queryEntry, picker.query) }
@@ -298,12 +310,18 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_sensitive(editButton, picker.selectionIndex == nil ? 0 : 1)
         gtk_widget_set_visible(libraryButton, inFill ? 0 : 1)
         gtk_label_set_text(mp_label(hint), inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
+    }
+
+    private func renderStatus(_ picker: PickerModel) {
         var warnings = picker.persistenceWarnings
         for warning in picker.fillModel?.persistenceWarnings ?? [] where !warnings.contains(warning) { warnings.append(warning) }
         var messages = [picker.libraryAvailable ? nil : LinuxStrings.libraryUnavailable,
                         picker.isResolvingBuiltins ? LinuxStrings.resolvingBuiltins : nil].compactMap { $0 }
         if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
         messages += warnings.map(LinuxStrings.persistenceWarning)
+        if let error = picker.forgetValuesError {
+            messages.append(LinuxStrings.forgetValuesError(error, state: picker.state))
+        }
         gtk_label_set_text(mp_label(status), messages.joined(separator: "\n"))
         gtk_widget_set_visible(status, messages.isEmpty ? 0 : 1)
     }

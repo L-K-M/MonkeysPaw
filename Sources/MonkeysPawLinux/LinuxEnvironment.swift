@@ -51,6 +51,19 @@ final class LinuxEnvironment {
         }
     }
 
+    /// Resolve the current picker for each reset, including with Settings open
+    /// across a library switch. The model must not retain the composition root.
+    private final class RememberedValues: RememberedValuesControl {
+        private weak var environment: LinuxEnvironment?
+
+        init(environment: LinuxEnvironment) { self.environment = environment }
+
+        func forgetAllValues() -> RememberedValuesOutcome {
+            guard let environment else { return .fileStoreFailure(.ioFailure) }
+            return environment.pickerModel.forgetAllValues()
+        }
+    }
+
     /// Every library callback checks its generation on the GLib thread, even
     /// if an index, clipboard read or scheduler queued it before replacement.
     private final class LibraryCallbacks: MainThread {
@@ -148,6 +161,8 @@ final class LinuxEnvironment {
     private(set) lazy var generalSettingsModel = GeneralSettingsModel(settings: settingsModel,
         library: LibraryLocation(environment: self, defaultLibraryPath: defaultLibraryDirectory.path),
         mainThread: mainThread)
+    private(set) lazy var rememberedValuesSettingsModel = RememberedValuesSettingsModel(
+        control: RememberedValues(environment: self), mainThread: mainThread)
     private lazy var dataFiles: FileStore = {
         do { return try RootedFileStore(root: paths.dataDirectory) }
         catch {
@@ -277,6 +292,7 @@ final class LinuxEnvironment {
             if self.currentSettingsWindow == nil {
                 self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
+                    rememberedValues: self.rememberedValuesSettingsModel,
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() })
             }
             self.currentSettingsWindow?.show()
