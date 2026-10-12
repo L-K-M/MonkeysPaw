@@ -294,3 +294,48 @@ inline and queued delivery. `OnboardingStrings` owns the shared path-free copy.
   - Focus is always visible. Reduced motion is respected.
 - **Language.** v1 is English only. User-visible strings live in one table
   per front end (`Strings.swift`) so extraction is mechanical later.
+
+### 11.7 Library window (M3)
+
+These defaults resolve §17 Q14–Q20; the owner may override them.
+
+- **Browse.** A reusable window (macOS: `.regular` while open; Linux:
+  hide-on-close) with a sidebar of All, Favourites, Recent, folders and tags, a
+  list, and the selected prompt's editor. Recent orders by the last delivery
+  or copy recorded in the app-data usage store (§5.4); using a prompt never
+  writes its file. Conflicts and groups join the sidebar with sync (M6).
+  Toggling a favourite saves `favourite` in front matter through the same
+  service as the editor. If that prompt is open with unsaved edits, the
+  toggle changes the editor's text instead, and the app's own saves refresh
+  the editor's stamp, so they never trigger a conflict. The picker's Library
+  control and the menu or tray open this window instead of the file manager.
+- **Edit · Preview · Fields · History.** Edit shows the raw file, front
+  matter and body, with live validation from the same codec and validator as
+  the picker. Fields lists the parsed fields read-only. Preview renders with
+  field defaults (or the field name when there is none), the real date and
+  time, and a `{clipboard}` placeholder; browsing or typing never reads the
+  clipboard. Non-UTF-8, oversized and future-format files open read-only.
+  History lists revisions newest first with restore (§5.5).
+- **Saving and conflicts.** Saves pass the editor's load stamp. If the file
+  changes on disk while you have unsaved edits, the conflict dialog opens at
+  once: keep mine (save over theirs), take theirs (reload), or save mine as
+  a copy. A deletion on disk offers keep mine (recreate), save mine as a
+  copy, or discard. A stale save opens the same dialog. Without unsaved
+  edits the editor reloads silently. The app never merges.
+- **Unsaved edits.** Changing selection, closing the window, renaming,
+  moving, deleting, or quitting asks Save / Discard / Cancel. A library
+  switch from Settings is refused with a message while an edit is unsaved.
+  Intents wait for a save in flight to finish.
+- **Rename, move, delete.** Rename edits the filename; the title stays in
+  front matter. Move targets an existing or new folder. An occupied
+  destination is refused, never replaced. Delete removes the file and keeps
+  its history; restoring a deleted prompt arrives later.
+- **Import.** Drop or choose `.md`, `.prompt` (Dotprompt) or `.prompty`
+  files or a folder. `string` inputs map to text fields, `string` with an
+  enum to choice fields, and defaults are kept; everything else is preserved
+  as metadata and listed in the report. Imports land in `Imported/`, use
+  exclusive creation with alternate names, assign fresh ids when an id is
+  already taken, and never overwrite.
+- **Tour.** New installs see a one-screen tour of the picker and fill form
+  right after the seed step. Closing it counts as done. Upgrades from v0.1.0
+  are marked done.
