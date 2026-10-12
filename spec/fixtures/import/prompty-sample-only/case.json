@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompty",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: Ada\nsample:\n  name: Ada\n  unused: retained\nmodel: example\n---\n{{name}}\n",
+    "body": "{{name}}\n",
+    "mappings": [
+      {
+        "sourceKey": "sample.name",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": "sample.name"
+      }
+    ],
+    "preservedKeys": [
+      "sample",
+      "model"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": []
+  }
+}

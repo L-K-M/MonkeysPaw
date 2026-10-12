@@ -72,12 +72,34 @@ public enum FileStoreError: String, Error, Sendable {
 /// checks still belong to the driver. This is not M5's sync path policy.
 public enum FileStorePath {
     public static func validate(_ path: String) throws {
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
-        guard !path.isEmpty, path.utf8.count <= Limits.maxPathBytes,
-              !path.contains("\\"),
-              !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-              parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+        guard isValid(path, mode: .relative) else {
             throw FileStoreError.invalidPath
+        }
+    }
+
+    enum Mode { case relative, absolute }
+
+    private static let slash = UInt8(ascii: "/")
+    private static let backslash = UInt8(ascii: "\\")
+    private static let dot = UInt8(ascii: ".")
+
+    /// Absolute source selections are outside the library's relative-path cap.
+    static func isValid(_ path: String, mode: Mode) -> Bool {
+        let bytes = path.utf8
+        guard !path.isEmpty, !bytes.contains(backslash),
+              !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return false }
+        let components: String.UTF8View.SubSequence
+        switch mode {
+        case .relative:
+            guard bytes.count <= Limits.maxPathBytes else { return false }
+            components = bytes[...]
+        case .absolute:
+            guard bytes.first == slash else { return false }
+            if bytes.count == 1 { return true }
+            components = bytes.dropFirst()
+        }
+        return components.split(separator: slash, omittingEmptySubsequences: false).allSatisfy {
+            !$0.isEmpty && !$0.elementsEqual([dot]) && !$0.elementsEqual([dot, dot])
         }
     }
 }

@@ -1,0 +1,10 @@
+---
+input:
+  schema:
+    count: integer
+    tags(array): string
+    date: string
+    name: string
+extra: {unknown: [true, 7]}
+---
+{{name}} {{#if count}}x{{/if}}

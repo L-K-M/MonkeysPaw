@@ -1,0 +1,10 @@
+---
+input:
+  schema:
+    type: object
+    required: [name]
+    properties:
+      name: {type: string, default: Ada}
+  default: {name: Other}
+---
+{{name}}

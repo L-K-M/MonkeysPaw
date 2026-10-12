@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.md",
+  "expected": {
+    "source": "\ufeffbody {{name}}\n",
+    "body": "\ufeffbody {{name}}\n",
+    "mappings": [],
+    "preservedKeys": [],
+    "dropped": [],
+    "warnings": []
+  }
+}

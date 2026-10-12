@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompt",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: Ada\ninput:\n  schema:\n    type: object\n    required:\n    - name\n    properties:\n      name:\n        type: string\n        default: Ada\n  default:\n    name: Other\n---\n{{name}}",
+    "body": "{{name}}",
+    "mappings": [
+      {
+        "sourceKey": "input.schema.properties.name",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": "input.schema.properties.name.default"
+      }
+    ],
+    "preservedKeys": [
+      "input"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": []
+  }
+}

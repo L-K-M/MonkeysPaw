@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompty",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: Ada\ninputs:\n  count:\n    type: number\n  clipboard:\n    type: string\n  name:\n    type: string\nsample:\n  name: Ada\nmodel: example\n---\n{% if count %}{{name | upper}}{% endif %}\n",
+    "body": "{% if count %}{{name | upper}}{% endif %}\n",
+    "mappings": [
+      {
+        "sourceKey": "inputs.name",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": "sample.name"
+      }
+    ],
+    "preservedKeys": [
+      "inputs",
+      "sample",
+      "model"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": [
+      {
+        "code": "unsupportedInput",
+        "key": "inputs.count"
+      },
+      {
+        "code": "reservedName",
+        "key": "clipboard"
+      },
+      {
+        "code": "validation",
+        "key": "field.unused"
+      },
+      {
+        "code": "unsupportedTemplate",
+        "format": "prompty",
+        "byteOffset": 0
+      },
+      {
+        "code": "unsupportedTemplate",
+        "format": "prompty",
+        "byteOffset": 14
+      },
+      {
+        "code": "unsupportedTemplate",
+        "format": "prompty",
+        "byteOffset": 30
+      }
+    ]
+  }
+}

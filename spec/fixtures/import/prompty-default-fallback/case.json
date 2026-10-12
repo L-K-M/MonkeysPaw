@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompty",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: Ada\ninputs:\n  name:\n    type: string\n    default: false\n    sample: Ada\nsample:\n  name: Other\n---\n{{name}}\n",
+    "body": "{{name}}\n",
+    "mappings": [{"sourceKey": "inputs.name", "fieldName": "name", "kind": "text", "defaultSource": "inputs.name.sample"}],
+    "preservedKeys": ["inputs", "sample"],
+    "dropped": ["frontMatterPresentation"],
+    "warnings": [{"code": "invalidDefault", "key": "inputs.name"}]
+  }
+}

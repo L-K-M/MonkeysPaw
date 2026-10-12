@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.md",
+  "expected": {
+    "refusal": {
+      "code": "invalidPrompt",
+      "issues": [
+        "field.reserved_name"
+      ]
+    }
+  }
+}

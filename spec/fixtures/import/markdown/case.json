@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.md",
+  "expected": {
+    "source": "---\n# keep\ncustom: {nested: [1, true]}\n---\né\t{{name}}\n",
+    "body": "é\t{{name}}\n",
+    "mappings": [],
+    "preservedKeys": [
+      "custom"
+    ],
+    "dropped": [],
+    "warnings": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.md",
+  "expected": {
+    "refusal": {
+      "code": "fileTooLarge",
+      "issues": []
+    }
+  },
+  "repeat": 262145
+}

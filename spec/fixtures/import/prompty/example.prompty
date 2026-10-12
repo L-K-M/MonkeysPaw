@@ -1,0 +1,10 @@
+---
+inputs:
+  name: {type: string, default: Ada, description: Person}
+  tone: {type: string, enum: [formal, casual]}
+sample: {name: Other, tone: casual}
+authors: [Author]
+model: {api: chat}
+---
+system:
+{{name}} {{tone}}

@@ -372,10 +372,15 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   its history; restoring a deleted prompt arrives later.
 - **Import.** Drop or choose `.md`, `.prompt` (Dotprompt) or `.prompty`
   files or a folder. `string` inputs map to text fields, `string` with an
-  enum to choice fields, and defaults are kept; everything else is preserved
-  as metadata and listed in the report. Imports land in `Imported/`, use
-  exclusive creation with alternate names, assign fresh ids when an id is
-  already taken, and never overwrite.
+  enum to choice fields, and defaults/descriptions are kept; Prompty sample
+  values supply absent defaults. Everything else is preserved as metadata
+  and listed in the report (§5.5). Core's `ImportModel` accepts chooser/drop
+  paths through file/folder intents and exposes progress and the final
+  per-file report. Imports land in `Imported/` or a chosen subfolder,
+  preserve folder-relative structure, use exclusive creation with alternate
+  names, assign fresh ids when an id is already taken, and never overwrite.
+  Symlinks are not followed; size, encoding and individual-file failures
+  appear as typed skips while successful imports remain available.
 - **Tour.** New installs see a one-screen tour of the picker and fill form
   right after accepting or declining seeds, or after the folder step when
   seeds are not offered. `firstRun.tourCompleted` is an optional version-1

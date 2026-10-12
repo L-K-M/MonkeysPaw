@@ -138,6 +138,12 @@ public enum Limits {
     /// §8.3: cap prompt bodies at 256 KiB on both clients and the server.
     public static let maxPromptBytes: Int = 256 * kibibyte
 
+    /// §5.5: cap import reads before UTF-8 decoding or YAML composition.
+    public static let importFileCapBytes: Int = 256 * kibibyte
+
+    /// §5.5: bound retries if generated import identities are already occupied.
+    public static let importIdentityAttemptCap: Int = 64
+
     /// §5.2: newer prompt formats remain read-only until explicitly supported.
     public static let promptFormatVersion: Int = 1
 

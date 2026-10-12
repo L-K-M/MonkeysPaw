@@ -18,7 +18,7 @@ public enum PromptCodec {
         let issue: PromptIssueCode
         if data.count > Limits.maxPromptBytes {
             issue = .sourceTooLarge
-        } else if let source = String(data: data, encoding: .utf8) {
+        } else if let source = PromptUTF8.decode(data) {
             return parse(source, filename: filename)
         } else {
             issue = .invalidUTF8

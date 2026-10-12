@@ -139,6 +139,52 @@ public final class LibraryService: PromptFavoriteEditing {
         throw LibraryError.copyLimitReached
     }
 
+    /// Import copies validated source bytes rather than performing an editor
+    /// save: idless Markdown and its comments stay intact until first save.
+    /// Identity collision checks and publication share the library lock.
+    /// No old identity's history, usage or remembered values migrate to a copy.
+    func createImported(_ draft: PromptDocument, at path: String) throws -> (path: String, reassigned: Bool, presentationLost: Bool) {
+        try locked {
+            try LibraryPath.validate(path)
+            try ImportMapper.validate(draft)
+            var document = draft
+            var reassigned = false
+            var presentationLost = false
+            if let id = draft.frontMatter.id {
+                let occupied = Set(try libraryEntries().compactMap { $0.document.frontMatter.id })
+                if occupied.contains(id) {
+                    let date = clock.now()
+                    var replacement: ULID?
+                    for _ in 0..<Limits.importIdentityAttemptCap {
+                        let candidate = try ULID.generate(at: date, entropy: entropy.bytes(count: Limits.ulidEntropyBytes))
+                        if !occupied.contains(candidate) { replacement = candidate; break }
+                    }
+                    guard let replacement else { throw ImportSkipReason.identityLimitReached }
+                    let replaced = try ImportMapper.replacingIdentity(replacement, in: draft,
+                                                                      filename: LibraryPath.filename(path))
+                    document = replaced.document
+                    presentationLost = replaced.presentationLost
+                    reassigned = true
+                }
+            }
+            let bytes = PromptUTF8.encode(document.source)
+            guard bytes.count <= Limits.maxPromptBytes else { throw ImportSkipReason.convertedTooLarge }
+            var startingSuffix = 1
+            for _ in 0..<Limits.libraryCreateAttemptCap {
+                let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
+                do {
+                    try files.create(bytes, at: candidate.path)
+                    // Successful publication is the result. A later read can
+                    // fail or see an external edit, but cannot undo this create.
+                    return (candidate.path, reassigned, presentationLost)
+                } catch FileStoreError.alreadyExists {
+                    startingSuffix = candidate.suffix + 1
+                }
+            }
+            throw LibraryError.copyLimitReached
+        }
+    }
+
     /// Later sync push calls this before transmitting an unassigned prompt.
     /// A supplied stamp rejects stale edits before assignment or return.
     /// Already assigned files are returned without a write or new snapshot.
@@ -295,7 +341,7 @@ public final class LibraryService: PromptFavoriteEditing {
             let id = try ULID.generate(at: date, entropy: entropy.bytes(count: Limits.ulidEntropyBytes))
             document = try PromptCodec.assigningIdentity(id, to: document)
         }
-        let bytes = Data(try PromptCodec.write(document).utf8)
+        let bytes = PromptUTF8.encode(try PromptCodec.write(document))
         let sourceIdentity = current?.entry.identity ?? PromptIdentity(path: path, id: nil)
         let targetIdentity = PromptIdentity(path: path, id: document.frontMatter.id)
         var migrated = [PromptKeyedStore]()
@@ -391,6 +437,7 @@ public final class LibraryService: PromptFavoriteEditing {
         catch let error as LibraryError { throw error }
         catch let error as PromptWriteError { throw error }
         catch let error as ULIDGenerationError { throw error }
+        catch let error as ImportSkipReason { throw error }
         catch { throw LibraryError.operationFailed }
     }
 }
