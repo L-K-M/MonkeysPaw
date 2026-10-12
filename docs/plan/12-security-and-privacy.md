@@ -40,7 +40,9 @@ labelled `unencrypted`, written through a private 0600 temporary file and
 atomic rename. Reads and mutations refuse symlinks, nonregular files,
 hardlinks, foreign ownership, insecure file modes and unsupported versions.
 Directory descriptors prevent a replaced config ancestor from redirecting
-secret I/O. Per-store serialization protects account edits.
+secret I/O. Per-store serialization protects account edits. Before mutations,
+an exclusive directory lock protects cleanup of abandoned private
+`.secrets-<UUID>` temporaries; contention fails without sweeping a live writer.
 
 An absent `secret-tool` enables file storage. An installed tool's failed
 lookup uses an existing file value; a successful empty `search --all`
@@ -49,10 +51,20 @@ locked or inaccessible service reads report `locked` or `unavailable`.
 Writes and deletes against an installed but failing or timed-out service
 fail with a typed error, without creating a plaintext copy or discarding
 the fallback. A successful service write removes that account's file copy;
-Clear removes both persisted copies and leaves overrides untouched.
+Clear with an accessible service removes both persisted copies and leaves
+overrides untouched. Commands that fail or time out after committing, and
+failed file cleanup, attempt restoration of the prior service state; an
+inaccessible service can also prevent compensation, so a reported failure
+may need an explicit retry or key re-entry.
+Removing the tool after saving a service key can leave an older service item
+behind a newer file value. Restoring the tool restores service precedence;
+re-enter and save the intended key through the unlocked service to replace
+that item and remove the plaintext copy. Restore the tool before Clear to
+purge service items as well as the file account.
 Subprocesses run only on a worker, with the existing two-second tool budget,
-discarded stderr and bounded stdin/stdout. Secrets larger than the tool's
-8 KiB stdin buffer are rejected before storing, rather than truncated.
+discarded stderr and bounded stdin/stdout. Provider override variables stay
+in the parent environment and are removed from all spawned tools' environments.
+Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
 
 `SECURITY.md` lists what is not protected:
 

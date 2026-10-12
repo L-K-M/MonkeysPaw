@@ -50,13 +50,22 @@ final class LinuxSecretStore: SecretStore {
         try requireWorker()
         lock.lock()
         defer { lock.unlock() }
+        do { try file.prepareForMutation() }
+        catch { throw SecretStoreError.writeFailed }
         let previousFile = try fileSecret(account)
         let previous = try lookup(account)
         if case .toolMissing = previous {
             do { try file.write(value, account: account); return .file }
             catch { throw SecretStoreError.writeFailed }
         }
-        try store(value, account: account)
+        guard value.withValue({ $0.utf8.count }) <= Self.secretToolInputCap else { throw SecretStoreError.writeFailed }
+        do { try store(value, account: account) }
+        catch {
+            // A command may commit before failing or timing out. Restore the
+            // known prior state rather than assuming failure meant no mutation.
+            try? restore(previous, account: account)
+            throw error
+        }
         if previousFile != nil {
             do { try file.write(nil, account: account) }
             catch {
@@ -73,9 +82,17 @@ final class LinuxSecretStore: SecretStore {
         try requireWorker()
         lock.lock()
         defer { lock.unlock() }
+        do { try file.prepareForMutation() }
+        catch { throw SecretStoreError.deleteFailed }
         let previousFile = try fileSecret(account)
         let previous = try lookup(account)
-        if case .found = previous { try clear(account) }
+        if case .found = previous {
+            do { try clear(account) }
+            catch {
+                try? restore(previous, account: account)
+                throw error
+            }
+        }
         guard previousFile != nil else { return }
         do { try file.write(nil, account: account) }
         catch {

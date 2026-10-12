@@ -6,7 +6,7 @@ import MonkeysPawCore
 /// Plaintext, deliberately labelled, and separate from provider settings.
 /// The owning SecretStore serializes every read/modify/replace operation.
 struct LinuxSecretFile {
-    private enum DirectoryAccess { case existing, create }
+    private enum DirectoryAccess { case existing, mutation, create }
     private struct Record: Codable {
         var version = 1
         var storage = "unencrypted"
@@ -15,8 +15,13 @@ struct LinuxSecretFile {
 
     private let directory: URL
     private let name = "secrets-unencrypted.json"
+    private let temporaryPrefix = ".secrets-"
 
     init(paths: LinuxPaths) { directory = paths.configDirectory }
+
+    func prepareForMutation() throws {
+        if let parent = try openDirectory(.mutation) { _ = Glibc.close(parent) }
+    }
 
     func read(account: SecretAccount) throws -> SecretValue? {
         try load().secrets[account.rawValue].map(SecretValue.init)
@@ -33,7 +38,7 @@ struct LinuxSecretFile {
         defer { _ = Glibc.close(parent) }
         try checkLeaf(parent: parent)
 
-        let temporary = ".secrets-\(UUID().uuidString)"
+        let temporary = temporaryPrefix + UUID().uuidString
         let descriptor = openat(parent, temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
             mode_t(Limits.privateFileMode))
         guard descriptor >= 0 else { throw SecretStoreError.writeFailed }
@@ -114,7 +119,7 @@ struct LinuxSecretFile {
                     next = openat(descriptor, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
                 }
                 guard next >= 0 else {
-                    if errno == ENOENT, access == .existing { _ = Glibc.close(descriptor); return nil }
+                    if errno == ENOENT, access != .create { _ = Glibc.close(descriptor); return nil }
                     throw SecretStoreError.readFailed
                 }
                 _ = Glibc.close(descriptor)
@@ -124,10 +129,42 @@ struct LinuxSecretFile {
             guard fstat(descriptor, &info) == 0, info.st_uid == geteuid(), info.st_mode & 0o022 == 0 else {
                 throw SecretStoreError.readFailed
             }
+            if access != .existing {
+                // All our temp writers hold this inode's advisory lock. Refuse
+                // contention instead of sweeping another live writer or waiting.
+                guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { throw SecretStoreError.writeFailed }
+                try removeAbandonedTemporaries(parent: descriptor)
+            }
             return descriptor
         } catch {
             _ = Glibc.close(descriptor)
             throw error
+        }
+    }
+
+    private func removeAbandonedTemporaries(parent: Int32) throws {
+        let descriptor = fcntl(parent, F_DUPFD_CLOEXEC, 0)
+        guard descriptor >= 0 else { throw SecretStoreError.writeFailed }
+        guard let stream = fdopendir(descriptor) else {
+            _ = Glibc.close(descriptor)
+            throw SecretStoreError.writeFailed
+        }
+        defer { closedir(stream) }
+        while true {
+            errno = 0
+            guard let entry = readdir(stream) else {
+                guard errno == 0 else { throw SecretStoreError.writeFailed }
+                return
+            }
+            let candidate = withUnsafeBytes(of: &entry.pointee.d_name) {
+                String(cString: $0.baseAddress!.assumingMemoryBound(to: CChar.self))
+            }
+            guard candidate.hasPrefix(temporaryPrefix),
+                  UUID(uuidString: String(candidate.dropFirst(temporaryPrefix.count))) != nil else { continue }
+            var info = stat()
+            guard fstatat(parent, candidate, &info, AT_SYMLINK_NOFOLLOW) == 0,
+                  Self.isPrivateRegularFile(info) else { continue }
+            guard unlinkat(parent, candidate, 0) == 0 else { throw SecretStoreError.writeFailed }
         }
     }
 }

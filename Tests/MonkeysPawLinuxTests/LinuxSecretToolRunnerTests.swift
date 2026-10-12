@@ -6,6 +6,20 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class LinuxSecretToolRunnerTests: XCTestCase {
+    func testChildEnvironmentOmitsProviderOverridesAndKeepsSessionSettings() throws {
+        let tools = try FakeLinuxTools()
+        let variable = "MONKEYSPAW_PROVIDER_0123456789ABCDEF0123456789ABCDEF_API_KEY"
+        tools.environment[variable] = "parent-only-key"
+        tools.environment["DBUS_SESSION_BUS_ADDRESS"] = "test-session-bus"
+        try tools.install("secret-tool", script: #"""
+        if [ "${MONKEYSPAW_PROVIDER_0123456789ABCDEF0123456789ABCDEF_API_KEY+x}" ]; then exit 9; fi
+        printf '%s' "$DBUS_SESSION_BUS_ADDRESS"
+        """#)
+        let output = try tools.runner.run("secret-tool", arguments: []).get()
+        XCTAssertEqual(output.text, "test-session-bus")
+        XCTAssertEqual(tools.runner.environment[variable], "parent-only-key")
+    }
+
     func testSecretStdinAndVerbatimStdoutUseAbsoluteExecutableAndSeparateArguments() throws {
         let tools = try FakeLinuxTools()
         try tools.install("secret-tool", script: #"printf '%s\n' "$0" > "$FAKE_EXEC""# + "\n"

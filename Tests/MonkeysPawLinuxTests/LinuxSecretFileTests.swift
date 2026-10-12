@@ -55,6 +55,43 @@ final class LinuxSecretFileTests: XCTestCase {
             [file.lastPathComponent])
     }
 
+    func testWriteRemovesAnAbandonedPrivateTemporaryButKeepsUnrelatedFiles() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let directory = file.deletingLastPathComponent()
+        let abandoned = directory.appendingPathComponent(".secrets-\(UUID().uuidString)")
+        try Data("abandoned-key".utf8).write(to: abandoned)
+        XCTAssertEqual(chmod(abandoned.path, 0o600), 0)
+        let unrelated = directory.appendingPathComponent(".secrets-not-a-temporary")
+        try Data("unrelated".utf8).write(to: unrelated)
+        try store.write(SecretValue("new-key"), account: account)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path))
+        XCTAssertEqual(try String(contentsOf: unrelated, encoding: .utf8), "unrelated")
+        XCTAssertEqual(try store.read(account: account), SecretValue("new-key"))
+    }
+
+    func testWriterLockPreventsSweepingAnActiveTemporary() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let original = try Data(contentsOf: file)
+        let directory = file.deletingLastPathComponent()
+        let active = directory.appendingPathComponent(".secrets-\(UUID().uuidString)")
+        try Data("active-bytes".utf8).write(to: active)
+        XCTAssertEqual(chmod(active.path, 0o600), 0)
+        let descriptor = Glibc.open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { _ = Glibc.close(descriptor) }
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertEqual(try String(contentsOf: active, encoding: .utf8), "active-bytes")
+        XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        try store.write(SecretValue("new-key"), account: account)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: active.path))
+    }
+
     func testLeafSymlinksIncludingDanglingLinksAreRefusedWithoutChangingTarget() throws {
         let (tools, store, file) = try fixture()
         try store.write(SecretValue("initial"), account: account)

@@ -170,6 +170,43 @@ final class LinuxSecretStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: secretFile(tools).path))
     }
 
+    func testFailureAfterServiceMutationCompensatesTheOldValue() throws {
+        for operation in ["store", "clear"] {
+            for ending in ["exit 1", "exec /bin/sleep 5"] {
+                let tools = try toolsWithPaths()
+                try installService(tools)
+                let account = SecretAccount.provider(profile)
+                try worker { try self.makeStore(tools).write(SecretValue("old-key"), account: account) }
+                tools.environment["FAKE_OPERATION"] = operation
+                try tools.install("secret-tool", script: #"""
+                case "$1" in
+                  lookup) if [ -f "$FAKE_ITEMS/$5" ]; then /bin/cat "$FAKE_ITEMS/$5"; else exit 1; fi ;;
+                  search) exit 0 ;;
+                  store) /bin/cat > "$FAKE_ITEMS/$7" ;;
+                  clear) /bin/rm -f "$FAKE_ITEMS/$5" ;;
+                esac
+                if [ "$1" = "$FAKE_OPERATION" ]; then
+                """# + "\n" + ending + "\nfi")
+                let store = makeStore(tools, timeout: .milliseconds(200))
+                let start = ContinuousClock.now
+                try worker {
+                    if operation == "store" {
+                        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account)) {
+                            XCTAssertEqual($0 as? SecretStoreError, ending == "exit 1" ? .writeFailed : .unavailable)
+                        }
+                    } else {
+                        XCTAssertThrowsError(try store.delete(account: account)) {
+                            XCTAssertEqual($0 as? SecretStoreError, ending == "exit 1" ? .deleteFailed : .unavailable)
+                        }
+                    }
+                    XCTAssertEqual(try store.read(account: account, source: .persisted)?.value, SecretValue("old-key"))
+                }
+                XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+                XCTAssertFalse(FileManager.default.fileExists(atPath: secretFile(tools).path))
+            }
+        }
+    }
+
     func testToolInputCapRejectsRatherThanTruncates() throws {
         let tools = try toolsWithPaths()
         try installService(tools)
@@ -218,6 +255,50 @@ final class LinuxSecretStoreTests: XCTestCase {
             XCTAssertEqual(try failing.read(account: account, source: .persisted)?.value, SecretValue("old-service-key"))
         }
         XCTAssertEqual(try Data(contentsOf: secretFile(tools)), original)
+    }
+
+    func testFailedFileCleanupClearsANewServiceItemWhenThePreviousTierWasFile() throws {
+        let tools = try toolsWithPaths()
+        let account = SecretAccount.provider(profile)
+        try worker { try self.makeStore(tools).write(SecretValue("old-file-key"), account: account) }
+        let original = try Data(contentsOf: secretFile(tools))
+        try installService(tools)
+        let paths = LinuxPaths(environment: tools.environment)
+        tools.environment["FAKE_CONFIG"] = paths.configDirectory.path
+        defer { _ = chmod(paths.configDirectory.path, 0o700) }
+        try tools.install("secret-tool", script: FakeLinuxTools.recordArguments + "\n" + #"""
+        case "$1" in
+          lookup) if [ -f "$FAKE_ITEMS/$5" ]; then /bin/cat "$FAKE_ITEMS/$5"; else exit 1; fi ;;
+          search) exit 0 ;;
+          store) /bin/cat > "$FAKE_ITEMS/$7"; /bin/chmod 0500 "$FAKE_CONFIG" ;;
+          clear) /bin/rm -f "$FAKE_ITEMS/$5" ;;
+        esac
+        """#)
+        let store = makeStore(tools)
+        try worker {
+            XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account)) {
+                XCTAssertEqual($0 as? SecretStoreError, .writeFailed)
+            }
+            XCTAssertEqual(try store.read(account: account, source: .persisted),
+                StoredSecret(value: SecretValue("old-file-key"), tier: .file))
+        }
+        XCTAssertTrue(tools.arguments.contains(["clear", "service", "ch.lkmc.monkeyspaw", "account", account.rawValue]))
+        XCTAssertEqual(try Data(contentsOf: secretFile(tools)), original)
+    }
+
+    func testServiceWriteAlsoRemovesAbandonedFileTemporaries() throws {
+        let tools = try toolsWithPaths()
+        try installService(tools)
+        let paths = LinuxPaths(environment: tools.environment)
+        try FileManager.default.createDirectory(at: paths.configDirectory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        let abandoned = paths.configDirectory.appendingPathComponent(".secrets-\(UUID().uuidString)")
+        try Data("abandoned-key".utf8).write(to: abandoned)
+        XCTAssertEqual(chmod(abandoned.path, 0o600), 0)
+        let store = makeStore(tools)
+        try worker { XCTAssertEqual(try store.write(SecretValue("new-key"), account: .provider(self.profile)), .secretService) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path))
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: paths.configDirectory.path).isEmpty)
     }
 
     func testNeitherSecretNorToolErrorsReachStderrOrFileLogs() throws {
@@ -321,7 +402,7 @@ final class LinuxSecretStoreTests: XCTestCase {
         try tools.install("secret-tool", script: FakeLinuxTools.recordArguments + "\n" + #"""
         case "$1" in
           lookup) if [ -f "$FAKE_ITEMS/$5" ]; then /bin/cat "$FAKE_ITEMS/$5"; else exit 1; fi ;;
-          search) exit 0 ;;
+          search) exit 0 ;; # All normal fixture searches are for absent items; real matches also print secret data.
           store) /bin/cat > "$FAKE_ITEMS/$7" ;;
           clear) /bin/rm -f "$FAKE_ITEMS/$5" ;;
           *) exit 2 ;;

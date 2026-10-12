@@ -55,7 +55,9 @@ struct LinuxToolRunner {
         let inputPipe = input.map { _ in Pipe() }
         process.executableURL = executable
         process.arguments = arguments
+        // Operator overrides belong to the parent, never unrelated child tools.
         process.environment = environment.merging(environmentOverrides) { _, value in value }
+            .filter { !$0.key.hasPrefix("MONKEYSPAW_PROVIDER_") || !$0.key.hasSuffix("_API_KEY") }
         process.standardInput = inputPipe?.fileHandleForReading ?? FileHandle.nullDevice
         process.standardOutput = pipe
         process.standardError = errorOutput == .mergeForHelp ? pipe : FileHandle.nullDevice
