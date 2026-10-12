@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompt",
+  "expected": {
+    "source": "---\nfields:\n  tone:\n    type: choice\n    options:\n    - formal\n    - casual\n    default: casual\ninput:\n  schema:\n    tone:\n      type: string\n      enum:\n      - formal\n      - casual\n      default: loud\n  default:\n    tone: casual\n---\n{{tone}}\n",
+    "body": "{{tone}}\n",
+    "mappings": [{"sourceKey": "input.schema.tone", "fieldName": "tone", "kind": "choice", "defaultSource": "input.default.tone"}],
+    "preservedKeys": ["input"],
+    "dropped": ["frontMatterPresentation"],
+    "warnings": [{"code": "invalidDefault", "key": "input.schema.tone"}]
+  }
+}

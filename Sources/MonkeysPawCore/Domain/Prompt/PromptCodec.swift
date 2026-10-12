@@ -18,11 +18,8 @@ public enum PromptCodec {
         let issue: PromptIssueCode
         if data.count > Limits.maxPromptBytes {
             issue = .sourceTooLarge
-        } else if String(data: data, encoding: .utf8) != nil {
-            // Validate strictly, then retain every scalar. Foundation's UTF-8
-            // initializer strips a leading BOM, which is literal source under
-            // §5.2's exact first-line delimiter rule.
-            return parse(String(decoding: data, as: UTF8.self), filename: filename)
+        } else if let source = PromptUTF8.decode(data) {
+            return parse(source, filename: filename)
         } else {
             issue = .invalidUTF8
         }

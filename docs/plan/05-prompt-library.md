@@ -705,10 +705,11 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   Save a new draft without id at that path for a distinct copy identity.
   The helper does not reserve the name; use `create(_:at:)` when a new file
   must never replace a destination that appeared after the probe.
-- **Import.** Drop `.md`, `.prompt` (Dotprompt), or `.prompty` files, or a
+- **Import.** Drop lowercase `.md`, `.prompt` (Dotprompt), or `.prompty` files, or a
   folder, onto the library window. Dotprompt `input.schema` and Prompty
   `inputs` map to `fields` where the mapping is lossless. Everything else
-  stays as preserved keys. Core's pure `ImportMapper` and asynchronous
+  stays as preserved keys. Extension matching is case-sensitive.
+  Core's pure `ImportMapper` and asynchronous
   `ImportService` use this mapping table:
 
   | Source | Monkey's Paw result |
@@ -716,10 +717,11 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   | Valid `.md` | Copy the complete UTF-8 source as-is, including front matter comments. An absent id stays absent until first save (§5.2). |
   | Dotprompt Picoschema `name: string[, description]` | `fields.name.type: text`; `name?` maps to `optional: true`. |
   | Dotprompt Picoschema `name(enum[, description]): [strings]` | A `choice` field with those option values. |
-  | Dotprompt string declarations, including JSON Schema `type: object` / `properties` | `text`, or `choice` for a nonempty string enum; keep string defaults and descriptions. `input.default` supplies a default when the declaration has none. |
-  | Prompty v1 keyed or list `inputs` with `type: string` | The same text/choice mapping; keep defaults and descriptions. A string `sample` value supplies a default only when no default exists. |
+  | Dotprompt string declarations, including JSON Schema `type: object` / `properties` | `text`, or `choice` for a nonempty string enum; keep string defaults and descriptions. `input.default` supplies a fallback default. An `input` without a supported `schema` reports `unsupportedInput` at `input.schema`; absent `input` is silent. |
+  | Prompty v1 keyed or list `inputs` with `type: string` | The same text/choice mapping; keep defaults and descriptions. `required: false` maps to `optional: true`; omitted `required` or `required: true` stays required. A string input-local `sample`, otherwise top-level `sample.<name>`, supplies a fallback default. Valid explicit defaults, including empty strings, take precedence. |
   | Prompty `sample` without an input declaration for a body placeholder | Make its implicit text field explicit with the string sample as its default; do not override unsupported declared inputs or map unused samples. |
-  | Other input types, invalid names/defaults/options, reserved names (§5.3), or a name already declared in `fields` | Preserve the source declaration and report why it was not mapped. |
+  | Invalid explicit default with a usable fallback | Report `invalidDefault` at the declaration key and keep the field with the validated string fallback; `defaultSource` names that fallback's metadata path. A choice fallback must belong to its enum. |
+  | Other input types, invalid defaults without a usable fallback, invalid names/options, reserved names (§5.3), or a name already declared in `fields` | Preserve the source declaration and report why it was not mapped. |
   | `model`, `config`, `output`/`outputs`, tools, authors and all other metadata | Preserve under the original keys, including the complete original input and sample metadata alongside mapped fields. |
   | Template bodies | Keep exact UTF-8 bytes. Unsupported closed Handlebars/Jinja2 expressions and Jinja2 blocks/comments remain literal and are reported, without conversion. |
 
@@ -730,11 +732,16 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   reads before decoding; non-UTF-8 is refused. Converted documents must also
   fit `Limits.maxPromptBytes`. UTF-8 BOM bytes remain a literal source scalar;
   a first line containing a BOM is not §5.2's exact `---` delimiter.
+  Supported placeholders count as field usage beside unsupported constructs;
+  a field referenced only by unsupported expressions receives `field.unused`.
+  Unsupported-template warning offsets are zero-based UTF-8 bytes relative
+  to the body, independently of the header length.
 
   Files land in `Imported/` or a chosen library-relative subfolder. Folder
   imports preserve paths relative to the selected folder, without adding
-  its basename. The source-reader port enumerates recursively without
-  following symlinks and rejects symlinked components when reading; Core
+  its basename. The source-reader port canonicalizes ancestors of the selected
+  root, allowing paths such as macOS `/var` through `/private/var`. It rejects
+  a symlinked selected root and symlinks below it during traversal and reads; Core
   validates returned relative paths and reports symlinks/nonregular entries
   as skips. Ignored library paths are refused rather than created invisibly.
   Slash/backslash checks and ignored `_`/`.` prefixes use bytes or scalars,

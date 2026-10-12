@@ -8,11 +8,16 @@ public enum ImportRequest: Equatable, Sendable {
 public enum ImportFormat: String, Sendable {
     case markdown, dotprompt, prompty
 
+    var sourceExtension: String {
+        switch self {
+        case .markdown: return ".md"
+        case .dotprompt: return ".prompt"
+        case .prompty: return ".prompty"
+        }
+    }
+
     static func filename(_ filename: String) -> Self? {
-        if filename.hasSuffix(".md") { return .markdown }
-        if filename.hasSuffix(".prompt") { return .dotprompt }
-        if filename.hasSuffix(".prompty") { return .prompty }
-        return nil
+        [Self.markdown, .dotprompt, .prompty].first { filename.hasSuffix($0.sourceExtension) }
     }
 }
 

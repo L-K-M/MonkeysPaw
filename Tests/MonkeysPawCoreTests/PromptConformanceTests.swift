@@ -19,6 +19,30 @@ final class PromptConformanceTests: XCTestCase {
         print("Consumed \(cases) prompt fixtures (\(files) files).")
     }
 
+    func testHiddenMetadataIsIgnoredAtEveryCorpusLevel() throws {
+        let baseline = try consumeCorpus(at: fixtureRoot)
+        try withTemporaryCorpus { root in
+            var directories = [root]
+            for category in categories {
+                let directory = root.appendingPathComponent(category)
+                directories.append(directory)
+                if category == "import" || category == "ranking" {
+                    let cases = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                        .filter { !$0.hasPrefix(".") }
+                    directories += cases.map { directory.appendingPathComponent($0) }
+                }
+            }
+            for directory in directories {
+                for name in [".DS_Store", "._metadata"] {
+                    try Data([0xff]).write(to: directory.appendingPathComponent(name))
+                }
+            }
+            let actual = try consumeCorpus(at: root)
+            XCTAssertEqual(actual.cases, baseline.cases)
+            XCTAssertEqual(actual.files, baseline.files)
+        }
+    }
+
     func testRejectsUnknownCategoriesAndFilesAndUnconsumedSources() throws {
         let mutations: [(String, CorpusError, (URL) throws -> Void)] = [
             ("unknown category", .unknownCategory, { root in
@@ -69,6 +93,7 @@ final class PromptConformanceTests: XCTestCase {
     func testRejectsUnknownSchemaVersionsAndContentMembers() throws {
         for category in categories.subtracting(["ranking", "import"]).sorted() {
             let files = try FileManager.default.contentsOfDirectory(atPath: fixtureRoot.appendingPathComponent(category).path)
+                .filter { !$0.hasPrefix(".") }
             let file = try XCTUnwrap(files.sorted().first { $0.hasSuffix(".json") })
             try assertRejectsJSON(category + "/" + file, label: category + " schema") { $0["schema"] = 2 }
             try assertRejectsJSON(category + "/" + file, label: category + " member") { $0["unknown"] = 1 }
@@ -164,7 +189,8 @@ final class PromptConformanceTests: XCTestCase {
 
     private func consumeCorpus(at root: URL) throws -> (cases: Int, files: Int) {
         let manager = FileManager.default
-        let directories = try manager.contentsOfDirectory(atPath: root.path).sorted()
+        let directories = try manager.contentsOfDirectory(atPath: root.path)
+            .filter { !$0.hasPrefix(".") }.sorted()
         guard Set(directories) == categories else { throw CorpusError.unknownCategory }
         var consumed = Set<RelativePath>()
         var allFiles = Set<RelativePath>()
@@ -173,7 +199,8 @@ final class PromptConformanceTests: XCTestCase {
         for category in directories {
             let directory = root.appendingPathComponent(category)
             try require(.directory, at: directory)
-            let files = try manager.contentsOfDirectory(atPath: directory.path).sorted()
+            let files = try manager.contentsOfDirectory(atPath: directory.path)
+                .filter { !$0.hasPrefix(".") }.sorted()
             guard !files.isEmpty else { throw CorpusError.emptyCategory }
 
             if category == "import" {
@@ -307,6 +334,7 @@ final class PromptConformanceTests: XCTestCase {
     private func consumeRanking(at directory: URL, relative: String,
                                 consumed: inout Set<RelativePath>, allFiles: inout Set<RelativePath>) throws {
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { !$0.hasPrefix(".") }
         for file in files {
             try require(.file, at: directory.appendingPathComponent(file))
             guard file == "case.json" || file.hasSuffix(".md") else { throw CorpusError.unrecognizedFile }

@@ -6,10 +6,7 @@ import Yams
 public enum ImportMapper {
     public static func map(_ data: Data, filename: String) throws -> ImportMappingResult {
         guard data.count <= Limits.importFileCapBytes else { throw ImportSkipReason.fileTooLarge }
-        guard String(data: data, encoding: .utf8) != nil else { throw ImportSkipReason.invalidUTF8 }
-        // Foundation's strict decoder removes a UTF-8 BOM. After validation,
-        // decode the same bytes without dropping that literal source scalar.
-        let source = String(decoding: data, as: UTF8.self)
+        guard let source = PromptUTF8.decode(data) else { throw ImportSkipReason.invalidUTF8 }
         guard let format = ImportFormat.filename(filename) else { throw ImportSkipReason.unsupportedExtension }
         let original = PromptCodec.parse(source, filename: filename)
         var report = ImportMappingReport()
@@ -56,7 +53,8 @@ public enum ImportMapper {
                                   filename: String) throws -> (document: PromptDocument, presentationLost: Bool) {
         if let node = document.preservedHeader?.mapping.flatMap({ value("id", in: $0) }),
            let literal = PortableYAML.string(node), let mark = node.mark {
-            // libYAML marks count Unicode scalars and header-relative lines.
+            // Yams exposes one-based, header-relative lines and scalar columns.
+            // The opening delimiter adds one source line.
             // Common plain/quoted ULIDs can change without rewriting comments,
             // scalar styles, CRLFs, or another occurrence in metadata/body.
             let scalars = document.source.unicodeScalars
@@ -133,8 +131,11 @@ public enum ImportMapper {
         }
 
         mutating func dotprompt() {
-            guard let input = value("input", in: header)?.mapping,
-                  let schema = value("schema", in: input) else { return }
+            guard let inputNode = value("input", in: header) else { return }
+            guard let input = inputNode.mapping, let schema = value("schema", in: input) else {
+                report.warnings.append(.unsupportedInput("input.schema"))
+                return
+            }
             let defaults = value("default", in: input)?.mapping
             guard let mapping = schema.mapping else {
                 report.warnings.append(.unsupportedInput("input.schema"))
@@ -273,12 +274,22 @@ public enum ImportMapper {
             pairs.insert((string("type"), string(kind.rawValue)), at: 0)
 
             let explicitDefault = value("default", in: properties)
-            let defaultNode = explicitDefault ?? fallback
-            if let defaultNode {
-                guard let defaultValue = PortableYAML.string(defaultNode),
-                      kind != .choice || choices.contains(defaultValue) else {
-                    report.warnings.append(.invalidDefault(source)); return
+            func usableDefault(_ node: Node?) -> Node? {
+                guard let node, let text = PortableYAML.string(node),
+                      kind != .choice || choices.contains(text) else { return nil }
+                return node
+            }
+            var defaultNode = usableDefault(explicitDefault)
+            var defaultSource = defaultNode == nil ? nil : source + ".default"
+            if defaultNode == nil {
+                defaultNode = usableDefault(fallback)
+                defaultSource = defaultNode == nil ? nil : fallbackSource
+                if explicitDefault != nil || (fallback != nil && defaultNode == nil) {
+                    report.warnings.append(.invalidDefault(source))
+                    guard defaultNode != nil else { return }
                 }
+            }
+            if let defaultNode {
                 pairs.append((string("default"), defaultNode))
             }
             if let node = value("description", in: properties) {
@@ -290,7 +301,7 @@ public enum ImportMapper {
             fields.append((string(name), Node(pairs, Tag(.map), .block)))
             used.insert(name)
             report.mappings.append(ImportFieldMapping(sourceKey: source, fieldName: name, kind: kind,
-                defaultSource: defaultNode == nil ? nil : explicitDefault == nil ? fallbackSource : source + ".default"))
+                defaultSource: defaultSource))
         }
     }
 

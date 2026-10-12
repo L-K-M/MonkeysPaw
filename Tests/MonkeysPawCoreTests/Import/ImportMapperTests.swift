@@ -18,15 +18,75 @@ final class ImportMapperTests: XCTestCase {
 
     func testUTF8BOMIsPreservedByImportAndSubsequentFileParsing() throws {
         for filename in ["Example.md", "Example.prompt", "Example.prompty"] {
-            let source = "\u{feff}body {{name}}\r\n"
-            let bytes = Data(source.utf8)
-            let mapped = try ImportMapper.map(bytes, filename: filename)
-            XCTAssertEqual(Data(mapped.document.source.utf8), bytes)
-            XCTAssertEqual(Data(mapped.document.body.utf8), bytes)
-            let loaded = PromptCodec.parseFile(bytes, filename: filename)
-            XCTAssertEqual(Data(loaded.source.utf8), bytes)
-            XCTAssertEqual(Data(loaded.body.utf8), bytes)
+            for body in ["body {{name}}\r\n", "---\nmodel: literal\n---\nbody\n", "\u{feff}body\n"] {
+                let bytes = Data([0xef, 0xbb, 0xbf]) + Data(body.utf8)
+                let mapped = try ImportMapper.map(bytes, filename: filename)
+                XCTAssertEqual(Data(mapped.document.source.utf8), bytes)
+                XCTAssertEqual(Data(mapped.document.body.utf8), bytes)
+                XCTAssertNil(mapped.document.preservedHeader)
+                let loaded = PromptCodec.parseFile(bytes, filename: filename)
+                XCTAssertEqual(Data(loaded.source.utf8), bytes)
+                XCTAssertEqual(Data(loaded.body.utf8), bytes)
+                XCTAssertEqual(Data(try PromptCodec.write(loaded).utf8), bytes)
+            }
         }
+        for bytes in [Data([0xef, 0xbb]), Data([0xef, 0xbb, 0xbf, 0xff])] {
+            XCTAssertThrowsError(try ImportMapper.map(bytes, filename: "Example.md")) {
+                XCTAssertEqual($0 as? ImportSkipReason, .invalidUTF8)
+            }
+            XCTAssertEqual(PromptCodec.parseFile(bytes, filename: "Example.md").issues.map(\.code), [.invalidUTF8])
+        }
+    }
+
+    func testDotpromptInputWithoutSchemaWarnsWhileAbsentInputIsSilent() throws {
+        for input in ["input: {type: object}\n", "input: string\n", "input: null\n"] {
+            let mapped = try map("---\n" + input + "---\nbody")
+            XCTAssertTrue(mapped.report.mappings.isEmpty)
+            XCTAssertEqual(mapped.report.warnings, [.unsupportedInput("input.schema")])
+        }
+        XCTAssertTrue(try map("---\nmodel: example\n---\nbody").report.warnings.isEmpty)
+    }
+
+    func testInvalidExplicitDefaultsUseValidatedFallbacksAndWarn() throws {
+        let declarations = """
+            name: {type: string, default: false}
+            tone: {type: string, enum: [formal, casual], default: loud}
+            blank: {type: string, default: ''}
+            badFallback: {type: string, enum: [a, b], default: c}
+            noFallback: {type: string, default: 7}
+        """
+        for filename in ["Example.prompt", "Example.prompty"] {
+            let dotprompt = filename.hasSuffix(".prompt")
+            let heading = dotprompt ? "input:\n  schema:\n" : "inputs:\n"
+            let inputs = declarations.split(separator: "\n").map { (dotprompt ? "    " : "  ") + $0 }.joined(separator: "\n")
+            let fallback = dotprompt ? "\n  default: {name: Ada, tone: casual, blank: other, badFallback: c}" : "\nsample: {name: Ada, tone: casual, blank: other, badFallback: c}"
+            let source = "---\n" + heading + inputs + fallback + "\n---\n{{name}} {{tone}} {{blank}}"
+            let mapped = try map(source, as: filename)
+            XCTAssertEqual(mapped.document.frontMatter.fields.map(\.name), ["name", "tone", "blank"])
+            XCTAssertEqual(mapped.document.frontMatter.fields.map(\.defaultValue), ["Ada", "casual", ""])
+            let defaultPrefix = dotprompt ? "input.default." : "sample."
+            let sourcePrefix = dotprompt ? "input.schema." : "inputs."
+            XCTAssertEqual(mapped.report.mappings.map(\.defaultSource), [defaultPrefix + "name", defaultPrefix + "tone", sourcePrefix + "blank.default"])
+            XCTAssertEqual(mapped.report.warnings, ["name", "tone", "badFallback", "noFallback"].map { .invalidDefault(sourcePrefix + $0) })
+            try assertPreservedMetadata(source, result: mapped.document)
+        }
+        let local = try map("---\ninputs:\n  name: {type: string, default: false, sample: local}\nsample: {name: root}\n---\n{{name}}", as: "Example.prompty")
+        XCTAssertEqual(local.document.frontMatter.fields.first?.defaultValue, "local")
+        XCTAssertEqual(local.report.mappings.first?.defaultSource, "inputs.name.sample")
+        XCTAssertEqual(local.report.warnings, [.invalidDefault("inputs.name")])
+    }
+
+    func testSupportedPlaceholdersCountAsUsedBesideForeignConstructs() throws {
+        for (filename, body) in [("Example.prompt", "{{name}} {{#if name}}x{{/if}}"),
+                                 ("Example.prompty", "{% if name %}{{name}}{% endif %}")] {
+            let header = filename.hasSuffix(".prompt") ? "input:\n  schema:\n    name: string" : "inputs:\n  name: {type: string}"
+            let mapped = try map("---\n" + header + "\n---\n" + body, as: filename)
+            XCTAssertEqual(mapped.document.template.names, ["name"])
+            XCTAssertFalse(mapped.report.warnings.contains(.validation(.unusedField)))
+            XCTAssertEqual(mapped.report.warnings.filter { if case .unsupportedTemplate = $0 { return true }; return false }.count, 2)
+        }
+        let unsupported = try map("---\ninputs:\n  name: {type: string}\n---\n{{name | upper}}", as: "Example.prompty")
+        XCTAssertEqual(unsupported.report.warnings, [.validation(.unusedField), .unsupportedTemplate(.prompty, byteOffset: 0)])
     }
 
     func testDotpromptPicoschemaMapsStringsEnumsDescriptionsAndDefaults() throws {
@@ -110,6 +170,8 @@ final class ImportMapperTests: XCTestCase {
             XCTAssertEqual(fields.map(\.defaultValue), ["Ada", "casual", "local"])
             XCTAssertEqual(fields.map(\.kind), [.text, .choice, .text])
             XCTAssertEqual(fields[0].description, "Person")
+            XCTAssertFalse(fields[0].optional, "Omitted required defaults to required.")
+            XCTAssertFalse(fields[1].optional)
             XCTAssertTrue(fields[2].optional)
             XCTAssertTrue(mapped.report.mappings[0].defaultSource?.hasSuffix(".default") == true)
             XCTAssertEqual(mapped.report.mappings[1].defaultSource, "sample.tone")
@@ -245,6 +307,22 @@ final class ImportMapperTests: XCTestCase {
         XCTAssertEqual(result.document.body, "body\r\n")
         XCTAssertTrue(result.presentationLost)
         XCTAssertTrue(result.document.source.contains("custom: retained"))
+    }
+
+    func testIdentityFastPathUsesYamsOneBasedHeaderMarksOnLaterLines() throws {
+        let old = "01K6Z4V9KQWZX7MPQ4T8ZNB2PD"
+        let replacement = try XCTUnwrap(ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PE"))
+        for quote in ["", "'", "\""] {
+            let source = "---\r\n# keep \(old)\r\ntitle: Café\r\nid: \(quote)\(old)\(quote) # identity\r\ncustom: \(old)\r\n---\r\n\(old)\r\n"
+            let document = PromptCodec.parse(source, filename: "Example.md")
+            let identity = try XCTUnwrap(document.preservedHeader?.mapping?.first { PortableYAML.string($0.key) == "id" }?.value)
+            XCTAssertEqual(identity.mark?.line, 3)
+            XCTAssertEqual(identity.mark?.column, 5)
+            let replaced = try ImportMapper.replacingIdentity(replacement, in: document, filename: "Example.md")
+            let expected = source.replacingOccurrences(of: "id: \(quote)\(old)", with: "id: \(quote)\(replacement.rawValue)")
+            XCTAssertEqual(Data(replaced.document.source.utf8), Data(expected.utf8))
+            XCTAssertFalse(replaced.presentationLost)
+        }
     }
 
     private func map(_ source: String, as filename: String = "Example.prompt") throws -> ImportMappingResult {

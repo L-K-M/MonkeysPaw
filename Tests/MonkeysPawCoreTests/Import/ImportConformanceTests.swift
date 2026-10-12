@@ -7,33 +7,46 @@ import XCTest
 enum ImportFixtureCorpus {
     enum Failure: Error { case invalidCorpus }
 
+    private struct GoldenText: Decodable {
+        struct Content: Decodable {
+            let source: String
+            let body: String
+        }
+        let expected: Content
+    }
+
     static func consume(at root: URL) throws -> (cases: Int, files: [String]) {
         try require(.typeDirectory, at: root)
-        let names = try FileManager.default.contentsOfDirectory(atPath: root.path).sorted()
+        let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { !$0.hasPrefix(".") }.sorted()
         guard !names.isEmpty else { throw Failure.invalidCorpus }
         var consumed: [String] = []
         for name in names {
             let directory = root.appendingPathComponent(name)
             try require(.typeDirectory, at: directory)
             let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .filter { !$0.hasPrefix(".") }
             for file in files { try require(.typeRegular, at: directory.appendingPathComponent(file)) }
             guard files.contains("case.json") else { throw Failure.invalidCorpus }
-            let envelope = try object(JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("case.json"))))
+            let json = try Data(contentsOf: directory.appendingPathComponent("case.json"))
+            let envelope = try object(JSONSerialization.jsonObject(with: json))
             try keys(envelope, ["schema", "category", "source", "expected"], optional: ["repeat"])
             guard try integer(envelope["schema"]) == 1, envelope["category"] as? String == "import",
                   let sourceName = envelope["source"] as? String,
                   !sourceName.contains("/"), ImportFormat.filename(sourceName) != nil,
                   Set(files) == ["case.json", sourceName] else { throw Failure.invalidCorpus }
             let unit = try Data(contentsOf: directory.appendingPathComponent(sourceName))
-            guard String(data: unit, encoding: .utf8) != nil else { throw Failure.invalidCorpus }
-            let text = String(decoding: unit, as: UTF8.self)
+            guard PromptUTF8.decode(unit) != nil else { throw Failure.invalidCorpus }
             let count = try envelope["repeat"].map(integer) ?? 1
             let size = unit.count.multipliedReportingOverflow(by: count)
             guard count > 0, !size.overflow, size.partialValue <= Limits.importFileCapBytes + 1 else {
                 throw Failure.invalidCorpus
             }
-            let data = Data(String(repeating: text, count: count).utf8)
-            let expected = try object(envelope["expected"])
+            var data = Data()
+            if !unit.isEmpty {
+                for _ in 0..<count { data.append(unit) }
+            }
+            var expected = try object(envelope["expected"])
             let actual: [String: Any]
             if let refusal = expected["refusal"] {
                 try keys(expected, ["refusal"])
@@ -52,14 +65,19 @@ enum ImportFixtureCorpus {
                 }
             } else {
                 try validateExpectation(expected)
+                // Decode golden text directly as Swift strings. NSString
+                // bridging through JSONSerialization can alter a leading BOM.
+                let golden = try JSONDecoder().decode(GoldenText.self, from: json).expected
+                expected["source"] = golden.source
+                expected["body"] = golden.body
                 let mapped = try ImportMapper.map(data, filename: sourceName)
                 actual = ["source": mapped.document.source, "body": mapped.document.body,
                           "mappings": mapped.report.mappings.map(mapping),
                           "preservedKeys": mapped.report.preservedKeys,
                           "dropped": mapped.report.dropped.map(\.rawValue),
                           "warnings": mapped.report.warnings.map(warning)]
-                XCTAssertEqual(Data(mapped.document.source.utf8), Data((expected["source"] as! String).utf8), name)
-                XCTAssertEqual(Data(mapped.document.body.utf8), Data((expected["body"] as! String).utf8), name)
+                XCTAssertEqual(Data(mapped.document.source.utf8), Data(golden.source.utf8), name)
+                XCTAssertEqual(Data(mapped.document.body.utf8), Data(golden.body.utf8), name)
             }
             XCTAssertEqual(NSDictionary(dictionary: actual), NSDictionary(dictionary: expected), name)
             consumed += [name + "/case.json", name + "/" + sourceName]
@@ -164,6 +182,31 @@ final class ImportConformanceTests: XCTestCase {
         let result = try ImportFixtureCorpus.consume(at: root)
         XCTAssertGreaterThan(result.cases, 0)
         XCTAssertEqual(result.files.count, result.cases * 2)
+    }
+
+    func testSwiftGoldenTextDecodingPreservesTheExactBOMBytes() throws {
+        let json = Data("{\"source\":\"\\ufeffbody\\n\",\"body\":\"\\ufeffbody\\n\"}".utf8)
+        let golden = try JSONDecoder().decode([String: String].self, from: json)
+        let bytes = Data([0xef, 0xbb, 0xbf, 0x62, 0x6f, 0x64, 0x79, 0x0a])
+        XCTAssertEqual(Data(try XCTUnwrap(golden["source"]).utf8), bytes)
+        XCTAssertEqual(Data(try XCTUnwrap(golden["body"]).utf8), bytes)
+    }
+
+    func testHiddenMetadataIsIgnoredWithoutWeakeningStrictDispatch() throws {
+        let original = try ImportFixtureCorpus.consume(at: root)
+        try withCopy { copy in
+            for folder in [copy, copy.appendingPathComponent("markdown")] {
+                for name in [".DS_Store", "._example.md"] {
+                    try Data([0xff]).write(to: folder.appendingPathComponent(name))
+                }
+                try FileManager.default.createDirectory(at: folder.appendingPathComponent(".hidden"), withIntermediateDirectories: false)
+            }
+            let actual = try ImportFixtureCorpus.consume(at: copy)
+            XCTAssertEqual(actual.cases, original.cases)
+            XCTAssertEqual(actual.files, original.files)
+            try Data().write(to: copy.appendingPathComponent("markdown/orphan.md"))
+            XCTAssertThrowsError(try ImportFixtureCorpus.consume(at: copy))
+        }
     }
 
     func testStrictDispatchRejectsOrphansLinksDirectoriesAndUnknownMembers() throws {

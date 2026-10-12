@@ -186,18 +186,23 @@ boolean schema versions.
 }
 ```
 
-`source` is a basename ending in `.md`, `.prompt`, or `.prompty`. Optional
+`source` is a basename ending in lowercase `.md`, `.prompt`, or `.prompty`;
+extension matching is case-sensitive. Dot-files, including `.DS_Store` and
+`._*` metadata, are ignored at every corpus directory level. Optional
 positive integer `repeat` covers the source-byte limit with a small input;
 expanded fixture input is bounded to 262,145 bytes. All other envelope and
 expectation members are required, with no extra members. `defaultSource` is
 the original metadata property's path or null. Warning objects use `code`
 and `key` for input/native-validation warnings, or `code`, `format`, and
-zero-based UTF-8 `byteOffset` for `unsupportedTemplate`. A refusal instead
+zero-based, body-relative UTF-8 `byteOffset` for `unsupportedTemplate`. A refusal instead
 uses only `expected.refusal`, containing `code` (`invalidPrompt`,
 `fileTooLarge`, or `convertedTooLarge`) and ordered native issue `issues`.
 Golden source/body expectations are handwritten specification data.
 Input warnings follow declaration order, then native validation warnings
 follow codec order, then unsupported template warnings follow byte offset.
+Supported `{{name}}` placeholders count as field usage even beside unsupported
+constructs. A field referenced only by unsupported expressions receives
+`validation` `field.unused`; usage analysis does not fail closed for the body.
 
 The §5.5 mapping table is portable:
 
@@ -206,10 +211,11 @@ The §5.5 mapping table is portable:
 | `.md` | Validate and copy all bytes, retaining comments and an absent id. A duplicate supplied ULID is replaced by the service, leaving body bytes unchanged. |
 | Dotprompt Picoschema `name: string[, description]` | Text field; `name?` is optional. |
 | Dotprompt `name(enum[, description]): [strings]` | Choice field with those options. |
-| Dotprompt string declaration / JSON Schema object property | Text or string-enum choice field; preserve string description/default; fall back to `input.default.<name>`. |
-| Prompty v1 keyed/list `inputs` with `type: string` | Text or string-enum choice field; preserve string description/default; fall back to input-local `sample`, then top-level `sample.<name>`. Explicit defaults, including empty strings, take precedence. |
+| Dotprompt string declaration / JSON Schema object property | Text or string-enum choice field; preserve string description/default; fall back to `input.default.<name>`. An `input` without a supported `schema` receives `unsupportedInput` with key `input.schema`; absent `input` is silent. |
+| Prompty v1 keyed/list `inputs` with `type: string` | Text or string-enum choice field; preserve string description/default; `required: false` maps to `optional: true`, while omitted `required` or `required: true` stays required. Fall back to input-local `sample`, then top-level `sample.<name>`. Valid explicit defaults, including empty strings, take precedence. |
 | Prompty sample-only body placeholder | Its implicit text field gains the string sample as its default. Unsupported explicit inputs and unused sample keys remain metadata. |
-| Unsupported types, invalid/default enum values, reserved/invalid names, duplicate mapped names, existing native declarations | Preserve metadata without mapping; typed warnings explain why. Builtins and deferred reserved names follow §5.3. |
+| Invalid explicit default with a usable fallback | Warn with `invalidDefault` at the declaration key, keep the field with the validated string fallback, and set `defaultSource` to its metadata path. A choice fallback must be an enum member. |
+| Unsupported types, invalid defaults without a usable fallback, invalid enum options, reserved/invalid names, duplicate mapped names, existing native declarations | Preserve metadata without mapping; typed warnings explain why. Builtins and deferred reserved names follow §5.3. |
 | All original metadata, including `input`/`inputs`, sample, model, output(s), tools, authors | Preserve original keys and values alongside generated native fields. |
 | Body | Exact UTF-8 bytes; unsupported closed expressions and Jinja2 blocks/comments remain literal and receive warnings. |
 

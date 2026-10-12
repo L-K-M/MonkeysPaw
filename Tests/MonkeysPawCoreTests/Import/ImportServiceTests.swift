@@ -5,6 +5,58 @@ import XCTest
 final class ImportServiceTests: XCTestCase {
     private let suppliedID = "01K6Z4V9KQWZX7MPQ4T8ZNB2PD"
 
+    func testBOMBytesSurvivePublicationReloadAndFirstSave() throws {
+        for filename in ["Example.md", "Example.prompt", "Example.prompty"] {
+            let graph = ImportTestGraph()
+            let bytes = Data([0xef, 0xbb, 0xbf]) + Data("body {{name}}\r\n".utf8)
+            let path = "/source/" + filename
+            graph.sources.files[Data(path.utf8)] = bytes
+            let report = try XCTUnwrap(graph.run(.files([path])))
+            XCTAssertEqual(report.files.first?.outcome, .created(path: "Imported/Example.md"))
+            XCTAssertEqual(try graph.files.read(at: "Imported/Example.md"), bytes)
+            let loaded = try graph.library.load(at: "Imported/Example.md")
+            XCTAssertEqual(Data(loaded.document.source.utf8), bytes)
+            let saved = try graph.library.save(loaded.document, at: loaded.relativePath, expectedStamp: loaded.stamp)
+            XCTAssertEqual(Data(saved.document.body.utf8), bytes)
+            let written = try graph.files.read(at: loaded.relativePath)
+            XCTAssertEqual(Data(written.suffix(bytes.count)), bytes)
+            XCTAssertEqual(Data(PromptCodec.parseFile(written, filename: "Example.md").body.utf8), bytes)
+        }
+    }
+
+    func testDestinationsStripTheMatchedFormatExtensionAndKeepMultiDotStems() throws {
+        for filename in ["v1.2.md", "v1.2.prompt", "v1.2.prompty"] {
+            let graph = ImportTestGraph()
+            let path = "/source/" + filename
+            graph.sources.put("body", at: path)
+            let report = try XCTUnwrap(graph.run(.files([path])))
+            XCTAssertEqual(report.files.first?.outcome, .created(path: "Imported/v1.2.md"))
+            XCTAssertEqual(try graph.files.read(at: "Imported/v1.2.md"), Data("body".utf8))
+        }
+    }
+
+    func testSourceAndStoreValidationShareByteExactComponentRules() throws {
+        let invalid = ["A//B.md", "A/./B.md", "A/../B.md", "A\\B.md", "A\nB.md", "A//\u{301}B.md", "A\\\u{301}B.md"]
+        for relative in invalid {
+            XCTAssertThrowsError(try FileStorePath.validate(relative)) {
+                XCTAssertEqual($0 as? FileStoreError, .invalidPath)
+            }
+            let graph = ImportTestGraph()
+            let source = "/source/" + relative
+            graph.sources.put("body", at: source)
+            let report = try XCTUnwrap(graph.run(.files([source])))
+            XCTAssertEqual(report.files.first?.outcome, .skipped(.invalidPath), relative)
+            XCTAssertTrue(graph.sources.reads.isEmpty)
+        }
+        for relative in ["A/\u{301}B.md", "é/文書.md", "A/..\u{301}/B.md"] {
+            XCTAssertNoThrow(try FileStorePath.validate(relative))
+            let graph = ImportTestGraph()
+            let source = "/source/" + relative
+            graph.sources.put("body", at: source)
+            XCTAssertEqual(graph.run(.files([source]))?.createdCount, 1, relative)
+        }
+    }
+
     func testReadsAndWritesRunOnWorkAndCallbacksWaitForMain() throws {
         let graph = ImportTestGraph()
         graph.sources.put("body", at: "/source/Example.md")

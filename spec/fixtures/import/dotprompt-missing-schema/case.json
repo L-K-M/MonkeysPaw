@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompt",
+  "expected": {
+    "source": "---\ninput:\n  type: object\n---\nbody\n",
+    "body": "body\n",
+    "mappings": [],
+    "preservedKeys": ["input"],
+    "dropped": ["frontMatterPresentation"],
+    "warnings": [{"code": "unsupportedInput", "key": "input.schema"}]
+  }
+}

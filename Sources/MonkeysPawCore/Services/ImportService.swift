@@ -112,8 +112,7 @@ public final class ImportService {
             guard let format = ImportFormat.filename(candidate.relativePath) else {
                 throw ImportSkipReason.unsupportedExtension
             }
-            let suffixCount = format == .markdown ? 3 : format == .dotprompt ? 7 : 8
-            let destination = subfolder + "/" + String(candidate.relativePath.dropLast(suffixCount)) + ".md"
+            let destination = subfolder + "/" + String(candidate.relativePath.dropLast(format.sourceExtension.count)) + ".md"
             try LibraryPath.validate(destination)
             let data = try sources.readFile(at: candidate.sourcePath, maximumBytes: Limits.importFileCapBytes)
             let mapped = try ImportMapper.map(data, filename: LibraryPath.filename(candidate.relativePath))
@@ -139,14 +138,7 @@ public final class ImportService {
     }
 
     private func validateSourcePath(_ path: String) throws {
-        guard path.utf8.first == 47, !path.utf8.contains(92),
-              !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
-            throw ImportSkipReason.invalidPath
-        }
-        let components = path.utf8.dropFirst().split(separator: 47, omittingEmptySubsequences: false)
-        guard path == "/" || components.allSatisfy({
-            !$0.isEmpty && !$0.elementsEqual([46]) && !$0.elementsEqual([46, 46])
-        }) else {
+        guard FileStorePath.isValid(path, mode: .absolute) else {
             throw ImportSkipReason.invalidPath
         }
     }

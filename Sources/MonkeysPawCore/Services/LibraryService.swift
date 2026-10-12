@@ -167,7 +167,7 @@ public final class LibraryService: PromptFavoriteEditing {
                     reassigned = true
                 }
             }
-            let bytes = Data(document.source.utf8)
+            let bytes = PromptUTF8.encode(document.source)
             guard bytes.count <= Limits.maxPromptBytes else { throw ImportSkipReason.convertedTooLarge }
             var startingSuffix = 1
             for _ in 0..<Limits.libraryCreateAttemptCap {
@@ -341,7 +341,7 @@ public final class LibraryService: PromptFavoriteEditing {
             let id = try ULID.generate(at: date, entropy: entropy.bytes(count: Limits.ulidEntropyBytes))
             document = try PromptCodec.assigningIdentity(id, to: document)
         }
-        let bytes = Data(try PromptCodec.write(document).utf8)
+        let bytes = PromptUTF8.encode(try PromptCodec.write(document))
         let sourceIdentity = current?.entry.identity ?? PromptIdentity(path: path, id: nil)
         let targetIdentity = PromptIdentity(path: path, id: document.frontMatter.id)
         var migrated = [PromptKeyedStore]()

@@ -1,0 +1,8 @@
+---
+input:
+  schema:
+    tone: {type: string, enum: [formal, casual], default: loud}
+  default:
+    tone: casual
+---
+{{tone}}
