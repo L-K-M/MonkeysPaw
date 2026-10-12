@@ -34,6 +34,12 @@ Rollout by milestone:
   and the README marker are the committed version. Release CI derives the
   macOS artifact version, the deb version, the server `VERSION` build arg,
   and the image tags from the git tag without editing committed settings.
+  `python3 scripts/check-version.py` checks that every `MARKETING_VERSION`
+  agrees with the single README marker and verifies `v0.1.0` → `0.1.0` and
+  `v0.1.0-beta.1` → `0.1.0~beta.1`. Packaging injects the tag's app version
+  into a temporary Swift source file for `monkeyspaw --version`; it removes
+  the file on exit. `AppIdentity.fallbackVersion` is the development-build
+  value only. The deb's tilde does not change the binary's hyphenated version.
 - **Toolchains.** Linux CI uses `swift:6.4-noble`, the same image as the
   server builder. macOS uses Xcode 26.x, pinned in workflows. Swift tools
   version 5.9 manifests keep Swift 5 language mode for desktop targets
@@ -58,6 +64,10 @@ Rollout by milestone:
     delivery on a Mac (§15 and `docs/platform/macos.md`).
   - Linux jobs run in the `swift:6.4-noble` container. The Linux Core test
     job is the portability gate.
+  - The `deb` job builds a fixed prerelease, inspects control fields and
+    installed paths, requires noble's `libglib2.0-0t64` plus
+    `libglib2.0-bin`, rejects dynamic Swift/Foundation dependencies, installs
+    with apt, and checks the installed binary's version.
   - The flatpak job runs on the bare runner, because bwrap needs a sysctl
     that a container cannot set (Vervellum).
 - **release.yml.**
@@ -78,7 +88,9 @@ Rollout by milestone:
   - Uploaded assets are downloaded back and byte-compared (Vervellum).
   - Deb `Depends:` comes from `dpkg-shlibdeps` (Ubuntu 24.04's t64 renames),
     plus `libglib2.0-bin`. `Recommends:` `libsecret-tools`, `ydotool`,
-    `xdotool`. Prerelease versions use a tilde.
+    `xdotool`. Prerelease versions use a tilde (every prerelease hyphen
+    becomes `~`), so they sort below the release; dpkg compares digit runs
+    numerically (`~beta.9` < `~beta.10`).
 - **macOS packaging.** On a Mac with Xcode and `brew install create-dmg`,
   run `scripts/package-macos.sh [version [build-number]]`. It calls
   `xcodebuild` directly so CI does not need the external `lkm-build` engine
@@ -104,6 +116,27 @@ Rollout by milestone:
     cannot satisfy this check. Only verified artifacts are copied to `dist/`.
 - **Linux floor.** Ubuntu 24.04+ (GTK 4.14), like Vervellum; the deb is
   built on noble. Ubuntu 22.04 (GTK 4.6) is Q8.
+- **Building a Linux deb locally.** On Ubuntu 24.04 with Swift 6.4, install
+  `libgtk-4-dev pkg-config python3 dpkg-dev binutils desktop-file-utils`,
+  then run `packaging/build-deb.sh 0.1.0` from any directory (or omit the
+  argument when `GITHUB_REF_NAME` contains the tag). Set `SWIFT` to another
+  Swift executable, such as `/home/paseo/.local/bin/swift64` on the Paseo
+  host. Building and packing need no root; installing dependencies and the
+  resulting deb do. The host cannot resolve noble's dpkg library metadata
+  or install with apt; the `deb` CI job is the installability proof.
+  The script builds release mode with `--static-swift-stdlib` and
+  `--build-system native` (§16), in `build/deb-swift/` apart from development
+  artifacts. It stages the binary, desktop entry, D-Bus service, eight
+  hicolor icons, copyright and changelog under `build/deb/`, validates the
+  desktop entry when the validator is available, and resolves `Depends:`
+  with `dpkg-shlibdeps` without a fallback. It adds `libglib2.0-bin` for
+  `gapplication` and recommends `libsecret-tools, ydotool, xdotool`.
+  `dpkg-deb --root-owner-group` writes
+  `dist/monkeyspaw_<deb-version>_<architecture>.deb`. Regenerate the
+  committed 16, 24, 32, 48, 64, 128, 256 and 512 pixel PNGs from
+  `media-sources/icon.png` with `scripts/make-linux-icons.sh` (Python 3 and
+  Pillow; Ubuntu package `python3-pil`); macOS icons still use
+  `scripts/make-icons.sh`.
 - **Flatpak.** Runtime `org.gnome.Platform` 50. `finish-args`:
   - `--share=ipc` (X11/MIT-SHM; the Vervellum pairing)
   - `--share=network` (LLM, sync)

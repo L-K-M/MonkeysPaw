@@ -12,3 +12,5 @@ xcuserdata/
 .DS_Store
 /config/
 .env
+# Written only while build-deb.sh compiles the packaged Linux executable.
+/Sources/MonkeysPawLinux/PackagedBuildVersion.generated.swift

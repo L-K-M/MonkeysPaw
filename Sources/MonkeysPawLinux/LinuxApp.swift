@@ -41,7 +41,14 @@ public enum MonkeysPawLinuxApp {
 
         switch arguments {
         case ["--version"]:
-            print("\(AppIdentity.binaryName) \(AppIdentity.fallbackVersion)")
+            #if MONKEYSPAW_PACKAGED_VERSION
+            // build-deb.sh generates this value from the version argument or tag.
+            let version = PackagedBuildVersion.value
+            #else
+            // The fallback is only for development builds without packaging.
+            let version = AppIdentity.fallbackVersion
+            #endif
+            print("\(AppIdentity.binaryName) \(version)")
             return 0
         case ["--help"], ["-h"]:
             print(usage)

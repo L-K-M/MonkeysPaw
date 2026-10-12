@@ -37,6 +37,9 @@
 
 **Ordering.**
 
+- J2 aligns versions and proves the noble deb builder in CI before J4 adds
+  tag publishing in `release.yml`; it does not close M2 release acceptance.
+
 - J3 adds universal macOS dmg/zip packaging and CI proof before J4 wires tag
   releases; M2 release acceptance still requires the `v0.1.0` artifacts and
   an owner-run dmg installation on a real Mac.

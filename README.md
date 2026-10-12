@@ -19,3 +19,10 @@ matter. Format and grammar conformance cases live under
 
 **Status:** Under construction per [PLAN.md](PLAN.md). M0a provides the shared
 Core package, the server health endpoint, and build and test infrastructure.
+
+## Install on Linux
+
+On Ubuntu 24.04 or newer, install the `.deb` from a release with
+`sudo apt install ./monkeyspaw_<version>_<arch>.deb`, then run `monkeyspaw`.
+Release publishing is still pending; to build a local package, see
+[packaging instructions](docs/plan/14-repository-packaging-ci-release.md).
