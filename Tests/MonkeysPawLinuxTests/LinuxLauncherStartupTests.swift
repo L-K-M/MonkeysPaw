@@ -239,6 +239,16 @@ final class LinuxLauncherStartupTests: XCTestCase {
 
     private func focus(_ window: String) throws {
         try runTool("xdotool", arguments: ["windowactivate", "--sync", window])
+        // A toggle hides only an active picker, and the hotkey path debounces
+        // repeats. Wait until the window manager reports the picker active and
+        // the debounce interval has passed before sending the next toggle.
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard case .success(let output) = self.windowTools.run("xdotool", arguments: ["getactivewindow"],
+                timeout: .seconds(1)) else { return false }
+            return output.text.trimmingCharacters(in: .whitespacesAndNewlines) == window
+        }, "The picker did not become the active window.")
+        let settled = Date().addingTimeInterval(Limits.toggleDebounce.timeInterval * 3)
+        _ = GTKTestSupport.spin { Date() >= settled }
     }
 
     private func action(_ action: ActionName) throws {
