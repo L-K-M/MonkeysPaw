@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "paths",
+  "source": "path.txt",
+  "scope": "user",
+  "expected": {
+    "path": "Caf\u00e9/\u0301A.md",
+    "path_key": "caf\u00e9/\u0301a.md"
+  }
+}

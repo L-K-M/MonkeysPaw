@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "paths",
+  "source": "path.txt",
+  "scope": "user",
+  "expected": {
+    "path": "A_B_C_D_E_F_G_H_I_J_K_L_M_N_O_P_Q_R_S_T_U_V_W_X_Y_Z_a_b_c_d_e_f_g_h_i_j_k_l_m_n_o_p_q_r_s_t_u_v_w_x_y_z_\u00b5_\u00c0_\u00c1_\u00c2_\u00c3_\u00c4_\u00c5_\u00c6_\u00c7_\u00c8_\u00c9_\u00ca_\u00cb_\u00cc_\u00cd_\u00ce_\u00cf_\u00d0_\u00d1_\u00d2_\u00d3_\u00d4_\u00d5_\u00d6_\u00d8_\u00d9_\u00da_\u00db_\u00dc_\u00dd_\u00de_\u00df_\u00e0_\u00e1_\u00e2_\u00e3_\u00e4_\u00e5_\u00e6_\u00e7_\u00e8_\u00e9_\u00ea_\u00eb_\u00ec.md",
+    "path_key": "a_b_c_d_e_f_g_h_i_j_k_l_m_n_o_p_q_r_s_t_u_v_w_x_y_z_a_b_c_d_e_f_g_h_i_j_k_l_m_n_o_p_q_r_s_t_u_v_w_x_y_z_\u03bc_\u00e0_\u00e1_\u00e2_\u00e3_\u00e4_\u00e5_\u00e6_\u00e7_\u00e8_\u00e9_\u00ea_\u00eb_\u00ec_\u00ed_\u00ee_\u00ef_\u00f0_\u00f1_\u00f2_\u00f3_\u00f4_\u00f5_\u00f6_\u00f8_\u00f9_\u00fa_\u00fb_\u00fc_\u00fd_\u00fe_ss_\u00e0_\u00e1_\u00e2_\u00e3_\u00e4_\u00e5_\u00e6_\u00e7_\u00e8_\u00e9_\u00ea_\u00eb_\u00ec.md"
+  }
+}

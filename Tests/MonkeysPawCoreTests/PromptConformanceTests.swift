@@ -5,7 +5,7 @@ import XCTest
 /// The corpus is enumerated, not a hand-picked list. Each JSON and source
 /// must be dispatched exactly once so future language consumers share a gate.
 final class PromptConformanceTests: XCTestCase {
-    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import"]
+    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import", "paths"]
     private let rankingAccuracy = 1e-12
 
     private var fixtureRoot: URL {
@@ -91,7 +91,7 @@ final class PromptConformanceTests: XCTestCase {
     }
 
     func testRejectsUnknownSchemaVersionsAndContentMembers() throws {
-        for category in categories.subtracting(["ranking", "import"]).sorted() {
+        for category in categories.subtracting(["ranking", "import", "paths"]).sorted() {
             let files = try FileManager.default.contentsOfDirectory(atPath: fixtureRoot.appendingPathComponent(category).path)
                 .filter { !$0.hasPrefix(".") }
             let file = try XCTUnwrap(files.sorted().first { $0.hasSuffix(".json") })
@@ -211,6 +211,17 @@ final class PromptConformanceTests: XCTestCase {
                     try consume(path, in: &consumed)
                 }
                 cases += imported.cases
+                continue
+            }
+
+            if category == "paths" {
+                let paths = try SyncPathFixtureCorpus.consume(at: directory)
+                for file in paths.files {
+                    let path = "paths/" + file
+                    allFiles.insert(RelativePath(path))
+                    try consume(path, in: &consumed)
+                }
+                cases += paths.cases
                 continue
             }
 

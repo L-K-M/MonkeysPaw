@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "paths",
+  "source": "path.txt",
+  "scope": "user",
+  "expected": {
+    "path": "\u0130/I\u0131i.md",
+    "path_key": "i\u0307/i\u0131i.md"
+  }
+}
