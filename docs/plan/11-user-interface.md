@@ -299,8 +299,8 @@ inline and queued delivery. `OnboardingStrings` owns the shared path-free copy.
 
 These defaults resolve §17 Q14–Q20; the owner may override them.
 
-- **Browse.** A reusable window (macOS: `.regular` while open; Linux: hide-
-  on-close) with a sidebar of All, Favourites, Recent, folders and tags, a
+- **Browse.** A reusable window (macOS: `.regular` while open; Linux:
+  hide-on-close) with a sidebar of All, Favourites, Recent, folders and tags, a
   list, and the selected prompt's editor. Recent orders by the last delivery
   or copy recorded in the app-data usage store (§5.4); using a prompt never
   writes its file. Conflicts and groups join the sidebar with sync (M6).
