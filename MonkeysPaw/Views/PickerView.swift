@@ -127,8 +127,8 @@ private struct PickerEmptyView: View {
                     .help(Strings.assistantNotConfigured)
                     .accessibilityLabel(noMatches.writeLabel)
                 Text(Strings.assistantNotConfigured).font(.caption).foregroundStyle(.secondary)
-                Button(noMatches.openLibraryLabel) { presentation.model.openLibrary() }
-                    .accessibilityLabel(noMatches.openLibraryLabel)
+                Button(Strings.openLibrary) { presentation.model.openLibrary() }
+                    .accessibilityLabel(Strings.openLibrary)
             } else {
                 Text(Strings.emptyLibrary)
                 Button(Strings.library) { presentation.model.openLibrary() }

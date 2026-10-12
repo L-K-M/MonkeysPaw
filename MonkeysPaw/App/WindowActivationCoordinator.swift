@@ -1,7 +1,7 @@
 import AppKit
 import MonkeysPawCore
 
-/// Settings and, later, Library share this policy. Setup is never registered.
+/// Settings and Library share this policy. Setup is never registered.
 final class WindowActivationCoordinator {
     private final class WindowReference {
         weak var window: NSWindow?

@@ -157,7 +157,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(panel.firstResponder === sink)
     }
 
-    func testOnDiskPromptAndEditLibraryLaunchURLs() throws {
+    func testOnDiskPromptEditURLAndLibraryWindowOpening() throws {
         let path = "folder name/Prompt #%.md"
         try files.write(Data("---\ntitle: Useful\nfavorite: true\ntags: [code]\n---\nBody".utf8), at: path)
         let picker = try open()
@@ -175,7 +175,8 @@ final class MacPickerViewTests: XCTestCase {
         picker.open()
         picker.openLibrary()
         XCTAssertNil(picker.requestedIntent)
-        XCTAssertEqual(launched, [root.appendingPathComponent(path), root])
+        XCTAssertEqual(launched, [root.appendingPathComponent(path)])
+        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow?.window).isVisible)
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
     }
