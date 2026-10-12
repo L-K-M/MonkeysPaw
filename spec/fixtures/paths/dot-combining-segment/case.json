@@ -4,7 +4,9 @@
   "source": "path.txt",
   "scope": "user",
   "expected": {
-    "path": ".\u0301/x.md",
-    "path_key": ".\u0301/x.md"
+    "issue": {
+      "code": "path.segment_hidden",
+      "segment": 0
+    }
   }
 }

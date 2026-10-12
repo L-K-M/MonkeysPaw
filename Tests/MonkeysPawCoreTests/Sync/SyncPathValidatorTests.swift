@@ -6,7 +6,7 @@ final class SyncPathValidatorTests: XCTestCase {
     func testValidNamesRemainAvailableInBothScopes() throws {
         let paths = ["a.md", ".md", ".hidden.md", "Conflicts/Personal/a.md", "a..b/x.md",
                      " Notes/a.md", "Topic: one/a.md", "a\u{00A0}/b.md", "a／b.md",
-                     "%2e%2e/a.md", "Folder/\u{301}/x.md", ".\u{301}/x.md"]
+                     "%2e%2e/a.md", "Folder/\u{301}/x.md", "Folder/.hidden.md"]
         for scope in [SyncPathValidator.Scope.user, .group] {
             for path in paths {
                 let result = try SyncPathValidator.validate(path, scope: scope)
@@ -24,6 +24,23 @@ final class SyncPathValidatorTests: XCTestCase {
         for (path, index) in [("./a.md", 0), ("../a.md", 0), ("a/./b.md", 1),
                               ("a/../b.md", 1), ("a/\u{301}/../b.md", 2)] {
             assertIssue(path, .dotSegment, segment: index)
+        }
+    }
+
+    func testRejectsDotPrefixedDirectoriesInBothScopes() {
+        for (path, index) in [(".hidden/a.md", 0), (".git/a.md", 0), ("a/.hidden/b.md", 1),
+                              (".\u{301}/x.md", 0), ("a/.\u{301}/.hidden.md", 1)] {
+            XCTAssertFalse(LibraryPath.isPrompt(path))
+            for scope in [SyncPathValidator.Scope.user, .group] {
+                XCTAssertThrowsError(try SyncPathValidator.validate(path, scope: scope), path) {
+                    guard let issue = $0 as? SyncPathIssue else { return XCTFail("Expected a typed path issue.") }
+                    XCTAssertEqual(issue.code.rawValue, "path.segment_hidden")
+                    XCTAssertEqual(issue.segmentIndex, index)
+                }
+            }
+        }
+        for path in [".md", ".hidden.md", "a/.hidden.md"] {
+            XCTAssertTrue(LibraryPath.isPrompt(path))
         }
     }
 
@@ -180,6 +197,7 @@ final class SyncPathValidatorTests: XCTestCase {
         assertIssue("/a\\.MD", .absolutePath)
         assertIssue(String(repeating: "a", count: 1_025), .pathTooLong)
         assertIssue("../a\\.MD", .dotSegment, segment: 0)
+        assertIssue(".hidden/a\\.MD", .hiddenDirectory, segment: 0)
         assertIssue("a\\\u{0}.MD", .backslash, segment: 0)
         assertIssue("a\u{0}.MD ", .controlCharacter, segment: 0)
         assertIssue("Groups/a.MD", .invalidExtension)
@@ -201,7 +219,7 @@ final class SyncPathValidatorTests: XCTestCase {
         XCTAssertEqual(Set([RelativePath(nfc), RelativePath(nfd)]).count, 2)
         XCTAssertEqual(try SyncPathValidator.validate(nfc, scope: .user),
                        try SyncPathValidator.validate(nfd, scope: .user))
-        for path in ["Groups/a.md", "a.MD", "a./b.md", "a /b.md", String(repeating: "a", count: 256) + ".md"] {
+        for path in ["Groups/a.md", "a.MD", ".hidden/a.md", "a./b.md", "a /b.md", String(repeating: "a", count: 256) + ".md"] {
             XCTAssertNoThrow(try FileStorePath.validate(path))
             XCTAssertThrowsError(try SyncPathValidator.validate(path, scope: .user))
         }

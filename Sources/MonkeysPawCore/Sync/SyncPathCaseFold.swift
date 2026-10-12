@@ -25,14 +25,14 @@ enum SyncPathCaseFold {
         return String(result)
     }
 
-    private struct MappingRange {
+    struct MappingRange {
         let first: UInt32
         let last: UInt32
         let step: UInt32
         let delta: Int64
     }
 
-    private static let ranges: [MappingRange] = [
+    static let ranges: [MappingRange] = [
         MappingRange(first: 0x41, last: 0x5A, step: 1, delta: 32),
         MappingRange(first: 0xC0, last: 0xD6, step: 1, delta: 32),
         MappingRange(first: 0xD8, last: 0xDE, step: 1, delta: 32),
@@ -101,7 +101,7 @@ enum SyncPathCaseFold {
         MappingRange(first: 0x1E900, last: 0x1E921, step: 1, delta: 34),
     ]
 
-    private static let exceptions: [UInt32: String] = [
+    static let exceptions: [UInt32: String] = [
         0xB5: "\u{3BC}",
         0xDF: "\u{73}\u{73}",
         0x130: "\u{69}\u{307}",

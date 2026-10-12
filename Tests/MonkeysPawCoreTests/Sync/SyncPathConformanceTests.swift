@@ -58,7 +58,7 @@ enum SyncPathFixtureCorpus {
                       let code = SyncPathIssueCode(rawValue: codeText) else { throw Failure.invalidCorpus }
                 let segment: Int?
                 switch code {
-                case .emptySegment, .dotSegment, .backslash, .controlCharacter, .trailingDotOrSpace, .segmentTooLong:
+                case .emptySegment, .dotSegment, .hiddenDirectory, .backslash, .controlCharacter, .trailingDotOrSpace, .segmentTooLong:
                     let index = try integer(issue["segment"])
                     guard index >= 0 else { throw Failure.invalidCorpus }
                     segment = index
@@ -112,7 +112,7 @@ enum SyncPathFixtureCorpus {
     }
 
     private static func integer(_ value: Any?) throws -> Int {
-        guard let number = value as? NSNumber, String(cString: number.objCType) != "c",
+        guard let number = value as? NSNumber, !["c", "d", "f"].contains(String(cString: number.objCType)),
               let integer = value as? Int, number.doubleValue == Double(integer) else { throw Failure.invalidCorpus }
         return integer
     }
@@ -197,6 +197,24 @@ final class SyncPathConformanceTests: XCTestCase {
         }
     }
 
+    func testRejectsFloatSpelledIntegers() throws {
+        // JSONSerialization's writer can turn 1.0 back into 1, so mutate the
+        // JSON spelling directly to exercise floating-point NSNumber values.
+        for (name, member, literal) in [("basic", "schema", "1.0"), ("basic", "schema", "1e0"),
+                                         ("nul", "segment", "0.0"), ("nul", "segment", "0e0")] {
+            try withCopy { copy in
+                let file = copy.appendingPathComponent(name + "/case.json")
+                let json = try String(contentsOf: file, encoding: .utf8)
+                let integer = member == "schema" ? "1" : "0"
+                let needle = "\"\(member)\": \(integer)"
+                XCTAssertTrue(json.contains(needle))
+                let mutated = json.replacingOccurrences(of: needle, with: "\"\(member)\": \(literal)")
+                try Data(mutated.utf8).write(to: file)
+                XCTAssertThrowsError(try SyncPathFixtureCorpus.consume(at: copy), member + " " + literal)
+            }
+        }
+    }
+
     func testRejectsUnknownMissingAndIllTypedSuccessMembers() throws {
         try mutateExpected("basic") { $0["unknown"] = 1 }
         for key in ["path", "path_key"] {
@@ -228,6 +246,26 @@ final class SyncPathConformanceTests: XCTestCase {
         try mutateExpected("unicode-nfd") { $0["path_key"] = "cafe\u{301}/e\u{301}.md" }
     }
 
+    func testRejectsWhitespaceChangesInInput() throws {
+        for suffix in ["\n", "\r\n", " "] {
+            try withCopy { copy in
+                let file = copy.appendingPathComponent("basic/path.txt")
+                var data = try Data(contentsOf: file)
+                data.append(contentsOf: suffix.utf8)
+                try data.write(to: file)
+                XCTAssertThrowsError(try SyncPathFixtureCorpus.consume(at: copy))
+            }
+        }
+        try withCopy { copy in
+            let file = copy.appendingPathComponent("trailing-space-file/path.txt")
+            var data = try Data(contentsOf: file)
+            XCTAssertEqual(data.last, 32)
+            data.removeLast()
+            try data.write(to: file)
+            XCTAssertThrowsError(try SyncPathFixtureCorpus.consume(at: copy))
+        }
+    }
+
     func testHiddenMetadataMatchesTheImportFixtureConvention() throws {
         let baseline = try SyncPathFixtureCorpus.consume(at: root)
         try withCopy { copy in
@@ -246,27 +284,38 @@ final class SyncPathConformanceTests: XCTestCase {
         }
     }
 
-    private func mutateExpected(_ name: String, _ mutate: (inout [String: Any]) -> Void) throws {
+    func testMutationHelpersRejectMalformedObjects() {
+        for value: Any? in [nil, NSNull(), true, [], "not an object"] {
+            XCTAssertThrowsError(try mutationObject(value))
+        }
+    }
+
+    private func mutationObject(_ value: Any?) throws -> [String: Any] {
+        guard let object = value as? [String: Any] else { throw SyncPathFixtureCorpus.Failure.invalidCorpus }
+        return object
+    }
+
+    private func mutateExpected(_ name: String, _ mutate: (inout [String: Any]) throws -> Void) throws {
         try mutateJSON(name, label: name + " expectation") { envelope in
-            var expected = envelope["expected"] as! [String: Any]
-            mutate(&expected)
+            var expected = try mutationObject(envelope["expected"])
+            try mutate(&expected)
             envelope["expected"] = expected
         }
     }
 
     private func mutateIssue(_ name: String, _ mutate: (inout [String: Any]) -> Void) throws {
         try mutateExpected(name) { expected in
-            var issue = expected["issue"] as! [String: Any]
+            var issue = try mutationObject(expected["issue"])
             mutate(&issue)
             expected["issue"] = issue
         }
     }
 
-    private func mutateJSON(_ name: String, label: String, _ mutate: (inout [String: Any]) -> Void) throws {
+    private func mutateJSON(_ name: String, label: String, _ mutate: (inout [String: Any]) throws -> Void) throws {
         try withCopy { copy in
             let file = copy.appendingPathComponent(name + "/case.json")
-            var envelope = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
-            mutate(&envelope)
+            var envelope = try mutationObject(JSONSerialization.jsonObject(with: Data(contentsOf: file)))
+            try mutate(&envelope)
             try JSONSerialization.data(withJSONObject: envelope).write(to: file)
             XCTAssertThrowsError(try SyncPathFixtureCorpus.consume(at: copy), label)
         }

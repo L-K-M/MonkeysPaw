@@ -39,6 +39,10 @@ public enum SyncPathValidator {
             guard !segment.elementsEqual([46]), !segment.elementsEqual([46, 46]) else {
                 throw SyncPathIssue(.dotSegment, segment: index)
             }
+            // §5.1 ignores dot-directories but permits dot-prefixed files.
+            guard index == segments.count - 1 || segment.first != 46 else {
+                throw SyncPathIssue(.hiddenDirectory, segment: index)
+            }
             guard !segment.contains(92) else { throw SyncPathIssue(.backslash, segment: index) }
             let text = String(decoding: segment, as: UTF8.self)
             guard !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
@@ -95,6 +99,7 @@ public enum SyncPathIssueCode: String, Sendable {
     case pathTooLong = "path.too_long"
     case emptySegment = "path.segment_empty"
     case dotSegment = "path.segment_dot"
+    case hiddenDirectory = "path.segment_hidden"
     case backslash = "path.backslash"
     case controlCharacter = "path.control_character"
     case trailingDotOrSpace = "path.trailing_dot_or_space"
@@ -110,6 +115,7 @@ public enum SyncPathIssueCode: String, Sendable {
         case .pathTooLong: return "Keep the NFC path within \(Limits.maxPathBytes) UTF-8 bytes."
         case .emptySegment: return "Use nonempty path segments separated by a single slash."
         case .dotSegment: return "Replace dot and dot-dot path segments with names."
+        case .hiddenDirectory: return "Use folder names without a leading dot."
         case .backslash: return "Use forward slashes to separate path segments."
         case .controlCharacter: return "Remove control characters from the path."
         case .trailingDotOrSpace: return "Remove trailing dots and spaces from path segments."

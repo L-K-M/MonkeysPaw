@@ -262,7 +262,10 @@ category and case levels. Mutation tests prove strict dispatch and byte
 comparison; golden values are specification data, independent of validator
 output.
 The category's `.gitattributes` permits the intentional terminal space in
-`trailing-space-file/path.txt` during whitespace checks; it changes no bytes.
+`trailing-space-file/path.txt` during whitespace checks and disables Git EOL
+normalization for `path.txt`. Its `.editorconfig` disables automatic final
+newlines and trailing-whitespace removal for those inputs. The consumer
+never trims them; mutation tests reject newline and whitespace drift.
 
 `SyncPathValidator.validate(_:scope:)` is pure and returns `SyncPath.path`
 in NFC plus `SyncPath.pathKey`. It leaves local `FileStorePath`,
@@ -272,9 +275,13 @@ and compare their original UTF-8 bytes. Sync paths follow §8.4 and §19 B4:
 - Split at every ASCII slash scalar/byte, including slashes followed by
   combining marks. A leading slash is absolute and is rejected. Every
   segment is nonempty and differs from `.` and `..`; traversal is rejected
-  rather than resolved.
+  rather than resolved. Directory segments cannot start with `.`, because
+  the local library ignores dot-directories (§5.1). Dot-prefixed filenames,
+  including `.md`, remain eligible locally and for sync.
 - Reject backslashes, NUL and Unicode control/format characters (categories
-  `Cc` and `Cf`, Foundation's `CharacterSet.controlCharacters`). Segments
+  `Cc` and `Cf`, Foundation's `CharacterSet.controlCharacters`, as documented
+  by [Apple](https://developer.apple.com/documentation/foundation/nscharacterset/controlcharacters?language=objc)
+  and [corelibs Foundation](https://github.com/swiftlang/swift-corelibs-foundation/blob/main/Sources/Foundation/CharacterSet.swift)). Segments
   cannot end in ASCII `.` or space. Interior dots/spaces, leading spaces,
   other Unicode marks and ordinary punctuation remain allowed.
 - Normalize to NFC before checking size: each segment is at most **255
@@ -305,11 +312,16 @@ combining sequences. The convenience `precomposedStringWithCanonicalMapping`
 can truncate such sequences on the supported Linux runtime, and
 Foundation's case-insensitive comparison folding omits some default full
 folds. Sync must not inherit these limitations; local ranking is unchanged.
+In `unicode-full-fold-23`, NFC changes canonical singletons such as Kelvin
+sign U+212A → `K`, Angstrom sign U+212B → `Å`, and Greek oxia capitals to
+their canonically equivalent spellings. Thus `expected.path` is NFC input,
+rather than the raw input bytes. This is canonical normalization; fullwidth
+and circled letters retain their spellings in `path`.
 
 `SyncPathIssue` carries no input path. `segmentIndex` is zero-based and
 present only for segment issues; all other issues use null. The first
 failure wins: empty path, NFC normalization, absolute path, total size, then segments from
-left to right (empty, dot/dot-dot, backslash, control, trailing dot/space,
+left to right (empty, dot/dot-dot, hidden directory, backslash, control, trailing dot/space,
 segment size), then suffix, then the reserved prefix.
 
 | Code | Rule |
@@ -320,6 +332,7 @@ segment size), then suffix, then the reserved prefix.
 | `path.too_long` | NFC path exceeds 1,024 bytes |
 | `path.segment_empty` | Empty slash-separated segment |
 | `path.segment_dot` | `.` or `..` segment |
+| `path.segment_hidden` | Dot-prefixed directory segment ignored by the local library |
 | `path.backslash` | Backslash in a segment |
 | `path.control_character` | NUL, control or format scalar in a segment |
 | `path.trailing_dot_or_space` | Segment ends in ASCII dot or space |
@@ -336,4 +349,22 @@ filesystem containment and symlink checks still belong to platform stores.
 The `unicode-full-fold-*` cases derive their goldens directly from the
 Unicode standard data and cover every `C`/`F` mapping input and output,
 including unchanged uppercase Cherokee. Core's compressed table was also
-checked against the standard across every valid Unicode scalar.
+checked against the standard across every valid Unicode scalar. Rerun that
+verification from the repository root:
+
+```sh
+python3 spec/fixtures/paths/.verify-case-fold.py
+```
+
+This stdlib-only verifier downloads Unicode 17.0.0 `CaseFolding.txt` into
+memory and requires SHA-256
+`ff8d8fefbf123574205085d6714c36149eb946d717a0c585c27f0f4ef58c4183`.
+It checks sorted, duplicate-free, valid scalar mappings; compares all
+1,112,064 valid scalars, including identities, against only `C` + `F`;
+checks idempotence; and verifies all 50 full-fold fixture paths/keys and
+coverage of every mapping input/output. It uses Python's NFC for fixture
+normalization only, never Python's runtime-version-dependent `casefold` as
+the fold oracle. The source data is not vendored. The verifier is
+dot-prefixed so it remains outside the strict fixture-case enumeration.
+`SyncPathCaseFoldTests` also checks table invariants and exclusion of simple
+and Turkic alternatives in the normal offline Swift test suite.
