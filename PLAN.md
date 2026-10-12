@@ -38,6 +38,7 @@ stable: the file for `§N` starts with `N-`.
 | §16 | [Risks](docs/plan/16-risks.md) |
 | §17 | [Open questions](docs/plan/17-open-questions.md) |
 | §18 | [Sources](docs/plan/18-sources.md) |
+| §19 | [M4 and M5 decisions](docs/plan/19-m4-m5-decisions.md) |
 
 ## Editing rules
 
