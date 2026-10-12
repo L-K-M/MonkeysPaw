@@ -182,6 +182,7 @@ final class LinuxLauncherStartupTests: XCTestCase {
     private func completeFirstRun() {
         settings.completeLibraryFolderStep()
         settings.markSeedsOffered()
+        settings.completeTour()
         XCTAssertNil(settings.error)
     }
 

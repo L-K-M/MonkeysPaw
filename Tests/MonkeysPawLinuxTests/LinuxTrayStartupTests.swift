@@ -36,6 +36,7 @@ final class LinuxTrayStartupTests: XCTestCase {
         settings.markSetupPresented()
         settings.completeLibraryFolderStep()
         settings.markSeedsOffered()
+        settings.completeTour()
         XCTAssertNil(settings.error)
     }
 

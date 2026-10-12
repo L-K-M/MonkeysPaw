@@ -107,6 +107,7 @@ jobs:
             LinuxOnboardingTests/testUnreadableChosenFolderOpensRecoveryAndCanUseTheDefault
             LinuxOnboardingTests/testSeedWriteFailureShowsTypedCopyAndDoesNotRepeatAfterRestart
             LinuxOnboardingTests/testFailedSeedOfferRecordingCopiesNothingAndLeavesTheOfferPending
+            LinuxOnboardingTests/testTourWriteFailureKeepsDoneAndClosePendingUntilRetry
             FileLogSinkTests/testUnwritableDirectoryReportsOnceAndOtherSinksKeepReceivingRecords
             FileLogSinkTests/testUnwritableFilePreservesExistingBytesAndReportsOnce
           )

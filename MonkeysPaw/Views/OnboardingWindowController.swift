@@ -13,6 +13,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private let folderChooser: SettingsWindowController.FolderChooser
     private var chooserRequest: UUID?
     private var cancelChooser: (() -> Void)?
+    private var isCompletingClosedTour = false
 
     init(model: OnboardingModel, activeLibraryPath: String, defaultLibraryPath: String,
          mainThread: MainThread, activateApplication: @escaping () -> Void,
@@ -25,14 +26,17 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         self.folderChooser = folderChooser
         super.init()
         presentation.onChooseFolder = { [weak self] in self?.chooseFolder() }
-        presentation.onClose = { [weak self] in self?.window?.close() }
+        presentation.onClose = { [weak self] in
+            guard let window = self?.window, window.isVisible else { return }
+            window.close()
+        }
         presentation.onChange = { [weak self] in
             guard let self else { return }
             if self.presentation.state.step != .libraryFolder
                 || self.presentation.state.libraryStatus == .lostWhileRunning
                 || self.presentation.state.isReadOnly { self.endChooser() }
             if self.presentation.state.isReadOnly { self.window?.close() }
-            self.onStateChange?()
+            if !self.isCompletingClosedTour { self.onStateChange?() }
         }
     }
 
@@ -79,6 +83,31 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         endChooser()
         onClose?()
+        // NSWindow.close() bypasses windowShouldClose. Finish after AppKit has
+        // closed it, and show the pending tour again if persistence failed.
+        guard presentation.state.step == .tour else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            // The close callback cleared composition's presented step. Keep a
+            // failed publication from routing back through show() and refresh.
+            self.isCompletingClosedTour = true
+            defer { self.isCompletingClosedTour = false }
+            self.presentation.completeTour()
+            // Reopen the closing window without a refresh or activation cycle
+            // that could clear the failed intent's transient settings error.
+            if self.presentation.state.step == .tour, let window = self.window {
+                window.orderFrontRegardless()
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard presentation.state.step == .tour else { return true }
+        presentation.close()
+        // The view-state closes only after the flag is saved. Failed writes
+        // keep the native close request on the tour with its typed error.
+        return false
     }
 
     private func endChooser() {

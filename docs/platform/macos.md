@@ -268,8 +268,12 @@ fresh-install checks do not overwrite your normal settings or prompts.
 | Check | Result | Details |
 |---|---|---|
 | Fresh install: Setup opens first; close it, accept Use Default Folder, then Add Starter Prompts; the summary reports ten added and the picker shows them | NOT RUN | |
-| Finish with Done and restart; Setup, folder and seed offer do not return and no starter file or identifier changes | NOT RUN | |
-| Fresh install: choose Skip Starter Prompts, then restart; the empty library remains empty and the offer does not return | NOT RUN | |
+| Finish the tour with Done and restart; Setup, folder, seed offer and tour do not return and no starter file or identifier changes | NOT RUN | |
+| Fresh install: choose Skip Starter Prompts, finish the tour, then restart; the empty library remains empty and the offer does not return | NOT RUN | |
+| First-run tour (M3 C6): after adding or skipping starters, or accepting a non-empty library, the same window shows hotkey, search, Tab/Shift+Tab, Return/Escape and Copy versus Deliver copy with one Done button; seed counts or failures remain visible | NOT RUN | |
+| Tour native close (M3 C6): closing the tour saves completion and closes the window; relaunch opens the picker; quitting before completion resumes the tour | NOT RUN | |
+| Tour settings write failure (M3 C6): prevent app-data writes, then use Done and native close; the typed error keeps the tour visible and pending; restore writes and retry, then restart to confirm completion | NOT RUN | |
+| Tour upgrade and recovery policy (M3 C6): existing installs, read-only settings and library recovery skip the tour; recovery preserves an explicitly pending tour flag | NOT RUN | |
 | Legacy install with Setup already presented and library step pending opens the folder step directly | NOT RUN | |
 | Choose Folder… uses a native directory sheet; Cancel keeps the active folder; choosing a readable empty folder seeds only that folder | NOT RUN | |
 | Choose a missing, unreadable or symbolic-link folder; the typed message keeps the folder step pending and a later valid choice succeeds | NOT RUN | |

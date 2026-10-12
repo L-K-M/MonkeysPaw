@@ -384,7 +384,7 @@ final class LinuxEnvironment {
             }
             switch self.onboardingModel.state.step {
             case .setup: self.showSetup()
-            case .libraryFolder, .seedOffer: self.showOnboarding()
+            case .libraryFolder, .seedOffer, .tour: self.showOnboarding()
             case .complete: self.pickerModel.open()
             }
         }
@@ -471,7 +471,7 @@ final class LinuxEnvironment {
                   self.currentSettingsWindow?.isVisible != true,
                   self.currentLibraryWindow?.isVisible != true else { return }
             switch self.onboardingModel.state.step {
-            case .libraryFolder, .seedOffer: self.showOnboarding()
+            case .libraryFolder, .seedOffer, .tour: self.showOnboarding()
             case .setup, .complete: break
             }
         }
