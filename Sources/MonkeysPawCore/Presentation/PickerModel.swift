@@ -209,16 +209,18 @@ public final class PickerModel: @unchecked Sendable {
     }
 
     /// Also available to Settings while the panel is closed. Session drafts
-    /// are invalidated only after the persisted reset succeeds.
-    public func forgetAllValues() {
-        guard !rejectForgetDuringDelivery() else { return }
+    /// are invalidated only after the persisted reset succeeds. Composition
+    /// forwards the returned outcome without reading the mutable UI error.
+    @discardableResult
+    public func forgetAllValues() -> RememberedValuesOutcome {
+        guard !rejectForgetDuringDelivery() else { return .deliveryInFlight }
         do { try fill.forgetAllValues() }
         catch {
-            failForgetting(error)
-            return
+            return failForgetting(error)
         }
         drafts = [:]
         completeForgetting(reset: state == .fill ? fillModel : nil)
+        return .forgotten
     }
 
     /// Consume before handling: a handler can publish another change without
@@ -267,11 +269,19 @@ public final class PickerModel: @unchecked Sendable {
         return true
     }
 
-    private func failForgetting(_ error: Error) {
-        if let error = error as? FileStoreError { forgetValuesError = error }
-        else if let error = error as? LibraryError { forgetValuesError = error }
-        else { forgetValuesError = LibraryError.operationFailed }
+    @discardableResult
+    private func failForgetting(_ error: Error) -> RememberedValuesOutcome {
+        let outcome: RememberedValuesOutcome
+        if let error = error as? FileStoreError {
+            forgetValuesError = error
+            outcome = .fileStoreFailure(error)
+        } else {
+            let error = error as? LibraryError ?? .operationFailed
+            forgetValuesError = error
+            outcome = .libraryFailure(error)
+        }
         onChange?()
+        return outcome
     }
 
     private func completeForgetting(reset model: FillModel?) {
