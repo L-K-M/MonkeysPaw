@@ -30,7 +30,8 @@ re-entry or Clear before it can be used.
     are also trimmed. Scheme/host case and default ports normalize; queries,
     fragments, userinfo, dot path segments and encoded path separators are
     rejected. HTTP is allowed only for `localhost`, canonical decimal IPv4
-    `127.0.0.0/8`, and IPv6 `::1` ([§19 B23](19-m4-m5-decisions.md)).
+    `127.0.0.0/8`, and IPv6 `::1`, matched literally without name resolution
+    ([§19 B23](19-m4-m5-decisions.md)).
 - **Models.** "Test connection" lists models with
   `MODEL_LIST_TIMEOUT = 15 s` and fills the model picker. Typing a model id
   by hand always works.
@@ -64,6 +65,9 @@ re-entry or Clear before it can be used.
   - HTTPS required, except on loopback.
   - No userinfo in URLs.
   - Redirects refused, so `Authorization` cannot leak to another host.
+  - Request construction rejects empty or non-token header names, duplicate
+    names ignoring case, and control characters in values (including CR/LF/NUL)
+    with `HTTPTransportError.invalidRequest`; adapters enforce the same rules.
   - `RESPONSE_CAP = 2 MiB` for LLM calls. Sync uses
     `SYNC_RESPONSE_CAP = 16 MiB` on the same transport.
   - Provider error bodies are never shown or logged; the user sees a typed
@@ -219,21 +223,26 @@ prompt-engineering guide. `placeholders` is checked locally, without an LLM.
 
 ### 7.6 Keys, privacy, cost
 
-- **Keys.** Each provider profile has its own secret-store account, so a
-  key is never sent to another provider. The stored key is never displayed.
+- **Keys.** Each provider profile has its own secret-store account, so
+  profiles never borrow one another's keys. The stored key is never displayed.
   Typed keys trim surrounding whitespace and newlines; a blank field means
   "keep". "Test" uses the typed draft without overwriting the stored key.
   Profiles use `provider:<lowercase UUID>` accounts; Linux overrides use
   `MONKEYSPAW_PROVIDER_<UUID without hyphens, uppercase>_API_KEY`. Clear
   deletes persisted credentials and disables auth for that profile without
   editing the environment. Replacing an environment-backed key is read-only.
-  A changed kind, scheme, host or effective port requires a re-entered key
-  or explicit Clear, including for Test. Test consults only its draft's ID.
+  A saved nil secret reference means auth is disabled, including after Clear,
+  and never auto-adopts a later environment override.
+  Reusing a persisted key after a changed kind, scheme, host or effective port
+  requires a re-entered key or explicit Clear, including for Test. Test looks
+  credentials up by the draft's profile ID and checks any persisted key's
+  destination binding against the draft's kind and origin.
   Persisted secrets contain a version-1 payload binding the key to its kind
   and normalized origin (scheme, host, effective port). Resolution refuses
   mismatched, unbound, malformed or unsupported payloads and requires
   re-entry or Clear; rollback restores payloads verbatim. Environment values
-  remain raw operator overrides.
+  are raw operator overrides, not bound to a destination; the binding's
+  re-entry gate applies only to persisted secrets.
   Capability keys include profile ID, kind, normalized base URL and model
   ([§19 B23](19-m4-m5-decisions.md)).
 - **What is sent.** Calls happen only on an explicit button. They send the

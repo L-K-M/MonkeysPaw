@@ -53,7 +53,7 @@ final class ProviderSettingsStoreTests: XCTestCase {
         try harness.service.save(second)
         var object = try harness.json()
         object["future"] = ["nested": ["items": [1, NSNull(), "kept"]]]
-        var profiles = object["profiles"] as! [[String: Any]]
+        var profiles = try XCTUnwrap(object["profiles"] as? [[String: Any]], "provider-settings fixture missing a profiles array")
         profiles[0]["id"] = first.id.rawValue.uppercased()
         profiles[0]["futureProfile"] = ["array": [false, "one"]]
         profiles[1]["futureProfile"] = ["array": [true, "two"]]
@@ -66,16 +66,19 @@ final class ProviderSettingsStoreTests: XCTestCase {
         try harness.service.selectProfile(first.id)
         var rewritten = try harness.json()
         XCTAssertEqual(rewritten["future"] as? NSDictionary, object["future"] as? NSDictionary)
-        let output = rewritten["profiles"] as! [[String: Any]]
+        let output = try XCTUnwrap(rewritten["profiles"] as? [[String: Any]], "rewritten settings missing a profiles array")
         for profile in output {
-            let original = profiles.first { ($0["id"] as! String).lowercased() == profile["id"] as? String }!
+            let profileID = try XCTUnwrap(profile["id"] as? String, "rewritten profile missing its ID")
+            let original = try XCTUnwrap(profiles.first { ($0["id"] as? String)?.lowercased() == profileID },
+                                         "no source profile matched rewritten ID \(profileID)")
             XCTAssertEqual(profile["futureProfile"] as? NSDictionary, original["futureProfile"] as? NSDictionary)
         }
         try harness.service.deleteProfile(first.id)
         rewritten = try harness.json()
-        let retained = rewritten["profiles"] as! [[String: Any]]
+        let retained = try XCTUnwrap(rewritten["profiles"] as? [[String: Any]], "rewritten settings missing a profiles array")
         XCTAssertEqual(retained.count, 1)
-        XCTAssertEqual(retained[0]["futureProfile"] as? NSDictionary, profiles[1]["futureProfile"] as? NSDictionary)
+        let retainedProfile = try XCTUnwrap(retained.first, "rewritten settings missing the retained profile")
+        XCTAssertEqual(retainedProfile["futureProfile"] as? NSDictionary, profiles[1]["futureProfile"] as? NSDictionary)
         XCTAssertEqual(rewritten["future"] as? NSDictionary, object["future"] as? NSDictionary)
     }
 
@@ -102,8 +105,12 @@ final class ProviderSettingsStoreTests: XCTestCase {
             let harness = ProviderHarness(files: files)
             XCTAssertEqual(harness.service.snapshot.readOnlyError, expected)
             XCTAssertEqual(harness.service.snapshot.settings, try ProviderSettings())
-            XCTAssertThrowsError(try harness.service.save(ProviderDraft())) { XCTAssertEqual($0 as? ProviderSettingsError, expected) }
-            XCTAssertThrowsError(try harness.service.resolveForTesting(ProviderDraft()))
+            XCTAssertThrowsError(try harness.service.save(ProviderDraft()), "\(expected)") {
+                XCTAssertEqual($0 as? ProviderSettingsError, expected)
+            }
+            XCTAssertThrowsError(try harness.service.resolveForTesting(ProviderDraft()), "\(expected)") {
+                XCTAssertEqual($0 as? ProviderSettingsError, expected)
+            }
             XCTAssertEqual(try files.memory.text(at: "provider-settings.json"), original)
             XCTAssertTrue(files.attemptedWrites.isEmpty)
             XCTAssertTrue(harness.secrets.reads.isEmpty)
@@ -117,7 +124,12 @@ final class ProviderSettingsStoreTests: XCTestCase {
         let harness = ProviderHarness(files: files)
         XCTAssertEqual(harness.service.snapshot.readOnlyError, .readFailed(.ioFailure))
         files.memory.onRead = nil
-        XCTAssertThrowsError(try harness.service.save(ProviderDraft()))
+        XCTAssertThrowsError(try harness.service.save(ProviderDraft())) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .readFailed(.ioFailure))
+        }
+        XCTAssertThrowsError(try harness.service.resolveForTesting(ProviderDraft())) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .readFailed(.ioFailure))
+        }
         XCTAssertFalse(harness.log.lines.joined().contains(sentinel))
         XCTAssertTrue(harness.files.attemptedWrites.isEmpty)
         let reopened = harness.reopen()
@@ -126,7 +138,8 @@ final class ProviderSettingsStoreTests: XCTestCase {
     }
 
     func testExternalFutureOrCorruptReplacementBlocksReadsAndSecretEdits() throws {
-        for replacement in [#"{"version":8}"#, "invalid"] {
+        let cases: [(String, ProviderSettingsError)] = [(#"{"version":8}"#, .futureVersion(8)), ("invalid", .corruptFile)]
+        for (replacement, expected) in cases {
             let harness = ProviderHarness()
             var draft = ProviderDraft(key: .typed("stored"))
             try harness.service.save(draft)
@@ -134,8 +147,15 @@ final class ProviderSettingsStoreTests: XCTestCase {
             let secretReads = harness.secrets.reads.count
             let secretWrites = harness.secrets.writes.count
             draft.key = .typed("replacement")
-            XCTAssertThrowsError(try harness.service.connection(for: draft.id))
-            XCTAssertThrowsError(try harness.service.save(draft))
+            XCTAssertThrowsError(try harness.service.connection(for: draft.id), replacement) {
+                XCTAssertEqual($0 as? ProviderSettingsError, expected)
+            }
+            XCTAssertThrowsError(try harness.service.resolveForTesting(draft), replacement) {
+                XCTAssertEqual($0 as? ProviderSettingsError, expected)
+            }
+            XCTAssertThrowsError(try harness.service.save(draft), replacement) {
+                XCTAssertEqual($0 as? ProviderSettingsError, expected)
+            }
             XCTAssertTrue(harness.service.snapshot.isReadOnly)
             XCTAssertEqual(harness.secrets.reads.count, secretReads)
             XCTAssertEqual(harness.secrets.writes.count, secretWrites)
@@ -157,7 +177,9 @@ final class ProviderSettingsStoreTests: XCTestCase {
         let bytes = try harness.files.read(at: "provider-settings.json")
         draft.displayName = "Changed"
         harness.files.memory.failNextWrite = true
-        XCTAssertThrowsError(try harness.service.save(draft))
+        XCTAssertThrowsError(try harness.service.save(draft)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .writeFailed(.ioFailure))
+        }
         XCTAssertEqual(harness.service.snapshot, before)
         XCTAssertEqual(try harness.files.read(at: "provider-settings.json"), bytes)
         try harness.service.save(draft)
@@ -169,7 +191,8 @@ final class ProviderSettingsStoreTests: XCTestCase {
         let harness = ProviderHarness()
         try harness.service.save(ProviderDraft())
         let valid = try harness.json()
-        let profile = (valid["profiles"] as! [[String: Any]])[0]
+        let profiles = try XCTUnwrap(valid["profiles"] as? [[String: Any]], "provider-settings fixture missing a profiles array")
+        let profile = try XCTUnwrap(profiles.first, "provider-settings fixture missing its profile")
         let modifications: [[String: Any]] = [
             ["profiles": [profile, profile]],
             ["profiles": [profile.merging(["kind": "unknown"], uniquingKeysWith: { _, new in new })]],
@@ -182,7 +205,9 @@ final class ProviderSettingsStoreTests: XCTestCase {
             let reads = harness.secrets.reads.count
             let reopened = harness.reopen()
             XCTAssertEqual(reopened.service.snapshot.readOnlyError, .corruptFile)
-            XCTAssertThrowsError(try reopened.service.resolveForTesting(ProviderDraft()))
+            XCTAssertThrowsError(try reopened.service.resolveForTesting(ProviderDraft())) {
+                XCTAssertEqual($0 as? ProviderSettingsError, .corruptFile)
+            }
             XCTAssertEqual(harness.secrets.reads.count, reads)
         }
     }

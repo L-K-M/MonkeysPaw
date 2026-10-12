@@ -54,12 +54,36 @@ final class ProviderNormalizationTests: XCTestCase {
     }
 
     func testHTTPRequiresAnExactLoopbackAddress() throws {
-        for host in ["localhost", "127.0.0.1", "127.12.34.56", "[::1]"] {
-            XCTAssertNoThrow(try ProviderSettings.normalizeBaseURL("http://\(host):8080", kind: .openaiCompatible))
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for host in ["localhost", "127.0.0.1", "127.12.34.56", "[::1]"] {
+                XCTAssertNoThrow(try ProviderSettings.normalizeBaseURL("http://\(host):8080", kind: kind), "\(kind) \(host)")
+            }
+            for host in ["example.com", "localhost.evil.test", "127.0.0.1.evil.test", "192.168.1.2", "[::2]", "127.0.0.999"] {
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("http://\(host)", kind: kind), "\(kind) \(host)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .insecureBaseURL, "\(kind) \(host)")
+                }
+            }
         }
-        for host in ["example.com", "localhost.evil.test", "127.0.0.1.evil.test", "192.168.1.2", "[::2]", "127.0.0.999"] {
-            XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("http://\(host)", kind: .anthropic)) {
-                XCTAssertEqual($0 as? ProviderSettingsError, .insecureBaseURL)
+    }
+
+    func testProfileAndConnectionEndpointPathsPreserveSegmentsForBothKinds() throws {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for path in ["", "/gateway", "/gateway%20space"] {
+                let profile = try ProviderProfile(id: ProviderProfileID(), displayName: "Endpoint", kind: kind,
+                    baseURL: "https://example.com" + path, modelID: "manual")
+                let connection = ProviderConnection(profileID: profile.id, kind: kind,
+                    baseURL: profile.baseURL, modelID: profile.modelID, key: nil)
+                let base = "https://example.com" + (path.isEmpty && kind == .openaiCompatible ? "/v1" : path)
+                let completion = kind == .anthropic ? "/v1/messages" : "/chat/completions"
+                let models = kind == .anthropic ? "/v1/models" : "/models"
+                let context = "\(kind) \(path)"
+                XCTAssertEqual(profile.completionURL.absoluteString, base + completion, context)
+                XCTAssertEqual(profile.modelsURL.absoluteString, base + models, context)
+                XCTAssertEqual(connection.completionURL.absoluteString, base + completion, context)
+                XCTAssertEqual(connection.modelsURL.absoluteString, base + models, context)
+                for url in [profile.completionURL, profile.modelsURL, connection.completionURL, connection.modelsURL] {
+                    XCTAssertFalse(url.absoluteString.lowercased().contains("%2f"), context)
+                }
             }
         }
     }
@@ -67,8 +91,8 @@ final class ProviderNormalizationTests: XCTestCase {
     func testHTTPRejectsNonCanonicalIPv4LoopbackOctets() {
         for kind in [ProviderKind.anthropic, .openaiCompatible] {
             for host in ["127.0.0.08", "127.09.1.1", "127.0.018.1", "127.00.0.1", "127.0.0.010"] {
-                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("http://\(host)", kind: kind)) {
-                    XCTAssertEqual($0 as? ProviderSettingsError, .insecureBaseURL)
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("http://\(host)", kind: kind), "\(kind) \(host)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .insecureBaseURL, "\(kind) \(host)")
                 }
             }
         }
@@ -77,14 +101,14 @@ final class ProviderNormalizationTests: XCTestCase {
     func testCredentialsQueryAndFragmentsAreRejectedForBothKinds() {
         for kind in [ProviderKind.anthropic, .openaiCompatible] {
             for input in ["https://user:password@example.com", "https://user@example.com", "https://@example.com"] {
-                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind)) {
-                    XCTAssertEqual($0 as? ProviderSettingsError, .credentialsInURL)
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), "\(kind) \(input)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .credentialsInURL, "\(kind) \(input)")
                 }
             }
             for input in ["https://example.com?api_key=secret", "https://example.com?token=secret",
                           "https://example.com?harmless=value", "https://example.com#secret", "https://example.com?"] {
-                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind)) {
-                    XCTAssertEqual($0 as? ProviderSettingsError, .queryOrFragmentInURL)
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), "\(kind) \(input)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .queryOrFragmentInURL, "\(kind) \(input)")
                 }
             }
         }
@@ -95,12 +119,15 @@ final class ProviderNormalizationTests: XCTestCase {
                       "https://example.com:0", "https://example.com:65536", "https://example.com/a/../v1",
                       "https://example.com/%2e%2e/v1", "https://example.com/v1%2Fmessages",
                       "https://example.com/a\\b", "https://example.com/a//b", "https://example.com/a%0Ab"] {
-            XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: .anthropic), input)
+            XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: .anthropic), input) {
+                XCTAssertEqual($0 as? ProviderSettingsError, .invalidBaseURL, input)
+            }
         }
     }
 
     func testProfileIDsAccountsAndEnvironmentNamesAreStableAndIsolated() throws {
-        let id = ProviderProfileID(UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff")!)
+        let uuid = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff"))
+        let id = ProviderProfileID(uuid)
         XCTAssertEqual(id.rawValue, "00112233-4455-6677-8899-aabbccddeeff")
         XCTAssertEqual(id.environmentVariable, "MONKEYSPAW_PROVIDER_00112233445566778899AABBCCDDEEFF_API_KEY")
         XCTAssertEqual(SecretAccount.provider(id).rawValue, "provider:" + id.rawValue)

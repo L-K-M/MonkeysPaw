@@ -24,6 +24,18 @@ public struct HTTPRequest: Sendable, CustomStringConvertible, CustomDebugStringC
                 deadline: ContinuousClock.Instant) throws {
         guard requestByteCap > 0, responseByteCap > 0 else { throw HTTPTransportError.invalidRequest }
         guard (body?.count ?? 0) <= requestByteCap else { throw HTTPTransportError.requestTooLarge }
+
+        // Match the adapter's rules before any transport can consume headers.
+        let token = Set("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".utf8)
+        var names = Set<String>()
+        for (name, value) in headers {
+            guard !name.isEmpty, name.utf8.allSatisfy(token.contains),
+                  names.insert(name.lowercased()).inserted,
+                  !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+                throw HTTPTransportError.invalidRequest
+            }
+        }
+
         self.url = url
         self.method = method
         self.headers = headers

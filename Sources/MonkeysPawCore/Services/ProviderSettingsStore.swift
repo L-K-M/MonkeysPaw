@@ -3,6 +3,7 @@ import Foundation
 /// A config-root FileStore, alongside SettingsStore, owns provider-settings.json.
 /// Share one instance per root. The lock serializes metadata and the service's
 /// secret mutation/rollback. Unknown JSON stays internal and follows profile IDs.
+/// Callbacks run under a non-recursive lock and must not re-enter this store.
 public final class ProviderSettingsStore: @unchecked Sendable {
     private struct Payload: Decodable {
         let version: Int

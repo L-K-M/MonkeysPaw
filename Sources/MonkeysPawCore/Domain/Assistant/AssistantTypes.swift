@@ -29,7 +29,8 @@ public enum AssistantAccessState: Equatable, Sendable {
 }
 
 /// Provider content and underlying errors never become user-facing diagnostics.
-public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable {
     case notConfigured
     case accessDenied
     case privatePrompt
@@ -61,4 +62,5 @@ public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible,
     }
 
     public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: ["error": description]) }
 }

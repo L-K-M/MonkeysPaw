@@ -1,4 +1,5 @@
 import Foundation
+import XCTest
 @testable import MonkeysPawCore
 
 final class ProviderRecordingFiles: FileStore {
@@ -31,6 +32,8 @@ final class FakeProviderSecrets: SecretStore {
     var readError: Error?
     var writeError: Error?
     var deleteError: Error?
+    /// Fails the Nth recorded write attempt, including failed attempts.
+    /// Ignored when writeError is set, which fails every call first.
     var failWriteNumber: Int?
     private(set) var reads = [(SecretAccount, SecretReadSource)]()
     private(set) var writes = [SecretAccount]()
@@ -79,9 +82,11 @@ final class ProviderHarness {
         service = ProviderSettingsService(store: ProviderSettingsStore(files: files, log: log), secrets: secrets, log: log)
     }
 
+    /// Simulates a relaunch over the same fakes; recording counts accumulate.
     func reopen() -> ProviderHarness { ProviderHarness(files: files, secrets: secrets, log: log) }
 
     func json() throws -> [String: Any] {
-        try JSONSerialization.jsonObject(with: files.read(at: "provider-settings.json")) as! [String: Any]
+        let object = try JSONSerialization.jsonObject(with: files.read(at: "provider-settings.json"))
+        return try XCTUnwrap(object as? [String: Any], "provider-settings.json root should be a JSON object")
     }
 }

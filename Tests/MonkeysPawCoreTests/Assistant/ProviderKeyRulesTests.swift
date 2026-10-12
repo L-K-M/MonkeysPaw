@@ -56,6 +56,74 @@ final class ProviderKeyRulesTests: XCTestCase {
         }
     }
 
+    func testClearWithoutPersistedSecretNeverCallsDelete() throws {
+        for environmentActive in [false, true] {
+            let harness = ProviderHarness()
+            var draft = ProviderDraft()
+            if environmentActive { harness.secrets.environment[.provider(draft.id)] = SecretValue("env") }
+            harness.secrets.deleteError = SecretStoreError.deleteFailed
+            draft.key = .clear
+
+            XCTAssertNoThrow(try harness.service.save(draft), "New profile, environment: \(environmentActive)")
+            XCTAssertNoThrow(try harness.service.save(draft), "Repeated Clear, environment: \(environmentActive)")
+            XCTAssertNil(try harness.service.connection(for: draft.id).key)
+            XCTAssertNil(try harness.reopen().service.connection(for: draft.id).key)
+            XCTAssertTrue(harness.secrets.deletions.isEmpty)
+            XCTAssertTrue(harness.secrets.writes.isEmpty)
+            XCTAssertEqual(harness.secrets.environment[.provider(draft.id)], environmentActive ? SecretValue("env") : nil)
+            XCTAssertNoThrow(try harness.service.deleteProfile(draft.id))
+            XCTAssertTrue(harness.secrets.deletions.isEmpty)
+        }
+    }
+
+    func testKeylessClearMetadataFailureNeedsNoSecretCompensation() throws {
+        let harness = ProviderHarness()
+        var draft = ProviderDraft()
+        harness.secrets.environment[.provider(draft.id)] = SecretValue("env")
+        try harness.service.save(draft)
+        let before = harness.service.snapshot
+        let bytes = try harness.files.read(at: "provider-settings.json")
+        harness.secrets.deleteError = SecretStoreError.deleteFailed
+        harness.files.memory.failNextWrite = true
+        draft.key = .clear
+
+        XCTAssertThrowsError(try harness.service.save(draft)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .writeFailed(.ioFailure))
+        }
+        XCTAssertEqual(harness.service.snapshot, before)
+        XCTAssertEqual(try harness.files.read(at: "provider-settings.json"), bytes)
+        XCTAssertEqual(try harness.service.connection(for: draft.id).key, SecretValue("env"))
+        XCTAssertTrue(harness.secrets.deletions.isEmpty)
+        XCTAssertTrue(harness.secrets.writes.isEmpty)
+        XCTAssertNoThrow(try harness.service.save(draft))
+        XCTAssertNil(try harness.reopen().service.connection(for: draft.id).key)
+        XCTAssertTrue(harness.secrets.deletions.isEmpty)
+    }
+
+    func testExistingKeylessProfilesDoNotAdoptLaterEnvironmentOverrides() throws {
+        let cases: [(String, ProviderKeyEdit)] = [("Initially keyless", .keep), ("Cleared", .typed("stored"))]
+        for (context, key) in cases {
+            let harness = ProviderHarness()
+            var draft = ProviderDraft(key: key)
+            try harness.service.save(draft)
+            if case .replace = key {
+                draft.key = .clear
+                try harness.service.save(draft)
+            }
+            harness.secrets.environment[.provider(draft.id)] = SecretValue("later-env")
+            let reads = harness.secrets.reads.count
+            draft.key = .keep
+
+            XCTAssertNil(try harness.service.resolveForTesting(draft).key, context)
+            try harness.service.save(draft)
+            XCTAssertNil(try harness.service.connection(for: draft.id).key, context)
+            XCTAssertNil(try harness.reopen().service.connection(for: draft.id).key, context)
+            XCTAssertNil(harness.service.snapshot.settings.profiles.first?.secretReference, context)
+            XCTAssertEqual(harness.secrets.reads.count, reads, context)
+            XCTAssertEqual(harness.secrets.environment[.provider(draft.id)], SecretValue("later-env"), context)
+        }
+    }
+
     func testChangedDestinationCanBeExplicitlyClearedForKeylessLocalUse() throws {
         let harness = ProviderHarness()
         try harness.service.save(ProviderDraft(key: .typed("stored")))
@@ -128,7 +196,9 @@ final class ProviderKeyRulesTests: XCTestCase {
         XCTAssertEqual(try harness.service.connection(for: two.id).key, SecretValue("two"))
         try harness.service.deleteProfile(two.id)
         XCTAssertNil(harness.service.snapshot.settings.selectedProfileID)
-        XCTAssertThrowsError(try harness.service.deleteProfile(two.id))
+        XCTAssertThrowsError(try harness.service.deleteProfile(two.id)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .profileNotFound)
+        }
     }
 
     func testEnvironmentOverrideIsIsolatedReadOnlyAndClearDoesNotMutateEnvironment() throws {
@@ -186,7 +256,8 @@ final class ProviderKeyRulesTests: XCTestCase {
     }
 
     func testMetadataFailureRestoresPreviousKeyForReplaceClearAndDelete() throws {
-        for operation in 0..<3 {
+        enum Operation: CaseIterable { case replace, clear, delete }
+        for operation in Operation.allCases {
             let harness = ProviderHarness()
             let draft = ProviderDraft(key: .typed("old"))
             try harness.service.save(draft)
@@ -195,16 +266,23 @@ final class ProviderKeyRulesTests: XCTestCase {
             let bytes = try harness.files.read(at: "provider-settings.json")
             var edit = ProviderDraft(profile: before.settings.profiles[0])
             edit.displayName = "Changed"
-            edit.key = operation == 0 ? .typed("new") : .clear
+            edit.key = operation == .replace ? .typed("new") : .clear
             harness.files.memory.failNextWrite = true
-            XCTAssertThrowsError(try operation == 2 ? harness.service.deleteProfile(draft.id) : harness.service.save(edit)) {
-                XCTAssertEqual($0 as? ProviderSettingsError, .writeFailed(.ioFailure))
+            switch operation {
+            case .delete:
+                XCTAssertThrowsError(try harness.service.deleteProfile(draft.id), "\(operation)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .writeFailed(.ioFailure), "\(operation)")
+                }
+            case .replace, .clear:
+                XCTAssertThrowsError(try harness.service.save(edit), "\(operation)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .writeFailed(.ioFailure), "\(operation)")
+                }
             }
-            XCTAssertEqual(harness.service.snapshot, before)
-            XCTAssertEqual(try harness.files.read(at: "provider-settings.json"), bytes)
-            XCTAssertEqual(harness.secrets.persisted[.provider(draft.id)], previousSecret)
-            XCTAssertEqual(try harness.service.connection(for: draft.id).key, SecretValue("old"))
-            XCTAssertEqual(try harness.reopen().service.connection(for: draft.id).key, SecretValue("old"))
+            XCTAssertEqual(harness.service.snapshot, before, "\(operation)")
+            XCTAssertEqual(try harness.files.read(at: "provider-settings.json"), bytes, "\(operation)")
+            XCTAssertEqual(harness.secrets.persisted[.provider(draft.id)], previousSecret, "\(operation)")
+            XCTAssertEqual(try harness.service.connection(for: draft.id).key, SecretValue("old"), "\(operation)")
+            XCTAssertEqual(try harness.reopen().service.connection(for: draft.id).key, SecretValue("old"), "\(operation)")
         }
     }
 
@@ -212,7 +290,9 @@ final class ProviderKeyRulesTests: XCTestCase {
         let harness = ProviderHarness()
         let draft = ProviderDraft(key: .typed("new"))
         harness.files.memory.failNextWrite = true
-        XCTAssertThrowsError(try harness.service.save(draft))
+        XCTAssertThrowsError(try harness.service.save(draft)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .writeFailed(.ioFailure))
+        }
         XCTAssertNil(harness.secrets.persisted[.provider(draft.id)])
         XCTAssertNil(try harness.files.stamp(at: "provider-settings.json"))
         try harness.service.save(draft)
@@ -237,9 +317,13 @@ final class ProviderKeyRulesTests: XCTestCase {
         XCTAssertTrue(harness.log.lines.contains("error: Provider secret restoration failed."))
         XCTAssertTrue(harness.service.snapshot.isReadOnly)
         XCTAssertEqual(harness.service.snapshot.readOnlyError, .secretRollbackFailed)
-        XCTAssertThrowsError(try harness.service.connection(for: draft.id))
+        XCTAssertThrowsError(try harness.service.connection(for: draft.id)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secretRollbackFailed)
+        }
         XCTAssertThrowsError(try harness.service.resolveForTesting(ProviderDraft(profile:
-            harness.service.snapshot.settings.profiles[0])))
+            harness.service.snapshot.settings.profiles[0]))) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secretRollbackFailed)
+        }
     }
 
     func testRestartCannotSendNewDestinationKeyAfterFailedCommitAndRestoration() throws {
@@ -279,8 +363,10 @@ final class ProviderKeyRulesTests: XCTestCase {
             let draft = ProviderDraft(baseURL: "https://localhost", key: .typed(UUID().uuidString))
             try harness.service.save(draft)
             var object = try harness.json()
-            var profiles = object["profiles"] as! [[String: Any]]
-            change(&profiles[0])
+            var profiles = try XCTUnwrap(object["profiles"] as? [[String: Any]], "provider-settings fixture missing a profiles array")
+            var profile = try XCTUnwrap(profiles.first, "provider-settings fixture missing its profile")
+            change(&profile)
+            profiles[0] = profile
             object["profiles"] = profiles
             try harness.files.memory.write(JSONSerialization.data(withJSONObject: object), at: "provider-settings.json")
 
@@ -299,7 +385,10 @@ final class ProviderKeyRulesTests: XCTestCase {
             var repair = ProviderDraft(profile: reopened.service.snapshot.settings.profiles[0])
             repair.key = .typed(UUID().uuidString)
             try reopened.service.save(repair)
-            guard case .replace(let key) = repair.key else { return XCTFail("Expected replacement intent") }
+            guard case .replace(let key) = repair.key else {
+                XCTFail("Expected replacement intent")
+                continue
+            }
             XCTAssertEqual(try reopened.service.connection(for: draft.id).key, key)
         }
     }
@@ -311,24 +400,28 @@ final class ProviderKeyRulesTests: XCTestCase {
         let account = SecretAccount.provider(draft.id)
         let persisted = try XCTUnwrap(harness.secrets.persisted[account])
         var unsupported = try persisted.value.withValue {
-            try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
+            try XCTUnwrap(try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any],
+                          "persisted secret is not a JSON envelope")
         }
         unsupported["version"] = 2
         let unsupportedValue = SecretValue(String(decoding: try JSONSerialization.data(withJSONObject: unsupported), as: UTF8.self))
         for tier in [SecretTier.keychain, .secretService, .file] {
             for value in [SecretValue(UUID().uuidString), SecretValue("{"), unsupportedValue] {
                 harness.secrets.persisted[account] = StoredSecret(value: value, tier: tier)
-                XCTAssertThrowsError(try harness.service.connection(for: draft.id)) {
-                    XCTAssertEqual($0 as? ProviderSettingsError, .keyRequiredForChangedDestination)
+                XCTAssertThrowsError(try harness.service.connection(for: draft.id), "\(tier)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .keyRequiredForChangedDestination, "\(tier)")
                 }
                 XCTAssertThrowsError(try harness.service.resolveForTesting(ProviderDraft(profile:
-                    harness.service.snapshot.settings.profiles[0]))) {
-                    XCTAssertEqual($0 as? ProviderSettingsError, .keyRequiredForChangedDestination)
+                    harness.service.snapshot.settings.profiles[0])), "\(tier)") {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .keyRequiredForChangedDestination, "\(tier)")
                 }
             }
             harness.secrets.persisted[account] = StoredSecret(value: persisted.value, tier: tier)
-            guard case .replace(let key) = draft.key else { return XCTFail("Expected replacement intent") }
-            XCTAssertEqual(try harness.service.connection(for: draft.id).key, key)
+            guard case .replace(let key) = draft.key else {
+                XCTFail("Expected replacement intent for \(tier)")
+                continue
+            }
+            XCTAssertEqual(try harness.service.connection(for: draft.id).key, key, "\(tier)")
         }
 
         // Even an envelope-shaped operator override stays raw.
@@ -357,15 +450,20 @@ final class ProviderKeyRulesTests: XCTestCase {
 
     func testInvalidDraftsDoNotChangeMetadataOrSecrets() throws {
         let harness = ProviderHarness()
-        let invalid: [ProviderDraft] = [
-            ProviderDraft(displayName: "", key: .typed("key")),
-            ProviderDraft(baseURL: "https://user:password@example.com", key: .typed("key")),
-            ProviderDraft(baseURL: "https://example.com?key=value", key: .typed("key")),
-            ProviderDraft(modelID: "", key: .typed("key")),
-            ProviderDraft(key: .replace(SecretValue("\nkey"))),
-            ProviderDraft(key: .replace(SecretValue("   ")))
+        let invalid: [(ProviderDraft, ProviderSettingsError)] = [
+            (ProviderDraft(displayName: "", key: .typed("key")), .invalidProfile),
+            (ProviderDraft(baseURL: "https://user:password@example.com", key: .typed("key")), .credentialsInURL),
+            (ProviderDraft(baseURL: "https://example.com?key=value", key: .typed("key")), .queryOrFragmentInURL),
+            (ProviderDraft(modelID: "", key: .typed("key")), .invalidProfile),
+            (ProviderDraft(key: .replace(SecretValue("\nkey"))), .invalidKey),
+            (ProviderDraft(key: .replace(SecretValue("   "))), .invalidKey)
         ]
-        for draft in invalid { XCTAssertThrowsError(try harness.service.save(draft)) }
+        for (index, testCase) in invalid.enumerated() {
+            let (draft, expected) = testCase
+            XCTAssertThrowsError(try harness.service.save(draft), "Invalid draft \(index)") {
+                XCTAssertEqual($0 as? ProviderSettingsError, expected, "Invalid draft \(index)")
+            }
+        }
         XCTAssertTrue(harness.secrets.writes.isEmpty)
         XCTAssertTrue(harness.files.attemptedWrites.isEmpty)
         XCTAssertEqual(harness.service.snapshot.settings.profiles, [])

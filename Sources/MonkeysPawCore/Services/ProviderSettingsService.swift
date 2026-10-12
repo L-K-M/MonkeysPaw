@@ -176,6 +176,8 @@ public final class ProviderSettingsService {
             throw ProviderSettingsError.secret(.readOnly)
         }
         let previous = try readSecret(account, source: .persisted)
+        if value == nil, previous == nil { return {} }
+
         do {
             if let value { try secrets.write(value, account: account) }
             else { try secrets.delete(account: account) }
