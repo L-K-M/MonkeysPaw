@@ -252,38 +252,94 @@ public final class LibraryService: PromptFavoriteEditing {
     @discardableResult
     public func move(from source: String, to destination: String) throws -> LibraryEntry {
         try locked {
-            try LibraryPath.validate(destination)
-            let loaded = try requireCurrent(at: source)
-            if source.utf8.elementsEqual(destination.utf8) { return loaded.entry }
-            guard try files.stamp(at: destination) == nil else { throw FileStoreError.alreadyExists }
-            let targetIdentity = PromptIdentity(path: destination, id: loaded.entry.document.frontMatter.id)
-            var migrated = [PromptKeyedStore]()
-            do {
-                try migrate(from: loaded.entry.identity, to: targetIdentity, completed: &migrated)
-                guard try files.stamp(at: source) == loaded.entry.stamp else { throw LibraryError.conflict }
-                try files.move(from: source, to: destination)
-            } catch {
-                try rollback(migrated, from: targetIdentity, to: loaded.entry.identity)
-                throw error
-            }
-            return try requireCurrent(at: destination).entry
+            do { return try moveFile(try requireCurrent(at: source), to: destination) }
+            // Preserve the synchronous API's existing occupied-path error.
+            catch LibraryError.destinationOccupied { throw FileStoreError.alreadyExists }
         }
+    }
+
+    private func moveFile(_ loaded: LoadedFile, to destination: String) throws -> LibraryEntry {
+        try LibraryPath.validate(destination)
+        let source = loaded.entry.relativePath
+        if source.utf8.elementsEqual(destination.utf8) { return loaded.entry }
+        guard try isAvailable(destination) else { throw LibraryError.destinationOccupied }
+        let targetIdentity = PromptIdentity(path: destination, id: loaded.entry.document.frontMatter.id)
+        var migrated = [PromptKeyedStore]()
+        do {
+            try migrate(from: loaded.entry.identity, to: targetIdentity, completed: &migrated)
+            guard try files.stamp(at: source) == loaded.entry.stamp else { throw LibraryError.conflict }
+            do { try files.move(from: source, to: destination) }
+            catch FileStoreError.alreadyExists { throw LibraryError.destinationOccupied }
+        } catch {
+            try rollback(migrated, from: targetIdentity, to: loaded.entry.identity)
+            throw error
+        }
+        let moved = try requireCurrent(at: destination)
+        guard moved.bytes == loaded.bytes else { throw LibraryError.conflict }
+        return moved.entry
     }
 
     /// History survives deletion; restore can resurrect this identity later.
     public func delete(at path: String, expectedStamp: FileStamp? = nil) throws {
-        try locked {
-            try LibraryPath.validate(path)
-            if let expectedStamp {
-                guard let currentStamp = try files.stamp(at: path) else { throw FileStoreError.notFound }
-                guard expectedStamp == currentStamp else { throw LibraryError.conflict }
-            }
-            try files.delete(at: path)
+        try locked { try deleteFile(at: path, expectedStamp: expectedStamp) }
+    }
+
+    private func deleteFile(at path: String, expectedStamp: FileStamp?) throws {
+        try LibraryPath.validate(path)
+        if let expectedStamp {
+            guard let currentStamp = try files.stamp(at: path) else { throw FileStoreError.notFound }
+            guard expectedStamp == currentStamp else { throw LibraryError.conflict }
         }
+        try files.delete(at: path)
     }
 
     public func history(for identity: PromptIdentity) throws -> [HistoryRevision] {
         try locked { try historyStore.revisions(for: identity) }
+    }
+
+    func historyForEditing(_ identity: PromptIdentity, filename: String) throws -> [PromptHistorySnapshot] {
+        try locked {
+            try historyStore.revisions(for: identity).map {
+                PromptHistorySnapshot(revision: $0, bytes: try historyStore.read($0), filename: filename)
+            }
+        }
+    }
+
+    func moveForEditing(at path: String, to destination: String,
+                        expectedStamp: FileStamp) throws -> PromptCommandOutcome {
+        try command(at: path, expectedStamp: expectedStamp) { loaded in
+            .updated(try moveFile(loaded, to: destination))
+        }
+    }
+
+    func deleteForEditing(at path: String, expectedStamp: FileStamp) throws -> PromptCommandOutcome {
+        try command(at: path, expectedStamp: expectedStamp) { _ in
+            try deleteFile(at: path, expectedStamp: expectedStamp)
+            return .deleted
+        }
+    }
+
+    func restoreForEditing(_ revision: HistoryRevision, at path: String,
+                           expectedStamp: FileStamp) throws -> PromptCommandOutcome {
+        try command(at: path, expectedStamp: expectedStamp) { _ in
+            do {
+                return PromptCommandOutcome(try editingCommit {
+                    try restoreDocument(revision, at: path, expectedStamp: expectedStamp)
+                })
+            } catch let error as PromptWriteError { return .forensic(error) }
+        }
+    }
+
+    /// Check the editor baseline before identity/format validation or any
+    /// migration. A missing prompt cannot be restored by the M3 presentation.
+    private func command(at path: String, expectedStamp: FileStamp,
+                         perform: (LoadedFile) throws -> PromptCommandOutcome) throws -> PromptCommandOutcome {
+        try locked {
+            guard let loaded = try readCurrent(at: path) else { return .missing }
+            guard loaded.entry.stamp == expectedStamp else { return .conflict(currentStamp: loaded.entry.stamp) }
+            if let reason = LoadedPrompt.readOnlyReason(for: loaded.entry.document) { return .readOnly(reason) }
+            return try perform(loaded)
+        }
     }
 
     /// Restore uses the normal save path, including validation, stamp checks,
@@ -291,32 +347,35 @@ public final class LibraryService: PromptFavoriteEditing {
     @discardableResult
     public func restore(_ revision: HistoryRevision, at path: String,
                         expectedStamp: FileStamp? = nil) throws -> LibraryEntry {
-        try locked {
-            try LibraryPath.validate(path)
-            switch revision.identity {
-            case .local:
-                guard PromptIdentity(path: path, id: nil) == revision.identity else {
-                    throw LibraryError.identityMismatch
-                }
-            case .assigned:
-                // Assigned ids need a full scan to resolve their live paths.
-                // Keep utf8.elementsEqual for byte-exact comparison: String
-                // equality accepts canonically equivalent but byte-distinct paths.
-                let liveElsewhere = try libraryEntries().contains(where: {
-                    $0.identity == revision.identity && !$0.relativePath.utf8.elementsEqual(path.utf8)
-                })
-                guard !liveElsewhere else { throw LibraryError.identityMismatch }
-            }
-            if let current = try readCurrent(at: path), current.entry.identity != revision.identity {
+        try locked { try restoreDocument(revision, at: path, expectedStamp: expectedStamp) }
+    }
+
+    private func restoreDocument(_ revision: HistoryRevision, at path: String,
+                                 expectedStamp: FileStamp?) throws -> LibraryEntry {
+        try LibraryPath.validate(path)
+        switch revision.identity {
+        case .local:
+            guard PromptIdentity(path: path, id: nil) == revision.identity else {
                 throw LibraryError.identityMismatch
             }
-            let bytes = try historyStore.read(revision)
-            var document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
-            if case .assigned(let id) = revision.identity {
-                document = try PromptCodec.assigningIdentity(id, to: document)
-            }
-            return try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp))
+        case .assigned:
+            // Assigned ids need a full scan to resolve their live paths.
+            // Keep utf8.elementsEqual for byte-exact comparison: String
+            // equality accepts canonically equivalent but byte-distinct paths.
+            let liveElsewhere = try libraryEntries().contains(where: {
+                $0.identity == revision.identity && !$0.relativePath.utf8.elementsEqual(path.utf8)
+            })
+            guard !liveElsewhere else { throw LibraryError.identityMismatch }
         }
+        if let current = try readCurrent(at: path), current.entry.identity != revision.identity {
+            throw LibraryError.identityMismatch
+        }
+        let bytes = try historyStore.read(revision)
+        var document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
+        if case .assigned(let id) = revision.identity {
+            document = try PromptCodec.assigningIdentity(id, to: document)
+        }
+        return try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp))
     }
 
     private func libraryEntries() throws -> [LibraryEntry] {

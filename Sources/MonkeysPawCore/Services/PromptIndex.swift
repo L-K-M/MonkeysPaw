@@ -23,6 +23,7 @@ public final class PromptIndex: @unchecked Sendable {
     private let observers = ChangeObservers<Void>()
     private let changeObservers = ChangeObservers<PromptIndexChange>()
     private var version: UInt64 = 0
+    private var pathVersions: [RelativePath: UInt64] = [:]
     private var compatibilityObserver: UUID?
 
     public init(service: LibraryService, usage: UsageStore, clock: WallClock) {
@@ -148,11 +149,37 @@ public final class PromptIndex: @unchecked Sendable {
         if let publication { publish(publication) }
     }
 
+    /// Publish a stamped file command without disk work on the UI thread.
+    /// Preserve newer publications for either affected path, including a
+    /// deletion. Unrelated publications cannot hide the completed command.
+    func acceptCommand(_ entry: LibraryEntry?, at source: String, expectedVersion: UInt64) {
+        let publication: Publication? = locked {
+            let sourcePath = RelativePath(source)
+            let destination = entry.map { RelativePath($0.relativePath) } ?? sourcePath
+            guard pathVersions[sourcePath, default: 0] <= expectedVersion,
+                  pathVersions[destination, default: 0] <= expectedVersion else { return nil }
+            let previous = prompts.removeValue(forKey: sourcePath)?.entry
+            var changes = LibraryChangeSet(deleted: [sourcePath])
+            if let entry {
+                prompts[destination] = PromptRanking.Input(entry)
+                useEvents[entry.identity] = usage.cachedUseEvents()[entry.identity] ?? useEvents[entry.identity] ?? []
+                changes = destination == sourcePath ? LibraryChangeSet(modified: [sourcePath])
+                    : LibraryChangeSet(created: [destination], deleted: [sourcePath])
+            }
+            if let previous, !prompts.values.contains(where: { $0.entry.identity == previous.identity }) {
+                useEvents[previous.identity] = nil
+            }
+            return capturePublication(changes)
+        }
+        if let publication { publish(publication) }
+    }
+
     /// Called only with the index lock held. Payload and subscriber membership
     /// belong to this commit even if a callback makes another publication.
     private func capturePublication(_ set: LibraryChangeSet) -> Publication {
         version &+= 1
         var stamps: [RelativePath: FileStamp] = [:]
+        for path in set.created.union(set.modified).union(set.deleted) { pathVersions[path] = version }
         for path in set.created.union(set.modified) { stamps[path] = prompts[path]?.entry.stamp }
         return Publication(observers: observers.capture(), changeObservers: changeObservers.capture(),
                            change: PromptIndexChange(changes: set, stamps: stamps, version: version))

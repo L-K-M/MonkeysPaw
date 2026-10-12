@@ -18,7 +18,7 @@ public final class PromptEditingService: @unchecked Sendable {
     }
 
     private struct Session {
-        let path: String
+        var path: String
         let onExternalChange: (PromptExternalChange) -> Void
         var file = OpenFile.unloaded
         var observedStamp: FileStamp?
@@ -34,6 +34,8 @@ public final class PromptEditingService: @unchecked Sendable {
         let outcome: PromptLoadOutcome
         let indexVersion: UInt64
     }
+
+    private enum CommittedFile { case unchanged, present(FileStamp), missing }
 
     private let library: LibraryService
     private let index: PromptIndex
@@ -185,6 +187,109 @@ public final class PromptEditingService: @unchecked Sendable {
         }, completion: { _, result in completion(result) })
     }
 
+    public func history(for identity: PromptIdentity, session: PromptEditingSession,
+                        completion: @escaping (PromptHistoryOutcome) -> Void) {
+        guard !session.isInactive else { return completion(.failed(.library(.operationFailed))) }
+        submit(session, operation: { service, path in
+            do { return PromptHistoryOutcome.loaded(try service.library.historyForEditing(identity,
+                filename: LibraryPath.filename(path))) }
+            catch { return .failed(Self.failure(error)) }
+        }, completion: { _, result in completion(result) })
+    }
+
+    public func restore(_ revision: HistoryRevision, session: PromptEditingSession, expectedStamp: FileStamp,
+                        completion: @escaping (PromptCommandOutcome) -> Void) {
+        command(session: session, completion: completion) { service, path in
+            try service.library.restoreForEditing(revision, at: path, expectedStamp: expectedStamp)
+        }
+    }
+
+    /// Filename only; the front matter and body move byte-for-byte.
+    public func rename(to filename: String, session: PromptEditingSession, expectedStamp: FileStamp,
+                       completion: @escaping (PromptCommandOutcome) -> Void) {
+        command(session: session, completion: completion) { service, path in
+            guard !filename.isEmpty, !filename.unicodeScalars.contains("/") else { throw FileStoreError.invalidPath }
+            let directory = path.unicodeScalars.lastIndex(of: "/").map {
+                String(path[...$0])
+            } ?? ""
+            return try service.library.moveForEditing(at: path, to: directory + filename, expectedStamp: expectedStamp)
+        }
+    }
+
+    /// Empty folder means the library root. FileStore.move creates parents.
+    public func move(to folder: String, session: PromptEditingSession, expectedStamp: FileStamp,
+                     completion: @escaping (PromptCommandOutcome) -> Void) {
+        command(session: session, completion: completion) { service, path in
+            if !folder.isEmpty { try FileStorePath.validate(folder) }
+            let destination = (folder.isEmpty ? "" : folder + "/") + LibraryPath.filename(path)
+            return try service.library.moveForEditing(at: path, to: destination, expectedStamp: expectedStamp)
+        }
+    }
+
+    public func delete(session: PromptEditingSession, expectedStamp: FileStamp,
+                       completion: @escaping (PromptCommandOutcome) -> Void) {
+        command(session: session, completion: completion) { service, path in
+            try service.library.deleteForEditing(at: path, expectedStamp: expectedStamp)
+        }
+    }
+
+    private func command(session: PromptEditingSession, completion: @escaping (PromptCommandOutcome) -> Void,
+                         perform: @escaping (PromptEditingService, String) throws -> PromptCommandOutcome) {
+        guard !session.isInactive else { return completion(.failed(.library(.operationFailed))) }
+        let live = locked { () -> Bool in
+            guard var state = sessions[session] else { return false }
+            state.savesInFlight += 1
+            sessions[session] = state
+            return true
+        }
+        guard live else { return }
+        submit(session, operation: { service, path in
+            let version = service.index.editingSnapshot(at: path).version
+            let outcome: PromptCommandOutcome
+            do { outcome = try perform(service, path) }
+            catch LibraryError.destinationOccupied { outcome = .destinationOccupied }
+            catch FileStoreError.notFound { outcome = .missing }
+            catch LibraryError.conflict {
+                switch service.checkedLoad(at: path) {
+                case .loaded(let loaded): outcome = .conflict(currentStamp: loaded.stamp)
+                case .deleted: outcome = .missing
+                case .failed(let failure): outcome = .failed(failure)
+                }
+            }
+            catch { outcome = .failed(Self.failure(error)) }
+            if let entry = outcome.committedEntry {
+                service.locked {
+                    guard var state = service.sessions[session],
+                          !state.path.utf8.elementsEqual(entry.relativePath.utf8) else { return }
+                    state.path = entry.relativePath
+                    state.file = .present(entry.stamp)
+                    state.observedStamp = entry.stamp
+                    state.pendingInitialChange = nil
+                    state.indexVersion = max(state.indexVersion, version)
+                    service.sessions[session] = state
+                }
+                service.index.acceptCommand(entry, at: path, expectedVersion: version)
+            } else if case .deleted = outcome {
+                service.locked {
+                    guard var state = service.sessions[session] else { return }
+                    state.file = .missing(previousStamp: state.observedStamp)
+                    state.observedStamp = nil
+                    state.indexVersion = max(state.indexVersion, version)
+                    service.sessions[session] = state
+                }
+                service.index.acceptCommand(nil, at: path, expectedVersion: version)
+            }
+            return outcome
+        }, completion: { service, result in
+            let file: CommittedFile
+            if let entry = result.committedEntry { file = .present(entry.stamp) }
+            else {
+                switch result { case .missing, .deleted: file = .missing; default: file = .unchanged }
+            }
+            service.completeWrite(file, session: session) { completion(result) }
+        })
+    }
+
     private func submit<Result>(_ session: PromptEditingSession,
                                 operation: @escaping (PromptEditingService, String) -> Result,
                                 completion: @escaping (PromptEditingService, Result) -> Void) {
@@ -254,15 +359,26 @@ public final class PromptEditingService: @unchecked Sendable {
 
     private func completeSave(_ result: PromptSaveOutcome, session: PromptEditingSession,
                               completion: (PromptSaveOutcome) -> Void) {
+        let file: CommittedFile
+        if let entry = result.committedEntry { file = .present(entry.stamp) }
+        else if case .deleted = result { file = .missing }
+        else { file = .unchanged }
+        completeWrite(file, session: session) { completion(result) }
+    }
+
+    private func completeWrite(_ file: CommittedFile, session: PromptEditingSession,
+                               completion: () -> Void) {
         let deferred = locked { () -> [PromptExternalChange] in
             guard var state = sessions[session] else { return [] }
             state.savesInFlight -= 1
-            if let entry = result.committedEntry {
-                state.file = .present(entry.stamp)
-                if state.observedStamp == nil { state.observedStamp = entry.stamp }
-                state.committedStamps.append(entry.stamp)
+            switch file {
+            case .present(let stamp):
+                state.file = .present(stamp)
+                if state.observedStamp == nil { state.observedStamp = stamp }
+                state.committedStamps.append(stamp)
+            case .missing: state.file = .missing(previousStamp: state.observedStamp)
+            case .unchanged: break
             }
-            if case .deleted = result { state.file = .missing(previousStamp: state.observedStamp) }
             var changes: [PromptExternalChange] = []
             if state.savesInFlight == 0 {
                 changes = state.deferredChanges.filter { change in
@@ -274,7 +390,7 @@ public final class PromptEditingService: @unchecked Sendable {
             sessions[session] = state
             return changes
         }
-        completion(result)
+        completion()
         for change in deferred { deliver(change, to: session) }
     }
 
@@ -288,7 +404,9 @@ public final class PromptEditingService: @unchecked Sendable {
 
     private func observe(_ publication: PromptIndexChange, session: PromptEditingSession) {
         let change = locked { () -> PromptExternalChange? in
-            guard var state = sessions[session], publication.version > state.indexVersion else { return nil }
+            guard var state = sessions[session], publication.version > state.indexVersion,
+                  publication.changes.created.union(publication.changes.modified).union(publication.changes.deleted)
+                    .contains(RelativePath(state.path)) else { return nil }
             state.indexVersion = publication.version
             defer { sessions[session] = state }
             let stamp = publication.stamps[RelativePath(state.path)]
