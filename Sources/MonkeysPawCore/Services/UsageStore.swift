@@ -16,6 +16,10 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     private let files: FileStore
     private let clock: WallClock
     private let lock = NSLock()
+    private let observers = ChangeObservers()
+    // Populated by the index's validated reads and successful writes. Browsing
+    // never scans app data or performs usage I/O on a presentation refresh.
+    private var cachedEvents: [PromptIdentity: [Date]] = [:]
 
     public init(files: FileStore, clock: WallClock) {
         self.files = files
@@ -26,7 +30,16 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     /// only after persistence succeeds, so the index can update without a read.
     @discardableResult
     public func recordUse(identity: PromptIdentity, at date: Date? = nil) throws -> [Date] {
-        try locked {
+        let recorded = try recordUseDeferringNotification(identity: identity, at: date)
+        recorded.notify()
+        return recorded.events
+    }
+
+    /// The index must commit its cache and unlock before usage subscribers can
+    /// re-enter it through an inline MainThread. Persistence remains serialized.
+    func recordUseDeferringNotification(identity: PromptIdentity, at date: Date?) throws
+        -> (events: [Date], notify: () -> Void) {
+        let (events, subscribers) = try locked {
             let timestamp = date ?? clock.now()
             guard timestamp.timeIntervalSince1970.isFinite else { throw LibraryError.invalidTimestamp }
             let path = try path(for: identity)
@@ -35,13 +48,38 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             try files.write(try encoder.encode(payload), at: path)
+            cachedEvents[identity] = events
+            return (events, observers.capture())
+        }
+        return (events, { [observers] in observers.publish(subscribers) })
+    }
+
+    public func useEvents(for identity: PromptIdentity) throws -> [Date] {
+        try locked {
+            let events = try readEvents(at: path(for: identity))
+            cachedEvents[identity] = events
             return events
         }
     }
 
-    public func useEvents(for identity: PromptIdentity) throws -> [Date] {
-        try locked { try readEvents(at: path(for: identity)) }
+    /// Latest validated in-memory events; missing keys have not been loaded.
+    /// PromptIndex rebuild/apply loads every indexed identity before publishing.
+    func cachedUseEvents() -> [PromptIdentity: [Date]] {
+        // Unlike the I/O helper this operation cannot throw.
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedEvents
     }
+
+    /// Recent changes independently of index content, after commit/unlock.
+    /// Reads and keyed-state migration stay quiet; content publication picks up
+    /// migrated keys. Failed writes never notify.
+    @discardableResult
+    func addObserver(_ observer: @escaping @Sendable () -> Void) -> UUID {
+        observers.add(observer)
+    }
+
+    func removeObserver(_ token: UUID) { observers.remove(token) }
 
     @discardableResult
     public func migrateKey(from source: PromptIdentity, to destination: PromptIdentity) throws -> PromptKeyMigration {
@@ -52,6 +90,7 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
             guard try files.stamp(at: destinationPath) == nil else { throw LibraryError.keyedStateConflict }
             do { try files.move(from: sourcePath, to: destinationPath) }
             catch FileStoreError.alreadyExists { throw LibraryError.keyedStateConflict }
+            cachedEvents[destination] = cachedEvents.removeValue(forKey: source)
             return .migrated
         }
     }
