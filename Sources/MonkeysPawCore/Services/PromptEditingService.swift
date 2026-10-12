@@ -61,9 +61,24 @@ public final class PromptEditingService: @unchecked Sendable {
     /// failed(.library(.operationFailed)); previously live tokens stay retired.
     public func beginSession(at path: String,
                              onExternalChange: @escaping (PromptExternalChange) -> Void = { _ in }) -> PromptEditingSession {
+        registerSession(at: path, stamp: nil, onExternalChange: onExternalChange)
+    }
+
+    /// Copy adoption already has a checked, committed entry. Register that
+    /// baseline immediately so notifications need not wait for an initial load.
+    func beginSession(forCommitted entry: LibraryEntry,
+                      onExternalChange: @escaping (PromptExternalChange) -> Void) -> PromptEditingSession {
+        registerSession(at: entry.relativePath, stamp: entry.stamp, onExternalChange: onExternalChange)
+    }
+
+    private func registerSession(at path: String, stamp: FileStamp?,
+                                 onExternalChange: @escaping (PromptExternalChange) -> Void) -> PromptEditingSession {
         locked {
             let token = PromptEditingSession(token: UUID(), isInactive: !isActive)
-            if isActive { sessions[token] = Session(path: path, onExternalChange: onExternalChange) }
+            guard isActive else { return token }
+            var state = Session(path: path, onExternalChange: onExternalChange)
+            if let stamp { state.file = .present(stamp); state.observedStamp = stamp }
+            sessions[token] = state
             return token
         }
     }

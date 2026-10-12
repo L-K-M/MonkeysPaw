@@ -95,7 +95,7 @@ public final class EditorModel: @unchecked Sendable {
         let completion: (EditorGuardResult) -> Void
     }
 
-    private enum LoadPurpose { case replace, inspectConflict, takeTheirs }
+    private enum LoadPurpose { case replace, inspectConflict, takeTheirs, reconcileCopy }
     private enum SavePurpose { case original, copy }
 
     private let editing: PromptEditingService
@@ -183,7 +183,8 @@ public final class EditorModel: @unchecked Sendable {
 
     public func resolveDecision(_ decision: EditorDecision, id: UUID) {
         guard isActive, state.status != .saving,
-              let request = pendingRequest, request.decision.id == id else { return }
+              let request = pendingRequest, request.decision.id == id,
+              state.pendingDecision?.id == id else { return }
         switch decision {
         case .save:
             savesDecision = true
@@ -266,15 +267,18 @@ public final class EditorModel: @unchecked Sendable {
         load(.replace)
     }
 
-    private func bindSession(to path: String) {
+    private func bindSession(to path: String, committedEntry: LibraryEntry? = nil) {
         let generation = self.generation
-        session = editing.beginSession(at: path) { [weak self] change in
+        let onExternalChange: (PromptExternalChange) -> Void = { [weak self] change in
             guard let self else { return }
             self.main.run { [weak self] in
                 guard let self, self.isActive, self.generation == generation else { return }
                 self.externalChange(change)
             }
         }
+        if let committedEntry {
+            session = editing.beginSession(forCommitted: committedEntry, onExternalChange: onExternalChange)
+        } else { session = editing.beginSession(at: path, onExternalChange: onExternalChange) }
     }
 
     private func retireSession() {
@@ -301,7 +305,7 @@ public final class EditorModel: @unchecked Sendable {
         let loadGeneration = self.loadGeneration
         let generation = self.generation
         if purpose == .inspectConflict { state.conflict?.isLoading = true }
-        else { state.status = .loading }
+        else if purpose != .reconcileCopy { state.status = .loading }
         changed()
         editing.load(session: session) { [weak self] outcome in
             guard let self else { return }
@@ -316,7 +320,17 @@ public final class EditorModel: @unchecked Sendable {
     private func loaded(_ outcome: PromptLoadOutcome, purpose: LoadPurpose) {
         switch outcome {
         case .loaded(let loaded):
-            if purpose == .inspectConflict {
+            if purpose == .reconcileCopy {
+                // A publication can precede the queued copy reply and thus
+                // predate its session. Reconcile on the worker, keeping any
+                // draft typed after adoption rather than replacing it.
+                if loaded.stamp != state.stamp {
+                    if state.isDirty || state.conflict != nil {
+                        state.conflict = EditorConflict(kind: .modified, stamp: loaded.stamp,
+                            theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason)
+                    } else { accept(loaded); state.status = .idle }
+                }
+            } else if purpose == .inspectConflict {
                 state.conflict = EditorConflict(kind: .modified, stamp: loaded.stamp,
                     theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason)
             } else {
@@ -387,6 +401,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func saved(_ outcome: PromptSaveOutcome, submitted: String, purpose: SavePurpose) {
+        var adoptedCopyGeneration: UInt64?
         if let entry = outcome.committedEntry {
             let unchanged = editorSourceEqual(state.source, submitted)
             let loaded = LoadedPrompt(bytes: Data(entry.document.source.utf8), entry: entry)
@@ -397,7 +412,8 @@ public final class EditorModel: @unchecked Sendable {
                 if unchanged {
                     retireSession()
                     accept(loaded)
-                    bindSession(to: entry.relativePath)
+                    bindSession(to: entry.relativePath, committedEntry: entry)
+                    adoptedCopyGeneration = generation
                 }
             } else {
                 baseline = loaded
@@ -423,6 +439,7 @@ public final class EditorModel: @unchecked Sendable {
             }
         }
         changed()
+        if let adoptedCopyGeneration, adoptedCopyGeneration == generation { load(.reconcileCopy) }
         main.run { [weak self] in self?.processRequests() }
     }
 
@@ -451,20 +468,23 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func finishDecision(_ result: EditorGuardResult) {
-        guard let request = pendingRequest else { return }
-        pendingRequest = nil
+        guard let request = pendingRequest, state.pendingDecision?.id == request.decision.id else { return }
         state.pendingDecision = nil
         savesDecision = false
         changed()
         // Resolving a dialog is a UI intent too; a queued hop rechecks edits
         // made after Save/Discard, before permitting the destructive action.
-        let generation = self.generation
         main.run { [weak self] in
-            guard let self, self.isActive, self.generation == generation else { return }
+            guard let self, self.isActive, self.pendingRequest?.decision.id == request.decision.id else { return }
             if result == .allowed, self.state.isDirty {
-                self.requests.insert(request, at: 0)
-                self.updateQueuedActions()
-            } else if result == .allowed { self.perform(request) }
+                self.state.pendingDecision = request.decision
+                self.changed()
+                return
+            }
+            // Keep the request reserved through publication: inline observers
+            // may enqueue navigation, but it must follow this older action.
+            self.pendingRequest = nil
+            if result == .allowed { self.perform(request) }
             else { request.completion(result) }
             self.processRequests()
         }
