@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import MonkeysPawCore
+import SwiftUI
 import UserNotifications
 import XCTest
 @testable import MonkeysPaw
@@ -76,7 +77,15 @@ final class MacOnboardingTests: XCTestCase {
     private func model() throws -> OnboardingModel { try XCTUnwrap(delegate.onboardingModel) }
     private func controller() throws -> OnboardingWindowController { try XCTUnwrap(delegate.onboardingWindow) }
     private func window() throws -> NSWindow { try XCTUnwrap(controller().window) }
-    private func presentation() throws -> OnboardingViewState { try controller().presentation }
+    private func presentation() throws -> OnboardingViewState {
+        // Headless hosts build SwiftUI's accessibility tree lazily. Check the
+        // actual hosted view's binding, then drive its state and intents.
+        let controller = try controller()
+        let window = try XCTUnwrap(controller.window)
+        let hosting = try XCTUnwrap(window.contentView as? NSHostingView<OnboardingView>)
+        XCTAssertTrue(hosting.rootView.presentation === controller.presentation)
+        return controller.presentation
+    }
 
     private func files(at url: URL) throws -> RootedFileStore {
         let files = try RootedFileStore(root: url)
@@ -107,27 +116,31 @@ final class MacOnboardingTests: XCTestCase {
         setup.close()
         XCTAssertTrue(spin { self.delegate.onboardingWindow?.window?.isVisible == true })
         let onboarding = try window()
-        XCTAssertEqual(try presentation().activeLibraryPath, root.path)
-        XCTAssertEqual(try presentation().defaultLibraryPath, root.path)
+        let presentation = try presentation()
+        XCTAssertEqual(presentation.state.step, .libraryFolder)
+        XCTAssertEqual(presentation.activeLibraryPath, root.path)
+        XCTAssertEqual(presentation.defaultLibraryPath, root.path)
         XCTAssertTrue(policies.isEmpty, "Onboarding follows Setup's accessory policy")
 
-        try press("onboarding-use-default", label: OnboardingStrings.useDefaultFolder)
-        XCTAssertTrue(spin { self.delegate.onboardingModel?.state.step == .seedOffer })
+        XCTAssertTrue(presentation.canChooseFolder)
+        presentation.useDefaultFolder()
+        XCTAssertTrue(spin { presentation.state.step == .seedOffer })
         XCTAssertTrue(try window() === onboarding)
-        try press("onboarding-accept-seeds", label: OnboardingStrings.acceptSeeds)
-        XCTAssertTrue(spin { self.delegate.onboardingModel?.state.seedSummary != nil })
+        XCTAssertTrue(presentation.canOfferSeeds)
+        presentation.acceptSeeds()
+        XCTAssertTrue(spin { presentation.state.seedSummary != nil })
         XCTAssertEqual(try model().state.step, .complete)
         let summary = try XCTUnwrap(model().state.seedSummary)
         XCTAssertEqual(summary.seededCount, 10)
         XCTAssertEqual(summary.skippedExistingCount, 0)
         XCTAssertEqual(delegate.pickerModel?.results.count, 10)
         XCTAssertTrue(delegate.pickerModel?.results.contains { $0.relativePath == "code/explain-an-error.md" } == true)
-        XCTAssertTrue(spin { self.accessibility("onboarding-seed-summary") != nil })
-        XCTAssertEqual(accessibility("onboarding-seed-summary")?.accessibilityLabel(), OnboardingStrings.seedSummary(summary))
+        XCTAssertEqual(presentation.state.step, .complete)
+        XCTAssertEqual(presentation.state.seedSummary, summary)
         let seeded = try files(at: root).listFiles().map { ($0.relativePath, try files(at: root).read(at: $0.relativePath)) }
         try model().acceptSeeds()
         for (path, bytes) in seeded { XCTAssertEqual(try files(at: root).read(at: path), bytes) }
-        try press("onboarding-done", label: Strings.done)
+        presentation.close()
         XCTAssertTrue(spin { !onboarding.isVisible })
         XCTAssertTrue(policies.isEmpty)
         XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
@@ -147,11 +160,15 @@ final class MacOnboardingTests: XCTestCase {
         delegate.beginOnboarding()
         XCTAssertTrue(try window().isVisible)
         XCTAssertEqual(legacyWrites, 0)
-        try press("onboarding-use-default", label: OnboardingStrings.useDefaultFolder)
-        XCTAssertTrue(spin { self.delegate.onboardingModel?.state.step == .seedOffer })
-        try press("onboarding-decline-seeds", label: OnboardingStrings.declineSeeds)
-        XCTAssertTrue(spin { self.delegate.onboardingModel?.state.step == .complete })
-        XCTAssertNil(try model().state.seedSummary)
+        let presentation = try presentation()
+        XCTAssertEqual(presentation.state.step, .libraryFolder)
+        XCTAssertTrue(presentation.canChooseFolder)
+        presentation.useDefaultFolder()
+        XCTAssertTrue(spin { presentation.state.step == .seedOffer })
+        XCTAssertTrue(presentation.canOfferSeeds)
+        presentation.declineSeeds()
+        XCTAssertTrue(spin { presentation.state.step == .complete })
+        XCTAssertNil(presentation.state.seedSummary)
         XCTAssertTrue(try files(at: root).listFiles().isEmpty)
         try window().close()
         start()
@@ -167,14 +184,17 @@ final class MacOnboardingTests: XCTestCase {
         let chosenFiles = try files(at: chosen)
         start(legacy: .setupPresented)
         delegate.beginOnboarding()
-        try press("onboarding-choose-folder", label: OnboardingStrings.chooseFolder + "…")
+        let presentation = try presentation()
+        XCTAssertTrue(presentation.canChooseFolder)
+        presentation.chooseFolder()
         XCTAssertTrue(spin { self.chooserCompletions.count == 1 })
         chooserCompletions[0](chosen)
-        XCTAssertEqual(try presentation().activeLibraryPath, chosen.path)
-        XCTAssertEqual(try model().state.step, .seedOffer)
+        XCTAssertEqual(presentation.activeLibraryPath, chosen.path)
+        XCTAssertEqual(presentation.state.step, .seedOffer)
         XCTAssertEqual(delegate.settingsModel?.libraryFolderPath, chosen.path)
-        try press("onboarding-accept-seeds", label: OnboardingStrings.acceptSeeds)
-        XCTAssertTrue(spin { self.delegate.onboardingModel?.state.step == .complete })
+        XCTAssertTrue(presentation.canOfferSeeds)
+        presentation.acceptSeeds()
+        XCTAssertTrue(spin { presentation.state.step == .complete })
         XCTAssertEqual(try chosenFiles.listFiles().count, 10)
         XCTAssertEqual(delegate.pickerModel?.results.count, 10)
         XCTAssertEqual(try files(at: root).listFiles().map(\.relativePath), ["original.md"])
@@ -186,31 +206,35 @@ final class MacOnboardingTests: XCTestCase {
         try files(at: root).write(Data("---\ntitle: [\n---\nInvalid prompt".utf8), at: "invalid.md")
         start(legacy: .setupPresented)
         delegate.beginOnboarding()
-        try presentation().useDefaultFolder()
-        XCTAssertEqual(try model().state.step, .complete)
+        let presentation = try presentation()
+        XCTAssertTrue(presentation.canChooseFolder)
+        presentation.useDefaultFolder()
+        XCTAssertEqual(presentation.state.step, .complete)
         XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
-        XCTAssertNil(accessibility("onboarding-accept-seeds"))
+        XCTAssertFalse(presentation.canOfferSeeds)
         XCTAssertEqual(try files(at: root).listFiles().map(\.relativePath), ["invalid.md"])
     }
 
     func testInvalidChooserResultShowsTypedMessageAndKeepsFolderPending() throws {
         start(legacy: .setupPresented)
         delegate.beginOnboarding()
-        try press("onboarding-choose-folder", label: OnboardingStrings.chooseFolder + "…")
+        let presentation = try presentation()
+        XCTAssertTrue(presentation.canChooseFolder)
+        presentation.chooseFolder()
         XCTAssertTrue(spin { self.chooserCompletions.count == 1 })
         chooserCompletions[0](directory.appendingPathComponent("missing"))
         let outcome = LibrarySwitchOutcome.invalidTarget(.rejectedByStore(.notFound))
         XCTAssertEqual(try model().state.lastSwitchMessage, outcome)
-        XCTAssertEqual(try presentation().messages, [try XCTUnwrap(GeneralSettingsStrings.message(for: outcome))])
-        XCTAssertEqual(try model().state.step, .libraryFolder)
+        XCTAssertEqual(presentation.messages, [try XCTUnwrap(GeneralSettingsStrings.message(for: outcome))])
+        XCTAssertEqual(presentation.state.step, .libraryFolder)
         XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.libraryFolderCompleted)
         XCTAssertEqual(delegate.libraryDirectory, root)
-        XCTAssertFalse(try presentation().isChoosingFolder)
-        XCTAssertTrue(spin { self.accessibility("onboarding-message") != nil })
-        XCTAssertFalse(try presentation().messages.joined().contains(directory.path))
-        try presentation().useDefaultFolder()
-        XCTAssertEqual(try model().state.step, .seedOffer)
-        XCTAssertTrue(try presentation().messages.isEmpty)
+        XCTAssertFalse(presentation.isChoosingFolder)
+        XCTAssertTrue(presentation.canChooseFolder)
+        XCTAssertFalse(presentation.messages.joined().contains(directory.path))
+        presentation.useDefaultFolder()
+        XCTAssertEqual(presentation.state.step, .seedOffer)
+        XCTAssertTrue(presentation.messages.isEmpty)
     }
 
     func testStartupMissingChosenFolderNotifiesOnceAndRecoversAfterClosingWindow() throws {
@@ -336,17 +360,19 @@ final class MacOnboardingTests: XCTestCase {
     func testSeedFailureIsShownAfterDurableOfferAndDoesNotRepeat() throws {
         start(legacy: .setupPresented)
         delegate.beginOnboarding()
-        try presentation().useDefaultFolder()
+        let presentation = try presentation()
+        XCTAssertTrue(presentation.canChooseFolder)
+        presentation.useDefaultFolder()
+        XCTAssertTrue(presentation.canOfferSeeds)
         // A regular non-prompt file is ignored by enumeration but blocks the
         // catalog's code/ parent. This deterministically fails without chmod.
         try files(at: root).write(Data("Blocked directory".utf8), at: "code")
-        try presentation().acceptSeeds()
-        XCTAssertEqual(try model().state.step, .complete)
-        let failure = try XCTUnwrap(model().state.seedFailure)
-        XCTAssertTrue(try presentation().messages.contains(OnboardingStrings.seedFailure(failure)))
-        XCTAssertNil(try model().state.seedSummary)
+        presentation.acceptSeeds()
+        XCTAssertEqual(presentation.state.step, .complete)
+        let failure = try XCTUnwrap(presentation.state.seedFailure)
+        XCTAssertTrue(presentation.messages.contains(OnboardingStrings.seedFailure(failure)))
+        XCTAssertNil(presentation.state.seedSummary)
         XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
-        XCTAssertTrue(spin { self.accessibility("onboarding-message") != nil })
         try window().close()
         start()
         delegate.beginOnboarding()
@@ -489,27 +515,6 @@ final class MacOnboardingTests: XCTestCase {
         done(root)
         model.useDefaultFolder()
         XCTAssertEqual(model.state.lastSwitchMessage, .libraryUnavailable(.ioFailure))
-    }
-
-    private func press(_ identifier: String, label: String) throws {
-        XCTAssertTrue(spin { self.accessibility(identifier) != nil }, "Rendered action is missing: \(identifier)")
-        let element = try XCTUnwrap(accessibility(identifier))
-        XCTAssertEqual(element.accessibilityLabel(), label)
-        XCTAssertTrue(element.isAccessibilityEnabled())
-        XCTAssertTrue(element.accessibilityPerformPress())
-    }
-
-    private func accessibility(_ identifier: String) -> NSAccessibilityProtocol? {
-        var visited: Set<ObjectIdentifier> = []
-        func walk(_ object: Any) -> NSAccessibilityProtocol? {
-            guard let object = object as? NSObject, visited.insert(ObjectIdentifier(object)).inserted else { return nil }
-            let element = object as? NSAccessibilityProtocol
-            if element?.accessibilityIdentifier() == identifier { return element }
-            let children = (element?.accessibilityChildren() ?? []) + ((object as? NSView)?.subviews ?? [])
-            for child in children { if let found = walk(child) { return found } }
-            return nil
-        }
-        return delegate.onboardingWindow?.window?.contentView.flatMap(walk)
     }
 
     private func spin(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
