@@ -637,9 +637,10 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   keeps the cached index; restoration requires a restart (§11.5).
   A driver started on a missing root still attaches through existing ancestors;
   it emits no initial baseline. Start/stop are explicit and idempotent.
-  Suppose the open editor has unsaved changes and the file changes on disk. Saving then
-  offers three choices: keep mine (overwrite), take theirs, or save mine as
-  a copy. The app never merges silently.
+  Suppose the open editor has unsaved changes and the file changes on disk.
+  The editor then offers three choices at once (and again on a stale save):
+  keep mine (overwrite), take theirs, or save mine as a copy (§11.7). The app
+  never merges silently.
   M2b implements the store contract beneath that future dialog:
   `expectedStamp` compares the caller's load/list stamp with the file now,
   including deletion/recreation, and throws `LibraryError.conflict` on
