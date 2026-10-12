@@ -17,8 +17,10 @@ exact body bytes. Canonical writing does not preserve comments inside front
 matter. Format and grammar conformance cases live under
 [`spec/fixtures/`](spec/fixtures/), documented in [`spec/README.md`](spec/README.md).
 
-**Status:** Under construction per [PLAN.md](PLAN.md). M0a provides the shared
-Core package, the server health endpoint, and build and test infrastructure.
+**Status:** Both native desktop pickers, the five-category conformance corpus
+and the release workflow are merged per [PLAN.md](PLAN.md). Native Settings,
+onboarding/recovery, Forget controls, Linux tray, the v0.1.0 tag and owner-run
+platform checks remain open.
 
 ## Install on Linux
 
