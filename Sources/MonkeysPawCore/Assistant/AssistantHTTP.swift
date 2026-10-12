@@ -1,9 +1,12 @@
 import Foundation
 
 /// Shared protocol boundary: never let transport diagnostics or error bodies
-/// escape into Assistant outcomes. Clients do not retry failed requests.
+/// escape into Assistant outcomes. Only OpenAI format probes inspect HTTP 400.
 enum AssistantHTTP {
-    static func send(_ request: HTTPRequest, through transport: HTTPTransporting) async throws -> HTTPResponse {
+    enum StatusPolicy { case successOnly, formatProbe }
+
+    static func send(_ request: HTTPRequest, through transport: HTTPTransporting,
+                     policy: StatusPolicy = .successOnly) async throws -> HTTPResponse {
         do {
             try Task.checkCancellation()
             let response = try await transport.send(request)
@@ -12,6 +15,7 @@ enum AssistantHTTP {
 
             switch response.statusCode {
             case 200: return response
+            case 400 where policy == .formatProbe: return response
             case 401, 403: throw AssistantError.authentication
             case 404: throw AssistantError.modelNotFound
             case 429: throw AssistantError.rateLimited(retryAfter: retryAfter(response.headers))
