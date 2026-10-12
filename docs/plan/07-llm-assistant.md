@@ -36,6 +36,11 @@ re-entry or Clear before it can be used.
   `MODEL_LIST_TIMEOUT = 15 s` and fills the model picker. Typing a model id
   by hand always works. Protocol clients decode one page, retaining model IDs,
   display names and pagination metadata for the connection-testing service.
+  Page calls also accept an `after_id` cursor and the original absolute
+  deadline. OpenAI-compatible lists normally finish in one page; compatible
+  endpoints advertising Anthropic-style `has_more`/`last_id` paging use the
+  same `after_id` query convention. Unknown envelope/model fields are ignored;
+  malformed known fields and empty/control-containing IDs are invalid.
 - **Anthropic defaults.**
   - Model `claude-opus-5-5`, `ANTHROPIC_MAX_TOKENS = 16000`.
   - The system prompt goes in the top-level `system` field. OpenAI-compatible

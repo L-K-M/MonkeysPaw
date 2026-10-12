@@ -96,4 +96,7 @@ public struct AssistantModelPage: Equatable, Sendable, CustomStringConvertible,
 public protocol AssistantClient: Sendable {
     func perform(_ request: AssistantRequest, using connection: ProviderConnection) async throws -> AssistantResponse
     func listModels(using connection: ProviderConnection) async throws -> AssistantModelPage
+    /// All pages of a connection test share its original absolute deadline.
+    func listModels(using connection: ProviderConnection, afterID: String?,
+                    deadline: ContinuousClock.Instant) async throws -> AssistantModelPage
 }
