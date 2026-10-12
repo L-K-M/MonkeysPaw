@@ -8,11 +8,12 @@ import XCTest
 /// A private-bus notification daemon verifies the real GNotification payload.
 final class GTKNotificationTests: XCTestCase {
     private final class Calls {
+        var titles: [String] = []
         var bodies: [String] = []
         var ready = false
     }
 
-    func testDeliveryNotificationsHaveNoFocusActions() throws {
+    func testDeliveryAndLibraryNotificationsHaveNoFocusActions() throws {
         try GTKTestSupport.requireDisplay()
         let connection = try XCTUnwrap(g_bus_get_sync(G_BUS_TYPE_SESSION, nil, nil))
         defer { g_object_unref(UnsafeMutableRawPointer(connection)) }
@@ -31,7 +32,7 @@ final class GTKNotificationTests: XCTestCase {
                 let title = g_variant_get_child_value(parameters, 3)!
                 let body = g_variant_get_child_value(parameters, 4)!
                 XCTAssertEqual(g_variant_n_children(actions), 0)
-                XCTAssertEqual(String(cString: g_variant_get_string(title, nil)), AppIdentity.displayName)
+                calls.titles.append(String(cString: g_variant_get_string(title, nil)))
                 calls.bodies.append(String(cString: g_variant_get_string(body, nil)))
                 g_variant_unref(actions)
                 g_variant_unref(title)
@@ -71,8 +72,12 @@ final class GTKNotificationTests: XCTestCase {
             session: LinuxSessionProbe(environment: ["DISPLAY": ":0"], flatpakInfoExists: false))
         notifier.copied()
         notifier.pressPaste(chord: .terminal, reason: .requested)
-        XCTAssertTrue(GTKTestSupport.spin { calls.bodies.count == 2 })
-        XCTAssertEqual(calls.bodies, [DeliveryStrings.copied, DeliveryStrings.pressControlShiftV])
+        notifier.libraryUnavailable()
+        XCTAssertTrue(GTKTestSupport.spin { calls.bodies.count == 3 })
+        XCTAssertEqual(calls.titles, [AppIdentity.displayName, AppIdentity.displayName,
+                                     OnboardingStrings.libraryUnavailableNotificationTitle])
+        XCTAssertEqual(calls.bodies, [DeliveryStrings.copied, DeliveryStrings.pressControlShiftV,
+                                     OnboardingStrings.libraryUnavailableNotificationBody])
     }
 
     private static let interfaceXML = """

@@ -77,7 +77,7 @@ final class LinuxSettingsWindow {
     }
 
     deinit {
-        chooser.cancel()
+        if isChoosing { chooser.cancel() }
         general.onChange = nil
         shortcuts.onChange = nil
         rememberedValues.onChange = nil
@@ -266,6 +266,8 @@ final class LinuxSettingsWindow {
     }
 
     private func cancelFolderChoice() {
+        // Settings and onboarding share a chooser. Cancel only our request.
+        guard isChoosing else { return }
         chooserRevision += 1
         isChoosing = false
         chooser.cancel()

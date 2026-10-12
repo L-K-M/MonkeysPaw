@@ -129,6 +129,7 @@ final class LinuxEnvironment {
     private let launchURI: (URL) -> Void
     private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
     private let folderChooser: LinuxFolderChoosing
+    private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
 
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
@@ -158,11 +159,36 @@ final class LinuxEnvironment {
         legacyFirstRun: firstRun.needsSetup ? .setupNotPresented : .setupPresented)
     private lazy var settings = SettingsService(store: settingsStore)
     private(set) lazy var settingsModel = SettingsModel(settings: settings)
+    private lazy var libraryLocation = LibraryLocation(environment: self,
+        defaultLibraryPath: defaultLibraryDirectory.path)
     private(set) lazy var generalSettingsModel = GeneralSettingsModel(settings: settingsModel,
-        library: LibraryLocation(environment: self, defaultLibraryPath: defaultLibraryDirectory.path),
-        mainThread: mainThread)
+        library: libraryLocation, mainThread: mainThread)
     private(set) lazy var rememberedValuesSettingsModel = RememberedValuesSettingsModel(
         control: RememberedValues(environment: self), mainThread: mainThread)
+    private var currentLibraryStatusModel: LibraryStatusModel?
+    var libraryStatusModel: LibraryStatusModel {
+        if let currentLibraryStatusModel { return currentLibraryStatusModel }
+        // Startup includes the watcher's initial enumeration and the index
+        // rebuild, not just whether the root could be constructed.
+        startLibrary()
+        let status = LibraryStatusModel(initialState: libraryGraph.picker.libraryAvailable
+            ? .available : .unavailableAtStartup, mainThread: mainThread,
+            notifyStartupUnavailable: { [weak self] in
+                guard let self, !self.isShutDown else { return }
+                (self.libraryAvailabilityNotifier ?? self.notifier).libraryUnavailable()
+            })
+        currentLibraryStatusModel = status
+        return status
+    }
+    private(set) lazy var onboardingModel = OnboardingModel(settings: settingsModel,
+        library: libraryLocation, status: libraryStatusModel, mainThread: mainThread,
+        isLibraryEmpty: { [weak self] in
+            guard let self, !self.isShutDown else { throw FileStoreError.ioFailure }
+            return try self.libraryGraph.library.entries().isEmpty
+        }, hasConfiguredSyncServer: { false }, seedIfEmpty: { [weak self] in
+            guard let self, !self.isShutDown else { throw FileStoreError.ioFailure }
+            return try SeedService(library: self.libraryGraph.library).seedIfEmpty()
+        })
     private lazy var dataFiles: FileStore = {
         do { return try RootedFileStore(root: paths.dataDirectory) }
         catch {
@@ -176,11 +202,12 @@ final class LinuxEnvironment {
     private lazy var clipboard = GTKClipboard(owner: panel.clipboardOwner)
     private lazy var fill = FillService(values: values, clipboard: clipboard, clock: clock,
         timeZone: { TimeZone.current })
+    private lazy var notifier = GTKNotifier(application: application, session: session)
     private lazy var delivery = DeliveryService(
         panel: panel, focus: focusTracker ?? LinuxFocusTracker(session: session, runner: runner),
         clipboard: clipboard,
         injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
-        notifier: GTKNotifier(application: application, session: session), session: session,
+        notifier: notifier, session: session,
         scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache())
     private lazy var selfTest = SelfTest(
         target: GTKSelfTestTarget(application: application), delivery: delivery,
@@ -192,8 +219,10 @@ final class LinuxEnvironment {
         session: session, shortcuts: shortcuts, selfTest: selfTest, mainThread: mainThread)
     private(set) lazy var setupModel = SetupModel(setup: setup)
     private(set) lazy var shortcutsSettingsModel = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
-    private lazy var setupWindow = LinuxSetupWindow(application: application, model: setupModel)
+    private var currentSetupWindow: LinuxSetupWindow?
     private var currentSettingsWindow: LinuxSettingsWindow?
+    private var currentOnboardingWindow: LinuxOnboardingWindow?
+    private var onboardingRequestRevision = 0
     private var isShutDown = false
 
     private let application: UnsafeMutablePointer<GtkApplication>
@@ -204,6 +233,7 @@ final class LinuxEnvironment {
          focusTracker: FocusTracker? = nil,
          libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
          folderChooser: LinuxFolderChoosing? = nil,
+         libraryAvailabilityNotifier: LibraryAvailabilityNotifier? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
              gtk_show_uri(nil, url.absoluteString, UInt32(GDK_CURRENT_TIME))
@@ -212,6 +242,7 @@ final class LinuxEnvironment {
         self.launchURI = launchURI
         self.libraryWatcherFactory = libraryWatcherFactory
         self.folderChooser = folderChooser ?? GTKFolderChooser()
+        self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
         log = CompositeLogSink(
             sinks: [StandardErrorLog(), FileLogSink(dataDirectory: LinuxPaths(environment: environment).dataDirectory)],
             policy: LogLevelPolicy(environmentValue: environment["MONKEYSPAW_LOG"]))
@@ -254,6 +285,8 @@ final class LinuxEnvironment {
     /// Start only in the registered primary, not remote invocations or unit tests.
     func start() {
         startLibrary()
+        _ = onboardingModel
+        if libraryStatusModel.needsLibraryFolderStep { presentFromLauncher() }
         hotkey.onChange = { [weak self] in self?.setupModel.refresh() }
         remoteDesktop.onChange = { [weak self] in self?.setupModel.refresh() }
         switch session.currentSession() {
@@ -276,11 +309,28 @@ final class LinuxEnvironment {
     }
 
     func presentFromLauncher() {
-        if settingsModel.needsSetupPresentation { showSetup() } else { startLibrary(); pickerModel.open() }
+        guard !isShutDown else { return }
+        onboardingRequestRevision += 1
+        let revision = onboardingRequestRevision
+        onboardingModel.refresh()
+        mainThread.run { [weak self] in
+            guard let self, !self.isShutDown, self.onboardingRequestRevision == revision else { return }
+            if self.currentSetupWindow?.isVisible == true {
+                self.showSetup()
+                return
+            }
+            switch self.onboardingModel.state.step {
+            case .setup: self.showSetup()
+            case .libraryFolder, .seedOffer: self.showOnboarding()
+            case .complete: self.pickerModel.open()
+            }
+        }
     }
 
     func showSettings() {
         guard pickerModel.state != .delivering else { return }
+        onboardingRequestRevision += 1
+        currentOnboardingWindow?.hide()
         pickerModel.dismiss()
         panel.hide()
         delivery.invalidatePendingPresentation()
@@ -300,8 +350,15 @@ final class LinuxEnvironment {
     }
 
     private func showSetup() {
-        setupWindow.show()
-        settingsModel.markSetupPresented()
+        guard !isShutDown else { return }
+        onboardingRequestRevision += 1
+        currentOnboardingWindow?.hide()
+        if currentSetupWindow == nil {
+            currentSetupWindow = LinuxSetupWindow(application: application, model: setupModel,
+                onHide: { [weak self] in self?.continueOnboarding() })
+        }
+        currentSetupWindow?.show()
+        onboardingModel.markSetupPresented()
         do {
             try firstRun.recordPresentation()
         } catch {
@@ -309,8 +366,38 @@ final class LinuxEnvironment {
         }
     }
 
+    private func continueOnboarding() {
+        guard !isShutDown else { return }
+        let revision = onboardingRequestRevision
+        onboardingModel.refresh()
+        mainThread.run { [weak self] in
+            // An explicit launcher/Settings request supersedes a queued close
+            // continuation; it must not be obscured by a later onboarding show.
+            guard let self, !self.isShutDown, self.onboardingRequestRevision == revision,
+                  self.currentSetupWindow?.isVisible != true else { return }
+            switch self.onboardingModel.state.step {
+            case .libraryFolder, .seedOffer: self.showOnboarding()
+            case .setup, .complete: break
+            }
+        }
+    }
+
+    private func showOnboarding() {
+        currentSettingsWindow?.hide()
+        if currentOnboardingWindow == nil {
+            // Each native view owns its General onChange hook. Both instances
+            // share settings and the same current-graph composition adapter.
+            currentOnboardingWindow = LinuxOnboardingWindow(application: application,
+                model: onboardingModel, general: GeneralSettingsModel(settings: settingsModel,
+                    library: libraryLocation, mainThread: mainThread), chooser: folderChooser)
+        }
+        currentOnboardingWindow?.show()
+    }
+
     private func togglePicker(origin: ToggleOrigin = .manual) {
+        guard !isShutDown else { return }
         startLibrary()
+        _ = onboardingModel
         // Only a focused panel toggles off. A buried or never-focused panel
         // must be raised, including when Wayland denied its initial activation.
         if panel.isActiveAndVisible {
@@ -391,6 +478,7 @@ final class LinuxEnvironment {
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
         let old = libraryGraph
         guard old.picker.state != .delivering else { return .deliveryInFlight }
+        let status = libraryStatusModel
         old.picker.dismiss()
         panel.hide()
 
@@ -404,7 +492,9 @@ final class LinuxEnvironment {
         delivery.invalidatePendingPresentation()
         old.stop()
         libraryGraph = makeLibraryGraph(directory: target, files: files)
-        if let error = startLibrary(libraryGraph) { return .libraryUnavailable(error) }
+        let startupError = startLibrary(libraryGraph)
+        status.libraryReplaced(available: libraryGraph.picker.libraryAvailable)
+        if let startupError { return .libraryUnavailable(startupError) }
 
         // Keep the usable graph for this session if saving fails. SettingsModel
         // calls the shared service and retains its typed error for the controls.
@@ -489,6 +579,7 @@ final class LinuxEnvironment {
     private func degradeLibrary(_ graph: LibraryGraph, _ error: FileStoreError? = nil) {
         graph.watcher?.stop()
         graph.picker.libraryAvailable = false
+        currentLibraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(graph, error)
     }
 
@@ -531,6 +622,8 @@ final class LinuxEnvironment {
 
     func shutdown() {
         isShutDown = true
+        currentSetupWindow?.hide()
+        currentOnboardingWindow?.hide()
         currentSettingsWindow?.hide()
         currentLibraryGraph?.stop()
         hotkey.shutdown()

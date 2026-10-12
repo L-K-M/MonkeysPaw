@@ -473,8 +473,13 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertTrue(environment.settingsModel.needsLibraryFolderStep)
         XCTAssertFalse(environment.settingsModel.firstRun.libraryFolderCompleted)
         environment.presentFromLauncher()
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
-        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.onboarding
+                && gtk_widget_get_visible(mp_window_widget(window)) != 0
+        })
+        XCTAssertFalse(environment.panel.isVisible)
         XCTAssertTrue(environment.settingsModel.needsLibraryFolderStep)
     }
 

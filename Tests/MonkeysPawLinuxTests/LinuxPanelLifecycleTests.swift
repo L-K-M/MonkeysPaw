@@ -22,6 +22,7 @@ final class LinuxPanelLifecycleTests: XCTestCase {
                 && gtk_widget_get_visible(mp_window_widget(window)) != 0
         })
         let first = try XCTUnwrap(gtk_application_get_active_window(application))
+        XCTAssertTrue(GTKTestSupport.spin { environment.settingsModel.firstRun.setupPresented })
         XCTAssertEqual(String(cString: gtk_window_get_title(first)), LinuxStrings.setup)
         XCTAssertTrue(FileManager.default.fileExists(atPath:
             tools.directory.appendingPathComponent("monkeyspaw/setup-shown").path))
@@ -34,9 +35,10 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin {
             guard let window = gtk_application_get_active_window(application),
                   let title = gtk_window_get_title(window) else { return false }
-            return String(cString: title) == AppIdentity.displayName
+            return String(cString: title) == LinuxStrings.onboarding
                 && gtk_widget_get_visible(mp_window_widget(window)) != 0
         })
+        XCTAssertFalse(environment.panel.isVisible)
     }
 
     func testSelfTestFieldStartsEmptyAndCanBeReused() throws {
