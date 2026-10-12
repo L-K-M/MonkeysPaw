@@ -148,7 +148,7 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 - [ ] NOT RUN: Escape from fill keeps the draft and returns to picker; another Escape closes.
 - [ ] NOT RUN: Cmd+W/Cancel/toggle-off close fill and keep its draft for reopening.
 - [ ] NOT RUN: clicking another app hides after about 300 ms, keeps its focus and retains the draft.
-- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in its default editor; Cmd+L opens the folder.
+- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in its default editor; Cmd+L opens Library.
 - [ ] NOT RUN: a no-match title creates a safe free filename while retaining the exact title; the new file opens for editing.
 - [ ] NOT RUN: the disabled assistant action displays its Settings hint.
 - [ ] NOT RUN: an external editor save reaches the picker within one second; record elapsed time.
@@ -281,8 +281,8 @@ fresh-install checks do not overwrite your normal settings or prompts.
 | Close recovery while it is pending and reopen the app; the folder step returns without clearing the saved completion flag | NOT RUN | |
 | Close onboarding while a chooser is pending, then reopen on next launch; no late callback switches the library or completes a newer request | NOT RUN | |
 | With future-version or corrupt settings, onboarding stays closed and Settings shows its read-only error | NOT RUN | |
-| The status menu says Open Library and reveals the current folder; runtime root loss changes the same row to disabled Library unavailable without a notification or reopened onboarding | NOT RUN | |
-| After runtime loss, choose a healthy folder in Settings; Open Library is enabled again and reveals the replacement folder; restoring the old folder alone still requires restart | NOT RUN | |
+| The status menu says Open Library and opens the browser window; Show in Finder inside Library reveals the current folder; runtime root loss changes the menu row to disabled Library unavailable without a notification or reopened onboarding | NOT RUN | |
+| After runtime loss, choose a healthy folder in Settings; Open Library is enabled again and the browser follows the replacement folder; restoring the old folder alone still requires restart | NOT RUN | |
 | Keyboard and VoiceOver identify the folder paths, chooser/default actions, seed actions, summary/failure and Done; Settings remains reachable and picker dismissal never restores an old target | NOT RUN | |
 
 ## M2 VoiceOver, visible focus and reduced motion: NOT RUN
@@ -367,3 +367,42 @@ while the form stays open; switching focus would hide it and require reopening.
 | No clipboard builtin: open/edit/deliver the fielded prompt and use the fieldless prompt without the builtin; zero reads and no app-triggered paste-privacy request | NOT RUN | |
 | One snapshot per form open: open the form and read once for both occurrences; edit fields and update the clipboard in the background without changing the preview snapshot or reading again; Escape and reopen to read the new text once, then deliver without another read | NOT RUN | |
 | One snapshot per fieldless use: each use reads once for both occurrences; change the external clipboard and use again to observe one new read | NOT RUN | |
+
+## M3 M1 Library window shell: NOT RUN
+
+The Linux implementation host cannot compile or run AppKit. Record the exact
+commit and `MacLibraryWindowTests` hosted results from `macos-app` CI before
+these owner checks. CI exercises presentation state, explicit key routing,
+window reuse and composition; real keyboard traversal, VoiceOver, clipboard
+privacy, activation and Spaces behavior still require a Mac. This shell has
+a read-only preview. Return does not open an editor.
+
+- Commit / `macos-app` CI run and hosted-test result:
+- macOS / hardware / signing identity / keyboard navigation setting:
+- VoiceOver / input source / clipboard read-count tracing method:
+- Date / tester / per-step clipboard read counts:
+
+Create valid prompts with defaults, required text and choice fields without
+defaults, escaped template openers, and date/time/clipboard builtins. Include
+favourites, recent deliveries or copies, nested folders and shared tags. Add
+malformed YAML, a future-format file, a non-UTF-8 file and a file larger than
+256 KiB. Use the permitted clipboard tracing procedure above without recording
+clipboard contents; leave read-count checks NOT RUN if tracing is unavailable.
+
+| Check | Result | Details |
+|---|---|---|
+| Picker Library control and ⌘L, status Open Library and the main-menu ⌘L item open the same reusable window; closing and reopening preserves the window | NOT RUN | |
+| Opening Library with an armed picker, pending blur or queued summon hides the picker and closing Library never restores an old paste target | NOT RUN | |
+| All, Favourites, Recent, nested folder rows and tag rows show correct counts; counts stay unchanged by the text filter | NOT RUN | |
+| Rows show title, exact relative path, favourite star, read-only/invalid badges and a last-use date in Recent; new deliveries and copies refresh Recent | NOT RUN | |
+| Filtering or changing section keeps a selected prompt's preview when its row disappears; selecting another row updates the preview | NOT RUN | |
+| Preview uses field defaults or {field} names, actual date/time, escaped openers and a literal {clipboard}; opening, filtering and selection make zero clipboard reads | NOT RUN | |
+| Invalid, future-format, non-UTF-8 and oversized rows show their issues, never rendered bodies, and disable the favourite button | NOT RUN | |
+| Favourite button and ⌘⇧F save the selected prompt and update picker/sidebar state; an external edit before toggling shows a conflict without overwriting it | NOT RUN | |
+| Show in Finder reveals the active folder; after a Settings folder switch the same Library window shows only the new graph and reveals its folder | NOT RUN | |
+| Runtime folder loss disables Open Library in both menus and disables favourite/reveal actions in an already-open window; switching to a healthy folder restores them | NOT RUN | |
+| Settings and Library can stay open together; the Dock icon appears while either is open and disappears only after both close, including close/reopen and minimization | NOT RUN | |
+| Arrow keys navigate sidebar and prompt rows; Tab/Shift+Tab reach filter, actions, sidebar, list and preview with visible focus; Return on a prompt opens nothing | NOT RUN | |
+| Escape from each pane clears the filter first, then closes; a real IME consumes Return/Escape during marked-text composition without Library actions | NOT RUN | |
+| VoiceOver identifies sidebar sections/counts, prompt rows/badges/last use, filter, preview, favourite/reveal actions and failure messages | NOT RUN | |
+| Repeated picker-to-Library openings work from a full-screen Space; window resize and Reduce Motion retain usable controls and visible focus | NOT RUN | |
