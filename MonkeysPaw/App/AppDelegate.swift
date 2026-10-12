@@ -130,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     deinit {
-        watcher?.stop()
+        tearDown()
         if let libraryStatusObserver { libraryStatusModel?.removeObserver(libraryStatusObserver) }
     }
 
@@ -164,7 +164,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         beginOnboarding()
     }
 
-    func applicationWillTerminate(_ notification: Notification) { watcher?.stop() }
+    func applicationWillTerminate(_ notification: Notification) { tearDown() }
+
+    private func tearDown() {
+        watcher?.stop()
+        onboardingStarted = false
+        setupWindow?.onClose = nil
+        onboardingWindow?.tearDown()
+        windowActivation.tearDown()
+    }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         // Returning from System Settings refreshes grants and registration state.

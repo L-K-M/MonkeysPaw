@@ -37,6 +37,19 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
     deinit { cancelChooser?() }
 
+    func tearDown() {
+        // Native windows and hosting views can outlive composition. Revoke work
+        // at the owner's teardown rather than waiting for this controller to die.
+        onStateChange = nil
+        presentation.onChange = nil
+        presentation.onChooseFolder = nil
+        presentation.onClose = nil
+        endChooser()
+        window?.delegate = nil
+        window?.close()
+        window = nil
+    }
+
     func show() {
         mainThread.run { [weak self] in
             guard let self else { return }

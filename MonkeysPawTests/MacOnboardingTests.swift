@@ -120,7 +120,7 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertEqual(presentation.state.step, .libraryFolder)
         XCTAssertEqual(presentation.activeLibraryPath, root.path)
         XCTAssertEqual(presentation.defaultLibraryPath, root.path)
-        XCTAssertTrue(policies.isEmpty, "Onboarding follows Setup's accessory policy")
+        XCTAssertEqual(policies, [], "Onboarding follows Setup's accessory policy")
 
         XCTAssertTrue(presentation.canChooseFolder)
         presentation.useDefaultFolder()
@@ -142,7 +142,7 @@ final class MacOnboardingTests: XCTestCase {
         for (path, bytes) in seeded { XCTAssertEqual(try files(at: root).read(at: path), bytes) }
         presentation.close()
         XCTAssertTrue(spin { !onboarding.isVisible })
-        XCTAssertTrue(policies.isEmpty)
+        XCTAssertEqual(policies, [])
         XCTAssertTrue(try XCTUnwrap(delegate.settingsModel).firstRun.seedsOffered)
 
         start()
@@ -506,15 +506,46 @@ final class MacOnboardingTests: XCTestCase {
         delegate.beginOnboarding()
         let model = try model()
         let presentation = try presentation()
+        let controller = try controller()
+        let onboarding = try window()
         presentation.chooseFolder()
         let done = chooserCompletions[0]
         weak var reference = delegate
-        delegate = nil
-        XCTAssertNil(reference)
+        // Prove cancellation follows the root's lifetime even if native code or
+        // a caller still holds the controller and its window.
+        withExtendedLifetime(controller) {
+            delegate = nil
+            XCTAssertNil(reference)
+            XCTAssertEqual(chooserCancellations, 1)
+            XCTAssertFalse(presentation.isChoosingFolder)
+            XCTAssertFalse(onboarding.isVisible)
+            done(root)
+            XCTAssertNil(model.state.lastSwitchMessage, "A late chooser result must not attempt a switch")
+            model.useDefaultFolder()
+            XCTAssertEqual(model.state.lastSwitchMessage, .libraryUnavailable(.ioFailure))
+        }
+    }
+
+    func testTerminationCancelsChooserOnceAndLateResponseCannotSwitchFolder() throws {
+        start(legacy: .setupPresented)
+        delegate.beginOnboarding()
+        let presentation = try presentation()
+        let onboarding = try window()
+        let chosen = directory.appendingPathComponent("chosen", isDirectory: true)
+        _ = try files(at: chosen)
+        presentation.chooseFolder()
+        let done = chooserCompletions[0]
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         XCTAssertEqual(chooserCancellations, 1)
-        done(root)
-        model.useDefaultFolder()
-        XCTAssertEqual(model.state.lastSwitchMessage, .libraryUnavailable(.ioFailure))
+        XCTAssertFalse(presentation.isChoosingFolder)
+        XCTAssertFalse(onboarding.isVisible)
+        done(chosen)
+        XCTAssertEqual(delegate.libraryDirectory, root)
+        XCTAssertNil(try model().state.lastSwitchMessage)
+        XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.libraryFolderCompleted)
+
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        XCTAssertEqual(chooserCancellations, 1)
     }
 
     private func spin(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
