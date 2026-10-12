@@ -576,6 +576,12 @@ warnings. Forgetting is rejected while delivery is in progress, so its pending
 learning cannot restore the values just cleared. Global forgetting also works
 while the panel is closed. A successful forget cancels a fieldless use still
 waiting for its builtin snapshot; an open form keeps its pending snapshot.
+Following the composition-intent exception in §4.2, Settings calls
+`RememberedValuesControl`, which composition forwards to its current picker's
+`forgetAllValues()` after any library replacement; its returned
+`RememberedValuesOutcome` distinguishes success, delivery-in-progress refusal
+and sanitized `FileStoreError`/`LibraryError` failure without reading the
+picker's mutable error state.
 
 `ValuesStore.migrateKey(from:to:)` moves the whole field map atomically under
 the store lock. Each store operation holds that lock independently;
