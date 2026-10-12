@@ -149,11 +149,27 @@ Footers differ per OS:
 2. Pick the library folder, or accept the default.
 3. Optionally sign in to a sync server, or paste an invite link.
 4. If the library is empty and no server is configured, copy about ten seed
-   prompts from `seed/`:
+   prompts from repository-root `seed/`, embedded in Core for both apps
+   (§4.4). `SeedService.seedIfEmpty()` uses §5.1's prompt enumeration: root
+   `README.md`, `.DS_Store`, non-Markdown and ignored files do not make a
+   library non-empty; any eligible prompt does, even malformed content.
+   It creates each catalog path exclusively and skips occupied destinations
+   without replacing any bytes. This is a real first save, assigning fresh
+   ULIDs and canonical front matter under §5.2; bodies remain byte-exact.
+
    - code review, commit message, explain an error, summarise, rewrite for
      tone, translate, critique a plan, write tests
    - a meta-prompt that drafts a prompt
-   - together they cover every field type
+   - extract action items; together they cover every field kind, both choice
+     option forms, defaults, optional/remember semantics, implicit fields and
+     clipboard/date/time builtins
+
+   The result reports seeded and skipped-existing counts. Other failures use
+   the library's typed, sanitized errors; paths and content are never logged.
+   There is no batch transaction: a failure or crash after some creates leaves
+   a non-empty library, so the next run seeds nothing and does not fill gaps.
+   Settings records "seeds offered" separately; onboarding owns the no-server
+   condition and when to offer seeds.
 5. A one-screen tour of the picker and fill form.
 
 Settings version 1 records `setupPresented`, `libraryFolderCompleted` and

@@ -83,6 +83,24 @@ Relative paths compare, hash and sort as exact UTF-8 bytes end to end,
 including native snapshots, watcher coalescing/change sets and picker selection.
 Canonically equivalent spellings can identify distinct local files.
 
+`FileStore.create(_:at:)` opens an unguessable same-directory temporary name
+with `O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW` and mode `0666`.
+The kernel applies the current umask, matching ordinary-write permissions
+without reading or changing the process-wide mask. Only temporary-name
+`EEXIST` collisions retry, bounded by `Limits.exclusiveCreateAttemptCap = 64`;
+other open failures or exhaustion return `FileStoreError.ioFailure`.
+All bytes are written through the returned descriptor, handling partial writes
+and interrupted calls, then `fsync` completes before `link(2)` publishes the
+destination. The temporary name and descriptor are cleaned up on success or
+failure. An occupied destination of any kind returns
+`FileStoreError.alreadyExists` without changing it; the destination is never
+followed, including a dangling symlink. Root and parent checks match `write`,
+rejecting symlinked ancestors. This is an atomic exclusive create, not a
+reservation probe. The directory entry is not synced, so crash durability is
+not promised; existing check-then-act root safety remains unchanged (§4.6).
+Filesystems without hard-link support return `ioFailure`; no replacement
+fallback is attempted.
+
 `LibraryService.entries()` includes malformed YAML, oversized sources and
 non-UTF-8 files as `LibraryEntry` values with error issues. The byte-oriented
 `PromptCodec.parseFile(_:filename:)` reports `source.too_large` or
@@ -215,6 +233,20 @@ M2b save and identity API:
   replaces the file, creating parents for new files. Error documents and
   future formats are refused; an existing future-format file is protected
   even if the submitted draft uses an older format.
+- `create(_:at:)` performs the same validation, canonical writing, first-save
+  ULID assignment and reversible keyed-state migration, using
+  `FileStore.create` instead of replacement. It never reads or snapshots an
+  occupied destination. A failed publication rolls migrations back; an
+  occupied library path returns `LibraryError.destinationOccupied`, distinct
+  from `FileStoreError.alreadyExists` during keyed-state migration, so seeding
+  skips only prompt-publication collisions. New files have no
+  prior bytes to snapshot. Seeding is a real first save under §5.2: the
+  catalog has no ids, while each installed prompt gets a fresh ULID and
+  retains its exact body bytes. Exclusive creates and seeded prompts use
+  ordinary-write permissions (`0666 & ~umask`), applied by the kernel without
+  reading or changing the process-wide mask. Bytes are written through the
+  temporary descriptor and synced before publication, as described in §5.1;
+  without a directory sync, this does not promise crash durability.
 - `PromptIdentity.local(hash)` is the lowercase pure-Swift SHA-256 of the
   exact relative path bytes and stays on this device. On first save,
   `LibraryService` uses injected `WallClock` and `EntropySource` ports to assign
@@ -582,7 +614,8 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   bounded by `Limits.libraryCopyCandidateCap` (1,000 alternates from
   `Name 2.md` through `Name 1001.md`; `Name.md` itself is uncounted).
   Save a new draft without id at that path for a distinct copy identity.
-  The helper does not reserve the name; later UI must recheck availability.
+  The helper does not reserve the name; use `create(_:at:)` when a new file
+  must never replace a destination that appeared after the probe.
 - **Import.** Drop `.md`, `.prompt` (Dotprompt), or `.prompty` files, or a
   folder, onto the library window. Dotprompt `input.schema` and Prompty
   `inputs` map to `fields` where the mapping is lossless. Everything else

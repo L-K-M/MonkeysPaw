@@ -36,6 +36,115 @@ final class RootedFileStoreTests: XCTestCase {
         XCTAssertFalse(manager.fileExists(atPath: root.path))
     }
 
+    func testExclusiveCreateMakesParentsAndPreservesOccupiedBytesAndStamp() throws {
+        let bytes = Data("Complete bytes 👋\r\n".utf8)
+        let path = "nested/a.md"
+        try store.create(bytes, at: path)
+        let stamp = try store.stamp(at: path)
+        let secondStore = try RootedFileStore(root: root)
+        XCTAssertThrowsError(try secondStore.create(Data("Replacement".utf8), at: path)) {
+            XCTAssertEqual($0 as? FileStoreError, .alreadyExists)
+        }
+        XCTAssertEqual(try store.read(at: path), bytes)
+        XCTAssertEqual(try store.stamp(at: path), stamp)
+        XCTAssertEqual(try manager.contentsOfDirectory(atPath: root.appendingPathComponent("nested").path), ["a.md"])
+        try store.create(Data(), at: "nested/empty.md")
+        XCTAssertEqual(try store.read(at: "nested/empty.md"), Data())
+    }
+
+    func testExclusiveCreateMatchesOrdinaryWritePermissionsUnderUmasks() throws {
+        // umask is process-wide; this test requires serial in-process execution.
+        for mask in [mode_t(0o000), mode_t(0o077)] {
+            let previousMask = umask(mask)
+            defer { _ = umask(previousMask) }
+            let createdPath = "created-\(mask).md"
+            let writtenPath = "written-\(mask).md"
+            let bytes = Data("Complete bytes".utf8)
+
+            try store.create(bytes, at: createdPath)
+            try store.write(bytes, at: writtenPath)
+
+            let writtenMode = try posixPermissions(at: root.appendingPathComponent(writtenPath))
+            XCTAssertEqual(writtenMode, 0o666 & ~Int(mask))
+            XCTAssertEqual(try posixPermissions(at: root.appendingPathComponent(createdPath)), writtenMode)
+        }
+    }
+
+    func testConcurrentExclusiveCreatesPublishExactlyOneCompleteFile() throws {
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let writers = try [RootedFileStore(root: root), RootedFileStore(root: root)]
+        let bytes = [Data(repeating: 0x61, count: 128 * 1024), Data(repeating: 0x62, count: 128 * 1024)]
+        let outcomes = ExclusiveCreateOutcomes()
+        DispatchQueue.concurrentPerform(iterations: writers.count) { index in
+            do {
+                try writers[index].create(bytes[index], at: "race.md")
+                outcomes.record(nil)
+            } catch {
+                outcomes.record(error as? FileStoreError ?? .ioFailure)
+            }
+        }
+        XCTAssertEqual(outcomes.errors.filter { $0 == nil }.count, 1)
+        XCTAssertEqual(outcomes.errors.compactMap { $0 }, [.alreadyExists])
+        XCTAssertTrue(bytes.contains(try store.read(at: "race.md")))
+        XCTAssertEqual(try manager.contentsOfDirectory(atPath: root.path), ["race.md"])
+    }
+
+    func testConcurrentExclusiveCreatesLeaveProcessUmaskUnchanged() throws {
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let paths = (0..<128).map { "mask-\($0).md" }
+        let writers = try paths.map { _ in try RootedFileStore(root: root) }
+        let bytes = Data("Complete bytes".utf8)
+        let outcomes = ExclusiveCreateOutcomes()
+        // umask is process-wide; set/read it only before or after all workers.
+        // This hosted test requires serial in-process execution.
+        let expectedMask = mode_t(0o077)
+        let previousMask = umask(expectedMask)
+        defer { _ = umask(previousMask) }
+
+        DispatchQueue.concurrentPerform(iterations: paths.count) { index in
+            do {
+                try writers[index].create(bytes, at: paths[index])
+                outcomes.record(nil)
+            } catch {
+                outcomes.record(error as? FileStoreError ?? .ioFailure)
+            }
+        }
+
+        let completedMask = umask(expectedMask)
+        XCTAssertEqual(completedMask, expectedMask)
+        XCTAssertEqual(outcomes.errors.filter { $0 == nil }.count, paths.count)
+        for path in paths {
+            XCTAssertEqual(try store.read(at: path), bytes)
+            XCTAssertEqual(try posixPermissions(at: root.appendingPathComponent(path)), 0o600)
+        }
+        XCTAssertEqual(Set(try manager.contentsOfDirectory(atPath: root.path)), Set(paths))
+    }
+
+    func testExclusiveCreateRefusesOccupiedLeavesAndRejectsSymlinkedParents() throws {
+        try store.create(Data("Inside".utf8), at: "a.md")
+        let target = outside.appendingPathComponent("secret.md")
+        let original = Data("Outside".utf8)
+        try original.write(to: target)
+        try manager.createSymbolicLink(at: root.appendingPathComponent("alias.md"), withDestinationURL: target)
+        try manager.createSymbolicLink(at: root.appendingPathComponent("dangling.md"),
+                                       withDestinationURL: outside.appendingPathComponent("absent.md"))
+        try manager.createDirectory(at: root.appendingPathComponent("directory.md"), withIntermediateDirectories: false)
+        for path in ["alias.md", "dangling.md", "directory.md"] {
+            XCTAssertThrowsError(try store.create(Data("Blocked".utf8), at: path)) {
+                XCTAssertEqual($0 as? FileStoreError, .alreadyExists)
+            }
+        }
+        try manager.createSymbolicLink(at: root.appendingPathComponent("escape"), withDestinationURL: outside)
+        assertOutsideRoot { try store.create(Data(), at: "escape/new/child.md") }
+        XCTAssertThrowsError(try store.create(Data(), at: "../new.md")) {
+            XCTAssertEqual($0 as? FileStoreError, .invalidPath)
+        }
+        XCTAssertEqual(try Data(contentsOf: target), original)
+        XCTAssertFalse(manager.fileExists(atPath: outside.appendingPathComponent("new").path))
+        XCTAssertFalse(manager.fileExists(atPath: outside.appendingPathComponent("absent.md").path))
+        XCTAssertFalse(try manager.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".monkeyspaw-create-") })
+    }
+
     func testPrivateWriteCreatesAndReplacesWith0600UnderPermissiveUmask() throws {
         // umask is process-wide; this test requires serial in-process execution.
         let previousMask = umask(0)
@@ -254,6 +363,7 @@ final class RootedFileStoreTests: XCTestCase {
         try manager.createSymbolicLink(at: root, withDestinationURL: outside)
         assertOutsideRoot { _ = try store.listFiles() }
         assertOutsideRoot { try store.write(Data(), at: "new.md") }
+        assertOutsideRoot { try store.create(Data(), at: "new.md") }
         try manager.removeItem(at: root)
         let parent = directory.appendingPathComponent("parent")
         let nestedStore = try RootedFileStore(root: parent.appendingPathComponent("nested"))
@@ -262,6 +372,7 @@ final class RootedFileStoreTests: XCTestCase {
         try manager.createSymbolicLink(at: parent, withDestinationURL: outside)
         assertOutsideRoot { _ = try nestedStore.stamp(at: "a.md") }
         assertOutsideRoot { try nestedStore.write(Data(), at: "new.md") }
+        assertOutsideRoot { try nestedStore.create(Data(), at: "new.md") }
         XCTAssertTrue(try manager.contentsOfDirectory(atPath: outside.path).isEmpty)
     }
 
@@ -377,5 +488,22 @@ final class RootedFileStoreTests: XCTestCase {
             XCTAssertFalse(String(describing: $0).contains(self.directory.path))
             XCTAssertFalse($0.localizedDescription.contains(self.directory.path))
         }
+    }
+}
+
+private final class ExclusiveCreateOutcomes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded = [FileStoreError?]()
+
+    var errors: [FileStoreError?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func record(_ error: FileStoreError?) {
+        lock.lock()
+        defer { lock.unlock() }
+        recorded.append(error)
     }
 }

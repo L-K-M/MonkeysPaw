@@ -96,6 +96,9 @@ public enum Limits {
     /// §5.1 PRIVATE_FILE_MODE: POSIX mode pinned on private temp files.
     public static let privateFileMode: Int = 0o600
 
+    /// §5.1: bound temporary-name collision attempts for exclusive creation.
+    public static let exclusiveCreateAttemptCap: Int = 64
+
     /// §5.4: use contributions decay by half every 14 elapsed 24-hour days.
     public static let frecencyHalfLifeDays: Double = 14
     /// §5.4: bound the total contribution of retained use events.

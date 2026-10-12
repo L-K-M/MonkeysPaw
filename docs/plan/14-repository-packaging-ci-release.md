@@ -47,6 +47,12 @@ Rollout by milestone:
 - **Dependencies.** Desktop: Yams only. Server: Hummingbird,
   hummingbird-auth (bcrypt), hummingbird-fluent, fluent-sqlite-driver. All
   are pinned with `Package.resolved` committed.
+- **Seeds.** Edit the Markdown under `seed/`, then run
+  `python3 scripts/generate-seeds.py` and commit the generated Core catalog
+  alongside the sources. The standard-library-only generator excludes root
+  `seed/README.md` using §5.1's library rules. Core tests compare every
+  embedded path and byte with the eligible files; no packaging resource step
+  is needed on macOS or Linux (§4.4).
 - **ci.yml.**
   - Also callable with `workflow_call`: release runs use the same test gates
     from the tagged commit. Concurrency includes the caller workflow name,

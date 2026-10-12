@@ -3,8 +3,9 @@ import Foundation
 import Glibc
 import MonkeysPawCore
 
-/// Foundation owns file bytes/replacement; POSIX metadata supplies nanosecond
-/// change time and inode identity for stamps. No filesystem error text escapes.
+/// Foundation owns reads/replacements; POSIX handles exclusive creation and
+/// supplies nanosecond change time and inode identity for stamps. No filesystem
+/// error text escapes.
 /// Per-component checks and the atomic-write window are check-then-act: they
 /// defend accidents, not a racing local adversary. Unlink bounds deletion;
 /// full fd-relative hardening is deferred.
@@ -81,6 +82,62 @@ final class RootedFileStore: FileStore {
             guard let url = try locate(path, parents: .create) else { throw FileStoreError.invalidRoot }
             if let attributes = try attributes(at: url) { try requireRegular(attributes) }
             try data.write(to: url, options: .atomic)
+        }
+    }
+
+    func create(_ data: Data, at path: String) throws {
+        try sanitized {
+            guard let url = try locate(path, parents: .create) else { throw FileStoreError.invalidRoot }
+            let parent = url.deletingLastPathComponent()
+            var generator = SystemRandomNumberGenerator()
+            var descriptor: Int32 = -1
+            var temporaryPath = ""
+            for _ in 0..<Limits.exclusiveCreateAttemptCap {
+                // Two independent 64-bit draws keep the temporary name unguessable.
+                let suffix = String(generator.next(), radix: 16) + "-" + String(generator.next(), radix: 16)
+                let candidate = parent.appendingPathComponent(".monkeyspaw-create-" + suffix).path
+                // The kernel applies umask at creation without changing the process mask.
+                let opened = candidate.withCString {
+                    Glibc.open($0, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, mode_t(0o666))
+                }
+                if opened >= 0 {
+                    descriptor = opened
+                    temporaryPath = candidate
+                    break
+                }
+                // EEXIST means a name collision and EINTR an interrupted call; retry both.
+                guard errno == EEXIST || errno == EINTR else { throw FileStoreError.ioFailure }
+            }
+            guard descriptor >= 0 else { throw FileStoreError.ioFailure }
+            defer {
+                _ = unlink(temporaryPath)
+                _ = Glibc.close(descriptor)
+            }
+            try data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                var offset = 0
+                while offset < raw.count {
+                    let written = Glibc.write(descriptor, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                    if written > 0 {
+                        offset += written
+                        continue
+                    }
+                    if written < 0 && errno == EINTR { continue }
+                    throw FileStoreError.ioFailure
+                }
+            }
+            guard fsync(descriptor) == 0 else { throw FileStoreError.ioFailure }
+            // link publishes complete bytes and atomically refuses any existing
+            // leaf, including directories and dangling symlinks, without following it.
+            guard link(temporaryPath, url.path) == 0 else {
+                throw errno == EEXIST ? FileStoreError.alreadyExists : FileStoreError.ioFailure
+            }
+            // Persist the new directory entry too; best-effort like writePrivate,
+            // since some filesystems reject directory fsync.
+            let directoryDescriptor = Glibc.open(parent.path, O_RDONLY | O_CLOEXEC)
+            if directoryDescriptor >= 0 {
+                _ = fsync(directoryDescriptor)
+                _ = Glibc.close(directoryDescriptor)
+            }
         }
     }
 

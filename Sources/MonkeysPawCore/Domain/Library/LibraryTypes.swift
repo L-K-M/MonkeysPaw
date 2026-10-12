@@ -38,6 +38,9 @@ public enum LibraryError: String, Error, Sendable {
     case invalidPromptPath
     case invalidIdentity
     case identityMismatch
+    /// Only exclusive publication to the library can produce this error;
+    /// alreadyExists from keyed-state migration remains a separate failure.
+    case destinationOccupied
     case conflict
     case copyLimitReached
     case invalidTimestamp
