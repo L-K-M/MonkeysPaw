@@ -294,7 +294,18 @@ one recursive FSEvents stream, with zero latency and `WatchRoot`; dropped-event
 batches also trigger the full rescan. The stream
 starts on the nearest existing ancestor when the root is absent and
 reattaches to the real root when it appears. A serial dispatch queue owns
-its resources. [Apple's FSEvents guide](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html)
+its resources. Each macOS snapshot opens the canonical path from `/` one
+component at a time with `openat`, `O_DIRECTORY` and `O_NOFOLLOW`, then
+enumerates with `fdopendir` and fd-relative metadata/child-directory access.
+Replacing an ancestor with a symlink cannot redirect that scan. Before
+accepting it, the driver walks the canonical path again and compares the
+ancestor and root device/inode identities with the opened tree. A missing,
+symlinked, inaccessible or changed root discards the scan and retains the
+last good baseline; monitor attachment uses the newly checked safe ancestors.
+An identity change during a scan reports `notFound`, even if a replacement
+directory is already present. A later successful scan can reconcile it.
+This scan guarantee does not change FileStore's check-then-act operations.
+[Apple's FSEvents guide](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html)
 describes root-change detection and snapshot reconciliation;
 [GIO's FileMonitor documentation](https://docs.gtk.org/gio/class.FileMonitor.html)
 specifies callback delivery on the creating thread's main context.
