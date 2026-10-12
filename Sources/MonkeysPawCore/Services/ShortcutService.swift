@@ -106,7 +106,12 @@ public final class ShortcutService {
             var accelerators = self.accelerators
             accelerators[.togglePicker] = accelerator
             self.apply(accelerators, onFire: onFire)
-            if let registration = self.registrations[.togglePicker] { done(.success(registration)) }
+            // apply registers every configured action; keep the completion total.
+            guard let registration = self.registrations[.togglePicker] else {
+                done(.failure(.unavailable))
+                return
+            }
+            done(.success(registration))
         }
     }
 

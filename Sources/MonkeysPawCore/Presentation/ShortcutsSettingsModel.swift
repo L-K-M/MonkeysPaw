@@ -76,7 +76,12 @@ public final class ShortcutsSettingsModel {
             guard let self else { return }
             switch result {
             case .success:
-                self.error = nil
+                // The refreshed action state may compare equal, so publish
+                // the cleared error here rather than relying on update.
+                if self.error != nil {
+                    self.error = nil
+                    self.onChange?()
+                }
                 self.refresh()
             case .failure(let error):
                 self.error = error

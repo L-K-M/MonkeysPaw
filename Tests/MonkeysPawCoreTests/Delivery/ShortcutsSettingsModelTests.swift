@@ -313,6 +313,25 @@ final class ShortcutsSettingsModelTests: XCTestCase {
         XCTAssertEqual(h.fires, [.togglePicker, .togglePicker])
     }
 
+    func testSuccessfulRebindPublishesClearedErrorWhenRefreshedStateIsUnchanged() throws {
+        let h = Harness(session: .macOS)
+        try h.configureCarbon()
+        // A live probe that still reports the previous registration leaves
+        // the refreshed action state equal; the cleared error must still publish.
+        let original = try XCTUnwrap(h.settings?.togglePicker.registration)
+        h.probe.liveHotkey = { original }
+        var published: [ShortcutRebindError?] = []
+        h.settings?.onChange = { [weak h] in published.append(h?.settings?.error) }
+        h.settings?.setAccelerator("Ctrl++P")
+        XCTAssertNotNil(h.settings?.error)
+
+        h.settings?.setAccelerator("Alt+F8")
+        h.delivery.main.drain()
+
+        XCTAssertNil(h.settings?.error)
+        XCTAssertEqual(published.last, .some(nil))
+    }
+
     func testNativeCarbonRegistrationFailureIsReportedWithoutConfirmingRequestedKey() throws {
         let h = Harness(session: .macOS)
         try h.configureCarbon()
