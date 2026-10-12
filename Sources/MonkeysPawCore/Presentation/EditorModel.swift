@@ -7,12 +7,11 @@ public enum EditorFailure: Equatable, Sendable {
 }
 
 public enum EditorStatus: Equatable, Sendable {
-    case idle, loading, saving, saved
+    case idle, loading, saving, commandRunning, saved
     case failed(EditorFailure)
 }
 
-/// File commands belong to their services/composition. An allowed result lets
-/// their caller proceed; open, close and revert are performed by this model.
+/// The same guard serves navigation and the model's stamped file commands.
 public enum EditorDiscardAction: Equatable, Sendable {
     case open(LibraryPromptSelection)
     case close, revert, rename, move, delete, librarySwitch, quit
@@ -68,8 +67,11 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var queuedActions: [EditorDiscardAction] = []
     public fileprivate(set) var historyMaintenanceFailed = false
     public fileprivate(set) var lastCopy: LibraryPromptSelection?
+    public fileprivate(set) var history = EditorHistoryState()
 
-    public var canEdit: Bool { source != nil && readOnlyReason == nil && status != .loading }
+    public var canEdit: Bool {
+        source != nil && readOnlyReason == nil && status != .loading && status != .commandRunning
+    }
     public var canSave: Bool { canEdit && status != .saving }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -80,6 +82,17 @@ public struct EditorState: Equatable, Sendable {
             && lhs.previewFailure == rhs.previewFailure && lhs.conflict == rhs.conflict
             && lhs.pendingDecision == rhs.pendingDecision && lhs.queuedActions == rhs.queuedActions
             && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed && lhs.lastCopy == rhs.lastCopy
+            && lhs.history == rhs.history
+    }
+}
+
+public struct EditorHistoryState: Equatable, Sendable {
+    public fileprivate(set) var revisions: [PromptHistorySnapshot] = []
+    public fileprivate(set) var selectedRevision: HistoryRevision?
+    public fileprivate(set) var isLoading = false
+    public fileprivate(set) var failure: PromptEditingFailure?
+    public var previewSource: String? {
+        revisions.first { $0.revision == selectedRevision }?.source
     }
 }
 
@@ -92,6 +105,7 @@ public final class EditorModel: @unchecked Sendable {
 
     private struct GuardRequest {
         let decision: EditorPendingDecision
+        let operation: ((EditorModel) -> Void)?
         let completion: (EditorGuardResult) -> Void
     }
 
@@ -105,6 +119,9 @@ public final class EditorModel: @unchecked Sendable {
     private var session: PromptEditingSession?
     private var generation: UInt64 = 0
     private var loadGeneration: UInt64 = 0
+    private var historyGeneration: UInt64 = 0
+    private var historyRequested = false
+    private var commandHasExternalChange = false
     private var isActive = true
     private var baseline: LoadedPrompt?
     private var document: PromptDocument?
@@ -173,12 +190,18 @@ public final class EditorModel: @unchecked Sendable {
     @discardableResult
     public func request(_ action: EditorDiscardAction,
                         completion: @escaping (EditorGuardResult) -> Void = { _ in }) -> UUID {
+        enqueue(action, operation: nil, completion: completion)
+    }
+
+    @discardableResult
+    private func enqueue(_ action: EditorDiscardAction, operation: ((EditorModel) -> Void)?,
+                         completion: @escaping (EditorGuardResult) -> Void) -> UUID {
         let decision = EditorPendingDecision(id: UUID(), action: action)
         guard isActive else {
             main.run { completion(.inactive) }
             return decision.id
         }
-        requests.append(GuardRequest(decision: decision, completion: completion))
+        requests.append(GuardRequest(decision: decision, operation: operation, completion: completion))
         updateQueuedActions()
         changed()
         main.run { [weak self] in self?.processRequests() }
@@ -186,7 +209,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     public func resolveDecision(_ decision: EditorDecision, id: UUID) {
-        guard isActive, state.status != .saving,
+        guard isActive, !isWriting,
               let request = pendingRequest, request.decision.id == id,
               state.pendingDecision?.id == id else { return }
         switch decision {
@@ -211,7 +234,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     public func save() {
-        guard isActive, state.status != .loading, state.status != .saving else { return }
+        guard isActive, state.status != .loading, !isWriting else { return }
         if let reason = state.readOnlyReason {
             savesDecision = false
             state.status = .failed(.readOnly(reason))
@@ -227,7 +250,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     public func resolveConflict(_ choice: EditorConflictChoice) {
-        guard isActive, state.status != .saving, let conflict = state.conflict,
+        guard isActive, !isWriting, let conflict = state.conflict,
               conflict.choices.contains(choice) else { return }
         switch choice {
         case .keepMine:
@@ -268,6 +291,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private var filename: String { LibraryPath.filename(state.prompt?.relativePath.string ?? "") }
+    private var isWriting: Bool { state.status == .saving || state.status == .commandRunning }
 
     private func startOpen(_ selection: LibraryPromptSelection) {
         resetEditor()
@@ -295,12 +319,15 @@ public final class EditorModel: @unchecked Sendable {
         session = nil
         generation &+= 1
         loadGeneration &+= 1
+        historyGeneration &+= 1
     }
 
     private func resetEditor() {
         retireSession()
         baseline = nil
         document = nil
+        historyRequested = false
+        commandHasExternalChange = false
         let pending = state.pendingDecision
         let queued = state.queuedActions
         state = EditorState()
@@ -362,6 +389,10 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func accept(_ loaded: LoadedPrompt) {
+        if state.prompt != Self.selection(loaded.entry) {
+            historyGeneration &+= 1
+            state.history = EditorHistoryState()
+        }
         baseline = loaded
         state.prompt = Self.selection(loaded.entry)
         state.source = loaded.source
@@ -374,6 +405,13 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func externalChange(_ change: PromptExternalChange) {
+        // A UI hop delivered before the service's write barrier may still be
+        // queued when a command starts. Its checked outcome must arrive before
+        // that hop can retire the session or replace the loaded baseline.
+        if state.status == .commandRunning {
+            commandHasExternalChange = true
+            return
+        }
         if state.isDirty || state.conflict != nil {
             openConflict(stamp: change.newStamp)
         } else if change.kind == .deleted {
@@ -456,6 +494,7 @@ public final class EditorModel: @unchecked Sendable {
         }
         changed()
         if let adoptedCopyGeneration, adoptedCopyGeneration == generation { load(.reconcileCopy) }
+        if outcome.committedEntry != nil, historyRequested { loadHistory() }
         main.run { [weak self] in self?.processRequests() }
     }
 
@@ -470,8 +509,8 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func processRequests() {
-        guard isActive, state.status != .saving, pendingRequest == nil else { return }
-        while isActive, state.status != .saving, pendingRequest == nil, !requests.isEmpty {
+        guard isActive, !isWriting, pendingRequest == nil else { return }
+        while isActive, !isWriting, pendingRequest == nil, !requests.isEmpty {
             let request = requests.removeFirst()
             updateQueuedActions()
             if case .open(let selection) = request.decision.action, selection == state.prompt {
@@ -517,6 +556,11 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func perform(_ request: GuardRequest) {
+        if let operation = request.operation {
+            operation(self)
+            request.completion(.allowed)
+            return
+        }
         switch request.decision.action {
         case .open(let selection): startOpen(selection)
         case .close: resetEditor(); changed()
@@ -610,6 +654,144 @@ public final class EditorModel: @unchecked Sendable {
                 observers[token]?(snapshot)
             }
         }
+    }
+}
+
+extension EditorModel {
+    /// Called when History is opened or refreshed. Selecting a loaded revision
+    /// is memory-only and never makes its read-only source an editor draft.
+    public func loadHistory() {
+        guard isActive, let session, let prompt = state.prompt else { return }
+        historyRequested = true
+        historyGeneration &+= 1
+        let historyGeneration = self.historyGeneration
+        let generation = self.generation
+        state.history.isLoading = true
+        state.history.failure = nil
+        changed()
+        editing.history(for: prompt.identity, session: session) { [weak self] outcome in
+            guard let self else { return }
+            self.main.run { [weak self] in
+                guard let self, self.isActive, self.generation == generation,
+                      self.historyGeneration == historyGeneration, self.state.prompt == prompt else { return }
+                self.state.history.isLoading = false
+                switch outcome {
+                case .loaded(let revisions):
+                    self.state.history.revisions = revisions
+                    if !revisions.contains(where: { $0.revision == self.state.history.selectedRevision }) {
+                        self.state.history.selectedRevision = nil
+                    }
+                case .failed(let failure): self.state.history.failure = failure
+                }
+                self.changed()
+            }
+        }
+    }
+
+    public func selectRevision(_ revision: HistoryRevision?) {
+        guard isActive, revision == nil || state.history.revisions.contains(where: { $0.revision == revision }) else { return }
+        state.history.selectedRevision = revision
+        changed()
+    }
+
+    public func restore(_ revision: HistoryRevision, completion: @escaping (PromptCommandOutcome) -> Void = { _ in }) {
+        requestCommand(.restore(revision), action: .revert, completion: completion)
+    }
+
+    public func rename(to filename: String, completion: @escaping (PromptCommandOutcome) -> Void = { _ in }) {
+        requestCommand(.rename(filename), action: .rename, completion: completion)
+    }
+
+    public func move(to folder: String, completion: @escaping (PromptCommandOutcome) -> Void = { _ in }) {
+        requestCommand(.move(folder), action: .move, completion: completion)
+    }
+
+    public func delete(completion: @escaping (PromptCommandOutcome) -> Void = { _ in }) {
+        requestCommand(.delete, action: .delete, completion: completion)
+    }
+
+    private enum Command {
+        case restore(HistoryRevision), rename(String), move(String), delete
+    }
+
+    private func requestCommand(_ command: Command, action: EditorDiscardAction,
+                                completion: @escaping (PromptCommandOutcome) -> Void) {
+        let generation = self.generation
+        enqueue(action, operation: { model in
+            // A queued command belongs to the requested session, never a
+            // different prompt opened by an earlier navigation or copy choice.
+            guard model.generation == generation else { return completion(.inactive) }
+            model.startCommand(command, completion: completion)
+        }, completion: { result in
+            switch result {
+            case .allowed: break
+            case .cancelled: completion(.cancelled)
+            case .inactive: completion(.inactive)
+            }
+        })
+    }
+
+    private func startCommand(_ command: Command, completion: @escaping (PromptCommandOutcome) -> Void) {
+        guard let session, let stamp = state.stamp else { return completion(.noSelection) }
+        let generation = self.generation
+        loadGeneration &+= 1
+        historyGeneration &+= 1
+        state.history.isLoading = false
+        commandHasExternalChange = false
+        state.status = .commandRunning
+        changed()
+        let reply: (PromptCommandOutcome) -> Void = { [weak self] outcome in
+            guard let self else { return }
+            self.main.run { [weak self] in
+                guard let self, self.isActive, self.generation == generation else { return }
+                self.completedCommand(outcome, command: command)
+                completion(outcome)
+                self.processRequests()
+            }
+        }
+        switch command {
+        case .restore(let revision): editing.restore(revision, session: session, expectedStamp: stamp, completion: reply)
+        case .rename(let filename): editing.rename(to: filename, session: session, expectedStamp: stamp, completion: reply)
+        case .move(let folder): editing.move(to: folder, session: session, expectedStamp: stamp, completion: reply)
+        case .delete: editing.delete(session: session, expectedStamp: stamp, completion: reply)
+        }
+    }
+
+    private func completedCommand(_ outcome: PromptCommandOutcome, command: Command) {
+        let needsReconciliation = commandHasExternalChange
+        commandHasExternalChange = false
+        state.status = .idle
+        if let entry = outcome.committedEntry {
+            accept(LoadedPrompt(bytes: Data(entry.document.source.utf8), entry: entry))
+            state.status = .saved
+            if case .updatedButHistoryMaintenanceFailed = outcome { state.historyMaintenanceFailed = true }
+            if case .restore = command { historyRequested = true }
+            changed()
+            // Check publications that preceded the queued command reply. Like
+            // copy reconciliation, this preserves edits typed after adoption.
+            load(.reconcileCopy)
+            if historyRequested { loadHistory() }
+            return
+        }
+        switch outcome {
+        case .deleted: resetEditor()
+        case .missing: openConflict(stamp: nil)
+        case .conflict(let stamp): openConflict(stamp: stamp)
+        case .destinationOccupied:
+            state.status = .failed(.editing(.library(.destinationOccupied)))
+            if needsReconciliation { load(.reconcileCopy) }
+        case .forensic(let reason):
+            state.status = .failed(.editing(.write(reason)))
+            if needsReconciliation { load(.reconcileCopy) }
+        case .readOnly(let reason):
+            state.status = .failed(.readOnly(reason))
+            if needsReconciliation { load(.reconcileCopy) }
+        case .failed(let failure):
+            state.status = .failed(.editing(failure))
+            if needsReconciliation { load(.reconcileCopy) }
+        case .updated, .updatedButHistoryMaintenanceFailed, .cancelled, .inactive, .noSelection: break
+        }
+        changed()
     }
 }
 

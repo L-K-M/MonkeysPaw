@@ -26,6 +26,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     private var indexObserver: UUID?
     private var usageObserver: UUID?
     private var editorObserver: UUID?
+    private var editorPrompt: LibraryPromptSelection?
     private var isActive = true
     private var observers: [UUID: (LibraryBrowserState) -> Void] = [:]
     private var observerOrder: [UUID] = []
@@ -44,6 +45,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         self.favorites = favorites
         self.main = main
         self.editor = editor
+        editorPrompt = editor?.state.prompt
         indexObserver = index.addObserver { [weak self] in
             guard let self else { return }
             self.main.run { [weak self] in
@@ -61,11 +63,12 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         editorObserver = editor?.addObserver { [weak self] state in
             guard let self else { return }
             self.main.run { [weak self] in
-                guard let self, self.isActive, let prompt = state.prompt,
-                      self.editor?.state.prompt == prompt,
-                      self.preferredSelection?.relativePath == prompt.relativePath,
-                      self.preferredSelection != prompt else { return }
-                self.preferredSelection = prompt
+                guard let self, self.isActive, self.editor?.state.prompt == state.prompt else { return }
+                let previous = self.editorPrompt
+                self.editorPrompt = state.prompt
+                guard let previous, self.preferredSelection == previous,
+                      self.preferredSelection != state.prompt else { return }
+                self.preferredSelection = state.prompt
                 self.refreshContents()
             }
         }
@@ -166,7 +169,8 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         // The editor's first save replaces a path hash with a ULID before its
         // UI reply arrives. Retain the user's choice for that reply, without
         // following an unrelated selection or an external identity change.
-        if editor?.state.status == .saving, editor?.state.prompt == selection { return }
+        if editor?.state.status == .saving || editor?.state.status == .commandRunning,
+           editor?.state.prompt == selection { return }
         let sameIdentity = contents.filter { $0.entry.identity == selection.identity }
         // An assigned rename has one surviving identity. Refuse an ambiguous
         // duplicate id instead of jumping to an arbitrary byte-distinct path.

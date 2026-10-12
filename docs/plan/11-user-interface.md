@@ -342,7 +342,13 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   field defaults (or the field name when there is none), the real date and
   time, and a `{clipboard}` placeholder; browsing or typing never reads the
   clipboard. Non-UTF-8, oversized and future-format files open read-only.
-  History lists revisions newest first with restore (§5.5).
+  `EditorModel`'s History state lists revisions newest first with timestamp,
+  byte size and valid/forensic status. `loadHistory()` refreshes the list;
+  `selectRevision(_:)` shows a read-only source preview. `restore(_:)` runs
+  through `PromptEditingService` with the editor stamp, opens the same conflict
+  on a stale stamp, and reloads the editor and history after success (§5.5).
+  Forensic and future-format revisions stay visible and return their typed
+  restore-refusal reason; non-UTF-8 or oversized sources have no text preview.
 - **Saving and conflicts.** Saves pass the editor's load stamp. The editor
   loads and saves through Core's `PromptEditingService`; file and codec work
   runs off the UI thread, and session-tagged typed completions and external
@@ -367,10 +373,20 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   Requests queue in order while a save is in flight, and a failed save or a
   newer draft retains the decision. A library switch retires the session
   only after the guard allows it.
-- **Rename, move, delete.** Rename edits the filename; the title stays in
-  front matter. Move targets an existing or new folder. An occupied
-  destination is refused, never replaced. Delete removes the file and keeps
-  its history; restoring a deleted prompt arrives later.
+  History restore uses the revert guard. `EditorModel`'s file commands perform
+  their writes only after the guard allows them, and navigation waits for a
+  command in flight. A queued command cannot act on a different editor session.
+- **Rename, move, delete.** `EditorModel.rename(to:)` edits the filename;
+  the title stays in front matter. `move(to:)` targets an existing or new
+  folder, creating intermediate folders; the empty folder targets the root.
+  These commands and `delete()` use `PromptEditingService`, the editor's load
+  stamp and typed outcomes. An occupied destination is refused, never replaced;
+  stale stamps open the same conflict, and read-only formats are refused.
+  Keyed values, usage and history follow §5.2's identity migration.
+  `LibraryBrowserModel` follows the committed rename/move only while that
+  editor prompt remains selected, including an unassigned path-hash move.
+  Delete clears that selection, closes the editor and keeps its history;
+  restoring a deleted prompt arrives later.
 - **Import.** Drop or choose `.md`, `.prompt` (Dotprompt) or `.prompty`
   files or a folder. `string` inputs map to text fields, `string` with an
   enum to choice fields, and defaults/descriptions are kept; Prompty sample
