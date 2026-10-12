@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "group",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\ndescription: \"\"\nformat: 1\nx:\n  private: false\n  favorite: true\n  nested:\n  - null\n  - true\n  - \"010\"\n  - 2.5\n---\n\u00e9 / e\u0301 / \u754c / \ud83d\udc3e\n",
+    "body": "\u00e9 / e\u0301 / \u754c / \ud83d\udc3e\n",
+    "canonicalHash": "938d464fdc54e18d6028ed3c291f47d440a8fdaf83061c76c25afd3985276c24",
+    "favorite": null,
+    "warnings": [
+      {
+        "code": "metadata.group_private_removed",
+        "severity": "warning"
+      }
+    ]
+  }
+}

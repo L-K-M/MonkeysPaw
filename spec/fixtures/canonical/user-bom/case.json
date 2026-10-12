@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "user",
+  "source": "source.md",
+  "expected": {
+    "bytes": "\ufeffBody\r\n",
+    "body": "\ufeffBody\r\n",
+    "canonicalHash": "870d4416899bfbd00cc8b63960737302b41ab6fd18575e9a115a0bda49f0c9d4",
+    "favorite": null,
+    "warnings": []
+  }
+}

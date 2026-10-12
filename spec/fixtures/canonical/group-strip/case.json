@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "group",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ntitle: Shared\ntags:\n- one\n- two\nmodel:\n  provider: \"on\"\n  extra:\n  - 1\n  - null\n---\nHello {{name}}\r\n\r\n",
+    "body": "Hello {{name}}\r\n\r\n",
+    "canonicalHash": "ef5e19ae382d15a13244e222b91004a45c13816168b7c7b5524be64245c48aca",
+    "favorite": true,
+    "warnings": [
+      {
+        "code": "metadata.group_private_removed",
+        "severity": "warning"
+      }
+    ]
+  },
+  "comparison": {
+    "source": "candidate.md",
+    "equivalent": true
+  }
+}

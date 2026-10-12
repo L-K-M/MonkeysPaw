@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "user",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\nfavorite: true\nprivate: true\n---\nBody\n",
+    "body": "Body\n",
+    "canonicalHash": "681edee3c621a3290e4624e2c63371358fabe129041a64c666e99ceb2a4fad85",
+    "favorite": null,
+    "warnings": []
+  },
+  "comparison": {
+    "source": "candidate.md",
+    "equivalent": false
+  }
+}

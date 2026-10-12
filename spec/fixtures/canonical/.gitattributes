@@ -1,0 +1,2 @@
+# Raw Markdown vectors include intentional CRLF and trailing body whitespace.
+*.md -text whitespace=-blank-at-eol,-blank-at-eof
