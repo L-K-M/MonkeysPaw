@@ -1,6 +1,6 @@
 import Foundation
 
-/// FIPS 180-4 SHA-256, used only for device-local path keys. No OS crypto API.
+/// FIPS 180-4 SHA-256 for local path keys and sync stored bytes. No OS crypto API.
 enum SHA256 {
     static func hexDigest(_ data: Data) -> String {
         var bytes = Array(data)
