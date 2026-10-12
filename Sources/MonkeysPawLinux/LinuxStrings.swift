@@ -43,6 +43,69 @@ enum LinuxStrings {
         }
     }
     static let setup = "Setup"
+    static let settings = "Settings"
+    static let openSettings = "Settings…"
+    static let openSetup = "Open Setup…"
+    static let generalTab = "General"
+    static let shortcutsTab = "Shortcuts"
+    static let libraryFolder = "Your library folder"
+    static let defaultLibraryFolder = "You are using the default library folder."
+    static let customLibraryFolder = "You are using a custom library folder."
+    static let chooseFolder = "Choose…"
+    static let chooseLibraryFolder = "Choose your library folder"
+    static let choose = "Choose"
+    static let useDefault = "Use Default"
+    static let openFolder = "Open Folder"
+    static let togglePicker = "Toggle picker"
+    static let repeatLast = "Repeat last"
+    static let repeatUnavailable = "Inactive. Unavailable for configuration."
+    static let setupShortcut = "Set up shortcut"
+    static let showInstructions = "Show instructions"
+
+    static func shortcutBinding(_ binding: ShortcutsSettingsModel.Binding) -> String {
+        switch binding {
+        case .unknown: return unknown
+        case .unbound: return SetupStrings.unboundShortcut
+        case .reported(let text): return text
+        case .accelerator(let accelerator): return (try? accelerator.gtkAccelerator()) ?? unknown
+        }
+    }
+
+    static func shortcutRegistration(_ registration: HotkeyRegistration?) -> String {
+        guard let registration else { return unknown }
+        let mechanism: String
+        switch registration.mechanism {
+        case .globalShortcutsPortal: mechanism = "Desktop shortcut portal"
+        case .gnomeCustomKeybinding: mechanism = "GNOME keyboard shortcut"
+        case .kglobalaccel: mechanism = "KDE global shortcut"
+        case .manual: mechanism = "Manual shortcut"
+        case .carbon: mechanism = "Carbon"
+        }
+        let status: String
+        switch registration.status {
+        case .registered: status = "Registered"
+        case .unbound: status = SetupStrings.unboundShortcut
+        case .needsAction: status = "Needs your action"
+        case .failed: status = "Registration failed"
+        }
+        return ([mechanism, status, registration.detail]).filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    static func shortcutVerification(_ verification: ShortcutVerification) -> String {
+        switch verification {
+        case .notStarted: return "Your shortcut has not been verified."
+        case .waiting: return "Waiting for you to press your shortcut."
+        case .verified: return "Your shortcut is verified."
+        }
+    }
+
+    static func shortcutError(_ error: ShortcutRebindError) -> String {
+        switch error {
+        case .unavailable: return "You cannot change this shortcut in the app. Follow your desktop's instructions."
+        case .invalidAccelerator, .unsupportedCarbonKey, .overlappingCommandModifiers:
+            return "Your shortcut could not be changed. Choose a supported key combination."
+        }
+    }
     static let testPaste = "Test paste"
     static let selfTestTitle = "Monkey's Paw: Test paste"
     static let portalAllow = "Allow keyboard access in Setup, then run Test paste"

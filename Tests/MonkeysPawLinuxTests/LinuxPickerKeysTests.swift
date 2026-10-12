@@ -14,6 +14,7 @@ final class LinuxPickerKeysTests: XCTestCase {
             (GDK_KEY_Up, 0, .moveUp), (GDK_KEY_Down, 0, .moveDown),
             (GDK_KEY_Escape, 0, .escape), (GDK_KEY_l, control, .openLibrary),
             (GDK_KEY_L, control, .openLibrary),
+            (GDK_KEY_comma, control, .openSettings),
         ]
         for (key, modifiers, expected) in cases {
             XCTAssertEqual(route(key, modifiers: modifiers, state: .picker), expected)
@@ -44,6 +45,7 @@ final class LinuxPickerKeysTests: XCTestCase {
             }
         }
         XCTAssertNil(route(GDK_KEY_l, modifiers: control, state: .fill))
+        XCTAssertNil(route(GDK_KEY_comma, modifiers: control, state: .fill))
         XCTAssertNil(route(GDK_KEY_Up, state: .fill, kind: .multiline))
         XCTAssertNil(route(GDK_KEY_Down, state: .fill, kind: .choice))
         for key in [GDK_KEY_Up, GDK_KEY_Down] {
@@ -54,7 +56,7 @@ final class LinuxPickerKeysTests: XCTestCase {
 
     func testInactiveStatesNeverRouteKeys() {
         let keys = [GDK_KEY_Up, GDK_KEY_Down, GDK_KEY_Return, GDK_KEY_KP_Enter, GDK_KEY_ISO_Enter,
-                    GDK_KEY_Tab, GDK_KEY_ISO_Left_Tab, GDK_KEY_Escape, GDK_KEY_l]
+                    GDK_KEY_Tab, GDK_KEY_ISO_Left_Tab, GDK_KEY_Escape, GDK_KEY_l, GDK_KEY_comma]
         for state: PickerModel.State in [.delivering, .closed, .done(.copiedOnly(.requested))] {
             for key in keys {
                 for modifiers in [UInt32(0), control, shift, control | shift, alt] {
@@ -73,6 +75,10 @@ final class LinuxPickerKeysTests: XCTestCase {
             }
         }
         XCTAssertEqual(route(GDK_KEY_Return, modifiers: GDK_LOCK_MASK.rawValue, state: .picker), .use(.paste(.standard)))
+        XCTAssertEqual(route(GDK_KEY_comma, modifiers: control | GDK_LOCK_MASK.rawValue, state: .picker), .openSettings)
+        for modifiers in [UInt32(0), shift, control | shift, control | alt, GDK_SUPER_MASK.rawValue] {
+            XCTAssertNil(route(GDK_KEY_comma, modifiers: modifiers, state: .picker))
+        }
     }
 
     private func route(_ key: Int32, modifiers: UInt32 = 0, state: PickerModel.State,
