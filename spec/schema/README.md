@@ -23,6 +23,9 @@ changed, missing and extra files, including untracked files.
 
 The dialect is [JSON Schema 2020-12](https://json-schema.org/draft/2020-12/schema).
 Keys and required-property names are sorted; files end with one newline.
+CI's Swift 6.4 Linux output is the baseline; byte equality on Darwin is not
+yet verified. Patterns require lookahead support; consumers with a restricted
+regex engine must supply equivalent spelling checks.
 `$id` URLs are stable logical identifiers, not network dependencies. Register
 the local files under their `$id`s to resolve sibling `$ref`s offline. Use
 exact integers: bounds include Int64.max, beyond binary64's exact range.
