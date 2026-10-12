@@ -122,12 +122,7 @@ public enum MonkeysPawLinuxApp {
         g_action_map_add_action(mp_action_map(application), mp_action(selftest))
         g_object_unref(UnsafeMutableRawPointer(selftest))
 
-        let quit = g_simple_action_new(ActionName.quit.rawValue, nil)!
-        GTK.onActionActivated(UnsafeMutableRawPointer(quit)) {
-            g_application_quit(gapp)
-        }
-        g_action_map_add_action(mp_action_map(application), mp_action(quit))
-        g_object_unref(UnsafeMutableRawPointer(quit))
+        installQuitAction(application: application, environment: environment)
 
         // Register early so a remote invocation exits without entering the main loop.
         var error: UnsafeMutablePointer<GError>?
@@ -219,6 +214,16 @@ public enum MonkeysPawLinuxApp {
         }
         g_action_map_add_action(mp_action_map(application), mp_action(library))
         g_object_unref(UnsafeMutableRawPointer(library))
+    }
+
+    static func installQuitAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment,
+                                  approved: (() -> Void)? = nil) {
+        let quit = g_simple_action_new(ActionName.quit.rawValue, nil)!
+        GTK.onActionActivated(UnsafeMutableRawPointer(quit)) { [weak environment] in
+            environment?.requestQuit { (approved ?? { g_application_quit(mp_gapp(application)) })() }
+        }
+        g_action_map_add_action(mp_action_map(application), mp_action(quit))
+        g_object_unref(UnsafeMutableRawPointer(quit))
     }
 
     private static func reportJSON(_ report: SelfTestReport) -> String? {

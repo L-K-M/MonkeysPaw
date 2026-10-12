@@ -273,7 +273,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(try files.stamp(at: "Name.md"), originalStamp)
     }
 
-    func testEditSelectedLaunchesFileURIAndDismissesPicker() throws {
+    func testEditSelectedOpensLibraryEditorAndDismissesPicker() throws {
         let path = "folder name/Prompt #%.md"
         try files.write(Data("Body".utf8), at: path)
         try open()
@@ -283,8 +283,9 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertNil(environment.pickerModel.requestedIntent)
         XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertEqual(environment.pickerModel.state, .closed)
-        XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
-        XCTAssertEqual(launchedURLs, [root.appendingPathComponent(path)])
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == path
+            && self.environment.editorModel.state.source == "Body" })
+        XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertFalse(environment.panel.isVisible)
     }
 
@@ -628,8 +629,9 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertNotNil(document.frontMatter.id)
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
-        XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
-        XCTAssertEqual(launchedURLs, [root.appendingPathComponent(expectedPath)])
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == expectedPath
+            && self.environment.editorModel.state.source != nil })
+        XCTAssertTrue(launchedURLs.isEmpty)
     }
 
     private func findWidget(matching predicate: (GTK.Widget) -> Bool) -> GTK.Widget? {

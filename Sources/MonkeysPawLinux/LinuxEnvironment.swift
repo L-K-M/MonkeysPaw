@@ -8,6 +8,7 @@ final class LinuxEnvironment {
     enum LibrarySwitchResult: Equatable {
         case switched
         case deliveryInFlight
+        case editorBusy
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case persistenceFailed(SettingsError)
@@ -16,6 +17,9 @@ final class LinuxEnvironment {
             switch self {
             case .switched: return .switched
             case .deliveryInFlight: return .deliveryInFlight
+            // Core has one busy outcome. Settings overrides this refusal's
+            // copy locally without widening the shared folder port.
+            case .editorBusy: return .deliveryInFlight
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .persistenceFailed(let error): return .settingsNotSaved(error)
@@ -89,6 +93,8 @@ final class LinuxEnvironment {
         let watcher: LibraryWatcher?
         let picker: PickerModel
         let browser: LibraryBrowserModel
+        let editing: PromptEditingService
+        let editor: EditorModel
         let callbacks: LibraryCallbacks
         let initializationError: FileStoreError?
         var started = false
@@ -96,6 +102,7 @@ final class LinuxEnvironment {
 
         init(directory: URL, files: FileStore, library: LibraryService,
              index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel, browser: LibraryBrowserModel,
+             editing: PromptEditingService, editor: EditorModel,
              callbacks: LibraryCallbacks, initializationError: FileStoreError?) {
             self.directory = directory
             self.files = files
@@ -104,15 +111,19 @@ final class LinuxEnvironment {
             self.watcher = watcher
             self.picker = picker
             self.browser = browser
+            self.editing = editing
+            self.editor = editor
             self.callbacks = callbacks
             self.initializationError = initializationError
         }
 
         func stop() {
+            browser.deactivate()
+            editor.deactivate()
+            editing.deactivate()
             callbacks.deactivate()
             watcher?.stop()
             picker.onChange = nil
-            browser.deactivate()
         }
     }
 
@@ -135,6 +146,8 @@ final class LinuxEnvironment {
     private let launchURI: (URL) -> Void
     private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
     private let folderChooser: LinuxFolderChoosing
+    private let backgroundWork: BackgroundWork
+    private let suppliedClipboard: Clipboard?
     private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
     private let statusNotifierBusAddress: String?
     private var statusNotifierItem: LinuxStatusNotifierItem?
@@ -145,6 +158,7 @@ final class LinuxEnvironment {
     private(set) lazy var panel = LinuxPanel(application: application)
     var pickerModel: PickerModel { libraryGraph.picker }
     var libraryBrowserModel: LibraryBrowserModel { libraryGraph.browser }
+    var editorModel: EditorModel { libraryGraph.editor }
 
     private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
@@ -212,7 +226,7 @@ final class LinuxEnvironment {
     private lazy var clock = SystemClock()
     private lazy var values = ValuesStore(files: dataFiles)
     private lazy var usage = UsageStore(files: dataFiles, clock: clock)
-    private lazy var clipboard = GTKClipboard(owner: panel.clipboardOwner)
+    private lazy var clipboard: Clipboard = suppliedClipboard ?? GTKClipboard(owner: panel.clipboardOwner)
     private lazy var fill = FillService(values: values, clipboard: clipboard, clock: clock,
         timeZone: { TimeZone.current })
     private lazy var notifier = GTKNotifier(application: application, session: session)
@@ -238,6 +252,8 @@ final class LinuxEnvironment {
     private var currentOnboardingWindow: LinuxOnboardingWindow?
     private var onboardingRequestRevision = 0
     private var isShutDown = false
+    private var quitPending = false
+    private var editorSwitchRefused = false
 
     private let application: UnsafeMutablePointer<GtkApplication>
 
@@ -247,6 +263,8 @@ final class LinuxEnvironment {
          focusTracker: FocusTracker? = nil,
          libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
          folderChooser: LinuxFolderChoosing? = nil,
+         backgroundWork: BackgroundWork? = nil,
+         clipboard: Clipboard? = nil,
          libraryAvailabilityNotifier: LibraryAvailabilityNotifier? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
@@ -256,6 +274,8 @@ final class LinuxEnvironment {
         self.launchURI = launchURI
         self.libraryWatcherFactory = libraryWatcherFactory
         self.folderChooser = folderChooser ?? GTKFolderChooser()
+        self.backgroundWork = backgroundWork ?? LinuxBackgroundWork()
+        suppliedClipboard = clipboard
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
         statusNotifierBusAddress = environment["DBUS_SESSION_BUS_ADDRESS"]
         log = CompositeLogSink(
@@ -409,7 +429,10 @@ final class LinuxEnvironment {
                 self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
                     rememberedValues: self.rememberedValuesSettingsModel,
-                    chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() })
+                    chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
+                    librarySwitchMessage: { [weak self] in
+                        self?.editorSwitchRefused == true ? LinuxEditorStrings.librarySwitchRefused : nil
+                    })
             }
             self.currentSettingsWindow?.show()
         }
@@ -432,14 +455,38 @@ final class LinuxEnvironment {
         // Resolve the current graph here if a folder switch ran in the meantime.
         mainThread.run { [weak self] in
             guard let self, !self.isShutDown, self.pickerModel.libraryAvailable else { return }
-            if self.currentLibraryWindow == nil {
-                self.currentLibraryWindow = LinuxLibraryWindow(application: self.application,
-                    browser: self.libraryBrowserModel, openFolder: { [weak self] in
-                        guard let self, !self.isShutDown else { return }
-                        self.libraryLocation.revealLibrary()
-                    })
-            }
-            self.currentLibraryWindow?.show()
+            self.presentLibraryWindow()
+        }
+    }
+
+    private func presentLibraryWindow() {
+        if currentLibraryWindow == nil {
+            currentLibraryWindow = LinuxLibraryWindow(application: application,
+                browser: libraryBrowserModel, editor: editorModel, openFolder: { [weak self] in
+                    guard let self, !self.isShutDown else { return }
+                    self.libraryLocation.revealLibrary()
+                })
+        }
+        currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
+        currentLibraryWindow?.show()
+    }
+
+    /// The tray and GApplication action share this guarded quit path. A queued
+    /// save or selection must finish before the quit decision can be approved.
+    func requestQuit(_ approved: @escaping () -> Void) {
+        guard !isShutDown, !quitPending else { return }
+        guard let graph = currentLibraryGraph else { approved(); return }
+        let state = graph.editor.state
+        guard state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty else {
+            approved()
+            return
+        }
+        quitPending = true
+        presentLibraryWindow()
+        graph.editor.request(.quit) { [weak self, weak graph] result in
+            guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return }
+            self.quitPending = false
+            if result == .allowed { approved() }
         }
     }
 
@@ -546,7 +593,9 @@ final class LinuxEnvironment {
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let callbacks = LibraryCallbacks(main: mainThread)
         let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks)
-        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: callbacks)
+        let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: callbacks)
+        let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: callbacks)
+        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: callbacks, editor: editor)
         picker.libraryAvailable = initializationError == nil
         let watcher: LibraryWatcher?
         do {
@@ -554,7 +603,7 @@ final class LinuxEnvironment {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
         } catch { watcher = nil }
         let graph = LibraryGraph(directory: directory, files: files, library: library,
-            index: index, watcher: watcher, picker: picker, browser: browser, callbacks: callbacks,
+            index: index, watcher: watcher, picker: picker, browser: browser, editing: editing, editor: editor, callbacks: callbacks,
             initializationError: initializationError)
         panel.rebind(picker: picker, session: session.currentSession(),
             openSetup: { [weak self, weak callbacks] in
@@ -576,7 +625,14 @@ final class LinuxEnvironment {
     /// UI-thread composition intent for later General/onboarding controls.
     /// Nil selects the default. Drafts belong to the retired picker.
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
+        guard !isShutDown else { return .libraryUnavailable(.ioFailure) }
         let old = libraryGraph
+        editorSwitchRefused = false
+        let state = old.editor.state
+        if state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty {
+            editorSwitchRefused = true
+            return .editorBusy
+        }
         guard old.picker.state != .delivering else { return .deliveryInFlight }
         old.picker.dismiss()
         panel.hide()
@@ -592,7 +648,8 @@ final class LinuxEnvironment {
         old.stop()
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
-        currentLibraryWindow?.rebind(browser: libraryGraph.browser)
+        currentLibraryWindow?.rebind(browser: libraryGraph.browser, editor: libraryGraph.editor)
+        currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
         currentLibraryStatusModel?.libraryReplaced(available: libraryGraph.picker.libraryAvailable)
@@ -681,6 +738,7 @@ final class LinuxEnvironment {
     private func degradeLibrary(_ graph: LibraryGraph, _ error: FileStoreError? = nil) {
         graph.watcher?.stop()
         graph.picker.libraryAvailable = false
+        currentLibraryWindow?.setLibraryAvailable(false)
         currentLibraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(graph, error)
     }
@@ -691,21 +749,23 @@ final class LinuxEnvironment {
             return
         }
 
-        let url: URL
         switch intent {
         case .openLibrary:
             showLibrary()
             return
-        case .edit(_, let path):
+        case .edit(let identity, let path):
             guard (try? FileStorePath.validate(path)) != nil else {
                 panel.showStatus(LinuxStrings.promptFileUnavailable)
                 return
             }
-            url = graph.directory.appendingPathComponent(path)
-        }
-        graph.picker.dismiss()
-        graph.callbacks.run { [weak self] in
-            self?.launchURI(url)
+            graph.picker.dismiss()
+            panel.hide()
+            delivery.invalidatePendingPresentation()
+            graph.callbacks.run { [weak self, weak graph] in
+                guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return }
+                self.presentLibraryWindow()
+                self.currentLibraryWindow?.openPrompt(LibraryPromptSelection(identity: identity, relativePath: RelativePath(path)))
+            }
         }
     }
 
@@ -735,7 +795,7 @@ final class LinuxEnvironment {
         currentSetupWindow?.hide()
         currentOnboardingWindow?.hide()
         currentSettingsWindow?.hide()
-        currentLibraryWindow?.hide()
+        currentLibraryWindow?.tearDown()
         currentLibraryGraph?.stop()
         hotkey.shutdown()
         remoteDesktop.shutdown()
