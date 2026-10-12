@@ -25,6 +25,10 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         XCTAssertEqual(String(cString: gtk_window_get_title(first)), LinuxStrings.setup)
         XCTAssertTrue(FileManager.default.fileExists(atPath:
             tools.directory.appendingPathComponent("monkeyspaw/setup-shown").path))
+        XCTAssertTrue(environment.settingsModel.firstRun.setupPresented)
+        XCTAssertTrue(environment.settingsModel.needsLibraryFolderStep)
+        XCTAssertTrue(FileManager.default.fileExists(atPath:
+            tools.directory.appendingPathComponent("monkeyspaw/settings.json").path))
         gtk_window_close(first)
         environment.presentFromLauncher()
         XCTAssertTrue(GTKTestSupport.spin {
@@ -91,6 +95,35 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         defer { g_free(raw) }
         XCTAssertEqual(String(cString: raw), SetupStrings.kdeShortcut)
         XCTAssertEqual(model.rows.first { $0.kind == .hotkey }?.registration?.status, .needsAction)
+    }
+
+    func testDestroyedPanelIgnoresRebindingWithoutReplacingPickerCallbacks() throws {
+        let application = try GTKTestSupport.application()
+        defer { GTKTestSupport.destroy(application) }
+        let tools = try FakeLinuxTools()
+        let environment = LinuxEnvironment(application: application, environment: [
+            "PATH": tools.directory.path, "XDG_DATA_HOME": tools.directory.path,
+            "XDG_CONFIG_HOME": tools.directory.path, "HOME": tools.directory.path,
+        ])
+        defer { environment.shutdown() }
+        let picker = environment.pickerModel
+        let panel = environment.panel
+        picker.open()
+        XCTAssertTrue(GTKTestSupport.spin { panel.isVisible })
+        gtk_window_destroy(mp_window(panel.clipboardOwner))
+
+        var pickerChanged = false
+        picker.onChange = { pickerChanged = true }
+        panel.rebind(picker: picker, session: .otherX11,
+            openSetup: { XCTFail("Destroyed panel opened Setup") },
+            requestedIntent: { _ in XCTFail("Destroyed panel forwarded an intent") },
+            createPrompt: { _ in XCTFail("Destroyed panel created a prompt") })
+        picker.setQuery("after destruction")
+
+        XCTAssertTrue(pickerChanged)
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertFalse(panel.isActiveAndVisible)
+        XCTAssertEqual(picker.state, .picker)
     }
 
     func testNativeCloseKeepsThePanelAvailableForTheShortcut() throws {

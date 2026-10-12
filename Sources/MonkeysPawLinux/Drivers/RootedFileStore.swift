@@ -36,6 +36,18 @@ final class RootedFileStore: FileStore {
         _ = try sanitized { try rootExists(parents: .existing) }
     }
 
+    /// A library selection may use a symlinked home/ancestor, but the selected
+    /// directory itself must not be an alias. Config/data keep their root rules.
+    convenience init(libraryRoot root: URL) throws {
+        try self.init(root: root)
+        try sanitized {
+            if let attributes = try attributes(at: root),
+               attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+                throw FileStoreError.outsideRoot
+            }
+        }
+    }
+
     func listFiles() throws -> [StoredFile] {
         try sanitized {
             guard try rootExists(parents: .existing) else { return [] }
