@@ -98,34 +98,98 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
 |---|---|
 | `GET /api/health` | Liveness and version; no auth (Docker healthcheck) |
 | `POST /api/v1/auth/login` `{username, password, device_name}` | `{device_token, user}`. Rate-limited (§8.5). |
-| `POST /api/v1/auth/logout` | Revokes this device's token |
+| `POST /api/v1/auth/logout` | Revokes this device's token; `200 {}` |
 | `POST /api/v1/auth/register` `{invite_token, username, password, device_name}` | Consumes an invite and joins its group with its role. Returns `{device_token, user}`. |
-| `POST /api/v1/auth/password` | Change own password; revokes all other devices |
-| `GET /api/v1/me` | User, groups with names and roles, devices |
-| `DELETE /api/v1/me/devices/{id}` | Revoke a device |
+| `POST /api/v1/auth/password` `{current_password, new_password}` | Change own password; revokes all other devices; `200 {}` (B9) |
+| `GET /api/v1/me` | `{user, groups, devices}`; caller device metadata only (B9) |
+| `DELETE /api/v1/me/devices/{id}` | Revoke a caller device; `200 {}` (B9) |
 | `POST /api/v1/sync/pull` `{database_id, cursors: {scope_key: cursor}}` | Per-scope feed (§8.4). Cursors are opaque strings: a seq, or `snap:…` for an unfinished snapshot. |
-| `GET /api/v1/prompts/{id}` | `{id, rev, scope, group_id, path, content}`, or 404 out of scope |
+| `GET /api/v1/prompts/{id}` | `{id, rev, scope, group_id?, path, content}`, or 404 out of scope or tombstoned (B13) |
 | `PUT /api/v1/prompts/{id}` `{base_rev, scope, group_id?, path, content}` | Create (`base_rev: 0`) or update with compare-and-swap. On update, `scope` and `group_id` must equal the current values; scope changes go through `/move`. |
 | `DELETE /api/v1/prompts/{id}?base_rev=<n>` | Tombstone, with compare-and-swap |
 | `POST /api/v1/prompts/{id}/move` `{base_rev, scope, group_id?, path}` | Atomic scope change: one prompt, new owner (Bitwarden) |
 | `GET /api/v1/prompts/{id}/revisions` · `GET …/revisions/{rev}` | History for restore |
 | `POST /api/v1/groups` · `PATCH /api/v1/groups/{id}` · `DELETE /api/v1/groups/{id}` | Group lifecycle |
+| `POST /api/v1/groups/join` `{invite_token}` | Authenticated existing account consumes a group invite; returns its group name, id and role (B10) |
 | `GET /api/v1/groups/{id}/members` · `PUT/DELETE /api/v1/groups/{id}/members/{user_id}` | Member list; role changes and removal (owner or admin; no self-grant) |
-| `POST /api/v1/groups/{id}/invites` `{role, expires_in}` | Single-use invite token, shown once; `expires_in` ≤ `INVITE_TTL_DAYS` |
+| `POST /api/v1/groups/{id}/invites` `{role, expires_in?}` | Single-use invite token, shown once; TTL in seconds, default/max 604,800 (B2/B10) |
 | `POST /api/v1/admin/users` · `PATCH /api/v1/admin/users/{id}` · `POST /api/v1/admin/invites` | Admin |
 
 Write responses:
 
 | Outcome | Response | Meaning |
 |---|---|---|
-| Success | `200 {rev, seq}` | For a move, `seq` is the new scope's row. |
-| Stale `base_rev` | `409 {code: "conflict", head}` | `head` is `{rev, path, content}` |
+| Success | `200 {rev, seq, warnings?}` | For a move, `seq` is the new scope's row. Warnings are issue objects with severity `warning`. |
+| Stale `base_rev` | `409 {code: "conflict", head}` | `head` is `{rev, scope, group_id?, path, content}` (B13). |
 | Path taken | `409 {code: "path_taken", existing: {id, rev, content}}` | The caller can read the existing prompt, since paths are per scope. |
 | Id is tombstoned | `410 {code: "deleted"}` | A stale id can't resurrect a prompt; revival mints a new id (§9.6). |
 | Invalid content or path | `422 {issues}` | Core validator errors only. Warnings (e.g. declared-but-unused fields) are returned with a `200` and never block a push. |
+| Malformed request/cursor | `400 {code: "malformed_request"}` | Invalid JSON shape or server cursor grammar (B3). |
+| Missing/invalid/revoked auth | `401 {code: "unauthorized"}` | Disabled users also receive 401. |
+| Denied visible write | `403 {code: "forbidden"}` | Includes viewer writes. |
+| Missing or invisible resource | `404 {code: "not_found"}` | No inaccessible identity or prompt data is returned. |
+| Request envelope overflow | `413 {code: "envelope_too_large"}` | HTTP JSON bytes exceed 2 MiB (B3). |
+| Login locked | `429 {code: "rate_limited"}` | Required `Retry-After` header: integer seconds, 1–900 (B3/B8). |
+| Internal failure | `500 {code: "internal_error"}` | Sanitized; no underlying error text (B3). |
+| Expired/restarted frozen snapshot | `409 {code: "snapshot_expired", scopes: [scope_key]}` | The client discards the entire incomplete collected pull and restarts affected scopes without their cursors (B17). |
 
 Request and response types live in `MonkeysPawCore/SyncAPI` and are shared by
-both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
+both sides. Their complete, data-only field descriptions and strict Codable
+fixtures pin the JSON Schema 2020-12 contract (B2); see
+[`spec/README.md`](../../spec/README.md). All body objects reject additional
+properties. JSON keys are snake_case, ULIDs uppercase Crockford, UUIDs
+lowercase hyphenated, and timestamps Gregorian UTC with exactly three
+fractional digits (`2026-10-12T20:10:56.557Z`). Counters are Int64: `rev` and
+successful write `seq` ≥1, create `base_rev` ≥0, delete/move `base_rev` ≥1,
+feed `seq`/`head` ≥0. Prompt scope is `private` or `group`; the latter requires
+`group_id`, and private omits it. The database's internal `user` scope and
+feed key `user:<ULID>` keep their existing spelling (B2).
+
+The previously unspecified bodies are pinned as follows (B2/B9/B10):
+
+- User metadata is `{id, username, display_name, account_kind, created_at,
+  disabled_at}`; display name and disabled time are explicit nullable values.
+  Devices expose `{id, name, created_at, last_seen_at, revoked_at, is_current}`;
+  last-seen/revoked times are nullable. No password/token hash is exposed.
+- Admin create takes `{username, password, display_name?, account_kind?}`,
+  defaults to member, and returns user metadata. Admin patch takes a nonempty
+  subset of `{display_name, password, disabled, account_kind}`. Omitted values
+  are unchanged; `display_name: null` clears it; password resets and disable
+  revoke devices per B9. Other optional fields reject explicit null.
+- Group create/rename take `{name}` and return
+  `{id, name, created_by, created_at}`; delete returns `{}`. Membership PUT
+  takes `{role}` and explicitly adds or changes an existing user. It returns
+  `{user_id, username, display_name, role, joined_at}`; list wraps these in
+  `{members}` and removal returns `{}`. `/me` and `/groups/join` group metadata
+  is `{group_id, name, role}`. Roles are owner/editor/viewer; permission and
+  last-owner checks remain transactional server responsibilities.
+- Admin invites take `{expires_in?}` for an account-only invite, or
+  `{group_id, role, expires_in?}` for a group invite. Responses expose
+  `{invite_token, expires_at, group_id?, role?}` once. Account-only invites
+  omit both union fields; group invites require both. HTTP invite roles are
+  editor/viewer; owner invites remain CLI-only. Tokens use 32 random bytes
+  as unpadded base64url, and clients construct the §8.5 join link.
+- Username input is 1–64 ASCII letters, digits, dots, underscores or hyphens,
+  beginning with a letter/digit; services lowercase it for uniqueness (B7).
+  Names are 1–255 Unicode scalars, display names 0–255, and new passwords at
+  least 12 scalars. Login/current-password strings are nonempty.
+- PUT additionally accepts optional `origin: edit|llm|restore`, default edit.
+  Revision metadata is `{rev, author_id, created_at, origin, scope, group_id?,
+  path}`; lists use `{revisions}`. Reading a revision adds `id` and `content`.
+  Origin additionally admits server-recorded move/delete. Historical scope
+  and path describe that revision, subject to B14 visibility; origin remains
+  an operation hint, separate from local assistant provenance (B27).
+- Issues are `{code, severity, location?}`. Codes map Core diagnostics, plus
+  `prompt.id_mismatch` for a content/URL-id mismatch. Locations discriminate
+  `front_matter` with one-based `line`/`column`, `body` with zero-based UTF-8
+  `byte_offset`, or `path` with zero-based nullable `segment`. Missing location
+  is omitted. A 422 has at least one error; 200 warnings contain only warnings.
+
+`MAX_PROMPT_BYTES = 256 KiB` bounds decoded prompt UTF-8, separately from the
+2 MiB HTTP request envelope and 16 MiB serialized pull response cap (B3).
+DTOs validate wire shape; shared content/path validators still produce the
+semantic 422 issues. Transport header/body limits are enforced by later server
+slices, not by an unbounded Foundation JSON encoder.
 
 ### 8.4 Server behaviour
 
@@ -162,18 +226,35 @@ both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
   - `mode: snapshot` returns every live prompt in the scope, and `cursor`
     becomes the scope head. The server picks it when:
     - the client's cursor is absent or 0
-    - the cursor is below `scope_floors`
+    - `cursor + 1 < floor_seq` (B18), so a completed snapshot at the highest
+      purged seq does not repeat forever
     - the cursor is above the scope head (a restored database)
     - `database_id` differs from the client's
-  - Delta pages return at most `SYNC_PAGE_MAX = 200` items. A response stops
-    early at `SYNC_PAGE_BYTES = 8 MiB` of content, a budget shared across all
-    scopes in the response, below `SYNC_RESPONSE_CAP`. Consecutive rows for one prompt
-    collapse to the latest. `has_more` says whether that scope continues.
+  - Delta pages return at most `SYNC_PAGE_MAX = 200` emitted items **per
+    response**, shared across scopes (B19). A response stops early at
+    `SYNC_PAGE_BYTES = 8 MiB` of serialized JSON, including metadata, and
+    asserts its final size ≤16 MiB (B3). Fair scope scheduling is deterministic.
+    Only safe same-prompt runs in the consumed interval collapse, preserving
+    their final kind. The cursor is the highest consumed seq, including empty
+    pages, and `has_more` says whether that scope continues (B19).
   - Snapshots page with the same limits, ordered by prompt id.
-    - Until the snapshot is complete, `cursor` is `snap:<last id>@<head>`
-      and items carry `seq = head`.
+    - Until the snapshot is complete, `cursor` is opaque `snap:…`, identifying
+      a frozen manifest/payload, its captured head and position (B17). It must
+      distinguish restarted manifests, rather than rely only on last-id/head.
+      Items carry `seq = head`. Every page reauthorizes access; expired or
+      restarted manifests use the 409 signaling above, never silently splice
+      a new snapshot into already collected pages.
     - The final page sets `cursor` to the head captured on page one.
     - Changes made meanwhile arrive as normal deltas after it.
+  - Scope keys are `user:<ULID>` or `group:<ULID>`; private scope metadata has
+    only key/kind, while group metadata requires group_id/name/role. Group
+    keys must agree with group_id. Each response has exactly one private
+    scope, unique scope keys, and disjoint, unique removed keys (B2). The
+    initial request uses explicit `database_id: null` and `cursors: {}`.
+    Cursors are nonempty opaque strings at the DTO boundary; only the server
+    parses them and can report malformed/expired ones (B2/B3/B17).
+  - Heads are durable high-water marks, independent of retained change rows
+    and never reset by retention (B18). Empty snapshot scopes can have head 0.
 - **Moves** write `move_out` in the old scope and `upsert` in the new one,
   in one transaction.
 - **Deleting a group** deletes its prompts. The group's scope disappears for
