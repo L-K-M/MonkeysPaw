@@ -19,6 +19,7 @@ final class MacLibraryEditorTests: XCTestCase {
     private var dialogs: [EditorTestDialog] = []
     private var terminationReplies: [Bool] = []
     private var launched: [URL] = []
+    private var immediateResponse: LibraryEditorResponse?
 
     override func setUpWithError() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -43,6 +44,11 @@ final class MacLibraryEditorTests: XCTestCase {
             clipboard: clipboard, editorDialog: { [weak self] _, dialog, respond in
                 let request = EditorTestDialog(dialog: dialog, respond: respond)
                 self?.dialogs.append(request)
+                if let response = self?.immediateResponse {
+                    self?.immediateResponse = nil
+                    request.cancelled = true
+                    respond(response)
+                }
                 return { request.cancelled = true }
             }, replyToTermination: { [weak self] in self?.terminationReplies.append($0) },
             setActivationPolicy: { _ in }, activateApplication: {},
@@ -98,7 +104,7 @@ final class MacLibraryEditorTests: XCTestCase {
         }
         work.drain()
         XCTAssertEqual(presentation.editorState.conflict?.kind, kind)
-        guard case .conflict(let conflict) = try dialog().dialog else { throw EditorTestError.noConflict }
+        guard case .conflict(let conflict, _) = try dialog().dialog else { throw EditorTestError.noConflict }
         XCTAssertEqual(conflict.kind, kind)
         return presentation
     }
@@ -183,7 +189,8 @@ final class MacLibraryEditorTests: XCTestCase {
 
     func testDeletionConflictKeepMineRecreates() throws {
         let presentation = try externalConflict(.deleted)
-        XCTAssertEqual(try dialog().dialog.responses, [.conflict(.keepMine), .conflict(.saveAsCopy), .conflict(.discard)])
+        XCTAssertEqual(try dialog().dialog.responses,
+            [.conflict(.keepMine), .conflict(.saveAsCopy), .conflict(.discard), .dismissConflict])
         try respond(.conflict(.keepMine))
         work.drain()
         XCTAssertEqual(try body(), "Mine")
@@ -273,6 +280,136 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertTrue(presentation.editorState.isDirty)
     }
 
+    func testVisibilityRestorationShowsAnAlreadyPublishedConflict() throws {
+        let presentation = try open()
+        presentation.edit("Mine")
+        let window = try window()
+        window.orderOut(nil) // Simulate hidden/minimized visibility without key-window waits.
+        try put("Theirs")
+        watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+        work.drain()
+        XCTAssertEqual(presentation.editorState.conflict?.kind, .modified)
+        XCTAssertFalse(dialogs.contains { !$0.cancelled })
+        window.orderFrontRegardless()
+        try XCTUnwrap(delegate.libraryWindow).windowDidDeminiaturize(
+            Notification(name: NSWindow.didDeminiaturizeNotification, object: window))
+        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected restored sheet") }
+        XCTAssertEqual(conflict.kind, .modified)
+    }
+
+    func testAppUnhideRetriesAnAlreadyPendingCloseDecision() throws {
+        let presentation = try open()
+        presentation.edit("Mine")
+        let window = try window()
+        window.orderOut(nil)
+        try XCTUnwrap(delegate.libraryWindow).requestClose()
+        XCTAssertNotNil(presentation.editorState.pendingDecision)
+        XCTAssertFalse(dialogs.contains { !$0.cancelled })
+        window.orderFrontRegardless()
+        delegate.applicationDidUnhide(Notification(name: NSApplication.didUnhideNotification))
+        guard case .decision(let decision, _) = try dialog().dialog else { return XCTFail("Expected restored decision") }
+        XCTAssertEqual(decision.action, .close)
+        try respond(.decision(.cancel))
+        XCTAssertTrue(window.isVisible)
+        XCTAssertTrue(presentation.editorState.isDirty)
+    }
+
+    func testPickerRevealUpgradesAnIdenticalPendingOpenWithoutDuplicatingTheDecision() throws {
+        try put("Second", at: "two.md")
+        let presentation = try open()
+        let target = try XCTUnwrap(presentation.snapshot.rows.first { $0.relativePath == "two.md" }?.selection)
+        presentation.edit("Mine")
+        presentation.selectPath("two.md")
+        let token = presentation.editorState.pendingDecision?.id
+        presentation.setFilter("one")
+        presentation.openPrompt(target)
+        XCTAssertEqual(presentation.editorState.pendingDecision?.id, token)
+        XCTAssertTrue(presentation.editorState.queuedActions.isEmpty)
+        try respond(.decision(.discard))
+        work.drain()
+        XCTAssertEqual(presentation.snapshot.filter, "")
+        XCTAssertEqual(presentation.snapshot.selectedSection, .all)
+        XCTAssertEqual(presentation.snapshot.selection, target)
+        XCTAssertEqual(presentation.editorState.source, "Second")
+    }
+
+    func testFailedConflictSaveCanBeCancelledToRepairTheDraft() throws {
+        let presentation = try open()
+        presentation.edit("---\ntitle: [broken\n---\nMine")
+        try put("Theirs")
+        watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+        work.drain()
+        try respond(.conflict(.keepMine))
+        work.drain()
+        XCTAssertTrue(try dialog().dialog.message.contains("Fix the validation errors"))
+        try respond(.dismissConflict)
+        XCTAssertNotNil(presentation.editorState.conflict)
+        XCTAssertTrue(presentation.editorState.isDirty)
+        presentation.edit("Fixed mine")
+        XCTAssertFalse(dialogs.contains { !$0.cancelled }, "Repairing the source must not reopen a modal on each keystroke")
+        presentation.save()
+        work.drain()
+        try respond(.conflict(.keepMine))
+        work.drain()
+        XCTAssertEqual(try body(), "Fixed mine")
+        XCTAssertNil(presentation.editorState.conflict)
+    }
+
+    func testCommandWUsesTheCloseGuardAndReopeningRetiresNativeInputAtTheSamePath() throws {
+        let presentation = try open()
+        presentation.edit("Mine")
+        let beforeClose = presentation.sourceRevision
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: 0, windowNumber: try window().windowNumber, context: nil,
+            characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: UInt16(kVK_ANSI_W)))
+        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow).handleKeyEvent(event))
+        try respond(.decision(.discard))
+        XCTAssertGreaterThan(presentation.sourceRevision, beforeClose)
+        delegate.showLibrary()
+        work.drain()
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "one.md")
+        XCTAssertGreaterThan(presentation.sourceRevision, beforeClose)
+        XCTAssertEqual(presentation.editorState.source, "Original")
+    }
+
+    func testModelDrivenSaveRewriteRetainsNativeUndoHistory() throws {
+        let presentation = try open()
+        let coordinator = LibrarySourceEditor.Coordinator(onEdit: presentation.edit)
+        let scroll = LibrarySourceEditor.makeScrollView(coordinator: coordinator)
+        let text = try XCTUnwrap(scroll.documentView as? LibrarySourceTextView)
+        scroll.frame = NSRect(x: 0, y: 0, width: 200, height: 100)
+        try window().contentView?.addSubview(scroll)
+        defer { scroll.removeFromSuperview(); coordinator.deactivate() }
+        coordinator.update(text, source: "Original", path: "one.md", revision: presentation.sourceRevision,
+            isEditable: true, onEdit: presentation.edit)
+        XCTAssertTrue(try window().makeFirstResponder(text))
+        let undo = try XCTUnwrap(text.undoManager)
+        // Separate the two native events explicitly; hosted tests do not need
+        // a run-loop/key-window wait merely to close automatic undo groups.
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        text.insertText(" plus", replacementRange: NSRange(location: 8, length: 0))
+        text.breakUndoCoalescing()
+        undo.endUndoGrouping()
+        presentation.save()
+        work.drain()
+        let saved = try XCTUnwrap(presentation.editorState.source)
+        undo.beginUndoGrouping()
+        coordinator.update(text, source: saved, path: "one.md", revision: presentation.sourceRevision,
+            isEditable: true, onEdit: presentation.edit)
+        undo.endUndoGrouping()
+        XCTAssertEqual(text.string, saved)
+        XCTAssertEqual(text.selectedRange(), NSRange(location: (saved as NSString).length, length: 0),
+            "The injected header must not move the body caret into YAML")
+        XCTAssertTrue(text.undoManager?.canUndo == true)
+        text.undoManager?.undo()
+        XCTAssertEqual(text.string, "Original plus", "Undo first removes the model-driven normalization")
+        XCTAssertTrue(text.undoManager?.canUndo == true, "The earlier native typing action remains undoable")
+        text.undoManager?.undo()
+        XCTAssertEqual(text.string, "Original")
+        XCTAssertEqual(presentation.editorState.source, "Original")
+    }
+
     func testQuitCancelThenSaveUsesTerminateLaterAndRepliesAfterSave() throws {
         let presentation = try open()
         presentation.edit("Mine")
@@ -296,8 +433,9 @@ final class MacLibraryEditorTests: XCTestCase {
     func testQuitDiscardDoesNotWriteAndInlineDialogResponseDefersTheReply() throws {
         let presentation = try open()
         presentation.edit("Mine")
+        immediateResponse = .decision(.discard)
         XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateLater)
-        try respond(.decision(.discard))
+        XCTAssertTrue(terminationReplies.isEmpty, "Even an inline sheet answer must wait until terminateLater is returned")
         drainTerminationReply()
         XCTAssertEqual(terminationReplies, [true])
         XCTAssertEqual(try body(), "Original")
@@ -435,6 +573,8 @@ final class MacLibraryEditorTests: XCTestCase {
             replacementRange: NSRange(location: 8, length: 0))
         XCTAssertTrue(text.hasMarkedText())
         let marked = text.string
+        XCTAssertEqual(presentation.editorState.source, marked, "The dirty guard sees composition before it is committed")
+        XCTAssertTrue(presentation.editorState.isDirty)
         coordinator.update(text, source: "A stale publication", path: "one.md", isEditable: true, onEdit: presentation.edit)
         XCTAssertEqual(text.string, marked)
         XCTAssertTrue(text.hasMarkedText())

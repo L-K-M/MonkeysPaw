@@ -161,7 +161,7 @@ struct LibraryView: View {
         VStack(alignment: .leading, spacing: 8) {
             LibrarySourceEditor(source: presentation.editorState.source ?? "",
                 path: presentation.editorState.prompt?.relativePath,
-                revision: presentation.bindingRevision,
+                revision: presentation.sourceRevision,
                 isEditable: presentation.libraryAvailable && presentation.editorState.canEdit,
                 onEdit: presentation.edit)
             ScrollView {

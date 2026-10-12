@@ -16,10 +16,11 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     private var cancelDialog: (() -> Void)?
     private var dialogRevision: UInt64 = 0
     private var closeRequested = false
+    private var dismissedConflict: EditorConflict?
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, activation: WindowActivationCoordinator,
-         presentDialog: @escaping DialogPresenter = LibraryEditorDialog.present,
+         presentDialog: @escaping DialogPresenter = LibraryWindowController.presentEditorDialog,
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
         self.activation = activation
@@ -35,6 +36,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool) {
         guard !isTornDown else { return }
         endDialog()
+        dismissedConflict = nil
         closeRequested = false
         presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available)
     }
@@ -46,6 +48,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
             self.window = window
+            if window.isMiniaturized { window.deminiaturize(nil) }
             self.observeKeys()
             self.activation.show(window)
             self.updateDialog()
@@ -71,6 +74,12 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         removeKeyMonitor()
     }
 
+    func windowDidDeminiaturize(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
+    func windowDidBecomeKey(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
+    func windowDidChangeOcclusionState(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
+
+    func refreshDialogsAfterVisibilityChange() { updateDialog() }
+
     func requestClose() {
         guard !isTornDown, !closeRequested else { return }
         closeRequested = true
@@ -85,14 +94,16 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         mainThread.run { [weak self] in
             guard let self, !self.isTornDown, let window = self.window, window.isVisible else { return }
             let state = self.presentation.editorState
+            if state.conflict == nil || state.status == .saving { self.dismissedConflict = nil }
             let desired: LibraryEditorDialog?
             let awaitingConflict = state.conflict.map {
                 $0.kind == .modified && $0.theirsSource == nil && $0.readOnlyReason == nil && $0.failure == nil
             } ?? false
             if state.status == .saving || state.status == .loading || state.conflict?.isLoading == true || awaitingConflict {
                 desired = nil
-            } else if let conflict = state.conflict { desired = .conflict(conflict) }
-            else if let decision = state.pendingDecision { desired = .decision(decision) }
+            } else if let conflict = state.conflict, conflict != self.dismissedConflict {
+                desired = .conflict(conflict, status: state.status)
+            } else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status) }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
             self.endDialog()
@@ -107,10 +118,15 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                     self.cancelDialog = nil
                     self.dialogRevision &+= 1
                     switch (desired, response) {
-                    case (.decision(let decision), .decision(let choice)):
+                    case (.decision(let decision, _), .decision(let choice)):
                         self.presentation.editor.resolveDecision(choice, id: decision.id)
                     case (.conflict, .conflict(let choice)):
                         self.presentation.editor.resolveConflict(choice)
+                    case (.conflict(let conflict, _), .dismissConflict):
+                        self.dismissedConflict = conflict
+                        if let decision = self.presentation.editor.state.pendingDecision {
+                            self.presentation.editor.resolveDecision(.cancel, id: decision.id)
+                        }
                     default: break
                     }
                 }
@@ -145,6 +161,11 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             presentation.save()
             return true
         }
+        if flags == [.command],
+           event.keyCode == UInt16(kVK_ANSI_W) || event.charactersIgnoringModifiers?.lowercased() == "w" {
+            requestClose()
+            return true
+        }
         if flags == [.command, .shift],
            event.keyCode == UInt16(kVK_ANSI_F) || event.charactersIgnoringModifiers?.lowercased() == "f" {
             presentation.toggleFavorite()
@@ -169,6 +190,30 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     private func removeKeyMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+    }
+
+    static func presentEditorDialog(in window: NSWindow, dialog: LibraryEditorDialog,
+                                    done: @escaping (LibraryEditorResponse) -> Void) -> (() -> Void) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = dialog.title
+        alert.informativeText = dialog.message
+        let responses = dialog.responses
+        for response in responses {
+            let button = alert.addButton(withTitle: response.title)
+            // Overwriting an external version must be an explicit choice.
+            button.keyEquivalent = response == .decision(.cancel) || response == .dismissConflict ? "\u{1b}" : ""
+            button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard)
+        }
+        alert.beginSheetModal(for: window) { response in
+            let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            guard responses.indices.contains(index) else { return }
+            done(responses[index])
+        }
+        return {
+            guard alert.window.sheetParent === window else { return }
+            window.endSheet(alert.window, returnCode: .cancel)
+        }
     }
 
     private func makeWindow() -> NSWindow {

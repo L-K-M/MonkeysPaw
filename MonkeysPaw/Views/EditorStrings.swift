@@ -18,19 +18,29 @@ enum EditorStrings {
     static func status(_ state: EditorState) -> String {
         let message: String
         switch state.status {
-        case .idle: message = state.isDirty ? "Unsaved edits" : ""
+        case .idle:
+            if let conflict = state.conflict {
+                message = conflict.kind == .deleted
+                    ? "The file was deleted on disk. Save to choose how to keep your draft."
+                    : "The file changed on disk. Save to reopen the conflict choices."
+            } else { message = state.isDirty ? "Unsaved edits" : "" }
         case .loading: message = "Loading…"
         case .saving: message = "Saving…"
         case .saved: message = state.isDirty ? "Saved; newer edits are unsaved." : "Saved"
-        case .failed(let failure):
-            switch failure {
-            case .invalid: message = "Could not save. Fix the validation errors below the source."
-            case .readOnly(let reason): message = readOnly(reason)
-            case .editing(let failure): message = editingFailure(failure)
-            }
+        case .failed(let error): message = failure(error)
         }
         guard state.historyMaintenanceFailed else { return message }
-        return message + " The prompt was saved, but its history needs maintenance."
+        let separator = message.hasSuffix(".") || message.hasSuffix("…") ? " " : ". "
+        return message.isEmpty ? "The prompt was saved, but its history needs maintenance."
+            : message + separator + "History needs maintenance."
+    }
+
+    static func failure(_ error: EditorFailure) -> String {
+        switch error {
+        case .invalid: return "Could not save. Fix the validation errors in Edit."
+        case .readOnly(let reason): return readOnly(reason)
+        case .editing(let failure): return editingFailure(failure)
+        }
     }
 
     static func editingFailure(_ failure: PromptEditingFailure) -> String {

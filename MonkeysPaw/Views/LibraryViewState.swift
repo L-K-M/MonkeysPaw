@@ -22,6 +22,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var activeLibraryPath: String
     @Published private(set) var focusRevision: UInt64 = 0
     @Published private(set) var editorState: EditorState
+    @Published private(set) var sourceRevision: UInt64 = 0
     @Published var editorTab = EditorTab.edit
     var onEditorChange: (() -> Void)?
     private(set) var model: LibraryBrowserModel
@@ -30,11 +31,12 @@ final class LibraryViewState: ObservableObject {
     private let revealLibrary: () -> Void
     private var observer: UUID?
     private var editorObserver: UUID?
-    private(set) var bindingRevision: UInt64 = 0
+    private var bindingRevision: UInt64 = 0
     private var isActive = true
     private var copySelection: LibraryPromptSelection?
     private var isClosingEditor = false
     private var isPresented = false
+    private var revealAfterOpen: [LibraryPromptSelection] = []
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, revealLibrary: @escaping () -> Void) {
@@ -71,6 +73,8 @@ final class LibraryViewState: ObservableObject {
         guard isActive else { return }
         detachObservers()
         bindingRevision &+= 1
+        sourceRevision &+= 1
+        revealAfterOpen = []
         self.model = model
         self.editor = editor
         editorState = editor.state
@@ -89,6 +93,8 @@ final class LibraryViewState: ObservableObject {
         guard isActive else { return }
         isActive = false
         bindingRevision &+= 1
+        sourceRevision &+= 1
+        revealAfterOpen = []
         detachObservers()
         libraryAvailable = false
         favoriteOutcome = nil
@@ -139,13 +145,19 @@ final class LibraryViewState: ObservableObject {
 
     private func select(_ selection: LibraryPromptSelection, context: OpenContext = .library) {
         guard isActive else { return }
+        // Upgrade a pending Library selection when Picker requests the same
+        // target, without asking the user to cancel two identical decisions.
+        if context == .picker, !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
         let action = EditorDiscardAction.open(selection)
         guard editor.state.pendingDecision?.action != action,
               !editor.state.queuedActions.contains(action) else { return }
         let revision = bindingRevision
         editor.request(action) { [weak self] result in
-            guard let self, self.isActive, self.bindingRevision == revision, result == .allowed else { return }
-            if context == .picker {
+            guard let self, self.isActive, self.bindingRevision == revision else { return }
+            let reveal = self.revealAfterOpen.contains(selection)
+            self.revealAfterOpen.removeAll { $0 == selection }
+            guard result == .allowed else { return }
+            if reveal {
                 self.model.setFilter("")
                 self.model.selectSection(.all)
             }
@@ -231,6 +243,7 @@ final class LibraryViewState: ObservableObject {
                 guard let self, let editor, self.isActive,
                       self.bindingRevision == revision, self.editor === editor else { return }
                 let previousPrompt = self.editorState.prompt
+                if previousPrompt?.relativePath != state.prompt?.relativePath { self.sourceRevision &+= 1 }
                 let adoptedCopy = state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
                 self.refreshPreview()

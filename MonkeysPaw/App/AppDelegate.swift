@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
          backgroundWork: BackgroundWork = DispatchBackgroundWork(),
          clipboard: Clipboard = PasteboardClipboard(),
-         editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryEditorDialog.present,
+         editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
          replyToTermination: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) },
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
@@ -234,6 +234,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shortcutsSettingsModel?.refresh()
         generalSettingsModel?.refresh()
         onboardingModel?.refresh()
+        libraryWindow?.refreshDialogsAfterVisibilityChange()
+    }
+
+    func applicationDidUnhide(_ notification: Notification) {
+        guard !isShutDown else { return }
+        libraryWindow?.refreshDialogsAfterVisibilityChange()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
