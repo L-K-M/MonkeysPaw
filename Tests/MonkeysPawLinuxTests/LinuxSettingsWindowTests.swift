@@ -43,6 +43,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let window = try openSettingsAction()
         let general = environment.generalSettingsModel
         let shortcuts = environment.shortcutsSettingsModel
+        let rememberedValues = environment.rememberedValuesSettingsModel
         let tabs = try settingsWidget("settings-tabs", in: window)
         XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 2)
         for (index, title) in [LinuxStrings.generalTab, LinuxStrings.shortcutsTab].enumerated() {
@@ -58,6 +59,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertEqual(try openSettingsAction(), window)
         XCTAssertTrue(environment.generalSettingsModel === general)
         XCTAssertTrue(environment.shortcutsSettingsModel === shortcuts)
+        XCTAssertTrue(environment.rememberedValuesSettingsModel === rememberedValues)
         gtk_window_close(mp_window(window))
 
         let files = try RootedFileStore(root: defaultFolder)
@@ -261,6 +263,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         weak var lifetime = environment
         let general = environment.generalSettingsModel
         let shortcuts = environment.shortcutsSettingsModel
+        let rememberedValues = environment.rememberedValuesSettingsModel
         environment.shutdown()
         environment = nil
         drainUI()
@@ -269,7 +272,11 @@ final class LinuxSettingsWindowTests: XCTestCase {
         // Retained presentation instances remain safe without their root.
         general.revealFolder()
         shortcuts.refresh()
+        rememberedValues.requestForgetAll()
         drainUI()
+        rememberedValues.confirmForgetAll()
+        drainUI()
+        XCTAssertEqual(rememberedValues.state.lastOutcome, .fileStoreFailure(.ioFailure))
         XCTAssertTrue(launched.isEmpty)
     }
 

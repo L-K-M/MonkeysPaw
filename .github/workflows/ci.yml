@@ -101,6 +101,7 @@ jobs:
             RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring
             RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce
             ValuesStoreFileTests/testGlobalResetRecoversUnreadableRegularFileWithoutReadingIt
+            LinuxForgetControlsTests/testUnreadableValuesShowTypedFailuresAndRecover
             LinuxLibrarySwitchTests/testUnreadableTargetIsRejectedWithoutStoppingTheOldWatcher
             LinuxLibrarySwitchTests/testSettingsWriteFailureKeepsNewGraphForTheSessionAndReportsTheError
             FileLogSinkTests/testUnwritableDirectoryReportsOnceAndOtherSinksKeepReceivingRecords
