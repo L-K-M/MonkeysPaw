@@ -138,6 +138,6 @@ private final class OnboardingEntropy: EntropySource {
 
     func bytes(count: Int) throws -> [UInt8] {
         requests += 1
-        return Array(repeating: UInt8(requests), count: count)
+        return Array(repeating: UInt8(truncatingIfNeeded: requests), count: count)
     }
 }

@@ -29,7 +29,7 @@ public final class LibraryStatusModel {
         state = initialState
         self.mainThread = mainThread
         self.notifyStartupUnavailable = notifyStartupUnavailable
-        mainThread.run { self.requestStartupNotificationIfNeeded() }
+        mainThread.run { [weak self] in self?.requestStartupNotificationIfNeeded() }
     }
 
     /// Independent subscribers receive real changes through MainThread.
@@ -45,8 +45,9 @@ public final class LibraryStatusModel {
         observers.removeValue(forKey: token)
     }
 
-    /// Runtime root loss is terminal for this process, even if a later graph
-    /// reports availability. Restoration requires a restart, not a rescan.
+    /// Runtime root loss is terminal for this graph, even if it later reports
+    /// availability: restoring the folder needs a restart, not a rescan. Only
+    /// libraryReplaced(available:) after a folder switch supersedes it.
     public func update(_ next: State) {
         mainThread.run {
             guard self.state != .lostWhileRunning, self.state != next else { return }
@@ -54,6 +55,18 @@ public final class LibraryStatusModel {
             let notify = self.takeStartupNotificationRequest()
             for observer in Array(self.observers.values) { observer(next) }
             if notify { self.notifyStartupUnavailable() }
+        }
+    }
+
+    /// A folder switch installs a new graph, so it supersedes runtime loss.
+    /// A replacement that cannot start reads as unavailable (label only);
+    /// startup recovery and its notification belong to app launch.
+    public func libraryReplaced(available: Bool) {
+        mainThread.run {
+            let next: State = available ? .available : .lostWhileRunning
+            guard self.state != next else { return }
+            self.state = next
+            for observer in Array(self.observers.values) { observer(next) }
         }
     }
 

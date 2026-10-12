@@ -46,6 +46,25 @@ final class LibraryStatusModelTests: XCTestCase {
         XCTAssertTrue(restarted.libraryAvailable)
     }
 
+    func testReplacingTheGraphClearsRuntimeLossWithoutStartupRecovery() {
+        let main = FakeMainThread()
+        let notifier = FakeLibraryAvailabilityNotifier(main: main)
+        let model = LibraryStatusModel(initialState: .available, mainThread: main,
+            notifyStartupUnavailable: notifier.libraryUnavailable)
+        var seen: [LibraryStatusModel.State] = []
+        model.addObserver { seen.append($0) }
+        model.update(.lostWhileRunning)
+
+        // A switch to another folder reports the new graph's health.
+        model.libraryReplaced(available: true)
+        XCTAssertTrue(model.libraryAvailable)
+        model.libraryReplaced(available: false)
+        XCTAssertEqual(model.state, .lostWhileRunning)
+        XCTAssertFalse(model.needsLibraryFolderStep)
+        XCTAssertEqual(seen, [.lostWhileRunning, .available, .lostWhileRunning])
+        XCTAssertEqual(notifier.requests, 0)
+    }
+
     func testIndependentObserversCanRemoveThemselvesAndEachOtherOutsideNotification() {
         for mode in [FakeCompletionMode.immediate, .deferred] {
             let main = FakeMainThread()

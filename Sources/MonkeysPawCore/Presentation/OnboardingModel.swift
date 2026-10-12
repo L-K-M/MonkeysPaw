@@ -114,6 +114,8 @@ public final class OnboardingModel {
                    GeneralSettingsModel.sameFolder(path, self.library.activeLibraryPath),
                    GeneralSettingsModel.sameFolder(saved, path) {
                     self.lastSwitchMessage = nil
+                    self.seedSummary = nil
+                    self.seedingFailure = nil
                     self.completeFolder()
                     return
                 }
@@ -169,6 +171,9 @@ public final class OnboardingModel {
     }
 
     private func switchLibrary(to path: String?) {
+        // A recovery folder step starts fresh: no stale first-run seed result.
+        seedSummary = nil
+        seedingFailure = nil
         let outcome = library.switchLibrary(to: path)
         lastSwitchMessage = outcome == .switched ? nil : outcome
         guard outcome == .switched else { return }

@@ -204,6 +204,28 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(try h.location.graph.files.text(at: "README.md"), "Keep")
     }
 
+    func testRecoveryFolderIntentClearsAnEarlierSeedResult() throws {
+        let h = OnboardingHarness()
+        h.completeInitialSteps()
+        let model = h.makeModel()
+        model.acceptSeeds()
+        XCTAssertNotNil(model.state.seedSummary)
+
+        // A later recovery step must not keep showing the first-run result.
+        h.status.update(.unavailableAtStartup)
+        XCTAssertEqual(model.state.step, .libraryFolder)
+        model.useDefaultFolder()
+        XCTAssertNil(model.state.seedSummary)
+        XCTAssertNil(model.state.seedFailure)
+    }
+
+    func testSeedSummaryCopyUsesSingularForOne() {
+        XCTAssertEqual(OnboardingStrings.seedSummary(SeedSummary(seededCount: 1, skippedExistingCount: 1)),
+            "You added 1 starter prompt and skipped 1 occupied destination.")
+        XCTAssertEqual(OnboardingStrings.seedSummary(SeedSummary(seededCount: 2, skippedExistingCount: 0)),
+            "You added 2 starter prompts and skipped 0 occupied destinations.")
+    }
+
     func testPromptArrivingAfterOfferMakesSeedServiceSkipAllCopying() throws {
         let h = OnboardingHarness()
         h.completeInitialSteps()
@@ -519,7 +541,7 @@ final class OnboardingModelTests: XCTestCase {
         let h = OnboardingHarness()
         h.completeInitialSteps()
         var model: OnboardingModel? = h.makeModel()
-        weak let released = model
+        weak var released = model
         h.main.mode = .deferred
         model?.acceptSeeds()
         model = nil

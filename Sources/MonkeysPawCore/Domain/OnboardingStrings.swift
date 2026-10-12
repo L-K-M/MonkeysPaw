@@ -17,7 +17,9 @@ public enum OnboardingStrings {
     public static let restartForLibrary = "Your library is unavailable. Restart Monkey's Paw to restore it."
 
     public static func seedSummary(_ summary: SeedSummary) -> String {
-        "You added \(summary.seededCount) starter prompts and skipped \(summary.skippedExistingCount) occupied destinations."
+        let added = summary.seededCount == 1 ? "starter prompt" : "starter prompts"
+        let skipped = summary.skippedExistingCount == 1 ? "occupied destination" : "occupied destinations"
+        return "You added \(summary.seededCount) \(added) and skipped \(summary.skippedExistingCount) \(skipped)."
     }
 
     public static func seedFailure(_ failure: SeedFailure) -> String {

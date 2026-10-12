@@ -189,13 +189,14 @@ Footers differ per OS:
    a non-empty library, so the next run seeds nothing and does not fill gaps.
    `OnboardingModel` offers seeds only when `SettingsModel.needsSeedOffer` is
    true, `LibraryService.entries()` is empty, the active graph is available,
-   and an injected predicate says no sync server is configured (false until
-   M6). Accepting or declining first calls `markSeedsOffered`; a failed record
+   and an injected `hasConfiguredSyncServer` predicate returns false (it
+   always does until M6 adds servers). Accepting or declining first calls `markSeedsOffered`; a failed record
    copies nothing and leaves the step pending. Accepting then invokes the
    active graph's `SeedService.seedIfEmpty()` through an injected service
    closure. `SeedSummary` counts and typed, sanitized `SeedFailure` values
-   are presentation state. A copy failure, even before the first create,
-   never repeats the recorded offer after a restart. A prompt arriving after
+   are presentation state. Once the offer is recorded the step is complete,
+   even if copying then fails, so the offer never repeats after a restart.
+   A later recovery folder step clears the shown result. A prompt arriving after
    the offer can make the service return zero for both counts.
 5. A one-screen tour of the picker and fill form.
 
@@ -238,7 +239,7 @@ settings use the default library.
 | State | Behaviour |
 |---|---|
 | Library folder missing or unreadable at start | `LibraryStatusModel.unavailableAtStartup` requests one path-free notification per process through composition's `LibraryAvailabilityNotifier`. `OnboardingModel` reopens the library step for this session, without clearing the persisted completion flag; only a successful folder completion clears the recovery requirement. Read-only settings still suppress onboarding and show their error. The tray menu says "Library unavailable". |
-| Folder disappears, becomes a non-directory or cannot be enumerated while running | Root unavailability as defined in §5.5 stops the watcher; the picker shows a banner and the index stays in memory read-only. `LibraryStatusModel.lostWhileRunning` changes the menu/tray label to "Library unavailable", with no startup notification or reopened folder step. Root loss emits no per-file deletions. Restoration requires a restart; this status is terminal for the process. |
+| Folder disappears, becomes a non-directory or cannot be enumerated while running | Root unavailability as defined in §5.5 stops the watcher; the picker shows a banner and the index stays in memory read-only. `LibraryStatusModel.lostWhileRunning` changes the menu/tray label to "Library unavailable", with no startup notification or reopened folder step. Root loss emits no per-file deletions. Restoration of that folder requires a restart; only a switch to another folder (`LibraryStatusModel.libraryReplaced`) supersedes the status. |
 | Save fails (permissions, disk full) | Typed error in the editor. The draft is kept; Retry is offered. |
 | Watcher error or event overflow | One path-free warning per error/overflow streak, defined in §4.6. Each delivered native batch triggers one coalesced full rescan, idle-coalesced on Linux. Linux GIO hides inotify overflow (§4.6). |
 | Picker: no matches | "No prompts match '<query>'" with actions: create a prompt titled `<query>`, write it with the assistant (once configured), open the library folder. |
