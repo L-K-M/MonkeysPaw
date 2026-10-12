@@ -14,6 +14,20 @@
 | Android keyboard | Picker-only: it reads the field only to choose single- or multi-line insertion, never stores or sends what is typed, and offers no prompts in password fields. The system warning at enable time is explained beforehand. |
 | Android secrets | AES-256-GCM key in AndroidKeyStore (StrongBox when available); nothing in plain SharedPreferences. |
 
+`SecretStore` reports `keychain`, `secretService`, `environment` or `file`
+to the UI without displaying a stored value. Effective reads follow D9;
+persisted reads bypass the read-only environment tier. Writes never edit
+environment variables; deletion removes persisted account copies and leaves
+the environment untouched ([§19 B23](19-m4-m5-decisions.md)). Secret values,
+drafts, resolved connections and HTTP envelopes have redacted descriptions.
+
+For Keychain/Secret Service, scans of repository, config, data, logs and
+temporary directories must find zero copies of a saved key. The Linux file
+tier instead permits exactly the named atomic 0600 secrets file, visibly
+labelled "unencrypted", and zero other copies
+([§19 B29](19-m4-m5-decisions.md)). Provider settings contain only a secret
+reference; the file fallback is never a settings file.
+
 `SECURITY.md` lists what is not protected:
 
 - Providers see what you send.
