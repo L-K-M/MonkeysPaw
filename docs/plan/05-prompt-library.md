@@ -48,11 +48,9 @@ with `PRIVATE_FILE_MODE = 0600` on the temporary file before rename.
 `record(identity:values:)` merges supplied fields, last-write-wins per field,
 preserving all other fields and identities. An empty supplied map is a no-op.
 Missing file or identity reads as an empty map. Corrupt, unsupported or
-over-cap state fails with `LibraryError.operationFailed`, without reset,
-truncation or pruning; recovery currently requires renaming
-`<data>/values.json` aside (for example to `values.json.corrupt`, keeping the
-rejected state inspectable) rather than deleting it; the M2e notes below
-document that path. Encoding above
+over-cap state fails with `LibraryError.operationFailed`, without automatic
+reset, truncation or pruning; the explicit "Forget all values" recovery action
+replaces that state with an empty version-1 document (§5.4). Encoding above
 `Limits.valuesFileCapBytes = 1,048,576`
 bytes fails before writing. Typed FileStore errors remain typed; other errors
 are sanitized, and values are never logged. One NSLock serializes each
@@ -461,9 +459,10 @@ through its injected `PanelWindow`
 and retains §4.6's guarded focus restoration. This prevents a pending show from
 reopening a closed picker. Blur hiding belongs to the platform
 timer, while a later open retains the same values. Drafts survive closing and
-reopening until delivery or model release at quit; delivery clears only that
-identity's draft. Closed forms and canceled fieldless snapshot requests ignore
-late callbacks. Tab/Shift-Tab follow field order and wrap within the fields.
+reopening until delivery, an explicit forget action or model release at quit;
+delivery clears only that identity's draft. Closed forms and canceled
+fieldless snapshot requests ignore late callbacks. Tab/Shift-Tab follow field
+order and wrap within the fields.
 The picker carries terminal/copy mode into the form's `preferredMode`; explicit
 form delivery accepts standard paste, terminal paste or copy-only.
 
@@ -481,11 +480,38 @@ plumbing and production composition are outside M2e. Merge also retains fields
 removed or renamed in a document; `remember: false` prevents prefill/new records
 without deleting previous text. All retained fields, including these stale
 fields, count against `Limits.valuesFileCapBytes`. No automatic pruning or
-removal API ships here. Until `remove(identity:)` and a clear-all API arrive,
-rename `<data>/values.json` aside (for example to `values.json.corrupt`) to
-reset remembered values while keeping rejected state inspectable; deleting the
-file outright is equivalent when inspection is unnecessary. The versioned map
-format is forward-compatible with those additions.
+reset occurs. "Forget values" calls `ValuesStore.remove(identity:)` through
+`FillService.forgetValues(for:)`, removing that prompt's entire map, including
+stale fields, and discarding its session draft. Other identities and their
+fields stay intact; an absent identity is a no-op. This action reads and
+validates the existing document and fails closed on corrupt, unsupported or
+over-cap state.
+
+"Forget all values" calls `ValuesStore.removeAll()` through
+`FillService.forgetAllValues()`, atomically replacing `values.json` with
+`{"values":{},"version":1}` via `writePrivate` at mode 0600 and clearing all
+session drafts. Rewriting keeps the versioned format and the existing private
+atomic-write contract, including when the file was missing. This is the
+documented reset for corrupt, unsupported, over-cap or unreadable regular
+files: it deliberately skips reading the previous contents. Rooted FileStore
+checks still reject symlinks, nonregular files and an unsafe data root. To
+inspect rejected state first, rename the file aside before using the action.
+Write failures remain typed and preserve the previous file.
+
+Both intents live on `PickerModel`, ready for the later picker and Settings
+controls. After persistence succeeds, a matching open fill form stays open
+and resets every field, including fields with `remember: false`, to its
+declared default in the held document. Its preview updates with the same builtin
+snapshot, field focus and delivery mode; no clipboard write, delivery or usage
+learning occurs.
+Closing that reset form does not create a new draft until you edit a field,
+so the next form open uses current defaults even if the prompt changed.
+Failures expose a sanitized persistence error and keep drafts and open fields;
+success clears the error and persistence
+warnings. Forgetting is rejected while delivery is in progress, so its pending
+learning cannot restore the values just cleared. Global forgetting also works
+while the panel is closed. A successful forget cancels a fieldless use still
+waiting for its builtin snapshot; an open form keeps its pending snapshot.
 
 `ValuesStore.migrateKey(from:to:)` moves the whole field map atomically under
 the store lock. Each store operation holds that lock independently;

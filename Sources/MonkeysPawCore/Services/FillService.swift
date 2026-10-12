@@ -91,4 +91,14 @@ public final class FillService: @unchecked Sendable {
         }
         try values.record(identity: identity, values: remembered)
     }
+
+    /// Forget this identity's whole remembered map, propagating store errors.
+    public func forgetValues(for identity: PromptIdentity) throws {
+        try values.remove(identity: identity)
+    }
+
+    /// Explicitly reset every remembered map, including rejected or unreadable state.
+    public func forgetAllValues() throws {
+        try values.removeAll()
+    }
 }

@@ -5,7 +5,8 @@ import Foundation
 /// Empty delivered strings are remembered verbatim, repeating the last choice.
 /// Every operation, including read/merge/private replacement, holds one lock.
 /// Share one instance per app-data root, including identity migration callers.
-/// Corrupt, unsupported and over-cap state fails closed without pruning/reset.
+/// Read/modify operations fail closed on corrupt, unsupported or over-cap state.
+/// Explicit removeAll() discards existing state without requiring it to decode.
 public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     private struct Payload: Codable {
         var values: [String: [String: String]]
@@ -37,6 +38,26 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
         }
     }
 
+    /// Remove the whole identity map, including fields no longer in a prompt.
+    /// Missing identities are a no-op; rejected state remains untouched.
+    public func remove(identity: PromptIdentity) throws {
+        try locked {
+            let key = try identity.storageKey
+            var payload = try read()
+            guard payload.values.removeValue(forKey: key) != nil else { return }
+            try write(payload)
+        }
+    }
+
+    /// values.json format version written by every replacement and accepted on read.
+    private static let formatVersion = 1
+
+    /// Explicit recovery also works when existing state cannot be read or decoded.
+    /// The private writer retains the driver's rooted path and file checks.
+    public func removeAll() throws {
+        try locked { try write(Payload(values: [:], version: Self.formatVersion)) }
+    }
+
     @discardableResult
     public func migrateKey(from source: PromptIdentity, to destination: PromptIdentity) throws -> PromptKeyMigration {
         try locked {
@@ -55,10 +76,10 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     private func read() throws -> Payload {
         let bytes: Data
         do { bytes = try files.read(at: path) }
-        catch FileStoreError.notFound { return Payload(values: [:], version: 1) }
+        catch FileStoreError.notFound { return Payload(values: [:], version: Self.formatVersion) }
         guard bytes.count <= Limits.valuesFileCapBytes else { throw LibraryError.operationFailed }
         let payload = try JSONDecoder().decode(Payload.self, from: bytes)
-        guard payload.version == 1 else { throw LibraryError.operationFailed }
+        guard payload.version == Self.formatVersion else { throw LibraryError.operationFailed }
         return payload
     }
 

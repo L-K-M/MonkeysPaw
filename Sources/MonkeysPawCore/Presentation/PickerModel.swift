@@ -74,6 +74,10 @@ public final class PickerModel: @unchecked Sendable {
     /// Survives reopening so delivery persistence failures remain visible;
     /// cleared when the next use starts.
     public private(set) var persistenceWarnings: [PromptPersistenceWarning] = []
+    /// Explicit forget failures use the same onChange hook and remain visible
+    /// until a forget succeeds. Only sanitized FileStoreError/LibraryError
+    /// values are exposed; delivery warnings keep their existing enum.
+    public private(set) var forgetValuesError: Error?
     public private(set) var isResolvingBuiltins = false
     /// Composition supplies folder availability; cached prompts remain usable.
     public var libraryAvailable = true { didSet { onChange?() } }
@@ -184,6 +188,39 @@ public final class PickerModel: @unchecked Sendable {
         onChange?()
     }
 
+    /// Forget the open form's identity, even if index refresh moved selection;
+    /// otherwise use the current selection. Failure retains every draft/value.
+    public func forgetSelectedValues() {
+        guard !rejectForgetDuringDelivery() else { return }
+        let model = state == .fill ? fillModel : nil
+        let identity = state == .fill ? model?.identity : selectedEntry?.identity
+        guard let identity else {
+            failForgetting(LibraryError.invalidIdentity)
+            return
+        }
+
+        do { try fill.forgetValues(for: identity) }
+        catch {
+            failForgetting(error)
+            return
+        }
+        drafts[identity] = nil
+        completeForgetting(reset: model)
+    }
+
+    /// Also available to Settings while the panel is closed. Session drafts
+    /// are invalidated only after the persisted reset succeeds.
+    public func forgetAllValues() {
+        guard !rejectForgetDuringDelivery() else { return }
+        do { try fill.forgetAllValues() }
+        catch {
+            failForgetting(error)
+            return
+        }
+        drafts = [:]
+        completeForgetting(reset: state == .fill ? fillModel : nil)
+    }
+
     /// Consume before handling: a handler can publish another change without
     /// dismissing, and must not receive this intent again. Clearing is silent.
     public func takeRequestedIntent() -> Intent? {
@@ -219,6 +256,33 @@ public final class PickerModel: @unchecked Sendable {
     private var selectedEntry: LibraryEntry? {
         guard let selectionIndex, matches.indices.contains(selectionIndex) else { return nil }
         return matches[selectionIndex].entry
+    }
+
+    /// Returns true and already reports `forgetValuesError` (with onChange)
+    /// when a delivery is in flight; callers must not report it again.
+    private func rejectForgetDuringDelivery() -> Bool {
+        guard state == .delivering || fillModel?.state == .delivering else { return false }
+        // Pending learning would restore the delivered values after a reset.
+        failForgetting(LibraryError.operationFailed)
+        return true
+    }
+
+    private func failForgetting(_ error: Error) {
+        if let error = error as? FileStoreError { forgetValuesError = error }
+        else if let error = error as? LibraryError { forgetValuesError = error }
+        else { forgetValuesError = LibraryError.operationFailed }
+        onChange?()
+    }
+
+    private func completeForgetting(reset model: FillModel?) {
+        forgetValuesError = nil
+        persistenceWarnings = []
+        // A fieldless use may still be waiting for a snapshot. Retire that
+        // delivery request; the held form owns and retains its own snapshot.
+        invalidateSnapshot()
+        model?.resetToDefaults()
+        // The form view can own its onChange hook, so notify the picker too.
+        onChange?()
     }
 
     private func openFill(_ entry: LibraryEntry, mode: DeliveryMode) {

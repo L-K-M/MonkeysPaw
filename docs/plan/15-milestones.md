@@ -37,6 +37,9 @@
 
 **Ordering.**
 
+- I3 adds Core forget intents, draft clearing and open-form resets before the
+  Settings and picker UI slices add their visible controls.
+
 - J2 aligns versions and proves the noble deb builder in CI before J4 adds
   tag publishing in `release.yml`; it does not close M2 release acceptance.
 
