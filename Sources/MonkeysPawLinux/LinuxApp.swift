@@ -9,6 +9,7 @@ enum ActionName: String {
     case toggle
     case selftest
     case settings
+    case library
     case quit
 }
 
@@ -105,6 +106,7 @@ public enum MonkeysPawLinuxApp {
         g_object_unref(UnsafeMutableRawPointer(toggle))
 
         installSettingsAction(application: application, environment: environment)
+        installLibraryAction(application: application, environment: environment)
 
         let selftest = g_simple_action_new(ActionName.selftest.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(selftest)) {
@@ -208,6 +210,15 @@ public enum MonkeysPawLinuxApp {
         }
         g_action_map_add_action(mp_action_map(application), mp_action(settings))
         g_object_unref(UnsafeMutableRawPointer(settings))
+    }
+
+    static func installLibraryAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment) {
+        let library = g_simple_action_new(ActionName.library.rawValue, nil)!
+        GTK.onActionActivated(UnsafeMutableRawPointer(library)) { [weak environment] in
+            environment?.showLibrary()
+        }
+        g_action_map_add_action(mp_action_map(application), mp_action(library))
+        g_object_unref(UnsafeMutableRawPointer(library))
     }
 
     private static func reportJSON(_ report: SelfTestReport) -> String? {

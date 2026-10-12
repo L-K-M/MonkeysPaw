@@ -1,5 +1,6 @@
 #if os(Linux)
 import MonkeysPawCore
+import Foundation
 
 /// Linux-only copy; delivery notifications use Core's DeliveryStrings.
 enum LinuxStrings {
@@ -15,6 +16,35 @@ enum LinuxStrings {
     static let cancel = "Cancel"
     static let edit = "Edit"
     static let library = "Library"
+    static let filterLibrary = "Filter library"
+    static let librarySections = "Library sections"
+    static let libraryPrompts = "Library prompts"
+    static let selectLibraryPrompt = "Select a prompt to preview it."
+    static let noLibraryMatches = "No prompts in this section match your filter."
+    static let addFavorite = "Add to Favourites"
+    static let removeFavorite = "Remove from Favourites"
+    static let readOnly = "Read-only"
+    static let invalidPrompt = "Invalid"
+    static let libraryHint = "Ctrl+D: toggle favourite · Esc: clear filter, then close"
+
+    static func lastUsed(_ date: Date) -> String {
+        "Last used: " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+    }
+
+    static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
+        switch outcome {
+        case .saved: return nil
+        case .noSelection: return selectLibraryPrompt
+        case .inactive: return "This library is no longer active. Reopen the Library window."
+        case .fileStoreFailure(let error):
+            return "Favourite not saved (\(error.rawValue)). Check the library and app-data folders."
+        case .libraryFailure(.conflict), .libraryFailure(.identityMismatch):
+            return "The prompt changed on disk. Wait for the library to refresh, then try again."
+        case .libraryFailure:
+            return "The favourite could not be saved. Reopen the library and try again."
+        case .writeFailure(let error): return "Favourite not saved. " + error.description
+        }
+    }
     static let forgetValues = "Forget values"
     static let forgetAllValues = RememberedValuesStrings.forgetAll + "…"
     static let emptyLibrary = "Your library is empty. Open the library folder to add a prompt."

@@ -21,7 +21,8 @@ final class ActionNameTests: XCTestCase {
         let actions = actionLine.dropFirst("Actions=".count)
             .split(separator: ";").map(String.init)
 
-        XCTAssertEqual(actions, [ActionName.toggle.rawValue, ActionName.selftest.rawValue, ActionName.settings.rawValue])
+        XCTAssertEqual(actions, [ActionName.toggle.rawValue, ActionName.selftest.rawValue,
+                                ActionName.settings.rawValue, ActionName.library.rawValue])
         for action in actions {
             XCTAssertNotNil(ActionName(rawValue: action))
             XCTAssertTrue(desktop.contains("[Desktop Action \(action)]"))

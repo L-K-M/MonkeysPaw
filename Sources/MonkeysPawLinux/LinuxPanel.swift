@@ -212,6 +212,7 @@ final class LinuxPanel: PanelWindow {
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             picker.openLibrary()
         }
+        gtk_widget_set_name(libraryButton, "picker-library")
         let settingsButton = GTK.button(LinuxStrings.openSettings) { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             openSettings()

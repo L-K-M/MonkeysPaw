@@ -288,14 +288,19 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertFalse(environment.panel.isVisible)
     }
 
-    func testNativeOpenLibraryButtonLaunchesFolderURIAndDismissesPicker() throws {
+    func testNativeOpenLibraryButtonOpensBrowserAndDismissesPicker() throws {
         try open()
         mp_entry_set_text(try widget("picker-query"), "missing prompt")
         let button = try widget("picker-open-folder")
         XCTAssertNotEqual(gtk_widget_activate(button), 0)
-        XCTAssertTrue(GTKTestSupport.spin { !self.launchedURLs.isEmpty })
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.library
+                && gtk_widget_get_visible(mp_window_widget(window)) != 0
+        })
         XCTAssertNil(environment.pickerModel.requestedIntent)
-        XCTAssertEqual(launchedURLs, [URL(fileURLWithPath: root.path, isDirectory: true)])
+        XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertFalse(environment.panel.isVisible)
     }

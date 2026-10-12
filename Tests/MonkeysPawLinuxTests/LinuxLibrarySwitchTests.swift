@@ -72,8 +72,12 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(launchedURLs, [second.appendingPathComponent("c.md")])
         try openPicker()
         environment.pickerModel.openLibrary()
-        XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 2 })
-        XCTAssertEqual(launchedURLs.last, second)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.library
+        })
+        XCTAssertEqual(launchedURLs, [second.appendingPathComponent("c.md")])
 
         try openPicker()
         gtk_window_close(mp_window(window))
