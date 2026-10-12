@@ -468,3 +468,29 @@ not record prompt text, field values or clipboard contents in this checklist.
 | With a real Japanese/Chinese IME, Return/Escape during marked text go to the input method; typing/state refresh preserves composition, and document/library replacement never commits the old composition into the new draft | NOT RUN | |
 | VoiceOver identifies source, editor tabs, field headings, save/revert/copy controls, validation/status messages and all sheet choices; Tab/Shift+Tab show visible focus | NOT RUN | |
 | A conflict or decision published while Library is minimized or the app hidden appears on restore/unhide; minimized Library is restored for a quit decision; full-screen Spaces, repeated openings and simultaneous Settings/Library windows preserve activation and Dock policy | NOT RUN | |
+
+## M4 A3 Keychain secrets: NOT RUN
+
+The Linux implementation host cannot compile Security or run hosted macOS
+tests. Record `KeychainSecretStoreTests` and the real-login-keychain test's
+pass or explicit skip from `macos-app` CI. The hosted test uses a unique
+service, suppresses Keychain dialogs and removes its item; it does not prove
+interactive ACL or signing behavior. The Assistant settings UI arrives in
+A13; keep the saved-key display check NOT RUN until that UI is available.
+
+- Commit / `macos-app` CI run / hosted test result or skip reason:
+- macOS / hardware / signing identity / login-keychain state:
+- Date / tester / observed ACL prompt count:
+
+Use a disposable macOS account and nonproduction credentials. Record only
+status and storage tier, never a key or resolved connection. Save two provider
+profiles, replace one key, restart and check both profiles. Deny/cancel access
+and repeat with the login keychain locked; failed edits must preserve the
+stored map. Repeat after installing an updated build with the same signing
+identity, and record any new access request.
+
+| Check | Result | Details |
+|---|---|---|
+| ACL prompts: record requests across both provider profiles sharing one item; allow, deny and cancel behave as expected, and denied/locked edits preserve saved credentials | NOT RUN | |
+| Signed-build access: the intended signed build and an update can read, replace and delete their saved keys; record signing identities and any new ACL prompts | NOT RUN | |
+| Key never shown after save: Assistant settings show only saved status and Keychain tier after save/reopen/restart; no stored value appears in the key field, errors or diagnostics | NOT RUN | |

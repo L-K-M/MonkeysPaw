@@ -26,6 +26,17 @@ metadata edits cannot rebind a stored key to another kind or origin.
 Environment values are raw operator overrides without destination bindings;
 the binding's re-entry gate applies only to persisted secrets.
 
+On macOS, one generic-password Keychain item uses service
+`ch.lkmc.monkeyspaw` and fixed account `secret-map`. Its version-1 JSON
+payload maps namespaced accounts to opaque secrets under `entries`; provider
+and device-token namespaces remain separate. A process-wide lock serializes
+reads and edits. Missing items return no secret; locked or denied access
+reports `locked`. A corrupt or unsupported payload reports `readFailed`
+and blocks all edits without overwriting the item. Deleting the last entry
+removes the item. There is no plaintext fallback on macOS, and no secret or
+Security error text is logged. Real ACL and signed-build behavior require
+the [macOS owner checks](../platform/macos.md).
+
 For Keychain/Secret Service, scans of repository, config, data, logs and
 temporary directories must find zero copies of a saved key. The Linux file
 tier instead permits exactly the named atomic 0600 secrets file, visibly

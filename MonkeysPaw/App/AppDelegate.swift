@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var presentedOnboardingStep: OnboardingModel.Step?
     private var notifier: UserNotificationNotifier?
     private var dataFiles: FileStore?
+    private(set) var providerSettingsService: ProviderSettingsService?
     private var values: ValuesStore?
     private var usage: UsageStore?
     private var fill: FillService?
@@ -171,6 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Graph construction is safe under hosted XCTest. Native registrations,
         // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
+
+        if let dataFiles {
+            providerSettingsService = ProviderSettingsService(
+                store: ProviderSettingsStore(files: dataFiles, log: log),
+                secrets: KeychainSecretStore(), log: log)
+        }
 
         focusTracker?.startTrackingActivations()
         if let accelerator = Accelerator.defaultBinding(for: .togglePicker) {
