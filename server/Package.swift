@@ -14,6 +14,10 @@ let package = Package(
         .package(name: "MonkeysPaw", path: ".."),
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.27.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.2"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird-fluent.git", exact: "2.0.0"),
+        .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", exact: "4.9.0"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird-auth.git", exact: "2.5.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.1"),
     ],
     targets: [
         .target(
@@ -21,6 +25,10 @@ let package = Package(
             dependencies: [
                 .product(name: "MonkeysPawCore", package: "MonkeysPaw"),
                 .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "HummingbirdFluent", package: "hummingbird-fluent"),
+                .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
+                .product(name: "HummingbirdBcrypt", package: "hummingbird-auth"),
+                .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
         .executableTarget(
