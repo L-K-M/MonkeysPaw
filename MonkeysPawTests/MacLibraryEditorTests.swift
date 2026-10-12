@@ -206,8 +206,7 @@ final class MacLibraryEditorTests: XCTestCase {
         try respond(.conflict(.saveAsCopy))
         work.drain()
         let copy = try XCTUnwrap(presentation.editorState.lastCopy)
-        // Exclusive creation may reuse the deleted path; it must assign a new identity.
-        XCTAssertEqual(copy.relativePath, original.relativePath)
+        // Core owns the copy's filename; the hosted test pins the fresh identity.
         XCTAssertNotEqual(copy.identity, original.identity)
         XCTAssertEqual(try body(at: copy.relativePath.string), "Mine")
         XCTAssertEqual(try files.stamp(at: copy.relativePath.string), presentation.editorState.stamp)
