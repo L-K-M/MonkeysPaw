@@ -1,0 +1,17 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/DeletePromptQuery.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "base_rev" : {
+      "maximum" : 9223372036854775807,
+      "minimum" : 1,
+      "type" : "integer"
+    }
+  },
+  "required" : [
+    "base_rev"
+  ],
+  "title" : "DeletePromptQuery",
+  "type" : "object"
+}

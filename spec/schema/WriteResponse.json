@@ -1,0 +1,54 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/WriteResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "rev" : {
+      "maximum" : 9223372036854775807,
+      "minimum" : 1,
+      "type" : "integer"
+    },
+    "seq" : {
+      "maximum" : 9223372036854775807,
+      "minimum" : 1,
+      "type" : "integer"
+    },
+    "warnings" : {
+      "items" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "code" : {
+            "enum" : [
+              "field.unused",
+              "metadata.group_private_removed",
+              "template.invalid_placeholder"
+            ],
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "location" : {
+            "$ref" : "IssueLocation.json"
+          },
+          "severity" : {
+            "const" : "warning",
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "code",
+          "severity"
+        ],
+        "type" : "object"
+      },
+      "minItems" : 0,
+      "type" : "array"
+    }
+  },
+  "required" : [
+    "rev",
+    "seq"
+  ],
+  "title" : "WriteResponse",
+  "type" : "object"
+}

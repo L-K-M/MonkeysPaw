@@ -1,0 +1,37 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/CreateUserRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "account_kind" : {
+      "$ref" : "AccountKind.json"
+    },
+    "display_name" : {
+      "oneOf" : [
+        {
+          "type" : "null"
+        },
+        {
+          "maxLength" : 255,
+          "minLength" : 0,
+          "type" : "string"
+        }
+      ]
+    },
+    "password" : {
+      "minLength" : 12,
+      "type" : "string"
+    },
+    "username" : {
+      "minLength" : 0,
+      "pattern" : "^(?:^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$)(?![\\s\\S])",
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "password",
+    "username"
+  ],
+  "title" : "CreateUserRequest",
+  "type" : "object"
+}

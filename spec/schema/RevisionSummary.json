@@ -1,0 +1,102 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/RevisionSummary.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "author_id" : {
+          "format" : "ulid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "created_at" : {
+          "format" : "date-time",
+          "minLength" : 0,
+          "pattern" : "^(?:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z)(?![\\s\\S])",
+          "type" : "string",
+          "x-syncapi-format" : "utc-milliseconds"
+        },
+        "origin" : {
+          "$ref" : "RevisionOrigin.json"
+        },
+        "path" : {
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "rev" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "scope" : {
+          "const" : "user",
+          "minLength" : 0,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "author_id",
+        "created_at",
+        "origin",
+        "path",
+        "rev",
+        "scope"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "author_id" : {
+          "format" : "ulid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "created_at" : {
+          "format" : "date-time",
+          "minLength" : 0,
+          "pattern" : "^(?:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z)(?![\\s\\S])",
+          "type" : "string",
+          "x-syncapi-format" : "utc-milliseconds"
+        },
+        "group_id" : {
+          "format" : "ulid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "origin" : {
+          "$ref" : "RevisionOrigin.json"
+        },
+        "path" : {
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "rev" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "scope" : {
+          "const" : "group",
+          "minLength" : 0,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "author_id",
+        "created_at",
+        "group_id",
+        "origin",
+        "path",
+        "rev",
+        "scope"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "RevisionSummary"
+}

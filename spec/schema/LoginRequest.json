@@ -1,0 +1,28 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/LoginRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "device_name" : {
+      "maxLength" : 255,
+      "minLength" : 1,
+      "type" : "string"
+    },
+    "password" : {
+      "minLength" : 1,
+      "type" : "string"
+    },
+    "username" : {
+      "minLength" : 0,
+      "pattern" : "^(?:^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$)(?![\\s\\S])",
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "device_name",
+    "password",
+    "username"
+  ],
+  "title" : "LoginRequest",
+  "type" : "object"
+}

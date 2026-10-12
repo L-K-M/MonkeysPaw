@@ -1,0 +1,39 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/PullRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "cursors" : {
+      "additionalProperties" : {
+        "minLength" : 1,
+        "type" : "string"
+      },
+      "propertyNames" : {
+        "format" : "scope-key",
+        "minLength" : 0,
+        "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+        "type" : "string"
+      },
+      "type" : "object"
+    },
+    "database_id" : {
+      "oneOf" : [
+        {
+          "type" : "null"
+        },
+        {
+          "format" : "uuid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\\s\\S])",
+          "type" : "string"
+        }
+      ]
+    }
+  },
+  "required" : [
+    "cursors",
+    "database_id"
+  ],
+  "title" : "PullRequest",
+  "type" : "object"
+}

@@ -1,0 +1,11 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/AccountKind.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "enum" : [
+    "admin",
+    "member"
+  ],
+  "minLength" : 0,
+  "title" : "AccountKind",
+  "type" : "string"
+}

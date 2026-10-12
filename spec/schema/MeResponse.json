@@ -1,0 +1,31 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/MeResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "devices" : {
+      "items" : {
+        "$ref" : "Device.json"
+      },
+      "minItems" : 0,
+      "type" : "array"
+    },
+    "groups" : {
+      "items" : {
+        "$ref" : "GroupMembership.json"
+      },
+      "minItems" : 0,
+      "type" : "array"
+    },
+    "user" : {
+      "$ref" : "User.json"
+    }
+  },
+  "required" : [
+    "devices",
+    "groups",
+    "user"
+  ],
+  "title" : "MeResponse",
+  "type" : "object"
+}

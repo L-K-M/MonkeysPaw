@@ -1,0 +1,80 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/IssueLocation.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "column" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "kind" : {
+          "const" : "front_matter",
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "line" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        }
+      },
+      "required" : [
+        "column",
+        "kind",
+        "line"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "byte_offset" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "kind" : {
+          "const" : "body",
+          "minLength" : 0,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "byte_offset",
+        "kind"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "kind" : {
+          "const" : "path",
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "segment" : {
+          "oneOf" : [
+            {
+              "type" : "null"
+            },
+            {
+              "maximum" : 9223372036854775807,
+              "minimum" : 0,
+              "type" : "integer"
+            }
+          ]
+        }
+      },
+      "required" : [
+        "kind",
+        "segment"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "IssueLocation"
+}

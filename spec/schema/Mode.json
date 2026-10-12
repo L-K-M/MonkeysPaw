@@ -1,0 +1,11 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/Mode.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "enum" : [
+    "delta",
+    "snapshot"
+  ],
+  "minLength" : 0,
+  "title" : "Mode",
+  "type" : "string"
+}

@@ -1,0 +1,19 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/MembersResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "members" : {
+      "items" : {
+        "$ref" : "Member.json"
+      },
+      "minItems" : 0,
+      "type" : "array"
+    }
+  },
+  "required" : [
+    "members"
+  ],
+  "title" : "MembersResponse",
+  "type" : "object"
+}

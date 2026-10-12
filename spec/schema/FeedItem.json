@@ -1,0 +1,85 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/FeedItem.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "kind" : {
+          "const" : "upsert",
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "prompt" : {
+          "$ref" : "FeedPrompt.json"
+        },
+        "seq" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        }
+      },
+      "required" : [
+        "kind",
+        "prompt",
+        "seq"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "id" : {
+          "format" : "ulid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "kind" : {
+          "const" : "delete",
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "seq" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        }
+      },
+      "required" : [
+        "id",
+        "kind",
+        "seq"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "id" : {
+          "format" : "ulid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "kind" : {
+          "const" : "move_out",
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "seq" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        }
+      },
+      "required" : [
+        "id",
+        "kind",
+        "seq"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "FeedItem"
+}

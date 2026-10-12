@@ -1,0 +1,12 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/WriteOrigin.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "enum" : [
+    "edit",
+    "llm",
+    "restore"
+  ],
+  "minLength" : 0,
+  "title" : "WriteOrigin",
+  "type" : "string"
+}

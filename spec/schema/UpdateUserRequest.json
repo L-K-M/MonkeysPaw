@@ -1,0 +1,35 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/UpdateUserRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "minProperties" : 1,
+  "properties" : {
+    "account_kind" : {
+      "$ref" : "AccountKind.json"
+    },
+    "disabled" : {
+      "type" : "boolean"
+    },
+    "display_name" : {
+      "oneOf" : [
+        {
+          "type" : "null"
+        },
+        {
+          "maxLength" : 255,
+          "minLength" : 0,
+          "type" : "string"
+        }
+      ]
+    },
+    "password" : {
+      "minLength" : 12,
+      "type" : "string"
+    }
+  },
+  "required" : [
+
+  ],
+  "title" : "UpdateUserRequest",
+  "type" : "object"
+}

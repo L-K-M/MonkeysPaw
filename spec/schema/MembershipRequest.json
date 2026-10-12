@@ -1,0 +1,15 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/MembershipRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "role" : {
+      "$ref" : "Role.json"
+    }
+  },
+  "required" : [
+    "role"
+  ],
+  "title" : "MembershipRequest",
+  "type" : "object"
+}

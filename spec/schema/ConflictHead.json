@@ -1,0 +1,76 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/ConflictHead.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "content" : {
+          "minLength" : 0,
+          "type" : "string",
+          "x-max-utf8-bytes" : 262144
+        },
+        "path" : {
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "rev" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "scope" : {
+          "const" : "user",
+          "minLength" : 0,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "content",
+        "path",
+        "rev",
+        "scope"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "content" : {
+          "minLength" : 0,
+          "type" : "string",
+          "x-max-utf8-bytes" : 262144
+        },
+        "group_id" : {
+          "format" : "ulid",
+          "minLength" : 0,
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "path" : {
+          "minLength" : 0,
+          "type" : "string"
+        },
+        "rev" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "scope" : {
+          "const" : "group",
+          "minLength" : 0,
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "content",
+        "group_id",
+        "path",
+        "rev",
+        "scope"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "ConflictHead"
+}

@@ -1,0 +1,34 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/RegisterRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "device_name" : {
+      "maxLength" : 255,
+      "minLength" : 1,
+      "type" : "string"
+    },
+    "invite_token" : {
+      "minLength" : 0,
+      "pattern" : "^(?:^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$)(?![\\s\\S])",
+      "type" : "string"
+    },
+    "password" : {
+      "minLength" : 12,
+      "type" : "string"
+    },
+    "username" : {
+      "minLength" : 0,
+      "pattern" : "^(?:^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$)(?![\\s\\S])",
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "device_name",
+    "invite_token",
+    "password",
+    "username"
+  ],
+  "title" : "RegisterRequest",
+  "type" : "object"
+}

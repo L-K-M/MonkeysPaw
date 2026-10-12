@@ -1,0 +1,17 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/JoinGroupRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "invite_token" : {
+      "minLength" : 0,
+      "pattern" : "^(?:^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$)(?![\\s\\S])",
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "invite_token"
+  ],
+  "title" : "JoinGroupRequest",
+  "type" : "object"
+}
