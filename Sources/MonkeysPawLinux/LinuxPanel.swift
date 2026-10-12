@@ -350,7 +350,7 @@ final class LinuxPanel: PanelWindow {
         gtk_button_set_label(mp_button(assistantButton), noMatches?.writeLabel ?? "")
         gtk_widget_set_visible(assistantButton, noMatches == nil ? 0 : 1)
         gtk_widget_set_visible(assistantHint, noMatches == nil ? 0 : 1)
-        gtk_button_set_label(mp_button(folderButton), noMatches?.openLibraryLabel ?? LinuxStrings.library)
+        gtk_button_set_label(mp_button(folderButton), LinuxStrings.library)
     }
 
     private func buildForm(_ fill: FillModel) {

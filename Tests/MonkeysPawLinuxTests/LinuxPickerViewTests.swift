@@ -292,6 +292,7 @@ final class LinuxPickerViewTests: XCTestCase {
         try open()
         mp_entry_set_text(try widget("picker-query"), "missing prompt")
         let button = try widget("picker-open-folder")
+        XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), LinuxStrings.library)
         XCTAssertNotEqual(gtk_widget_activate(button), 0)
         XCTAssertTrue(GTKTestSupport.spin {
             guard let window = gtk_application_get_active_window(self.application),

@@ -416,7 +416,8 @@ final class LinuxEnvironment {
         guard !isShutDown, pickerModel.state != .delivering else { return }
         startLibrary()
         guard pickerModel.libraryAvailable else {
-            panel.showStatus(LinuxStrings.libraryUnavailable)
+            // Desktop actions may arrive without a picker to render feedback.
+            if panel.isVisible { panel.showStatus(LinuxStrings.libraryUnavailable) }
             return
         }
         onboardingRequestRevision += 1
