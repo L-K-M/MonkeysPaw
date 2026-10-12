@@ -115,6 +115,10 @@ final class LinuxEnvironment {
     }
 
     private enum ToggleOrigin { case shortcut, manual }
+    private enum TrayEntry: Int32 {
+        case picker = 1, library, settings, setup, quit
+    }
+
     let log: LogSink
     let mainThread: MainThread
     private let session: LinuxSessionProbe
@@ -130,6 +134,9 @@ final class LinuxEnvironment {
     private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
     private let folderChooser: LinuxFolderChoosing
     private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
+    private let statusNotifierBusAddress: String?
+    private var statusNotifierItem: LinuxStatusNotifierItem?
+    private var libraryStatusObserver: UUID?
 
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
@@ -243,6 +250,7 @@ final class LinuxEnvironment {
         self.libraryWatcherFactory = libraryWatcherFactory
         self.folderChooser = folderChooser ?? GTKFolderChooser()
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
+        statusNotifierBusAddress = environment["DBUS_SESSION_BUS_ADDRESS"]
         log = CompositeLogSink(
             sinks: [StandardErrorLog(), FileLogSink(dataDirectory: LinuxPaths(environment: environment).dataDirectory)],
             policy: LogLevelPolicy(environmentValue: environment["MONKEYSPAW_LOG"]))
@@ -284,8 +292,10 @@ final class LinuxEnvironment {
 
     /// Start only in the registered primary, not remote invocations or unit tests.
     func start() {
+        guard !isShutDown else { return }
         startLibrary()
         _ = onboardingModel
+        startStatusNotifierItem()
         if libraryStatusModel.needsLibraryFolderStep { presentFromLauncher() }
         hotkey.onChange = { [weak self] in self?.setupModel.refresh() }
         remoteDesktop.onChange = { [weak self] in self?.setupModel.refresh() }
@@ -300,6 +310,55 @@ final class LinuxEnvironment {
             guard action == .togglePicker else { return }
             self?.togglePicker(origin: .shortcut)
         }
+    }
+
+    private func startStatusNotifierItem() {
+        guard statusNotifierItem == nil else { return }
+        statusNotifierItem = LinuxStatusNotifierItem(busAddress: statusNotifierBusAddress) { [weak self] in
+            self?.togglePicker()
+        }
+        updateStatusNotifierEntries()
+        libraryStatusObserver = libraryStatusModel.addObserver { [weak self] _ in
+            guard let self, !self.isShutDown else { return }
+            self.updateStatusNotifierEntries()
+        }
+        statusNotifierItem?.start()
+    }
+
+    private func updateStatusNotifierEntries() {
+        let status = libraryStatusModel
+        statusNotifierItem?.setEntries([
+            StatusNotifierEntry(id: TrayEntry.picker.rawValue, label: LinuxStrings.showPicker) { [weak self] in
+                self?.togglePicker()
+            },
+            StatusNotifierEntry(id: TrayEntry.library.rawValue, label: status.menuLabel,
+                enabled: status.libraryAvailable) { [weak self] in
+                guard let self, !self.isShutDown, self.libraryStatusModel.libraryAvailable,
+                      self.pickerModel.state != .delivering else { return }
+                self.handle(.openLibrary, in: self.libraryGraph)
+            },
+            StatusNotifierEntry(id: TrayEntry.settings.rawValue, label: LinuxStrings.openSettings) { [weak self] in
+                self?.showSettings()
+            },
+            StatusNotifierEntry(id: TrayEntry.setup.rawValue, label: LinuxStrings.traySetup) { [weak self] in
+                self?.showSetupFromTray()
+            },
+            StatusNotifierEntry(id: TrayEntry.quit.rawValue, label: LinuxStrings.quit) { [weak self] in
+                guard let self, !self.isShutDown else { return }
+                // Use the same quit path as the application action. runPanel's
+                // defers release its hold and shut down the exported item.
+                g_action_group_activate_action(mp_action_group(self.application), ActionName.quit.rawValue, nil)
+            },
+        ])
+    }
+
+    private func showSetupFromTray() {
+        guard !isShutDown, pickerModel.state != .delivering else { return }
+        onboardingRequestRevision += 1
+        pickerModel.dismiss()
+        panel.hide()
+        delivery.invalidatePendingPresentation()
+        mainThread.run { [weak self] in self?.showSetup() }
     }
 
     func activateToggle() {
@@ -626,7 +685,14 @@ final class LinuxEnvironment {
     }
 
     func shutdown() {
+        guard !isShutDown else { return }
         isShutDown = true
+        if let libraryStatusObserver {
+            currentLibraryStatusModel?.removeObserver(libraryStatusObserver)
+            self.libraryStatusObserver = nil
+        }
+        statusNotifierItem?.stop()
+        statusNotifierItem = nil
         currentSetupWindow?.hide()
         currentOnboardingWindow?.hide()
         currentSettingsWindow?.hide()

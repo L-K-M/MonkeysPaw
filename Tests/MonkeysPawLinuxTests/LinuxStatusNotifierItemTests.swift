@@ -196,7 +196,7 @@ final class LinuxStatusNotifierItemTests: XCTestCase {
         let isMenu = try XCTUnwrap(g_variant_lookup_value(properties, "ItemIsMenu", nil))
         let tooltip = try XCTUnwrap(g_variant_lookup_value(properties, "ToolTip", nil))
         defer { g_variant_unref(isMenu); g_variant_unref(tooltip) }
-        XCTAssertNotEqual(g_variant_get_boolean(isMenu), 0)
+        XCTAssertEqual(g_variant_get_boolean(isMenu), 0)
         XCTAssertEqual(String(cString: g_variant_get_type_string(tooltip)), "(sa(iiay)ss)")
         XCTAssertEqual(string(tooltip, 0), "ch.lkmc.monkeyspaw")
         XCTAssertEqual(string(tooltip, 2), "Monkey's Paw")

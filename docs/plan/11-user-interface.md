@@ -63,7 +63,11 @@ Per OS:
   available. The hotkey is the primary entry point, because stock GNOME
   hides tray icons.
 
-  The Linux SNI driver exists; composition attaches it in I14b.
+  Linux attaches one StatusNotifierItem at resident startup, with left click and
+  **Show Picker** toggling the picker, the shared library status row opening the
+  folder when available, and **Settings…**, **Setup…** and **Quit** actions.
+  Without a tray watcher, the hotkey, desktop actions and picker Settings button
+  remain the entry points.
 
 ### 11.2 Picker and fill form
 

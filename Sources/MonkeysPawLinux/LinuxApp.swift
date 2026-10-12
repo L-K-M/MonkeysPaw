@@ -184,7 +184,8 @@ public enum MonkeysPawLinuxApp {
         }
 
         // A panel spends most of its life hidden. Holding keeps the process resident.
-        // A standalone diagnostic must not install a GNOME desktop shortcut.
+        // A standalone diagnostic must not start a tray item or install a GNOME
+        // desktop shortcut. Remote invocations leave the primary's item alone.
         if !isRemote, mode != .selftest { environment.start() }
         if !isRemote {
             g_application_hold(gapp)
