@@ -148,14 +148,41 @@ final class MacPickerViewTests: XCTestCase {
         let picker = try open()
         let started = ProcessInfo.processInfo.systemUptime
         try Data("External body".utf8).write(to: root.appendingPathComponent("external.md"), options: .atomic)
-        let arrived = spin(until: started + 1.0) { picker.results.first?.relativePath == "external.md" }
+        let arrived = spin(timeout: 5) {
+            picker.results.first?.relativePath == "external.md"
+                && picker.selectedPreview == .body("External body")
+        }
         let elapsed = ProcessInfo.processInfo.systemUptime - started
         let timing = XCTAttachment(string: "External save → picker: \(elapsed) seconds")
         timing.lifetime = .keepAlways
         add(timing)
-        XCTAssertTrue(arrived, "Real FSEvents → debounce → index → picker exceeded one second")
+        print("External atomic create -> macOS picker: \(elapsed) seconds")
+        XCTAssertTrue(arrived, "Real FSEvents -> debounce -> index -> picker did not refresh within five seconds")
         XCTAssertLessThan(elapsed, 1.0)
         XCTAssertEqual(picker.selectedPreview, .body("External body"))
+    }
+
+    func testExternalInPlaceSaveReachesPickerWithinOneSecondThroughFSEvents() throws {
+        try files.write(Data("---\ntitle: Original\n---\nOriginal body".utf8), at: "external.md")
+        let picker = try open()
+        XCTAssertEqual(picker.results.map(\.title), ["Original"])
+        XCTAssertEqual(picker.selectedPreview, .body("Original body"))
+
+        let started = ProcessInfo.processInfo.systemUptime
+        try Data("---\ntitle: Updated\n---\nUpdated body".utf8)
+            .write(to: root.appendingPathComponent("external.md"))
+        let arrived = spin(timeout: 5) {
+            picker.results.map(\.relativePath) == ["external.md"]
+                && picker.results.map(\.title) == ["Updated"]
+                && picker.selectedPreview == .body("Updated body")
+        }
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        let timing = XCTAttachment(string: "External in-place save -> picker: \(elapsed) seconds")
+        timing.lifetime = .keepAlways
+        add(timing)
+        print("External in-place save -> macOS picker: \(elapsed) seconds")
+        XCTAssertTrue(arrived, "Real FSEvents -> debounce -> index -> picker did not refresh within five seconds")
+        XCTAssertLessThan(elapsed, 1.0)
     }
 
     func testBackgroundSchedulerPublishesOnlyOnMainThread() throws {
