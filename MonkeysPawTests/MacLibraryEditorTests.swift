@@ -228,8 +228,10 @@ final class MacLibraryEditorTests: XCTestCase {
         try respond(.conflict(.saveAsCopy))
         work.drain()
         let copy = try XCTUnwrap(presentation.editorState.lastCopy)
-        // Core owns the copy's filename; the hosted test pins the fresh identity.
+        // A copy takes an alternate name and never recreates the deleted original.
         XCTAssertNotEqual(copy.identity, original.identity)
+        XCTAssertNotEqual(copy.relativePath, original.relativePath)
+        XCTAssertNil(try files.stamp(at: "one.md"))
         XCTAssertEqual(try body(at: copy.relativePath.string), "Mine")
         XCTAssertEqual(try files.stamp(at: copy.relativePath.string), presentation.editorState.stamp)
         XCTAssertEqual(presentation.editorState.prompt, copy)
