@@ -157,6 +157,45 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(environment.pickerModel.fillModel?.preferredMode, .copyOnly)
     }
 
+    func testDestroyedPanelIgnoresPendingBlurAndQueuedUIWork() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try open()
+        let panel = environment.panel
+        let picker = environment.pickerModel
+        let other = try XCTUnwrap(gtk_application_window_new(application))
+        defer { gtk_window_destroy(mp_window(other)) }
+        gtk_window_present(mp_window(other))
+        let lostFocus = GTKTestSupport.spin {
+            panel.isVisible && !panel.isActiveAndVisible
+                && gtk_window_is_active(mp_window(other)) != 0
+        }
+        XCTAssertTrue(lostFocus)
+        guard lostFocus else { return }
+        XCTAssertEqual(picker.state, .picker)
+
+        // Keep the Swift panel alive after destroying its borrowed GTK window,
+        // before the focus-out timer can run on the next main-loop iteration.
+        gtk_window_destroy(mp_window(panel.clipboardOwner))
+        let deadline = ContinuousClock().now.advanced(by: Limits.blurHideDelay + .milliseconds(100))
+        XCTAssertTrue(GTKTestSupport.spin { ContinuousClock().now >= deadline })
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertFalse(panel.isActiveAndVisible)
+        XCTAssertEqual(picker.state, .picker)
+
+        var queuedUIRan = false
+        environment.mainThread.run {
+            picker.setQuery("after destruction")
+            panel.showStatus(LinuxStrings.createPromptFailed)
+            panel.show()
+            panel.hide()
+            panel.hideForDelivery()
+            queuedUIRan = true
+        }
+        XCTAssertTrue(GTKTestSupport.spin { queuedUIRan })
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertFalse(panel.isActiveAndVisible)
+    }
+
     func testToggleRaisesVisibleInactivePickerInsteadOfClosingIt() throws {
         try files.write(Data("Body".utf8), at: "a.md")
         try open()
