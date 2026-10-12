@@ -77,6 +77,7 @@ final class LibraryCreateTests: XCTestCase {
             // The external file existed at publication but disappeared before the error returned.
             throw FileStoreError.alreadyExists
         }
+        defer { files.onCreate = nil }
 
         let entry = try service.createPrompt(titled: "New", body: "Body")
 
@@ -96,6 +97,7 @@ final class LibraryCreateTests: XCTestCase {
             attempts.append(path)
             try files?.put("External", at: path)
         }
+        defer { files.onCreate = nil }
 
         XCTAssertThrowsError(try service.createPrompt(titled: "New", body: "Body")) {
             XCTAssertEqual($0 as? LibraryError, .copyLimitReached)
