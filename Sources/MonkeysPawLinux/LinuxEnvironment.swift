@@ -118,10 +118,10 @@ final class LinuxEnvironment {
         }
 
         func stop() {
+            callbacks.deactivate()
             browser.deactivate()
             editor.deactivate()
             editing.deactivate()
-            callbacks.deactivate()
             watcher?.stop()
             picker.onChange = nil
         }
@@ -253,7 +253,6 @@ final class LinuxEnvironment {
     private var onboardingRequestRevision = 0
     private var isShutDown = false
     private var quitPending = false
-    private var editorSwitchRefused = false
 
     private let application: UnsafeMutablePointer<GtkApplication>
 
@@ -430,9 +429,7 @@ final class LinuxEnvironment {
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
                     rememberedValues: self.rememberedValuesSettingsModel,
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
-                    librarySwitchMessage: { [weak self] in
-                        self?.editorSwitchRefused == true ? LinuxEditorStrings.librarySwitchRefused : nil
-                    })
+                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
             }
             self.currentSettingsWindow?.show()
         }
@@ -477,17 +474,30 @@ final class LinuxEnvironment {
         guard !isShutDown, !quitPending else { return }
         guard let graph = currentLibraryGraph else { approved(); return }
         let state = graph.editor.state
-        guard state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty else {
+        guard editorHasUnsavedWork(state) else {
             approved()
             return
         }
         quitPending = true
         presentLibraryWindow()
         graph.editor.request(.quit) { [weak self, weak graph] result in
-            guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return }
+            guard let self, let graph, self.currentLibraryGraph === graph else { return }
             self.quitPending = false
+            guard !self.isShutDown else { return }
             if result == .allowed { approved() }
         }
+    }
+
+    private func editorHasUnsavedWork(_ state: EditorState) -> Bool {
+        // Match Core's discard guard: a clean conflict has no unsaved draft.
+        state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty
+    }
+
+    private var librarySwitchMessage: String? {
+        guard let graph = currentLibraryGraph else { return nil }
+        if editorHasUnsavedWork(graph.editor.state) { return LinuxEditorStrings.librarySwitchRefused }
+        // An empty override hides a past busy refusal once the work resolves.
+        return graph.picker.state == .delivering ? nil : ""
     }
 
     private func showSetup() {
@@ -535,7 +545,8 @@ final class LinuxEnvironment {
             // share settings and the same current-graph composition adapter.
             currentOnboardingWindow = LinuxOnboardingWindow(application: application,
                 model: onboardingModel, general: GeneralSettingsModel(settings: settingsModel,
-                    library: libraryLocation, mainThread: mainThread), chooser: folderChooser)
+                    library: libraryLocation, mainThread: mainThread), chooser: folderChooser,
+                librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
         }
         currentOnboardingWindow?.show()
     }
@@ -594,7 +605,9 @@ final class LinuxEnvironment {
         let callbacks = LibraryCallbacks(main: mainThread)
         let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks)
         let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: callbacks)
-        let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: callbacks)
+        // EditorModel guards retired publications itself; its .inactive guard
+        // completions must still reach callers after the graph stops.
+        let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: mainThread)
         let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: callbacks, editor: editor)
         picker.libraryAvailable = initializationError == nil
         let watcher: LibraryWatcher?
@@ -627,12 +640,7 @@ final class LinuxEnvironment {
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
         guard !isShutDown else { return .libraryUnavailable(.ioFailure) }
         let old = libraryGraph
-        editorSwitchRefused = false
-        let state = old.editor.state
-        if state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty {
-            editorSwitchRefused = true
-            return .editorBusy
-        }
+        if editorHasUnsavedWork(old.editor.state) { return .editorBusy }
         guard old.picker.state != .delivering else { return .deliveryInFlight }
         old.picker.dismiss()
         panel.hide()
@@ -646,6 +654,7 @@ final class LinuxEnvironment {
         // by Setup or focus restoration before retiring their graph.
         delivery.invalidatePendingPresentation()
         old.stop()
+        quitPending = false
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
         currentLibraryWindow?.rebind(browser: libraryGraph.browser, editor: libraryGraph.editor)
@@ -786,6 +795,7 @@ final class LinuxEnvironment {
     func shutdown() {
         guard !isShutDown else { return }
         isShutDown = true
+        quitPending = false
         if let libraryStatusObserver {
             currentLibraryStatusModel?.removeObserver(libraryStatusObserver)
             self.libraryStatusObserver = nil

@@ -204,7 +204,7 @@ controls belong to a later slice.
 | Picker Edit and no-match creation | Ctrl+Return/Edit and no-match Create dismiss the picker and open the prompt in Library's Edit tab. A target hidden by the Library filter/section is revealed only after the discard guard allows it. Open Folder still reveals the active folder. | NOT RUN |
 | Real IBus/Fcitx editor composition | Compose with a real conversion engine. Return commits and Escape cancels through the input method without saving or closing. Model refreshes preserve active preedit; committed characters appear once and update validation/preview. Switch/reopen the session and confirm no old composition survives. | NOT RUN |
 | Orca and visible focus | Tab/Shift+Tab reach source, tabs, actions, validation, Fields and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |
-| Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, tab changes and saves read zero times even with `{{clipboard}}`; Preview shows `{clipboard}`. | NOT RUN |
+| Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, tab changes and saves read zero times when the prompt source contains `{{clipboard}}`; Preview renders the literal marker `{clipboard}`. | NOT RUN |
 
 ## Orca, visible focus and reduced motion (M2, NOT RUN)
 

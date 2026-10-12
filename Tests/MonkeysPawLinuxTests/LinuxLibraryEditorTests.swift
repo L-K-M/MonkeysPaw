@@ -87,6 +87,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
         try files.write(Data("Original".utf8), at: "a.md")
         let window = try open("a.md")
         let original = environment.editorModel.state.prompt
+        XCTAssertNotEqual(gtk_widget_get_sensitive(try widget("library-save-copy", in: window)), 0,
+            "A clean prompt must still allow Save as Copy")
         replace(try widget("library-source", in: window), with: "My copy")
         try click("library-save-copy", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.lastCopy != nil && self.environment.editorModel.state.status != .loading })
@@ -94,15 +96,16 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertNotEqual(copy.relativePath, original?.relativePath)
         XCTAssertNotEqual(copy.identity, original?.identity)
         XCTAssertEqual(try files.read(at: "a.md"), Data("Original".utf8))
-        XCTAssertEqual(PromptCodec.parseFile(try files.read(at: copy.relativePath.string), filename: "copy.md").body, "My copy")
+        XCTAssertEqual(PromptCodec.parseFile(try files.read(at: copy.relativePath.string), filename: (copy.relativePath.string as NSString).lastPathComponent).body, "My copy")
         XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.selection == copy })
         XCTAssertEqual(environment.editorModel.state.prompt, copy)
         XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(try widget("library-source", in: window))), 0)
     }
 
     func testReadOnlyReasonsDisableNativeEditingAndSave() throws {
+        let unsupported = try XCTUnwrap(PromptFormatVersion(2), "Format 2 must be representable as an unsupported format")
         let cases: [(String, Data, PromptReadOnlyReason)] = [
-            ("future.md", Data("---\nformat: 2\n---\nFuture".utf8), .unsupportedFormat(PromptFormatVersion(2)!)),
+            ("future.md", Data("---\nformat: 2\n---\nFuture".utf8), .unsupportedFormat(unsupported)),
             ("bytes.md", Data([0xff, 0xfe]), .invalidUTF8),
             ("large.md", Data(repeating: 65, count: Limits.maxPromptBytes + 1), .sourceTooLarge)]
         for (path, bytes, reason) in cases { try files.write(bytes, at: path)
@@ -137,7 +140,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
             } else {
                 let copy = try XCTUnwrap(environment.editorModel.state.lastCopy)
                 XCTAssertNotEqual(copy.relativePath.string, path)
-                XCTAssertEqual(PromptCodec.parseFile(try files.read(at: copy.relativePath.string), filename: path).body, "Mine")
+                XCTAssertEqual(PromptCodec.parseFile(try files.read(at: copy.relativePath.string), filename: (copy.relativePath.string as NSString).lastPathComponent).body, "Mine")
                 XCTAssertEqual(try files.read(at: path), Data("Theirs".utf8))
             }
         }
@@ -168,9 +171,9 @@ final class LinuxLibraryEditorTests: XCTestCase {
                 if choice == .saveAsCopy {
                     let copy = try XCTUnwrap(environment.editorModel.state.lastCopy)
                     XCTAssertNotEqual(copy.identity, original?.identity)
-                    XCTAssertEqual(PromptCodec.parseFile(try files.read(at: copy.relativePath.string), filename: path).body, "Mine")
-                    // Core currently reuses an unoccupied original path for a
-                    // fresh copy identity. The handoff records this Core gap.
+                    XCTAssertEqual(PromptCodec.parseFile(try files.read(at: copy.relativePath.string), filename: (copy.relativePath.string as NSString).lastPathComponent).body, "Mine")
+                    XCTAssertEqual(copy.relativePath.string, "deleted-\(index) 2.md")
+                    XCTAssertNil(try files.stamp(at: path), "Copy must leave the deleted original absent")
                 } else {
                     XCTAssertNil(try files.stamp(at: path))
                     XCTAssertNil(environment.editorModel.state.prompt)
@@ -298,6 +301,240 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(PromptCodec.parseFile(try files.read(at: "a.md"), filename: "a.md").body, "Saved before quit")
     }
 
+    func testQuitActionApprovesAfterEnvironmentIsReleased() {
+        weak let released = environment
+        environment.shutdown()
+        environment = nil
+        XCTAssertNil(released, "Quit's action must not retain the environment")
+        quit()
+        XCTAssertEqual(quitCount, 1, "A released environment must not swallow Quit")
+    }
+
+    func testQuitCanBeRequestedAfterGraphReplacementBeforeDiscardReplyDrains() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        quit()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision?.action == .quit })
+        let old = environment.editorModel
+        old.resolveDecision(.discard, id: try XCTUnwrap(old.state.pendingDecision).id)
+        let replacement = tools.directory.appendingPathComponent("Second")
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .switched)
+        XCTAssertTrue(environment.editorModel !== old)
+        quit()
+        XCTAssertEqual(quitCount, 1, "The retired graph's quit latch must not block the new graph")
+        drain()
+        XCTAssertEqual(quitCount, 1, "The retired quit must not approve after replacement")
+    }
+
+    func testShutdownCompletesAbandonedAndLaterEditorRequestsAsInactive() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        let old = environment.editorModel
+        var replies: [EditorGuardResult] = []
+        old.request(.close) { replies.append($0) }
+        XCTAssertTrue(GTKTestSupport.spin { old.state.pendingDecision != nil })
+        old.request(.quit) { replies.append($0) }
+        environment.shutdown()
+        old.request(.revert) { replies.append($0) }
+        drain()
+        XCTAssertEqual(replies, [.inactive, .inactive, .inactive], "Retirement must deliver every guard completion")
+    }
+
+    func testDecisionNativeDismissalCancelsWithoutHidingOrRecreatingDialog() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        for useEscape in [false, true] {
+            gtk_window_close(mp_window(window))
+            XCTAssertNotEqual(gtk_widget_get_visible(window), 0, "close-request must stop GTK's default hide")
+            XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+            let alert = try XCTUnwrap(dialog)
+            let message = try widget("library-dialog-message", in: alert)
+            XCTAssertEqual(gtk_label_get_wrap(mp_label(message)), 1)
+            XCTAssertEqual(gtk_label_get_max_width_chars(mp_label(message)), 64)
+            if useEscape {
+                XCTAssertNotEqual(mp_test_emit_key_pressed(alert, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+            } else { gtk_window_close(mp_window(alert)) }
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision == nil && self.dialog == nil },
+                "Native dismissal must resolve the decision as Cancel")
+            environment.libraryBrowserModel.setFilter(useEscape ? "Draft" : "Original")
+            drain()
+            XCTAssertNil(dialog, "A cancelled decision must not reappear on render")
+            XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+            XCTAssertEqual(environment.editorModel.state.source, "Draft")
+        }
+    }
+
+    func testDialogEscapeIgnoresLockBitsAndRejectsRealChords() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        // GTK4 does not name X11's Num Lock MOD2 bit, but it can occur in state.
+        for locks in [GDK_LOCK_MASK.rawValue, UInt32(1 << 4), GDK_LOCK_MASK.rawValue | UInt32(1 << 4)] {
+            gtk_window_close(mp_window(window))
+            XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+            let alert = try XCTUnwrap(dialog)
+            XCTAssertEqual(mp_test_emit_key_pressed(alert, UInt32(GDK_KEY_Escape),
+                GdkModifierType(rawValue: locks | GDK_CONTROL_MASK.rawValue)), 0)
+            XCTAssertNotNil(environment.editorModel.state.pendingDecision)
+            XCTAssertNotEqual(mp_test_emit_key_pressed(alert, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: locks)), 0,
+                "Escape must cancel with Caps/Num Lock enabled")
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision == nil && self.dialog == nil })
+            drain() // Cancel's queued completion releases the close request.
+        }
+        XCTAssertEqual(environment.editorModel.state.source, "Draft")
+    }
+
+    func testUnchangedPreviewKeepsNativeBufferAndCaret() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        let window = try open("a.md")
+        let preview = try widget("library-preview", in: window)
+        let previewBuffer = buffer(preview)
+        var end = GtkTextIter()
+        gtk_text_buffer_get_end_iter(previewBuffer, &end)
+        gtk_text_buffer_place_cursor(previewBuffer, &end)
+        var changes = 0
+        GTK.onSignal(UnsafeMutableRawPointer(previewBuffer), "changed") { changes += 1 }
+        replace(try widget("library-source", in: window), with: "---\ncustom: draft\n---\nBody")
+        drain()
+        environment.libraryBrowserModel.setFilter("Body")
+        drain()
+        XCTAssertEqual(changes, 0, "Unchanged Preview must not reset its text, scroll or selection")
+        var caret = GtkTextIter()
+        gtk_text_buffer_get_iter_at_mark(previewBuffer, &caret, gtk_text_buffer_get_insert(previewBuffer))
+        XCTAssertEqual(gtk_text_iter_get_offset(&caret), 4)
+        replace(try widget("library-source", in: window), with: "Changed")
+        XCTAssertTrue(GTKTestSupport.spin { self.contents(preview) == "Changed" })
+        XCTAssertGreaterThan(changes, 0)
+    }
+
+    func testRejectedSaveAndFavoriteShortcutsAreNotConsumed() throws {
+        try files.write(Data("---\nformat: 2\n---\nFuture".utf8), at: "future.md")
+        let window = try open("future.md")
+        for key in [GDK_KEY_s, GDK_KEY_d] {
+            XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(key), GDK_CONTROL_MASK), 0,
+                "A read-only editor must leave rejected shortcuts unhandled")
+        }
+        try files.write(Data("Valid".utf8), at: "valid.md")
+        _ = try open("valid.md")
+        replace(try widget("library-source", in: window), with: "---\n[broken\n---\nDraft")
+        drain()
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_d), GDK_CONTROL_MASK), 0)
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_s), GDK_CONTROL_MASK), 0)
+        XCTAssertTrue(GTKTestSupport.spin { if case .failed(.invalid) = self.environment.editorModel.state.status { return true }; return false })
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_w), GDK_CONTROL_MASK), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_w), GDK_CONTROL_MASK), 0)
+        try respond(.decision(.cancel))
+    }
+
+    func testSameSessionNilLoadingSourcePreservesBufferButReplacementClearsIt() throws {
+        holdWork()
+        try files.write(Data("Original".utf8), at: "a.md")
+        environment.showLibrary()
+        XCTAssertTrue(GTKTestSupport.spin { self.window(titled: LinuxStrings.library) != nil })
+        try select("a.md", in: try XCTUnwrap(self.window(titled: LinuxStrings.library)))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .loading })
+        let loading = environment.editorModel.state
+        XCTAssertNotNil(loading.prompt)
+        XCTAssertNil(loading.source)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == "Original" })
+        let native = LinuxLibrarySourceEditor()
+        g_object_ref_sink(native.widget)
+        defer { g_object_unref(native.widget) }
+        native.update(environment.editorModel.state, revision: 1, available: true)
+        gtk_text_buffer_begin_user_action(buffer(native.widget))
+        gtk_text_buffer_insert_at_cursor(buffer(native.widget), "Draft", -1)
+        gtk_text_buffer_end_user_action(buffer(native.widget))
+        let draft = contents(native.widget)
+        XCTAssertNotEqual(gtk_text_buffer_get_can_undo(buffer(native.widget)), 0)
+        native.update(loading, revision: 1, available: true)
+        XCTAssertEqual(contents(native.widget), draft, "A nil source has not supplied replacement text")
+        XCTAssertNotEqual(gtk_text_buffer_get_can_undo(buffer(native.widget)), 0)
+        native.update(loading, revision: 2, available: true)
+        XCTAssertEqual(contents(native.widget), "", "A new loading session must not show the retired draft")
+        XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(native.widget)), 0)
+    }
+
+    func testOpeningNewIdentityAtSamePathRetiresUndoBeforeLoading() throws {
+        holdWork()
+        let original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal"
+        try files.write(Data(original.utf8), at: "a.md")
+        let window = try open("a.md")
+        let source = try widget("library-source", in: window)
+        replace(source, with: original.replacingOccurrences(of: "Original", with: "Saved"))
+        environment.editorModel.save()
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .saved })
+        drain()
+        XCTAssertFalse(environment.editorModel.state.isDirty)
+        XCTAssertNotEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
+
+        let replacement = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAW\n---\nReplacement"
+        try files.write(Data(replacement.utf8), at: "a.md")
+        let id = try XCTUnwrap(ULID("01ARZ3NDEKTSV4RRFFQ69G5FAW"))
+        let selection = LibraryPromptSelection(identity: .assigned(id), relativePath: "a.md")
+        environment.editorModel.open(selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt == selection
+            && self.environment.editorModel.state.status == .loading })
+        drain()
+        XCTAssertEqual(contents(source), "", "A different identity starts a new session despite the same path")
+        XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == replacement })
+        drain()
+        XCTAssertEqual(contents(source), replacement)
+        XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0, "Undo must not restore the retired prompt's id")
+    }
+
+    func testCleanConflictUsesCoreUnsavedGuardForQuitAndFolderSwitch() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let source = try widget("library-source", in: window)
+        replace(source, with: "Mine")
+        try files.write(Data("Theirs".utf8), at: "a.md")
+        try waitForConflict(.modified)
+        try respond(.dismissConflict)
+        replace(source, with: "Original")
+        drain()
+        XCTAssertFalse(environment.editorModel.state.isDirty)
+        XCTAssertNotNil(environment.editorModel.state.conflict)
+        quit()
+        XCTAssertEqual(quitCount, 1, "The baseline draft has no unsaved edits to discard")
+        XCTAssertNil(environment.editorModel.state.pendingDecision)
+        let replacement = tools.directory.appendingPathComponent("Second")
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .switched)
+        XCTAssertEqual(try files.read(at: "a.md"), Data("Theirs".utf8))
+    }
+
+    func testUnavailableLibraryPreservesNativeUndoAndAllowsDiscardThenSwitch() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let source = try widget("library-source", in: window)
+        replace(source, with: "Draft")
+        let root = LinuxPaths(environment: tools.environment).documentsDirectory.appendingPathComponent("MonkeysPaw")
+        try FileManager.default.moveItem(at: root, to: tools.directory.appendingPathComponent("Retired"))
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.pickerModel.libraryAvailable })
+        drain()
+        XCTAssertEqual(contents(source), "Draft")
+        XCTAssertEqual(gtk_text_view_get_editable(mp_text_view(source)), 0)
+        XCTAssertNotEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0,
+            "A health transition without replacement text must retain native undo")
+        let replacement = tools.directory.appendingPathComponent("Second")
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .editorBusy)
+        gtk_window_close(mp_window(window))
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        try respond(.decision(.discard))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt == nil })
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .switched)
+    }
+
     func testCloseAndQuitQueueBehindSaveAndWaitForItsCompletion() throws {
         holdWork()
         try files.write(Data("Original".utf8), at: "a.md")
@@ -395,6 +632,10 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(environment.switchLibrary(to: replacement), .editorBusy)
         heldWork?.runAll()
         XCTAssertTrue(GTKTestSupport.spin { old.state.status == .saved })
+        environment.showSettings()
+        drain()
+        let switchMessage = try widget("settings-library-message", in: settings)
+        XCTAssertEqual(gtk_widget_get_visible(switchMessage), 0, "Completed editor work must clear the stale refusal")
         old.edit("New draft")
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { old.state.pendingDecision != nil })
@@ -472,12 +713,12 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(contents(source), "Body 👋 e\u{301}")
     }
 
-    func testCopyAdoptionAtDeletedOriginalPathRetiresNativeUndo() throws {
+    func testCopyAdoptionAfterDeletionUsesAlternatePathAndRetiresNativeUndo() throws {
         let original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal"
         try files.write(Data(original.utf8), at: "a.md")
         let window = try open("a.md")
         let source = try widget("library-source", in: window)
-        let selection = environment.editorModel.state.prompt
+        let selection = try XCTUnwrap(environment.editorModel.state.prompt)
         replace(source, with: original.replacingOccurrences(of: "Original", with: "Mine"))
         XCTAssertNotEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
         try files.delete(at: "a.md")
@@ -487,9 +728,9 @@ final class LinuxLibraryEditorTests: XCTestCase {
             && self.environment.editorModel.state.conflict == nil })
         drain()
         let copy = try XCTUnwrap(environment.editorModel.state.lastCopy)
-        XCTAssertNotEqual(copy.identity, selection?.identity)
-        // Shared Core may reuse a deleted original path. The new session must
-        // still retire undo commands containing the original prompt's id.
+        XCTAssertNotEqual(copy.identity, selection.identity)
+        XCTAssertEqual(copy.relativePath.string, "a 2.md")
+        XCTAssertNil(try files.stamp(at: "a.md"))
         XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
         XCTAssertEqual(contents(source), environment.editorModel.state.source)
     }

@@ -284,7 +284,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == path
-            && self.environment.editorModel.state.source == "Body" })
+            && self.environment.editorModel.state.source == "Body" }, "Editor did not load the selected path '\(path)'")
         XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertFalse(environment.panel.isVisible)
     }
@@ -630,7 +630,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == expectedPath
-            && self.environment.editorModel.state.source != nil })
+            && self.environment.editorModel.state.source == document.source }, "Editor did not load the created prompt '\(expectedPath)'")
         XCTAssertTrue(launchedURLs.isEmpty)
     }
 

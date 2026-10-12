@@ -51,6 +51,7 @@ final class LinuxLibraryWindow {
     private let revert = GTK.button(LinuxEditorStrings.revert) {}
     private let saveCopy = GTK.button(LinuxEditorStrings.saveAsCopy) {}
     private var renderedFields: [PromptField]?
+    private var renderedPreview: String?
 
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
@@ -172,9 +173,12 @@ final class LinuxLibraryWindow {
             guard let self, let editor, self.editor === editor else { return }
             let previous = self.previousPrompt
             let adoptedCopy = state.prompt != previous && state.prompt == state.lastCopy
-            // A copy is a new session even when Core reuses a deleted path.
-            // First-save identity assignment in the original keeps its undo.
-            if previous?.relativePath != state.prompt?.relativePath || adoptedCopy { self.sourceRevision &+= 1 }
+            let openingSession = state.status == .loading && state.source == nil && state.prompt != previous
+            // A fresh open/copy retires undo, including another identity at the
+            // same path. First-save identity assignment keeps the original undo.
+            if previous?.relativePath != state.prompt?.relativePath || adoptedCopy || openingSession {
+                self.sourceRevision &+= 1
+            }
             self.previousPrompt = state.prompt
             if adoptedCopy, let prompt = state.prompt {
                 self.copySelection = prompt
@@ -257,8 +261,9 @@ final class LinuxLibraryWindow {
         browser.selectPrompt(copy)
     }
 
-    private func requestClose() {
-        guard !isDestroyed, !closeRequested, let editor else { return }
+    @discardableResult
+    private func requestClose() -> Bool {
+        guard !isDestroyed, !closeRequested, let editor else { return false }
         closeRequested = true
         let revision = bindingRevision
         editor.request(.close) { [weak self] result in
@@ -271,6 +276,7 @@ final class LinuxLibraryWindow {
                 gtk_widget_set_visible(self.window, 0)
             }
         }
+        return true
     }
 
     private func render() {
@@ -290,10 +296,7 @@ final class LinuxLibraryWindow {
             ? LinuxStrings.removeFavorite : LinuxStrings.addFavorite
         gtk_button_set_label(mp_button(favorite), favoriteTitle)
         mp_accessible_label(favorite, favoriteTitle)
-        let canFavorite = state.selectedPrompt?.canRender == true && state.selectedPrompt?.isReadOnly == false
-            && (editor?.state.prompt?.relativePath != state.selection?.relativePath
-                || (editor?.state.canEdit == true && editor?.state.previewFailure == nil))
-        gtk_widget_set_sensitive(favorite, available && canFavorite ? 1 : 0)
+        gtk_widget_set_sensitive(favorite, canFavorite(state) ? 1 : 0)
         gtk_label_set_text(mp_label(status), message ?? "")
         gtk_widget_set_visible(status, message == nil ? 0 : 1)
         updateDialog()
@@ -363,9 +366,12 @@ final class LinuxLibraryWindow {
         gtk_label_set_text(mp_label(validation), state.issues.map(LinuxEditorStrings.issue).joined(separator: "\n"))
         let text = state.prompt == nil ? LinuxStrings.selectLibraryPrompt
             : state.previewFailure == nil ? state.preview : state.issues.map(\.message).joined(separator: "\n")
-        gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(preview)), text, Int32(text.utf8.count))
+        if renderedPreview.map({ $0.utf8.elementsEqual(text.utf8) }) != true {
+            renderedPreview = text
+            gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(preview)), text, Int32(text.utf8.count))
+        }
         if renderedFields != state.fields {
-            while let child = gtk_widget_get_first_child(fields) { gtk_grid_remove(grid, child) }
+            while let child = gtk_widget_get_first_child(fields) { gtk_widget_unparent(child) }
             renderedFields = state.fields
             if state.fields.isEmpty { gtk_grid_attach(grid, GTK.label(LinuxEditorStrings.noFields), 0, 0, 5, 1) }
             else {
@@ -391,12 +397,14 @@ final class LinuxLibraryWindow {
         gtk_label_set_text(mp_label(editorStatus), LinuxEditorStrings.status(state))
     }
 
-    private func savePrompt() {
-        guard isVisible, available, let editor, editor.state.canSave else { return }
+    @discardableResult
+    private func savePrompt() -> Bool {
+        guard isVisible, available, let editor, editor.state.canSave else { return false }
         if editor.state.conflict != nil {
             dismissedConflict = nil
             updateDialog()
         } else { editor.save() }
+        return true
     }
 
     private func updateDialog() {
@@ -487,11 +495,19 @@ final class LinuxLibraryWindow {
         select(in: list, position: state.rows.firstIndex { $0.selection == state.selection }, focus: hadFocus)
     }
 
-    private func toggleFavorite() {
-        guard isVisible, available, let browser, gtk_widget_get_sensitive(favorite) != 0 else { return }
+    private func canFavorite(_ state: LibraryBrowserState) -> Bool {
+        available && state.selectedPrompt?.canRender == true && state.selectedPrompt?.isReadOnly == false
+            && (editor?.state.prompt?.relativePath != state.selection?.relativePath
+                || (editor?.state.canEdit == true && editor?.state.previewFailure == nil))
+    }
+
+    @discardableResult
+    private func toggleFavorite() -> Bool {
+        guard isVisible, let browser, canFavorite(browser.state) else { return false }
         message = LinuxStrings.favoriteMessage(browser.toggleFavorite())
         messageSelection = browser.selection
         render()
+        return true
     }
 
     private func keyPressed(_ key: UInt32, modifiers: UInt32) -> Bool {
@@ -504,21 +520,17 @@ final class LinuxLibraryWindow {
         let modifiers = modifiers & relevant
         guard activeDialog == nil else { return false }
         if key == UInt32(GDK_KEY_Escape), modifiers == 0 {
-            if !browser.filter.isEmpty { browser.setFilter(""); render() }
-            else { requestClose() }
-            return true
+            if !browser.filter.isEmpty { browser.setFilter(""); render(); return true }
+            return requestClose()
         }
         if [UInt32(GDK_KEY_s), UInt32(GDK_KEY_S)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
-            savePrompt()
-            return true
+            return savePrompt()
         }
         if [UInt32(GDK_KEY_w), UInt32(GDK_KEY_W)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
-            requestClose()
-            return true
+            return requestClose()
         }
         if [UInt32(GDK_KEY_d), UInt32(GDK_KEY_D)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
-            toggleFavorite()
-            return true
+            return toggleFavorite()
         }
         return false // GTK owns list arrows, activation and Tab traversal.
     }

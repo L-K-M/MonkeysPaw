@@ -9,6 +9,7 @@ final class LinuxOnboardingWindow {
     private let model: OnboardingModel
     private let general: GeneralSettingsModel
     private let chooser: LinuxFolderChoosing
+    private let librarySwitchMessage: () -> String?
     private var isDestroyed = false
     private var isChoosing = false
     private var chooserRevision = 0
@@ -37,10 +38,12 @@ final class LinuxOnboardingWindow {
     private var canCompleteFolder: Bool { isFolderStep && model.state.libraryStatus != .lostWhileRunning }
 
     init(application: UnsafeMutablePointer<GtkApplication>, model: OnboardingModel,
-         general: GeneralSettingsModel, chooser: LinuxFolderChoosing) {
+         general: GeneralSettingsModel, chooser: LinuxFolderChoosing,
+         librarySwitchMessage: @escaping () -> String? = { nil }) {
         self.model = model
         self.general = general
         self.chooser = chooser
+        self.librarySwitchMessage = librarySwitchMessage
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
         GTK.onCloseRequested(window) { [weak self] in self?.close() }
@@ -218,7 +221,11 @@ final class LinuxOnboardingWindow {
         gtk_label_set_text(mp_label(libraryPath), state.activeLibraryPath)
         gtk_label_set_text(mp_label(libraryDefault), state.isDefaultLibrary
             ? LinuxStrings.defaultLibraryFolder : LinuxStrings.customLibraryFolder)
-        setMessage(libraryMessage, model.state.lastSwitchMessage.flatMap(GeneralSettingsStrings.message))
+        let switchMessage: String? = model.state.lastSwitchMessage.flatMap { outcome in
+            if outcome == .deliveryInFlight, let message = librarySwitchMessage() { return message }
+            return GeneralSettingsStrings.message(for: outcome)
+        }
+        setMessage(libraryMessage, switchMessage)
         let canChoose = canCompleteFolder && !isChoosing
         gtk_widget_set_sensitive(defaultButton, canChoose ? 1 : 0)
         gtk_widget_set_sensitive(chooseButton, canChoose ? 1 : 0)

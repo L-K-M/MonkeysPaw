@@ -86,7 +86,9 @@ final class LinuxEditorDialog {
         }()
         GTK.onCloseRequested(window) { respond(cancel) }
         GTK.observeKeys(window) { key, modifiers in
-            guard key == UInt32(GDK_KEY_Escape), modifiers == 0 else { return false }
+            let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
+                | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
+            guard key == UInt32(GDK_KEY_Escape), modifiers & relevant == 0 else { return false }
             respond(cancel)
             return true
         }

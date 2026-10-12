@@ -90,6 +90,7 @@ final class LinuxSettingsWindow {
     func show() {
         guard !isDestroyed else { return }
         general.refresh()
+        renderGeneral()
         shortcuts.refresh()
         gtk_window_present(mp_window(window))
     }

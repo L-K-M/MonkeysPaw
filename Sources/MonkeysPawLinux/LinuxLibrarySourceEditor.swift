@@ -37,6 +37,7 @@ final class LinuxLibrarySourceEditor {
     }
 
     func update(_ state: EditorState, revision: UInt64, available: Bool) {
+        // revision identifies a loaded session, not an edit or save refresh.
         let changedSession = path != state.prompt?.relativePath || self.revision != revision
         isUpdating = true
         defer { isUpdating = false }
@@ -50,6 +51,7 @@ final class LinuxLibrarySourceEditor {
         let editable = available && state.canEdit
         gtk_text_view_set_editable(mp_text_view(widget), editable ? 1 : 0)
         guard !hasPreedit else { return }
+        if !changedSession, state.prompt != nil, state.source == nil, state.readOnlyReason == nil { return }
         let source = state.source ?? ""
         let initialLoad = !hasLoadedSource && state.source != nil
         if state.source != nil { hasLoadedSource = true }

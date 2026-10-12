@@ -220,7 +220,9 @@ public enum MonkeysPawLinuxApp {
                                   approved: (() -> Void)? = nil) {
         let quit = g_simple_action_new(ActionName.quit.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(quit)) { [weak environment] in
-            environment?.requestQuit { (approved ?? { g_application_quit(mp_gapp(application)) })() }
+            let finish = approved ?? { g_application_quit(mp_gapp(application)) }
+            guard let environment else { finish(); return }
+            environment.requestQuit(finish)
         }
         g_action_map_add_action(mp_action_map(application), mp_action(quit))
         g_object_unref(UnsafeMutableRawPointer(quit))
