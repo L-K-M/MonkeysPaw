@@ -39,11 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let revealLibraryURI: (URL) -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
     private let forgetAllConfirmation: SettingsWindowController.ForgetAllConfirmation
+    private let makeNotifier: (() -> UserNotificationNotifier)?
+    private let activateApplication: () -> Void
     private let windowActivation: WindowActivationCoordinator
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
     private var setupWindow: SetupWindowController?
     private(set) var settingsWindow: SettingsWindowController?
+    private(set) var onboardingWindow: OnboardingWindowController?
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
     private var statusItem: NSStatusItem?
@@ -53,6 +56,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var generalSettingsModel: GeneralSettingsModel?
     private(set) var shortcutsSettingsModel: ShortcutsSettingsModel?
     private(set) var rememberedValuesSettingsModel: RememberedValuesSettingsModel?
+    private(set) var libraryStatusModel: LibraryStatusModel?
+    private(set) var onboardingModel: OnboardingModel?
+    private var libraryStatusObserver: UUID?
+    private var libraryMenuItems: [NSMenuItem] = []
+    private var isShutDown = false
+    private var onboardingStarted = false
+    private var presentedOnboardingStep: OnboardingModel.Step?
+    private var notifier: UserNotificationNotifier?
     private var dataFiles: FileStore?
     private var values: ValuesStore?
     private var usage: UsageStore?
@@ -75,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
          forgetAllConfirmation: @escaping SettingsWindowController.ForgetAllConfirmation = SettingsWindowController.confirmForgetAll,
+         makeNotifier: (() -> UserNotificationNotifier)? = nil,
          setActivationPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          activateApplication: @escaping () -> Void = { NSApp.activate() },
          makeFocusTracker: @escaping (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker = {
@@ -104,6 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         revealLibraryURI = revealLibrary
         self.folderChooser = folderChooser
         self.forgetAllConfirmation = forgetAllConfirmation
+        self.makeNotifier = makeNotifier
+        self.activateApplication = activateApplication
         windowActivation = WindowActivationCoordinator(mainThread: mainThread,
             setPolicy: setActivationPolicy, activate: activateApplication)
         // Injected graphs never read or write the user's legacy preferences.
@@ -116,18 +130,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
-    deinit { watcher?.stop() }
+    deinit {
+        tearDown()
+        if let libraryStatusObserver { libraryStatusModel?.removeObserver(libraryStatusObserver) }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The hosted application's default delegate has production roots.
         // Only explicitly injected test graphs may access the filesystem.
-        guard !Self.isRunningTests || rootsAreInjected else { return }
+        guard !isShutDown, !Self.isRunningTests || rootsAreInjected else { return }
         let log = CompositeLogSink(
             sinks: [OSLogSink(), FileLogSink(dataDirectory: dataDirectory)],
             policy: LogLevelPolicy(environmentValue: ProcessInfo.processInfo.environment["MONKEYSPAW_LOG"]))
         self.log = log
         compose(log: log)
         startLibrary()
+        composeOnboarding()
         // Graph construction is safe under hosted XCTest. Native registrations,
         // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
@@ -144,17 +162,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         log.write(.info, "Application started")
 
-        // M1's first-run step is Setup (§6.4); library onboarding arrives in M2.
-        if settingsModel?.needsSetupPresentation == true { showSetup() }
+        beginOnboarding()
     }
 
-    func applicationWillTerminate(_ notification: Notification) { watcher?.stop() }
+    func applicationWillTerminate(_ notification: Notification) { tearDown() }
+
+    private func tearDown() {
+        guard !isShutDown else { return }
+        isShutDown = true
+        watcher?.stop()
+        onboardingStarted = false
+        presentedOnboardingStep = nil
+        setupWindow?.tearDown()
+        onboardingWindow?.tearDown()
+        windowActivation.tearDown()
+    }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        guard !isShutDown else { return }
         // Returning from System Settings refreshes grants and registration state.
         setupModel?.refresh()
         shortcutsSettingsModel?.refresh()
         generalSettingsModel?.refresh()
+        onboardingModel?.refresh()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !isShutDown, let onboardingModel else { return false }
+        // This launcher request owns routing the refreshed step, even if a
+        // model publication occurs inline while refreshing.
+        onboardingStarted = false
+        onboardingModel.refresh()
+        onboardingStarted = true
+        if setupWindow?.isVisible == true {
+            showSetup()
+            return false
+        }
+
+        let step = onboardingModel.state.step
+        presentedOnboardingStep = step
+        switch step {
+        case .setup: showSetup()
+        case .libraryFolder, .seedOffer: showOnboarding()
+        case .complete: pickerModel?.open()
+        }
+        return false
     }
 
     private func compose(log: LogSink) {
@@ -166,11 +218,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let session = MacSessionProbe()
         let clipboard = PasteboardClipboard()
         let notifier: UserNotificationNotifier
-        if Self.isRunningTests {
+        if let makeNotifier {
+            notifier = makeNotifier()
+        } else if Self.isRunningTests {
             notifier = UserNotificationNotifier(requestAuthorization: { _, completion in completion(false) })
         } else {
             notifier = UserNotificationNotifier()
         }
+        self.notifier = notifier
         let cgEvent = CGEventPasteInjector()
         let appleScript = AppleScriptPasteInjector()
         let failureCache = SessionPasteFailureCache()
@@ -207,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let setupModel = SetupModel(setup: setup)
         self.setupModel = setupModel
         setupWindow = SetupWindowController(model: setupModel)
+        setupWindow?.onClose = { [weak self] in self?.presentPendingOnboarding() }
         panel.onHide = { reason in
             switch reason {
             case .delivery: focus.prepareForRestore(.delivery)
@@ -241,13 +297,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSetup: { [weak self] in self?.showSetup() })
     }
 
+    private func composeOnboarding() {
+        guard let settingsModel, let notifier else { return }
+        // Startup includes watcher/rebuild health, not just an openable folder.
+        let status = LibraryStatusModel(initialState: pickerModel?.libraryAvailable == true
+            ? .available : .unavailableAtStartup, mainThread: mainThread,
+            notifyStartupUnavailable: { notifier.libraryUnavailable() })
+        libraryStatusModel = status
+        libraryStatusObserver = status.addObserver { [weak self] _ in self?.updateLibraryMenuItems() }
+        let onboarding = OnboardingModel(settings: settingsModel, library: SettingsLibraryLocation(owner: self),
+            status: status, mainThread: mainThread, isLibraryEmpty: { [weak self] in
+                guard let library = self?.library else { throw LibraryError.operationFailed }
+                return try library.entries().isEmpty
+            }, hasConfiguredSyncServer: { false }, seedIfEmpty: { [weak self] in
+                guard let self else { throw LibraryError.operationFailed }
+                return try self.seedCurrentLibrary()
+            })
+        onboardingModel = onboarding
+        let window = OnboardingWindowController(model: onboarding, activeLibraryPath: libraryDirectory.path,
+            defaultLibraryPath: defaultLibraryDirectory.path, mainThread: mainThread,
+            activateApplication: activateApplication, folderChooser: folderChooser,
+            openSettings: { [weak self] in self?.showSettings() })
+        window.onStateChange = { [weak self] in self?.presentPendingOnboarding() }
+        window.onClose = { [weak self] in
+            guard let self, !self.isShutDown else { return }
+            self.presentedOnboardingStep = nil
+        }
+        onboardingWindow = window
+    }
+
+    private func seedCurrentLibrary() throws -> SeedSummary {
+        guard let library, let index, pickerModel?.libraryAvailable == true else {
+            throw LibraryError.operationFailed
+        }
+        // Show successful and partial copies immediately; the watcher still
+        // handles external changes and root loss through the current generation.
+        defer {
+            do { try index.rebuild() }
+            catch { log?.write(.warning, "Starter prompt index refresh failed") }
+        }
+        return try SeedService(library: library).seedIfEmpty()
+    }
+
+    /// Hosted launch constructs models without opening windows. Tests explicitly
+    /// enter this same launch flow with isolated roots and injected drivers.
+    func beginOnboarding() {
+        guard !isShutDown else { return }
+        onboardingModel?.refresh()
+        onboardingStarted = true
+        presentPendingOnboarding()
+    }
+
+    private func presentPendingOnboarding() {
+        guard !isShutDown, onboardingStarted, let onboardingModel else { return }
+        let step = onboardingModel.state.step
+        // Setup records progress when shown, but remains the first screen until
+        // you close it. Its close callback runs after native window teardown.
+        guard setupWindow?.isVisible != true else { return }
+        guard presentedOnboardingStep != step else { return }
+        presentedOnboardingStep = step
+        switch step {
+        case .setup: showSetup()
+        case .libraryFolder, .seedOffer:
+            guard onboardingWindow?.window?.isVisible != true else { return }
+            showOnboarding()
+        case .complete: break // Keep a seed result visible until Done.
+        }
+    }
+
+    private func showOnboarding() {
+        focusTracker?.cancelPendingRestoration()
+        panelController?.cancelForOwnedWindow()
+        pickerModel?.dismiss()
+        panelController?.hide()
+        delivery?.invalidatePendingPresentation()
+        onboardingWindow?.show()
+    }
+
     /// UI-thread composition intent for the later General/onboarding views.
     /// A failed settings write keeps the new graph for this session (§5.1).
     /// libraryUnavailable leaves the new graph installed but degraded, as at
     /// launch, without saving the choice; another switch or a relaunch recovers.
     func switchLibrary(to url: URL?) -> LibrarySwitchResult {
         assert(Thread.isMainThread, "Library replacement is main-thread-confined")
-        guard let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
+        guard !isShutDown, let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
         guard pickerModel.state != .delivering else { return .deliveryInFlight }
         pickerModel.dismiss()
 
@@ -269,10 +402,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pickerPresentation = nil
         self.pickerModel = nil
         libraryDirectory = directory
+        onboardingWindow?.updateLibraryPaths(active: directory.path, default: defaultLibraryDirectory.path)
         libraryStarted = false
         libraryWarningLogged = false
         installLibrary(files: files, availability: true)
-        if case .failure(let error) = startLibrary() { return .libraryUnavailable(error) }
+        let startup = startLibrary()
+        libraryStatusModel?.libraryReplaced(available: self.pickerModel?.libraryAvailable == true)
+        if case .failure(let error) = startup { return .libraryUnavailable(error) }
 
         // SettingsModel forwards to the shared SettingsService and retains its
         // typed error. Never persist a choice whose watcher/rebuild failed.
@@ -437,6 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func degradeLibrary(_ error: FileStoreError? = nil) {
         watcher?.stop()
         pickerModel?.libraryAvailable = false
+        libraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(error)
     }
 
@@ -531,9 +668,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// without creating a status item or installing native hotkeys.
     func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
+        // Status owns this item's availability; AppKit must not re-enable it
+        // merely because its target implements the reveal action.
+        menu.autoenablesItems = false
         let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
                                 keyEquivalent: "")
         show.target = self
+        let library = menu.addItem(withTitle: libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu,
+                                  action: #selector(openLibraryFromMenu), keyEquivalent: "")
+        library.target = self
+        libraryMenuItems.append(library)
+        updateLibraryMenuItems()
         addSettingsItem(to: menu)
         let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
@@ -541,6 +686,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
         return menu
+    }
+
+    private func updateLibraryMenuItems() {
+        // Menus own their items; discard rows from menus that have been released.
+        libraryMenuItems.removeAll { $0.menu == nil }
+        for item in libraryMenuItems {
+            item.title = libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu
+            item.isEnabled = libraryStatusModel?.libraryAvailable == true
+        }
+    }
+
+    @objc private func openLibraryFromMenu() {
+        guard libraryStatusModel?.libraryAvailable == true else { return }
+        revealLibrary()
     }
 
     private func addSettingsItem(to menu: NSMenu) {
@@ -562,18 +721,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() {
+        guard !isShutDown else { return }
         // Revoke older retries and suppress this cancellation's restore before
         // presenting Setup. Native key-window transitions may still be pending.
         focusTracker?.cancelPendingRestoration()
         panelController?.cancelForOwnedWindow()
         setupWindow?.show()
-        settingsModel?.markSetupPresented()
+        onboardingModel?.markSetupPresented()
         recordLegacySetup()
     }
 
     @objc func showSettings() {
         mainThread.run { [weak self] in
-            guard let self else { return }
+            guard let self, !self.isShutDown else { return }
             self.focusTracker?.cancelPendingRestoration()
             self.panelController?.cancelForOwnedWindow()
             // A summon or dismissal may be queued behind an older restore.

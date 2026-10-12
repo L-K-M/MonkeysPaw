@@ -251,3 +251,36 @@ fields. Forgetting must leave the clipboard and usage history unchanged.
 | Block app-data writes and confirm Forget all; the error preserves state; restore writes and retry, including with unreadable or corrupt values.json | NOT RUN | |
 | Close Settings during confirmation and reopen; no pending confirmation or late response clears values | NOT RUN | |
 | VoiceOver identifies both Forget actions, the sheet's destructive action, Cancel and outcome messages; existing picker shortcuts and visible focus still work | NOT RUN | |
+
+## M2 onboarding and library recovery: NOT RUN
+
+The Linux implementation host cannot compile or run these macOS windows.
+Record the exact commit and `MacOnboardingTests` / `UserNotificationNotifierTests`
+hosted results from `macos-app` CI before the owner checks. Setup stays first;
+close it to continue to the library folder. Setup and onboarding keep the
+accessory policy; Settings continues to use the shared regular-window policy.
+Use an isolated macOS account or test app-data and library directories so the
+fresh-install checks do not overwrite your normal settings or prompts.
+
+- Commit / `macos-app` CI run and hosted-test result:
+- macOS / hardware / signing identity / notification permission / date / tester:
+
+| Check | Result | Details |
+|---|---|---|
+| Fresh install: Setup opens first; close it, accept Use Default Folder, then Add Starter Prompts; the summary reports ten added and the picker shows them | NOT RUN | |
+| Finish with Done and restart; Setup, folder and seed offer do not return and no starter file or identifier changes | NOT RUN | |
+| Fresh install: choose Skip Starter Prompts, then restart; the empty library remains empty and the offer does not return | NOT RUN | |
+| Legacy install with Setup already presented and library step pending opens the folder step directly | NOT RUN | |
+| Choose Folder… uses a native directory sheet; Cancel keeps the active folder; choosing a readable empty folder seeds only that folder | NOT RUN | |
+| Choose a missing, unreadable or symbolic-link folder; the typed message keeps the folder step pending and a later valid choice succeeds | NOT RUN | |
+| Accept a non-empty library, including one malformed prompt; the starter offer is skipped and existing bytes remain intact | NOT RUN | |
+| Prevent settings writes, then choose a folder or accept seeds; the save error remains visible, progress is not claimed and no seeds copy before their flag saves; restore writes and retry | NOT RUN | |
+| Prevent seed writes after accepting the offer; the path-free failure appears, copied files remain, and restart does not repeat the offer | NOT RUN | |
+| Restart with a missing or unreadable chosen folder and completed onboarding; one path-free notification appears and the folder window opens; choose a readable folder to recover | NOT RUN | |
+| Deny notification permission; startup recovery still opens the folder window without another notification request in the same process | NOT RUN | |
+| Close recovery while it is pending and reopen the app; the folder step returns without clearing the saved completion flag | NOT RUN | |
+| Close onboarding while a chooser is pending, then reopen on next launch; no late callback switches the library or completes a newer request | NOT RUN | |
+| With future-version or corrupt settings, onboarding stays closed and Settings shows its read-only error | NOT RUN | |
+| The status menu says Open Library and reveals the current folder; runtime root loss changes the same row to disabled Library unavailable without a notification or reopened onboarding | NOT RUN | |
+| After runtime loss, choose a healthy folder in Settings; Open Library is enabled again and reveals the replacement folder; restoring the old folder alone still requires restart | NOT RUN | |
+| Keyboard and VoiceOver identify the folder paths, chooser/default actions, seed actions, summary/failure and Done; Settings remains reachable and picker dismissal never restores an old target | NOT RUN | |

@@ -3,12 +3,28 @@ import MonkeysPawCore
 import SwiftUI
 
 /// Owns the native window; SetupView receives only its presentation model.
-final class SetupWindowController {
+final class SetupWindowController: NSObject, NSWindowDelegate {
     private let presentation: SetupViewState
     private var window: NSWindow?
+    var onClose: (() -> Void)?
+    var isVisible: Bool { window?.isVisible == true }
 
     init(model: SetupModel) {
         presentation = SetupViewState(model: model)
+        super.init()
+    }
+
+    func tearDown() {
+        // Closing for teardown must not advance the first-run flow.
+        onClose = nil
+        window?.delegate = nil
+        window?.close()
+        window = nil
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Let AppKit finish closing Setup before raising the next first-run step.
+        DispatchQueue.main.async { [weak self] in self?.onClose?() }
     }
 
     func show() {
@@ -28,6 +44,7 @@ final class SetupWindowController {
         window.title = Strings.setupTitle
         window.isReleasedWhenClosed = false
         window.isRestorable = false
+        window.delegate = self
         let content = NSHostingView(rootView: SetupView(presentation: presentation))
         content.sizingOptions = []
         window.contentView = content
