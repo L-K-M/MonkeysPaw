@@ -39,7 +39,7 @@ final class MacLibrarySwitchTests: XCTestCase {
     @discardableResult
     private func start(legacyFirstRun: LegacyFirstRun = .setupNotPresented,
                        recordLegacySetup: @escaping () -> Void = {},
-                       scheduler: Scheduler = SwitchScheduler(),
+                       scheduler: MonkeysPawCore.Scheduler = SwitchScheduler(),
                        focusSource: WorkspaceFocusTracker.Source? = nil,
                        onWatcherStart: @escaping (URL) throws -> Void = { _ in }) throws -> PickerModel {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, legacyFirstRun: legacyFirstRun,
@@ -356,7 +356,7 @@ private final class SwitchWatcher: FileStoreWatcher {
     func emit(_ event: FileStoreWatchEvent) { onEvent?(event) }
 }
 
-private final class SwitchScheduler: Scheduler {
+private final class SwitchScheduler: MonkeysPawCore.Scheduler {
     var hold = false
     private var pending: [() -> Void] = []
     func after(_ delay: Duration, _ work: @escaping () -> Void) {
