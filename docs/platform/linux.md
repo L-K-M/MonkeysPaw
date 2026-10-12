@@ -1,5 +1,17 @@
 # Linux picker and delivery checks
 
+## Tray (M2, NOT RUN)
+
+Record the commit, date, desktop/compositor, GTK and tray host versions.
+Private-bus/Xvfb tests verify registration, menu actions, library status and
+shutdown; these real desktop checks remain owner-run.
+
+| Check | Expected result | Status |
+|---|---|---|
+| KDE Plasma tray icon and menu | Interactive and service startup show one Monkey's Paw icon. Left click and Show Picker toggle the picker; Open Library reveals the active folder; Settings… and Setup… open their reusable windows; Quit exits and removes the icon. | NOT RUN |
+| GNOME with the AppIndicator extension | With the extension enabled, the icon and all five menu entries work. An unavailable library disables Library unavailable; a successful folder switch restores Open Library. Quit removes the item. | NOT RUN |
+| Stock GNOME without a tray | No fallback window appears. The hotkey, launcher toggle/Settings desktop actions and picker Settings button still work; an ordinary service launch stays hidden. | NOT RUN |
+
 ## Onboarding and library recovery (M2, NOT RUN)
 
 Run these with isolated XDG config/data/documents directories on X11 and
@@ -17,14 +29,14 @@ they do not complete these owner checks.
 | Startup unavailable notification and recovery | A missing or unreadable saved folder produces one path-free notification with no focus action and reopens the folder step. Closing and reopening retains recovery; choosing a readable folder or Use Default restores the library. | NOT RUN |
 | Runtime folder loss | Cached prompts remain read-only. No startup notification or new recovery step appears; an already-open onboarding window shows restart guidance. Restart, or a successful Settings folder switch, restores library health. | NOT RUN |
 | Read-only settings | Future-version or corrupt settings show the Settings error and suppress Setup/onboarding; the settings file remains unchanged. | NOT RUN |
-| Tray status row (I14b) | No Linux tray exists in this slice. I14b must attach the shared `LibraryStatusModel.menuLabel` and verify unavailable/recovered labels on the real desktop. | NOT RUN |
+| Tray status row (I14b) | Open Library reveals the active folder. Missing/unreadable startup and runtime root loss change it to disabled Library unavailable; a successful folder switch restores Open Library without restarting the tray. | NOT RUN |
 
 Composition retains one onboarding model and one library status model for
 the process. Folder checks and seeding resolve the current library graph;
 every successful or degraded replacement reports its health. Startup
 health includes watcher startup and index rebuild. Runtime loss is latched
-until a new graph replaces it or the app restarts. Library status UI in
-Settings and the tray is left to I14b to avoid expanding the Settings slice.
+until a new graph replaces it or the app restarts. The tray subscribes to
+this status; additional library status UI in Settings remains deferred.
 
 ## Settings (M2, NOT RUN)
 
