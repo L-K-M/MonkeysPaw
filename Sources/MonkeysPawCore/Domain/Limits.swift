@@ -129,6 +129,12 @@ public enum Limits {
     /// §7.1: bound each complete non-streaming LLM call to 300 seconds.
     public static let llmBudget: Duration = .seconds(300)
 
+    /// §7.1: one explicit model-list operation has a 15-second deadline.
+    public static let modelListTimeout: Duration = .seconds(15)
+
+    /// §19 B3: bound the serialized HTTP request envelope separately from content.
+    public static let httpRequestCap: Int = 2 * mebibyte
+
     /// §7.1: cap LLM response bodies at 2 MiB to bound transport memory.
     public static let responseCap: Int = 2 * mebibyte
 
