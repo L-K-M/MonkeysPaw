@@ -44,8 +44,11 @@ Per OS:
   - `GtkNotebook` for tabs
   - `GtkApplication` actions for menus
 
-  Choose **Settings…** in your launcher's desktop actions to open the reusable
-  General and Shortcuts window. Closing it hides it for the next opening.
+  Choose **Settings…** in the picker footer, press **Ctrl+,** in the picker,
+  or use your launcher's desktop action to open or raise the reusable General
+  and Shortcuts window. The picker dismisses before Settings opens, without
+  delivery. Closing Settings hides it for the next opening. **Open Setup…**
+  in Shortcuts opens the existing Setup window and shares its live service.
 
   Plainer than macOS by design. The tray uses a StatusNotifierItem where
   available. The hotkey is the primary entry point, because stock GNOME
@@ -153,6 +156,7 @@ Footers differ per OS:
 | Picker | type · `↑↓` · `Return` · `Esc` | filter · move · use · close |
 | Picker | `⌘Return` / `Ctrl+Return` | edit the selection (Library editor from M3; before that, the OS default editor) |
 | Picker | `⌘L` / `Ctrl+L` | open Library |
+| Picker | `Ctrl+,` (Linux) | open Settings |
 | Picker | `Ctrl+Shift+Return` (Linux) | use the selection with the terminal chord (a prompt with fields goes to the form first and remembers the choice) |
 | Picker | `⌥Return` / `Alt+Return` | use the selection, copy only |
 | Fill form | `Tab` / `Shift+Tab` | next / previous field |

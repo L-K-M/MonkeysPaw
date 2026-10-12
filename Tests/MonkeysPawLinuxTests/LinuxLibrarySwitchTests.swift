@@ -146,6 +146,92 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
     }
 
+    func testSwitchDiscardsQueuedPresentationAndTargetsBehindFocusRestoration() throws {
+        let focus = SwitchFocusTracker()
+        compose(focusTracker: focus)
+        try files.write(Data("Alpha".utf8), at: "a.md")
+        let second = try library("B", prompts: ["b.md": "Beta"])
+        try openPicker()
+        let old = environment.pickerModel
+        let window = environment.panel.clipboardOwner
+        old.dismiss()
+        XCTAssertTrue(GTKTestSupport.spin { focus.restoredTargets.count == 1 })
+        XCTAssertFalse(environment.panel.isVisible)
+
+        // These requests enter DeliveryService while its first restore is held.
+        old.open()
+        old.dismiss()
+        old.open()
+        drainUI()
+        XCTAssertEqual(focus.restoredTargets.count, 1)
+        XCTAssertFalse(environment.panel.isVisible)
+        XCTAssertEqual(environment.switchLibrary(to: second), .switched)
+        let current = environment.pickerModel
+        XCTAssertTrue(current !== old)
+        XCTAssertEqual(current.state, .closed)
+
+        var visibilityChanges = 0
+        GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { visibilityChanges += 1 }
+        drainUI()
+        focus.release()
+        drainNativeEvents()
+        XCTAssertEqual(visibilityChanges, 0, "Retired requests must not show or hide the reused panel")
+        XCTAssertEqual(focus.restoredTargets.count, 1, "Queued old dismissals must not restore their targets")
+        XCTAssertEqual(current.state, .closed)
+        XCTAssertFalse(environment.panel.isVisible)
+        XCTAssertEqual(environment.panel.clipboardOwner, window)
+
+        // Discarded queue slots must finish so the replacement can still open.
+        try openPicker()
+        current.setQuery("Beta")
+        XCTAssertEqual(current.results.map(\.relativePath), ["b.md"])
+        XCTAssertEqual(current.query, "Beta")
+        XCTAssertTrue(environment.panel.isVisible)
+        XCTAssertTrue(environment.pickerModel === current)
+    }
+
+    func testSettingsActionDuringDeliveryKeepsTheGraphAndRefusesWindowEntry() throws {
+        let scheduler = SwitchScheduler()
+        compose(scheduler: scheduler)
+        MonkeysPawLinuxApp.installSettingsAction(application: application, environment: environment)
+        try files.write(Data("Alpha".utf8), at: "a.md")
+        try openPicker()
+        let picker = environment.pickerModel
+        picker.use(mode: .copyOnly)
+        XCTAssertTrue(GTKTestSupport.spin {
+            picker.state == .delivering && scheduler.delays.contains(Limits.settleDelayLinux)
+        })
+
+        g_action_group_activate_action(mp_action_group(application), ActionName.settings.rawValue, nil)
+        drainUI()
+        XCTAssertEqual(g_list_length(gtk_application_get_windows(application)), 1,
+                       "Settings must not open while delivery owns the focus sequence")
+        XCTAssertEqual(picker.state, .delivering)
+        XCTAssertTrue(environment.pickerModel === picker)
+        scheduler.fireAll()
+        XCTAssertTrue(GTKTestSupport.spin { picker.state == .done(.copiedOnly(.requested)) })
+        XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+
+        // A fresh Settings request works once the delivery has completed.
+        g_action_group_activate_action(mp_action_group(application), ActionName.settings.rawValue, nil)
+        XCTAssertTrue(GTKTestSupport.spin {
+            // Setup also owns a hidden self-test target; count Settings itself.
+            var node = gtk_application_get_windows(self.application)
+            var visibleSettings = 0
+            while let current = node {
+                if let window = current.pointee.data?.assumingMemoryBound(to: GtkWindow.self),
+                   gtk_window_get_title(window).map({ String(cString: $0) }) == LinuxStrings.settings,
+                   gtk_widget_get_visible(mp_window_widget(window)) != 0 {
+                    visibleSettings += 1
+                }
+                node = current.pointee.next
+            }
+            return visibleSettings == 1
+        })
+        XCTAssertEqual(picker.state, .closed)
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
     func testOldNativeEventsAndDebounceCannotChangeTheReplacementLibrary() throws {
         let scheduler = SwitchScheduler()
         compose(scheduler: scheduler)
@@ -433,10 +519,11 @@ final class LinuxLibrarySwitchTests: XCTestCase {
     }
 
     private func compose(scheduler: Scheduler? = nil,
+                         focusTracker: FocusTracker? = nil,
                          watcherFactory: ((URL) throws -> FileStoreWatcher)? = nil) {
         environment?.shutdown()
         environment = LinuxEnvironment(application: application, environment: tools.environment,
-            scheduler: scheduler, libraryWatcherFactory: watcherFactory,
+            scheduler: scheduler, focusTracker: focusTracker, libraryWatcherFactory: watcherFactory,
             launchURI: { [weak self] url in self?.launchedURLs.append(url) })
     }
 
@@ -494,6 +581,27 @@ final class LinuxLibrarySwitchTests: XCTestCase {
             return nil
         }
         return try XCTUnwrap(find(environment.panel.clipboardOwner), "Missing GTK control")
+    }
+}
+
+private final class SwitchFocusTracker: FocusTracker {
+    private(set) var restoredTargets: [DeliveryTarget] = []
+    private var pending: ((FocusConfirmation) -> Void)?
+    private var isHolding = true
+
+    func captureTarget() -> DeliveryTarget? { .linux(session: .otherX11, x11WindowClass: "External") }
+
+    func restore(_ target: DeliveryTarget, completion: @escaping (FocusConfirmation) -> Void) {
+        restoredTargets.append(target)
+        guard isHolding else { completion(.unconfirmed); return }
+        pending = completion
+    }
+
+    func release() {
+        isHolding = false
+        let completion = pending
+        pending = nil
+        completion?(.unconfirmed)
     }
 }
 

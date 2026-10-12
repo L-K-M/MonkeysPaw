@@ -75,6 +75,50 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertEqual(try openSettingsAction(), window)
     }
 
+    func testPickerSettingsButtonDismissesBeforeOpeningAndReusesTheWindow() throws {
+        try assertPickerSettingsAccess {
+            let button = try settingsWidget("picker-settings", in: self.environment.panel.clipboardOwner)
+            XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), "Settings…")
+            XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        }
+    }
+
+    func testPickerControlCommaDismissesBeforeOpeningAndReusesTheWindow() throws {
+        try assertPickerSettingsAccess {
+            XCTAssertNotEqual(mp_test_emit_key_pressed(self.environment.panel.clipboardOwner,
+                UInt32(GDK_KEY_comma), GDK_CONTROL_MASK), 0)
+        }
+    }
+
+    func testSettingsActionDismissesPickerWithoutDeliveryAndReusesTheWindow() throws {
+        try assertPickerSettingsAccess { _ = try self.openSettingsAction() }
+    }
+
+    func testShortcutsOpenSetupReusesTheExistingWindowAndModels() throws {
+        environment.presentFromLauncher()
+        XCTAssertTrue(GTKTestSupport.spin { self.setupWindows.count == 1 })
+        let setupWindow = try XCTUnwrap(setupWindows.first)
+        let setup = environment.setupModel
+        let shortcuts = environment.shortcutsSettingsModel
+        gtk_window_close(mp_window(setupWindow))
+        let settingsWindow = try openSettingsAction()
+        let tabs = try settingsWidget("settings-tabs", in: settingsWindow)
+        gtk_notebook_set_current_page(mp_notebook(tabs), 1)
+        let button = try settingsWidget("settings-open-setup", in: settingsWindow)
+        XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), "Open Setup…")
+
+        for _ in 0..<2 {
+            XCTAssertNotEqual(gtk_widget_activate(button), 0)
+            XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(setupWindow) != 0 })
+            XCTAssertEqual(setupWindows, [setupWindow])
+            XCTAssertEqual(settingsWindows, [settingsWindow])
+            XCTAssertTrue(environment.setupModel === setup)
+            XCTAssertTrue(environment.shortcutsSettingsModel === shortcuts)
+            XCTAssertFalse(environment.panel.isVisible)
+            gtk_window_close(mp_window(setupWindow))
+        }
+    }
+
     func testChooseSwitchesLibraryInvalidChoiceKeepsPathAndDefaultAndRevealUseModel() throws {
         let window = try openSettingsAction()
         let pathLabel = try settingsWidget("settings-library-path", in: window)
@@ -243,6 +287,52 @@ final class LinuxSettingsWindowTests: XCTestCase {
 
     private var defaultFolder: URL { paths.documentsDirectory.appendingPathComponent("MonkeysPaw", isDirectory: true) }
 
+    private func assertPickerSettingsAccess(_ open: () throws -> Void) throws {
+        try RootedFileStore(root: defaultFolder).write(Data("Test prompt".utf8), at: "prompt.md")
+        let window = try openSettingsAction()
+        let picker = environment.pickerModel
+        GTKClipboard(owner: environment.panel.clipboardOwner).writeText("Keep clipboard")
+        var presentations = 0
+        GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
+            guard let self, gtk_widget_get_visible(window) != 0 else { return }
+            presentations += 1
+            XCTAssertEqual(picker.state, .closed, "Dismiss the picker before showing Settings")
+            XCTAssertFalse(self.environment.panel.isVisible)
+        }
+
+        for _ in 0..<2 {
+            gtk_window_close(mp_window(window))
+            environment.activateToggle()
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+            let count = presentations
+            try open()
+            XCTAssertTrue(GTKTestSupport.spin { presentations == count + 1 })
+            XCTAssertEqual(try visibleSettings(), window)
+            XCTAssertEqual(settingsWindows.count, 1)
+            XCTAssertEqual(picker.state, .closed)
+            XCTAssertFalse(environment.panel.isVisible)
+            XCTAssertTrue(environment.pickerModel === picker)
+
+            let clipboard = SettingsClipboardRead()
+            GTKClipboard(owner: environment.panel.clipboardOwner).readText { clipboard.store($0) }
+            XCTAssertTrue(GTKTestSupport.spin { clipboard.value != nil })
+            XCTAssertEqual(clipboard.value, "Keep clipboard", "Opening Settings must not deliver a prompt")
+        }
+
+        // Settings is still visible: either picker entry must raise that window.
+        picker.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+        try open()
+        XCTAssertTrue(GTKTestSupport.spin {
+            !self.environment.panel.isVisible && gtk_window_is_active(mp_window(window)) != 0
+        })
+        XCTAssertEqual(settingsWindows, [window])
+        XCTAssertEqual(picker.state, .closed)
+        let identity = try XCTUnwrap(picker.results.first?.identity)
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        XCTAssertTrue(try UsageStore(files: data, clock: SystemClock()).useEvents(for: identity).isEmpty)
+    }
+
     private func compose() {
         environment?.shutdown()
         environment = LinuxEnvironment(application: application, environment: tools.environment,
@@ -265,12 +355,20 @@ final class LinuxSettingsWindowTests: XCTestCase {
     }
 
     private var settingsWindows: [GTK.Widget] {
+        windows(titled: LinuxStrings.settings)
+    }
+
+    private var setupWindows: [GTK.Widget] {
+        windows(titled: LinuxStrings.setup)
+    }
+
+    private func windows(titled title: String) -> [GTK.Widget] {
         var windows: [GTK.Widget] = []
         var node = gtk_application_get_windows(application)
         while let current = node {
             if let raw = current.pointee.data {
                 let window = raw.assumingMemoryBound(to: GtkWindow.self)
-                if gtk_window_get_title(window).map({ String(cString: $0) }) == LinuxStrings.settings {
+                if gtk_window_get_title(window).map({ String(cString: $0) }) == title {
                     windows.append(mp_window_widget(window))
                 }
             }
@@ -305,6 +403,23 @@ final class LinuxSettingsWindowTests: XCTestCase {
         var drained = false
         GTK.onMainLoop { drained = true }
         XCTAssertTrue(GTKTestSupport.spin { drained })
+    }
+}
+
+private final class SettingsClipboardRead: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text: String?
+
+    var value: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return text
+    }
+
+    func store(_ value: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        text = value
     }
 }
 

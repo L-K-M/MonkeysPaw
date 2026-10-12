@@ -107,6 +107,7 @@ final class LinuxEnvironment {
     private let session: LinuxSessionProbe
     private let runner: LinuxToolRunner
     private let scheduler: Scheduler
+    private let focusTracker: FocusTracker?
     private let hotkey: LinuxHotkeyBackend
     private let portal: LinuxPortalTransport
     private let remoteDesktop: RemoteDesktopPasteInjector
@@ -161,7 +162,7 @@ final class LinuxEnvironment {
     private lazy var fill = FillService(values: values, clipboard: clipboard, clock: clock,
         timeZone: { TimeZone.current })
     private lazy var delivery = DeliveryService(
-        panel: panel, focus: LinuxFocusTracker(session: session, runner: runner),
+        panel: panel, focus: focusTracker ?? LinuxFocusTracker(session: session, runner: runner),
         clipboard: clipboard,
         injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
         notifier: GTKNotifier(application: application, session: session), session: session,
@@ -184,6 +185,7 @@ final class LinuxEnvironment {
     init(application: UnsafeMutablePointer<GtkApplication>,
          environment: [String: String] = ProcessInfo.processInfo.environment,
          scheduler: Scheduler? = nil,
+         focusTracker: FocusTracker? = nil,
          libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
          folderChooser: LinuxFolderChoosing? = nil,
          launchURI: @escaping (URL) -> Void = { url in
@@ -201,6 +203,7 @@ final class LinuxEnvironment {
         runner = LinuxToolRunner(environment: environment)
         session = LinuxSessionProbe(environment: environment)
         self.scheduler = scheduler ?? GLibScheduler()
+        self.focusTracker = focusTracker
         paths = LinuxPaths(environment: environment)
         firstRun = LinuxFirstRunState(paths: paths)
         portal = LinuxPortalTransport(busAddress: environment["DBUS_SESSION_BUS_ADDRESS"])
@@ -261,11 +264,21 @@ final class LinuxEnvironment {
     }
 
     func showSettings() {
-        if currentSettingsWindow == nil {
-            currentSettingsWindow = LinuxSettingsWindow(application: application,
-                general: generalSettingsModel, shortcuts: shortcutsSettingsModel, chooser: folderChooser)
+        guard pickerModel.state != .delivering else { return }
+        pickerModel.dismiss()
+        panel.hide()
+        delivery.invalidatePendingPresentation()
+        // Dismissal and invalidation enter DeliveryService through GLib idles.
+        // Present only after those requests, including desktop-action entry.
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            if self.currentSettingsWindow == nil {
+                self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
+                    general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
+                    chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() })
+            }
+            self.currentSettingsWindow?.show()
         }
-        currentSettingsWindow?.show()
     }
 
     private func showSetup() {
@@ -342,6 +355,9 @@ final class LinuxEnvironment {
             openSetup: { [weak self, weak callbacks] in
                 guard callbacks?.isActive == true else { return }
                 self?.showSetup()
+            }, openSettings: { [weak self, weak callbacks] in
+                guard callbacks?.isActive == true else { return }
+                self?.showSettings()
             }, requestedIntent: { [weak self, weak graph] intent in
                 guard let graph, graph.callbacks.isActive else { return }
                 self?.handle(intent, in: graph)
@@ -365,6 +381,9 @@ final class LinuxEnvironment {
         do { files = try prepareLibraryFiles(at: target) }
         catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }
 
+        // The reused panel was hidden directly above. Revoke old requests held
+        // by Setup or focus restoration before retiring their graph.
+        delivery.invalidatePendingPresentation()
         old.stop()
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         if let error = startLibrary(libraryGraph) { return .libraryUnavailable(error) }

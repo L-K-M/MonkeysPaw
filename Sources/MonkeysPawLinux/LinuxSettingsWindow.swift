@@ -9,6 +9,7 @@ final class LinuxSettingsWindow {
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
     private let chooser: LinuxFolderChoosing
+    private let openSetup: () -> Void
     private var isDestroyed = false
     private var isChoosing = false
     private var chooserRevision = 0
@@ -31,10 +32,11 @@ final class LinuxSettingsWindow {
     private var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
     init(application: UnsafeMutablePointer<GtkApplication>, general: GeneralSettingsModel,
-         shortcuts: ShortcutsSettingsModel, chooser: LinuxFolderChoosing) {
+         shortcuts: ShortcutsSettingsModel, chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void) {
         self.general = general
         self.shortcuts = shortcuts
         self.chooser = chooser
+        self.openSetup = openSetup
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
         gtk_window_set_title(mp_window(window), LinuxStrings.settings)
@@ -130,6 +132,12 @@ final class LinuxSettingsWindow {
         gtk_widget_set_name(verifyButton, "settings-verify-shortcut")
         gtk_box_append(mp_box(buttons), changeButton)
         gtk_box_append(mp_box(buttons), verifyButton)
+        let setupButton = GTK.button(LinuxStrings.openSetup) { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.openSetup()
+        }
+        gtk_widget_set_name(setupButton, "settings-open-setup")
+        gtk_box_append(mp_box(buttons), setupButton)
         gtk_box_append(mp_box(page), buttons)
         gtk_box_append(mp_box(page), GTK.label(LinuxStrings.repeatLast))
         repeatBinding = namedLabel("settings-repeat-binding", in: page)

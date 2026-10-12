@@ -116,6 +116,7 @@ final class LinuxPanelLifecycleTests: XCTestCase {
         picker.onChange = { pickerChanged = true }
         panel.rebind(picker: picker, session: .otherX11,
             openSetup: { XCTFail("Destroyed panel opened Setup") },
+            openSettings: { XCTFail("Destroyed panel opened Settings") },
             requestedIntent: { _ in XCTFail("Destroyed panel forwarded an intent") },
             createPrompt: { _ in XCTFail("Destroyed panel created a prompt") })
         picker.setQuery("after destruction")

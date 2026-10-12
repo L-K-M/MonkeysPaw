@@ -44,6 +44,8 @@ enum LinuxStrings {
     }
     static let setup = "Setup"
     static let settings = "Settings"
+    static let openSettings = "Settings…"
+    static let openSetup = "Open Setup…"
     static let generalTab = "General"
     static let shortcutsTab = "Shortcuts"
     static let libraryFolder = "Your library folder"

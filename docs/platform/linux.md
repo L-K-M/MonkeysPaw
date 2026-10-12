@@ -1,5 +1,24 @@
 # Linux picker and delivery checks
 
+## Settings (M2, NOT RUN)
+
+Run these on X11 and GNOME/KDE Wayland. Record the tested commit, date,
+desktop/compositor, GTK and portal versions. Xvfb and private-bus tests do
+not complete these owner checks.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Picker Settings button and Ctrl+, | The picker dismisses without delivery; Settings opens or raises one reusable window. Close and reopen it. | NOT RUN |
+| Launcher Settings desktop action, cold and resident | The action opens the same General and Shortcuts window; the picker stays usable after closing it. | NOT RUN |
+| Choose folder | Choosing an existing readable folder updates the active path and picker; relaunch uses the saved folder. | NOT RUN |
+| Cancel folder chooser | The active folder and settings remain unchanged; Choose becomes usable again. | NOT RUN |
+| Invalid folder | A missing, unreadable or symlinked chosen folder shows an error and retains the previous library. | NOT RUN |
+| Use Default | The active folder returns to the XDG documents default and survives relaunch. | NOT RUN |
+| Open Folder | The file manager opens the active library folder, including after choosing another folder or Use Default. | NOT RUN |
+| Shortcuts Open Setup | Open Setup opens or raises the existing Setup window; closing and reopening it retains the live shortcut state. | NOT RUN |
+| GNOME portal Shortcuts tab | Binding, registration and verification match Setup; portal configuration/Setup guidance follows the advertised interface version. Opening Settings never verifies the shortcut. | NOT RUN |
+| KDE Shortcuts tab | Native and portal binding, registration, guidance and verification match Setup and update after system changes or mechanism handoff. Repeat remains inactive and unbound. | NOT RUN |
+
 ## Picker and fill (M2f, NOT RUN)
 
 Run these on X11 and on GNOME/KDE Wayland. Record the desktop/compositor,

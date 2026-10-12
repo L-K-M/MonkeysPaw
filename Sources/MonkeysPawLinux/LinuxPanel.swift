@@ -29,6 +29,7 @@ final class LinuxPanel: PanelWindow {
     private var controls: [FieldControl] = []
     private var transientStatus: String?
     private var queryPreedit: Preedit?
+    private var openSettings: (() -> Void)?
 
     private var queryEntry: GTK.Widget!
     private var stack: GTK.Widget!
@@ -79,6 +80,7 @@ final class LinuxPanel: PanelWindow {
     }
 
     func rebind(picker: PickerModel, session: DesktopSession, openSetup: @escaping () -> Void,
+                openSettings: @escaping () -> Void,
                 requestedIntent: @escaping (PickerModel.Intent) -> Void,
                 createPrompt: @escaping (String) -> Void) {
         guard !isDestroyed else { return }
@@ -97,6 +99,7 @@ final class LinuxPanel: PanelWindow {
         gtk_window_set_child(mp_window(window), nil)
         isRendering = false
         self.picker = picker
+        self.openSettings = openSettings
         let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
                      gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(content, 12) }
@@ -201,6 +204,11 @@ final class LinuxPanel: PanelWindow {
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             picker.openLibrary()
         }
+        let settingsButton = GTK.button(LinuxStrings.openSettings) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            openSettings()
+        }
+        gtk_widget_set_name(settingsButton, "picker-settings")
         for button in [useButton!, copyButton!, editButton!, libraryButton!,
                        GTK.button(LinuxStrings.cancel, { [weak self, weak picker] in
                            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
@@ -209,7 +217,7 @@ final class LinuxPanel: PanelWindow {
                        GTK.button(LinuxStrings.setup, { [weak self, weak picker] in
                            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
                            openSetup()
-                       })] { gtk_box_append(mp_box(actions), button) }
+                       }), settingsButton] { gtk_box_append(mp_box(actions), button) }
         gtk_box_append(mp_box(content), actions)
         hint = GTK.label(LinuxStrings.pickerHint)
         gtk_box_append(mp_box(content), hint)
@@ -462,6 +470,7 @@ final class LinuxPanel: PanelWindow {
         case .use(let mode): picker.use(mode: mode)
         case .edit: picker.editSelected()
         case .openLibrary: picker.openLibrary()
+        case .openSettings: openSettings?()
         case .escape: picker.escape()
         case .focusNext: picker.fillModel?.focusNext()
         case .focusPrevious: picker.fillModel?.focusPrevious()

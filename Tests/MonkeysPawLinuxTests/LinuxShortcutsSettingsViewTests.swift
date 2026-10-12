@@ -38,7 +38,7 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         model = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
         shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
         view = LinuxSettingsWindow(application: application, general: environment.generalSettingsModel,
-            shortcuts: model, chooser: SettingsFolderChooser())
+            shortcuts: model, chooser: SettingsFolderChooser(), openSetup: { XCTFail("Unexpected Setup intent") })
         view.show()
         XCTAssertTrue(GTKTestSupport.spin { self.model.togglePicker.registration != nil })
         let windows = try XCTUnwrap(gtk_application_get_windows(application))

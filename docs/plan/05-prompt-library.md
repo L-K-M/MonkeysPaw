@@ -48,15 +48,15 @@ and must not itself be a symlink; only the platform default may be created, and
 a symlinked default is resolved as before. Validation failure leaves the graph
 and settings intact. A valid switch replaces only the library store, service,
 index, watcher and picker, keeping the native panel, delivery and app-data
-stores. Old callbacks are retired (macOS also invalidates queued picker
-presentation work) and the old picker's session drafts are dropped; remembered
-values, usage and history stay in app data. The new picker hook is installed
-before monitoring starts and the index rebuilds. A watcher or initial scan
-failure leaves the new graph unavailable, as at launch, and does not persist
-the choice. After successful startup the choice is saved; a save failure keeps
-the new graph for this session and surfaces `SettingsModel`'s error, and the
-next launch uses the last successfully persisted choice. This avoids a second
-view rebind and watcher restart after a settings write failure.
+stores. Both platforms hide the reused panel directly, then invalidate queued
+picker presentation work before retiring the old graph's callbacks and session
+drafts; remembered values, usage and history stay in app data. The new picker
+hook is installed before monitoring starts and the index rebuilds. A watcher
+or initial scan failure leaves the new graph unavailable, as at launch, and
+does not persist the choice. After successful startup the choice is saved; a
+save failure keeps the new graph for this session and surfaces `SettingsModel`'s
+error, and the next launch uses the last successfully persisted choice. This
+avoids a second view rebind and watcher restart after a settings write failure.
 
 `ValuesStore` stores version 1 sorted-key JSON in the single `values.json`:
 `{"values":{<identity-key>:{<field-name>:<value>}},"version":1}`. Keys use the
