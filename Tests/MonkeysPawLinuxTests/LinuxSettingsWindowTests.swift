@@ -273,6 +273,13 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertTrue(launched.isEmpty)
     }
 
+    func testOpenRequestQueuedBeforeShutdownBuildsNoWindow() throws {
+        environment.showSettings()
+        environment.shutdown()
+        drainUI()
+        XCTAssertTrue(settingsWindows.isEmpty)
+    }
+
     func testEveryLinuxSwitchResultMapsLosslesslyToCore() {
         let cases: [(LinuxEnvironment.LibrarySwitchResult, LibrarySwitchOutcome)] = [
             (.switched, .switched),

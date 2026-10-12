@@ -32,7 +32,8 @@ final class GTKFolderChooser: LinuxFolderChoosing {
         completion = done
         let chooser = mp_file_chooser(dialog)
         gtk_file_chooser_set_select_multiple(chooser, 0)
-        gtk_file_chooser_set_create_folders(chooser, 0)
+        // A first-run user may create the library folder here, as on macOS.
+        gtk_file_chooser_set_create_folders(chooser, 1)
         let folder = g_file_new_for_path(currentPath)!
         var error: UnsafeMutablePointer<GError>?
         _ = gtk_file_chooser_set_current_folder(chooser, folder, &error)

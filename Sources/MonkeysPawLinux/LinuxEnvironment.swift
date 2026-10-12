@@ -179,6 +179,7 @@ final class LinuxEnvironment {
     private(set) lazy var shortcutsSettingsModel = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
     private lazy var setupWindow = LinuxSetupWindow(application: application, model: setupModel)
     private var currentSettingsWindow: LinuxSettingsWindow?
+    private var isShutDown = false
 
     private let application: UnsafeMutablePointer<GtkApplication>
 
@@ -271,7 +272,8 @@ final class LinuxEnvironment {
         // Dismissal and invalidation enter DeliveryService through GLib idles.
         // Present only after those requests, including desktop-action entry.
         mainThread.run { [weak self] in
-            guard let self else { return }
+            // An open request queued before shutdown must not build a window.
+            guard let self, !self.isShutDown else { return }
             if self.currentSettingsWindow == nil {
                 self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
@@ -512,6 +514,7 @@ final class LinuxEnvironment {
     }
 
     func shutdown() {
+        isShutDown = true
         currentSettingsWindow?.hide()
         currentLibraryGraph?.stop()
         hotkey.shutdown()
