@@ -175,11 +175,9 @@ public enum MonkeysPawLinuxApp {
                 return 0
             }
 
-            if g_application_command_line_get_is_remote(command) != 0 {
-                environment.activateToggle()
-            } else {
-                environment.presentFromLauncher()
-            }
+            // Ordinary launches resume pending onboarding in the resident
+            // primary too. Only the explicit toggle action toggles the picker.
+            environment.presentFromLauncher()
             return 0
         }
 
