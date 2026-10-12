@@ -20,6 +20,8 @@ persisted reads bypass the read-only environment tier. Writes never edit
 environment variables; deletion removes persisted account copies and leaves
 the environment untouched ([§19 B23](19-m4-m5-decisions.md)). Secret values,
 drafts, resolved connections and HTTP envelopes have redacted descriptions.
+Persisted provider secrets also carry the destination binding from §7.6;
+metadata edits cannot rebind a stored key to another kind or origin.
 
 For Keychain/Secret Service, scans of repository, config, data, logs and
 temporary directories must find zero copies of a saved key. The Linux file

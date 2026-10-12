@@ -64,6 +64,16 @@ final class ProviderNormalizationTests: XCTestCase {
         }
     }
 
+    func testHTTPRejectsNonCanonicalIPv4LoopbackOctets() {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for host in ["127.0.0.08", "127.09.1.1", "127.0.018.1", "127.00.0.1", "127.0.0.010"] {
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("http://\(host)", kind: kind)) {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .insecureBaseURL)
+                }
+            }
+        }
+    }
+
     func testCredentialsQueryAndFragmentsAreRejectedForBothKinds() {
         for kind in [ProviderKind.anthropic, .openaiCompatible] {
             for input in ["https://user:password@example.com", "https://user@example.com", "https://@example.com"] {

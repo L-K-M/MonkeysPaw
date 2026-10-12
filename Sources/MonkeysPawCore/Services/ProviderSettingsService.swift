@@ -3,6 +3,14 @@ import Foundation
 /// Owns B23 key rules. Call from serial background work when a native secret
 /// store can prompt or block. The shared store serializes every compound edit.
 public final class ProviderSettingsService {
+    private struct Credential: Codable {
+        static let currentVersion = 1
+        let version: Int
+        let origin: String
+        let kind: ProviderKind
+        let key: String
+    }
+
     private let store: ProviderSettingsStore
     private let secrets: SecretStore
     private let log: LogSink?
@@ -30,7 +38,8 @@ public final class ProviderSettingsService {
                 reference = try keptReference(for: draft.id, previous: previous)
             case .replace(let value):
                 reference = .provider(draft.id)
-                undo = try editSecret(account: .provider(draft.id), value: value)
+                let bound = try bindSecret(value, kind: candidate.kind, baseURL: candidate.baseURL)
+                undo = try editSecret(account: .provider(draft.id), value: bound)
             case .clear:
                 reference = nil
                 undo = try editSecret(account: .provider(draft.id), value: nil)
@@ -74,7 +83,7 @@ public final class ProviderSettingsService {
             case .clear: key = nil
             case .keep:
                 let reference = try keptReference(for: draft.id, previous: previous)
-                key = try reference.flatMap { try readSecret($0, source: .effective)?.value }
+                key = try reference.flatMap { try resolveSecret($0, kind: draft.kind, baseURL: baseURL) }
             }
             return ProviderConnection(profileID: draft.id, kind: draft.kind, baseURL: baseURL,
                                       modelID: draft.modelID, key: key)
@@ -86,7 +95,9 @@ public final class ProviderSettingsService {
             guard let profile = settings.profiles.first(where: { $0.id == id }) else {
                 throw ProviderSettingsError.profileNotFound
             }
-            let key = try profile.secretReference.flatMap { try readSecret($0, source: .effective)?.value }
+            let key = try profile.secretReference.flatMap {
+                try resolveSecret($0, kind: profile.kind, baseURL: profile.baseURL)
+            }
             return ProviderConnection(profileID: id, kind: profile.kind, baseURL: profile.baseURL,
                                       modelID: profile.modelID, key: key)
         }
@@ -129,6 +140,33 @@ public final class ProviderSettingsService {
         do { return try secrets.read(account: account, source: source) }
         catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
         catch { throw ProviderSettingsError.secret(.readFailed) }
+    }
+
+    // Bind inside the secret: a failed rollback can leave metadata byte-identical.
+    private func bindSecret(_ value: SecretValue, kind: ProviderKind, baseURL: URL) throws -> SecretValue {
+        do {
+            return try value.withValue { key in
+                let credential = Credential(version: Credential.currentVersion, origin: ProviderSettings.credentialOrigin(baseURL),
+                                            kind: kind, key: key)
+                return SecretValue(String(decoding: try JSONEncoder().encode(credential), as: UTF8.self))
+            }
+        } catch { throw ProviderSettingsError.secret(.writeFailed) }
+    }
+
+    private func resolveSecret(_ account: SecretAccount, kind: ProviderKind, baseURL: URL) throws -> SecretValue? {
+        guard let stored = try readSecret(account, source: .effective) else { return nil }
+        // Environment values are raw, explicit operator overrides (B23).
+        if stored.tier == .environment { return stored.value }
+        let credential = stored.value.withValue {
+            try? JSONDecoder().decode(Credential.self, from: Data($0.utf8))
+        }
+        guard let credential, credential.version == Credential.currentVersion, credential.kind == kind,
+              credential.origin == ProviderSettings.credentialOrigin(baseURL) else {
+            throw ProviderSettingsError.keyRequiredForChangedDestination
+        }
+        let key = SecretValue(credential.key)
+        try validateKey(.replace(key))
+        return key
     }
 
     /// SecretStore promises atomic per-account edits. Metadata commit uses

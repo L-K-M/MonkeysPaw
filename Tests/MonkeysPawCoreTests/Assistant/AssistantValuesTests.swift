@@ -3,6 +3,19 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class AssistantValuesTests: XCTestCase {
+    func testProviderDraftDefaultNameMatchesItsKindAndKeepsAnExplicitName() {
+        XCTAssertEqual(ProviderDraft().displayName, "Anthropic")
+        XCTAssertEqual(ProviderDraft(kind: .openaiCompatible).displayName, "OpenAI-compatible")
+        XCTAssertEqual(ProviderDraft(displayName: "Local", kind: .openaiCompatible).displayName, "Local")
+    }
+
+    func testTypedKeyTrimsSurroundingWhitespaceAndNewlinesOnly() {
+        let sentinel = UUID().uuidString
+        XCTAssertEqual(ProviderKeyEdit.typed(" \t" + sentinel + "\r\n"), .replace(SecretValue(sentinel)))
+        XCTAssertEqual(ProviderKeyEdit.typed(" \t\n"), .keep)
+        XCTAssertEqual(ProviderKeyEdit.typed("first\nsecond"), .replace(SecretValue("first\nsecond")))
+    }
+
     func testAccessSeamAllowsEditorOwnerAndPrivatePromptsAndOffersViewerCopy() {
         XCTAssertEqual(AssistantAccessState.privatePrompt.mutationAccess, .currentScope)
         XCTAssertEqual(AssistantAccessState.group(.editor).mutationAccess, .currentScope)

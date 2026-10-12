@@ -74,6 +74,6 @@ public enum HTTPTransportError: String, Error, Equatable, Sendable {
 /// the HTTP task. It throws typed errors without provider bodies. Responses,
 /// including errors, remain capped data for the protocol layer to interpret.
 /// The portable URLSession adapter belongs to A2 (§19 B1).
-public protocol HTTPTransporting {
+public protocol HTTPTransporting: Sendable {
     func send(_ request: HTTPRequest) async throws -> HTTPResponse
 }

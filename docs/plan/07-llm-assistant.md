@@ -11,7 +11,8 @@ Loading and atomic publication follow §5.1's fail-closed settings contract
 ([§19 B23](19-m4-m5-decisions.md)).
 Secret edits are compensated if metadata cannot commit. Failed compensation
 blocks further credential resolution and makes that store instance read-only;
-repair the affected credential before recreating the store.
+after restart, a credential with a mismatched destination still requires
+re-entry or Clear before it can be used.
 
 | Kind | Covers | Request | Auth |
 |---|---|---|---|
@@ -28,8 +29,8 @@ repair the affected credential before recreating the store.
   - Full Anthropic `…/v1/messages` and either protocol's model-list endpoint
     are also trimmed. Scheme/host case and default ports normalize; queries,
     fragments, userinfo, dot path segments and encoded path separators are
-    rejected. HTTP is allowed only for `localhost`, IPv4 `127.0.0.0/8`, and
-    IPv6 `::1` ([§19 B23](19-m4-m5-decisions.md)).
+    rejected. HTTP is allowed only for `localhost`, canonical decimal IPv4
+    `127.0.0.0/8`, and IPv6 `::1` ([§19 B23](19-m4-m5-decisions.md)).
 - **Models.** "Test connection" lists models with
   `MODEL_LIST_TIMEOUT = 15 s` and fills the model picker. Typing a model id
   by hand always works.
@@ -220,14 +221,19 @@ prompt-engineering guide. `placeholders` is checked locally, without an LLM.
 
 - **Keys.** Each provider profile has its own secret-store account, so a
   key is never sent to another provider. The stored key is never displayed.
-  A blank field means "keep". "Test" uses the typed draft without
-  overwriting the stored key.
+  Typed keys trim surrounding whitespace and newlines; a blank field means
+  "keep". "Test" uses the typed draft without overwriting the stored key.
   Profiles use `provider:<lowercase UUID>` accounts; Linux overrides use
   `MONKEYSPAW_PROVIDER_<UUID without hyphens, uppercase>_API_KEY`. Clear
   deletes persisted credentials and disables auth for that profile without
   editing the environment. Replacing an environment-backed key is read-only.
   A changed kind, scheme, host or effective port requires a re-entered key
   or explicit Clear, including for Test. Test consults only its draft's ID.
+  Persisted secrets contain a version-1 payload binding the key to its kind
+  and normalized origin (scheme, host, effective port). Resolution refuses
+  mismatched, unbound, malformed or unsupported payloads and requires
+  re-entry or Clear; rollback restores payloads verbatim. Environment values
+  remain raw operator overrides.
   Capability keys include profile ID, kind, normalized base URL and model
   ([§19 B23](19-m4-m5-decisions.md)).
 - **What is sent.** Calls happen only on an explicit button. They send the

@@ -4,6 +4,13 @@ public enum ProviderKind: String, Codable, Hashable, Sendable {
     case anthropic
     case openaiCompatible
 
+    var defaultDisplayName: String {
+        switch self {
+        case .anthropic: return "Anthropic"
+        case .openaiCompatible: return "OpenAI-compatible"
+        }
+    }
+
     public var defaultBaseURL: String {
         switch self {
         case .anthropic: return "https://api.anthropic.com"
@@ -102,9 +109,10 @@ public enum ProviderKeyEdit: Equatable, Sendable {
     case replace(SecretValue)
     case clear
 
-    /// A whitespace-only key field is Keep; Clear is a separate intent.
+    /// Trim pasted surrounding whitespace; a blank field is Keep, not Clear.
     public static func typed(_ value: String) -> ProviderKeyEdit {
-        value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .keep : .replace(SecretValue(value))
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? .keep : .replace(SecretValue(value))
     }
 }
 
@@ -118,11 +126,11 @@ public struct ProviderDraft: Equatable, Sendable, CustomStringConvertible,
     public var modelID: String
     public var key: ProviderKeyEdit
 
-    public init(id: ProviderProfileID = ProviderProfileID(), displayName: String = "Anthropic",
+    public init(id: ProviderProfileID = ProviderProfileID(), displayName: String? = nil,
                 kind: ProviderKind = .anthropic, baseURL: String? = nil, modelID: String? = nil,
                 key: ProviderKeyEdit = .keep) {
         self.id = id
-        self.displayName = displayName
+        self.displayName = displayName ?? kind.defaultDisplayName
         self.kind = kind
         self.baseURL = baseURL ?? kind.defaultBaseURL
         self.modelID = modelID ?? kind.defaultModelID

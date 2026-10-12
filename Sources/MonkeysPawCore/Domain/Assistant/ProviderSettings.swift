@@ -94,9 +94,9 @@ public struct ProviderSettings: Equatable, Sendable {
             return groups.dropLast().allSatisfy { Int($0, radix: 16) == 0 } && Int(groups[7], radix: 16) == 1
         }
         let octets = host.split(separator: ".", omittingEmptySubsequences: false)
-        return octets.count == 4 && octets.first == "127" && octets.allSatisfy {
-            !$0.isEmpty && $0.utf8.allSatisfy({ (48...57).contains($0) })
-                && Int($0).map({ (0...255).contains($0) }) == true
+        return octets.count == 4 && octets.first == "127" && octets.allSatisfy { octet in
+            guard let value = Int(octet), (0...255).contains(value) else { return false }
+            return String(value) == octet
         }
     }
 
