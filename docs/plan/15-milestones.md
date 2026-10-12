@@ -50,6 +50,10 @@
 - I1 adds Core settings persistence and the General/onboarding model, including
   legacy Setup import; later slices wire the desktop settings, folder step and seeds.
 
+- I7 wires Linux settings and replaceable library composition, installing the
+  new picker hook before arming its watcher and rebuilding, ahead of the General
+  folder controls and onboarding slices.
+
 - I2 supplies the embedded seed catalog and empty-library exclusive seeding
   service before onboarding wiring, with settings recording "seeds offered"
   separately and no composition-root changes in this slice.
