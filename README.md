@@ -22,7 +22,22 @@ Core package, the server health endpoint, and build and test infrastructure.
 
 ## Install on Linux
 
-On Ubuntu 24.04 or newer, install the `.deb` from a release with
-`sudo apt install ./monkeyspaw_<version>_<arch>.deb`, then run `monkeyspaw`.
-Release publishing is still pending; to build a local package, see
-[packaging instructions](docs/plan/14-repository-packaging-ci-release.md).
+On Ubuntu 24.04 or newer, download the `.deb` and its `.deb.sha256` from a
+release. Run `sha256sum -c <filename>.deb.sha256` in the download directory,
+then install with `sudo apt install ./monkeyspaw_<version>_<arch>.deb` and run
+`monkeyspaw`. To build a local package, run
+`scripts/build.sh deb`; see the
+[packaging requirements](docs/plan/14-repository-packaging-ci-release.md).
+
+## Install on macOS
+
+Download `MonkeysPaw-<version>.dmg`, `.zip` and `.sha256` from the
+[releases](https://github.com/L-K-M/MonkeysPaw/releases). In the download
+directory, run `shasum -a 256 -c MonkeysPaw-<version>.sha256`; both archives
+must report **OK**. Open the dmg and drag `MonkeysPaw.app` to Applications.
+Builds are ad-hoc signed unless the release says otherwise, and are not
+notarized. For Gatekeeper approval and installation checks, see the
+[macOS checklist](docs/platform/macos.md). Local packaging uses
+`scripts/build.sh mac`; the app-only engine remains at `scripts/build.sh app`.
+
+The [CI and release guide](CICD.md) describes dry runs and cutting a release.
