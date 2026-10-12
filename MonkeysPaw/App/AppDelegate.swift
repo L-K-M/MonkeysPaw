@@ -245,8 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             // RootedFileStore accepts canonical OS ancestors (such as /var).
-            // Reject a selected symlink itself before creating a default root.
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: directory.path),
+            // Reject a chosen symlink itself. The default keeps resolving, so a
+            // default folder linked into a synced directory still loads.
+            if location == .chosen,
+               let attributes = try? FileManager.default.attributesOfItem(atPath: directory.path),
                attributes[.type] as? FileAttributeType == .typeSymbolicLink {
                 throw FileStoreError.outsideRoot
             }

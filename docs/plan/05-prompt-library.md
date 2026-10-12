@@ -43,7 +43,8 @@ Paths, contents and underlying error bodies are never logged.
 macOS composition reads the library choice from this settings store at launch.
 Switching folders replaces the library store, service, index, watcher and picker
 while keeping the native panel, delivery and app-data stores. A chosen folder
-must already exist and be readable; only the platform default is created.
+must already exist and be readable and must not itself be a symlink; only the
+platform default is created, and a symlinked default is resolved as before.
 Delivery in progress refuses a switch. The old picker is dismissed and the
 panel hidden directly, then queued presentation work, the old watcher and its
 callbacks are invalidated before the new graph starts, with the

@@ -93,6 +93,22 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(delegate.settingsModel?.libraryFolderPath, other.path)
     }
 
+    func testSymlinkedDefaultLibraryStillLoadsAndCanBeReselected() throws {
+        // Users may link the default folder into a synced directory; only a
+        // chosen folder must not be a symlink itself.
+        let synced = directory.appendingPathComponent("synced", isDirectory: true)
+        try files(at: synced).write(Data("Synced".utf8), at: "synced.md")
+        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: synced)
+        let picker = try start()
+        XCTAssertTrue(picker.libraryAvailable)
+        XCTAssertEqual(picker.results.map(\.relativePath), ["synced.md"])
+
+        XCTAssertEqual(delegate.switchLibrary(to: nil), .switched)
+        let current = try XCTUnwrap(delegate.pickerModel)
+        XCTAssertTrue(current.libraryAvailable)
+        XCTAssertEqual(current.results.map(\.relativePath), ["synced.md"])
+    }
+
     func testInvalidTargetsKeepGraphAndSettings() throws {
         try files(at: root).write(Data("Alpha".utf8), at: "alpha.md")
         let old = try start()
