@@ -37,7 +37,14 @@ Per OS:
   reliably retake focus in a reused hosting view (Vervellum). Menu-bar
   agent (`LSUIElement`); the activation policy turns `.regular` only while
   Settings or Library is open.
-  - A main menu is installed even though it never shows: AppKit routes
+  - **Settings…** in the status menu and **⌘,** open the same reusable
+    General/Shortcuts window, including while Setup has focus. Shortcuts has
+    **Open Setup…** to reopen the existing Setup screen.
+    During shortcut capture, modified chords and Escape are consumed before
+    menu dispatch. Tab, key repeats and bare modifier changes retain native
+    handling; leaving the recorder stops capture. The Command-or-Control
+    binding alias displays as **Cmd** on macOS.
+  - A main menu is installed even while it is hidden: AppKit routes
     ⌘C/⌘V/⌘A/⌘Z through main-menu items, and without them those keys die
     silently in text fields (Vervellum).
 - **Linux.** GTK4 through the shim:

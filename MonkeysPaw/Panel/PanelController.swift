@@ -25,7 +25,7 @@ final class PanelController: PanelWindow {
     var onKey: ((NSEvent, FieldKind?) -> Bool)?
 
     private let mainThread: MainThread
-    private let scheduler: Scheduler
+    private let scheduler: MonkeysPawCore.Scheduler
     private let log: LogSink
     private let keyWindow: () -> NSWindow?
     private var panel: PromptPanel?
@@ -39,7 +39,7 @@ final class PanelController: PanelWindow {
     var isVisible: Bool { panel?.isVisible == true }
     var isActiveAndVisible: Bool { isVisible && panel?.isKeyWindow == true }
 
-    init(mainThread: MainThread, scheduler: Scheduler, log: LogSink,
+    init(mainThread: MainThread, scheduler: MonkeysPawCore.Scheduler, log: LogSink,
          keyWindow: @escaping () -> NSWindow? = { NSApp.keyWindow }) {
         self.mainThread = mainThread
         self.scheduler = scheduler
