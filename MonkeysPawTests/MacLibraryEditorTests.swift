@@ -92,8 +92,8 @@ final class MacLibraryEditorTests: XCTestCase {
         request.respond(response)
     }
 
-    private func externalConflict(_ kind: EditorConflict.Kind) throws -> LibraryViewState {
-        let presentation = try open()
+    private func externalConflict(_ kind: EditorConflict.Kind, source: String = "Original") throws -> LibraryViewState {
+        let presentation = try open(source)
         presentation.edit("Mine")
         if kind == .deleted {
             try files.delete(at: "one.md")
@@ -199,13 +199,21 @@ final class MacLibraryEditorTests: XCTestCase {
     }
 
     func testDeletionConflictSaveAsCopy() throws {
-        let presentation = try externalConflict(.deleted)
+        let presentation = try externalConflict(.deleted,
+            source: "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal")
+        let original = try XCTUnwrap(presentation.editorState.prompt)
+        XCTAssertNil(try files.stamp(at: "one.md"))
         try respond(.conflict(.saveAsCopy))
         work.drain()
         let copy = try XCTUnwrap(presentation.editorState.lastCopy)
+        // Exclusive creation may reuse the deleted path; it must assign a new identity.
+        XCTAssertEqual(copy.relativePath, original.relativePath)
+        XCTAssertNotEqual(copy.identity, original.identity)
         XCTAssertEqual(try body(at: copy.relativePath.string), "Mine")
-        XCTAssertNil(try files.stamp(at: "one.md"))
+        XCTAssertEqual(try files.stamp(at: copy.relativePath.string), presentation.editorState.stamp)
         XCTAssertEqual(presentation.editorState.prompt, copy)
+        XCTAssertFalse(presentation.editorState.isDirty)
+        XCTAssertNil(presentation.editorState.conflict)
     }
 
     func testDeletionConflictDiscardClosesDraft() throws {
@@ -391,6 +399,9 @@ final class MacLibraryEditorTests: XCTestCase {
         text.insertText(" plus", replacementRange: NSRange(location: 8, length: 0))
         text.breakUndoCoalescing()
         undo.endUndoGrouping()
+        XCTAssertEqual(text.string, "Original plus")
+        // Replacing an explicit range does not establish the body caret for this test.
+        text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
         presentation.save()
         work.drain()
         let saved = try XCTUnwrap(presentation.editorState.source)
@@ -402,12 +413,46 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(text.selectedRange(), NSRange(location: (saved as NSString).length, length: 0),
             "The injected header must not move the body caret into YAML")
         XCTAssertTrue(text.undoManager?.canUndo == true)
-        text.undoManager?.undo()
+        XCTAssertTrue(NSApp.sendAction(Selector(("undo:")), to: text, from: nil))
+        waitForSource("Original plus", in: presentation)
         XCTAssertEqual(text.string, "Original plus", "Undo first removes the model-driven normalization")
+        XCTAssertEqual(presentation.editorState.source, "Original plus")
         XCTAssertTrue(text.undoManager?.canUndo == true, "The earlier native typing action remains undoable")
-        text.undoManager?.undo()
+        XCTAssertTrue(NSApp.sendAction(Selector(("undo:")), to: text, from: nil))
+        waitForSource("Original", in: presentation)
         XCTAssertEqual(text.string, "Original")
         XCTAssertEqual(presentation.editorState.source, "Original")
+    }
+
+    func testQuitWithOnlyQueuedActionsRepliesAfterTheyDrain() throws {
+        let presentation = try open()
+        let editor = try XCTUnwrap(delegate.editorModel)
+        presentation.edit("Mine")
+        presentation.save()
+        var completed: [EditorDiscardAction] = []
+        editor.request(.rename) { result in
+            XCTAssertEqual(result, .allowed)
+            completed.append(.rename)
+            // At this point queuedActions alone must defer termination.
+            XCTAssertFalse(editor.state.isDirty)
+            XCTAssertEqual(editor.state.status, .saved)
+            XCTAssertNil(editor.state.pendingDecision)
+            XCTAssertEqual(editor.state.queuedActions, [.move])
+            XCTAssertEqual(self.delegate.applicationShouldTerminate(NSApp), .terminateLater)
+            XCTAssertTrue(self.terminationReplies.isEmpty)
+        }
+        editor.request(.move) { result in
+            XCTAssertEqual(result, .allowed)
+            completed.append(.move)
+        }
+        XCTAssertEqual(editor.state.queuedActions, [.rename, .move])
+        work.drain()
+        XCTAssertEqual(completed, [.rename, .move])
+        XCTAssertTrue(editor.state.queuedActions.isEmpty)
+        XCTAssertTrue(terminationReplies.isEmpty)
+        drainTerminationReply()
+        XCTAssertEqual(terminationReplies, [true])
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateNow)
     }
 
     func testQuitCancelThenSaveUsesTerminateLaterAndRepliesAfterSave() throws {
@@ -459,6 +504,15 @@ final class MacLibraryEditorTests: XCTestCase {
         let drained = expectation(description: "AppKit deferred termination reply")
         DispatchQueue.main.async { drained.fulfill() }
         wait(for: [drained], timeout: 2)
+    }
+
+    private func waitForSource(_ source: String, in presentation: LibraryViewState) {
+        // Wait for AppKit's textDidChange publication after native Undo,
+        // without synthesizing callbacks or requiring a key window.
+        let published = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            presentation.editorState.source == source
+        }, object: nil)
+        wait(for: [published], timeout: 2)
     }
 
     func testSettingsRefusesDirtyAndSavingLibrarySwitchesAndRetiresPendingOldLoads() throws {
@@ -564,11 +618,19 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertFalse(text.isRichText)
         XCTAssertFalse(text.isAutomaticQuoteSubstitutionEnabled)
         XCTAssertTrue(try window().makeFirstResponder(text))
+        let undo = try XCTUnwrap(text.undoManager)
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
         text.insertText(" plus", replacementRange: NSRange(location: 8, length: 0))
+        text.breakUndoCoalescing()
+        undo.endUndoGrouping()
         XCTAssertEqual(presentation.editorState.source, "Original plus")
-        text.undoManager?.undo()
+        XCTAssertTrue(undo.canUndo)
+        XCTAssertTrue(NSApp.sendAction(Selector(("undo:")), to: text, from: nil))
+        waitForSource("Original", in: presentation)
         XCTAssertEqual(text.string, "Original")
         XCTAssertEqual(presentation.editorState.source, "Original")
+        undo.groupsByEvent = true
         text.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
             replacementRange: NSRange(location: 8, length: 0))
         XCTAssertTrue(text.hasMarkedText())

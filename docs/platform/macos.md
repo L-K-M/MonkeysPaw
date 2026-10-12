@@ -435,7 +435,7 @@ not record prompt text, field values or clipboard contents in this checklist.
 
 | Check | Result | Details |
 |---|---|---|
-| Selection opens Edit with exact raw source, monospace text, native undo/redo, cut/copy/paste/select-all and multiline scrolling | NOT RUN | |
+| Selection opens Edit with exact raw source, monospace text, native undo/redo, cut/copy/paste/select-all and multiline scrolling; a save that adds an id header preserves the body caret and both normalization and prior typing remain undoable | NOT RUN | |
 | Edit, Preview and Fields tabs remain usable on resize; diagnostics below Edit update during typing and identify severity/location; Fields shows parsed declarations and implicit fields read-only | NOT RUN | |
 | Preview uses defaults or field names, real date/time and a literal {clipboard}; opening, typing and all tab changes make zero clipboard reads or writes | NOT RUN | |
 | Non-UTF-8, oversized and future-format prompts show distinct read-only reasons and disable source edits, Save and Save as Copy | NOT RUN | |
@@ -443,7 +443,7 @@ not record prompt text, field values or clipboard contents in this checklist.
 | Favourite on the open dirty prompt updates its source without writing; a clean favourite saves through the editor and causes no false conflict | NOT RUN | |
 | Revert asks Save/Discard/Cancel while dirty and reloads the current disk source after approval; Save as Copy creates a distinct identity/path and selects the copy when the watcher publishes it | NOT RUN | |
 | An external write while dirty opens a native sheet; independently exercise Keep Mine, Take Theirs and Save Mine as Copy, confirming original/copy bytes and retained newer edits; Cancel keeps the draft and conflict available, including after an invalid save, so Edit can repair it before Save reopens the choices | NOT RUN | |
-| An external deletion while dirty leaves its draft visible and offers Keep Mine (recreate), Save Mine as Copy and Discard; exercise all choices | NOT RUN | |
+| An external deletion while dirty leaves its draft visible and offers Keep Mine (recreate), Save Mine as Copy and Discard; exercise all choices; a copy gets a fresh identity and may reuse the now-free filename | NOT RUN | |
 | Selection change, red close button, ⌘W and Escape after clearing the filter ask Save/Discard/Cancel; Cancel keeps the current row/draft and Save completes before navigation/close | NOT RUN | |
 | A close requested during Save waits for completion; failed saves preserve the decision and draft with retryable typed feedback | NOT RUN | |
 | Settings Choose Folder/Use Default refuse a dirty draft or a pending save with the editor-specific message and keep the existing library; after saving/discarding, a switch retires old worker replies, native input and sheet callbacks | NOT RUN | |
