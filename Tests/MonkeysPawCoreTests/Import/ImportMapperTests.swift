@@ -134,6 +134,13 @@ final class ImportMapperTests: XCTestCase {
                 name: {type: string, default: Ada, description: Person}
                 tone: {type: string, enum: [formal, casual]}
             """, true),
+            // Dotprompt treats a `properties` mapping without `type` as an object schema.
+            ("""
+              required: [name]
+              properties:
+                name: {type: string, default: Ada, description: Person}
+                tone: {type: string, enum: [formal, casual]}
+            """, true),
             ("""
               name: {type: string, default: Ada, description: Person}
               tone: {type: string, enum: [formal, casual]}

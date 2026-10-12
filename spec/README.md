@@ -211,7 +211,7 @@ The §5.5 mapping table is portable:
 | `.md` | Validate and copy all bytes, retaining comments and an absent id. A duplicate supplied ULID is replaced by the service, leaving body bytes unchanged. |
 | Dotprompt Picoschema `name: string[, description]` | Text field; `name?` is optional. |
 | Dotprompt `name(enum[, description]): [strings]` | Choice field with those options. |
-| Dotprompt string declaration / JSON Schema object property | Text or string-enum choice field; preserve string description/default; fall back to `input.default.<name>`. An `input` without a supported `schema` receives `unsupportedInput` with key `input.schema`; absent `input` is silent. |
+| Dotprompt string declaration / JSON Schema object property (`type: object` or a `properties` mapping without `type`, as Dotprompt's parser reads it) | Text or string-enum choice field; preserve string description/default; fall back to `input.default.<name>`. An `input` without a supported `schema` receives `unsupportedInput` with key `input.schema`; absent `input` is silent. |
 | Prompty v1 keyed/list `inputs` with `type: string` | Text or string-enum choice field; preserve string description/default; `required: false` maps to `optional: true`, while omitted `required` or `required: true` stays required. Fall back to input-local `sample`, then top-level `sample.<name>`. Valid explicit defaults, including empty strings, take precedence. |
 | Prompty sample-only body placeholder | Its implicit text field gains the string sample as its default. Unsupported explicit inputs and unused sample keys remain metadata. |
 | Invalid explicit default with a usable fallback | Warn with `invalidDefault` at the declaration key, keep the field with the validated string fallback, and set `defaultSource` to its metadata path. A choice fallback must be an enum member. |
@@ -219,8 +219,9 @@ The §5.5 mapping table is portable:
 | All original metadata, including `input`/`inputs`, sample, model, output(s), tools, authors | Preserve original keys and values alongside generated native fields. |
 | Body | Exact UTF-8 bytes; unsupported closed expressions and Jinja2 blocks/comments remain literal and receive warnings. |
 
-Foreign front matter uses the canonical native writer and discloses loss of
-comments/styles as `frontMatterPresentation`. Native YAML portability,
+Foreign front matter uses the canonical native writer. Every converted
+header reports `frontMatterPresentation`, even when the source had no
+comments or styles to lose. Native YAML portability,
 metadata validation and prompt-size limits apply. No provider, tool,
 environment expansion, file-reference expansion or template engine executes.
 The mapper reads no filesystem, clipboard, clock or entropy; the service

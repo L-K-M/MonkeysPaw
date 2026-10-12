@@ -117,6 +117,11 @@ public enum ImportMapper {
     }
 
     private struct FieldMapper {
+        /// Dotprompt 1.1.2 `JSON_SCHEMA_SCALAR_TYPES` plus `object` and `array`.
+        private static let jsonSchemaTypes: Set<String> = [
+            "any", "boolean", "integer", "null", "number", "string", "object", "array"
+        ]
+
         let header: Node.Mapping
         let bodyNames: Set<String>
         var report: ImportMappingReport
@@ -141,8 +146,11 @@ public enum ImportMapper {
                 report.warnings.append(.unsupportedInput("input.schema"))
                 return
             }
-            if let type = value("type", in: mapping).flatMap(PortableYAML.string) {
-                guard type == "object", let properties = value("properties", in: mapping)?.mapping else {
+            // Dotprompt's parser reads JSON Schema when `type` names a JSON
+            // Schema type or `properties` is a mapping; anything else is Picoschema.
+            let type = value("type", in: mapping).flatMap(PortableYAML.string)
+            if type.map(Self.jsonSchemaTypes.contains) == true || value("properties", in: mapping)?.mapping != nil {
+                guard type == nil || type == "object", let properties = value("properties", in: mapping)?.mapping else {
                     report.warnings.append(.unsupportedInput("input.schema"))
                     return
                 }
