@@ -360,6 +360,8 @@ final class ForgetValuesModelTests: XCTestCase {
         h.data.onRead = nil
         h.picker.forgetSelectedValues()
         XCTAssertNil(h.picker.forgetValuesError)
+        // The retry must really forget: the open form shows defaults again.
+        XCTAssertEqual(form.values, ["topic": "default"])
     }
 
     func testNoSelectionIsExplicitFailureAndClosedGlobalForgetCanClearIt() throws {

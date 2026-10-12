@@ -258,6 +258,8 @@ public final class PickerModel: @unchecked Sendable {
         return matches[selectionIndex].entry
     }
 
+    /// Returns true and already reports `forgetValuesError` (with onChange)
+    /// when a delivery is in flight; callers must not report it again.
     private func rejectForgetDuringDelivery() -> Bool {
         guard state == .delivering || fillModel?.state == .delivering else { return false }
         // Pending learning would restore the delivered values after a reset.

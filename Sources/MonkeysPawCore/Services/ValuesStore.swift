@@ -49,10 +49,13 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
         }
     }
 
+    /// values.json format version written by every replacement and accepted on read.
+    private static let formatVersion = 1
+
     /// Explicit recovery also works when existing state cannot be read or decoded.
     /// The private writer retains the driver's rooted path and file checks.
     public func removeAll() throws {
-        try locked { try write(Payload(values: [:], version: 1)) }
+        try locked { try write(Payload(values: [:], version: Self.formatVersion)) }
     }
 
     @discardableResult
@@ -73,10 +76,10 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     private func read() throws -> Payload {
         let bytes: Data
         do { bytes = try files.read(at: path) }
-        catch FileStoreError.notFound { return Payload(values: [:], version: 1) }
+        catch FileStoreError.notFound { return Payload(values: [:], version: Self.formatVersion) }
         guard bytes.count <= Limits.valuesFileCapBytes else { throw LibraryError.operationFailed }
         let payload = try JSONDecoder().decode(Payload.self, from: bytes)
-        guard payload.version == 1 else { throw LibraryError.operationFailed }
+        guard payload.version == Self.formatVersion else { throw LibraryError.operationFailed }
         return payload
     }
 
