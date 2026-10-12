@@ -631,7 +631,13 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   The raw watcher reports root unavailability on the same ordered callback
   as file events: missing, replaced by a non-directory, or not enumerable.
   It reports once per transition and retains the last good file baseline,
-  without deletions caused solely by root loss. `LibraryWatcher` flushes
+  without deletions caused solely by root loss. macOS scans are anchored to
+  directory descriptors and never follow a symlinked root or ancestor,
+  including replacement during enumeration. Rechecking the canonical path
+  after enumeration must find the same ancestor and root device/inode
+  identities; otherwise the entire scan is discarded. A symlink reports
+  `outsideRoot`; an identity change reports `notFound`. Reattachment cannot
+  erase the root loss detected by that scan (§4.6). `LibraryWatcher` flushes
   earlier pending changes before forwarding health, without debounce.
   Composition stops monitoring, shows the existing unavailable banner and
   keeps the cached index; restoration requires a restart (§11.5).

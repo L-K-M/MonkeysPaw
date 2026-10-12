@@ -3,8 +3,8 @@ import Foundation
 import MonkeysPawCore
 
 /// Driver-local snapshot and canonical ancestor topology for the recursive
-/// FSEvents stream. Like FileStore, component checks guard accidents, not
-/// racing adversaries.
+/// FSEvents stream. Scans stay anchored to opened directories so replacing
+/// an ancestor cannot redirect enumeration through a symlink.
 final class FileWatchTree {
     private enum Location { case tree, rootComponent }
     private struct RootUnavailable: Error { let reason: FileStoreError }
@@ -22,7 +22,7 @@ final class FileWatchTree {
     }
 
     let root: URL
-    private let manager = FileManager.default
+    private static let directoryFlags = O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
 
     init(root: URL) throws {
         guard root.isFileURL, root.path.hasPrefix("/") else { throw FileStoreError.invalidRoot }
@@ -49,34 +49,94 @@ final class FileWatchTree {
 
     /// Record safe canonical ancestors so the stream can attach to the
     /// nearest existing directory when the root is missing or replaced.
-    func scan() throws -> Snapshot {
+    /// Internal hooks bracket fd-relative enumeration for deterministic races.
+    func scan(beforeEnumeration: () throws -> Void = {}, afterEnumeration: () throws -> Void = {}) throws -> Snapshot {
         var snapshot = Snapshot()
-        var directory = URL(fileURLWithPath: "/", isDirectory: true)
-        guard let filesystemRoot = try Self.node(at: directory) else { throw FileStoreError.ioFailure }
-        snapshot.nodes[Data(directory.path.utf8)] = filesystemRoot
+        guard let descriptor = try openRoot(into: &snapshot) else { return snapshot }
+        defer { _ = Darwin.close(descriptor) }
+        let ancestors = snapshot.nodes
 
-        for part in root.pathComponents.dropFirst() {
-            directory.appendPathComponent(part, isDirectory: true)
-            let node: Node
-            do {
-                guard let existing = try Self.node(at: directory, location: .rootComponent) else { return snapshot }
-                node = existing
-            } catch {
-                snapshot.rootError = error as? FileStoreError ?? .ioFailure
-                return snapshot
-            }
-            snapshot.nodes[Data(directory.path.utf8)] = node
-        }
+        var enumerationError: Error?
         do {
-            try collect(in: root, prefix: "", into: &snapshot)
-            snapshot.rootError = rootFailure()
-        } catch let error as RootUnavailable {
-            snapshot.rootError = error.reason
-        } catch {
-            guard let reason = rootFailure() else { throw error }
-            snapshot.rootError = reason
+            try beforeEnumeration()
+            try collect(in: descriptor, prefix: "", into: &snapshot)
+            try afterEnumeration()
+        } catch { enumerationError = error }
+
+        // Rewalk from / without following links. The fresh topology, even on
+        // failure, prevents rearming FSEvents through a detached ancestor.
+        var checked = Snapshot()
+        if let current = try openRoot(into: &checked) { _ = Darwin.close(current) }
+        if checked.rootError != nil { return checked }
+        guard ancestors.allSatisfy({ checked.nodes[$0.key]?.identity == $0.value.identity }) else {
+            checked.rootError = .notFound
+            return checked
+        }
+        if let error = enumerationError {
+            if let loss = error as? RootUnavailable {
+                checked.rootError = loss.reason
+                return checked
+            }
+            throw error
         }
         return snapshot
+    }
+
+    /// Returns an owned root descriptor, or only the safe ancestor topology
+    /// and typed root loss. Every openat name is exactly one path component.
+    private func openRoot(into snapshot: inout Snapshot) throws -> Int32? {
+        // O_EVTONLY permits traversing search-only ancestors without requiring
+        // read permission on them. Only the library itself is opened for reading.
+        var descriptor = Darwin.open("/", O_EVTONLY | Self.directoryFlags)
+        guard descriptor >= 0 else { throw FileStoreError.ioFailure }
+        defer { if descriptor >= 0 { _ = Darwin.close(descriptor) } }
+        var directory = URL(fileURLWithPath: "/", isDirectory: true)
+        snapshot.nodes[Data(directory.path.utf8)] = try Self.directoryNode(at: descriptor)
+
+        let parts = root.pathComponents.dropFirst()
+        for (index, part) in parts.enumerated() {
+            let access = index == parts.count - 1 ? O_RDONLY : O_EVTONLY
+            let (child, failure) = part.withCString {
+                let opened = Darwin.openat(descriptor, $0, access | Self.directoryFlags)
+                return (opened, errno)
+            }
+            guard child >= 0 else {
+                snapshot.rootError = Self.directoryFailure(part, relativeTo: descriptor, failure: failure)
+                return nil
+            }
+            _ = Darwin.close(descriptor)
+            descriptor = child
+            directory.appendPathComponent(part, isDirectory: true)
+            do { snapshot.nodes[Data(directory.path.utf8)] = try Self.directoryNode(at: descriptor) }
+            catch {
+                snapshot.rootError = error as? FileStoreError ?? .ioFailure
+                return nil
+            }
+        }
+        guard Darwin.faccessat(descriptor, ".", R_OK | X_OK, 0) == 0 else {
+            snapshot.rootError = .ioFailure
+            return nil
+        }
+        snapshot.rootError = nil
+        let opened = descriptor
+        descriptor = -1 // Transfer ownership to the scan.
+        return opened
+    }
+
+    /// O_DIRECTORY/O_NOFOLLOW can reject a link with ENOTDIR or ELOOP.
+    /// Classify it using only the already-open parent, never its pathname.
+    private static func directoryFailure(_ name: String, relativeTo descriptor: Int32, failure: Int32) -> FileStoreError {
+        var info = Darwin.stat()
+        if Darwin.fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 {
+            if info.st_mode & mode_t(S_IFMT) == mode_t(S_IFLNK) { return .outsideRoot }
+            if info.st_mode & mode_t(S_IFMT) != mode_t(S_IFDIR) { return .invalidRoot }
+        }
+        switch failure {
+        case ENOENT: return .notFound
+        case ENOTDIR: return .invalidRoot
+        case ELOOP: return .outsideRoot
+        default: return .ioFailure
+        }
     }
 
     /// Emits regular files only, ordered by UTF-8 path bytes. Directory nodes
@@ -95,39 +155,65 @@ final class FileWatchTree {
         }
     }
 
-    private func collect(in directory: URL, prefix: String, into snapshot: inout Snapshot) throws {
-        let children: [URL]
-        do { children = try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) }
-        catch let error as NSError where error.domain == NSCocoaErrorDomain
-            && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) {
-            if prefix.isEmpty { throw RootUnavailable(reason: .notFound) }
-            return
+    private func collect(in descriptor: Int32, prefix: String, into snapshot: inout Snapshot) throws {
+        let enumerationFailure: Error = prefix.isEmpty ? RootUnavailable(reason: .ioFailure) : FileStoreError.ioFailure
+        // fdopendir owns its descriptor on success; retain the scan's descriptor
+        // for openat/fstatat and close the duplicate only via closedir.
+        let duplicate = Darwin.fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+        guard duplicate >= 0 else { throw enumerationFailure }
+        guard let stream = Darwin.fdopendir(duplicate) else {
+            _ = Darwin.close(duplicate)
+            throw enumerationFailure
         }
-        catch {
-            if prefix.isEmpty { throw RootUnavailable(reason: .ioFailure) }
-            throw FileStoreError.ioFailure
-        }
+        defer { _ = Darwin.closedir(stream) }
 
-        for url in children {
-            let path = prefix + url.lastPathComponent
+        while true {
+            errno = 0
+            guard let entry = Darwin.readdir(stream) else {
+                guard errno == 0 else { throw enumerationFailure }
+                return
+            }
+            let nameLength = Int(entry.pointee.d_namlen) + 1
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: nameLength) { String(validatingUTF8: $0) }
+            }
+            // Unrepresentable native names cannot become UTF-8 Core paths.
+            guard let name, name != ".", name != ".." else { continue }
+            let path = prefix + name
             // Mirror FileStore visibility: invalid paths are unobservable to both layers.
-            guard (try? FileStorePath.validate(path)) != nil, let node = try Self.node(at: url) else { continue }
+            guard (try? FileStorePath.validate(path)) != nil else { continue }
+            var info = Darwin.stat()
+            guard Darwin.fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
+                if errno == ENOENT || errno == ENOTDIR { continue }
+                throw FileStoreError.ioFailure
+            }
+            guard let node = Self.node(info) else { continue }
             if node.kind == .directory {
-                snapshot.nodes[Data(url.path.utf8)] = node
-                try collect(in: url, prefix: path + "/", into: &snapshot)
+                // A child can be swapped after fstatat too. Never follow it,
+                // and take directory identity from the descriptor actually read.
+                let (child, failure) = name.withCString {
+                    let opened = Darwin.openat(descriptor, $0, O_RDONLY | Self.directoryFlags)
+                    return (opened, errno)
+                }
+                guard child >= 0 else {
+                    if failure == ENOENT || failure == ENOTDIR || failure == ELOOP { continue }
+                    throw FileStoreError.ioFailure
+                }
+                defer { _ = Darwin.close(child) }
+                snapshot.nodes[Data(root.appendingPathComponent(path).path.utf8)] = try Self.directoryNode(at: child)
+                try collect(in: child, prefix: path + "/", into: &snapshot)
             } else {
                 snapshot.files[RelativePath(path)] = node
             }
         }
     }
 
-    /// Root loss can race enumeration after its first successful read. Recheck
-    /// before publishing so a partially collected tree cannot invent deletions.
-    private func rootFailure() -> FileStoreError? {
-        do {
-            guard try Self.node(at: root, location: .rootComponent) != nil else { return .notFound }
-            return Darwin.access(root.path, R_OK | X_OK) == 0 ? nil : .ioFailure
-        } catch { return error as? FileStoreError ?? .ioFailure }
+    private static func directoryNode(at descriptor: Int32) throws -> Node {
+        var info = Darwin.stat()
+        guard Darwin.fstat(descriptor, &info) == 0, let node = Self.node(info), node.kind == .directory else {
+            throw FileStoreError.ioFailure
+        }
+        return node
     }
 
     private static func node(at url: URL, location: Location = .tree) throws -> Node? {
@@ -140,6 +226,10 @@ final class FileWatchTree {
             if info.st_mode & mode_t(S_IFMT) == mode_t(S_IFLNK) { throw FileStoreError.outsideRoot }
             guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) else { throw FileStoreError.invalidRoot }
         }
+        return node(info)
+    }
+
+    private static func node(_ info: Darwin.stat) -> Node? {
         let kind: Node.Kind
         switch info.st_mode & mode_t(S_IFMT) {
         case mode_t(S_IFDIR): kind = .directory

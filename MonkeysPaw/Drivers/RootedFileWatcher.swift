@@ -145,24 +145,42 @@ final class RootedFileWatcher: FileStoreWatcher {
         return true
     }
 
-    private func changed(epoch expectedEpoch: UInt64, token: UUID, flags: FSEventStreamEventFlags) {
+    /// Synchronously drive production reconciliation with a scan hook. Native
+    /// callbacks stay unchanged; tests can force replacement at the scan boundary.
+    func rescanForTesting(beforeEnumeration: () throws -> Void) {
+        onQueue {
+            guard let monitor else { return }
+            changed(epoch: epoch, token: monitor.token, flags: 0, beforeEnumeration: beforeEnumeration)
+        }
+    }
+
+    private func changed(epoch expectedEpoch: UInt64, token: UUID, flags: FSEventStreamEventFlags,
+                         beforeEnumeration: () throws -> Void = {}) {
         guard onEvent != nil, epoch == expectedEpoch, monitor?.token == token else { return }
         noteEventFlags(flags)
         // Keep the last good baseline on transient I/O failure. The current
         // stream remains armed so a later native event can retry attachment.
         var next: FileWatchTree.Snapshot
+        var rootLoss: FileStoreError?
         do {
-            next = try tree.scan()
-            if try arm(for: next) { next = try tree.scan() }
+            next = try tree.scan(beforeEnumeration: beforeEnumeration)
+            rootLoss = next.rootError
+            if try arm(for: next) {
+                next = try tree.scan()
+                // Reattachment closes its scan/arm gap, but cannot turn a
+                // discarded scan into success or advance the last good baseline.
+                rootLoss = rootLoss ?? next.rootError
+                // The second scan may lose another ancestor or find a restored
+                // root. Keep attachment on its freshly checked topology too.
+                try arm(for: next)
+            }
         } catch {
             warnAboutRescan(error as? FileStoreError ?? .ioFailure)
+            if let rootLoss { reportRootUnavailable(rootLoss, epoch: expectedEpoch) }
             return
         }
-        if let error = next.rootError {
-            if error == .ioFailure { warnAboutRescan(error) }
-            guard epoch == expectedEpoch, let onEvent, !rootUnavailable else { return }
-            rootUnavailable = true
-            onEvent(.rootUnavailable(error))
+        if let error = rootLoss {
+            reportRootUnavailable(error, epoch: expectedEpoch)
             return
         }
         rootUnavailable = false
@@ -173,6 +191,13 @@ final class RootedFileWatcher: FileStoreWatcher {
             guard epoch == expectedEpoch, let onEvent else { return }
             onEvent(.file(event))
         }
+    }
+
+    private func reportRootUnavailable(_ error: FileStoreError, epoch expectedEpoch: UInt64) {
+        if error == .ioFailure { warnAboutRescan(error) }
+        guard epoch == expectedEpoch, let onEvent, !rootUnavailable else { return }
+        rootUnavailable = true
+        onEvent(.rootUnavailable(error))
     }
 
     /// Called on the watcher queue; internal for flag-policy regression tests.

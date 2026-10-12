@@ -274,6 +274,94 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertEqual(health, [.outsideRoot])
     }
 
+    func testAncestorSwapAfterRootCheckReportsLossAndKeepsBaseline() throws {
+        let parent = root.appendingPathComponent("parent")
+        let nested = parent.appendingPathComponent("library")
+        try RootedFileStore(root: nested).write(Data("Inside".utf8), at: "a.md")
+        let outsideLibrary = outside.appendingPathComponent("library")
+        try manager.createDirectory(at: outsideLibrary, withIntermediateDirectories: true)
+        try Data("Outside".utf8).write(to: outsideLibrary.appendingPathComponent("a.md"))
+        try Data("Must never appear".utf8).write(to: outsideLibrary.appendingPathComponent("escaped.md"))
+        let replacement = directory.appendingPathComponent("replacement")
+        try manager.createSymbolicLink(at: replacement, withDestinationURL: outside)
+
+        let watcher = try RootedFileWatcher(root: nested, log: OSLogSink())
+        let scheduler = HeldWatcherScheduler()
+        let service = LibraryWatcher(watcher: watcher, scheduler: scheduler)
+        self.service = service
+        try service.start { [received] in received.append($0) }
+        var entered = false
+        watcher.rescanForTesting {
+            entered = true
+            try self.swap(parent, with: replacement)
+        }
+        XCTAssertTrue(entered, "The swap must occur after the root check and before enumeration.")
+        scheduler.runPending()
+        XCTAssertEqual(health, [.outsideRoot])
+        XCTAssertTrue(changes.isEmpty, "An invalid scan must publish no outside files or deletions.")
+
+        let retiredLibrary = replacement.appendingPathComponent("library")
+        try manager.removeItem(at: retiredLibrary.appendingPathComponent("a.md"))
+        try Data("Real tree".utf8).write(to: retiredLibrary.appendingPathComponent("b.md"))
+        try swap(parent, with: replacement)
+        watcher.rescanForTesting {}
+        scheduler.runPending()
+        XCTAssertEqual(changes, [LibraryChangeSet(created: ["b.md"], deleted: ["a.md"])])
+        XCTAssertEqual(health, [.outsideRoot])
+    }
+
+    func testScanDiscardsTreeWhenOpenedRootIdentityChanges() throws {
+        try store.write(Data("Inside".utf8), at: "a.md")
+        let replacement = outside.appendingPathComponent("replacement")
+        try manager.createDirectory(at: replacement, withIntermediateDirectories: true)
+        try Data("Replacement".utf8).write(to: replacement.appendingPathComponent("replacement.md"))
+        let tree = try FileWatchTree(root: root)
+        let baseline = try tree.scan()
+        let interrupted = try tree.scan(beforeEnumeration: { try self.swap(self.root, with: replacement) })
+        XCTAssertEqual(interrupted.rootError, .notFound)
+        XCTAssertTrue(interrupted.files.isEmpty, "Discard every file from the detached root.")
+        let current = try tree.scan()
+        XCTAssertNil(current.rootError)
+        let key = Data(tree.root.path.utf8)
+        XCTAssertEqual(interrupted.nodes[key]?.identity, current.nodes[key]?.identity,
+                       "Attachment must use the checked replacement topology.")
+        XCTAssertNotEqual(baseline.nodes[key]?.identity, current.nodes[key]?.identity)
+        XCTAssertEqual(FileWatchTree.changes(from: baseline, to: current), [
+            FileStoreEvent(relativePath: "a.md", kind: .deleted),
+            FileStoreEvent(relativePath: "replacement.md", kind: .created)
+        ])
+    }
+
+    func testScanNeverFollowsAncestorSwappedBackBeforeVerification() throws {
+        let parent = root.appendingPathComponent("parent")
+        let nested = parent.appendingPathComponent("library")
+        try RootedFileStore(root: nested).write(Data("Inside".utf8), at: "a.md")
+        let outsideLibrary = outside.appendingPathComponent("library")
+        try manager.createDirectory(at: outsideLibrary, withIntermediateDirectories: true)
+        try Data("Outside".utf8).write(to: outsideLibrary.appendingPathComponent("a.md"))
+        try Data("Must never appear".utf8).write(to: outsideLibrary.appendingPathComponent("escaped.md"))
+        let replacement = directory.appendingPathComponent("replacement")
+        try manager.createSymbolicLink(at: replacement, withDestinationURL: outside)
+        let tree = try FileWatchTree(root: nested)
+        let baseline = try tree.scan()
+        let interrupted = try tree.scan(
+            beforeEnumeration: { try self.swap(parent, with: replacement) },
+            afterEnumeration: { try self.swap(parent, with: replacement) })
+        XCTAssertNil(interrupted.rootError)
+        XCTAssertEqual(interrupted.files, baseline.files,
+                       "Restoring the checked path must not conceal reads through a symlink.")
+        XCTAssertTrue(FileWatchTree.changes(from: baseline, to: interrupted).isEmpty)
+    }
+
+    private func swap(_ first: URL, with second: URL) throws {
+        let result = Darwin.renamex_np(first.path, second.path, UInt32(RENAME_SWAP))
+        let failure = errno
+        guard result == 0 else {
+            XCTFail("Atomic replacement failed with errno \(failure)")
+            throw FileStoreError.ioFailure
+        }
+    }
+
     func testStopRestartDiscardsPendingEventsAndTakesNewBaseline() throws {
         try start()
         try XCTUnwrap(service).start { _ in XCTFail("Repeated start replaced the consumer.") }
@@ -552,6 +640,27 @@ private final class RawEvents: @unchecked Sendable {
         return !name[marker.upperBound...].isEmpty && !name[..<marker.lowerBound].isEmpty
     }
     func append(_ event: FileStoreWatchEvent) { received.append(event) }
+}
+
+/// Hold debounce and health delivery until a forced scan has completed. This
+/// tests production change sets without a timer or native-event timing race.
+private final class HeldWatcherScheduler: Scheduler {
+    private let lock = NSLock()
+    private var pending = [() -> Void]()
+
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        lock.lock()
+        pending.append(work)
+        lock.unlock()
+    }
+
+    func runPending() {
+        lock.lock()
+        let work = pending
+        pending.removeAll()
+        lock.unlock()
+        work.forEach { $0() }
+    }
 }
 
 /// Only Sendable event values cross threads, through this locked buffer.
