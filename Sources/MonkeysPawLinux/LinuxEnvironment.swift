@@ -373,8 +373,11 @@ final class LinuxEnvironment {
         mainThread.run { [weak self] in
             // An explicit launcher/Settings request supersedes a queued close
             // continuation; it must not be obscured by a later onboarding show.
+            // Closing Setup must not replace a Settings window you opened;
+            // onboarding stays pending for the next launcher request.
             guard let self, !self.isShutDown, self.onboardingRequestRevision == revision,
-                  self.currentSetupWindow?.isVisible != true else { return }
+                  self.currentSetupWindow?.isVisible != true,
+                  self.currentSettingsWindow?.isVisible != true else { return }
             switch self.onboardingModel.state.step {
             case .libraryFolder, .seedOffer: self.showOnboarding()
             case .setup, .complete: break
@@ -479,7 +482,6 @@ final class LinuxEnvironment {
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
         let old = libraryGraph
         guard old.picker.state != .delivering else { return .deliveryInFlight }
-        let status = libraryStatusModel
         old.picker.dismiss()
         panel.hide()
 
@@ -494,7 +496,9 @@ final class LinuxEnvironment {
         old.stop()
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
-        status.libraryReplaced(available: libraryGraph.picker.libraryAvailable)
+        // Never create the status here: its first read starts the current
+        // graph. A later first read derives health from the replacement.
+        currentLibraryStatusModel?.libraryReplaced(available: libraryGraph.picker.libraryAvailable)
         if let startupError { return .libraryUnavailable(startupError) }
 
         // Keep the usable graph for this session if saving fails. SettingsModel

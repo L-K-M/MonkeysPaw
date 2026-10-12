@@ -441,6 +441,30 @@ final class LinuxOnboardingTests: XCTestCase {
         XCTAssertNotEqual(gtk_widget_get_visible(settings), 0)
     }
 
+    func testClosingSetupKeepsAnExplicitlyOpenedSettingsWindow() throws {
+        environment.presentFromLauncher()
+        let setup = try visibleWindow(titled: LinuxStrings.setup)
+        drainUI()
+        // Settings opened while Setup is still visible, then Setup closes.
+        environment.showSettings()
+        let settings = try visibleWindow(titled: LinuxStrings.settings)
+        drainUI()
+        gtk_window_close(mp_window(setup))
+        drainUI()
+        XCTAssertNotEqual(gtk_widget_get_visible(settings), 0)
+        XCTAssertFalse(windows(titled: LinuxStrings.onboarding).contains { gtk_widget_get_visible($0) != 0 })
+    }
+
+    func testSwitchBeforeFirstStatusAccessDoesNotStartTheOldLibrary() throws {
+        let started = StartedWatchers()
+        compose(watcherFactory: { directory in StartRecordingWatcher(directory: directory, started: started) })
+        let other = try library("Other", prompt: "Other")
+        XCTAssertEqual(environment.switchLibrary(to: other), .switched)
+        // Only the replacement starts; the retired default graph never indexes.
+        XCTAssertEqual(started.directories.map(\.lastPathComponent), [other.lastPathComponent])
+        XCTAssertTrue(environment.libraryStatusModel.libraryAvailable)
+    }
+
     func testRuntimeLossDuringFolderStepDisablesChoicesAndShowsRestartGuidance() throws {
         let window = try folderStep()
         try click("onboarding-choose-folder", in: window)
@@ -567,6 +591,19 @@ final class LinuxOnboardingTests: XCTestCase {
 private final class OnboardingNotifications: LibraryAvailabilityNotifier {
     private(set) var count = 0
     func libraryUnavailable() { count += 1 }
+}
+
+private final class StartedWatchers { var directories: [URL] = [] }
+
+private final class StartRecordingWatcher: FileStoreWatcher {
+    private let directory: URL
+    private let started: StartedWatchers
+    init(directory: URL, started: StartedWatchers) {
+        self.directory = directory
+        self.started = started
+    }
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws { started.directories.append(directory) }
+    func stop() {}
 }
 
 /// Retain callbacks after stop to prove generation guards protect new graphs.
