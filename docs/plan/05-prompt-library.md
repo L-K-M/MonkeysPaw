@@ -728,7 +728,8 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   the portable YAML subset still apply, and incompatible files are refused
   with typed reasons. `Limits.importFileCapBytes = 262,144` bounds source
   reads before decoding; non-UTF-8 is refused. Converted documents must also
-  fit `Limits.maxPromptBytes`.
+  fit `Limits.maxPromptBytes`. UTF-8 BOM bytes remain a literal source scalar;
+  a first line containing a BOM is not §5.2's exact `---` delimiter.
 
   Files land in `Imported/` or a chosen library-relative subfolder. Folder
   imports preserve paths relative to the selected folder, without adding

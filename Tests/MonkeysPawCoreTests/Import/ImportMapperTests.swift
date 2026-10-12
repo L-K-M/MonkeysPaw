@@ -16,6 +16,19 @@ final class ImportMapperTests: XCTestCase {
         }
     }
 
+    func testUTF8BOMIsPreservedByImportAndSubsequentFileParsing() throws {
+        for filename in ["Example.md", "Example.prompt", "Example.prompty"] {
+            let source = "\u{feff}body {{name}}\r\n"
+            let bytes = Data(source.utf8)
+            let mapped = try ImportMapper.map(bytes, filename: filename)
+            XCTAssertEqual(Data(mapped.document.source.utf8), bytes)
+            XCTAssertEqual(Data(mapped.document.body.utf8), bytes)
+            let loaded = PromptCodec.parseFile(bytes, filename: filename)
+            XCTAssertEqual(Data(loaded.source.utf8), bytes)
+            XCTAssertEqual(Data(loaded.body.utf8), bytes)
+        }
+    }
+
     func testDotpromptPicoschemaMapsStringsEnumsDescriptionsAndDefaults() throws {
         let body = "é\r\n{{name}} / {{tone}} / {{hint}}\r\n\n"
         let source = """

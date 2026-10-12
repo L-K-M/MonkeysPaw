@@ -6,7 +6,10 @@ import Yams
 public enum ImportMapper {
     public static func map(_ data: Data, filename: String) throws -> ImportMappingResult {
         guard data.count <= Limits.importFileCapBytes else { throw ImportSkipReason.fileTooLarge }
-        guard let source = String(data: data, encoding: .utf8) else { throw ImportSkipReason.invalidUTF8 }
+        guard String(data: data, encoding: .utf8) != nil else { throw ImportSkipReason.invalidUTF8 }
+        // Foundation's strict decoder removes a UTF-8 BOM. After validation,
+        // decode the same bytes without dropping that literal source scalar.
+        let source = String(decoding: data, as: UTF8.self)
         guard let format = ImportFormat.filename(filename) else { throw ImportSkipReason.unsupportedExtension }
         let original = PromptCodec.parse(source, filename: filename)
         var report = ImportMappingReport()

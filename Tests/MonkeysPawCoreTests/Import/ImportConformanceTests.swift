@@ -25,7 +25,8 @@ enum ImportFixtureCorpus {
                   !sourceName.contains("/"), ImportFormat.filename(sourceName) != nil,
                   Set(files) == ["case.json", sourceName] else { throw Failure.invalidCorpus }
             let unit = try Data(contentsOf: directory.appendingPathComponent(sourceName))
-            guard let text = String(data: unit, encoding: .utf8) else { throw Failure.invalidCorpus }
+            guard String(data: unit, encoding: .utf8) != nil else { throw Failure.invalidCorpus }
+            let text = String(decoding: unit, as: UTF8.self)
             let count = try envelope["repeat"].map(integer) ?? 1
             let size = unit.count.multipliedReportingOverflow(by: count)
             guard count > 0, !size.overflow, size.partialValue <= Limits.importFileCapBytes + 1 else {
