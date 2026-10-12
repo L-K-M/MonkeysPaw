@@ -125,6 +125,8 @@ public final class DeliveryService {
 
     /// Revoke queued picker window requests and their captured target before
     /// composition replaces the picker graph. Delivery queue slots are retained.
+    /// A dismissal queued earlier is dropped with its panel hide, so composition
+    /// hides the reused panel itself before calling this.
     public func invalidatePendingPresentation() {
         mainThread.run {
             self.presentationGeneration &+= 1

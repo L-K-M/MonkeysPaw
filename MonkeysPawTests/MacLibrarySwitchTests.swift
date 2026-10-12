@@ -111,7 +111,7 @@ final class MacLibrarySwitchTests: XCTestCase {
             XCTAssertEqual(delegate.switchLibrary(to: target), .invalidTarget(error))
             XCTAssertTrue(delegate.pickerModel === old)
             XCTAssertEqual(delegate.libraryDirectory, root)
-            XCTAssertEqual(delegate.settingsModel?.state, settings)
+            XCTAssertEqual(try XCTUnwrap(delegate.settingsModel).state, settings)
             XCTAssertFalse(watchers[0].stopped)
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
@@ -122,12 +122,12 @@ final class MacLibrarySwitchTests: XCTestCase {
         guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         let other = try otherLibrary()
         let old = try start()
-        let settings = delegate.settingsModel?.state
+        let settings = try XCTUnwrap(delegate.settingsModel).state
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: other.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: other.path) }
         XCTAssertEqual(delegate.switchLibrary(to: other), .invalidTarget(.ioFailure))
         XCTAssertTrue(delegate.pickerModel === old)
-        XCTAssertEqual(delegate.settingsModel?.state, settings)
+        XCTAssertEqual(try XCTUnwrap(delegate.settingsModel).state, settings)
         XCTAssertFalse(watchers[0].stopped)
     }
 
@@ -143,7 +143,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(delegate.switchLibrary(to: other), .deliveryInFlight)
         XCTAssertTrue(delegate.pickerModel === picker)
         XCTAssertEqual(delegate.libraryDirectory, root)
-        XCTAssertNil(delegate.settingsModel?.libraryFolderPath)
+        XCTAssertNil(try XCTUnwrap(delegate.settingsModel).libraryFolderPath)
         XCTAssertFalse(watchers[0].stopped)
         scheduler.drain()
     }
@@ -255,7 +255,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(delegate.switchLibrary(to: nil), .switched)
         XCTAssertEqual(delegate.libraryDirectory, root)
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.path))
-        XCTAssertNil(delegate.settingsModel?.libraryFolderPath)
+        XCTAssertNil(try XCTUnwrap(delegate.settingsModel).libraryFolderPath)
     }
 
     func testLegacySetupImportKeepsLibraryAndSeedStepsPending() throws {
@@ -291,7 +291,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(delegate.switchLibrary(to: other), .settingsNotSaved(.futureVersion(999)))
         XCTAssertEqual(delegate.libraryDirectory, other)
         XCTAssertEqual(delegate.pickerModel?.results.map(\.relativePath), ["beta.md"])
-        XCTAssertNil(delegate.settingsModel?.libraryFolderPath)
+        XCTAssertNil(try XCTUnwrap(delegate.settingsModel).libraryFolderPath)
         XCTAssertEqual(delegate.settingsModel?.error, .futureVersion(999))
         XCTAssertEqual(try config.read(at: "settings.json"), bytes)
     }
@@ -321,7 +321,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         })
         XCTAssertEqual(delegate.switchLibrary(to: other), .libraryUnavailable(.ioFailure))
         XCTAssertFalse(try XCTUnwrap(delegate.pickerModel).libraryAvailable)
-        XCTAssertNil(delegate.settingsModel?.libraryFolderPath)
+        XCTAssertNil(try XCTUnwrap(delegate.settingsModel).libraryFolderPath)
         XCTAssertTrue(watchers[0].stopped)
         XCTAssertTrue(watchers[1].stopped)
         XCTAssertEqual(delegate.switchLibrary(to: nil), .switched)
@@ -336,7 +336,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         })
         XCTAssertEqual(delegate.switchLibrary(to: other), .libraryUnavailable(.notFound))
         XCTAssertFalse(try XCTUnwrap(delegate.pickerModel).libraryAvailable)
-        XCTAssertNil(delegate.settingsModel?.libraryFolderPath)
+        XCTAssertNil(try XCTUnwrap(delegate.settingsModel).libraryFolderPath)
         XCTAssertTrue(watchers[1].stopped)
     }
 }

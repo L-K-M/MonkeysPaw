@@ -199,6 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// UI-thread composition intent for the later General/onboarding views.
     /// A failed settings write keeps the new graph for this session (§5.1).
+    /// libraryUnavailable leaves the new graph installed but degraded, as at
+    /// launch, without saving the choice; another switch or a relaunch recovers.
     func switchLibrary(to url: URL?) -> LibrarySwitchResult {
         assert(Thread.isMainThread, "Library replacement is main-thread-confined")
         guard let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }

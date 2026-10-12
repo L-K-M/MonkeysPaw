@@ -44,8 +44,9 @@ macOS composition reads the library choice from this settings store at launch.
 Switching folders replaces the library store, service, index, watcher and picker
 while keeping the native panel, delivery and app-data stores. A chosen folder
 must already exist and be readable; only the platform default is created.
-Delivery in progress refuses a switch. The old picker is dismissed, its watcher
-stopped and its callbacks invalidated before the new graph starts, with the
+Delivery in progress refuses a switch. The old picker is dismissed and the
+panel hidden directly, then queued presentation work, the old watcher and its
+callbacks are invalidated before the new graph starts, with the
 picker hook installed before watcher attachment and the initial rebuild.
 The choice is persisted only after startup succeeds. If persistence fails, the
 new folder remains active for this session and Settings reports the error;
