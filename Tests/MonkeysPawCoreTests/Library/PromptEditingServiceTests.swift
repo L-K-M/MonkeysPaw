@@ -5,15 +5,20 @@ import XCTest
 final class PromptEditingServiceTests: XCTestCase {
     func testCreateLoadEditSavePreservesUnknownMetadataBodyIdentityAndHistory() throws {
         let h = PromptEditingHarness()
-        let session = h.marker.ui { h.editor.beginSession(at: "nested/New.md") }
+        let copySession = h.marker.ui { h.editor.beginSession(at: "nested/New.md") }
         let body = "  Text 👋 e\u{301}\r\n\r\n"
         let source = "---\nextra: {nested: [a, b]}\ntitle: New\nmodel: custom\n---\n" + body
-        let created = try saved(h.copy(source, near: "nested/New.md", session: session))
+        let created = try saved(h.copy(source, near: "nested/New.md", session: copySession))
         XCTAssertNotNil(created.document.frontMatter.id)
-        XCTAssertEqual(created.relativePath, "nested/New.md")
+        XCTAssertEqual(created.relativePath, "nested/New 2.md")
+        XCTAssertNil(try h.files.stamp(at: "nested/New.md"))
         XCTAssertEqual(Data(created.document.body.utf8), Data(body.utf8))
         XCTAssertTrue(try h.library.history(for: created.identity).isEmpty)
 
+        let session = h.marker.ui {
+            h.editor.retire(copySession)
+            return h.editor.beginSession(at: created.relativePath)
+        }
         let loaded = try load(h, session)
         XCTAssertEqual(loaded.sourceBytes, try h.files.read(at: created.relativePath))
         XCTAssertEqual(loaded.source, created.document.source)
@@ -29,7 +34,7 @@ final class PromptEditingServiceTests: XCTestCase {
         XCTAssertTrue(savedEntry.document.source.hasPrefix("---\nid: "))
         let written = try h.files.text(at: created.relativePath)
         XCTAssertEqual(written, try PromptCodec.write(savedEntry.document))
-        XCTAssertEqual(written, try PromptCodec.write(PromptCodec.parse(changed, filename: "New.md")))
+        XCTAssertEqual(written, try PromptCodec.write(PromptCodec.parse(changed, filename: "New 2.md")))
         XCTAssertTrue(written.contains("extra:"))
         XCTAssertTrue(written.contains("model: custom\n"))
         let revision = try XCTUnwrap(h.library.history(for: created.identity).first)
@@ -225,7 +230,8 @@ final class PromptEditingServiceTests: XCTestCase {
             h.held.releaseAll()
             h.main.releaseAll()
             XCTAssertEqual(h.files.accessCount + h.data.accessCount, accesses)
-            XCTAssertEqual(try h.files.stamp(at: "copy.md") != nil, releaseWorker)
+            XCTAssertEqual(try h.files.stamp(at: "copy 2.md") != nil, releaseWorker)
+            XCTAssertNil(try h.files.stamp(at: "copy.md"))
         }
     }
 
@@ -267,6 +273,7 @@ final class PromptEditingServiceTests: XCTestCase {
         }
         XCTAssertEqual(try h.files.read(at: "a.md"), loaded.sourceBytes)
         XCTAssertNil(try h.files.stamp(at: "copy.md"))
+        XCTAssertNil(try h.files.stamp(at: "copy 2.md"))
     }
 
     func testInvalidYAMLLoadsAsEditableOriginalSourceAndCanBeCorrected() throws {
@@ -398,14 +405,14 @@ final class PromptEditingServiceTests: XCTestCase {
         let h = PromptEditingHarness()
         let (session, _) = try h.open()
         h.dataFiles.onList = {
-            if try h.files.stamp(at: "copy.md") != nil { throw FileStoreError.ioFailure }
+            if try h.files.stamp(at: "copy 2.md") != nil { throw FileStoreError.ioFailure }
         }
         defer { h.dataFiles.onList = nil }
         guard case .savedButHistoryMaintenanceFailed(let copy) = try h.copy("Copy", near: "copy.md", session: session) else {
             return XCTFail("Exclusive creation also commits before pruning.")
         }
-        XCTAssertEqual(copy.relativePath, "copy.md")
-        XCTAssertEqual(copy.stamp, try h.files.stamp(at: "copy.md"))
+        XCTAssertEqual(copy.relativePath, "copy 2.md")
+        XCTAssertEqual(copy.stamp, try h.files.stamp(at: "copy 2.md"))
     }
 
     func testCopyPreservesDestinationThatArrivesAfterProbeAndRetriesExclusively() throws {

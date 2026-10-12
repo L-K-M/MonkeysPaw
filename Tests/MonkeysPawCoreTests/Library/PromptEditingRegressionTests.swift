@@ -19,14 +19,15 @@ final class PromptEditingRegressionTests: XCTestCase {
 
     func testLibraryEditingCopyReportsTheExternalPostCommitStamp() throws {
         let h = PromptEditingHarness()
-        replaceAfterWrite(h, at: "copy.md")
+        replaceAfterWrite(h, at: "copy 2.md")
 
         let outcome = try h.library.createCopyForEditing(PromptCodec.parse("Mine", filename: "copy.md"),
                                                         near: "copy.md")
 
         guard case .conflict(let stamp) = outcome else { return XCTFail("Expected a typed copy conflict.") }
-        XCTAssertEqual(stamp, try h.files.stamp(at: "copy.md"))
-        XCTAssertEqual(try h.files.text(at: "copy.md"), "External")
+        XCTAssertEqual(stamp, try h.files.stamp(at: "copy 2.md"))
+        XCTAssertEqual(try h.files.text(at: "copy 2.md"), "External")
+        XCTAssertNil(try h.files.stamp(at: "copy.md"))
         XCTAssertNil(outcome.committedEntry)
     }
 
