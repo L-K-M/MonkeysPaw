@@ -482,7 +482,9 @@ final class LinuxPickerViewTests: XCTestCase {
         case .atomicReplace:
             let temporary = root.appendingPathComponent(".external-save.tmp")
             try updated.write(to: temporary)
-            XCTAssertEqual(Glibc.rename(temporary.path, destination.path), 0)
+            let result = Glibc.rename(temporary.path, destination.path)
+            let renameError = errno
+            XCTAssertEqual(result, 0, "Atomic replacement failed with errno \(renameError)")
         }
         let arrived = GTKTestSupport.spin(timeout: .seconds(5)) {
             self.environment.pickerModel.results.map(\.relativePath) == ["external.md"]
