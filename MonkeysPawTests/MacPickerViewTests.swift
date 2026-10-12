@@ -182,18 +182,24 @@ final class MacPickerViewTests: XCTestCase {
 
     func testNoMatchCreationKeepsExactTitleAfterSanitizingAndCollision() throws {
         try files.write(Data("---\ntitle: Unrelated\n---\nExisting".utf8), at: "a b.md")
+        try files.write(Data("---\ntitle: Another\n---\nExisting alternate".utf8), at: "a b 2.md")
+        let originalStamp = try files.stamp(at: "a b.md")
+        let alternateStamp = try files.stamp(at: "a b 2.md")
         let picker = try open()
         let title = "  a/b  "
         picker.setQuery(title)
         XCTAssertEqual(picker.noMatches?.createTitle, title)
         try XCTUnwrap(delegate.pickerPresentation).createNoMatch()
-        let path = "a b 2.md"
+        let path = "a b 3.md"
         let document = PromptCodec.parseFile(try files.read(at: path), filename: path)
         XCTAssertEqual(document.frontMatter.title, title)
         XCTAssertEqual(document.body, Strings.newPromptBody)
         XCTAssertNotNil(document.frontMatter.id)
         XCTAssertTrue(document.canRender)
         XCTAssertEqual(try files.read(at: "a b.md"), Data("---\ntitle: Unrelated\n---\nExisting".utf8))
+        XCTAssertEqual(try files.stamp(at: "a b.md"), originalStamp)
+        XCTAssertEqual(try files.read(at: "a b 2.md"), Data("---\ntitle: Another\n---\nExisting alternate".utf8))
+        XCTAssertEqual(try files.stamp(at: "a b 2.md"), alternateStamp)
         XCTAssertEqual(launched, [root.appendingPathComponent(path)])
         XCTAssertEqual(picker.state, .closed)
     }

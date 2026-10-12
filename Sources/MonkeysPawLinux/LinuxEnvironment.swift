@@ -672,9 +672,8 @@ final class LinuxEnvironment {
     private func createPrompt(titled title: String, in graph: LibraryGraph) {
         guard graph.picker.libraryAvailable else { return }
         do {
-            let path = try graph.library.availablePath(for: PromptCreation.relativePath(title: title, now: clock.now()))
-            let document = try PromptCodec.newDocument(title: title, body: LinuxStrings.newPromptBody)
-            let entry = try graph.library.save(document, at: path)
+            let entry = try graph.library.createPrompt(titled: title, body: LinuxStrings.newPromptBody)
+            let path = entry.relativePath
             do { try graph.index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
             catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
             handle(.edit(identity: entry.identity, relativePath: path), in: graph)
