@@ -4,13 +4,27 @@ import SwiftUI
 
 /// The macOS composition root owns the drivers and the resident status item.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    enum LibrarySwitchResult: Equatable {
+        case switched
+        case deliveryInFlight
+        case invalidTarget(FileStoreError)
+        case libraryUnavailable(FileStoreError)
+        case settingsNotSaved(SettingsError)
+    }
+
+    private enum LibraryLocation { case platformDefault, chosen }
+
     private let makeFocusTracker: (MainThread, Scheduler) -> WorkspaceFocusTracker
     private let scheduler: Scheduler
     private let makePanelController: (MainThread, Scheduler, LogSink) -> PanelController
+    private let makeFileWatcher: (URL, LogSink) throws -> FileStoreWatcher
     private let mainThread: MainThread = DispatchMainThread()
-    private let libraryDirectory: URL
+    private let defaultLibraryDirectory: URL
+    private(set) var libraryDirectory: URL
     private let dataDirectory: URL
     private let rootsAreInjected: Bool
+    private let legacyFirstRun: LegacyFirstRun
+    private let recordLegacySetup: () -> Void
     private let launchURI: (URL) -> Void
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
@@ -20,10 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private(set) var pickerModel: PickerModel?
     private(set) var setupModel: SetupModel?
+    private(set) var settingsModel: SettingsModel?
+    private var dataFiles: FileStore?
+    private var values: ValuesStore?
+    private var usage: UsageStore?
+    private var fill: FillService?
+    private var delivery: DeliveryService?
     private var libraryFiles: FileStore?
     private var library: LibraryService?
     private var index: PromptIndex?
     private var watcher: LibraryWatcher?
+    private var libraryGeneration: UInt64 = 0
     private var libraryStarted = false
     private var libraryWarningLogged = false
     private var log: LogSink?
@@ -31,23 +52,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Hosted tests replace workspace/AX access while exercising the real UI wiring.
     init(libraryRoot: URL? = nil, dataRoot: URL? = nil,
+         legacyFirstRun: LegacyFirstRun? = nil, recordLegacySetup: (() -> Void)? = nil,
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
          makeFocusTracker: @escaping (MainThread, Scheduler) -> WorkspaceFocusTracker = {
         WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
     }, scheduler: Scheduler = DispatchScheduler(),
          makePanelController: @escaping (MainThread, Scheduler, LogSink) -> PanelController = {
              PanelController(mainThread: $0, scheduler: $1, log: $2)
+         }, makeFileWatcher: @escaping (URL, LogSink) throws -> FileStoreWatcher = {
+             try RootedFileWatcher(root: $0, log: $1)
          }) {
         precondition((libraryRoot == nil) == (dataRoot == nil), "Inject libraryRoot and dataRoot together")
         self.makeFocusTracker = makeFocusTracker
         self.scheduler = scheduler
         self.makePanelController = makePanelController
-        rootsAreInjected = libraryRoot != nil && dataRoot != nil
+        self.makeFileWatcher = makeFileWatcher
+        let injected = libraryRoot != nil && dataRoot != nil
+        rootsAreInjected = injected
         let home = FileManager.default.homeDirectoryForCurrentUser
-        libraryDirectory = libraryRoot ?? home.appendingPathComponent("Documents/MonkeysPaw", isDirectory: true)
+        let defaultRoot = libraryRoot ?? home.appendingPathComponent("Documents/MonkeysPaw", isDirectory: true)
+        defaultLibraryDirectory = defaultRoot
+        libraryDirectory = defaultRoot
         dataDirectory = dataRoot ?? home.appendingPathComponent(
             "Library/Application Support/" + AppIdentity.macOSBundleID, isDirectory: true)
         self.launchURI = launchURI
+        // Injected graphs never read or write the user's legacy preferences.
+        let isolated = injected || Self.isRunningTests
+        self.legacyFirstRun = legacyFirstRun ?? (isolated ? .setupNotPresented
+            : (UserDefaults.standard.bool(forKey: "hasShownDeliverySetup") ? .setupPresented : .setupNotPresented))
+        if let recordLegacySetup { self.recordLegacySetup = recordLegacySetup }
+        else if isolated { self.recordLegacySetup = {} }
+        else { self.recordLegacySetup = { UserDefaults.standard.set(true, forKey: "hasShownDeliverySetup") } }
         super.init()
     }
 
@@ -80,11 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         log.write(.info, "Application started")
 
         // M1's first-run step is Setup (§6.4); library onboarding arrives in M2.
-        let setupKey = "hasShownDeliverySetup"
-        if !UserDefaults.standard.bool(forKey: setupKey) {
-            showSetup()
-            UserDefaults.standard.set(true, forKey: setupKey)
-        }
+        if settingsModel?.needsSetupPresentation == true { showSetup() }
     }
 
     func applicationWillTerminate(_ notification: Notification) { watcher?.stop() }
@@ -102,7 +133,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hotkeys = CarbonHotkeyBackend()
         let session = MacSessionProbe()
         let clipboard = PasteboardClipboard()
-        let notifier = UserNotificationNotifier()
+        let notifier: UserNotificationNotifier
+        if Self.isRunningTests {
+            notifier = UserNotificationNotifier(requestAuthorization: { _, completion in completion(false) })
+        } else {
+            notifier = UserNotificationNotifier()
+        }
         let cgEvent = CGEventPasteInjector()
         let appleScript = AppleScriptPasteInjector()
         let failureCache = SessionPasteFailureCache()
@@ -117,49 +153,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let probe = MacSetupProbe(hotkeys: hotkeys, mainThread: mainThread)
         let setup = SetupService(probe: probe, session: session, shortcuts: shortcuts,
                                  selfTest: selfTest, mainThread: mainThread)
-        let files: FileStore
-        var libraryAvailable = true
-        do {
-            let rooted = try RootedFileStore(root: libraryDirectory)
-            try rooted.createRoot()
-            files = rooted
-        } catch {
-            files = UnavailableFileStore()
-            libraryAvailable = false
-            warnAboutLibrary()
-        }
         let data: FileStore
         do { data = try RootedFileStore(root: dataDirectory) }
         catch {
             data = UnavailableFileStore()
-            log.write(.warning, "App data unavailable; remembered values and usage cannot be saved")
+            log.write(.warning, "App data unavailable; settings, remembered values and usage cannot be saved")
         }
         let values = ValuesStore(files: data)
         let usage = UsageStore(files: data, clock: clock)
-        let library = LibraryService(library: files, data: data, clock: clock,
-            entropy: SystemEntropy(), keyedStores: [values, usage])
-        let index = PromptIndex(service: library, usage: usage, clock: clock)
-        let fill = FillService(values: values, clipboard: clipboard, clock: clock, timeZone: { TimeZone.current })
-        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: mainThread)
-        model.libraryAvailable = libraryAvailable
-        let presentation = PickerViewState(model: model, mainThread: mainThread,
-            requestedIntent: { [weak self] in self?.handle($0) },
-            createPrompt: { [weak self] in self?.createPrompt(titled: $0) })
-        panel.rootView = { [weak presentation] in
-            guard let presentation else { return AnyView(EmptyView()) }
-            return AnyView(PickerView(presentation: presentation))
-        }
-        panel.onCancel = { [weak model] in model?.dismiss() }
-        panel.onEscape = { [weak model] in model?.escape() }
-        panel.onShow = { [weak presentation] in presentation?.didShow() }
-        panel.onKey = { [weak presentation, weak panel] event, kind in
-            if presentation?.route(event, fieldKind: kind) == true { return true }
-            guard presentation?.model.state == .picker else { return false }
-            return panel?.forwardTypingToSearch(event) ?? false
-        }
-        focus.onCapture = { [weak presentation] in
-            presentation?.pasteTarget = Self.pasteTargetName(for: $0)
-        }
+        let settings = SettingsService(store: SettingsStore(files: data, legacyFirstRun: legacyFirstRun))
+        let settingsModel = SettingsModel(settings: settings)
+        self.settingsModel = settingsModel
+        dataFiles = data
+        self.values = values
+        self.usage = usage
+        self.delivery = delivery
+        fill = FillService(values: values, clipboard: clipboard, clock: clock, timeZone: { TimeZone.current })
+        panelController = panel
+        focusTracker = focus
+        self.shortcuts = shortcuts
+        let setupModel = SetupModel(setup: setup)
+        self.setupModel = setupModel
+        setupWindow = SetupWindowController(model: setupModel)
         panel.onHide = { reason in
             switch reason {
             case .delivery: focus.prepareForRestore(.delivery)
@@ -168,38 +183,169 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        panelController = panel
+        let choice = settingsModel.libraryFolderPath
+        libraryDirectory = choice.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? defaultLibraryDirectory
+        let files: FileStore
+        var libraryAvailable = true
+        do {
+            files = try prepareLibrary(at: libraryDirectory, location: choice == nil ? .platformDefault : .chosen)
+        } catch {
+            files = UnavailableFileStore()
+            libraryAvailable = false
+            warnAboutLibrary(error as? FileStoreError)
+        }
+        installLibrary(files: files, availability: libraryAvailable)
+    }
+
+    /// UI-thread composition intent for the later General/onboarding views.
+    /// A failed settings write keeps the new graph for this session (§5.1).
+    /// libraryUnavailable leaves the new graph installed but degraded, as at
+    /// launch, without saving the choice; another switch or a relaunch recovers.
+    func switchLibrary(to url: URL?) -> LibrarySwitchResult {
+        assert(Thread.isMainThread, "Library replacement is main-thread-confined")
+        guard let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
+        guard pickerModel.state != .delivering else { return .deliveryInFlight }
+        pickerModel.dismiss()
+
+        let directory = url ?? defaultLibraryDirectory
+        let files: FileStore
+        do { files = try prepareLibrary(at: directory, location: url == nil ? .platformDefault : .chosen) }
+        catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }
+
+        // Delivery's queue can still be finishing a guarded dismissal or Setup
+        // self-test. Hide the old view now, before replacing its native root.
+        panelController?.hide()
+        delivery?.invalidatePendingPresentation()
+        libraryGeneration &+= 1
+        // Stop before releasing: FSEvents marshals teardown via its serial queue.
+        watcher?.stop()
+        watcher = nil
+        pickerModel.onChange = nil
+        index?.setOnChange(nil)
+        pickerPresentation = nil
+        self.pickerModel = nil
+        libraryDirectory = directory
+        libraryStarted = false
+        libraryWarningLogged = false
+        installLibrary(files: files, availability: true)
+        if case .failure(let error) = startLibrary() { return .libraryUnavailable(error) }
+
+        // SettingsModel forwards to the shared SettingsService and retains its
+        // typed error. Never persist a choice whose watcher/rebuild failed.
+        if let url { settingsModel.setLibraryFolder(url.path) }
+        else { settingsModel.clearLibraryFolder() }
+        if let error = settingsModel.error { return .settingsNotSaved(error) }
+        return .switched
+    }
+
+    private func prepareLibrary(at directory: URL, location: LibraryLocation) throws -> RootedFileStore {
+        guard directory.isFileURL, directory.path.utf8.first == UInt8(ascii: "/"),
+              !directory.path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            throw FileStoreError.invalidRoot
+        }
+        do {
+            // RootedFileStore accepts canonical OS ancestors (such as /var).
+            // Reject a chosen symlink itself. The default keeps resolving, so a
+            // default folder linked into a synced directory still loads.
+            if location == .chosen,
+               let attributes = try? FileManager.default.attributesOfItem(atPath: directory.path),
+               attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+                throw FileStoreError.outsideRoot
+            }
+            let files = try RootedFileStore(root: directory)
+            if location == .platformDefault { try files.createRoot() }
+            try files.requireRoot()
+            _ = try files.listFiles()
+            return files
+        } catch let error as FileStoreError { throw error }
+        catch { throw FileStoreError.ioFailure }
+    }
+
+    private func installLibrary(files: FileStore, availability: Bool) {
+        guard let data = dataFiles, let values, let usage, let fill, let delivery,
+              let panel = panelController, let focus = focusTracker, let log else { return }
+        let generation = libraryGeneration
+        let isCurrent: () -> Bool = { [weak self] in self?.libraryGeneration == generation }
+        // Check inside the UI hop, not before queueing: an old index, snapshot
+        // or view publish may already be waiting on DispatchQueue.main.
+        let libraryMain = LibraryMainThread(main: mainThread, isCurrent: isCurrent)
+        let library = LibraryService(library: files, data: data, clock: clock,
+            entropy: SystemEntropy(), keyedStores: [values, usage])
+        let index = PromptIndex(service: library, usage: usage, clock: clock)
+        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain)
+        model.libraryAvailable = availability
+        let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
+            requestedIntent: { [weak self] intent in
+                guard isCurrent() else { return }
+                self?.handle(intent)
+            }, createPrompt: { [weak self] title in
+                guard isCurrent() else { return }
+                self?.createPrompt(titled: title)
+            })
+        panel.rootView = { [weak presentation] in
+            guard isCurrent(), let presentation else { return AnyView(EmptyView()) }
+            return AnyView(PickerView(presentation: presentation).id(ObjectIdentifier(presentation)))
+        }
+        panel.onCancel = { [weak model] in
+            guard isCurrent() else { return }
+            model?.dismiss()
+        }
+        panel.onEscape = { [weak model] in
+            guard isCurrent() else { return }
+            model?.escape()
+        }
+        panel.onShow = { [weak presentation] in
+            guard isCurrent() else { return }
+            presentation?.didShow()
+        }
+        panel.onKey = { [weak presentation, weak panel] event, kind in
+            guard isCurrent() else { return false }
+            if presentation?.route(event, fieldKind: kind) == true { return true }
+            guard presentation?.model.state == .picker else { return false }
+            return panel?.forwardTypingToSearch(event) ?? false
+        }
+        focus.onCapture = { [weak presentation] in
+            guard isCurrent() else { return }
+            presentation?.pasteTarget = Self.pasteTargetName(for: $0)
+        }
+
         pickerPresentation = presentation
         pickerModel = model
         libraryFiles = files
         self.library = library
         self.index = index
-        if let raw = try? RootedFileWatcher(root: libraryDirectory, log: log) {
+        if let raw = try? makeFileWatcher(libraryDirectory, log) {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
         }
-        focusTracker = focus
-        self.shortcuts = shortcuts
-        let setupModel = SetupModel(setup: setup)
-        self.setupModel = setupModel
-        setupWindow = SetupWindowController(model: setupModel)
     }
 
-    private func startLibrary() {
-        guard !libraryStarted, let index, let pickerModel else { return }
+    @discardableResult
+    private func startLibrary() -> Result<Void, FileStoreError> {
+        guard !libraryStarted, let index, let pickerModel else { return .failure(.ioFailure) }
         libraryStarted = true
-        guard pickerModel.libraryAvailable else { degradeLibrary(); return }
+        guard pickerModel.libraryAvailable else { degradeLibrary(); return .failure(.ioFailure) }
+        let generation = libraryGeneration
         do {
-            // compose installed the picker/index hook before this first publish.
+            // The picker/index hook is installed before this first publish.
             try Self.startLibrary(index: index, watcher: watcher) { [weak self] update in
                 self?.mainThread.run { [weak self] in
-                    guard let self, self.pickerModel?.libraryAvailable == true else { return }
+                    guard let self, self.libraryGeneration == generation,
+                          self.pickerModel?.libraryAvailable == true else { return }
                     switch update {
                     case .changes(let changes): self.apply(changes, to: index)
                     case .rootUnavailable(let error): self.degradeLibrary(error)
                     }
                 }
             }
-        } catch { degradeLibrary(error as? FileStoreError) }
+            // The root can disappear while the watcher takes its baseline;
+            // listFiles treats a missing root as empty, which cannot prove health.
+            try (libraryFiles as? RootedFileStore)?.requireRoot()
+            return .success(())
+        } catch {
+            let failure = error as? FileStoreError ?? .ioFailure
+            degradeLibrary(failure)
+            return .failure(failure)
+        }
     }
 
     static func startLibrary(index: PromptIndex, watcher: LibraryWatcher?,
@@ -267,7 +413,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             url = libraryDirectory.appendingPathComponent(path)
         }
         pickerModel?.dismiss()
-        mainThread.run { [weak self] in self?.launchURI(url) }
+        let generation = libraryGeneration
+        mainThread.run { [weak self] in
+            guard let self, self.libraryGeneration == generation else { return }
+            self.launchURI(url)
+        }
     }
 
     private func createPrompt(titled title: String) {
@@ -359,10 +509,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusTracker?.cancelPendingRestoration()
         panelController?.cancelForOwnedWindow()
         setupWindow?.show()
+        settingsModel?.markSetupPresented()
+        recordLegacySetup()
     }
 
     static var isRunningTests: Bool {
         NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+}
+
+/// Library callbacks cross the UI queue through a port tied to this generation.
+/// shared delivery/focus graph keeps its ordinary MainThread for its lifetime.
+private struct LibraryMainThread: MainThread {
+    let main: MainThread
+    let isCurrent: () -> Bool
+
+    func run(_ work: @escaping () -> Void) {
+        main.run {
+            guard isCurrent() else { return }
+            work()
+        }
     }
 }

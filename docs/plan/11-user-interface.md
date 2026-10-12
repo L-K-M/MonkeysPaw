@@ -203,16 +203,17 @@ settings are read-only, the model reports `needsSetupPresentation`,
 instead of repeating onboarding that cannot persist each launch. A failed
 completion does not claim durable progress.
 
-Linux now wires the shared settings model to its config root and imports the
-legacy marker without completing the library step. Presenting Setup records
-both settings progress and the legacy marker for downgrade compatibility.
-The composition operation for later General/onboarding folder controls stores
-the chosen absolute path in `settings.json`, or null for the default, after the
-replacement graph starts (§5.1). It dismisses the picker, drops its session
-drafts and rebinds the existing native panel. Delivery in progress refuses a
-switch. A settings save failure leaves the selected library active for the
-session and exposes the error without claiming persistence. Read-only settings
-use the default library. Folder controls and seed onboarding remain later work.
+Both desktops wire the shared settings model: macOS to the app-data
+`settings.json`, Linux to its config root (§5.1). Each imports its legacy M1
+Setup fact without completing the library step, and presenting Setup records
+both settings progress and the legacy flag for downgrades. The composition
+switch operation for the General and onboarding folder controls stores the
+chosen absolute path, or null for the default, after the replacement graph
+starts. It dismisses the picker, drops its session drafts and rebinds the
+reused native panel; delivery in progress refuses a switch. A settings save
+failure leaves the new folder active for this session with a settings error,
+while the saved folder remains the choice for the next launch. Read-only
+settings use the default library.
 
 ### 11.5 Error and empty states
 
@@ -224,7 +225,7 @@ use the default library. Folder controls and seed onboarding remain later work.
 | Watcher error or event overflow | One path-free warning per error/overflow streak, defined in §4.6. Each delivered native batch triggers one coalesced full rescan, idle-coalesced on Linux. Linux GIO hides inotify overflow (§4.6). |
 | Picker: no matches | "No prompts match '<query>'" with actions: create a prompt titled `<query>`, write it with the assistant (once configured), open the library folder. |
 | Picker: prompt has validation errors | The preview lists the issues and offers Edit. No delivery. |
-| Fill form: `Esc` | Back to the picker. Typed values stay in memory for that prompt until delivery, an explicit forget action or quit. |
+| Fill form: `Esc` | Back to the picker. Typed values stay in memory for that prompt until delivery, an explicit forget action, a library switch or quit. |
 | Panel loses focus (click elsewhere) | Hides after `BLUR_HIDE_MS = 300`, keeping typed values. No delivery and no refocus, because the user already chose a new target. |
 | Delivery fell back to copy-only | Notification "Copied. Press Ctrl+V" (Cmd+V on macOS). A successful paste is silent. |
 | Secret Service unreachable | The error names the ladder and offers the env-var or file tier. |

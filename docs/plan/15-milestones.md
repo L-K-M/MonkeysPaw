@@ -54,6 +54,10 @@
   new picker hook before arming its watcher and rebuilding, ahead of the General
   folder controls and onboarding slices.
 
+- I6 wires macOS settings and library graph replacement before the General
+  and library-onboarding views, installing the picker hook, arming the watcher,
+  then rebuilding before persisting the choice; hosted tests require macOS CI.
+
 - I2 supplies the embedded seed catalog and empty-library exclusive seeding
   service before onboarding wiring, with settings recording "seeds offered"
   separately and no composition-root changes in this slice.

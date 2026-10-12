@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Combine
 import MonkeysPawCore
+import SwiftUI
 import XCTest
 @testable import MonkeysPaw
 
@@ -72,6 +73,88 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(picker.libraryAvailable)
         XCTAssertTrue(picker.results.isEmpty)
         XCTAssertEqual(NSApp.windows.map(ObjectIdentifier.init).filter { !originalWindows.contains($0) }, [])
+    }
+
+    func testLibrarySwitchReusesPanelAndHostingViewWithFreshControlsAndCallbacks() throws {
+        try files.write(Data("Alpha".utf8), at: "alpha.md")
+        let other = directory.appendingPathComponent("chosen", isDirectory: true)
+        let otherFiles = try RootedFileStore(root: other)
+        try otherFiles.write(Data("Beta".utf8), at: "beta.md")
+        let old = try open()
+        let panel = try currentPanel()
+        let container = try XCTUnwrap(panel.contentView)
+        let hosting = try XCTUnwrap(container.subviews.first as? NSHostingView<AnyView>)
+        let oldQuery = try XCTUnwrap(find("picker-query"))
+        let oldPresentation = try XCTUnwrap(delegate.pickerPresentation)
+        let oldKey = controller.onKey
+        let setup = delegate.setupModel
+        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        XCTAssertEqual(old.state, .closed)
+        XCTAssertFalse(controller.isVisible)
+        XCTAssertTrue(delegate.setupModel === setup)
+        let current = try XCTUnwrap(delegate.pickerModel)
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        oldPresentation.pasteTarget = "Old target"
+        presentation.pasteTarget = "Before capture"
+        delegate.togglePicker()
+        XCTAssertTrue(spin {
+            self.controller.isActiveAndVisible && self.find("picker-query") != nil
+                && self.find("picker-query") !== oldQuery
+        })
+        XCTAssertTrue(try currentPanel() === panel)
+        XCTAssertTrue(panel.contentView === container)
+        XCTAssertTrue(panel.contentView?.subviews.first === hosting)
+        XCTAssertEqual(NSApp.windows.compactMap { $0 as? PromptPanel }.filter {
+            !originalWindows.contains(ObjectIdentifier($0))
+        }.count, 1)
+        XCTAssertEqual(presentation.pasteTarget, Strings.noPasteTarget)
+        XCTAssertEqual(oldPresentation.pasteTarget, "Old target")
+        XCTAssertEqual(current.results.map(\.relativePath), ["beta.md"])
+        let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        query.stringValue = "beta"
+        query.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: query))
+        XCTAssertEqual(current.query, "beta")
+        XCTAssertEqual(old.query, "")
+
+        let libraryKey = try keyEvent(code: UInt16(kVK_ANSI_L), characters: "l", modifiers: .command, to: panel)
+        XCTAssertEqual(oldKey?(libraryKey, nil), false)
+        XCTAssertTrue(launched.isEmpty)
+        XCTAssertEqual(current.state, .picker)
+        try files.write(Data("Late Alpha".utf8), at: "late-alpha.md")
+        try otherFiles.write(Data("Fresh Beta".utf8), at: "beta.md")
+        XCTAssertTrue(spin { current.selectedPreview == .body("Fresh Beta") })
+        XCTAssertEqual(current.results.map(\.relativePath), ["beta.md"])
+        XCTAssertTrue(current.libraryAvailable)
+        try sendKey(code: UInt16(kVK_ANSI_L), characters: "l", modifiers: .command, to: panel)
+        XCTAssertEqual(launched, [other])
+        XCTAssertEqual(current.state, .closed)
+        XCTAssertFalse(controller.isVisible)
+    }
+
+    func testLibrarySwitchRetiresNativeFocusRequestsEvenWhenOldControlIsRetained() throws {
+        _ = try open()
+        let panel = try currentPanel()
+        let oldQuery = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        oldQuery.pickerFocus.update(view: oldQuery, wantsFocus: true, revision: 999)
+        let other = directory.appendingPathComponent("chosen", isDirectory: true)
+        try RootedFileStore(root: other).createRoot()
+        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        delegate.togglePicker()
+        XCTAssertTrue(spin {
+            guard let query = self.find("picker-query") as? PickerTextField, query !== oldQuery else { return false }
+            return self.controller.isActiveAndVisible && self.isFocused(query, in: panel)
+        })
+
+        // Model SwiftUI temporarily retaining an obsolete representable in the
+        // same native window. Neither a pending nor a later focus update may run.
+        panel.contentView?.addSubview(oldQuery)
+        defer { oldQuery.removeFromSuperview() }
+        let sink = PickerKeyboardSink(frame: .zero)
+        panel.contentView?.addSubview(sink)
+        XCTAssertTrue(panel.makeFirstResponder(sink))
+        oldQuery.pickerFocus.update(view: oldQuery, wantsFocus: true, revision: 1_000)
+        pump(for: 0.02)
+        XCTAssertTrue(panel.firstResponder === sink)
     }
 
     func testOnDiskPromptAndEditLibraryLaunchURLs() throws {

@@ -11,14 +11,17 @@ final class PickerViewState: ObservableObject {
     @Published var pasteTarget = Strings.noPasteTarget
     let model: PickerModel
     private let mainThread: MainThread
+    private let isCurrent: () -> Bool
     private let requestedIntent: (PickerModel.Intent) -> Void
     private let createPrompt: (String) -> Void
 
     init(model: PickerModel, mainThread: MainThread,
+         isCurrent: @escaping () -> Bool = { true },
          requestedIntent: @escaping (PickerModel.Intent) -> Void,
          createPrompt: @escaping (String) -> Void) {
         self.model = model
         self.mainThread = mainThread
+        self.isCurrent = isCurrent
         self.requestedIntent = requestedIntent
         self.createPrompt = createPrompt
         state = model.state
@@ -28,6 +31,7 @@ final class PickerViewState: ObservableObject {
     }
 
     private func refresh() {
+        guard isCurrent() else { return }
         let intent = model.state == .picker ? model.takeRequestedIntent() : nil
         if state != model.state { focusRevision &+= 1 }
         state = model.state // Republishes field values, selection and preview too.
@@ -35,21 +39,26 @@ final class PickerViewState: ObservableObject {
     }
 
     func didShow() {
+        guard isCurrent() else { return }
         transientStatus = nil
         focusRevision &+= 1
     }
 
     func setQuery(_ query: String) {
+        guard isCurrent() else { return }
         transientStatus = nil
         model.setQuery(query)
     }
 
     func createNoMatch() {
-        guard model.libraryAvailable, let noMatches = model.noMatches else { return }
+        guard isCurrent(), model.libraryAvailable, let noMatches = model.noMatches else { return }
         createPrompt(noMatches.createTitle)
     }
 
-    func showStatus(_ message: String) { transientStatus = message }
+    func showStatus(_ message: String) {
+        guard isCurrent() else { return }
+        transientStatus = message
+    }
 
     var status: String {
         var warnings = model.persistenceWarnings
@@ -87,6 +96,7 @@ final class PickerViewState: ObservableObject {
     }
 
     func route(_ event: NSEvent, fieldKind: FieldKind?) -> Bool {
+        guard isCurrent() else { return false }
         guard let intent = MacPickerKeys.intent(keyCode: event.keyCode,
             characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags,
             state: model.state, fieldKind: fieldKind) else { return false }

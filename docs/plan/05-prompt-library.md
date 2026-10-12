@@ -40,20 +40,23 @@ Atomic `FileStore.write` must succeed before the in-memory value changes. Write
 failure is retryable and retains both the previous file and in-memory value.
 Paths, contents and underlying error bodies are never logged.
 
-Linux composition reads this choice before building its library graph. Folder
-switching refuses an in-flight delivery and otherwise dismisses the picker
-first. A chosen folder must be an existing readable directory, with no symlink
-at the selected root; only the platform default may be created, and it may be
-a symlink to a directory, resolved as before. Validation
-failure leaves the graph and settings intact. A valid switch replaces only the
-library service, index, watcher and picker, keeping the native panel and shared
-app-data stores. It retires old callbacks and drops the old picker's session
-drafts. The new picker hook is installed before monitoring starts and the index
-rebuilds. Startup failure leaves the new graph unavailable, as at launch, and
-does not persist the choice. After successful startup, settings are saved; a
-save failure keeps the new graph for the session and surfaces `SettingsModel`'s
-error. The next launch uses the last successfully persisted choice. This avoids
-a second view rebind and watcher restart after a settings write failure.
+Both desktop composition roots read this choice before building the library
+graph: macOS from the app-data store, Linux from its config root. Switching
+folders refuses an in-flight delivery and otherwise dismisses the picker and
+hides the panel first. A chosen folder must be an existing readable directory
+and must not itself be a symlink; only the platform default may be created, and
+a symlinked default is resolved as before. Validation failure leaves the graph
+and settings intact. A valid switch replaces only the library store, service,
+index, watcher and picker, keeping the native panel, delivery and app-data
+stores. Old callbacks are retired (macOS also invalidates queued picker
+presentation work) and the old picker's session drafts are dropped; remembered
+values, usage and history stay in app data. The new picker hook is installed
+before monitoring starts and the index rebuilds. A watcher or initial scan
+failure leaves the new graph unavailable, as at launch, and does not persist
+the choice. After successful startup the choice is saved; a save failure keeps
+the new graph for this session and surfaces `SettingsModel`'s error, and the
+next launch uses the last successfully persisted choice. This avoids a second
+view rebind and watcher restart after a settings write failure.
 
 `ValuesStore` stores version 1 sorted-key JSON in the single `values.json`:
 `{"values":{<identity-key>:{<field-name>:<value>}},"version":1}`. Keys use the
@@ -408,6 +411,10 @@ user's last choice repeats. Non-remembered fields are not recorded.
 
 ### 5.4 Index, search, ranking
 
+Ranking and remembered values use the shared app-data identity keys (§5.2),
+so changing the library root does not isolate unassigned prompts with the same
+relative path; assigned ULIDs keep their own keys.
+
 - **Index.** Core's `PromptIndex` caches every prompt's title, tags, folder,
   description and body in memory, including invalid entries and their issues
   as returned by `LibraryService.entries()`. `rebuild()` replaces the whole
@@ -516,10 +523,10 @@ through its injected `PanelWindow`
 and retains §4.6's guarded focus restoration. This prevents a pending show from
 reopening a closed picker. Blur hiding belongs to the platform
 timer, while a later open retains the same values. Drafts survive closing and
-reopening until delivery, an explicit forget action or model release at quit;
-delivery clears only that identity's draft. Closed forms and canceled
-fieldless snapshot requests ignore late callbacks. Tab/Shift-Tab follow field
-order and wrap within the fields.
+reopening until delivery, an explicit forget action, a library switch or
+model release at quit; delivery clears only that identity's draft. Closed forms
+and canceled fieldless snapshot requests ignore late callbacks. Tab/Shift-Tab
+follow field order and wrap within the fields.
 The picker carries terminal/copy mode into the form's `preferredMode`; explicit
 form delivery accepts standard paste, terminal paste or copy-only.
 

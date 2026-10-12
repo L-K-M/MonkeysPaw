@@ -9,13 +9,25 @@ final class PickerFocusRequest {
     private var wantsFocus = false
     private var revision: UInt64?
     private var pending = false
+    private var isActive = true
     private var keyObserver: NSObjectProtocol?
 
     deinit {
         if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
     }
 
+    /// Root replacement can retain old representables until SwiftUI updates.
+    /// Revoke their queued focus work before the reused window shows again.
+    func deactivate() {
+        isActive = false
+        pending = false
+        view = nil
+        if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
+        keyObserver = nil
+    }
+
     func update(view: NSView, wantsFocus: Bool, revision: UInt64) {
+        guard isActive else { return }
         self.view = view
         if wantsFocus && (!self.wantsFocus || self.revision != revision) { pending = true }
         if !wantsFocus { pending = false }
@@ -25,6 +37,7 @@ final class PickerFocusRequest {
     }
 
     func attached(_ view: NSView) {
+        guard isActive else { return }
         self.view = view
         if let keyObserver { NotificationCenter.default.removeObserver(keyObserver) }
         keyObserver = nil
