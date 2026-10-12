@@ -236,17 +236,42 @@ final class RootedFileWatcherTests: XCTestCase {
         let nested = parent.appendingPathComponent("library")
         let nestedStore = try RootedFileStore(root: nested)
         try nestedStore.write(Data("Inside".utf8), at: "a.md")
-        try Data("Outside".utf8).write(to: outside.appendingPathComponent("a.md"))
+        let outsideLibrary = outside.appendingPathComponent("library")
+        try manager.createDirectory(at: outsideLibrary, withIntermediateDirectories: true)
+        try Data("Outside".utf8).write(to: outsideLibrary.appendingPathComponent("a.md"))
+        try Data("Must never appear".utf8).write(to: outsideLibrary.appendingPathComponent("escaped.md"))
+        let replacement = directory.appendingPathComponent("replacement")
+        try manager.createSymbolicLink(at: replacement, withDestinationURL: outside)
         try start(at: nested)
-        try manager.removeItem(at: parent)
-        try manager.createSymbolicLink(at: parent, withDestinationURL: outside)
+
+        // Swap the whole ancestor with the prepared link in one syscall.
+        // Recursive removal exposes a readable, partially emptied root to scans.
+        let swapResult = Darwin.renamex_np(parent.path, replacement.path, UInt32(RENAME_SWAP))
+        let swapError = errno
+        guard swapResult == 0 else {
+            XCTFail("Atomic ancestor replacement failed with errno \(swapError)")
+            return
+        }
         XCTAssertTrue(spin { self.health == [.outsideRoot] })
         expectQuiet()
-        try Data("Changed outside".utf8).write(to: outside.appendingPathComponent("a.md"))
+        try Data("Changed outside".utf8).write(to: outsideLibrary.appendingPathComponent("a.md"))
+        try Data("New outside".utf8).write(to: outsideLibrary.appendingPathComponent("new.md"))
         expectQuiet()
-        try manager.removeItem(at: parent)
-        try nestedStore.write(Data("Real tree".utf8), at: "b.md")
+
+        // Prepare recovery off-tree, then swap it back without an empty-root
+        // interval. The watcher must still diff against its last good baseline.
+        let retiredLibrary = replacement.appendingPathComponent("library")
+        try manager.removeItem(at: retiredLibrary.appendingPathComponent("a.md"))
+        try Data("Real tree".utf8).write(to: retiredLibrary.appendingPathComponent("b.md"))
+        let restoreResult = Darwin.renamex_np(parent.path, replacement.path, UInt32(RENAME_SWAP))
+        let restoreError = errno
+        guard restoreResult == 0 else {
+            XCTFail("Atomic ancestor recovery failed with errno \(restoreError)")
+            return
+        }
         expect(LibraryChangeSet(created: ["b.md"], deleted: ["a.md"]))
+        expectQuiet()
+        XCTAssertEqual(health, [.outsideRoot])
     }
 
     func testStopRestartDiscardsPendingEventsAndTakesNewBaseline() throws {
