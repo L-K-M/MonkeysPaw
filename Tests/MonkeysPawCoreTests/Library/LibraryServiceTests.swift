@@ -227,6 +227,45 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertEqual(try data.text(at: historyPath(revision)), "External")
     }
 
+    func testEditingCopyAfterDeletionUsesAlternatePath() throws {
+        let path = "folder/Name.md"
+        try library.put("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal", at: path)
+        let original = try service.load(at: path)
+        try library.delete(at: path)
+        let mine = PromptCodec.parse(original.document.source + " Mine", filename: "Name.md")
+
+        guard case .saved(let copy) = try service.createCopyForEditing(mine, near: path) else {
+            return XCTFail("Expected a saved copy.")
+        }
+
+        XCTAssertNil(try library.stamp(at: path))
+        XCTAssertEqual(copy.relativePath, "folder/Name 2.md")
+        XCTAssertNotEqual(copy.identity, original.identity)
+        XCTAssertEqual(copy.document.body, "Original Mine")
+        XCTAssertEqual(try service.entries().map(\.relativePath), ["folder/Name 2.md"])
+    }
+
+    func testEditingCopyUsesLastAlternateThenReturnsTypedExhaustionWithOriginalPathFree() throws {
+        let path = "Name.md"
+        let mine = PromptCodec.parse("Mine", filename: path)
+        for suffix in 2...Limits.libraryCopyCandidateCap {
+            try library.put("Existing", at: "Name \(suffix).md")
+        }
+        let lastPath = "Name \(Limits.libraryCopyCandidateCap + 1).md"
+
+        guard case .saved(let copy) = try service.createCopyForEditing(mine, near: path) else {
+            return XCTFail("Expected the last alternate name to remain available.")
+        }
+        XCTAssertEqual(copy.relativePath, lastPath)
+        XCTAssertEqual(try library.text(at: "Name 2.md"), "Existing")
+        XCTAssertNil(try library.stamp(at: path))
+
+        XCTAssertThrowsError(try service.createCopyForEditing(mine, near: path)) {
+            XCTAssertEqual($0 as? LibraryError, .copyLimitReached)
+        }
+        XCTAssertNil(try library.stamp(at: path))
+    }
+
     func testDeletionAndRecreationConflictEvenWithSameBytes() throws {
         try library.put("Same", at: "a.md")
         let opened = try service.load(at: "a.md")

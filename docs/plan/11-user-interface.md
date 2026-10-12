@@ -353,7 +353,8 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   changes on disk while you have unsaved edits, the conflict dialog opens at
   once: keep mine (save over theirs), take theirs (reload), or save mine as
   a copy. A deletion on disk offers keep mine (recreate), save mine as a
-  copy, or discard. A stale save opens the same dialog. Without unsaved
+  copy, or discard. A copy always takes an alternate name beside the original.
+  A stale save opens the same dialog. Without unsaved
   edits the editor reloads silently. If an external writer replaces a newly
   created copy before verification, the editor reports a copy failure and
   keeps the original session, draft, conflict and pending decision. The app

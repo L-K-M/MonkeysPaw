@@ -215,6 +215,36 @@ final class EditorModelTests: XCTestCase {
         XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("a 2.md"))
     }
 
+    func testDeletionConflictSaveAsCopyUsesAlternatePathAndAdoptsCopy() throws {
+        let e = EditorHarness(heldWork: true)
+        let original = try e.open("---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal", at: "Name.md")
+        let source = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(source + " Mine") }
+        try e.change(nil, at: "Name.md")
+        e.settle()
+        XCTAssertEqual(e.model.state.conflict?.kind, .deleted)
+
+        e.ui { e.model.resolveConflict(.saveAsCopy) }
+        e.settle()
+
+        XCTAssertNil(try e.h.files.stamp(at: "Name.md"))
+        XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("Name 2.md"))
+        XCTAssertEqual(e.model.state.lastCopy, e.model.state.prompt)
+        XCTAssertNotEqual(e.model.state.prompt?.identity, original.identity)
+        XCTAssertEqual(e.model.state.stamp, try e.h.files.stamp(at: "Name 2.md"))
+        XCTAssertEqual(e.model.state.source, try e.h.files.text(at: "Name 2.md"))
+        XCTAssertEqual(e.model.state.status, .saved)
+        XCTAssertFalse(e.model.state.isDirty)
+        XCTAssertNil(e.model.state.conflict)
+
+        let committed = try XCTUnwrap(e.model.state.source)
+        e.ui { e.model.edit(committed + " Next"); e.model.save() }
+        e.settle()
+        XCTAssertTrue(try e.h.files.text(at: "Name 2.md").hasSuffix("Original Mine Next"))
+        XCTAssertFalse(e.model.state.isDirty)
+        XCTAssertNil(try e.h.files.stamp(at: "Name.md"))
+    }
+
     func testEditsDuringCopyStayOnOriginalWithCopyResultExposed() throws {
         let e = EditorHarness(heldWork: true)
         let original = try e.open()

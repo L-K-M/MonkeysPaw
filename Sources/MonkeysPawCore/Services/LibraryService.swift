@@ -9,6 +9,10 @@ public final class LibraryService: PromptFavoriteEditing {
         case createOnly
     }
 
+    private enum CreationNaming {
+        case preferredPath, alternateOnly
+    }
+
     private struct LoadedFile {
         let bytes: Data
         let entry: LibraryEntry
@@ -78,7 +82,7 @@ public final class LibraryService: PromptFavoriteEditing {
     func createCopyForEditing(_ document: PromptDocument, near path: String) throws -> PromptSaveOutcome {
         try locked {
             let copy = try PromptCodec.removingIdentity(from: document)
-            return try editingCommit { try createDocument(copy, near: path) }
+            return try editingCommit { try createDocument(copy, near: path, naming: .alternateOnly) }
         }
     }
 
@@ -121,12 +125,13 @@ public final class LibraryService: PromptFavoriteEditing {
         try locked {
             let path = PromptCreation.relativePath(title: title, now: clock.now())
             let document = try PromptCodec.newDocument(title: title, body: body)
-            return try createDocument(document, near: path)
+            return try createDocument(document, near: path, naming: .preferredPath)
         }
     }
 
-    private func createDocument(_ document: PromptDocument, near path: String) throws -> LibraryEntry {
-        var startingSuffix = 1
+    private func createDocument(_ document: PromptDocument, near path: String,
+                                naming: CreationNaming) throws -> LibraryEntry {
+        var startingSuffix = naming == .alternateOnly ? 2 : 1
         for _ in 0..<Limits.libraryCreateAttemptCap {
             let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
             do {
