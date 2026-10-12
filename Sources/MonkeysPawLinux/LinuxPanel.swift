@@ -66,13 +66,36 @@ final class LinuxPanel: PanelWindow {
             self.isDestroyed = true
             self.blurRevision += 1
         }
+
+        // The window survives library switches. Install its controllers once;
+        // they always use the current binding rather than a captured picker.
+        GTK.observeKeys(window) { [weak self] key, modifiers in self?.keyPressed(key, modifiers: modifiers) ?? false }
+        GTK.onCloseRequested(window) { [weak self] in
+            guard let self, !self.isDestroyed else { return }
+            if let picker = self.picker { picker.dismiss() } else { self.hide() }
+        }
+        GTK.onNotify(UnsafeMutableRawPointer(window), "is-active") { [weak self] in self?.focusChanged() }
+        GTK.onNotify(UnsafeMutableRawPointer(window), "focus-widget") { [weak self] in self?.fieldFocusChanged() }
     }
 
-    func bind(picker: PickerModel, session: DesktopSession, openSetup: @escaping () -> Void,
-              requestedIntent: @escaping (PickerModel.Intent) -> Void,
-              createPrompt: @escaping (String) -> Void) {
+    func rebind(picker: PickerModel, session: DesktopSession, openSetup: @escaping () -> Void,
+                requestedIntent: @escaping (PickerModel.Intent) -> Void,
+                createPrompt: @escaping (String) -> Void) {
         guard !isDestroyed else { return }
-        assert(self.picker == nil)
+        self.picker?.onChange = nil
+        self.picker = nil
+        blurRevision += 1 // Retire a blur timeout queued by the previous view.
+        isRendering = true
+        gtk_window_set_focus(mp_window(window), nil)
+        boundFill = nil
+        controls = []
+        initialFocus = nil
+        renderedResults = []
+        renderedFocus = nil
+        transientStatus = nil
+        queryPreedit = nil
+        gtk_window_set_child(mp_window(window), nil)
+        isRendering = false
         self.picker = picker
         let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
@@ -86,9 +109,10 @@ final class LinuxPanel: PanelWindow {
         initialFocus = queryEntry
         gtk_box_append(mp_box(content), queryEntry)
         GTK.onSignal(queryEntry, "changed") { [weak self, weak picker] in
-            guard let self, !self.isDestroyed, !self.isRendering else { return }
+            guard let self, !self.isDestroyed, let picker, self.picker === picker,
+                  !self.isRendering else { return }
             self.transientStatus = nil
-            picker?.setQuery(String(cString: mp_entry_text(self.queryEntry)))
+            picker.setQuery(String(cString: mp_entry_text(self.queryEntry)))
         }
 
         let split = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12)!
@@ -103,21 +127,24 @@ final class LinuxPanel: PanelWindow {
         let listScroll = scrolled(resultsList)
         gtk_box_append(mp_box(pickerPage), listScroll)
         GTK.onRow(resultsList, "row-selected") { [weak self, weak picker] position in
-            guard let self, !self.isDestroyed, !self.isRendering, let position,
-                  picker?.selectionIndex != position else { return }
-            picker?.selectResult(at: position)
+            guard let self, !self.isDestroyed, let picker, self.picker === picker,
+                  !self.isRendering, let position,
+                  picker.selectionIndex != position else { return }
+            picker.selectResult(at: position)
         }
         GTK.onRow(resultsList, "row-activated") { [weak self, weak picker] position in
-            guard let self, !self.isDestroyed, !self.isRendering, let position else { return }
-            picker?.selectResult(at: position)
-            picker?.use(mode: .paste(.standard))
+            guard let self, !self.isDestroyed, let picker, self.picker === picker,
+                  !self.isRendering, let position else { return }
+            picker.selectResult(at: position)
+            picker.use(mode: .paste(.standard))
         }
 
         noMatchesBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
         noMatchesLabel = GTK.label("")
         gtk_box_append(mp_box(noMatchesBox), noMatchesLabel)
-        createButton = GTK.button("", { [weak picker] in
-            guard let noMatches = picker?.noMatches else { return }
+        createButton = GTK.button("", { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker,
+                  let noMatches = picker.noMatches else { return }
             createPrompt(noMatches.createTitle)
         })
         gtk_box_append(mp_box(noMatchesBox), createButton)
@@ -129,7 +156,10 @@ final class LinuxPanel: PanelWindow {
         gtk_box_append(mp_box(noMatchesBox), assistantButton)
         assistantHint = GTK.label(LinuxStrings.assistantNotConfigured)
         gtk_box_append(mp_box(noMatchesBox), assistantHint)
-        folderButton = GTK.button("", { [weak picker] in picker?.openLibrary() })
+        folderButton = GTK.button("", { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            picker.openLibrary()
+        })
         gtk_widget_set_name(folderButton, "picker-open-folder")
         gtk_box_append(mp_box(noMatchesBox), folderButton)
         gtk_box_append(mp_box(pickerPage), noMatchesBox)
@@ -153,27 +183,41 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_name(status, "picker-status")
         gtk_box_append(mp_box(content), status)
         actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
-        useButton = GTK.button(LinuxStrings.usePrompt) { [weak self] in self?.usePreferred() }
-        copyButton = GTK.button(LinuxStrings.copy) { [weak self] in self?.use(mode: .copyOnly) }
+        useButton = GTK.button(LinuxStrings.usePrompt) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            self.usePreferred()
+        }
+        copyButton = GTK.button(LinuxStrings.copy) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            self.use(mode: .copyOnly)
+        }
         gtk_widget_set_name(useButton, "picker-use")
         gtk_widget_set_name(copyButton, "picker-copy")
-        editButton = GTK.button(LinuxStrings.edit) { [weak picker] in picker?.editSelected() }
-        libraryButton = GTK.button(LinuxStrings.library) { [weak picker] in picker?.openLibrary() }
+        editButton = GTK.button(LinuxStrings.edit) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            picker.editSelected()
+        }
+        libraryButton = GTK.button(LinuxStrings.library) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            picker.openLibrary()
+        }
         for button in [useButton!, copyButton!, editButton!, libraryButton!,
-                       GTK.button(LinuxStrings.cancel, { [weak picker] in picker?.dismiss() }),
-                       GTK.button(LinuxStrings.setup, openSetup)] { gtk_box_append(mp_box(actions), button) }
+                       GTK.button(LinuxStrings.cancel, { [weak self, weak picker] in
+                           guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+                           picker.dismiss()
+                       }),
+                       GTK.button(LinuxStrings.setup, { [weak self, weak picker] in
+                           guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+                           openSetup()
+                       })] { gtk_box_append(mp_box(actions), button) }
         gtk_box_append(mp_box(content), actions)
         hint = GTK.label(LinuxStrings.pickerHint)
         gtk_box_append(mp_box(content), hint)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.pickerSession(session)))
         gtk_window_set_child(mp_window(window), content)
 
-        GTK.observeKeys(window) { [weak self] key, modifiers in self?.keyPressed(key, modifiers: modifiers) ?? false }
-        GTK.onCloseRequested(window) { [weak picker] in picker?.dismiss() }
-        GTK.onNotify(UnsafeMutableRawPointer(window), "is-active") { [weak self] in self?.focusChanged() }
-        GTK.onNotify(UnsafeMutableRawPointer(window), "focus-widget") { [weak self] in self?.fieldFocusChanged() }
         picker.onChange = { [weak self, weak picker] in
-            guard let self, !self.isDestroyed, let picker else { return }
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             if picker.state == .picker, let intent = picker.takeRequestedIntent() {
                 requestedIntent(intent)
                 return
@@ -297,8 +341,9 @@ final class LinuxPanel: PanelWindow {
                 preedit = observePreedit(in: mp_entry_text_delegate(widget))
                 mp_entry_set_text(widget, field.value)
                 GTK.onSignal(widget, "changed") { [weak self, weak fill] in
-                    guard let self, !self.isDestroyed, !self.isRendering else { return }
-                    fill?.setValue(String(cString: mp_entry_text(widget)), name: field.name)
+                    guard let self, !self.isDestroyed, let fill, self.boundFill === fill,
+                          !self.isRendering else { return }
+                    fill.setValue(String(cString: mp_entry_text(widget)), name: field.name)
                 }
                 gtk_box_append(mp_box(row), widget)
             case .multiline:
@@ -308,8 +353,9 @@ final class LinuxPanel: PanelWindow {
                 let buffer = gtk_text_view_get_buffer(mp_text_view(widget))!
                 gtk_text_buffer_set_text(buffer, field.value, -1)
                 GTK.onSignal(UnsafeMutableRawPointer(buffer), "changed") { [weak self, weak fill] in
-                    guard let self, !self.isDestroyed, !self.isRendering else { return }
-                    fill?.setValue(self.text(in: widget), name: field.name)
+                    guard let self, !self.isDestroyed, let fill, self.boundFill === fill,
+                          !self.isRendering else { return }
+                    fill.setValue(self.text(in: widget), name: field.name)
                 }
                 gtk_box_append(mp_box(row), scrolled(widget))
             case .choice:
@@ -318,9 +364,9 @@ final class LinuxPanel: PanelWindow {
                 for option in field.options { gtk_combo_box_text_append(mp_combo_box_text(widget), option.value, option.label) }
                 gtk_combo_box_set_active_id(mp_combo_box(widget), field.value)
                 GTK.onSignal(widget, "changed") { [weak self, weak fill] in
-                    guard let self, !self.isDestroyed, !self.isRendering,
+                    guard let self, !self.isDestroyed, let fill, self.boundFill === fill, !self.isRendering,
                           let value = gtk_combo_box_get_active_id(mp_combo_box(widget)) else { return }
-                    fill?.setValue(String(cString: value), name: field.name)
+                    fill.setValue(String(cString: value), name: field.name)
                 }
                 gtk_box_append(mp_box(row), widget)
             }
@@ -379,9 +425,12 @@ final class LinuxPanel: PanelWindow {
     }
 
     private func observePreedit(in widget: GTK.Widget?) -> Preedit? {
-        guard let widget else { return nil }
+        guard !isDestroyed, let widget else { return nil }
         let preedit = Preedit()
-        GTK.onPreeditChanged(widget) { preedit.isActive = $0 }
+        GTK.onPreeditChanged(widget) { [weak self] active in
+            guard let self, !self.isDestroyed else { return }
+            preedit.isActive = active
+        }
         return preedit
     }
 
@@ -394,7 +443,7 @@ final class LinuxPanel: PanelWindow {
     }
 
     private func fieldFocusChanged() {
-        guard !isRendering, let position = focusedControl else { return }
+        guard !isDestroyed, !isRendering, let position = focusedControl else { return }
         picker?.fillModel?.focusField(at: position)
     }
 
@@ -425,7 +474,7 @@ final class LinuxPanel: PanelWindow {
     private func usePreferred() { use(mode: picker?.fillModel?.preferredMode ?? .paste(.standard)) }
 
     private func use(mode: DeliveryMode) {
-        guard let picker else { return }
+        guard !isDestroyed, let picker else { return }
         if picker.state == .fill { picker.fillModel?.deliver(mode: mode) }
         else { picker.use(mode: mode) }
     }

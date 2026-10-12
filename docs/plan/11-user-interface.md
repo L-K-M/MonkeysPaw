@@ -197,6 +197,17 @@ settings are read-only, the model reports `needsSetupPresentation`,
 instead of repeating onboarding that cannot persist each launch. A failed
 completion does not claim durable progress.
 
+Linux now wires the shared settings model to its config root and imports the
+legacy marker without completing the library step. Presenting Setup records
+both settings progress and the legacy marker for downgrade compatibility.
+The composition operation for later General/onboarding folder controls stores
+the chosen absolute path in `settings.json`, or null for the default, after the
+replacement graph starts (§5.1). It dismisses the picker, drops its session
+drafts and rebinds the existing native panel. Delivery in progress refuses a
+switch. A settings save failure leaves the selected library active for the
+session and exposes the error without claiming persistence. Read-only settings
+use the default library. Folder controls and seed onboarding remain later work.
+
 ### 11.5 Error and empty states
 
 | State | Behaviour |
