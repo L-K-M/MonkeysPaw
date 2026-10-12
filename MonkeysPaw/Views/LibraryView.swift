@@ -46,6 +46,8 @@ struct LibraryView: View {
                 systemImage: presentation.snapshot.selectedPrompt?.favorite == true ? "star.fill" : "star",
                 action: presentation.toggleFavorite)
                 .labelStyle(.iconOnly)
+                .accessibilityLabel(presentation.snapshot.selectedPrompt?.favorite == true
+                    ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite)
                 .disabled(!presentation.canToggleFavorite)
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .accessibilityIdentifier("library-favorite")
@@ -99,7 +101,7 @@ struct LibraryView: View {
             Text(String(section.count)).foregroundStyle(.secondary)
         }
         .tag(section.id)
-        .accessibilityLabel(section.title + ", " + String(section.count) + " prompts")
+        .accessibilityLabel(section.title + ", " + String(section.count) + (section.count == 1 ? " prompt" : " prompts"))
     }
 
     private var prompts: some View {

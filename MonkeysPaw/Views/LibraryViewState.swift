@@ -121,7 +121,8 @@ final class LibraryViewState: ObservableObject {
     }
 
     func toggleFavorite() {
-        guard isActive, libraryAvailable else { return }
+        // The keyboard shortcut must honour the same gate as the button.
+        guard canToggleFavorite else { return }
         favoriteOutcome = model.toggleFavorite()
     }
 

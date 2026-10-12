@@ -126,7 +126,9 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(current.results.map(\.relativePath), ["beta.md"])
         XCTAssertTrue(current.libraryAvailable)
         try sendKey(code: UInt16(kVK_ANSI_L), characters: "l", modifiers: .command, to: panel)
-        XCTAssertEqual(launched, [other])
+        // ⌘L opens the Library window for the new graph instead of Finder.
+        XCTAssertTrue(launched.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow?.window).isVisible)
         XCTAssertEqual(current.state, .closed)
         XCTAssertFalse(controller.isVisible)
     }

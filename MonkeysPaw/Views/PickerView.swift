@@ -131,8 +131,8 @@ private struct PickerEmptyView: View {
                     .accessibilityLabel(Strings.openLibrary)
             } else {
                 Text(Strings.emptyLibrary)
-                Button(Strings.library) { presentation.model.openLibrary() }
-                    .accessibilityLabel(Strings.library)
+                Button(Strings.openLibrary) { presentation.model.openLibrary() }
+                    .accessibilityLabel(Strings.openLibrary)
             }
             Spacer()
         }
