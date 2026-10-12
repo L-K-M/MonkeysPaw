@@ -131,6 +131,25 @@ public enum PromptCodec {
         return parse(try write(updated), filename: metadata.title + ".md")
     }
 
+    /// Metadata-only edit through the canonical writer, preserving body bytes,
+    /// unknown keys and optional-key presence. Invalid/future files fail closed.
+    static func settingFavorite(_ favorite: Bool, in document: PromptDocument,
+                                filename: String) throws -> PromptDocument {
+        _ = try write(document)
+        let front = document.frontMatter
+        let metadata = FrontMatter(id: front.id, title: front.title, description: front.description,
+                                   tags: front.tags, favorite: favorite, isPrivate: front.isPrivate,
+                                   fields: front.fields, format: front.format)
+        var pairs = document.preservedHeader?.mapping?.filter { PortableYAML.string($0.key) != "favorite" }
+            .map { ($0.key, $0.value) } ?? []
+        pairs.append((Node("favorite", Tag(.str)), Node(favorite ? "true" : "false", Tag(.bool))))
+        let updated = PromptDocument(source: document.source, body: document.body, frontMatter: metadata,
+                                     template: document.template, preservedHeader: Node(pairs, Tag(.map), .block),
+                                     decodingIssues: document.decodingIssues,
+                                     declarationLocations: document.declarationLocations)
+        return parse(try write(updated), filename: filename)
+    }
+
     private static let knownKeys = ["id", "title", "description", "tags", "favorite", "private", "fields", "format"]
 
     private struct SourceParts {

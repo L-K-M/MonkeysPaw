@@ -14,7 +14,9 @@ public struct LibraryEntry: @unchecked Sendable {
 
     init(path: String, document: PromptDocument, stamp: FileStamp) {
         relativePath = path
-        folder = path.split(separator: "/").dropLast().joined(separator: "/")
+        // A leading combining mark can extend the preceding slash grapheme.
+        // Paths use slash scalars, independent of Character segmentation.
+        folder = path.unicodeScalars.lastIndex(of: "/").map { String(path[..<$0]) } ?? ""
         identity = PromptIdentity(path: path, id: document.frontMatter.id)
         self.document = document
         self.stamp = stamp

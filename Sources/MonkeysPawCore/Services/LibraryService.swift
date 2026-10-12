@@ -3,7 +3,7 @@ import Foundation
 /// Owns one library tree and its app-data history. No cache/watch/index in M2b.
 /// Calls are synchronous and serialized within this instance. A composition
 /// root must share one service per pair of roots; external edits use stamps.
-public final class LibraryService {
+public final class LibraryService: PromptFavoriteEditing {
     private enum SaveMode {
         case replace(expectedStamp: FileStamp?)
         case createOnly
@@ -47,6 +47,23 @@ public final class LibraryService {
     public func save(_ document: PromptDocument, at path: String,
                      expectedStamp: FileStamp? = nil) throws -> LibraryEntry {
         try locked { try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp)) }
+    }
+
+    /// Uses the held entry's stamp, including first-save identity migration and
+    /// history. Never reload a stale entry and then overwrite the external edit.
+    public func toggleFavorite(of entry: LibraryEntry) -> PromptFavoriteOutcome {
+        do {
+            let saved = try locked {
+                let draft = try PromptCodec.settingFavorite(!entry.document.frontMatter.favorite,
+                    in: entry.document, filename: LibraryPath.filename(entry.relativePath))
+                return try saveDocument(draft, at: entry.relativePath,
+                                        mode: .replace(expectedStamp: entry.stamp))
+            }
+            return .saved(saved)
+        } catch let error as FileStoreError { return .fileStoreFailure(error) }
+        catch let error as LibraryError { return .libraryFailure(error) }
+        catch let error as PromptWriteError { return .writeFailure(error) }
+        catch { return .libraryFailure(.operationFailed) }
     }
 
     /// A real first save, including identity assignment, that atomically refuses
