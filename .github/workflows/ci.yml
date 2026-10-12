@@ -418,8 +418,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # An empty server fails closed without a bootstrap admin secret (§8.5).
+          # Mount a throwaway one as a read-only file so it never appears in argv.
+          bootstrap_dir=$(mktemp -d)
+          head -c 32 /dev/urandom | base64 > "$bootstrap_dir/admin-password"
+          chmod 0444 "$bootstrap_dir/admin-password"
           docker run --detach --name monkeyspaw-server-ci \
-            --publish 127.0.0.1:8080:8080 monkeyspaw-server:ci
+            --publish 127.0.0.1:8080:8080 \
+            --volume "$bootstrap_dir/admin-password:/run/secrets/admin-password:ro" \
+            --env MONKEYSPAW_ADMIN_PASSWORD_FILE=/run/secrets/admin-password \
+            monkeyspaw-server:ci
 
           # Bound the wait to about one minute; print logs on failure.
           health_wait_attempts=30
