@@ -1,4 +1,6 @@
-/// General/onboarding state. Call synchronous intents on the UI thread;
+import Foundation
+
+/// Shared settings/onboarding state. Call synchronous intents on the UI thread;
 /// onChange runs inline there, with no asynchronous service callbacks (§4.2).
 /// Read-only settings suppress onboarding queries because progress cannot
 /// persist; the UI shows the read-only error instead of repeating first run.
@@ -17,6 +19,7 @@ public final class SettingsModel {
     public var needsSeedOffer: Bool { !isReadOnly && !firstRun.seedsOffered }
 
     private let settings: SettingsService
+    private var observers: [UUID: (SettingsSnapshot, SettingsError?) -> Void] = [:]
 
     public init(settings: SettingsService) {
         self.settings = settings
@@ -24,12 +27,28 @@ public final class SettingsModel {
         error = state.readOnlyError
     }
 
+    /// Independent presentation subscribers do not replace the view's hook.
+    /// Subscribe/remove on the UI thread. Observers receive real changes inline;
+    /// removal applies after any notification already in progress.
+    @discardableResult
+    public func addObserver(_ observer: @escaping (SettingsSnapshot, SettingsError?) -> Void) -> UUID {
+        let token = UUID()
+        observers[token] = observer
+        return token
+    }
+
+    public func removeObserver(_ token: UUID) {
+        observers.removeValue(forKey: token)
+    }
+
     /// Republish after another settings consumer changes the shared service.
     /// Clear transient intent errors; the store's read-only error stays visible.
     public func refresh() {
+        let previousState = state
+        let previousError = error
         state = settings.snapshot
         error = state.readOnlyError
-        onChange?()
+        publish(from: previousState, error: previousError)
     }
 
     public func setLibraryFolder(_ path: String) {
@@ -53,12 +72,24 @@ public final class SettingsModel {
     }
 
     private func perform(_ intent: () throws -> Void) {
+        let previousState = state
+        let previousError = error
         do {
             try intent()
             error = nil
         } catch let failure as SettingsError { self.error = failure }
         catch { self.error = .writeFailed(.ioFailure) }
         state = settings.snapshot
+        publish(from: previousState, error: previousError)
+    }
+
+    private func publish(from previousState: SettingsSnapshot, error previousError: SettingsError?) {
+        if state != previousState || error != previousError {
+            let snapshot = state
+            let failure = error
+            for observer in Array(observers.values) { observer(snapshot, failure) }
+        }
+        // Preserve the existing view hook's per-intent/refresh notification.
         onChange?()
     }
 }

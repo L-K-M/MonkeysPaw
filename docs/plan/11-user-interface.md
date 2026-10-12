@@ -11,6 +11,23 @@
 | Settings | General · Shortcuts · Delivery · Assistant · Account (sign in, devices, groups, members, invites) |
 | Setup | §6.4 |
 
+M2 Settings contains **General · Shortcuts**; the other tabs follow their
+milestones. Shortcuts renders the shared `ShortcutsSettingsModel`: the current
+toggle-picker binding (or unknown/unbound), registration mechanism and status,
+backend conflict/failure detail, and a **Press your shortcut now** verification
+intent. macOS Carbon offers in-app rebinding. Linux offers the applicable
+system settings action, explicit Setup action, or desktop/manual instructions
+described in §6.1. Opening settings or completing a change request never turns
+verification green. Repeat last prompt is displayed unbound, inactive and
+unavailable for configuration until M7. Core supplies this contract
+independently of the later native windows.
+
+Settings → General shows your active library folder, whether it is the default,
+and any read-only settings or library-switch error. You can choose another
+folder, return to the default, or reveal the active folder in your file manager.
+Views call `GeneralSettingsModel`; its `LibraryLocationControl` port delegates
+graph replacement and folder reveal to the platform composition root.
+
 Per OS:
 
 - **macOS.** SwiftUI for windows and forms. AppKit for the NSPanel and native
@@ -186,12 +203,17 @@ settings are read-only, the model reports `needsSetupPresentation`,
 instead of repeating onboarding that cannot persist each launch. A failed
 completion does not claim durable progress.
 
-On macOS the folder choice lives in the app-data `settings.json` (§5.1).
-Presenting Setup records `setupPresented` there and continues writing the M1
-flag for downgrades. Folder selection replaces the picker graph in the reused
-panel and drops session drafts; delivery in progress refuses the change.
-A failed settings write leaves the new folder active for this session with a
-settings error, while the saved folder remains the choice for the next launch.
+Both desktops wire the shared settings model: macOS to the app-data
+`settings.json`, Linux to its config root (§5.1). Each imports its legacy M1
+Setup fact without completing the library step, and presenting Setup records
+both settings progress and the legacy flag for downgrades. The composition
+switch operation for the General and onboarding folder controls stores the
+chosen absolute path, or null for the default, after the replacement graph
+starts. It dismisses the picker, drops its session drafts and rebinds the
+reused native panel; delivery in progress refuses a switch. A settings save
+failure leaves the new folder active for this session with a settings error,
+while the saved folder remains the choice for the next launch. Read-only
+settings use the default library.
 
 ### 11.5 Error and empty states
 

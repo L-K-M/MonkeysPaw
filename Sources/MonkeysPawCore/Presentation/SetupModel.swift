@@ -1,3 +1,5 @@
+import Foundation
+
 /// Platform-neutral Setup state (§6.4). Intents enter on the UI thread.
 public final class SetupModel {
     public enum State: Equatable {
@@ -14,20 +16,25 @@ public final class SetupModel {
     public private(set) var rows = SetupRow.Kind.allCases.map { SetupRow(kind: $0, status: .unknown) }
 
     private let setup: SetupService
+    private var observer: UUID?
 
     public init(setup: SetupService) {
         self.setup = setup
-        setup.onChange = { [weak self] in self?.refresh() }
-        refresh()
-    }
-
-    public func refresh() {
-        setup.refresh { [weak self] snapshot in
+        observer = setup.addObserver { [weak self] snapshot in
             guard let self else { return }
             self.session = snapshot.session
             self.rows = snapshot.rows
             self.onChange?()
         }
+        refresh()
+    }
+
+    deinit {
+        if let observer { setup.removeObserver(observer) }
+    }
+
+    public func refresh() {
+        setup.refresh { _ in }
     }
 
     public func beginHotkeyVerification() {

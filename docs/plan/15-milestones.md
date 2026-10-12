@@ -50,6 +50,10 @@
 - I1 adds Core settings persistence and the General/onboarding model, including
   legacy Setup import; later slices wire the desktop settings, folder step and seeds.
 
+- I7 wires Linux settings and replaceable library composition, installing the
+  new picker hook before arming its watcher and rebuilding, ahead of the General
+  folder controls and onboarding slices.
+
 - I6 wires macOS settings and library graph replacement before the General
   and library-onboarding views, installing the picker hook, arming the watcher,
   then rebuilding before persisting the choice; hosted tests require macOS CI.

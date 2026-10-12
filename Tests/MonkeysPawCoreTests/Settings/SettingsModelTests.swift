@@ -173,6 +173,55 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertFalse(model.needsSetupPresentation)
     }
 
+    func testObserversNotifyOnlyForRealChangesWithoutReplacingTheViewHook() {
+        let files = MemoryFileStore()
+        let model = SettingsModel(settings: SettingsService(store: SettingsStore(files: files)))
+        let main = FakeMainThread()
+        var snapshots = [SettingsSnapshot]()
+        var errors = [SettingsError?]()
+        var viewChanges = 0
+        let token = model.addObserver { snapshot, error in
+            XCTAssertTrue(main.isRunning)
+            snapshots.append(snapshot)
+            errors.append(error)
+        }
+        model.onChange = { viewChanges += 1 }
+        main.run { model.refresh() }
+        main.run { model.setLibraryFolder("/folder") }
+        main.run { model.setLibraryFolder("/folder") }
+        main.run { model.setLibraryFolder("relative") }
+        main.run { model.setLibraryFolder("relative") }
+        main.run { model.refresh() }
+
+        XCTAssertEqual(snapshots.count, 3)
+        XCTAssertEqual(snapshots.map { $0.document.libraryFolderPath }, ["/folder", "/folder", "/folder"])
+        XCTAssertEqual(errors, [nil, .invalidLibraryFolder, nil])
+        XCTAssertEqual(viewChanges, 6)
+        model.removeObserver(token)
+        main.run { model.clearLibraryFolder() }
+        XCTAssertEqual(snapshots.count, 3)
+        XCTAssertEqual(viewChanges, 7)
+    }
+
+    func testIndependentObserversReceiveByteDistinctPathChangesAndCanRemoveThemselves() {
+        let model = SettingsModel(settings: SettingsService(store: SettingsStore(files: MemoryFileStore())))
+        var firstChanges = 0
+        var secondChanges = 0
+        var token: UUID?
+        token = model.addObserver { _, _ in
+            firstChanges += 1
+            model.removeObserver(token!)
+        }
+        let second = model.addObserver { _, _ in secondChanges += 1 }
+        model.setLibraryFolder("/café")
+        model.setLibraryFolder("/cafe\u{301}")
+        XCTAssertEqual(firstChanges, 1)
+        XCTAssertEqual(secondChanges, 2)
+        model.removeObserver(second)
+        model.clearLibraryFolder()
+        XCTAssertEqual(secondChanges, 2)
+    }
+
     func testDocumentAndPersistedSchemaContainOnlyLibraryChoiceAndFirstRunFlags() throws {
         // The public document has no arbitrary string map or content/secret API.
         let document = try SettingsDocument(libraryFolderPath: "/library", firstRun:

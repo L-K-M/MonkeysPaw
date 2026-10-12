@@ -5,6 +5,64 @@ import MonkeysPawCore
 
 /// The Linux composition root: only this type assembles platform drivers.
 final class LinuxEnvironment {
+    enum LibrarySwitchResult: Equatable {
+        case switched
+        case deliveryInFlight
+        case invalidTarget(FileStoreError)
+        case libraryUnavailable(FileStoreError)
+        case persistenceFailed(SettingsError)
+    }
+
+    /// Every library callback checks its generation on the GLib thread, even
+    /// if an index, clipboard read or scheduler queued it before replacement.
+    private final class LibraryCallbacks: MainThread {
+        private let main: MainThread
+        private(set) var isActive = true
+
+        init(main: MainThread) { self.main = main }
+        func deactivate() { isActive = false }
+
+        func run(_ work: @escaping () -> Void) {
+            main.run { [weak self] in
+                guard self?.isActive == true else { return }
+                work()
+            }
+        }
+    }
+
+    private final class LibraryGraph {
+        let directory: URL
+        let files: FileStore
+        let library: LibraryService
+        let index: PromptIndex
+        let watcher: LibraryWatcher?
+        let picker: PickerModel
+        let callbacks: LibraryCallbacks
+        let initializationError: FileStoreError?
+        var started = false
+        var warningLogged = false
+
+        init(directory: URL, files: FileStore, library: LibraryService,
+             index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel,
+             callbacks: LibraryCallbacks, initializationError: FileStoreError?) {
+            self.directory = directory
+            self.files = files
+            self.library = library
+            self.index = index
+            self.watcher = watcher
+            self.picker = picker
+            self.callbacks = callbacks
+            self.initializationError = initializationError
+        }
+
+        func stop() {
+            callbacks.deactivate()
+            watcher?.stop()
+            picker.onChange = nil
+            index.setOnChange(nil)
+        }
+    }
+
     private enum ToggleOrigin { case shortcut, manual }
     let log: LogSink
     let mainThread: MainThread
@@ -17,39 +75,36 @@ final class LinuxEnvironment {
     private let firstRun: LinuxFirstRunState
     private let paths: LinuxPaths
     private let launchURI: (URL) -> Void
-    private var libraryInitializationFailed = false
-    private var libraryStarted = false
-    private var libraryWarningLogged = false
+    private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
 
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application)
-    private(set) lazy var pickerModel: PickerModel = {
-        // Establish the root before reading the initialization failure flag.
-        _ = libraryFiles
-        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: mainThread)
-        model.libraryAvailable = !libraryInitializationFailed
-        panel.bind(picker: model, session: session.currentSession(),
-            openSetup: { [weak self] in self?.showSetup() },
-            requestedIntent: { [weak self] in self?.handle($0) },
-            createPrompt: { [weak self] in self?.createPrompt(titled: $0) })
-        return model
-    }()
+    var pickerModel: PickerModel { libraryGraph.picker }
 
-    // Stores, watcher and URI intents must all retain the same selected root.
-    private lazy var libraryDirectory = paths.documentsDirectory
+    private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
-    private lazy var libraryFiles: FileStore = {
-        do {
-            let files = try RootedFileStore(root: libraryDirectory)
-            try files.createRoot()
-            return files
-        } catch {
-            libraryInitializationFailed = true
-            warnAboutLibrary()
+    private var currentLibraryGraph: LibraryGraph?
+    private var libraryGraph: LibraryGraph {
+        get {
+            if let currentLibraryGraph { return currentLibraryGraph }
+            let graph = makeInitialLibraryGraph()
+            currentLibraryGraph = graph
+            return graph
+        }
+        set { currentLibraryGraph = newValue }
+    }
+    private lazy var configFiles: FileStore = {
+        do { return try RootedFileStore(root: paths.configDirectory) }
+        catch {
+            log.write(.warning, "Settings unavailable; using defaults without saving changes")
             return UnavailableFileStore()
         }
     }()
+    private lazy var settingsStore = SettingsStore(files: configFiles,
+        legacyFirstRun: firstRun.needsSetup ? .setupNotPresented : .setupPresented)
+    private lazy var settings = SettingsService(store: settingsStore)
+    private(set) lazy var settingsModel = SettingsModel(settings: settings)
     private lazy var dataFiles: FileStore = {
         do { return try RootedFileStore(root: paths.dataDirectory) }
         catch {
@@ -60,17 +115,9 @@ final class LinuxEnvironment {
     private lazy var clock = SystemClock()
     private lazy var values = ValuesStore(files: dataFiles)
     private lazy var usage = UsageStore(files: dataFiles, clock: clock)
-    private lazy var library = LibraryService(library: libraryFiles, data: dataFiles,
-        clock: clock, entropy: SystemEntropy(), keyedStores: [values, usage])
-    private lazy var index = PromptIndex(service: library, usage: usage, clock: clock)
     private lazy var clipboard = GTKClipboard(owner: panel.clipboardOwner)
     private lazy var fill = FillService(values: values, clipboard: clipboard, clock: clock,
         timeZone: { TimeZone.current })
-    private lazy var watcher: LibraryWatcher? = {
-        guard let raw = try? RootedFileWatcher(root: libraryDirectory, log: log) else { return nil }
-        return LibraryWatcher(watcher: raw, scheduler: scheduler)
-    }()
-
     private lazy var delivery = DeliveryService(
         panel: panel, focus: LinuxFocusTracker(session: session, runner: runner),
         clipboard: clipboard,
@@ -92,12 +139,14 @@ final class LinuxEnvironment {
     init(application: UnsafeMutablePointer<GtkApplication>,
          environment: [String: String] = ProcessInfo.processInfo.environment,
          scheduler: Scheduler? = nil,
+         libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
              gtk_show_uri(nil, url.absoluteString, UInt32(GDK_CURRENT_TIME))
          }) {
         self.application = application
         self.launchURI = launchURI
+        self.libraryWatcherFactory = libraryWatcherFactory
         log = CompositeLogSink(
             sinks: [StandardErrorLog(), FileLogSink(dataDirectory: LinuxPaths(environment: environment).dataDirectory)],
             policy: LogLevelPolicy(environmentValue: environment["MONKEYSPAW_LOG"]))
@@ -161,15 +210,16 @@ final class LinuxEnvironment {
     }
 
     func presentFromLauncher() {
-        if firstRun.needsSetup { showSetup() } else { startLibrary(); pickerModel.open() }
+        if settingsModel.needsSetupPresentation { showSetup() } else { startLibrary(); pickerModel.open() }
     }
 
     private func showSetup() {
         setupWindow.show()
+        settingsModel.markSetupPresented()
         do {
             try firstRun.recordPresentation()
         } catch {
-            log.write(.warning, "Could not save first-run Setup state; Setup will reopen next launch")
+            log.write(.warning, "Could not save legacy first-run Setup state")
         }
     }
 
@@ -185,21 +235,118 @@ final class LinuxEnvironment {
         }
     }
 
-    private func startLibrary() {
-        guard !libraryStarted else { return }
-        libraryStarted = true
-        // Establish the hook/view before a rebuild publishes its first results.
-        _ = pickerModel
+    private func makeInitialLibraryGraph() -> LibraryGraph {
+        let directory = settings.snapshot.document.libraryFolderPath
+            .map { URL(fileURLWithPath: $0, isDirectory: true) } ?? defaultLibraryDirectory
         do {
-            try Self.startLibrary(index: index, watcher: watcher) { [weak self, weak index] update in
-                guard let self, let index else { return }
-                switch update {
-                case .changes(let changes): self.apply(changes, to: index)
-                case .rootUnavailable(let error): self.degradeLibrary(error)
+            return makeLibraryGraph(directory: directory, files: try prepareLibraryFiles(at: directory))
+        } catch {
+            return makeLibraryGraph(directory: directory, files: UnavailableFileStore(),
+                initializationError: error as? FileStoreError ?? .ioFailure)
+        }
+    }
+
+    private func prepareLibraryFiles(at directory: URL) throws -> RootedFileStore {
+        guard directory.isFileURL, directory.baseURL == nil,
+              (try? SettingsDocument(libraryFolderPath: directory.path)) != nil else {
+            throw FileStoreError.invalidRoot
+        }
+        // The default keeps the canonicalizing root rule, so a default folder
+        // linked into a synced directory still loads; a chosen root must not be a symlink.
+        let isDefault = directory.standardizedFileURL.path.utf8
+            .elementsEqual(defaultLibraryDirectory.standardizedFileURL.path.utf8)
+        let files = isDefault ? try RootedFileStore(root: directory) : try RootedFileStore(libraryRoot: directory)
+        if isDefault {
+            try files.createRoot()
+        } else {
+            try files.requireRoot()
+        }
+        // requireRoot checks shape, while enumeration also catches unreadable
+        // roots/descendants before we retire the working library.
+        _ = try files.listFiles()
+        return files
+    }
+
+    private func makeLibraryGraph(directory: URL, files: FileStore,
+                                  initializationError: FileStoreError? = nil) -> LibraryGraph {
+        let library = LibraryService(library: files, data: dataFiles,
+            clock: clock, entropy: SystemEntropy(), keyedStores: [values, usage])
+        let index = PromptIndex(service: library, usage: usage, clock: clock)
+        let callbacks = LibraryCallbacks(main: mainThread)
+        let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks)
+        picker.libraryAvailable = initializationError == nil
+        let watcher: LibraryWatcher?
+        do {
+            let raw = try libraryWatcherFactory?(directory) ?? RootedFileWatcher(root: directory, log: log)
+            watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
+        } catch { watcher = nil }
+        let graph = LibraryGraph(directory: directory, files: files, library: library,
+            index: index, watcher: watcher, picker: picker, callbacks: callbacks,
+            initializationError: initializationError)
+        panel.rebind(picker: picker, session: session.currentSession(),
+            openSetup: { [weak self, weak callbacks] in
+                guard callbacks?.isActive == true else { return }
+                self?.showSetup()
+            }, requestedIntent: { [weak self, weak graph] intent in
+                guard let graph, graph.callbacks.isActive else { return }
+                self?.handle(intent, in: graph)
+            }, createPrompt: { [weak self, weak graph] title in
+                guard let graph, graph.callbacks.isActive else { return }
+                self?.createPrompt(titled: title, in: graph)
+            })
+        return graph
+    }
+
+    /// UI-thread composition intent for later General/onboarding controls.
+    /// Nil selects the default. Drafts belong to the retired picker.
+    func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
+        let old = libraryGraph
+        guard old.picker.state != .delivering else { return .deliveryInFlight }
+        old.picker.dismiss()
+        panel.hide()
+
+        let target = directory ?? defaultLibraryDirectory
+        let files: RootedFileStore
+        do { files = try prepareLibraryFiles(at: target) }
+        catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }
+
+        old.stop()
+        libraryGraph = makeLibraryGraph(directory: target, files: files)
+        if let error = startLibrary(libraryGraph) { return .libraryUnavailable(error) }
+
+        // Keep the usable graph for this session if saving fails. SettingsModel
+        // calls the shared service and retains its typed error for the controls.
+        if let directory { settingsModel.setLibraryFolder(directory.path) }
+        else { settingsModel.clearLibraryFolder() }
+        if let error = settingsModel.error { return .persistenceFailed(error) }
+        return .switched
+    }
+
+    @discardableResult
+    private func startLibrary() -> FileStoreError? { startLibrary(libraryGraph) }
+
+    @discardableResult
+    private func startLibrary(_ graph: LibraryGraph) -> FileStoreError? {
+        guard !graph.started else { return nil }
+        graph.started = true
+        // makeLibraryGraph installs the picker hook/view before monitoring.
+        do {
+            if let error = graph.initializationError { throw error }
+            try Self.startLibrary(index: graph.index, watcher: graph.watcher) { [weak self, weak graph] update in
+                guard let graph else { return }
+                graph.callbacks.run { [weak self, weak graph] in
+                    guard let self, let graph else { return }
+                    switch update {
+                    case .changes(let changes): self.apply(changes, in: graph)
+                    case .rootUnavailable(let error): self.degradeLibrary(graph, error)
+                    }
                 }
             }
+            return nil
         } catch {
-            degradeLibrary(error as? FileStoreError)
+            let failure = error as? FileStoreError ?? .ioFailure
+            degradeLibrary(graph, failure)
+            return failure
         }
     }
 
@@ -213,33 +360,33 @@ final class LinuxEnvironment {
         try index.rebuild()
     }
 
-    private func apply(_ changes: LibraryChangeSet, to index: PromptIndex) {
+    private func apply(_ changes: LibraryChangeSet, in graph: LibraryGraph) {
         do {
             // Health flushes earlier pending events first. The root can already
             // be gone when those paths reload; avoid dropping cached modified
             // entries before the following health update stops this graph.
-            try (libraryFiles as? RootedFileStore)?.requireRoot()
+            try (graph.files as? RootedFileStore)?.requireRoot()
         } catch {
-            degradeLibrary(error as? FileStoreError)
+            degradeLibrary(graph, error as? FileStoreError)
             return
         }
         do {
-            try index.apply(changes)
+            try graph.index.apply(changes)
         } catch {
             // Warn after the outcome is known: the warning latches once, and a
             // failed rebuild must log its typed reason rather than a generic one.
             do {
-                try index.rebuild()
-                warnAboutLibrary()
+                try graph.index.rebuild()
+                warnAboutLibrary(graph)
             } catch {
-                degradeLibrary(error as? FileStoreError)
+                degradeLibrary(graph, error as? FileStoreError)
             }
         }
     }
 
-    private func warnAboutLibrary(_ error: FileStoreError? = nil) {
-        guard !libraryWarningLogged else { return }
-        libraryWarningLogged = true
+    private func warnAboutLibrary(_ graph: LibraryGraph, _ error: FileStoreError? = nil) {
+        guard !graph.warningLogged else { return }
+        graph.warningLogged = true
         if let error {
             log.write(.warning, "Library unavailable (\(error.rawValue)); keeping cached prompts")
             return
@@ -247,43 +394,43 @@ final class LinuxEnvironment {
         log.write(.warning, "Library unavailable or refresh failed; keeping cached prompts")
     }
 
-    private func degradeLibrary(_ error: FileStoreError? = nil) {
-        watcher?.stop()
-        pickerModel.libraryAvailable = false
-        warnAboutLibrary(error)
+    private func degradeLibrary(_ graph: LibraryGraph, _ error: FileStoreError? = nil) {
+        graph.watcher?.stop()
+        graph.picker.libraryAvailable = false
+        warnAboutLibrary(graph, error)
     }
 
-    private func handle(_ intent: PickerModel.Intent) {
-        guard pickerModel.libraryAvailable else {
+    private func handle(_ intent: PickerModel.Intent, in graph: LibraryGraph) {
+        guard graph.picker.libraryAvailable else {
             panel.showStatus(LinuxStrings.libraryUnavailable)
             return
         }
 
         let url: URL
         switch intent {
-        case .openLibrary: url = libraryDirectory
+        case .openLibrary: url = graph.directory
         case .edit(_, let path):
             guard (try? FileStorePath.validate(path)) != nil else {
                 panel.showStatus(LinuxStrings.promptFileUnavailable)
                 return
             }
-            url = libraryDirectory.appendingPathComponent(path)
+            url = graph.directory.appendingPathComponent(path)
         }
-        pickerModel.dismiss()
-        mainThread.run { [weak self] in
+        graph.picker.dismiss()
+        graph.callbacks.run { [weak self] in
             self?.launchURI(url)
         }
     }
 
-    private func createPrompt(titled title: String) {
-        guard pickerModel.libraryAvailable else { return }
+    private func createPrompt(titled title: String, in graph: LibraryGraph) {
+        guard graph.picker.libraryAvailable else { return }
         do {
-            let path = try library.availablePath(for: PromptCreation.relativePath(title: title, now: clock.now()))
+            let path = try graph.library.availablePath(for: PromptCreation.relativePath(title: title, now: clock.now()))
             let document = try PromptCodec.newDocument(title: title, body: LinuxStrings.newPromptBody)
-            let entry = try library.save(document, at: path)
-            do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
+            let entry = try graph.library.save(document, at: path)
+            do { try graph.index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
             catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
-            handle(.edit(identity: entry.identity, relativePath: path))
+            handle(.edit(identity: entry.identity, relativePath: path), in: graph)
         } catch {
             panel.showStatus(LinuxStrings.createPromptFailed)
             log.write(.warning, "Could not create a prompt; check library and app-data permissions")
@@ -291,7 +438,7 @@ final class LinuxEnvironment {
     }
 
     func shutdown() {
-        if libraryStarted { watcher?.stop() }
+        currentLibraryGraph?.stop()
         hotkey.shutdown()
         remoteDesktop.shutdown()
         portal.shutdown()

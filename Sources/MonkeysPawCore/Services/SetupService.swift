@@ -1,13 +1,15 @@
+import Foundation
+
 /// Owns probing so SetupModel only calls the service layer (§4.2).
 public final class SetupService {
-    /// This hook has one owner, SetupModel. Assignment replaces the callback.
-    public var onChange: (() -> Void)?
-
     private let probe: SetupProbe
     private let session: SessionProbe
     private let shortcuts: ShortcutService
     private let selfTest: SelfTest
     private let mainThread: MainThread
+    private var observers: [UUID: (SetupSnapshot) -> Void] = [:]
+    private var shortcutObserver: UUID?
+    private var isReadingSnapshot = false
 
     public init(
         probe: SetupProbe, session: SessionProbe, shortcuts: ShortcutService,
@@ -18,11 +20,38 @@ public final class SetupService {
         self.shortcuts = shortcuts
         self.selfTest = selfTest
         self.mainThread = mainThread
-        shortcuts.onChange = { [weak self] in self?.onChange?() }
+        shortcutObserver = shortcuts.addObserver { [weak self] in
+            guard let self, !self.isReadingSnapshot else { return }
+            self.refresh { _ in }
+        }
+    }
+
+    deinit {
+        if let shortcutObserver { shortcuts.removeObserver(shortcutObserver) }
+    }
+
+    /// Subscribers share one probe result per refresh, including live backend
+    /// changes refreshed by the composition root. Callbacks run on MainThread.
+    /// Removal applies after any notification already in progress.
+    @discardableResult
+    public func addObserver(_ observer: @escaping (SetupSnapshot) -> Void) -> UUID {
+        let token = UUID()
+        mainThread.run { self.observers[token] = observer }
+        return token
+    }
+
+    public func removeObserver(_ token: UUID) {
+        mainThread.run { self.observers.removeValue(forKey: token) }
     }
 
     public func refresh(done: @escaping (SetupSnapshot) -> Void) {
-        mainThread.run { done(self.snapshot()) }
+        mainThread.run {
+            let snapshot = self.snapshot()
+            // Notify observers before `done`: ShortcutsSettingsModel's
+            // performPlatformChange reads its updated changePath there.
+            for observer in Array(self.observers.values) { observer(snapshot) }
+            done(snapshot)
+        }
     }
 
     /// Recheck the row so a stale view cannot launch an unnecessary fix.
@@ -42,7 +71,7 @@ public final class SetupService {
                 self.mainThread.run {
                     guard !didComplete else { return }
                     didComplete = true
-                    self.onChange?()
+                    self.refresh { _ in }
                 }
             }
         }
@@ -59,6 +88,12 @@ public final class SetupService {
     private func snapshot() -> SetupSnapshot {
         let session = session.currentSession()
         let registration = probe.hotkeyRegistration()
+        // The live read may itself notify ShortcutService observers. This
+        // service will publish this snapshot, so do not recursively probe it.
+        let wasReadingSnapshot = isReadingSnapshot
+        isReadingSnapshot = true
+        shortcuts.refreshRegistration(registration)
+        isReadingSnapshot = wasReadingSnapshot
         let hotkeyStatus: SetupStatus
         if registration.status == .unbound {
             hotkeyStatus = .needsAction(fix: SetupStrings.assignShortcut)

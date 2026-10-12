@@ -36,4 +36,6 @@ public enum SetupStrings {
     public static let assignShortcut = "Assign a shortcut in Settings"
     public static let unboundShortcut = "No shortcut assigned"
     public static let kdeShortcut = "Set the key in System Settings → Shortcuts → Monkey's Paw"
+    public static let gnomeShortcut = "Change the key in GNOME Settings → Keyboard → View and Customize Shortcuts"
+    public static let genericShortcutSettings = "Change the key in your desktop's keyboard shortcut settings"
 }

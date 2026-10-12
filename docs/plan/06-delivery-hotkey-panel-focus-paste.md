@@ -12,6 +12,31 @@
 
 Hotkey notes:
 
+- **Shortcuts settings (M2).** The shared `ShortcutsSettingsModel` shows the
+  toggle-picker action's live registration, backend-reported binding/detail,
+  conflict or failure information, and activation verification. An unknown
+  binding stays unknown; the default is never presented as a current binding.
+  Setup and Settings share refreshed snapshots and receive shortcut changes
+  through removable observers on the injected `MainThread`, without issuing
+  a second registration, portal List/Bind, or configuration request.
+  - Carbon is app-owned. The in-app change intent parses an `Accelerator`,
+    rejects Carbon's unsupported keys and overlapping Command aliases before
+    replacing the registration, and retains the existing activation handler.
+    Only a successful Carbon registration confirms the requested accelerator.
+  - Portal v2 offers **Change in system settings** through the existing Setup
+    hotkey action (`ConfigureShortcuts`). Portal v1 gives desktop settings
+    guidance after binding, rather than binding again to change a key. Initial
+    attachment/recovery remains an explicit Setup action. KDE's native path
+    gives System Settings → Shortcuts → Monkey's Paw, retaining the existing
+    explicit portal/native handoff actions. GNOME's fallback is installed only
+    through the explicit Setup hotkey action; a registered fallback gives
+    GNOME keyboard settings guidance. Manual mechanisms show the backend's
+    `gapplication action` instructions.
+  - Launching a change action does not confirm a binding or verification.
+    Refresh uses the backend's reported result; verification still requires a
+    real activation of the current mechanism/revision. The repeat action is
+    displayed unbound, inactive and unavailable for configuration until M7.
+  This slice supplies the Core contract; per-platform Settings windows follow.
 - **GNOME keybinding.** The custom keybinding row is named
   `Monkey's Paw: <action>`, so re-syncs update it in place. Installation
   runs from the explicit Setup hotkey action, never from startup, a service,
