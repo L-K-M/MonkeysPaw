@@ -52,9 +52,12 @@ public struct CanonicalForm: Sendable {
     /// This is never the stored-byte hash and never assigns an identity.
     public static func equivalentForAdoption(_ local: Data, _ server: Data,
                                              scope: Scope, filename: String) throws -> Bool {
-        let left = try adoptionBytes(local, scope: scope, filename: filename)
-        let right = try adoptionBytes(server, scope: scope, filename: filename)
-        return left == right
+        let left = try adoptionContent(local, scope: scope, filename: filename)
+        let right = try adoptionContent(server, scope: scope, filename: filename)
+
+        // Removing an empty header must not conflate body front-matter text
+        // with another document's actual metadata. Keep that boundary explicit.
+        return left.body == right.body && left.bytes == right.bytes
     }
 
     private static func validated(_ data: Data, filename: String) throws -> PromptDocument {
@@ -92,7 +95,8 @@ public struct CanonicalForm: Sendable {
                               declarationLocations: document.declarationLocations)
     }
 
-    private static func adoptionBytes(_ data: Data, scope: Scope, filename: String) throws -> Data {
+    private static func adoptionContent(_ data: Data, scope: Scope,
+                                        filename: String) throws -> (bytes: Data, body: Data) {
         let original = try validated(data, filename: filename)
         let document = scope == .group ? groupDocument(original) : original
         let front = document.frontMatter
@@ -108,6 +112,6 @@ public struct CanonicalForm: Sendable {
                                      template: document.template, preservedHeader: header,
                                      decodingIssues: document.decodingIssues,
                                      declarationLocations: document.declarationLocations)
-        return Data(try PromptCodec.write(neutral).utf8)
+        return (Data(try PromptCodec.write(neutral).utf8), Data(document.body.utf8))
     }
 }

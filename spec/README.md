@@ -381,8 +381,10 @@ sources, duplicate references, symlinks, empty categories/cases and nested
 directories are rejected. The category's root `.gitattributes` is required
 and consumed once as regular fixture metadata. It disables text conversion
 and whitespace diagnostics for raw Markdown vectors, whose body bytes
-deliberately include CRLF and trailing whitespace. Other hidden files are
-rejected.
+deliberately include CRLF and trailing whitespace. Other dotted entries
+are ignored as filesystem metadata, at both category and case levels,
+following the import consumer pattern. Hidden cases are never enumerated;
+nonhidden unknown/orphan files remain errors.
 
 ```json
 {
@@ -435,8 +437,12 @@ Adoption (§9.4, B5) instead removes `id` before canonical byte comparison.
 It retains personal keys for user scope and strips them for group scope.
 An empty header becomes absent only for adoption, allowing a plain idless
 local file to match an id-only server file. All other metadata and body
-bytes still matter; Unicode canonical equivalence and newline conversion
-are not applied. Stored hashes remain distinct when ids differ.
+bytes still matter; the body is compared separately to preserve its boundary
+when an empty header is removed. Body text resembling front matter cannot
+compare equal to another file's metadata. Unicode canonical equivalence
+and newline conversion are not applied. Stored hashes remain distinct when
+ids differ. A BOM preceding a complete front-matter-like block stays part
+of the body because §5.2 requires the first line to be exactly `---`.
 
 Refusal cases use only `expected.error`, with `{ "code": "invalid_prompt" }`,
 `{ "code": "source_too_large" }` for canonical-output overflow, or

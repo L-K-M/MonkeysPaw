@@ -57,7 +57,8 @@ final class CanonicalFormTests: XCTestCase {
             XCTAssertEqual(result.bytes, Data(("---\n{}\n---\n" + body).utf8))
             XCTAssertEqual(try CanonicalForm.group(result.bytes, filename: "source.md").bytes, result.bytes)
         }
-        for body in ["", "Plain\r\n", "\u{feff}---\nBody\r\n", "\u{feff}body\n", "é", "e\u{301}"] {
+        for body in ["", "Plain\r\n", "\u{feff}---\nBody\r\n", "\u{feff}body\n", "é", "e\u{301}",
+                     "\u{feff}---\nprivate: true\n---\nBody\r\n"] {
             let data = Data(body.utf8)
             let result = try CanonicalForm.group(data, filename: "source.md")
             XCTAssertEqual(result.bytes, data)
@@ -66,7 +67,8 @@ final class CanonicalFormTests: XCTestCase {
     }
 
     func testPrivateStorageStaysVerbatimIncludingBOMCommentsAndPersonalKeys() throws {
-        let sources = ["", "\u{feff}body\r\n", "---\r\n# retain this\r\nprivate: true\r\nfavorite: false\r\n"
+        let sources = ["", "\u{feff}body\r\n", "\u{feff}---\nprivate: true\n---\nBody\r\n",
+                       "---\r\n# retain this\r\nprivate: true\r\nfavorite: false\r\n"
                        + "id: " + id.lowercased() + "\r\ntitle: 'Shared'\r\nunknown: {nested: [a, b]}\r\n---\r\nBody\r\n"]
         for source in sources {
             let bytes = Data(source.utf8)
@@ -187,5 +189,14 @@ final class CanonicalFormTests: XCTestCase {
         let composed = try CanonicalForm.group(Data("é".utf8), filename: "source.md")
         let decomposed = try CanonicalForm.group(Data("e\u{301}".utf8), filename: "source.md")
         XCTAssertNotEqual(composed.canonicalHash, decomposed.canonicalHash)
+    }
+
+    func testAdoptionCannotConfuseBodyFrontMatterWithMetadataAfterRemovingID() throws {
+        let local = Data("---\ntitle: Shared\n---\nBody\n".utf8)
+        let server = Data(("---\nid: " + id + "\n---\n---\ntitle: Shared\n---\nBody\n").utf8)
+        for scope in [CanonicalForm.Scope.user, .group] {
+            XCTAssertFalse(try CanonicalForm.equivalentForAdoption(local, server, scope: scope, filename: "source.md"))
+            XCTAssertFalse(try CanonicalForm.equivalentForAdoption(server, local, scope: scope, filename: "source.md"))
+        }
     }
 }

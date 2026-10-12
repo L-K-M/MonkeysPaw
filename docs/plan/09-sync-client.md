@@ -194,7 +194,9 @@ instead of doubling.
   using exact UTF-8 byte equality. It strips personal keys for group scope
   and retains them for user scope. Empty headers are treated as absent only
   in this comparison, so an id-only server file matches a plain idless local
-  file. Other optional keys, unknown metadata and body bytes still matter.
+  file. The body is also compared separately, so body text resembling front
+  matter cannot be mistaken for metadata after an empty header is removed.
+  Other optional keys, unknown metadata and body bytes still matter.
   Invalid/future inputs fail rather than compare equal. This comparison
   never assigns an id and never substitutes for the stored-byte hash.
 - **Remembered values** are never synced.

@@ -20,13 +20,14 @@ enum CanonicalFixtureCorpus {
         let entries = try FileManager.default.contentsOfDirectory(atPath: root.path)
         guard entries.contains(".gitattributes") else { throw Failure.invalidCorpus }
         try require(.typeRegular, at: root.appendingPathComponent(".gitattributes"))
-        let names = entries.filter { $0 != ".gitattributes" }.sorted()
+        let names = entries.filter { !$0.hasPrefix(".") }.sorted()
         guard !names.isEmpty else { throw Failure.invalidCorpus }
         var consumed = [".gitattributes"]
         for name in names {
             let directory = root.appendingPathComponent(name)
             try require(.typeDirectory, at: directory)
             let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .filter { !$0.hasPrefix(".") }
             for file in files { try require(.typeRegular, at: directory.appendingPathComponent(file)) }
             guard files.contains("case.json") else { throw Failure.invalidCorpus }
             let json = try Data(contentsOf: directory.appendingPathComponent("case.json"))
@@ -182,11 +183,31 @@ final class CanonicalConformanceTests: XCTestCase {
         print("Consumed \(result.cases) canonical fixtures (\(result.files.count) files).")
     }
 
+    func testHiddenMetadataIsIgnoredWithoutWeakeningStrictDispatch() throws {
+        let original = try CanonicalFixtureCorpus.consume(at: root)
+        try withCopy { copy in
+            // A complete hidden case must also stay outside enumeration.
+            try FileManager.default.copyItem(at: copy.appendingPathComponent("empty"),
+                                            to: copy.appendingPathComponent(".hidden"))
+            for directory in [copy, copy.appendingPathComponent("group-strip")] {
+                for name in [".DS_Store", "._source.md"] {
+                    try Data([0xff]).write(to: directory.appendingPathComponent(name))
+                }
+            }
+            try FileManager.default.createDirectory(at: copy.appendingPathComponent("group-strip/.hidden"),
+                                                    withIntermediateDirectories: false)
+            let actual = try CanonicalFixtureCorpus.consume(at: copy)
+            XCTAssertEqual(actual.cases, original.cases)
+            XCTAssertEqual(actual.files, original.files)
+            try Data().write(to: copy.appendingPathComponent("group-strip/orphan.md"))
+            XCTAssertThrowsError(try CanonicalFixtureCorpus.consume(at: copy))
+        }
+    }
+
     func testRejectsUnknownMissingOrphanLinkedAndNestedFiles() throws {
         let mutations: [(URL) throws -> Void] = [
             { try FileManager.default.removeItem(at: $0.appendingPathComponent(".gitattributes")) },
             { try Data().write(to: $0.appendingPathComponent("unknown.txt")) },
-            { try Data().write(to: $0.appendingPathComponent(".unknown")) },
             { try Data().write(to: $0.appendingPathComponent("group-strip/unknown.txt")) },
             { try Data().write(to: $0.appendingPathComponent("group-strip/orphan.md")) },
             { try Data().write(to: $0.appendingPathComponent("group-strip/extra.json")) },
@@ -211,7 +232,7 @@ final class CanonicalConformanceTests: XCTestCase {
                 try FileManager.default.createSymbolicLink(atPath: directory.path, withDestinationPath: "plain-bom")
             },
             { copy in
-                for name in try FileManager.default.contentsOfDirectory(atPath: copy.path) {
+                for name in try FileManager.default.contentsOfDirectory(atPath: copy.path) where name != ".gitattributes" {
                     try FileManager.default.removeItem(at: copy.appendingPathComponent(name))
                 }
             }
