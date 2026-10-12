@@ -3,7 +3,7 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class OnboardingModelTests: XCTestCase {
-    func testFreshInstallPresentsSetupThenDefaultFolderThenRecordsAndCopiesSeedsOnce() throws {
+    func testFreshInstallPresentsSetupFolderSeedsTourThenCompletesOnce() throws {
         let h = OnboardingHarness()
         let model = h.makeModel()
         var steps: [OnboardingModel.Step] = []
@@ -32,14 +32,19 @@ final class OnboardingModelTests: XCTestCase {
         model.acceptSeeds()
         model.declineSeeds()
         model.refresh()
-        XCTAssertEqual(model.state.step, .complete)
+        XCTAssertEqual(model.state.step, .tour)
         XCTAssertEqual(model.state.seedSummary,
             SeedSummary(seededCount: SeedCatalog.prompts.count, skippedExistingCount: 0))
         XCTAssertNil(model.state.seedFailure)
         XCTAssertTrue(h.settings.firstRun.seedsOffered)
         XCTAssertEqual(h.copies, 1)
         XCTAssertEqual(try h.location.graph.library.entries().count, SeedCatalog.prompts.count)
-        XCTAssertEqual(steps, [.libraryFolder, .seedOffer, .complete])
+        model.completeTour()
+        model.completeTour()
+        XCTAssertEqual(model.state.step, .complete)
+        XCTAssertTrue(h.settings.firstRun.tourCompleted)
+        XCTAssertEqual(h.restart().makeModel().state.step, .complete)
+        XCTAssertEqual(steps, [.libraryFolder, .seedOffer, .tour, .complete])
     }
 
     func testLegacySetupFactLeavesFolderPendingAndPersistsWithItsCompletion() {
@@ -148,13 +153,16 @@ final class OnboardingModelTests: XCTestCase {
         let model = h.makeModel()
         model.declineSeeds()
         XCTAssertTrue(h.settings.firstRun.seedsOffered)
-        XCTAssertEqual(model.state.step, .complete)
+        XCTAssertEqual(model.state.step, .tour)
         XCTAssertNil(model.state.seedSummary)
         XCTAssertEqual(h.copies, 0)
         let restarted = h.restart()
         let reopened = restarted.makeModel()
         reopened.acceptSeeds()
+        XCTAssertEqual(reopened.state.step, .tour)
+        reopened.completeTour()
         XCTAssertEqual(reopened.state.step, .complete)
+        XCTAssertEqual(restarted.restart().makeModel().state.step, .complete)
         XCTAssertEqual(restarted.copies, 0)
     }
 
@@ -172,7 +180,7 @@ final class OnboardingModelTests: XCTestCase {
             XCTAssertFalse(h.restart().settings.firstRun.seedsOffered)
             if accept { model.acceptSeeds() } else { model.declineSeeds() }
             XCTAssertTrue(h.settings.firstRun.seedsOffered)
-            XCTAssertEqual(model.state.step, .complete)
+            XCTAssertEqual(model.state.step, .tour)
             XCTAssertNil(model.state.settingsError)
             XCTAssertEqual(h.copies, accept ? 1 : 0)
         }
@@ -184,7 +192,7 @@ final class OnboardingModelTests: XCTestCase {
             try h.location.graph.files.write(Data([0xff]), at: path)
             h.completeInitialSteps()
             let model = h.makeModel()
-            XCTAssertEqual(model.state.step, .complete)
+            XCTAssertEqual(model.state.step, .tour)
             XCTAssertFalse(h.settings.firstRun.seedsOffered)
             model.acceptSeeds()
             XCTAssertEqual(h.copies, 0)
@@ -267,7 +275,7 @@ final class OnboardingModelTests: XCTestCase {
             }
             model.acceptSeeds()
             XCTAssertTrue(h.settings.firstRun.seedsOffered)
-            XCTAssertEqual(model.state.step, .complete)
+            XCTAssertEqual(model.state.step, .tour)
             XCTAssertEqual(model.state.seedFailure, .fileStore(.ioFailure))
             XCTAssertNil(model.state.seedSummary)
             let paths = try h.location.graph.files.listFiles().map(\.relativePath)
@@ -277,7 +285,7 @@ final class OnboardingModelTests: XCTestCase {
             let reopened = restarted.makeModel()
             reopened.acceptSeeds()
             reopened.refresh()
-            XCTAssertEqual(reopened.state.step, .complete)
+            XCTAssertEqual(reopened.state.step, .tour)
             XCTAssertEqual(restarted.copies, 0)
             XCTAssertEqual(try restarted.location.graph.files.listFiles().map(\.relativePath), paths)
         }
@@ -294,7 +302,11 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(afterFolder.makeModel().state.step, .seedOffer)
         XCTAssertEqual(afterFolder.copies, 0)
         afterFolder.makeModel().declineSeeds()
-        XCTAssertEqual(afterFolder.restart().makeModel().state.step, .complete)
+        let afterSeeds = afterFolder.restart()
+        let tour = afterSeeds.makeModel()
+        XCTAssertEqual(tour.state.step, .tour)
+        tour.completeTour()
+        XCTAssertEqual(afterSeeds.restart().makeModel().state.step, .complete)
     }
 
     func testReadOnlySettingsSuppressEveryStepAndKeepErrorVisibleIncludingRecovery() throws {
@@ -311,6 +323,7 @@ final class OnboardingModelTests: XCTestCase {
             model.chooseFolder("/chosen")
             model.acceptSeeds()
             model.declineSeeds()
+            model.completeTour()
             model.refresh()
             XCTAssertEqual(model.state.step, .complete)
             XCTAssertTrue(model.state.isReadOnly)
@@ -364,7 +377,8 @@ final class OnboardingModelTests: XCTestCase {
             XCTAssertEqual(h.notifier.requests, 1)
             XCTAssertEqual(h.copies, 0)
             XCTAssertTrue(h.settings.firstRun.libraryFolderCompleted)
-            XCTAssertEqual(h.restart().makeModel().state.step, .complete)
+            XCTAssertFalse(h.settings.firstRun.tourCompleted, "Recovery does not consume a pending tour")
+            XCTAssertEqual(h.restart().makeModel().state.step, .tour)
         }
     }
 
@@ -404,14 +418,14 @@ final class OnboardingModelTests: XCTestCase {
         h.completeInitialSteps()
         h.serverConfigured = true
         let model = h.makeModel()
-        XCTAssertEqual(model.state.step, .complete)
+        XCTAssertEqual(model.state.step, .tour)
         XCTAssertEqual(h.emptinessChecks, 0)
         h.serverConfigured = false
         model.refresh()
         XCTAssertEqual(model.state.step, .seedOffer)
         h.serverConfigured = true
         model.acceptSeeds()
-        XCTAssertEqual(model.state.step, .complete)
+        XCTAssertEqual(model.state.step, .tour)
         XCTAssertFalse(h.settings.firstRun.seedsOffered)
         XCTAssertEqual(h.copies, 0)
     }
@@ -528,8 +542,16 @@ final class OnboardingModelTests: XCTestCase {
             if mode == .deferred { XCTAssertEqual(h.copies, 0) }
             h.main.drain()
             XCTAssertEqual(h.copies, 1)
+            XCTAssertEqual(model.state.step, .tour)
+            model.completeTour()
+            model.completeTour()
+            if mode == .deferred {
+                XCTAssertFalse(h.settings.firstRun.tourCompleted)
+                XCTAssertEqual(model.state.step, .tour)
+            }
+            h.main.drain()
             XCTAssertEqual(model.state.step, .complete)
-            XCTAssertEqual(changes, 3)
+            XCTAssertEqual(changes, 4)
             h.settings.setLibraryFolder("relative")
             if mode == .deferred { XCTAssertNil(model.state.settingsError) }
             h.main.drain()

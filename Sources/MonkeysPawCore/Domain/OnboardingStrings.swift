@@ -9,6 +9,15 @@ public enum OnboardingStrings {
     public static let seedOfferHelp = "You can add starter prompts to your empty library or start with your own."
     public static let acceptSeeds = "Add Starter Prompts"
     public static let declineSeeds = "Skip Starter Prompts"
+    public static let tourTitle = "Use your prompts"
+    public static let tourHelp = """
+        Press your global hotkey to open the picker. Type to search your prompts, use the arrow keys to choose one, and press Return to use it.
+
+        If your prompt has fields, fill them in the form. Use Tab and Shift+Tab to move between fields. Press Return in a single-line field to use your prompt, or Escape to return to the picker.
+
+        Copy puts your filled prompt on the clipboard. Deliver also pastes it into the text field you were using.
+        """
+    public static let completeTour = "Done"
     public static let libraryAvailableMenu = "Open Library"
     public static let libraryUnavailableMenu = "Library unavailable"
     public static let libraryUnavailableNotificationTitle = "Library unavailable"
