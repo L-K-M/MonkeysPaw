@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "paths",
+  "source": "path.txt",
+  "scope": "group",
+  "expected": {
+    "path": "Group\u017f/a.md",
+    "path_key": "groups/a.md"
+  }
+}

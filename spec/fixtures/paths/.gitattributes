@@ -1,0 +1,3 @@
+# Path inputs are exact bytes; Git must not normalize their line endings.
+**/path.txt -text
+trailing-space-file/path.txt whitespace=-blank-at-eol

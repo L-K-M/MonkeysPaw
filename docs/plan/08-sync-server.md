@@ -181,6 +181,8 @@ both sides. Bodies are capped at `MAX_PROMPT_BYTES = 256 KiB`.
 - **Path and name validation.** Shared by Core on the client and the server.
   - A `path` is `/`-separated segments. Each segment:
     - is non-empty, and not `.` or `..`
+    - if a directory, does not start with `.`: local library enumeration
+      ignores dot-directories (§5.1). Dot-prefixed filenames remain eligible.
     - has no `\`, NUL, or control characters
     - does not end in `.` or a space
     - is NFC-normalized and at most 255 bytes

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "category": "paths",
+  "source": "path.txt",
+  "scope": "user",
+  "expected": {
+    "issue": {
+      "code": "path.segment_dot",
+      "segment": 1
+    }
+  }
+}

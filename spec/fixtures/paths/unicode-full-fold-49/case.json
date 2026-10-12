@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "paths",
+  "source": "path.txt",
+  "scope": "user",
+  "expected": {
+    "path": "\ud83a\udd41_\ud83a\udd42_\ud83a\udd43.md",
+    "path_key": "\ud83a\udd41_\ud83a\udd42_\ud83a\udd43.md"
+  }
+}
