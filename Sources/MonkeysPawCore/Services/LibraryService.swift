@@ -9,8 +9,17 @@ public final class LibraryService: PromptFavoriteEditing {
         case createOnly
     }
 
+    /// Suffix 1 is the plain path; 2 and above are "Name 2.md", "Name 3.md", ...
+    /// A copy never takes the plain path, even when the original was deleted.
     private enum CreationNaming {
         case preferredPath, alternateOnly
+
+        var startingSuffix: Int {
+            switch self {
+            case .preferredPath: return 1
+            case .alternateOnly: return 2
+            }
+        }
     }
 
     private struct LoadedFile {
@@ -131,7 +140,7 @@ public final class LibraryService: PromptFavoriteEditing {
 
     private func createDocument(_ document: PromptDocument, near path: String,
                                 naming: CreationNaming) throws -> LibraryEntry {
-        var startingSuffix = naming == .alternateOnly ? 2 : 1
+        var startingSuffix = naming.startingSuffix
         for _ in 0..<Limits.libraryCreateAttemptCap {
             let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
             do {
