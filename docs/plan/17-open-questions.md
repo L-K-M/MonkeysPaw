@@ -4,6 +4,7 @@ Each question has a default, and the plan proceeds on it unless the owner
 says otherwise.
 
 Assistant (M4) and sync server (M5) implementation defaults live in §19.
+Where both cover a topic, the §17 answer wins and §19 refines it.
 
 | # | Question | Default |
 |---|---|---|
