@@ -56,6 +56,8 @@ Per OS:
   available. The hotkey is the primary entry point, because stock GNOME
   hides tray icons.
 
+  The Linux SNI driver exists; composition attaches it in I14b.
+
 ### 11.2 Picker and fill form
 
 M2f supplies the Linux picker and fill view, bound to Core `PickerModel` and
