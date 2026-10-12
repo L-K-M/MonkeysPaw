@@ -5,6 +5,85 @@ enum Strings {
     static let showPanel = "Show Panel"
     static let setup = "Setup…"
     static let setupTitle = "Monkey's Paw Setup"
+    static let settings = "Settings…"
+    static let settingsTitle = "Monkey's Paw Settings"
+    static let generalTab = "General"
+    static let shortcutsTab = "Shortcuts"
+    static let libraryFolder = "Library folder"
+    static let defaultLibraryFolder = "You are using the default library folder."
+    static let chosenLibraryFolder = "You are using a folder you chose."
+    static let chooseFolder = "Choose…"
+    static let useDefaultFolder = "Use Default"
+    static let showInFinder = "Show in Finder"
+    static let togglePicker = "Toggle picker"
+    static let repeatLast = "Repeat last"
+    static let repeatUnavailable = "Repeat last is not available yet."
+    static let openSetup = "Open Setup…"
+    static let changeShortcut = "Change shortcut…"
+    static let configureShortcut = "Configure in Setup…"
+    static let recordShortcut = "Record shortcut…"
+    static let recordingShortcut = "Press a shortcut; Escape cancels"
+    static let shortcutCaptureHint = "Record a key with Control, Option, Shift or Command. Escape cancels."
+    static let unknownShortcut = "Your shortcut is unknown."
+    static let shortcutUnavailable = "Your shortcut cannot be changed right now."
+    static let invalidShortcut = "Choose one key with modifier keys for your shortcut."
+
+    static func shortcutError(_ error: ShortcutRebindError) -> String {
+        switch error {
+        case .unavailable: return shortcutUnavailable
+        case .invalidAccelerator: return invalidShortcut
+        case .unsupportedCarbonKey: return carbonUnsupportedKey
+        case .overlappingCommandModifiers: return carbonOverlappingModifiers
+        }
+    }
+
+    static func shortcutBinding(_ binding: ShortcutsSettingsModel.Binding) -> String {
+        switch binding {
+        case .unknown: return unknownShortcut
+        case .unbound: return SetupStrings.unboundShortcut
+        case .reported(let text): return text
+        case .accelerator(let accelerator):
+            var parts: [String] = []
+            let modifiers: [(Accelerator.Modifier, String)] = [
+                (.control, "Ctrl"), (.alt, "Alt"), (.shift, "Shift"), (.command, "Cmd"),
+                (.superKey, "Super"), (.commandOrControl, "CmdOrCtrl"),
+            ]
+            for (modifier, name) in modifiers where accelerator.modifiers.contains(modifier) { parts.append(name) }
+            switch accelerator.key {
+            case .character(let key): parts.append(String(key).uppercased())
+            case .function(let number): parts.append("F\(number)")
+            case .named(let key): parts.append(key.rawValue)
+            }
+            return parts.joined(separator: "+")
+        }
+    }
+
+    static func hotkeyMechanism(_ mechanism: HotkeyMechanism) -> String {
+        switch mechanism {
+        case .carbon: return "Carbon"
+        case .globalShortcutsPortal: return "Global Shortcuts portal"
+        case .kglobalaccel: return "KGlobalAccel"
+        case .gnomeCustomKeybinding: return "GNOME keyboard shortcut"
+        case .manual: return "Manual shortcut"
+        }
+    }
+
+    static func registrationStatus(_ status: RegistrationStatus) -> String {
+        switch status {
+        case .registered: return "Registered"
+        case .unbound: return "Unbound"
+        case .needsAction: return "Action required"
+        case .failed: return "Failed"
+        }
+    }
+
+    static func shortcutVerification(_ verification: ShortcutVerification) -> String {
+        switch verification {
+        case .notStarted: return "Not verified"
+        case .waiting: return "Waiting for your shortcut"
+        case .verified: return "Verified"
+        }
+    }
     static let copy = "Copy"
     static let cancel = "Cancel"
     static let searchPrompts = "Search prompts"

@@ -168,6 +168,21 @@ final class CarbonHotkeyBackend: HotkeyBackend {
         return Combination(keyCode: UInt32(code), modifiers: modifiers)
     }
 
+    /// The recorder uses the very same physical table as registration. Shift
+    /// plus Equal stays Shift+Equal rather than choosing the implicit Plus alias.
+    static func keyName(for keyCode: UInt16) -> String? {
+        let code = Int(keyCode)
+        if let key = characterCodes.first(where: { $0.value == code })?.key { return String(key).uppercased() }
+        if let number = functionCodes.first(where: { $0.value == code })?.key { return "F\(number)" }
+        guard let key = namedCodes.first(where: { $0.value == code && $0.key != .plus })?.key else { return nil }
+        switch key {
+        case .pageUp: return "PageUp"
+        case .pageDown: return "PageDown"
+        case .quote: return "Quote"
+        default: return key.rawValue
+        }
+    }
+
     private static let characterCodes: [Character: Int] = [
         "a": kVK_ANSI_A, "b": kVK_ANSI_B, "c": kVK_ANSI_C, "d": kVK_ANSI_D,
         "e": kVK_ANSI_E, "f": kVK_ANSI_F, "g": kVK_ANSI_G, "h": kVK_ANSI_H,

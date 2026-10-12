@@ -10,15 +10,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case settingsNotSaved(SettingsError)
+
+        var outcome: LibrarySwitchOutcome {
+            switch self {
+            case .switched: return .switched
+            case .deliveryInFlight: return .deliveryInFlight
+            case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
+            case .libraryUnavailable(let error): return .libraryUnavailable(error)
+            case .settingsNotSaved(let error): return .settingsNotSaved(error)
+            }
+        }
     }
 
     private enum LibraryLocation { case platformDefault, chosen }
 
-    private let makeFocusTracker: (MainThread, Scheduler) -> WorkspaceFocusTracker
-    private let scheduler: Scheduler
-    private let makePanelController: (MainThread, Scheduler, LogSink) -> PanelController
+    private let makeFocusTracker: (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker
+    private let scheduler: MonkeysPawCore.Scheduler
+    private let makePanelController: (MainThread, MonkeysPawCore.Scheduler, LogSink) -> PanelController
     private let makeFileWatcher: (URL, LogSink) throws -> FileStoreWatcher
-    private let mainThread: MainThread = DispatchMainThread()
+    private let mainThread: MainThread
     private let defaultLibraryDirectory: URL
     private(set) var libraryDirectory: URL
     private let dataDirectory: URL
@@ -26,15 +36,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let legacyFirstRun: LegacyFirstRun
     private let recordLegacySetup: () -> Void
     private let launchURI: (URL) -> Void
+    private let revealLibraryURI: (URL) -> Void
+    private let folderChooser: SettingsWindowController.FolderChooser
+    private let windowActivation: WindowActivationCoordinator
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
     private var setupWindow: SetupWindowController?
+    private(set) var settingsWindow: SettingsWindowController?
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
     private var statusItem: NSStatusItem?
     private(set) var pickerModel: PickerModel?
     private(set) var setupModel: SetupModel?
     private(set) var settingsModel: SettingsModel?
+    private(set) var generalSettingsModel: GeneralSettingsModel?
+    private(set) var shortcutsSettingsModel: ShortcutsSettingsModel?
     private var dataFiles: FileStore?
     private var values: ValuesStore?
     private var usage: UsageStore?
@@ -54,10 +70,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     init(libraryRoot: URL? = nil, dataRoot: URL? = nil,
          legacyFirstRun: LegacyFirstRun? = nil, recordLegacySetup: (() -> Void)? = nil,
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
-         makeFocusTracker: @escaping (MainThread, Scheduler) -> WorkspaceFocusTracker = {
+         revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
+         folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
+         setActivationPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
+         activateApplication: @escaping () -> Void = { NSApp.activate() },
+         makeFocusTracker: @escaping (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker = {
         WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
-    }, scheduler: Scheduler = DispatchScheduler(),
-         makePanelController: @escaping (MainThread, Scheduler, LogSink) -> PanelController = {
+    }, scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
+         makePanelController: @escaping (MainThread, MonkeysPawCore.Scheduler, LogSink) -> PanelController = {
              PanelController(mainThread: $0, scheduler: $1, log: $2)
          }, makeFileWatcher: @escaping (URL, LogSink) throws -> FileStoreWatcher = {
              try RootedFileWatcher(root: $0, log: $1)
@@ -67,6 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.scheduler = scheduler
         self.makePanelController = makePanelController
         self.makeFileWatcher = makeFileWatcher
+        let mainThread = DispatchMainThread()
+        self.mainThread = mainThread
         let injected = libraryRoot != nil && dataRoot != nil
         rootsAreInjected = injected
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -76,6 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dataDirectory = dataRoot ?? home.appendingPathComponent(
             "Library/Application Support/" + AppIdentity.macOSBundleID, isDirectory: true)
         self.launchURI = launchURI
+        revealLibraryURI = revealLibrary
+        self.folderChooser = folderChooser
+        windowActivation = WindowActivationCoordinator(mainThread: mainThread,
+            setPolicy: setActivationPolicy, activate: activateApplication)
         // Injected graphs never read or write the user's legacy preferences.
         let isolated = injected || Self.isRunningTests
         self.legacyFirstRun = legacyFirstRun ?? (isolated ? .setupNotPresented
@@ -123,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         // Returning from System Settings refreshes grants and registration state.
         setupModel?.refresh()
+        shortcutsSettingsModel?.refresh()
     }
 
     private func compose(log: LogSink) {
@@ -195,6 +222,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             warnAboutLibrary(error as? FileStoreError)
         }
         installLibrary(files: files, availability: libraryAvailable)
+        let general = GeneralSettingsModel(settings: settingsModel,
+            library: SettingsLibraryLocation(owner: self), mainThread: mainThread)
+        let shortcutSettings = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
+        generalSettingsModel = general
+        shortcutsSettingsModel = shortcutSettings
+        settingsWindow = SettingsWindowController(general: general, shortcuts: shortcutSettings,
+            mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
+            openSetup: { [weak self] in self?.showSetup() })
     }
 
     /// UI-thread composition intent for the later General/onboarding views.
@@ -442,12 +477,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return name
     }
 
-    private func installMainMenu() {
+    func installMainMenu() {
         // LSUIElement hides the menu bar, but AppKit still routes editing key
         // equivalents through its items to the first responder.
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        addSettingsItem(to: appMenu)
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(AppIdentity.displayName)",
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
@@ -478,17 +515,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      accessibilityDescription: AppIdentity.displayName)
         item.button?.image?.isTemplate = true
 
+        item.menu = makeStatusMenu()
+        statusItem = item
+    }
+
+    /// Pure menu construction lets hosted tests exercise the real equivalents
+    /// without creating a status item or installing native hotkeys.
+    func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
         let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
                                 keyEquivalent: "")
         show.target = self
+        addSettingsItem(to: menu)
         let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
-        item.menu = menu
-        statusItem = item
+        return menu
+    }
+
+    private func addSettingsItem(to menu: NSMenu) {
+        let settings = menu.addItem(withTitle: Strings.settings, action: #selector(showSettings), keyEquivalent: ",")
+        settings.keyEquivalentModifierMask = .command
+        settings.target = self
     }
 
     @objc private func showPanel() {
@@ -513,10 +563,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordLegacySetup()
     }
 
+    @objc func showSettings() {
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            self.focusTracker?.cancelPendingRestoration()
+            self.panelController?.cancelForOwnedWindow()
+            // A summon or dismissal may be queued behind an older restore.
+            // Close model state even if its native panel has not appeared yet.
+            self.pickerModel?.dismiss()
+            self.panelController?.hide()
+            self.delivery?.invalidatePendingPresentation()
+            self.settingsWindow?.show()
+        }
+    }
+
+    fileprivate var defaultLibraryPath: String { defaultLibraryDirectory.path }
+
+    fileprivate func revealLibrary() { revealLibraryURI(libraryDirectory) }
+
     static var isRunningTests: Bool {
         NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
+}
+
+/// General retains its port; a weak root prevents a resident composition cycle.
+private final class SettingsLibraryLocation: LibraryLocationControl {
+    private weak var owner: AppDelegate?
+
+    init(owner: AppDelegate) { self.owner = owner }
+    var activeLibraryPath: String { owner?.libraryDirectory.path ?? "" }
+    var defaultLibraryPath: String { owner?.defaultLibraryPath ?? "" }
+
+    func switchLibrary(to path: String?) -> LibrarySwitchOutcome {
+        guard let owner else { return .libraryUnavailable(.ioFailure) }
+        return owner.switchLibrary(to: path.map { URL(fileURLWithPath: $0, isDirectory: true) }).outcome
+    }
+
+    func revealLibrary() { owner?.revealLibrary() }
 }
 
 /// Library callbacks cross the UI queue through a port tied to this generation.

@@ -200,3 +200,30 @@ quarantined download, Gatekeeper approval or installation on your Mac.
 - [ ] NOT RUN: the zip copy launches with the same version and behavior.
 - [ ] NOT RUN: installed-app Setup, picker and delivery checks above pass.
 - [ ] Optional, NOT RUN: an Intel Mac launches the universal app's `x86_64` slice.
+
+## M2 Settings, General and Shortcuts: NOT RUN
+
+The Linux implementation host cannot compile or run this window. Record the
+exact build and hosted-test results before these owner checks. The shortcut
+change applies to this app session; a failed native registration removes the
+previous shortcut and reports Failed, so record a working shortcut again.
+
+- Commit / `macos-app` CI run and hosted-test result:
+- macOS / hardware / keyboard layout / signing identity / date / tester:
+
+| Check | Result | Details |
+|---|---|---|
+| Open Settings from the status menu; open twice and close/reopen the same window | NOT RUN | |
+| Press ⌘, while Settings is key, then while Setup is key; Settings opens from both | NOT RUN | |
+| Choose another readable library folder; its active path and picker contents update | NOT RUN | |
+| Cancel Choose; the folder stays unchanged; close Settings during a chooser and reopen | NOT RUN | |
+| Choose an invalid, unreadable or symbolic-link folder; read the error and confirm the old folder remains active | NOT RUN | |
+| Use Default restores your default library; retry after a settings save error | NOT RUN | |
+| Show in Finder reveals the active folder after choosing it and after Use Default | NOT RUN | |
+| Open Setup from Shortcuts; the existing Setup window and live registration are reused | NOT RUN | |
+| Record a modified physical key under a non-US layout; Escape cancels capture without closing Settings | NOT RUN | |
+| Rebind Toggle picker, press Press your shortcut now and release the shortcut; verification changes only after it fires | NOT RUN | |
+| Try a conflicting shortcut; Failed and the backend detail appear; record a working key to recover | NOT RUN | |
+| Close Settings while Setup is key; activation policy returns to accessory and Setup remains usable | NOT RUN | |
+| Open Settings with the picker armed, then close; no old paste target is reactivated and a fresh summon still works | NOT RUN | |
+| VoiceOver identifies both tabs, folder path, recorder and actions; keyboard focus stays visible | NOT RUN | |

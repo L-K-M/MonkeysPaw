@@ -37,6 +37,9 @@ Per OS:
   reliably retake focus in a reused hosting view (Vervellum). Menu-bar
   agent (`LSUIElement`); the activation policy turns `.regular` only while
   Settings or Library is open.
+  - **Settings…** in the status menu and **⌘,** open the same reusable
+    General/Shortcuts window, including while Setup has focus. Shortcuts has
+    **Open Setup…** to reopen the existing Setup screen.
   - A main menu is installed even though it never shows: AppKit routes
     ⌘C/⌘V/⌘A/⌘Z through main-menu items, and without them those keys die
     silently in text fields (Vervellum).
