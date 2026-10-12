@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     enum LibrarySwitchResult: Equatable {
         case switched
         case deliveryInFlight
+        case editorBusy
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case settingsNotSaved(SettingsError)
@@ -15,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch self {
             case .switched: return .switched
             case .deliveryInFlight: return .deliveryInFlight
+            // Core's folder port has one busy result. Native Settings retains
+            // the editor-specific message without widening Core in this slice.
+            case .editorBusy: return .deliveryInFlight
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .settingsNotSaved(let error): return .settingsNotSaved(error)
@@ -36,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let legacyFirstRun: LegacyFirstRun
     private let recordLegacySetup: () -> Void
     private let launchURI: (URL) -> Void
+    private let backgroundWork: BackgroundWork
+    private let clipboard: Clipboard
+    private let editorDialog: LibraryWindowController.DialogPresenter
+    private let replyToTermination: (Bool) -> Void
     private let revealLibraryURI: (URL) -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
     private let forgetAllConfirmation: SettingsWindowController.ForgetAllConfirmation
@@ -53,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private(set) var pickerModel: PickerModel?
     private(set) var libraryBrowserModel: LibraryBrowserModel?
+    private(set) var editorModel: EditorModel?
+    private var promptEditing: PromptEditingService?
+    private var terminationPending = false
+    private var editorSwitchRefused = false
     private(set) var setupModel: SetupModel?
     private(set) var settingsModel: SettingsModel?
     private(set) var generalSettingsModel: GeneralSettingsModel?
@@ -85,6 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     init(libraryRoot: URL? = nil, dataRoot: URL? = nil,
          legacyFirstRun: LegacyFirstRun? = nil, recordLegacySetup: (() -> Void)? = nil,
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
+         backgroundWork: BackgroundWork = DispatchBackgroundWork(),
+         clipboard: Clipboard = PasteboardClipboard(),
+         editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryEditorDialog.present,
+         replyToTermination: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) },
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
          forgetAllConfirmation: @escaping SettingsWindowController.ForgetAllConfirmation = SettingsWindowController.confirmForgetAll,
@@ -115,6 +131,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dataDirectory = dataRoot ?? home.appendingPathComponent(
             "Library/Application Support/" + AppIdentity.macOSBundleID, isDirectory: true)
         self.launchURI = launchURI
+        self.backgroundWork = backgroundWork
+        self.clipboard = clipboard
+        self.editorDialog = editorDialog
+        self.replyToTermination = replyToTermination
         revealLibraryURI = revealLibrary
         self.folderChooser = folderChooser
         self.forgetAllConfirmation = forgetAllConfirmation
@@ -169,11 +189,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) { tearDown() }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isShutDown else { return .terminateNow }
+        guard !terminationPending else { return .terminateLater }
+        guard let editor = editorModel,
+              editor.state.isDirty || editor.state.status == .saving || editor.state.pendingDecision != nil else {
+            return .terminateNow
+        }
+        terminationPending = true
+        // A draft may live in a minimized window. Make the decision sheet visible.
+        libraryWindow?.show()
+        editor.request(.quit) { [weak self] result in
+            // AppKit must first receive terminateLater, even with an inline
+            // injected dialog or a just-completed save.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isShutDown, self.terminationPending else { return }
+                self.terminationPending = false
+                self.replyToTermination(result == .allowed)
+            }
+        }
+        return .terminateLater
+    }
+
     private func tearDown() {
         guard !isShutDown else { return }
         isShutDown = true
         watcher?.stop()
         libraryBrowserModel?.deactivate()
+        editorModel?.deactivate()
+        promptEditing?.deactivate()
         libraryWindow?.tearDown()
         pickerModel?.onChange = nil
         onboardingStarted = false
@@ -221,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = makePanelController(mainThread, scheduler, log)
         let hotkeys = CarbonHotkeyBackend()
         let session = MacSessionProbe()
-        let clipboard = PasteboardClipboard()
+        let clipboard = self.clipboard
         let notifier: UserNotificationNotifier
         if let makeNotifier {
             notifier = makeNotifier()
@@ -300,6 +344,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rememberedValues: rememberedValues, forgetAllConfirmation: forgetAllConfirmation,
             mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
             openSetup: { [weak self] in self?.showSetup() })
+        settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
+            self?.editorSwitchRefused == true ? EditorStrings.librarySwitchRefused : nil
+        }
     }
 
     private func composeOnboarding() {
@@ -386,6 +433,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func switchLibrary(to url: URL?) -> LibrarySwitchResult {
         assert(Thread.isMainThread, "Library replacement is main-thread-confined")
         guard !isShutDown, let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
+        editorSwitchRefused = false
+        if let state = editorModel?.state,
+           state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty {
+            editorSwitchRefused = true
+            return .editorBusy
+        }
         guard pickerModel.state != .delivering else { return .deliveryInFlight }
         pickerModel.dismiss()
 
@@ -403,6 +456,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher?.stop()
         watcher = nil
         libraryBrowserModel?.deactivate()
+        editorModel?.deactivate()
+        promptEditing?.deactivate()
         pickerModel.onChange = nil
         pickerPresentation = nil
         self.pickerModel = nil
@@ -460,8 +515,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let library = LibraryService(library: files, data: data, clock: clock,
             entropy: SystemEntropy(), keyedStores: [values, usage])
         let index = PromptIndex(service: library, usage: usage, clock: clock)
+        let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: libraryMain)
+        let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: libraryMain)
         let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain)
-        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: libraryMain)
+        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: libraryMain, editor: editor)
         model.libraryAvailable = availability
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
             requestedIntent: { [weak self] intent in
@@ -504,12 +561,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.library = library
         self.index = index
         libraryBrowserModel = browser
+        editorModel = editor
+        promptEditing = editing
         if let libraryWindow {
-            libraryWindow.rebind(to: browser, libraryPath: libraryDirectory.path, available: availability)
+            libraryWindow.rebind(to: browser, editor: editor, libraryPath: libraryDirectory.path, available: availability)
         } else {
-            libraryWindow = LibraryWindowController(model: browser, libraryPath: libraryDirectory.path,
+            libraryWindow = LibraryWindowController(model: browser, editor: editor, libraryPath: libraryDirectory.path,
                 available: availability, mainThread: mainThread, activation: windowActivation,
-                now: { [clock] in clock.now() }, timeZone: { TimeZone.current },
+                presentDialog: editorDialog,
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
         if let raw = try? makeFileWatcher(libraryDirectory, log) {
@@ -606,17 +665,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch intent {
         case .openLibrary:
             showLibrary()
-        case .edit(_, let path):
+        case .edit(let identity, let path):
             guard (try? FileStorePath.validate(path)) != nil else {
                 pickerPresentation?.showStatus(Strings.promptFileUnavailable)
                 return
             }
-            let url = libraryDirectory.appendingPathComponent(path)
-            pickerModel?.dismiss()
+            let selection = LibraryPromptSelection(identity: identity, relativePath: RelativePath(path))
             let generation = libraryGeneration
             mainThread.run { [weak self] in
                 guard let self, !self.isShutDown, self.libraryGeneration == generation else { return }
-                self.launchURI(url)
+                self.cancelPickerForOwnedWindow()
+                self.libraryWindow?.show()
+                self.libraryWindow?.presentation.openPrompt(selection)
             }
         }
     }

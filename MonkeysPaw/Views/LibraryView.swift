@@ -13,7 +13,7 @@ struct LibraryView: View {
             HSplitView {
                 sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
                 prompts.frame(minWidth: 180, idealWidth: 240)
-                preview.frame(minWidth: 200, maxWidth: .infinity)
+                editor.frame(minWidth: 240, maxWidth: .infinity)
             }
             if !presentation.libraryAvailable {
                 Text(Strings.libraryUnavailable).font(.caption)
@@ -125,12 +125,100 @@ struct LibraryView: View {
         }
     }
 
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let prompt = presentation.editorState.prompt {
+                Text(presentation.snapshot.selectedPrompt?.title ?? LibraryStrings.prompts).font(.headline)
+                Text(prompt.relativePath.string).font(.caption).foregroundStyle(.secondary)
+                if let reason = presentation.editorState.readOnlyReason {
+                    Text(EditorStrings.readOnly(reason)).font(.caption)
+                        .accessibilityIdentifier("library-read-only")
+                }
+                HStack {
+                    Button(EditorStrings.save, action: presentation.save).disabled(!presentation.canSave)
+                        .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("library-save")
+                    Button(EditorStrings.revert, action: presentation.revert).disabled(!presentation.canRevert)
+                        .accessibilityIdentifier("library-revert")
+                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSave)
+                        .accessibilityIdentifier("library-save-copy")
+                }
+                TabView(selection: $presentation.editorTab) {
+                    source.tabItem { Text("Edit") }.tag(LibraryViewState.EditorTab.edit)
+                    preview.tabItem { Text("Preview") }.tag(LibraryViewState.EditorTab.preview)
+                    fields.tabItem { Text("Fields") }.tag(LibraryViewState.EditorTab.fields)
+                }
+                Text(EditorStrings.status(presentation.editorState)).font(.caption)
+                    .accessibilityIdentifier("library-editor-status")
+            } else {
+                Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+        .padding(12)
+    }
+
+    private var source: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LibrarySourceEditor(source: presentation.editorState.source ?? "",
+                path: presentation.editorState.prompt?.relativePath,
+                revision: presentation.bindingRevision,
+                isEditable: presentation.libraryAvailable && presentation.editorState.canEdit,
+                onEdit: presentation.edit)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(presentation.editorState.issues.enumerated()), id: \.offset) { issue in
+                        Text(EditorStrings.issue(issue.element))
+                            .foregroundStyle(issue.element.severity == .error ? Color.red : Color.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .frame(maxHeight: presentation.editorState.issues.isEmpty ? 0 : 120)
+            .accessibilityIdentifier("library-validation")
+        }
+        .padding(8)
+    }
+
+    private var fields: some View {
+        ScrollView([.horizontal, .vertical]) {
+            if presentation.editorState.fields.isEmpty {
+                Text("No fields in this prompt.").foregroundStyle(.secondary)
+            } else {
+                Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 12) {
+                    GridRow {
+                        Text("Name / label"); Text("Type"); Text("Default"); Text("Options"); Text("Behavior")
+                    }.font(.headline)
+                    ForEach(Array(presentation.editorState.fields.enumerated()), id: \.offset) { item in
+                        GridRow {
+                            VStack(alignment: .leading) {
+                                Text(verbatim: item.element.name).font(.system(.body, design: .monospaced))
+                                Text(verbatim: item.element.label)
+                                if let description = item.element.description { Text(verbatim: description).font(.caption) }
+                            }
+                            Text(item.element.kind.rawValue)
+                            Text(verbatim: item.element.defaultValue)
+                            Text(verbatim: item.element.options.map { $0.label + " = " + $0.value }.joined(separator: "\n"))
+                            Text(fieldBehavior(item.element))
+                        }
+                    }
+                }
+                .textSelection(.enabled)
+            }
+        }
+        .padding(12)
+        .accessibilityLabel("Parsed prompt fields")
+        .accessibilityIdentifier("library-fields")
+    }
+
+    private func fieldBehavior(_ field: PromptField) -> String {
+        [field.optional ? "Optional" : "Required", field.remember ? "Remembered" : "Not remembered",
+         field.isImplicit ? "Implicit" : "Declared"].joined(separator: "\n")
+    }
+
     private var preview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if let row = presentation.snapshot.selectedPrompt {
-                    Text(row.title).font(.headline)
-                    Text(row.relativePath.string).font(.caption).foregroundStyle(.secondary)
                     if let description = row.previewLine { Text(description).foregroundStyle(.secondary) }
                 }
                 switch presentation.preview {

@@ -55,6 +55,7 @@ final class MacLibraryWindowTests: XCTestCase {
     private func start() throws {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data,
             launchURI: { [weak self] in self?.launched.append($0) },
+            backgroundWork: LibraryWindowInlineWork(), editorDialog: { _, _, _ in {} },
             revealLibrary: { [weak self] in self?.revealed.append($0) },
             setActivationPolicy: { [weak self] in self?.policies.append($0) },
             activateApplication: { [weak self] in self?.applicationActivations += 1 },
@@ -278,9 +279,8 @@ final class MacLibraryWindowTests: XCTestCase {
         """
         let document = PromptCodec.parse(source, filename: "preview.md")
         XCTAssertTrue(document.canRender)
-        let date = Date(timeIntervalSince1970: 0)
-        XCTAssertEqual(LibraryViewState.renderPreview(document, now: date, timeZone: try XCTUnwrap(TimeZone(secondsFromGMT: 0))),
-            "brief {topic} {note} {implicit} 1970-01-01 00:00 {clipboard} {clipboard} {{literal}}")
+        // The native adapter renders EditorModel's preview; the shared model
+        // owns exact date/time formatting and default substitution.
         try put(source, at: "preview.md")
         try start()
         delegate.showLibrary()
@@ -325,7 +325,8 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertTrue(presentation.canToggleFavorite)
         // The native button forwards to this adapter intent.
         presentation.toggleFavorite()
-        guard case .saved? = presentation.favoriteOutcome else { return XCTFail("Expected successful favourite save") }
+        guard case .savePending? = presentation.favoriteOutcome else { return XCTFail("Expected editor-owned save") }
+        XCTAssertEqual(presentation.editorState.status, .saved)
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.favorite, true)
         XCTAssertEqual(presentation.snapshot.sections.first { $0.id == .favourites }?.count, 1)
         XCTAssertNil(presentation.favoriteMessage)
@@ -340,8 +341,9 @@ final class MacLibraryWindowTests: XCTestCase {
         let external = Data("---\ntitle: External\nfavorite: true\n---\nChanged outside the app".utf8)
         try files.write(external, at: "one.md")
         presentation.toggleFavorite()
-        guard case .libraryFailure(.conflict)? = presentation.favoriteOutcome else { return XCTFail("Expected a typed conflict") }
-        XCTAssertEqual(presentation.favoriteMessage, LibraryStrings.favoriteMessage(.libraryFailure(.conflict)))
+        guard case .savePending? = presentation.favoriteOutcome else { return XCTFail("Expected editor-owned conflict") }
+        XCTAssertEqual(presentation.editorState.conflict?.kind, .modified)
+        XCTAssertNil(presentation.favoriteMessage, "The editor owns its conflict feedback")
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.favorite, false)
         XCTAssertEqual(try files.read(at: "one.md"), external, "A failed favourite never overwrites an external edit")
     }
@@ -540,10 +542,11 @@ final class MacLibraryWindowTests: XCTestCase {
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         try index.rebuild()
         let main = LibraryWindowMainThread()
-        let old = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: main)
-        let presentation = LibraryViewState(model: old, libraryPath: root.path, available: true,
-            mainThread: main, now: { Date(timeIntervalSince1970: 0) },
-            timeZone: { TimeZone(secondsFromGMT: 0)! }, revealLibrary: {})
+        let editing = PromptEditingService(library: library, index: index, work: LibraryWindowInlineWork(), main: main)
+        let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: main)
+        let old = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: main, editor: editor)
+        let presentation = LibraryViewState(model: old, editor: editor, libraryPath: root.path, available: true,
+            mainThread: main, revealLibrary: {})
         var changes = 0
         let subscription = presentation.$snapshot.dropFirst().sink { _ in changes += 1 }
         defer { subscription.cancel() }
@@ -556,8 +559,10 @@ final class MacLibraryWindowTests: XCTestCase {
         let newLibrary = LibraryService(library: otherFiles, data: dataFiles, clock: clock, entropy: SystemEntropy())
         let newIndex = PromptIndex(service: newLibrary, usage: usage, clock: clock)
         try newIndex.rebuild()
-        let new = LibraryBrowserModel(index: newIndex, usage: usage, favorites: newLibrary, main: main)
-        presentation.rebind(to: new, libraryPath: other.path, available: true)
+        let newEditing = PromptEditingService(library: newLibrary, index: newIndex, work: LibraryWindowInlineWork(), main: main)
+        let newEditor = EditorModel(editing: newEditing, clock: clock, timeZone: { TimeZone.current }, main: main)
+        let new = LibraryBrowserModel(index: newIndex, usage: usage, favorites: newLibrary, main: main, editor: newEditor)
+        presentation.rebind(to: new, editor: newEditor, libraryPath: other.path, available: true)
         let rebound = presentation.snapshot
         let reboundChanges = changes
         main.drain()
@@ -575,6 +580,10 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(presentation.snapshot, rebound)
         old.deactivate()
         new.deactivate()
+        editor.deactivate()
+        newEditor.deactivate()
+        editing.deactivate()
+        newEditing.deactivate()
     }
 
     func testRetainedLibraryControllerAndPresentationDoNotRetainCompositionRoot() throws {
@@ -606,6 +615,10 @@ final class MacLibraryWindowTests: XCTestCase {
                           LibraryStrings.favoriteMessage(.libraryFailure(.operationFailed)))
         XCTAssertEqual(LibraryStrings.favoriteMessage(.writeFailure(.invalidPrompt)), PromptWriteError.invalidPrompt.description)
     }
+}
+
+private struct LibraryWindowInlineWork: BackgroundWork {
+    func run(_ work: @escaping () -> Void) { work() }
 }
 
 private final class LibraryWindowScheduler: MonkeysPawCore.Scheduler {

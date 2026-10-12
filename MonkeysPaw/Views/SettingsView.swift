@@ -16,6 +16,7 @@ final class SettingsViewState: ObservableObject {
     let rememberedValuesModel: RememberedValuesSettingsModel
     var onChooseFolder: (() -> Void)?
     var onRememberedValuesChange: (() -> Void)?
+    var librarySwitchMessage: (() -> String?)?
     private let openSetup: () -> Void
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
@@ -57,8 +58,11 @@ final class SettingsViewState: ObservableObject {
     var canUseDefault: Bool { !general.isDefaultLibrary || general.settingsError != nil }
 
     var generalMessages: [String] {
-        Self.generalMessages(for: general.lastSwitchMessage,
-            switchMessage: general.lastSwitchMessage.flatMap(GeneralSettingsStrings.message),
+        let switchMessage = general.lastSwitchMessage.flatMap { outcome in
+            if outcome == .deliveryInFlight, let message = librarySwitchMessage?() { return message }
+            return GeneralSettingsStrings.message(outcome)
+        }
+        return Self.generalMessages(for: general.lastSwitchMessage, switchMessage: switchMessage,
             settingsError: general.settingsError)
     }
 
