@@ -267,6 +267,22 @@ final class GeneralSettingsModelTests: XCTestCase {
         XCTAssertEqual(changes, 2)
     }
 
+    func testRefreshReflectsAnotherCompositionDriversUnavailableSwitch() {
+        let h = GeneralSettingsHarness()
+        let model = h.makeModel()
+        h.library.outcome = .libraryUnavailable(.ioFailure)
+        var changes = 0
+        model.onChange = { changes += 1 }
+        h.main.run {
+            XCTAssertEqual(h.library.switchLibrary(to: "/external"), .libraryUnavailable(.ioFailure))
+        }
+        XCTAssertEqual(model.state.activeLibraryPath, "/active")
+        XCTAssertEqual(changes, 0, "Failed startup produces no settings event")
+        model.refresh()
+        XCTAssertEqual(model.state.activeLibraryPath, "/external")
+        XCTAssertEqual(changes, 1)
+    }
+
     func testStateAndPortCallsUseInjectedMainThreadUnderBothSchedulingModes() {
         for mode in [FakeCompletionMode.immediate, .deferred] {
             let h = GeneralSettingsHarness()
@@ -308,12 +324,12 @@ final class GeneralSettingsModelTests: XCTestCase {
     func testMultipleModelsObserveIndependentlyAndAreReleased() {
         let h = GeneralSettingsHarness()
         var first: GeneralSettingsModel? = h.makeModel()
-        let second = h.makeModel()
+        var second: GeneralSettingsModel? = h.makeModel()
         weak var released = first
         var firstChanges = 0
         var secondChanges = 0
         first?.onChange = { firstChanges += 1 }
-        second.onChange = { secondChanges += 1 }
+        second?.onChange = { secondChanges += 1 }
         h.settings.setLibraryFolder("relative")
         XCTAssertEqual(firstChanges, 1)
         XCTAssertEqual(secondChanges, 1)
@@ -322,6 +338,35 @@ final class GeneralSettingsModelTests: XCTestCase {
         h.settings.refresh()
         XCTAssertEqual(firstChanges, 1)
         XCTAssertEqual(secondChanges, 2)
+        released = second
+        second = nil
+        XCTAssertNil(released)
+        h.settings.setLibraryFolder("/another")
+        XCTAssertEqual(secondChanges, 2)
+    }
+
+    func testQueuedMutationAndRevealIntentsSurviveModelRelease() {
+        let cases: [(intent: (GeneralSettingsModel) -> Void, active: String, saved: String?, reveals: Int)] = [
+            ({ $0.chooseFolder("/chosen") }, "/chosen", "/chosen", 0),
+            ({ $0.useDefaultFolder() }, "/default", nil, 0),
+            ({ $0.revealFolder() }, "/active", "/saved", 1)
+        ]
+        for item in cases {
+            let h = GeneralSettingsHarness()
+            h.settings.setLibraryFolder("/saved")
+            h.main.mode = .deferred
+            var model: GeneralSettingsModel? = h.makeModel()
+            item.intent(model!)
+            model = nil
+            XCTAssertTrue(h.library.switches.isEmpty)
+            XCTAssertEqual(h.library.reveals, 0)
+            h.main.drain()
+
+            XCTAssertEqual(h.library.activeLibraryPath, item.active)
+            XCTAssertEqual(h.settings.libraryFolderPath, item.saved)
+            XCTAssertEqual(h.library.reveals, item.reveals)
+            XCTAssertEqual(h.library.switches.count, item.reveals == 0 ? 1 : 0)
+        }
     }
 
     func testStringsAndTypedDiagnosticsCarryNoPathsContentOrErrorBodies() throws {

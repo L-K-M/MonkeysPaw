@@ -1,6 +1,6 @@
 import Foundation
 
-/// Settings → General (§11.1). Construct and call intents on the UI thread;
+/// Settings → General (§11.1). Construct, release and call intents on the UI thread;
 /// state updates and onChange are delivered through the injected MainThread.
 public final class GeneralSettingsModel {
     public struct State: Equatable, Sendable {
@@ -52,8 +52,9 @@ public final class GeneralSettingsModel {
 
     /// The view runs its native chooser and passes the selected absolute path.
     public func chooseFolder(_ path: String) {
-        mainThread.run { [weak self] in
-            guard let self else { return }
+        // Retain accepted mutations/reveals until the queued operation runs,
+        // even if the settings view closes before the main loop drains it.
+        mainThread.run {
             if Self.sameFolder(path, self.library.activeLibraryPath) {
                 self.publish(path: self.library.activeLibraryPath, message: nil)
                 return
@@ -65,13 +66,15 @@ public final class GeneralSettingsModel {
     public func useDefaultFolder() {
         // Even when the active path is the default, nil must clear a saved
         // explicit choice or retry persistence after an earlier failed write.
-        mainThread.run { [weak self] in self?.switchLibrary(to: nil) }
+        mainThread.run { self.switchLibrary(to: nil) }
     }
 
     public func revealFolder() {
-        mainThread.run { [weak self] in self?.library.revealLibrary() }
+        mainThread.run { self.library.revealLibrary() }
     }
 
+    /// Republish after another composition operation replaces the graph.
+    /// Failed startup can change its path without a shared-settings event.
     public func refresh() {
         mainThread.run { [weak self] in
             guard let self else { return }
