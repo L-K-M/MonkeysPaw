@@ -122,6 +122,8 @@ public final class EditorModel: @unchecked Sendable {
     private var historyGeneration: UInt64 = 0
     private var historyRequested = false
     private var commandHasExternalChange = false
+    // The service drops retired replies; the model still owes its caller one.
+    private var commandCompletion: ((PromptCommandOutcome) -> Void)?
     private var isActive = true
     private var baseline: LoadedPrompt?
     private var document: PromptDocument?
@@ -142,7 +144,7 @@ public final class EditorModel: @unchecked Sendable {
         self.main = main
     }
 
-    deinit { if let session { editing.retire(session) } }
+    deinit { deactivate() }
 
     @discardableResult
     public func addObserver(_ observer: @escaping (EditorState) -> Void) -> UUID {
@@ -164,8 +166,8 @@ public final class EditorModel: @unchecked Sendable {
     /// by composition, since another consumer may still hold that graph.
     public func deactivate() {
         guard isActive else { return }
-        retireSession()
         isActive = false
+        retireSession()
         let abandoned = (pendingRequest.map { [$0] } ?? []) + requests
         requests = []
         pendingRequest = nil
@@ -320,6 +322,9 @@ public final class EditorModel: @unchecked Sendable {
         generation &+= 1
         loadGeneration &+= 1
         historyGeneration &+= 1
+        let completion = commandCompletion
+        commandCompletion = nil
+        if let completion { main.run { completion(.inactive) } }
     }
 
     private func resetEditor() {
@@ -742,6 +747,7 @@ extension EditorModel {
     private func startCommand(_ command: Command, completion: @escaping (PromptCommandOutcome) -> Void) {
         guard let session, let stamp = state.stamp else { return completion(.noSelection) }
         let generation = self.generation
+        commandCompletion = completion
         loadGeneration &+= 1
         historyGeneration &+= 1
         state.history.isLoading = false
@@ -751,7 +757,9 @@ extension EditorModel {
         let reply: (PromptCommandOutcome) -> Void = { [weak self] outcome in
             guard let self else { return }
             self.main.run { [weak self] in
-                guard let self, self.isActive, self.generation == generation else { return }
+                guard let self, self.isActive, self.generation == generation,
+                      let completion = self.commandCompletion else { return }
+                self.commandCompletion = nil
                 self.completedCommand(outcome, command: command)
                 completion(outcome)
                 self.processRequests()

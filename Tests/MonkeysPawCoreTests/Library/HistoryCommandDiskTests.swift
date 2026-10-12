@@ -37,6 +37,16 @@ final class HistoryCommandDiskTests: XCTestCase {
         if let root { try FileManager.default.removeItem(at: root) }
     }
 
+    func testDiskFixtureEnumeratesFilesThroughATemporaryDirectoryAlias() throws {
+        let actual = root.appendingPathComponent("actual")
+        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actual)
+        let store = try HistoryTestDiskStore(root: alias, marker: marker)
+        try store.write(Data("Original".utf8), at: "nested/a.md")
+        XCTAssertEqual(try store.listFiles().map(\.relativePath), ["nested/a.md"])
+    }
+
     func testCreateEditRenameMoveRestoreRoundTripsOnDiskWithIdentityAndHistory() throws {
         let body = "  Original {{field}}\r\n\r\n"
         let created = try library.create(PromptCodec.parse("---\ntitle: Keep title\n---\n" + body,
@@ -127,9 +137,11 @@ private final class HistoryTestDiskStore: FileStore {
     private let marker: EditingThreadMarker
 
     init(root: URL, marker: EditingThreadMarker) throws {
-        self.root = root
         self.marker = marker
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Darwin enumeration may resolve /var to /private/var. Use the same
+        // canonical prefix when deriving relative paths from enumerated URLs.
+        self.root = root.resolvingSymlinksInPath()
     }
 
     private func url(_ path: String) throws -> URL {
@@ -156,7 +168,10 @@ private final class HistoryTestDiskStore: FileStore {
         guard FileManager.default.fileExists(atPath: file.path) else { return nil }
         let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
         guard attributes[.type] as? FileAttributeType == .typeRegular else { throw FileStoreError.notRegularFile }
-        return FileStamp("\(attributes[.systemFileNumber]!)|\(attributes[.size]!)|\(attributes[.modificationDate]!)")
+        let number = try XCTUnwrap(attributes[.systemFileNumber])
+        let size = try XCTUnwrap(attributes[.size])
+        let modified = try XCTUnwrap(attributes[.modificationDate])
+        return FileStamp("\(number)|\(size)|\(modified)")
     }
 
     func read(at path: String) throws -> Data {

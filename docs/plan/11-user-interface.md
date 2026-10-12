@@ -353,7 +353,9 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   loads and saves through Core's `PromptEditingService`; file and codec work
   runs off the UI thread, and session-tagged typed completions and external
   changes return through `MainThread`. Retiring a session or library graph
-  drops late replies. A committed history-maintenance warning carries the
+  drops late state replies. `EditorModel` completes each file-command caller
+  exactly once through `MainThread`, with `inactive` on model retirement or
+  release. A committed history-maintenance warning carries the
   saved entry and stamp, so the editor can clear dirty state and show the
   warning without retrying the write. If the file
   changes on disk while you have unsaved edits, the conflict dialog opens at
@@ -374,11 +376,12 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   newer draft retains the decision. A library switch retires the session
   only after the guard allows it.
   History restore uses the revert guard. `EditorModel`'s file commands perform
-  their writes only after the guard allows them, and navigation waits for a
-  command in flight. A queued command cannot act on a different editor session.
+  their writes only after the guard allows them. Open-prompt, close and revert
+  requests issued during a command queue in order and act after it completes.
+  A queued command cannot act on a different editor session.
 - **Rename, move, delete.** `EditorModel.rename(to:)` edits the filename;
   the title stays in front matter. `move(to:)` targets an existing or new
-  folder, creating intermediate folders; the empty folder targets the root.
+  folder, creating intermediate folders; an empty folder path targets the root.
   These commands and `delete()` use `PromptEditingService`, the editor's load
   stamp and typed outcomes. An occupied destination is refused, never replaced;
   stale stamps open the same conflict, and read-only formats are refused.
@@ -386,7 +389,7 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   destination; keep mine, take theirs or recreation applies to that path.
   Keyed values, usage and history follow §5.2's identity migration.
   `LibraryBrowserModel` follows the committed rename/move only while that
-  editor prompt remains selected, including an unassigned path-hash move.
+  editor prompt remains selected, including an unassigned path-hash move (§5.2).
   Delete clears that selection, closes the editor and keeps its history;
   restoring a deleted prompt arrives later.
 - **Import.** Drop or choose `.md`, `.prompt` (Dotprompt) or `.prompty`

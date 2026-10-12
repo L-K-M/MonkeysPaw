@@ -257,6 +257,7 @@ public final class LibraryService: PromptFavoriteEditing {
     @discardableResult
     public func move(from source: String, to destination: String) throws -> LibraryEntry {
         try locked {
+            try LibraryPath.validate(destination)
             do {
                 switch try moveFile(try requireCurrent(at: source), to: destination) {
                 case .moved(let entry): return entry

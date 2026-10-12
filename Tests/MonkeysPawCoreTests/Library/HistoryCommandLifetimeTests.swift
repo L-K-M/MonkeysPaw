@@ -3,6 +3,46 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class HistoryCommandLifetimeTests: XCTestCase {
+    func testModelDeactivationCompletesEveryRunningCommandExactlyOnceAtEachQueueBoundary() throws {
+        for queuedMain in [false, true] {
+            for boundary in 0...2 {
+                for command in HistoryTestCommand.allCases {
+                    let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                    let selection = try e.open(historyCommandSource)
+                    let revision = try historySnapshot(e.h, identity: selection.identity)
+                    var replies: [PromptCommandOutcome] = []
+                    e.ui { command.run(e.model, revision: revision) {
+                        replies.append($0)
+                        XCTAssertTrue(e.h.marker.isUI)
+                    } }
+                    e.h.main.releaseAll()
+                    if boundary > 0 {
+                        e.h.main.isHeld = true
+                        e.h.held.releaseNext()
+                        if boundary == 2 {
+                            // Release the index notification and service reply;
+                            // leave the model's own reply hop queued.
+                            e.h.main.releaseNext()
+                            e.h.main.releaseNext()
+                        }
+                    }
+                    XCTAssertEqual(e.model.state.status, .commandRunning)
+                    let retired = e.model.state
+                    let accesses = e.h.files.accessCount + e.h.data.accessCount
+                    e.ui { e.model.deactivate(); e.model.deactivate() }
+                    e.settle()
+                    XCTAssertEqual(replies.count, 1, "command: \(command), boundary: \(boundary), queuedMain: \(queuedMain)")
+                    guard case .inactive = replies.first else {
+                        XCTFail("Retired model must complete its command with inactive.")
+                        continue
+                    }
+                    XCTAssertEqual(e.model.state, retired)
+                    XCTAssertEqual(e.h.files.accessCount + e.h.data.accessCount, accesses)
+                }
+            }
+        }
+    }
+
     func testRetiringSessionDropsEveryQueuedCommandBeforeFileWork() throws {
         for command in HistoryTestCommand.allCases {
             let h = PromptEditingHarness(heldWork: true)
@@ -10,8 +50,10 @@ final class HistoryCommandLifetimeTests: XCTestCase {
             let revision = try historySnapshot(h, identity: loaded.entry.identity)
             let accesses = h.files.accessCount + h.data.accessCount
             var completed = false
-            h.marker.ui { command.run(h.editor, session: session, stamp: loaded.stamp, revision: revision) { _ in completed = true }
-                h.editor.retire(session) }
+            h.marker.ui {
+                command.run(h.editor, session: session, stamp: loaded.stamp, revision: revision) { _ in completed = true }
+                h.editor.retire(session)
+            }
             h.held.releaseAll()
             h.main.releaseAll()
             XCTAssertFalse(completed)
@@ -67,15 +109,48 @@ final class HistoryCommandLifetimeTests: XCTestCase {
         var model: EditorModel? = EditorModel(editing: h.editor, clock: h.clock, timeZone: { .gmt }, main: h.main)
         h.marker.ui { model?.open(selection) }
         h.held.releaseAll()
-        var completed = false
-        h.marker.ui { model?.loadHistory(); model?.rename(to: "renamed.md") { _ in completed = true } }
+        var replies: [PromptCommandOutcome] = []
+        h.marker.ui { model?.loadHistory(); model?.rename(to: "renamed.md") {
+            replies.append($0)
+            XCTAssertTrue(h.marker.isUI)
+        } }
         weak var released = model
         model = nil
         XCTAssertNil(released)
         let accesses = h.files.accessCount + h.data.accessCount
         h.held.releaseAll(); h.main.releaseAll()
-        XCTAssertFalse(completed)
+        XCTAssertEqual(replies.count, 1)
+        guard case .inactive = replies.first else { return XCTFail("Released model must complete its command caller.") }
         XCTAssertEqual(h.files.accessCount + h.data.accessCount, accesses)
+    }
+
+    func testReleasedModelCompletesPendingAndQueuedCommandCallersExactlyOnce() throws {
+        for queuedMain in [false, true] {
+            let h = PromptEditingHarness(heldWork: true)
+            try h.files.put(historyCommandSource, at: "a.md")
+            try h.index.rebuild()
+            let entry = try h.library.load(at: "a.md")
+            var model: EditorModel? = EditorModel(editing: h.editor, clock: h.clock, timeZone: { .gmt }, main: h.main)
+            h.marker.ui { model?.open(LibraryPromptSelection(identity: entry.identity, relativePath: "a.md")) }
+            h.held.releaseAll()
+            h.main.isHeld = queuedMain
+            var replies: [PromptCommandOutcome] = []
+            let completion: (PromptCommandOutcome) -> Void = { replies.append($0); XCTAssertTrue(h.marker.isUI) }
+            h.marker.ui { model?.edit("Mine"); model?.delete(completion: completion)
+                model?.rename(to: "renamed.md", completion: completion) }
+            h.main.releaseAll()
+            let accesses = h.files.accessCount + h.data.accessCount
+            weak var released = model
+            model = nil
+            XCTAssertNil(released)
+            h.held.releaseAll()
+            h.main.releaseAll()
+            XCTAssertEqual(replies.count, 2)
+            for reply in replies {
+                guard case .inactive = reply else { return XCTFail("Released guard must complete its caller with inactive.") }
+            }
+            XCTAssertEqual(h.files.accessCount + h.data.accessCount, accesses)
+        }
     }
 
     func testAlreadyQueuedExternalDeletionCannotRetireCommandBeforeItsTypedReply() throws {

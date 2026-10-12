@@ -22,8 +22,10 @@ final class EditorFileCommandTests: XCTestCase {
                     let selection = try e.open(historyCommandSource)
                     let revision = try historySnapshot(e.h, identity: selection.identity)
                     var result: PromptCommandOutcome?
+                    var replies = 0
                     e.ui { e.model.edit(historyCommandSource + "Mine"); command.run(e.model, revision: revision) {
                         result = $0
+                        replies += 1
                         XCTAssertTrue(e.h.marker.isUI)
                     } }
                     e.h.main.releaseAll()
@@ -32,6 +34,7 @@ final class EditorFileCommandTests: XCTestCase {
                     XCTAssertEqual(try e.h.files.text(at: "a.md"), historyCommandSource)
                     try e.decide(decision)
                     e.settle()
+                    XCTAssertEqual(replies, 1)
                     if decision == .cancel {
                         guard case .cancelled = result else { return XCTFail("Expected cancelled command.") }
                         XCTAssertEqual(e.model.state.source, historyCommandSource + "Mine")
@@ -81,24 +84,27 @@ final class EditorFileCommandTests: XCTestCase {
     }
 
     func testFailedSaveAndNewerDraftKeepCommandPending() throws {
-        for failedSave in [false, true] {
-            for command in HistoryTestCommand.allCases {
-                let e = EditorHarness(heldWork: true)
-                let selection = try e.open(historyCommandSource)
-                let revision = try historySnapshot(e.h, identity: selection.identity)
-                if failedSave { e.h.files.failNextWrite = true }
-                var result: PromptCommandOutcome?
-                e.ui { e.model.edit(historyCommandSource + "Mine"); e.model.save()
-                    command.run(e.model, revision: revision) { result = $0 }
-                    if !failedSave { e.model.edit(historyCommandSource + "Newer") }
+        for queuedMain in [false, true] {
+            for failedSave in [false, true] {
+                for command in HistoryTestCommand.allCases {
+                    let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                    let selection = try e.open(historyCommandSource)
+                    let revision = try historySnapshot(e.h, identity: selection.identity)
+                    if failedSave { e.h.files.failNextWrite = true }
+                    var result: PromptCommandOutcome?
+                    e.ui { e.model.edit(historyCommandSource + "Mine"); e.model.save()
+                        command.run(e.model, revision: revision) { result = $0 }
+                        if !failedSave { e.model.edit(historyCommandSource + "Newer") }
+                    }
+                    e.settle()
+                    XCTAssertNil(result)
+                    XCTAssertEqual(e.model.state.pendingDecision?.action, command.action)
+                    XCTAssertTrue(e.model.state.isDirty)
+                    XCTAssertNotNil(try e.h.files.stamp(at: "a.md"))
+                    try e.decide(.cancel)
+                    e.settle()
+                    guard case .cancelled = result else { return XCTFail("Expected pending command cancellation.") }
                 }
-                e.settle()
-                XCTAssertNil(result)
-                XCTAssertEqual(e.model.state.pendingDecision?.action, command.action)
-                XCTAssertTrue(e.model.state.isDirty)
-                XCTAssertNotNil(try e.h.files.stamp(at: "a.md"))
-                try e.decide(.cancel)
-                guard case .cancelled = result else { return XCTFail("Expected pending command cancellation.") }
             }
         }
     }
@@ -120,6 +126,70 @@ final class EditorFileCommandTests: XCTestCase {
         XCTAssertNotNil(result?.committedEntry)
         XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("renamed.md"))
         XCTAssertNil(e.model.state.conflict)
+    }
+
+    func testEveryNonCommittedReservedSaveRequiresAnotherCommandDecision() throws {
+        enum Failure: CaseIterable { case io, invalid, conflict, deleted, readOnly }
+        for failure in Failure.allCases {
+            for command in HistoryTestCommand.allCases {
+                let e = EditorHarness(heldWork: true, queuedMain: true)
+                let selection = try e.open(historyCommandSource)
+                let revision = try historySnapshot(e.h, identity: selection.identity)
+                var result: PromptCommandOutcome?
+                e.ui { e.model.edit(historyCommandSource + "Mine"); command.run(e.model, revision: revision) { result = $0 } }
+                e.h.main.releaseAll()
+                let decision = try XCTUnwrap(e.model.state.pendingDecision)
+                try e.decide(.discard)
+                let source: String
+                switch failure {
+                case .invalid: source = "{{unclosed"
+                case .readOnly: source = "---\nformat: 2\n---\nFuture"
+                default: source = historyCommandSource + "Save"
+                }
+                e.ui { e.model.edit(source); e.model.save() }
+                e.h.main.releaseAll()
+                XCTAssertEqual(e.model.state.pendingDecision, decision)
+                XCTAssertEqual(e.model.state.status, .saving)
+                switch failure {
+                case .io: e.h.files.failNextWrite = true
+                case .conflict:
+                    e.h.files.onStamp = { path, _ in
+                        guard path == "a.md" else { return }
+                        e.h.files.onStamp = nil
+                        throw LibraryError.conflict
+                    }
+                case .deleted:
+                    e.h.files.onRead = { path in
+                        guard path == "a.md" else { return }
+                        e.h.files.onRead = nil
+                        try e.h.files.move(from: path, to: "parked.md")
+                    }
+                case .invalid, .readOnly: break
+                }
+                e.settle()
+                switch failure {
+                case .io: XCTAssertEqual(e.model.state.status, .failed(.editing(.fileStore(.ioFailure))))
+                case .invalid: XCTAssertEqual(e.model.state.status, .failed(.invalid(e.model.state.issues)))
+                case .conflict: XCTAssertEqual(e.model.state.conflict?.kind, .modified)
+                case .deleted:
+                    XCTAssertEqual(e.model.state.conflict?.kind, .deleted)
+                    try e.h.files.move(from: "parked.md", to: "a.md")
+                case .readOnly:
+                    XCTAssertEqual(e.model.state.status, .failed(.readOnly(.unsupportedFormat(try XCTUnwrap(PromptFormatVersion(2))))))
+                }
+                XCTAssertNil(result)
+                XCTAssertEqual(e.model.state.pendingDecision, decision)
+                e.ui { e.model.edit(historyCommandSource + "Manual retry"); e.model.save() }
+                e.settle()
+                XCTAssertEqual(e.model.state.status, .saved)
+                XCTAssertFalse(e.model.state.isDirty)
+                XCTAssertNil(result, "A later manual save cannot approve \(command) after \(failure).")
+                XCTAssertEqual(e.model.state.pendingDecision, decision)
+                try e.decide(.cancel)
+                e.settle()
+                guard case .cancelled = result else { return XCTFail("Reserved command must remain cancellable.") }
+            }
+        }
     }
 
     func testRenameAndMoveFollowAssignedAndLocalIdentityWithoutChangingFileBytes() throws {
@@ -272,11 +342,14 @@ final class EditorFileCommandTests: XCTestCase {
     func testNoSelectionAndInactiveEditorReturnWithoutFileWork() throws {
         let e = EditorHarness(queuedMain: true)
         var result: PromptCommandOutcome?
-        e.ui { e.model.delete { result = $0 } }
+        var replies = 0
+        e.ui { e.model.delete { result = $0; replies += 1 } }
         e.settle()
+        XCTAssertEqual(replies, 1)
         guard case .noSelection = result else { return XCTFail("Expected no selection.") }
-        e.ui { e.model.deactivate(); e.model.rename(to: "a.md") { result = $0 } }
+        e.ui { e.model.deactivate(); e.model.rename(to: "a.md") { result = $0; replies += 1 } }
         e.settle()
+        XCTAssertEqual(replies, 2)
         guard case .inactive = result else { return XCTFail("Expected retired editor.") }
         XCTAssertEqual(e.h.files.accessCount, 0)
     }
@@ -314,6 +387,7 @@ final class EditorFileCommandTests: XCTestCase {
                     // Delete just after the final destination stamp probe. The
                     // checked move result predates this newer cache publication.
                     e.h.files.onStamp = { path, _ in
+                        guard path == "renamed.md" else { return }
                         e.h.files.onStamp = nil
                         try e.h.files.delete(at: path)
                         let version = e.h.index.editingSnapshot(at: path).version

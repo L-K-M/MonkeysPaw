@@ -40,7 +40,7 @@ final class EditorHistoryTests: XCTestCase {
             (Data("---\ntitle: [broken\n---\nBroken".utf8), .invalidPrompt),
             (Data([0xff, 0xfe]), .invalidPrompt),
             (Data(repeating: 0x78, count: Limits.maxPromptBytes + 1), .invalidPrompt),
-            (Data("---\nformat: 2\n---\nFuture".utf8), .unsupportedFormat(PromptFormatVersion(2)!))
+            (Data("---\nformat: 2\n---\nFuture".utf8), .unsupportedFormat(try XCTUnwrap(PromptFormatVersion(2))))
         ]
         for (bytes, reason) in fixtures {
             let e = EditorHarness()

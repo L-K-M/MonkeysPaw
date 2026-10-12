@@ -626,7 +626,9 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   deactivation also removes the index subscription. Tokens created after
   deactivation immediately complete requests with
   `failed(.library(.operationFailed))`, without file work. Previously live
-  tokens remain retired and drop replies.
+  tokens remain retired and drop service replies. `EditorModel` separately
+  completes its file-command callers exactly once with `inactive` through
+  `MainThread` on model retirement or release.
   A committed rename or move rebinds the live session to the destination;
   queued publications for the old path cannot affect it. File commands use a
   required editor stamp, reject missing and read-only prompts, and reuse the
@@ -670,9 +672,9 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   are forensic-only: restore refuses them with `PromptWriteError.invalidPrompt`.
   Future formats are refused with `PromptWriteError.unsupportedFormat`.
   `PromptHistorySnapshot` carries timestamp, byte size, optional exact UTF-8
-  source and the typed restore refusal. `EditorModel` selects its read-only
-  preview without editing the draft. M3 restore requires a live prompt and
-  its editor stamp; restoring a deleted prompt through presentation is deferred.
+  source and the typed restore-refusal reason. `EditorModel` selects its
+  read-only preview without editing the draft. M3 restore requires a live prompt
+  and its editor stamp; restoring a deleted prompt through presentation is deferred.
   LLM provenance belongs to M4 and is absent in M2b.
 - **External edits.** M2c's `LibraryWatcher` emits labeled
   `LibraryChangeSet {created, modified, deleted}` after

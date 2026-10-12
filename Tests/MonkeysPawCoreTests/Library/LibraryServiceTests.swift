@@ -19,6 +19,16 @@ final class LibraryServiceTests: XCTestCase {
         service = LibraryService(library: library, data: data, clock: clock, entropy: entropy, keyedStores: [keyed])
     }
 
+    func testMoveValidatesDestinationBeforeReadingMissingSource() {
+        XCTAssertThrowsError(try service.move(from: "missing.md", to: "../invalid.md")) {
+            XCTAssertEqual($0 as? FileStoreError, .invalidPath)
+        }
+        XCTAssertThrowsError(try service.move(from: "missing.md", to: "invalid.txt")) {
+            XCTAssertEqual($0 as? LibraryError, .invalidPromptPath)
+        }
+        XCTAssertEqual(library.accessCount, 0)
+    }
+
     func testEnumerationIgnoresOnlySpecifiedPathsAndSorts() throws {
         let included = ["a.md", "z.md", ".visible.md", "readme.md", "notes/README.md",
                         "nested/folder/a.md", "Groups/team/a.md", "Conflicts/a.md"]

@@ -3,6 +3,54 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PromptHistoryCommandTests: XCTestCase {
+    func testMissingCommandStateReportsRecreationModificationAndDeletion() throws {
+        enum Missing { case deleted, alreadyMissing, relocated }
+        let cases: [(HistoryTestCommand, Missing)] = [
+            (.delete, .deleted), (.delete, .alreadyMissing), (.restore, .alreadyMissing),
+            (.rename, .alreadyMissing), (.move, .alreadyMissing),
+            (.rename, .relocated), (.move, .relocated)
+        ]
+        for queuedMain in [false, true] {
+            for (command, missing) in cases {
+                let h = PromptEditingHarness(heldWork: true)
+                var changes: [PromptExternalChange] = []
+                let (session, loaded) = try h.open(historyCommandSource) { changes.append($0) }
+                let revision = try historySnapshot(h, identity: loaded.entry.identity)
+                h.main.isHeld = queuedMain
+                if missing == .alreadyMissing { try h.files.delete(at: "a.md") }
+                if missing == .relocated {
+                    h.files.onRead = { path in
+                        guard path == command.destination else { return }
+                        h.files.onRead = nil
+                        try h.files.delete(at: path)
+                    }
+                }
+                let outcome = try commandResult(h) { command.run(h.editor, session: session, stamp: loaded.stamp,
+                    revision: revision, completion: $0) }
+                switch (missing, outcome) {
+                case (.deleted, .deleted), (.alreadyMissing, .missing), (.relocated, .relocated(_, .deleted)): break
+                default: return XCTFail("Expected checked missing command state.")
+                }
+                XCTAssertTrue(changes.isEmpty)
+                let path = missing == .relocated ? command.destination : "a.md"
+                try h.files.put("Recreated", at: path)
+                let recreated = try h.files.stamp(at: path)
+                try h.index.apply(LibraryChangeSet(created: [RelativePath(path)]))
+                h.main.releaseAll()
+                try h.files.put("Modified", at: path)
+                let modified = try h.files.stamp(at: path)
+                try h.index.apply(LibraryChangeSet(modified: [RelativePath(path)]))
+                h.main.releaseAll()
+                try h.files.delete(at: path)
+                try h.index.apply(LibraryChangeSet(deleted: [RelativePath(path)]))
+                h.main.releaseAll()
+                XCTAssertEqual(changes, [PromptExternalChange(kind: .recreated, newStamp: recreated),
+                    PromptExternalChange(kind: .modified, newStamp: modified),
+                    PromptExternalChange(kind: .deleted, newStamp: nil)])
+            }
+        }
+    }
+
     func testEveryCommandRunsOnWorkAndRepliesOnMainWithoutOwnExternalChanges() throws {
         for heldWork in [false, true] {
             for queuedMain in [false, true] {
@@ -88,7 +136,7 @@ final class PromptHistoryCommandTests: XCTestCase {
             let outcome = try commandResult(h) { command.run(h.editor, session: session, stamp: loaded.stamp,
                 revision: revision, completion: $0) }
             guard case .readOnly(let reason) = outcome else { return XCTFail("Expected read-only \(command).") }
-            XCTAssertEqual(reason, .unsupportedFormat(PromptFormatVersion(2)!))
+            XCTAssertEqual(reason, .unsupportedFormat(try XCTUnwrap(PromptFormatVersion(2))))
             XCTAssertEqual(try h.files.text(at: "a.md"), source)
             XCTAssertEqual(try h.library.history(for: loaded.entry.identity), [revision])
         }
@@ -164,6 +212,7 @@ final class PromptHistoryCommandTests: XCTestCase {
             let outcome = try commandResult(h) { h.editor.move(to: folder, session: session,
                 expectedStamp: loaded.stamp, completion: $0) }
             guard case .failed = outcome else { return XCTFail("Invalid folder was accepted.") }
+            XCTAssertEqual(try h.files.text(at: "a.md"), "Original")
         }
     }
 
@@ -267,6 +316,8 @@ final class PromptHistoryCommandTests: XCTestCase {
             h.files.onRead = nil
             var reloaded: PromptLoadOutcome?
             h.marker.ui { h.editor.load(session: session) { reloaded = $0 } }
+            h.held.releaseAll()
+            h.main.releaseAll()
             if observation == 1 {
                 guard case .deleted = reloaded else { return XCTFail("Expected missing destination.") }
             } else {
