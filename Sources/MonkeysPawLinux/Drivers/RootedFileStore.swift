@@ -105,7 +105,8 @@ final class RootedFileStore: FileStore {
                     temporaryPath = candidate
                     break
                 }
-                guard errno == EEXIST else { throw FileStoreError.ioFailure }
+                // EEXIST means a name collision and EINTR an interrupted call; retry both.
+                guard errno == EEXIST || errno == EINTR else { throw FileStoreError.ioFailure }
             }
             guard descriptor >= 0 else { throw FileStoreError.ioFailure }
             defer {
@@ -129,6 +130,13 @@ final class RootedFileStore: FileStore {
             // leaf, including directories and dangling symlinks, without following it.
             guard link(temporaryPath, url.path) == 0 else {
                 throw errno == EEXIST ? FileStoreError.alreadyExists : FileStoreError.ioFailure
+            }
+            // Persist the new directory entry too; best-effort like writePrivate,
+            // since some filesystems reject directory fsync.
+            let directoryDescriptor = Glibc.open(parent.path, O_RDONLY | O_CLOEXEC)
+            if directoryDescriptor >= 0 {
+                _ = fsync(directoryDescriptor)
+                _ = Glibc.close(directoryDescriptor)
             }
         }
     }
