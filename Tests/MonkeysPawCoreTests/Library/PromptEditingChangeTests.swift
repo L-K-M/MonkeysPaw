@@ -247,6 +247,80 @@ final class PromptEditingChangeTests: XCTestCase {
                                 PromptExternalChange(kind: .modified, newStamp: modified)])
     }
 
+    func testMissingLoadThenRecreationStillReportsTheNextDeletion() throws {
+        let h = PromptEditingHarness()
+        var changes: [PromptExternalChange] = []
+        let (session, _) = try h.open(changes: { changes.append($0) })
+        try h.files.delete(at: "a.md")
+        h.marker.ui { h.editor.load(session: session) {
+            guard case .deleted = $0 else { return XCTFail("Expected missing load.") }
+        } }
+        try h.files.put("Recreated", at: "a.md")
+        let stamp = try h.files.stamp(at: "a.md")
+        try h.index.apply(LibraryChangeSet(created: [RelativePath("a.md")]))
+        try h.files.delete(at: "a.md")
+        try h.index.apply(LibraryChangeSet(deleted: [RelativePath("a.md")]))
+        XCTAssertEqual(changes, [PromptExternalChange(kind: .recreated, newStamp: stamp),
+                                PromptExternalChange(kind: .deleted, newStamp: nil)])
+    }
+
+    func testMissingSaveThenRecreationStillReportsTheNextDeletion() throws {
+        let h = PromptEditingHarness()
+        var changes: [PromptExternalChange] = []
+        let (session, loaded) = try h.open(changes: { changes.append($0) })
+        try h.files.delete(at: "a.md")
+        guard case .deleted = try h.save("Mine", session: session, stamp: loaded.stamp) else {
+            return XCTFail("Expected missing save.")
+        }
+        try h.files.put("Recreated", at: "a.md")
+        let stamp = try h.files.stamp(at: "a.md")
+        try h.index.apply(LibraryChangeSet(created: [RelativePath("a.md")]))
+        try h.files.delete(at: "a.md")
+        try h.index.apply(LibraryChangeSet(deleted: [RelativePath("a.md")]))
+        XCTAssertEqual(changes, [PromptExternalChange(kind: .recreated, newStamp: stamp),
+                                PromptExternalChange(kind: .deleted, newStamp: nil)])
+    }
+
+    func testMissingSessionKeepsRecreationAndDeletionWhileSaveIsHeld() throws {
+        let h = PromptEditingHarness(heldWork: true)
+        var changes: [PromptExternalChange] = []
+        let (session, loaded) = try h.open(changes: { changes.append($0) })
+        try h.files.delete(at: "a.md")
+        guard case .deleted = try h.save("Mine", session: session, stamp: loaded.stamp) else {
+            return XCTFail("Expected missing save.")
+        }
+        h.marker.ui { h.editor.save("Mine", session: session, expectedStamp: loaded.stamp) { _ in } }
+        try h.files.put("Recreated", at: "a.md")
+        let stamp = try h.files.stamp(at: "a.md")
+        try h.index.apply(LibraryChangeSet(created: [RelativePath("a.md")]))
+        try h.files.delete(at: "a.md")
+        try h.index.apply(LibraryChangeSet(deleted: [RelativePath("a.md")]))
+        XCTAssertTrue(changes.isEmpty)
+        h.held.releaseAll()
+        XCTAssertEqual(changes, [PromptExternalChange(kind: .recreated, newStamp: stamp),
+                                PromptExternalChange(kind: .deleted, newStamp: nil)])
+    }
+
+    func testDeferredRecreationAfterMissingSaveStillReportsLaterWatcherDeletion() throws {
+        let h = PromptEditingHarness(heldWork: true)
+        var changes: [PromptExternalChange] = []
+        let (session, loaded) = try h.open(changes: { changes.append($0) })
+        try h.files.delete(at: "a.md")
+        guard case .deleted = try h.save("Mine", session: session, stamp: loaded.stamp) else {
+            return XCTFail("Expected missing save.")
+        }
+        h.marker.ui { h.editor.save("Mine", session: session, expectedStamp: loaded.stamp) { _ in } }
+        try h.files.put("Recreated", at: "a.md")
+        let stamp = try h.files.stamp(at: "a.md")
+        try h.index.apply(LibraryChangeSet(created: [RelativePath("a.md")]))
+        try h.files.delete(at: "a.md")
+        h.held.releaseAll()
+        XCTAssertEqual(changes, [PromptExternalChange(kind: .recreated, newStamp: stamp)])
+        try h.index.apply(LibraryChangeSet(deleted: [RelativePath("a.md")]))
+        XCTAssertEqual(changes, [PromptExternalChange(kind: .recreated, newStamp: stamp),
+                                PromptExternalChange(kind: .deleted, newStamp: nil)])
+    }
+
     func testServiceLifetimeDoesNotStealOrRetainOtherIndexSubscribers() throws {
         let h = PromptEditingHarness()
         let counter = EditingIndexCounter()

@@ -228,6 +228,7 @@ public final class PromptEditingService: @unchecked Sendable {
             defer { sessions[session] = state }
             let stamp = publication.stamps[RelativePath(state.path)]
             guard state.observedStamp != stamp else { return nil }
+            let previousStamp = state.observedStamp
             let kind: PromptExternalChange.Kind
             if stamp == nil { kind = .deleted }
             else if state.observedStamp == nil { kind = .recreated }
@@ -240,6 +241,9 @@ public final class PromptEditingService: @unchecked Sendable {
                 return nil
             }
             guard !state.file.matches(stamp) else { return nil }
+            // Accepted deferred changes also advance the state to communicate:
+            // a recreation must make a following deletion observable.
+            state.file = stamp.map(OpenFile.present) ?? .missing(previousStamp: previousStamp)
             if state.savesInFlight > 0 {
                 state.deferredChanges.append(change)
                 return nil
@@ -257,6 +261,10 @@ public final class PromptEditingService: @unchecked Sendable {
                 sessions[session] = state
                 return nil
             }
+            // A save outcome may have superseded the accepted state while this
+            // notification waited. Reconcile it before calling into the editor.
+            state.file = change.newStamp.map(OpenFile.present) ?? .missing(previousStamp: state.observedStamp)
+            sessions[session] = state
             return state.onExternalChange
         }
         callback?(change)
