@@ -124,16 +124,26 @@ final class LinuxTrayCompositionTests: XCTestCase {
         XCTAssertFalse(visibleWindows().contains { title(of: $0) == LinuxStrings.onboarding })
     }
 
-    func testOpenLibraryRevealsTheCurrentFolderIncludingAfterASwitch() throws {
+    func testOpenLibraryReusesBrowserAndFolderActionResolvesCurrentLibrary() throws {
         try start()
+        try click(1)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
         try click(2)
-        XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 1 })
+        let window = try visibleWindow(titled: LinuxStrings.library)
+        XCTAssertFalse(environment.panel.isVisible)
+        XCTAssertEqual(environment.pickerModel.state, .closed)
+        XCTAssertTrue(launchedURLs.isEmpty)
         let initial = URL(fileURLWithPath: environment.generalSettingsModel.state.activeLibraryPath, isDirectory: true)
+        let reveal = try settingsWidget("library-open-folder", in: window)
+        XCTAssertNotEqual(gtk_widget_activate(reveal), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 1 })
         XCTAssertEqual(launchedURLs, [initial])
         let replacement = try library("Replacement")
         XCTAssertEqual(environment.switchLibrary(to: replacement), .switched)
         drain()
         try click(2)
+        XCTAssertEqual(try visibleWindow(titled: LinuxStrings.library), window)
+        XCTAssertNotEqual(gtk_widget_activate(reveal), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 2 })
         XCTAssertEqual(launchedURLs.last, replacement)
     }
@@ -154,7 +164,8 @@ final class LinuxTrayCompositionTests: XCTestCase {
         XCTAssertTrue(environment.libraryStatusModel === status)
         XCTAssertEqual(try rows().first { $0.id == 2 }, Row(id: 2, label: status.menuLabel, enabled: true))
         try click(2)
-        XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs == [replacement] })
+        _ = try visibleWindow(titled: LinuxStrings.library)
+        XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertTrue(watcher.signals.contains { $0.name == "ItemsPropertiesUpdated" })
     }
 

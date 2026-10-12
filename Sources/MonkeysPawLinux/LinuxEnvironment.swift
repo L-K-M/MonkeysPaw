@@ -88,13 +88,14 @@ final class LinuxEnvironment {
         let index: PromptIndex
         let watcher: LibraryWatcher?
         let picker: PickerModel
+        let browser: LibraryBrowserModel
         let callbacks: LibraryCallbacks
         let initializationError: FileStoreError?
         var started = false
         var warningLogged = false
 
         init(directory: URL, files: FileStore, library: LibraryService,
-             index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel,
+             index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel, browser: LibraryBrowserModel,
              callbacks: LibraryCallbacks, initializationError: FileStoreError?) {
             self.directory = directory
             self.files = files
@@ -102,6 +103,7 @@ final class LinuxEnvironment {
             self.index = index
             self.watcher = watcher
             self.picker = picker
+            self.browser = browser
             self.callbacks = callbacks
             self.initializationError = initializationError
         }
@@ -110,7 +112,7 @@ final class LinuxEnvironment {
             callbacks.deactivate()
             watcher?.stop()
             picker.onChange = nil
-            index.setOnChange(nil)
+            browser.deactivate()
         }
     }
 
@@ -142,6 +144,7 @@ final class LinuxEnvironment {
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application)
     var pickerModel: PickerModel { libraryGraph.picker }
+    var libraryBrowserModel: LibraryBrowserModel { libraryGraph.browser }
 
     private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
@@ -228,6 +231,7 @@ final class LinuxEnvironment {
     private(set) lazy var shortcutsSettingsModel = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
     private var currentSetupWindow: LinuxSetupWindow?
     private var currentSettingsWindow: LinuxSettingsWindow?
+    private var currentLibraryWindow: LinuxLibraryWindow?
     private var currentOnboardingWindow: LinuxOnboardingWindow?
     private var onboardingRequestRevision = 0
     private var isShutDown = false
@@ -408,6 +412,34 @@ final class LinuxEnvironment {
         }
     }
 
+    func showLibrary() {
+        guard !isShutDown, pickerModel.state != .delivering else { return }
+        startLibrary()
+        guard pickerModel.libraryAvailable else {
+            // Desktop actions may arrive without a picker to render feedback.
+            if panel.isVisible { panel.showStatus(LinuxStrings.libraryUnavailable) }
+            return
+        }
+        onboardingRequestRevision += 1
+        currentOnboardingWindow?.hide()
+        pickerModel.dismiss()
+        panel.hide()
+        delivery.invalidatePendingPresentation()
+        // Match Settings: queued dismissal/focus work finishes before present.
+        // Resolve the current graph here if a folder switch ran in the meantime.
+        mainThread.run { [weak self] in
+            guard let self, !self.isShutDown, self.pickerModel.libraryAvailable else { return }
+            if self.currentLibraryWindow == nil {
+                self.currentLibraryWindow = LinuxLibraryWindow(application: self.application,
+                    browser: self.libraryBrowserModel, openFolder: { [weak self] in
+                        guard let self, !self.isShutDown else { return }
+                        self.libraryLocation.revealLibrary()
+                    })
+            }
+            self.currentLibraryWindow?.show()
+        }
+    }
+
     private func showSetup() {
         guard !isShutDown else { return }
         onboardingRequestRevision += 1
@@ -436,7 +468,8 @@ final class LinuxEnvironment {
             // onboarding stays pending for the next launcher request.
             guard let self, !self.isShutDown, self.onboardingRequestRevision == revision,
                   self.currentSetupWindow?.isVisible != true,
-                  self.currentSettingsWindow?.isVisible != true else { return }
+                  self.currentSettingsWindow?.isVisible != true,
+                  self.currentLibraryWindow?.isVisible != true else { return }
             switch self.onboardingModel.state.step {
             case .libraryFolder, .seedOffer: self.showOnboarding()
             case .setup, .complete: break
@@ -510,6 +543,7 @@ final class LinuxEnvironment {
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let callbacks = LibraryCallbacks(main: mainThread)
         let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks)
+        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: callbacks)
         picker.libraryAvailable = initializationError == nil
         let watcher: LibraryWatcher?
         do {
@@ -517,7 +551,7 @@ final class LinuxEnvironment {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
         } catch { watcher = nil }
         let graph = LibraryGraph(directory: directory, files: files, library: library,
-            index: index, watcher: watcher, picker: picker, callbacks: callbacks,
+            index: index, watcher: watcher, picker: picker, browser: browser, callbacks: callbacks,
             initializationError: initializationError)
         panel.rebind(picker: picker, session: session.currentSession(),
             openSetup: { [weak self, weak callbacks] in
@@ -555,6 +589,7 @@ final class LinuxEnvironment {
         old.stop()
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
+        currentLibraryWindow?.rebind(browser: libraryGraph.browser)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
         currentLibraryStatusModel?.libraryReplaced(available: libraryGraph.picker.libraryAvailable)
@@ -655,7 +690,9 @@ final class LinuxEnvironment {
 
         let url: URL
         switch intent {
-        case .openLibrary: url = graph.directory
+        case .openLibrary:
+            showLibrary()
+            return
         case .edit(_, let path):
             guard (try? FileStorePath.validate(path)) != nil else {
                 panel.showStatus(LinuxStrings.promptFileUnavailable)
@@ -695,6 +732,7 @@ final class LinuxEnvironment {
         currentSetupWindow?.hide()
         currentOnboardingWindow?.hide()
         currentSettingsWindow?.hide()
+        currentLibraryWindow?.hide()
         currentLibraryGraph?.stop()
         hotkey.shutdown()
         remoteDesktop.shutdown()
