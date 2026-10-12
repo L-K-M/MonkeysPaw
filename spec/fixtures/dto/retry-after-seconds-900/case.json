@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "dto",
+  "dto": "RetryAfter",
+  "source": "body.json",
+  "expected": {
+    "valid": true,
+    "header_value": "900"
+  }
+}

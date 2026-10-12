@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "category": "dto",
+  "dto": "ErrorResponse",
+  "source": "body.json",
+  "expected": {
+    "valid": true,
+    "http_status": 500
+  }
+}

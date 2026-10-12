@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "category": "dto",
+  "dto": "AccountKind",
+  "source": "body.json",
+  "expected": {
+    "valid": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "category": "dto",
+  "dto": "EmptyResponse",
+  "source": "body.json",
+  "expected": {
+    "valid": true
+  }
+}

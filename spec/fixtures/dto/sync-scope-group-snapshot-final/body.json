@@ -1,0 +1,1 @@
+{"cursor":"2","group_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","has_more":false,"head":2,"items":[{"kind":"upsert","prompt":{"content":"---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nHello {{name}}\r\n","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","path":"Notes/Hello.md","rev":1},"seq":2}],"key":"group:01ARZ3NDEKTSV4RRFFQ69G5FAW","kind":"group","mode":"snapshot","name":"Team","role":"viewer"}
