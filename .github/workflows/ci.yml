@@ -94,14 +94,28 @@ jobs:
           useradd --create-home --shell /bin/bash monkeyspaw-tests
           test "$(id -u monkeyspaw-tests)" -ne 0
           chown -R monkeyspaw-tests:monkeyspaw-tests .build
+          # Every test that skips as root. Each must report passed; XCTest may
+          # print one summary per test target, so counts are not compared.
+          tests=(
+            RootedFileStoreTests/testInitializationErrorsDoNotExposeOSPaths
+            RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring
+            RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce
+            ValuesStoreFileTests/testGlobalResetRecoversUnreadableRegularFileWithoutReadingIt
+            LinuxLibrarySwitchTests/testUnreadableTargetIsRejectedWithoutStoppingTheOldWatcher
+            LinuxLibrarySwitchTests/testSettingsWriteFailureKeepsNewGraphForTheSessionAndReportsTheError
+            FileLogSinkTests/testUnwritableDirectoryReportsOnceAndOtherSinksKeepReceivingRecords
+            FileLogSinkTests/testUnwritableFilePreservesExistingBytesAndReportsOnce
+          )
+          filter=$(IFS='|'; echo "${tests[*]}")
           # SwiftPM keeps its workspace lock in TMPDIR; root's lock in /tmp is
-          # unusable. Run every root-skipping test, including the GTK cases.
+          # unusable. The GTK cases need the private bus and display.
           runuser -u monkeyspaw-tests -- env TMPDIR=/home/monkeyspaw-tests \
-            dbus-run-session -- xvfb-run -a swift test --skip-build --filter \
-            'RootedFileStoreTests/testInitializationErrorsDoNotExposeOSPaths|RootedFileWatcherTests/testRescanFailuresLogOncePerStreakAndKeepBaselineAndMonitoring|RootedFileWatcherHealthTests/testUnreadableRootReportsUnavailableOnce|ValuesStoreFileTests/testGlobalResetRecoversUnreadableRegularFileWithoutReadingIt|LinuxLibrarySwitchTests/testUnreadableTargetIsRejectedWithoutStoppingTheOldWatcher|LinuxLibrarySwitchTests/testSettingsWriteFailureKeepsNewGraphForTheSessionAndReportsTheError|FileLogSinkTests/testUnwritableDirectoryReportsOnceAndOtherSinksKeepReceivingRecords|FileLogSinkTests/testUnwritableFilePreservesExistingBytesAndReportsOnce' \
+            dbus-run-session -- xvfb-run -a swift test --skip-build --filter "$filter" \
             2>&1 | tee permission-tests.log
-          grep -q 'Executed 8 tests, with 0 failures' permission-tests.log
-          ! grep -qi 'skipped' permission-tests.log
+          for test in "${tests[@]}"; do
+            grep -qF "Test Case '${test/\//.}' passed" permission-tests.log
+          done
+          ! grep -E "Test Case '.*' (skipped|failed)" permission-tests.log
       - name: Smoke X11 delivery and CLI self-test
         env:
           GSETTINGS_BACKEND: memory
