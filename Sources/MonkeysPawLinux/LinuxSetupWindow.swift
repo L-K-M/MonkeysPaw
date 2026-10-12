@@ -6,15 +6,26 @@ import MonkeysPawCore
 final class LinuxSetupWindow {
     private let window: GTK.Widget
     private let model: SetupModel
+    private var isDestroyed = false
     private var labels: [SetupRow.Kind: GTK.Widget] = [:]
     private var fixes: [SetupRow.Kind: GTK.Widget] = [:]
     private let report: GTK.Widget
+    var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
-    init(application: UnsafeMutablePointer<GtkApplication>, model: SetupModel) {
+    init(application: UnsafeMutablePointer<GtkApplication>, model: SetupModel,
+         onHide: @escaping () -> Void = {}) {
         self.model = model
         window = gtk_application_window_new(application)!
         report = GTK.label("")
         GTK.hideOnClose(window)
+        GTK.onSignal(window, "destroy") { [weak self] in
+            self?.isDestroyed = true
+            self?.model.onChange = nil
+        }
+        GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
+            guard let self, !self.isDestroyed, !self.isVisible else { return }
+            onHide()
+        }
         gtk_window_set_title(mp_window(window), LinuxStrings.setup)
         gtk_window_set_default_size(mp_window(window), Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
         let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
@@ -43,11 +54,18 @@ final class LinuxSetupWindow {
     }
 
     func show() {
+        guard !isDestroyed else { return }
         model.refresh()
         gtk_window_present(mp_window(window))
     }
 
+    func hide() {
+        guard !isDestroyed else { return }
+        gtk_widget_set_visible(window, 0)
+    }
+
     private func render() {
+        guard !isDestroyed else { return }
         for row in model.rows {
             guard let label = labels[row.kind], let fix = fixes[row.kind] else { continue }
             let detail: String

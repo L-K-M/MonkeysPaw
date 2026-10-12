@@ -55,6 +55,9 @@ enum LinuxStrings {
         }
     }
     static let setup = "Setup"
+    static let onboarding = "Welcome to Monkey's Paw"
+    static let onboardingComplete = "You're ready to use Monkey's Paw."
+    static let close = "Close"
     static let settings = "Settings"
     static let openSettings = "Settings…"
     static let openSetup = "Open Setup…"

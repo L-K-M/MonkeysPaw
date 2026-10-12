@@ -1,5 +1,31 @@
 # Linux picker and delivery checks
 
+## Onboarding and library recovery (M2, NOT RUN)
+
+Run these with isolated XDG config/data/documents directories on X11 and
+GNOME/KDE Wayland. Record the commit, date, desktop/compositor, GTK and
+portal versions. Private-bus/Xvfb tests cover the composition and controls;
+they do not complete these owner checks.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Fresh install | Launcher opens Setup first. Closing Setup opens the library folder step; accept the displayed default or choose an existing readable folder. | NOT RUN |
+| Legacy install | With only the old `setup-shown` marker, launcher opens the folder step without repeating Setup. | NOT RUN |
+| Starter prompts | An empty accepted library offers Add Starter Prompts and Skip Starter Prompts. Adding shows the copied/skipped counts and makes the prompts available in the picker; restart never copies them again. | NOT RUN |
+| Skip starter prompts and non-empty library | Skipping records the offer without copying. A library containing an eligible prompt, including malformed Markdown, skips the offer. | NOT RUN |
+| Folder chooser and cancellation | Invalid choices show a typed message and retain the step. Closing or switching between Settings and onboarding cancels that window's chooser; a stale result cannot switch the library. | NOT RUN |
+| Startup unavailable notification and recovery | A missing or unreadable saved folder produces one path-free notification with no focus action and reopens the folder step. Closing and reopening retains recovery; choosing a readable folder or Use Default restores the library. | NOT RUN |
+| Runtime folder loss | Cached prompts remain read-only. No startup notification or new recovery step appears; an already-open onboarding window shows restart guidance. Restart, or a successful Settings folder switch, restores library health. | NOT RUN |
+| Read-only settings | Future-version or corrupt settings show the Settings error and suppress Setup/onboarding; the settings file remains unchanged. | NOT RUN |
+| Tray status row (I14b) | No Linux tray exists in this slice. I14b must attach the shared `LibraryStatusModel.menuLabel` and verify unavailable/recovered labels on the real desktop. | NOT RUN |
+
+Composition retains one onboarding model and one library status model for
+the process. Folder checks and seeding resolve the current library graph;
+every successful or degraded replacement reports its health. Startup
+health includes watcher startup and index rebuild. Runtime loss is latched
+until a new graph replaces it or the app restarts. Library status UI in
+Settings and the tray is left to I14b to avoid expanding the Settings slice.
+
 ## Settings (M2, NOT RUN)
 
 Run these on X11 and GNOME/KDE Wayland. Record the tested commit, date,
@@ -69,10 +95,11 @@ xterm, Openbox, and Python 3.
 
 ## X11
 
-- [ ] Launch `monkeyspaw` normally on first run. Setup opens. It opens again
-  if the `setup-shown` marker cannot be saved under the XDG config directory.
-  Later launcher activations show the picker; Setup stays available there.
-  Service launches and CLI diagnostics do not open first-run Setup.
+- [ ] Launch `monkeyspaw` normally on first run. Setup opens, then closing it
+  continues through the folder and eligible seed steps above. Later launcher
+  activations resume pending steps or show the picker when complete; Setup
+  stays available there. Ordinary service launches and CLI diagnostics do
+  not open first-run Setup. Startup library failure opens recovery.
 - [ ] Start `monkeyspaw --gapplication-service`. It remains resident with no
   visible window. Run `gapplication action ch.lkmc.monkeyspaw toggle` twice:
   the picker opens and closes. Close it natively and toggle again.

@@ -34,7 +34,7 @@ final class LinuxSettingsWindow {
     private var verifyButton: GTK.Widget!
     private var repeatBinding: GTK.Widget!
 
-    private var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
+    var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
     init(application: UnsafeMutablePointer<GtkApplication>, general: GeneralSettingsModel,
          shortcuts: ShortcutsSettingsModel, rememberedValues: RememberedValuesSettingsModel,
@@ -77,7 +77,7 @@ final class LinuxSettingsWindow {
     }
 
     deinit {
-        chooser.cancel()
+        if isChoosing { chooser.cancel() }
         general.onChange = nil
         shortcuts.onChange = nil
         rememberedValues.onChange = nil
@@ -266,6 +266,8 @@ final class LinuxSettingsWindow {
     }
 
     private func cancelFolderChoice() {
+        // Settings and onboarding share a chooser. Cancel only our request.
+        guard isChoosing else { return }
         chooserRevision += 1
         isChoosing = false
         chooser.cancel()

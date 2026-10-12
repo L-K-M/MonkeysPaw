@@ -232,6 +232,37 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertFalse(environment.panel.isVisible)
     }
 
+    func testPendingOnboardingLauncherRequestDuringDeliveryRefusesWindowEntry() throws {
+        let scheduler = SwitchScheduler()
+        compose(scheduler: scheduler)
+        environment.settingsModel.markSetupPresented()
+        try files.write(Data("Alpha".utf8), at: "a.md")
+        try openPicker()
+        let picker = environment.pickerModel
+        picker.use(mode: .copyOnly)
+        XCTAssertTrue(GTKTestSupport.spin {
+            picker.state == .delivering && scheduler.delays.contains(Limits.settleDelayLinux)
+        })
+
+        environment.presentFromLauncher()
+        drainUI()
+        XCTAssertEqual(g_list_length(gtk_application_get_windows(application)), 1,
+                       "Onboarding must not open while delivery owns the focus sequence")
+        XCTAssertEqual(picker.state, .delivering)
+        XCTAssertTrue(environment.pickerModel === picker)
+        scheduler.fireAll()
+        XCTAssertTrue(GTKTestSupport.spin { picker.state == .done(.copiedOnly(.requested)) })
+        XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+
+        environment.presentFromLauncher()
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.onboarding
+                && gtk_widget_get_visible(mp_window_widget(window)) != 0
+        })
+    }
+
     func testOldNativeEventsAndDebounceCannotChangeTheReplacementLibrary() throws {
         let scheduler = SwitchScheduler()
         compose(scheduler: scheduler)
@@ -473,8 +504,13 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertTrue(environment.settingsModel.needsLibraryFolderStep)
         XCTAssertFalse(environment.settingsModel.firstRun.libraryFolderCompleted)
         environment.presentFromLauncher()
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
-        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.onboarding
+                && gtk_widget_get_visible(mp_window_widget(window)) != 0
+        })
+        XCTAssertFalse(environment.panel.isVisible)
         XCTAssertTrue(environment.settingsModel.needsLibraryFolderStep)
     }
 

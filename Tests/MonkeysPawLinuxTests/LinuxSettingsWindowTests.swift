@@ -102,6 +102,9 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let setupWindow = try XCTUnwrap(setupWindows.first)
         let setup = environment.setupModel
         let shortcuts = environment.shortcutsSettingsModel
+        // Isolate explicit Setup reuse from its first-run continuation.
+        environment.settingsModel.completeLibraryFolderStep()
+        environment.settingsModel.markSeedsOffered()
         gtk_window_close(mp_window(setupWindow))
         let settingsWindow = try openSettingsAction()
         let tabs = try settingsWidget("settings-tabs", in: settingsWindow)

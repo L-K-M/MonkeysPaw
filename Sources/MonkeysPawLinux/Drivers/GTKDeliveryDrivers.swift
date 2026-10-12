@@ -33,7 +33,7 @@ struct GTKClipboard: Clipboard {
     }
 }
 
-struct GTKNotifier: Notifier {
+struct GTKNotifier: Notifier, LibraryAvailabilityNotifier {
     private let application: UnsafeMutablePointer<GtkApplication>
     private let session: SessionProbe
 
@@ -43,6 +43,11 @@ struct GTKNotifier: Notifier {
     }
 
     func copied() { mp_notify(application, AppIdentity.displayName, DeliveryStrings.copied) }
+
+    func libraryUnavailable() {
+        mp_notify(application, OnboardingStrings.libraryUnavailableNotificationTitle,
+                  OnboardingStrings.libraryUnavailableNotificationBody)
+    }
 
     func pressPaste(chord: PasteChord, reason: CopyReason) {
         mp_notify(application, AppIdentity.displayName,
