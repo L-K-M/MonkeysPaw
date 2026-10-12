@@ -73,7 +73,7 @@ they do not complete these owner checks.
 | Startup unavailable notification and recovery | A missing or unreadable saved folder produces one path-free notification with no focus action and reopens the folder step. Closing and reopening retains recovery; choosing a readable folder or Use Default restores the library. | NOT RUN |
 | Runtime folder loss | Cached prompts remain read-only. No startup notification or new recovery step appears; an already-open onboarding window shows restart guidance. Restart, or a successful Settings folder switch, restores library health. | NOT RUN |
 | Read-only settings | Future-version or corrupt settings show the Settings error and suppress Setup/onboarding; the settings file remains unchanged. | NOT RUN |
-| Tray status row (I14b) | Open Library reveals the active folder. Missing/unreadable startup and runtime root loss change it to disabled Library unavailable; a successful folder switch restores Open Library without restarting the tray. | NOT RUN |
+| Tray status row (I14b, M3L1) | Open Library opens the reusable browser window. Missing/unreadable startup and runtime root loss change it to disabled Library unavailable; a successful folder switch restores Open Library without restarting the tray. | NOT RUN |
 
 Composition retains one onboarding model and one library status model for
 the process. Folder checks and seeding resolve the current library graph;
@@ -133,10 +133,31 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
 - [ ] Search for no matches. Open the library folder, create a prompt and
   verify its safe filename opens in the default editor. The assistant action
   is disabled and shows the Settings hint. Ctrl+Return edits a selected file;
-  Ctrl+L opens the folder and dismisses the picker.
+  Ctrl+L opens the Library window and dismisses the picker. Open Folder inside
+  Library reveals the active folder.
 - [ ] Make the library unavailable at startup, then remove it while running.
   The app stays usable and shows the banner; cached prompts remain available
   after removal. Restore the folder and restart to resume watching.
+
+## Library browser shell (M3L1, NOT RUN)
+
+Run these on X11 and GNOME/KDE Wayland, including GNOME without a tray
+extension. Record the commit, date, desktop/compositor, GTK, Orca and portal
+versions. The implementation uses GTK 4.8 controls; private-bus/Xvfb tests
+do not complete these owner checks. Editing, history and file management
+remain for later M3 slices.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Picker Library, no-match Library and Ctrl+L | Each dismisses the picker without delivery and opens or raises one Library window. Close natively, reopen, and confirm the same window remains usable. | NOT RUN |
+| Tray Open Library and launcher Library action | Both open the same window, including a cold `gapplication action ch.lkmc.monkeyspaw library`. Missing/unreadable libraries keep the tray row disabled. Repeat the launcher action without a tray host. | NOT RUN |
+| Sidebar and filter | All, Favourites, Recent, nested folders and tags show the model's counts. Counts remain stable while filtering. Folder sections include descendants; changing the filter or section retains the selected preview even when its row is hidden. | NOT RUN |
+| Prompt rows and Recent | Rows show title, exact relative path, favourite star and invalid/read-only badges. Recent orders retained uses newest first and shows last-used times. Delivery/copy refreshes Recent while Library is open. | NOT RUN |
+| Read-only preview and privacy | Defaults appear, empty fields use `{field}` names, date/time are real and clipboard uses `{clipboard}`. Selecting and filtering never read the clipboard or write prompt files. Invalid, future-format, non-UTF-8 and oversized prompts display their issues. | NOT RUN |
+| Favourite button and Ctrl+D | A valid prompt saves its favourite through the library service, refreshes sidebar/list and picker, and retains selection after first-save identity assignment. A stale file or failed write shows an error without changing the star. Read-only entries disable the button. | NOT RUN |
+| Open Folder and folder switching | Open Folder reveals the active folder. With Library visible or hidden, change the folder in Settings or Use Default: the same window binds to the new library, clears its old selection/filter and receives no retired-library updates. | NOT RUN |
+| Keyboard, Orca and visible focus | Tab/Shift+Tab reach the labelled sidebar, prompt list, preview and actions. Arrows navigate the lists; Return on a prompt opens nothing. Escape clears a nonempty filter, then hides the window. Input-method Escape stays with active filter preedit. Orca announces rows/counts, badges, preview and favourite errors; focus stays visible. | NOT RUN |
+| Settings and shutdown | Settings and Library can remain open together; closing either leaves the other usable. Quit with both open and reopen the app: no stale window or callback survives. | NOT RUN |
 
 ## Orca, visible focus and reduced motion (M2, NOT RUN)
 
