@@ -103,6 +103,25 @@ final class EditorFileCommandTests: XCTestCase {
         }
     }
 
+    func testSaveStartedAfterDiscardWaitsBeforeQueuedGuardApproval() throws {
+        let e = EditorHarness(heldWork: true, queuedMain: true)
+        try e.open(historyCommandSource)
+        var result: PromptCommandOutcome?
+        e.ui { e.model.edit(historyCommandSource + "Mine"); e.model.rename(to: "renamed.md") { result = $0 } }
+        e.h.main.releaseAll()
+        try e.decide(.discard)
+        // Approval is queued, but a new explicit save can begin inline before
+        // that hop. The file command must use the stamp from this save's reply.
+        e.ui { e.model.save() }
+        e.h.main.releaseAll()
+        XCTAssertEqual(e.model.state.status, .saving)
+        XCTAssertEqual(e.h.held.pending.count, 1)
+        e.settle()
+        XCTAssertNotNil(result?.committedEntry)
+        XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("renamed.md"))
+        XCTAssertNil(e.model.state.conflict)
+    }
+
     func testRenameAndMoveFollowAssignedAndLocalIdentityWithoutChangingFileBytes() throws {
         for assigned in [false, true] {
             for queuedMain in [false, true] {
@@ -278,5 +297,41 @@ final class EditorFileCommandTests: XCTestCase {
         XCTAssertEqual(e.model.state.prompt?.relativePath, RelativePath("renamed.md"))
         XCTAssertEqual(browser.selection, e.model.state.prompt)
         XCTAssertEqual(browser.selectedEntry?.relativePath, "renamed.md")
+    }
+
+    func testDestinationPublicationDuringMoveCannotKeepGhostSourceRow() throws {
+        for deletion in [false, true] {
+            let e = EditorHarness()
+            let original = try e.open(historyCommandSource)
+            let before = try e.h.library.load(at: "a.md")
+            let browser = LibraryBrowserModel(index: e.h.index, usage: e.h.usage,
+                favorites: e.h.library, main: e.h.main, editor: e.model)
+            e.ui { browser.selectPrompt(original) }
+            e.h.files.onRead = { path in
+                guard path == "renamed.md" else { return }
+                e.h.files.onRead = nil
+                if deletion {
+                    // Delete just after the final destination stamp probe. The
+                    // checked move result predates this newer cache publication.
+                    e.h.files.onStamp = { path, _ in
+                        e.h.files.onStamp = nil
+                        try e.h.files.delete(at: path)
+                        let version = e.h.index.editingSnapshot(at: path).version
+                        e.h.index.acceptCommand(nil, at: path, expectedVersion: version)
+                    }
+                } else {
+                    let entry = LibraryEntry(path: path, document: before.document,
+                        stamp: try XCTUnwrap(e.h.files.stamp(at: path)))
+                    let version = e.h.index.editingSnapshot(at: path).version
+                    e.h.index.acceptCommand(entry, at: path, expectedVersion: version)
+                }
+            }
+            e.ui { e.model.rename(to: "renamed.md") }
+            e.settle()
+            XCTAssertFalse(browser.rows.contains { $0.relativePath == RelativePath("a.md") })
+            XCTAssertEqual(browser.rows.map(\.relativePath), deletion ? [] : [RelativePath("renamed.md")])
+            if deletion { XCTAssertNil(browser.selection) }
+            else { XCTAssertEqual(browser.selection, e.model.state.prompt) }
+        }
     }
 }

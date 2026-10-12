@@ -225,4 +225,16 @@ final class PromptHistoryCommandTests: XCTestCase {
         h.main.releaseAll()
         XCTAssertEqual(changes, [PromptExternalChange(kind: .modified, newStamp: try h.files.stamp(at: "renamed.md"))])
     }
+
+    func testMoveKeepsBasenameWhenCombiningMarkSharesSlashGrapheme() throws {
+        let h = PromptEditingHarness()
+        let (session, loaded) = try h.open(historyCommandSource, at: "from/\u{301}a.md")
+        let renamed = try commandResult(h) { h.editor.rename(to: "\u{301}renamed.md", session: session,
+            expectedStamp: loaded.stamp, completion: $0) }
+        let stamp = try XCTUnwrap(renamed.committedEntry?.stamp)
+        let moved = try commandResult(h) { h.editor.move(to: "to", session: session,
+            expectedStamp: stamp, completion: $0) }
+        XCTAssertEqual(moved.committedEntry.map { RelativePath($0.relativePath) }, RelativePath("to/\u{301}renamed.md"))
+        XCTAssertEqual(try h.files.text(at: "to/\u{301}renamed.md"), historyCommandSource)
+    }
 }

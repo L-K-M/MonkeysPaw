@@ -537,6 +537,14 @@ public final class EditorModel: @unchecked Sendable {
         // made after Save/Discard, before permitting the destructive action.
         main.run { [weak self] in
             guard let self, self.isActive, self.pendingRequest?.decision.id == request.decision.id else { return }
+            if result == .allowed, self.state.status == .saving {
+                // A new explicit save can start after Discard but before this
+                // queued approval. Reserve the same request for its new stamp.
+                self.savesDecision = true
+                self.state.pendingDecision = request.decision
+                self.changed()
+                return
+            }
             if result == .allowed, self.state.isDirty {
                 self.state.pendingDecision = request.decision
                 self.changed()

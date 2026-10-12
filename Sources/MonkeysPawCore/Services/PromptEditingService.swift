@@ -209,8 +209,9 @@ public final class PromptEditingService: @unchecked Sendable {
                        completion: @escaping (PromptCommandOutcome) -> Void) {
         command(session: session, completion: completion) { service, path in
             guard !filename.isEmpty, !filename.unicodeScalars.contains("/") else { throw FileStoreError.invalidPath }
-            let directory = path.unicodeScalars.lastIndex(of: "/").map {
-                String(path[...$0])
+            let scalars = path.unicodeScalars
+            let directory = scalars.lastIndex(of: "/").map {
+                String(path[..<scalars.index(after: $0)])
             } ?? ""
             return try service.library.moveForEditing(at: path, to: directory + filename, expectedStamp: expectedStamp)
         }

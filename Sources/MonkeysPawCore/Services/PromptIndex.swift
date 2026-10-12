@@ -150,24 +150,35 @@ public final class PromptIndex: @unchecked Sendable {
     }
 
     /// Publish a stamped file command without disk work on the UI thread.
-    /// Preserve newer publications for either affected path, including a
-    /// deletion. Unrelated publications cannot hide the completed command.
+    /// Reconcile each path independently: a newer destination publication must
+    /// survive without keeping the old source row. Newer source recreations
+    /// also survive, and unrelated publications cannot hide the command.
     func acceptCommand(_ entry: LibraryEntry?, at source: String, expectedVersion: UInt64) {
         let publication: Publication? = locked {
             let sourcePath = RelativePath(source)
             let destination = entry.map { RelativePath($0.relativePath) } ?? sourcePath
-            guard pathVersions[sourcePath, default: 0] <= expectedVersion,
-                  pathVersions[destination, default: 0] <= expectedVersion else { return nil }
-            let previous = prompts.removeValue(forKey: sourcePath)?.entry
-            var changes = LibraryChangeSet(deleted: [sourcePath])
-            if let entry {
+            let previousIdentities = Set([prompts[sourcePath]?.entry.identity, prompts[destination]?.entry.identity].compactMap { $0 })
+            var deleted: Set<RelativePath> = []
+            var created: Set<RelativePath> = []
+            var modified: Set<RelativePath> = []
+            if pathVersions[sourcePath, default: 0] <= expectedVersion,
+               entry == nil || destination != sourcePath {
+                prompts.removeValue(forKey: sourcePath)
+                // Keep a deletion publication even without a cached row: an
+                // earlier command must not later resurrect this missing path.
+                deleted.insert(sourcePath)
+            }
+            if let entry, pathVersions[destination, default: 0] <= expectedVersion {
+                let existed = prompts[destination] != nil
                 prompts[destination] = PromptRanking.Input(entry)
                 useEvents[entry.identity] = usage.cachedUseEvents()[entry.identity] ?? useEvents[entry.identity] ?? []
-                changes = destination == sourcePath ? LibraryChangeSet(modified: [sourcePath])
-                    : LibraryChangeSet(created: [destination], deleted: [sourcePath])
+                if existed { modified.insert(destination) }
+                else { created.insert(destination) }
             }
-            if let previous, !prompts.values.contains(where: { $0.entry.identity == previous.identity }) {
-                useEvents[previous.identity] = nil
+            let changes = LibraryChangeSet(created: created, modified: modified, deleted: deleted)
+            guard !changes.isEmpty else { return nil }
+            for identity in previousIdentities where !prompts.values.contains(where: { $0.entry.identity == identity }) {
+                useEvents[identity] = nil
             }
             return capturePublication(changes)
         }
