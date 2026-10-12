@@ -15,6 +15,7 @@ not complete these owner checks.
 | Invalid folder | A missing, unreadable or symlinked chosen folder shows an error and retains the previous library. | NOT RUN |
 | Use Default | The active folder returns to the XDG documents default and survives relaunch. | NOT RUN |
 | Open Folder | The file manager opens the active library folder, including after choosing another folder or Use Default. | NOT RUN |
+| Forget all values | Cancel keeps remembered values and session drafts. Confirm clears both while the picker is closed and after switching libraries with Settings open. A failed write shows a sanitized error and keeps values; an unreadable regular values file can be reset once its directory is writable. | NOT RUN |
 | Shortcuts Open Setup | Open Setup opens or raises the existing Setup window; closing and reopening it retains the live shortcut state. | NOT RUN |
 | GNOME portal Shortcuts tab | Binding, registration and verification match Setup; portal configuration/Setup guidance follows the advertised interface version. Opening Settings never verifies the shortcut. | NOT RUN |
 | KDE Shortcuts tab | Native and portal binding, registration, guidance and verification match Setup and update after system changes or mechanism handoff. Repeat remains inactive and unbound. | NOT RUN |
@@ -23,6 +24,10 @@ not complete these owner checks.
 
 Run these on X11 and on GNOME/KDE Wayland. Record the desktop/compositor,
 tool versions and date. These owner checks are not completed by Xvfb tests.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Forget values in picker and fill | The action appears only for a selected prompt or open form. It clears that prompt's remembered values and draft, keeps other prompts' values, and resets an open form to defaults without delivery. Failure keeps values and shows a sanitized error. The action is disabled during delivery. | NOT RUN |
 
 - [ ] Add a Markdown prompt under the XDG documents directory's `MonkeysPaw`
   folder (default `~/Documents/MonkeysPaw`). From a browser/editor field,
