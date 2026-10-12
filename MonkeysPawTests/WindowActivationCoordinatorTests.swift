@@ -15,21 +15,22 @@ final class WindowActivationCoordinatorTests: XCTestCase {
         defer { settings.close(); library.close(); setup.close() }
 
         setup.orderFrontRegardless()
-        XCTAssertTrue(policies.isEmpty, "An unregistered Setup window cannot change policy")
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: setup)
+        XCTAssertEqual(policies, [.accessory], "An unregistered Setup window keeps accessory policy")
         coordinator.show(settings)
         coordinator.show(library)
-        XCTAssertEqual(policies, [.regular])
+        XCTAssertEqual(policies, [.accessory, .regular])
         XCTAssertEqual(activations, 2)
         settings.close()
         XCTAssertTrue(library.isVisible)
-        XCTAssertEqual(policies, [.regular], "Closing Settings must keep a visible Library regular")
+        XCTAssertEqual(policies, [.accessory, .regular], "Closing Settings must keep a visible Library regular")
         library.orderOut(nil)
         // Deterministic delivery of the native visibility notification.
         NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: library)
-        XCTAssertEqual(policies, [.regular, .accessory])
+        XCTAssertEqual(policies, [.accessory, .regular, .accessory])
         XCTAssertTrue(setup.isVisible)
         coordinator.show(library)
-        XCTAssertEqual(policies, [.regular, .accessory, .regular])
+        XCTAssertEqual(policies, [.accessory, .regular, .accessory, .regular])
         library.close()
         XCTAssertEqual(policies.last, .accessory)
         coordinator.show(settings)
@@ -39,10 +40,38 @@ final class WindowActivationCoordinatorTests: XCTestCase {
         XCTAssertEqual(policies.last, .accessory)
     }
 
+    func testDeferredWindowNotificationsPruneReleasedWindowsAndRestoreAccessoryPolicy() {
+        for name in [NSWindow.willCloseNotification, NSWindow.didChangeOcclusionStateNotification] {
+            let main = DeferredWindowMainThread()
+            var policies: [NSApplication.ActivationPolicy] = []
+            let coordinator = WindowActivationCoordinator(mainThread: main,
+                setPolicy: { policies.append($0) }, activate: {})
+            weak var releasedWindow: NSWindow?
+            autoreleasepool {
+                let closing = window()
+                releasedWindow = closing
+                coordinator.show(closing)
+                main.drain()
+                XCTAssertEqual(policies.last, .regular)
+                closing.close()
+                NotificationCenter.default.post(name: name, object: closing)
+            }
+            XCTAssertNil(releasedWindow, "A queued notification must not retain its window")
+            main.drain()
+            XCTAssertEqual(policies, [.regular, .accessory])
+        }
+    }
+
     private func window() -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 120),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         return window
     }
+}
+
+private final class DeferredWindowMainThread: MainThread {
+    private var pending: [() -> Void] = []
+    func run(_ work: @escaping () -> Void) { pending.append(work) }
+    func drain() { while !pending.isEmpty { pending.removeFirst()() } }
 }

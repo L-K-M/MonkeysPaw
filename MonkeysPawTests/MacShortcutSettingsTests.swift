@@ -49,6 +49,16 @@ final class MacShortcutSettingsTests: XCTestCase {
         }
     }
 
+    func testCommandOrControlBindingDisplaysCommandOnMacOS() throws {
+        for (binding, display) in [("CmdOrCtrl+P", "Cmd+P"), ("Shift+CmdOrCtrl+Comma", "Shift+Cmd+Comma")] {
+            let accelerator = try Accelerator(binding)
+            XCTAssertEqual(Strings.shortcutBinding(.accelerator(accelerator)), display)
+            XCTAssertEqual(try CarbonHotkeyBackend.translate(accelerator),
+                           try CarbonHotkeyBackend.translate(Accelerator(display)))
+        }
+        XCTAssertFalse(Strings.carbonOverlappingModifiers.contains("CmdOrCtrl"))
+    }
+
     func testCaptureRejectsUnmodifiedModifierOnlyAutorepeatAndUnsupportedKeys() throws {
         for flags: NSEvent.ModifierFlags in [[], .capsLock, .function, .numericPad] {
             XCTAssertEqual(ShortcutRecorderButton.capture(try key(kVK_ANSI_P, flags: flags)), .ignored)
@@ -101,8 +111,6 @@ final class MacShortcutSettingsTests: XCTestCase {
         var captures: [String] = []
         recorder.onCapture = { captures.append($0) }
         window.orderFrontRegardless()
-        NSApp.activate()
-        window.makeKey()
         recorder.beginCapture()
         XCTAssertTrue(recorder.performKeyEquivalent(with: try key(kVK_Escape, window: window)))
         XCTAssertFalse(recorder.isRecording)
@@ -140,26 +148,50 @@ final class MacShortcutSettingsTests: XCTestCase {
         let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
         var captures: [String] = []
         recorder.onCapture = { captures.append($0) }
-        window.orderFrontRegardless()
-        NSApp.activate()
-        window.makeKey()
-        let deadline = Date().addingTimeInterval(2)
-        while !window.isKeyWindow, Date() < deadline {
-            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005))
-        }
-        XCTAssertTrue(window.isKeyWindow)
+        try makeRecorderKey(window)
         recorder.beginCapture()
-        NSApp.sendEvent(try key(kVK_Escape, text: "\u{1b}", window: window))
+        postAndDispatch(try key(kVK_Escape, text: "\u{1b}", window: window))
         XCTAssertFalse(recorder.isRecording)
         XCTAssertTrue(window.isVisible)
         XCTAssertTrue(captures.isEmpty)
         recorder.beginCapture()
-        NSApp.sendEvent(try key(kVK_ANSI_Comma, text: ",", flags: .command, window: window))
+        postAndDispatch(try key(kVK_ANSI_Comma, text: ",", flags: .command, window: window))
         XCTAssertEqual(captures, ["Cmd+Comma"])
         XCTAssertEqual(menuTarget.opens, 0, "Capture must intercept Command before menu dispatch")
         XCTAssertFalse(recorder.isRecording)
-        NSApp.sendEvent(try key(kVK_ANSI_Comma, text: ",", flags: .command, window: window))
+        postAndDispatch(try key(kVK_ANSI_Comma, text: ",", flags: .command, window: window))
         XCTAssertEqual(menuTarget.opens, 1, "After capture, the normal menu equivalent works again")
+    }
+
+    func testMonitorPassesTabRepeatsAndFlagChangesAndConsumesCaptureEvents() throws {
+        let window = recorderWindow()
+        defer { window.close() }
+        let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
+        try makeRecorderKey(window)
+        recorder.beginCapture()
+        let ignored = [try key(kVK_Tab, text: "\t", window: window),
+                       try key(kVK_ANSI_P, flags: .command, repeatKey: true, window: window),
+                       try key(kVK_Shift, flags: .shift, type: .flagsChanged, window: window)]
+        for event in ignored {
+            XCTAssertTrue(recorder.monitoredEvent(event) === event)
+            XCTAssertTrue(recorder.isRecording)
+        }
+        XCTAssertFalse(recorder.performKeyEquivalent(with: ignored[0]), "Tab keeps its native responder path")
+        var errors: [ShortcutRebindError] = []
+        var captures: [String] = []
+        recorder.onError = { errors.append($0) }
+        recorder.onCapture = { captures.append($0) }
+        XCTAssertNil(recorder.monitoredEvent(try key(kVK_Help, flags: .command, window: window)))
+        XCTAssertEqual(errors, [.unsupportedCarbonKey])
+        XCTAssertTrue(recorder.isRecording)
+        XCTAssertNil(recorder.monitoredEvent(try key(kVK_Escape, window: window)))
+        XCTAssertFalse(recorder.isRecording)
+        recorder.beginCapture()
+        XCTAssertNil(recorder.monitoredEvent(try key(kVK_ANSI_Comma, flags: .command, window: window)))
+        XCTAssertEqual(captures, ["Cmd+Comma"])
+        XCTAssertFalse(recorder.isRecording)
+        let normal = try key(kVK_ANSI_Comma, flags: .command, window: window)
+        XCTAssertTrue(recorder.monitoredEvent(normal) === normal)
     }
 
     func testUnsupportedCarbonKeysAndOverlappingCommandAliasesShowTypedErrorsWithoutLosingOldKey() throws {
@@ -214,11 +246,34 @@ final class MacShortcutSettingsTests: XCTestCase {
     }
 
     private func recorderWindow() -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        // Like the picker host, this panel can become key while its app is
+        // inactive. Regular NSWindow activation is unreliable in hosted CI.
+        let window = RecorderTestPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+            styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
         window.contentView = ShortcutRecorderButton(frame: .zero)
         return window
+    }
+
+    private func makeRecorderKey(_ window: NSWindow) throws {
+        window.orderFrontRegardless()
+        window.makeKey()
+        let deadline = Date().addingTimeInterval(2)
+        while !window.isKeyWindow, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005))
+        }
+        _ = try XCTUnwrap(window.isKeyWindow ? window : nil, "Non-activating recorder panel could not become key")
+    }
+
+    private func postAndDispatch(_ event: NSEvent) {
+        // Exercise the application event queue so the installed local monitor
+        // participates before normal key-equivalent/responder dispatch.
+        NSApp.postEvent(event, atStart: true)
+        while let next = NSApp.nextEvent(matching: [.keyDown, .flagsChanged], until: .distantPast,
+                                        inMode: .default, dequeue: true) {
+            NSApp.sendEvent(next)
+        }
     }
 
     private func key(_ code: Int, text: String = "", flags: NSEvent.ModifierFlags = [], repeatKey: Bool = false,
@@ -227,6 +282,11 @@ final class MacShortcutSettingsTests: XCTestCase {
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window?.windowNumber ?? 0, context: nil,
             characters: text, charactersIgnoringModifiers: text, isARepeat: repeatKey, keyCode: UInt16(code)))
     }
+}
+
+private final class RecorderTestPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 private final class RecorderMenuTarget: NSObject {

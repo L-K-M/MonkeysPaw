@@ -119,15 +119,15 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertFalse(panel.isVisible)
     }
 
-    func testSetupFromSettingsReusesSetupAndClosingSettingsWhileSetupIsKeyReturnsToAccessory() throws {
+    func testSetupFromSettingsReusesSetupAndClosingSettingsWithSetupVisibleReturnsToAccessory() throws {
         try start()
         let model = try XCTUnwrap(delegate.setupModel)
         delegate.showSettings()
         let settings = try settings()
         settings.presentation.showSetup()
         let setup = try setupWindow()
-        setup.makeKeyAndOrderFront(nil)
-        XCTAssertTrue(spin { setup.isKeyWindow })
+        XCTAssertTrue(setup.isVisible)
+        XCTAssertEqual(applicationActivations, 1)
         XCTAssertTrue(delegate.setupModel === model)
         XCTAssertEqual(policies.last, .regular)
         XCTAssertEqual(legacySetupWrites, 1)
@@ -257,7 +257,7 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertFalse(presentation.isChoosingFolder)
     }
 
-    func testBothMenusRouteCommandCommaWhileSettingsOrSetupIsKey() throws {
+    func testBothMenusRouteCommandCommaForSettingsAndSetupWindows() throws {
         try start()
         delegate.installMainMenu()
         let main = try XCTUnwrap(NSApp.mainMenu)
@@ -274,18 +274,49 @@ final class MacSettingsWindowTests: XCTestCase {
         let settings = try settings()
         let window = try XCTUnwrap(settings.window)
         XCTAssertTrue(window.isVisible)
-        XCTAssertTrue(spin { window.isKeyWindow })
+        // Menu routing and activation requests do not require the hosted app
+        // to win a cooperative activation request on the CI runner.
         XCTAssertTrue(main.performKeyEquivalent(with: try commandComma(window: window)))
         XCTAssertEqual(applicationActivations, 2)
 
         settings.presentation.showSetup()
         let setup = try setupWindow()
-        XCTAssertTrue(spin { setup.isKeyWindow })
+        XCTAssertTrue(setup.isVisible)
         window.close()
+        XCTAssertEqual(policies.last, .accessory)
         XCTAssertTrue(main.performKeyEquivalent(with: try commandComma(window: setup)))
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(applicationActivations, 3)
         XCTAssertEqual(NSApp.activationPolicy(), .regular)
+    }
+
+    func testApplicationActivationRefreshesGeneralSettings() throws {
+        try start()
+        delegate.showSettings()
+        let presentation = try settings().presentation
+        let model = try XCTUnwrap(delegate.settingsModel)
+        model.setLibraryFolder("relative")
+        XCTAssertEqual(presentation.general.settingsError, .invalidLibraryFolder)
+
+        delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+        XCTAssertNil(presentation.general.settingsError, "Refresh clears transient settings intent errors")
+        XCTAssertTrue(presentation.generalMessages.isEmpty)
+        XCTAssertEqual(presentation.general.activeLibraryPath, root.path)
+    }
+
+    func testGeneralMessageMappingPreservesSettingsErrorsAndShowsOnlyFailures() {
+        let error = SettingsError.writeFailed(.ioFailure)
+        let settingsMessage = GeneralSettingsStrings.settingsError(error)
+        XCTAssertEqual(SettingsViewState.generalMessages(for: .settingsNotSaved(error),
+            switchMessage: nil, settingsError: error), [settingsMessage])
+        XCTAssertEqual(SettingsViewState.generalMessages(for: .settingsNotSaved(error),
+            switchMessage: "Choice could not be saved", settingsError: error), ["Choice could not be saved"])
+        XCTAssertEqual(SettingsViewState.generalMessages(for: .switched,
+            switchMessage: "Folder changed", settingsError: error), [settingsMessage])
+        XCTAssertTrue(SettingsViewState.generalMessages(for: .switched,
+            switchMessage: "Folder changed", settingsError: nil).isEmpty)
+        XCTAssertEqual(SettingsViewState.generalMessages(for: .deliveryInFlight,
+            switchMessage: "Wait for delivery", settingsError: error), ["Wait for delivery", settingsMessage])
     }
 
     func testSettingsCancelsArmedTargetAndDeferredBlurThenNormalPickerDismissalStillWorks() throws {
@@ -366,14 +397,6 @@ final class MacSettingsWindowTests: XCTestCase {
         try XCTUnwrap(NSApp.windows.first {
             !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.setupTitle
         })
-    }
-
-    private func spin(_ condition: () -> Bool) -> Bool {
-        let deadline = Date().addingTimeInterval(2)
-        while !condition(), Date() < deadline {
-            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005))
-        }
-        return condition()
     }
 }
 

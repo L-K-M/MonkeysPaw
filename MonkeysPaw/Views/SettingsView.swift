@@ -44,12 +44,22 @@ final class SettingsViewState: ObservableObject {
     var canUseDefault: Bool { !general.isDefaultLibrary || general.settingsError != nil }
 
     var generalMessages: [String] {
+        Self.generalMessages(for: general.lastSwitchMessage,
+            switchMessage: general.lastSwitchMessage.flatMap(GeneralSettingsStrings.message),
+            settingsError: general.settingsError)
+    }
+
+    /// Only failure outcomes belong in General's red message list. A missing
+    /// switch mapping must not hide a settings error; mapped save failures
+    /// already include it and avoid duplicate copy.
+    static func generalMessages(for outcome: LibrarySwitchOutcome?, switchMessage: String?,
+                                settingsError: SettingsError?) -> [String] {
         var messages: [String] = []
-        if let outcome = general.lastSwitchMessage, let message = GeneralSettingsStrings.message(for: outcome) {
+        if let outcome, outcome != .switched, let message = switchMessage {
             messages.append(message)
+            if case .settingsNotSaved = outcome { return messages }
         }
-        if case .settingsNotSaved = general.lastSwitchMessage { return messages }
-        if let error = general.settingsError { messages.append(GeneralSettingsStrings.settingsError(error)) }
+        if let error = settingsError { messages.append(GeneralSettingsStrings.settingsError(error)) }
         return messages
     }
 
@@ -89,7 +99,6 @@ struct SettingsView: View {
             general.tabItem { Text(Strings.generalTab) }
             shortcuts.tabItem { Text(Strings.shortcutsTab) }
         }
-        .padding(16)
     }
 
     private var general: some View {

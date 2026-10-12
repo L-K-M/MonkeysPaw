@@ -46,7 +46,7 @@ enum Strings {
             var parts: [String] = []
             let modifiers: [(Accelerator.Modifier, String)] = [
                 (.control, "Ctrl"), (.alt, "Alt"), (.shift, "Shift"), (.command, "Cmd"),
-                (.superKey, "Super"), (.commandOrControl, "CmdOrCtrl"),
+                (.superKey, "Super"), (.commandOrControl, "Cmd"),
             ]
             for (modifier, name) in modifiers where accelerator.modifiers.contains(modifier) { parts.append(name) }
             parts.append(acceleratorKeyName(accelerator.key))
@@ -141,7 +141,7 @@ enum Strings {
     static let defaultHotkey = "Carbon default: ⌃⌥P"
     static let carbonRegistered = "Carbon shortcut registered"
     static let carbonUnsupportedKey = "This key has no macOS Carbon shortcut equivalent. Choose another key."
-    static let carbonOverlappingModifiers = "Cmd, Super, and CmdOrCtrl all mean Command on macOS. Use only one."
+    static let carbonOverlappingModifiers = "This shortcut repeats the Command modifier. Use Command only once."
     static let carbonTranslationFailure = "Could not translate this shortcut."
     static let carbonHandlerFailure = "Could not install the Carbon shortcut handler."
 

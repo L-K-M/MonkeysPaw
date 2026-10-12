@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Returning from System Settings refreshes grants and registration state.
         setupModel?.refresh()
         shortcutsSettingsModel?.refresh()
+        generalSettingsModel?.refresh()
     }
 
     private func compose(log: LogSink) {

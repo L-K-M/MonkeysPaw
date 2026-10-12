@@ -53,10 +53,8 @@ final class ShortcutRecorderButton: NSButton {
         title = Strings.recordingShortcut
         setAccessibilityLabel(Strings.recordingShortcut)
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            guard let self, self.isRecording, let window = self.window,
-                  event.window === window, window.isKeyWindow else { return event }
-            self.record(event)
-            return nil
+            guard let self else { return event }
+            return self.monitoredEvent(event)
         }
         for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
             windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
@@ -83,14 +81,13 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard isRecording else { return super.performKeyEquivalent(with: event) }
-        record(event)
-        return true
+        if isRecording, record(event) { return true }
+        return super.performKeyEquivalent(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
-        guard isRecording else { super.keyDown(with: event); return }
-        record(event)
+        if isRecording, record(event) { return }
+        super.keyDown(with: event)
     }
 
     override func cancelOperation(_ sender: Any?) {
@@ -105,15 +102,23 @@ final class ShortcutRecorderButton: NSButton {
         windowObservers = []
     }
 
-    private func record(_ event: NSEvent) {
+    /// Ignored input keeps native focus navigation, including the responder
+    /// fallback when AppKit dispatches Tab to this button.
+    func monitoredEvent(_ event: NSEvent) -> NSEvent? {
+        guard isRecording, let window, event.window === window, window.isKeyWindow else { return event }
+        return record(event) ? nil : event
+    }
+
+    private func record(_ event: NSEvent) -> Bool {
         switch Self.capture(event) {
-        case .ignored: break
+        case .ignored: return false
         case .cancelled: stopCapture()
         case .unsupportedKey: onError?(.unsupportedCarbonKey)
         case .accelerator(let text):
             stopCapture()
             onCapture?(text)
         }
+        return true
     }
 
     static func capture(_ event: NSEvent) -> Capture {

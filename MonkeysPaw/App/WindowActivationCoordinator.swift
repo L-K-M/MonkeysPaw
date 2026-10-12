@@ -25,13 +25,18 @@ final class WindowActivationCoordinator {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
                 [weak self] notification in
                 guard let window = notification.object as? NSWindow else { return }
+                // Copy only the name: retaining Notification across a deferred
+                // MainThread hop would also retain its window object.
+                let name = notification.name
                 self?.mainThread.run { [weak self, weak window] in
-                    guard let self, let window, self.windows[ObjectIdentifier(window)] != nil else { return }
+                    guard let self else { return }
                     // willClose precedes orderOut, so exclude the closing window
                     // before inspecting visibility. Reopening registers it again.
-                    if notification.name == NSWindow.willCloseNotification {
+                    if name == NSWindow.willCloseNotification, let window {
                         self.windows.removeValue(forKey: ObjectIdentifier(window))
                     }
+                    // A closed window may have died before this hop. Always
+                    // prune weak registrations and recompute the shared policy.
                     self.updatePolicy()
                 }
             })
