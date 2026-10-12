@@ -114,7 +114,8 @@ public final class GeneralSettingsModel {
         onChange?()
     }
 
-    private static func sameFolder(_ lhs: String, _ rhs: String) -> Bool {
+    // Onboarding shares this comparison and the default-folder intent mapping.
+    static func sameFolder(_ lhs: String, _ rhs: String) -> Bool {
         guard let left = normalizedAbsolutePath(lhs), let right = normalizedAbsolutePath(rhs) else { return false }
         return left == right
     }
