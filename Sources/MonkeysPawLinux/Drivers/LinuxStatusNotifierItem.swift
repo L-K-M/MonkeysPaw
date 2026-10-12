@@ -95,8 +95,10 @@ final class LinuxStatusNotifierItem {
         let attempt = ConnectionAttempt(self, address: busAddress)
         self.attempt = attempt
         let callback: GAsyncReadyCallback = { _, result, data in
-            guard let result, let data else { return }
+            // Balance the retained attempt before any other early return.
+            guard let data else { return }
             let attempt = Unmanaged<ConnectionAttempt>.fromOpaque(data).takeRetainedValue()
+            guard let result else { return }
             let connection = attempt.address == nil ? g_bus_get_finish(result, nil)
                 : g_dbus_connection_new_for_address_finish(result, nil)
             guard let owner = attempt.box.current, owner.attempt === attempt else {
@@ -226,8 +228,9 @@ final class LinuxStatusNotifierItem {
             "RegisterStatusNotifierItem", StatusNotifierWire.tuple([g_variant_new_string(serviceName)]), type,
             G_DBUS_CALL_FLAGS_NO_AUTO_START, Int32(Limits.portalCallTimeout.timeInterval * 1_000),
             work.cancellable, { source, result, data in
-                guard let source, let result, let data else { return }
+                guard let data else { return }
                 let work = Unmanaged<Registration>.fromOpaque(data).takeRetainedValue()
+                guard let source, let result else { return }
                 let reply = g_dbus_connection_call_finish(mp_dbus_connection(source), result, nil)
                 defer { if let reply { g_variant_unref(reply) } }
                 guard let owner = work.box.current, owner.registration === work,
@@ -339,7 +342,11 @@ final class LinuxStatusNotifierItem {
             if String(cString: g_variant_get_string(event, nil)) == "clicked", entry?.enabled == true {
                 scheduleActivation(id)
             }
-        default: break
+        default:
+            // Unreachable while GDBus validates calls against the exported XML;
+            // every invocation must still be completed exactly once.
+            g_dbus_method_invocation_return_dbus_error(invocation, "org.freedesktop.DBus.Error.UnknownMethod",
+                "Unknown menu method")
         }
     }
 
