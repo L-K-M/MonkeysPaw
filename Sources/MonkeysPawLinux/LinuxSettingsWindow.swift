@@ -23,6 +23,7 @@ final class LinuxSettingsWindow {
     private var defaultButton: GTK.Widget!
     private var forgetAllButton: GTK.Widget!
     private var forgetConfirmation: GTK.Widget!
+    private var forgetCancelButton: GTK.Widget!
     private var forgetMessage: GTK.Widget!
     private var toggleBinding: GTK.Widget!
     private var toggleRegistration: GTK.Widget!
@@ -141,12 +142,15 @@ final class LinuxSettingsWindow {
             self.rememberedValues.confirmForgetAll()
         }
         gtk_widget_set_name(confirm, "settings-confirm-forget-all")
+        // GNOME's style for an irreversible confirmation.
+        gtk_widget_add_css_class(confirm, "destructive-action")
         mp_accessible_label(confirm, RememberedValuesStrings.forgetAll)
         let cancel = GTK.button(RememberedValuesStrings.cancel) { [weak self] in
             guard let self, self.isVisible else { return }
             self.rememberedValues.cancelForgetAll()
         }
         gtk_widget_set_name(cancel, "settings-cancel-forget-all")
+        forgetCancelButton = cancel
         mp_accessible_label(cancel, RememberedValuesStrings.cancel)
         gtk_box_append(mp_box(confirmButtons), cancel)
         gtk_box_append(mp_box(confirmButtons), confirm)
@@ -233,8 +237,13 @@ final class LinuxSettingsWindow {
         guard !isDestroyed else { return }
         let state = rememberedValues.state
         let confirming = state.confirmation == .forgetAll
+        let wasConfirming = gtk_widget_get_visible(forgetConfirmation) != 0
         gtk_widget_set_visible(forgetConfirmation, confirming ? 1 : 0)
         gtk_widget_set_sensitive(forgetAllButton, confirming ? 0 : 1)
+        // Keyboard and screen-reader users land on the safe choice; focus
+        // returns to the trigger once the confirmation closes.
+        if confirming, !wasConfirming { gtk_widget_grab_focus(forgetCancelButton) }
+        if !confirming, wasConfirming { gtk_widget_grab_focus(forgetAllButton) }
         setMessage(forgetMessage, state.message)
     }
 

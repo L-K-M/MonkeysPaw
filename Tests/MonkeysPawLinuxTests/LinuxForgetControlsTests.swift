@@ -191,8 +191,13 @@ final class LinuxForgetControlsTests: XCTestCase {
         XCTAssertEqual(gtk_widget_get_sensitive(button), 0)
         XCTAssertEqual(labelText(try settingsWidget("settings-forget-confirmation-message", in: window)),
             RememberedValuesStrings.confirmationMessage)
+        let cancel = try settingsWidget("settings-cancel-forget-all", in: window)
+        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), cancel)
+        XCTAssertEqual(gtk_widget_has_css_class(try settingsWidget("settings-confirm-forget-all", in: window),
+            "destructive-action"), 1)
         try click("settings-cancel-forget-all", in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(confirmation) == 0 })
+        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), button)
         XCTAssertEqual(try data.read(at: "values.json"), original)
         XCTAssertEqual(try openFormAfterSettings("Alpha").values["topic"], "Alpha draft")
         environment.pickerModel.escape()
