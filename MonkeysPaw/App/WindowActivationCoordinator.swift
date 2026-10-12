@@ -51,6 +51,8 @@ final class WindowActivationCoordinator {
         mainThread.run { [weak self, weak window] in
             guard let self, let window else { return }
             self.windows[ObjectIdentifier(window)] = WindowReference(window)
+            // Ordering front does not restore a window you minimized to the Dock.
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.orderFrontRegardless()
             self.updatePolicy()
             self.activate()

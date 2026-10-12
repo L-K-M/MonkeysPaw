@@ -112,6 +112,8 @@ final class MacShortcutSettingsTests: XCTestCase {
         recorder.onCapture = { captures.append($0) }
         window.orderFrontRegardless()
         recorder.beginCapture()
+        recorder.beginCapture()
+        XCTAssertTrue(recorder.isRecording, "A second activation keeps the running capture")
         XCTAssertTrue(recorder.performKeyEquivalent(with: try key(kVK_Escape, window: window)))
         XCTAssertFalse(recorder.isRecording)
         XCTAssertTrue(window.isVisible, "Escape cancels capture without closing its window")

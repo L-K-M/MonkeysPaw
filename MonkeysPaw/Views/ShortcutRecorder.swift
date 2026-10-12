@@ -47,7 +47,8 @@ final class ShortcutRecorderButton: NSButton {
     override var acceptsFirstResponder: Bool { true }
 
     @objc func beginCapture() {
-        guard let window, window.makeFirstResponder(self) else { return }
+        // Space or a second click on the focused button must not restart capture.
+        guard !isRecording, let window, window.makeFirstResponder(self) else { return }
         stopCapture()
         isRecording = true
         title = Strings.recordingShortcut
