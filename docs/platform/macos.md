@@ -155,3 +155,44 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 - [ ] NOT RUN: moving/removing the library shows the unavailable banner, retains cached prompts and requires restart after restoration.
 - [ ] NOT RUN: delivery hides once and pastes once in the same target; fallback keeps the clipboard and gives Cmd+V guidance.
 - [ ] NOT RUN: VoiceOver identifies search, results, field kinds/descriptions, preview and actions inside the panel.
+
+## M2 macOS artifacts and installation: NOT RUN
+
+The Linux implementation host cannot build or run these artifacts. Only the
+`macos-artifacts` CI job on `macos-26` with Xcode 26.0 proves the universal
+build, signatures, bundle versions, image integrity/content, zip equivalence
+and five-second launches of both packaged copies. CI does not exercise a
+quarantined download, Gatekeeper approval or installation on your Mac.
+
+- Commit / `macos-artifacts` CI run:
+- Artifact version / build number / SHA-256:
+- macOS / hardware / signing identity / date / tester:
+- Gatekeeper message and approval steps:
+
+1. Download `MonkeysPaw-<version>.dmg` and `.zip` from the CI artifacts or
+   release. Record the exact build and hashes; check for the download's
+   quarantine attribute with `xattr -p com.apple.quarantine <path>`.
+2. Open the dmg in Finder. Confirm it contains `MonkeysPaw.app` and an
+   **Applications** link. Drag the app to Applications, eject the image,
+   then open `/Applications/MonkeysPaw.app`.
+3. Ad-hoc builds have no Developer ID certificate and are not notarized.
+   A quarantined download can be blocked by Gatekeeper. Record the exact
+   message. If you trust this build, use System Settings → Privacy &
+   Security → **Open Anyway** when offered, then confirm **Open**. Do not
+   remove quarantine for this check: record the real approval path, using
+   [Apple's instructions](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/26/mac/26).
+4. Confirm the menu-bar item appears and no Dock icon appears, then open
+   Setup from the menu. Confirm the app works after the dmg has been ejected.
+   Quit and relaunch, then run the picker/delivery matrix above from this copy.
+5. Quit the installed app, extract the zip separately, launch that copy
+   and record its Gatekeeper behavior and version. On an Intel Mac, also
+   record whether the `x86_64` slice launches; CI runs the native runner
+   architecture only.
+
+- [ ] NOT RUN: the downloaded dmg opens and provides a working Applications link.
+- [ ] NOT RUN: the copied app launches after the image is ejected and after restart.
+- [ ] NOT RUN: Gatekeeper behavior and any approval steps are recorded for ad-hoc signing.
+- [ ] NOT RUN: the installed menu-bar app has the expected version and no Dock icon.
+- [ ] NOT RUN: the zip copy launches with the same version and behavior.
+- [ ] NOT RUN: installed-app Setup, picker and delivery checks above pass.
+- [ ] Optional, NOT RUN: an Intel Mac launches the universal app's `x86_64` slice.

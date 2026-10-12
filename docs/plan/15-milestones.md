@@ -37,6 +37,10 @@
 
 **Ordering.**
 
+- J3 adds universal macOS dmg/zip packaging and CI proof before J4 wires tag
+  releases; M2 release acceptance still requires the `v0.1.0` artifacts and
+  an owner-run dmg installation on a real Mac.
+
 - I1 adds Core settings persistence and the General/onboarding model, including
   legacy Setup import; later slices wire the desktop settings, folder step and seeds.
 

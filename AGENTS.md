@@ -42,6 +42,7 @@ Run these commands from the repository root:
 |---|---|
 | Build macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build` |
 | Test macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO clean test` |
+| Package universal macOS dmg and zip (requires Xcode and create-dmg) | `scripts/package-macos.sh [version [build-number]]` |
 | Validate Xcode object IDs without Xcode | `python3 scripts/check-pbxproj.py` |
 | Build Core without GTK | `swift build --target MonkeysPawCore` |
 | Build Linux app | `swift build --product monkeyspaw` |
