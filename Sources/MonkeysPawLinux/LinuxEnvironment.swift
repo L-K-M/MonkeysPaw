@@ -251,8 +251,12 @@ final class LinuxEnvironment {
               (try? SettingsDocument(libraryFolderPath: directory.path)) != nil else {
             throw FileStoreError.invalidRoot
         }
-        let files = try RootedFileStore(libraryRoot: directory)
-        if directory.standardizedFileURL.path.utf8.elementsEqual(defaultLibraryDirectory.standardizedFileURL.path.utf8) {
+        // The default keeps the canonicalizing root rule, so a default folder
+        // linked into a synced directory still loads; a chosen root must not be a symlink.
+        let isDefault = directory.standardizedFileURL.path.utf8
+            .elementsEqual(defaultLibraryDirectory.standardizedFileURL.path.utf8)
+        let files = isDefault ? try RootedFileStore(root: directory) : try RootedFileStore(libraryRoot: directory)
+        if isDefault {
             try files.createRoot()
         } else {
             try files.requireRoot()

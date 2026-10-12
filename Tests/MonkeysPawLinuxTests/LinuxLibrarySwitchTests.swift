@@ -407,6 +407,23 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         }
     }
 
+    func testSymlinkedDefaultLibraryStillLoadsAndCanBeReselected() throws {
+        // Users may link the default folder into a synced directory; only a
+        // chosen folder must not be a symlink itself.
+        let target = try library("Synced", prompts: ["s.md": "Synced"])
+        try FileManager.default.createDirectory(at: root.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: target)
+        try openPicker()
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(environment.pickerModel.results.map(\.relativePath), ["s.md"])
+
+        XCTAssertEqual(environment.switchLibrary(to: nil), .switched)
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        try openPicker()
+        XCTAssertEqual(environment.pickerModel.results.map(\.relativePath), ["s.md"])
+    }
+
     func testUnusedEnvironmentShutdownDoesNotConstructTheLibraryOrPanel() {
         XCTAssertNil(gtk_application_get_windows(application))
         environment.shutdown()

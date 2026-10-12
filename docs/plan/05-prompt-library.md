@@ -43,7 +43,8 @@ Paths, contents and underlying error bodies are never logged.
 Linux composition reads this choice before building its library graph. Folder
 switching refuses an in-flight delivery and otherwise dismisses the picker
 first. A chosen folder must be an existing readable directory, with no symlink
-at the selected root; only the platform default may be created. Validation
+at the selected root; only the platform default may be created, and it may be
+a symlink to a directory, resolved as before. Validation
 failure leaves the graph and settings intact. A valid switch replaces only the
 library service, index, watcher and picker, keeping the native panel and shared
 app-data stores. It retires old callbacks and drops the old picker's session
