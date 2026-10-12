@@ -187,8 +187,16 @@ Footers differ per OS:
    the library's typed, sanitized errors; paths and content are never logged.
    There is no batch transaction: a failure or crash after some creates leaves
    a non-empty library, so the next run seeds nothing and does not fill gaps.
-   Settings records "seeds offered" separately; onboarding owns the no-server
-   condition and when to offer seeds.
+   `OnboardingModel` offers seeds only when `SettingsModel.needsSeedOffer` is
+   true, `LibraryService.entries()` is empty, the active graph is available,
+   and an injected predicate says no sync server is configured (false until
+   M6). Accepting or declining first calls `markSeedsOffered`; a failed record
+   copies nothing and leaves the step pending. Accepting then invokes the
+   active graph's `SeedService.seedIfEmpty()` through an injected service
+   closure. `SeedSummary` counts and typed, sanitized `SeedFailure` values
+   are presentation state. A copy failure, even before the first create,
+   never repeats the recorded offer after a restart. A prompt arriving after
+   the offer can make the service return zero for both counts.
 5. A one-screen tour of the picker and fill form.
 
 Settings version 1 records `setupPresented`, `libraryFolderCompleted` and
@@ -197,9 +205,17 @@ library step too. Composition supplies the legacy M1 Setup fact from macOS
 `hasShownDeliverySetup` or Linux `<config>/setup-shown` only when settings are
 missing: it marks Setup presented in memory, leaves the library step pending,
 and is saved with the next successful settings change. Folder changes, including
-returning to the default, keep every first-run flag. The later seeding slice must
-record the offer successfully before copying seeds, so it cannot repeat after a
-restart. A read-only settings error is surfaced by `SettingsModel`. While
+returning to the default, keep every first-run flag. `OnboardingModel` resumes
+at the first incomplete eligible step: Setup presented, folder, then seed offer.
+Sync sign-in and the tour remain deferred to M6 and M3. Folder intents share
+General's `LibraryLocationControl` composition exception (§4.2); validation,
+graph replacement and folder persistence remain in composition. Only a
+successful switch or a saved, already-active healthy folder permits
+`completeLibraryFolderStep`. `settingsNotSaved`, invalid targets, delivery in
+progress and unavailable graphs do not complete the step. Service closures
+resolve the active graph at call time, so choosing another folder also changes
+the seed eligibility check and copy destination. A read-only settings error
+is surfaced by `SettingsModel` and `OnboardingModel`. While
 settings are read-only, the model reports `needsSetupPresentation`,
 `needsLibraryFolderStep` and `needsSeedOffer` as false. The UI shows the error
 instead of repeating onboarding that cannot persist each launch. A failed
@@ -221,8 +237,8 @@ settings use the default library.
 
 | State | Behaviour |
 |---|---|
-| Library folder missing or unreadable at start | Notification. The library step of first run reopens. The tray menu says "Library unavailable". |
-| Folder disappears, becomes a non-directory or cannot be enumerated while running | Root unavailability as defined in §5.5 stops the watcher; the picker shows a banner and the index stays in memory read-only. The menu/tray shows the startup row's "Library unavailable" state once the settings slice adds it. Root loss emits no per-file deletions. Restoration requires a restart. |
+| Library folder missing or unreadable at start | `LibraryStatusModel.unavailableAtStartup` requests one path-free notification per process through composition's `LibraryAvailabilityNotifier`. `OnboardingModel` reopens the library step for this session, without clearing the persisted completion flag; only a successful folder completion clears the recovery requirement. Read-only settings still suppress onboarding and show their error. The tray menu says "Library unavailable". |
+| Folder disappears, becomes a non-directory or cannot be enumerated while running | Root unavailability as defined in §5.5 stops the watcher; the picker shows a banner and the index stays in memory read-only. `LibraryStatusModel.lostWhileRunning` changes the menu/tray label to "Library unavailable", with no startup notification or reopened folder step. Root loss emits no per-file deletions. Restoration requires a restart; this status is terminal for the process. |
 | Save fails (permissions, disk full) | Typed error in the editor. The draft is kept; Retry is offered. |
 | Watcher error or event overflow | One path-free warning per error/overflow streak, defined in §4.6. Each delivered native batch triggers one coalesced full rescan, idle-coalesced on Linux. Linux GIO hides inotify overflow (§4.6). |
 | Picker: no matches | "No prompts match '<query>'" with actions: create a prompt titled `<query>`, write it with the assistant (once configured), open the library folder. |
@@ -239,6 +255,13 @@ settings use the default library.
 | Sync: snapshot in progress | The footer says "resyncing…". Automatic. |
 | Removed from a group | Notification: "You were removed from <group>; N local files were kept". |
 | Path renamed by a clash | Silent. The prompt's history entry notes the rename. |
+
+Composition retains one `OnboardingModel` so recovery survives closing its
+window, and shares one `LibraryStatusModel`, updated from the active graph
+alongside `PickerModel.libraryAvailable`. Menus, Settings and onboarding
+subscribe independently with removable observer tokens; updates, notification
+requests and onboarding publications use the injected `MainThread`, under both
+inline and queued delivery. `OnboardingStrings` owns the shared path-free copy.
 
 ### 11.6 Accessibility and language
 
