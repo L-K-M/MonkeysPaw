@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import Darwin
 import MonkeysPawCore
 import XCTest
@@ -85,6 +84,7 @@ final class MacForgetControlsTests: XCTestCase {
         let clipboardRevision = NSPasteboard.general.changeCount
         XCTAssertTrue(presentation.showsForgetValues)
         XCTAssertTrue(presentation.canForgetValues)
+        presentation.showStatus(Strings.promptFileUnavailable)
 
         try pressForgetValues()
         XCTAssertTrue(spin { (try? self.values.rememberedValues(for: alpha)) == [:] })

@@ -72,6 +72,7 @@ final class PickerViewState: ObservableObject {
 
     func forgetSelectedValues() {
         guard isCurrent(), showsForgetValues else { return }
+        transientStatus = nil
         model.forgetSelectedValues()
     }
 
