@@ -202,6 +202,17 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertEqual(keychain.mutations.filter { $0 == .add }.count, 1)
     }
 
+    func testNativeInteractionStatusesAreReportedAsLocked() {
+        // Apple SecBase.h: errSecInteractionNotAllowed and the legacy
+        // errSecInteractionRequired. Keep Security imports in the driver.
+        let statuses: [Int32] = [-25308, -25315]
+        for status in statuses {
+            XCTAssertThrowsError(try SystemKeychainAccess.check(status)) {
+                XCTAssertEqual($0 as? KeychainAccessError, .locked)
+            }
+        }
+    }
+
     func testRealLoginKeychainRoundTripWithoutPrompts() throws {
         let service = "ch.lkmc.monkeyspaw.tests." + UUID().uuidString
         let store = KeychainSecretStore(service: service)

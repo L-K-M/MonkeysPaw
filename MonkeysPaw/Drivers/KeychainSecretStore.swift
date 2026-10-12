@@ -119,7 +119,7 @@ protocol KeychainAccess {
     func delete(service: String, account: String) throws
 }
 
-enum KeychainAccessError: Error {
+enum KeychainAccessError: Error, Equatable {
     case notFound
     case duplicateItem
     case locked
@@ -164,12 +164,12 @@ struct SystemKeychainAccess: KeychainAccess {
          kSecAttrAccount as String: account]
     }
 
-    private static func check(_ status: OSStatus) throws {
+    static func check(_ status: OSStatus) throws {
         switch status {
         case errSecSuccess: return
         case errSecItemNotFound: throw KeychainAccessError.notFound
         case errSecDuplicateItem: throw KeychainAccessError.duplicateItem
-        case errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled:
+        case errSecInteractionNotAllowed, errSecInteractionRequired, errSecAuthFailed, errSecUserCanceled:
             throw KeychainAccessError.locked
         case errSecNotAvailable, errSecNoDefaultKeychain, errSecNoSuchKeychain,
              errSecInvalidKeychain, errSecMissingEntitlement:
