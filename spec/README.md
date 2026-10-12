@@ -496,6 +496,13 @@ then compares the entire encoded Data byte-for-byte with the source. JSON
 strings are decoded directly into Swift strings to preserve BOMs and large
 Int64s. No fixtures are emitted by the DTO encoder or schema descriptions;
 the examples and invalid mutations are independently authored from §8/§19.
+Integer encoders emit plain decimal tokens. The corpus pins canonical
+encoding, rather than every noncanonical JSON spelling: Foundation may
+accept some integral fraction/exponent tokens, and its dictionary decoder
+collapses duplicate object members. Neither behavior is a portable decoding
+guarantee or an assertion made by this corpus; producers use canonical JSON
+with unique keys. A parser that enforces numeric token spelling or duplicate
+member rejection would need a separate lexical decoding contract.
 
 `Sources/MonkeysPawCore/SyncAPI/` exports Codable + Sendable value types under
 `SyncAPI`, and data-only descriptions for S2's JSON Schema 2020-12 exporter:
@@ -538,10 +545,11 @@ definitions, with these corpus boundaries:
   required ULID `group_id`. Feed identities retain `kind: user|group` and
   `user:<ULID>`/`group:<ULID>` keys. Private feed metadata omits group id,
   name and role; group metadata requires all three.
-- `rev`, successful write `seq`, and delete/move `base_rev` are positive
-  Int64; PUT `base_rev` and feed head/seq may be zero. Overflow, fractions,
+- `rev`, successful write/feed `seq`, and delete/move `base_rev` are positive
+  Int64; PUT `base_rev` and feed head may be zero. Overflow, fractional values,
   booleans and numeric strings are rejected. The corpus pins values beyond
   2^53 and at Int64.max without floating-point conversion.
+  A snapshot at head zero must be empty; every emitted item has positive seq.
 - `database_id` is required and explicitly nullable on pull requests; null
   means first sync. Response database ids are required/non-null. Cursor
   values are arbitrary **nonempty opaque strings**, including `"0"`, delta

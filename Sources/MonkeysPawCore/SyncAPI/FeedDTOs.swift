@@ -42,7 +42,7 @@ extension SyncAPI {
         }
 
         public static let schema: SyncAPISchema = .oneOf([
-            .object(fields: [.init("seq", .seq), .init("kind", .constant("upsert")), .init("prompt", .reference("FeedPrompt"))]),
+            .object(fields: [.init("seq", .integer(minimum: 1)), .init("kind", .constant("upsert")), .init("prompt", .reference("FeedPrompt"))]),
             .object(fields: [.init("seq", .integer(minimum: 1)), .init("kind", .constant("delete")), .init("id", .ulid)]),
             .object(fields: [.init("seq", .integer(minimum: 1)), .init("kind", .constant("move_out")), .init("id", .ulid)])
         ])

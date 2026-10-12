@@ -141,7 +141,7 @@ properties. JSON keys are snake_case, ULIDs uppercase Crockford, UUIDs
 lowercase hyphenated, and timestamps Gregorian UTC with exactly three
 fractional digits (`2026-10-12T20:10:56.557Z`). Counters are Int64: `rev` and
 successful write `seq` ≥1, create `base_rev` ≥0, delete/move `base_rev` ≥1,
-feed `seq`/`head` ≥0. Prompt scope is `private` or `group`; the latter requires
+feed `seq` ≥1 and `head` ≥0. Prompt scope is `private` or `group`; the latter requires
 `group_id`, and private omits it. The database's internal `user` scope and
 feed key `user:<ULID>` keep their existing spelling (B2).
 
@@ -254,7 +254,8 @@ slices, not by an unbounded Foundation JSON encoder.
     Cursors are nonempty opaque strings at the DTO boundary; only the server
     parses them and can report malformed/expired ones (B2/B3/B17).
   - Heads are durable high-water marks, independent of retained change rows
-    and never reset by retention (B18). Empty snapshot scopes can have head 0.
+    and never reset by retention (B18). A snapshot with head 0 is empty; every
+    emitted item has a positive seq (B2/B17/B18).
 - **Moves** write `move_out` in the old scope and `upsert` in the new one,
   in one transaction.
 - **Deleting a group** deletes its prompts. The group's scope disappears for
