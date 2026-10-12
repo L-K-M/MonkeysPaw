@@ -14,6 +14,7 @@ final class MemoryFileStore: FileStore {
     var failNextDelete = false
     var failMoveNumber: Int?
     var moveCount = 0
+    var onStamp: ((String, FileStamp?) throws -> Void)?
     var onRead: ((String) throws -> Void)?
     var onWrite: ((String) -> Void)?
     var onCreate: ((String) throws -> Void)?
@@ -32,7 +33,9 @@ final class MemoryFileStore: FileStore {
     func stamp(at path: String) throws -> FileStamp? {
         accessCount += 1
         try FileStorePath.validate(path)
-        return files[Data(path.utf8)]?.stamp
+        let stamp = files[Data(path.utf8)]?.stamp
+        try onStamp?(path, stamp)
+        return stamp
     }
 
     func read(at path: String) throws -> Data {

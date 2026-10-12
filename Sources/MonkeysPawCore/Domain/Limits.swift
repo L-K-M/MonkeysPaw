@@ -114,6 +114,9 @@ public enum Limits {
     /// §5.2: bound copy-name probes (Name 2.md through Name 1001.md).
     public static let libraryCopyCandidateCap: Int = 1_000
 
+    /// §11.5: bound exclusive publication attempts for no-match creation.
+    public static let libraryCreateAttemptCap: Int = 64
+
     /// ULID's 80 random bits, supplied by the saving service.
     public static let ulidEntropyBytes: Int = 10
 

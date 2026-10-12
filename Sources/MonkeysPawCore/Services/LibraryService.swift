@@ -56,6 +56,27 @@ public final class LibraryService {
         try locked { try saveDocument(document, at: path, mode: .createOnly) }
     }
 
+    /// Create from a picker query with the usual filename and first-save rules.
+    /// Raced destinations survive; alternate-name or publication exhaustion
+    /// returns LibraryError.copyLimitReached. Other failures are not retried.
+    public func createPrompt(titled title: String, body: String) throws -> LibraryEntry {
+        try locked {
+            let path = PromptCreation.relativePath(title: title, now: clock.now())
+            let document = try PromptCodec.newDocument(title: title, body: body)
+            var startingSuffix = 1
+            for _ in 0..<Limits.libraryCreateAttemptCap {
+                let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
+                do {
+                    return try saveDocument(document, at: candidate.path, mode: .createOnly)
+                } catch LibraryError.destinationOccupied {
+                    // Move forward even if the external file disappears before the next probe.
+                    startingSuffix = candidate.suffix + 1
+                }
+            }
+            throw LibraryError.copyLimitReached
+        }
+    }
+
     /// Later sync push calls this before transmitting an unassigned prompt.
     /// A supplied stamp rejects stale edits before assignment or return.
     /// Already assigned files are returned without a write or new snapshot.
@@ -74,21 +95,23 @@ public final class LibraryService {
     /// Use a draft without id for a distinct copy identity. A caller should
     /// use create(_:at:) to claim it without replacement; this probe reserves nothing.
     public func availablePath(for path: String) throws -> String {
-        try locked {
-            try LibraryPath.validate(path)
-            if try isAvailable(path) { return path }
-            // A leading combining mark can share a grapheme with the slash.
-            let scalars = path.unicodeScalars
-            let filenameStart = scalars.lastIndex(of: "/").map { scalars.index(after: $0) } ?? scalars.startIndex
-            let directory = String(path[..<filenameStart])
-            let stem = path[filenameStart...].dropLast(3)
-            for suffix in 2..<(2 + Limits.libraryCopyCandidateCap) {
-                let candidate = directory + Self.copyFilename(stem: stem, suffix: suffix)
-                try LibraryPath.validate(candidate)
-                if try isAvailable(candidate) { return candidate }
-            }
-            throw LibraryError.copyLimitReached
+        try locked { try availablePath(for: path, startingSuffix: 1).path }
+    }
+
+    private func availablePath(for path: String, startingSuffix: Int) throws -> (path: String, suffix: Int) {
+        try LibraryPath.validate(path)
+        if startingSuffix == 1, try isAvailable(path) { return (path, 1) }
+        // A leading combining mark can share a grapheme with the slash.
+        let scalars = path.unicodeScalars
+        let filenameStart = scalars.lastIndex(of: "/").map { scalars.index(after: $0) } ?? scalars.startIndex
+        let directory = String(path[..<filenameStart])
+        let stem = path[filenameStart...].dropLast(3)
+        for suffix in max(2, startingSuffix)..<(2 + Limits.libraryCopyCandidateCap) {
+            let candidate = directory + Self.copyFilename(stem: stem, suffix: suffix)
+            try LibraryPath.validate(candidate)
+            if try isAvailable(candidate) { return (candidate, suffix) }
         }
+        throw LibraryError.copyLimitReached
     }
 
     private static func copyFilename(stem: Substring, suffix: Int) -> String {

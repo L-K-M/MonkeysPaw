@@ -267,8 +267,10 @@ final class LinuxPickerViewTests: XCTestCase {
 
     func testNoMatchCreationPreservesTitleAfterFilenameCollision() throws {
         try files.write(Data("---\ntitle: Unrelated\n---\nExisting body".utf8), at: "Name.md")
+        let originalStamp = try files.stamp(at: "Name.md")
         try createPrompt(query: "Name", expectedPath: "Name 2.md")
         XCTAssertEqual(try files.read(at: "Name.md"), Data("---\ntitle: Unrelated\n---\nExisting body".utf8))
+        XCTAssertEqual(try files.stamp(at: "Name.md"), originalStamp)
     }
 
     func testEditSelectedLaunchesFileURIAndDismissesPicker() throws {

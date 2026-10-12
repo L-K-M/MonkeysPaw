@@ -467,9 +467,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func createPrompt(titled title: String) {
         guard pickerModel?.libraryAvailable == true, let library, let index else { return }
         do {
-            let path = try library.availablePath(for: PromptCreation.relativePath(title: title, now: clock.now()))
-            let document = try PromptCodec.newDocument(title: title, body: Strings.newPromptBody)
-            let entry = try library.save(document, at: path)
+            let entry = try library.createPrompt(titled: title, body: Strings.newPromptBody)
+            let path = entry.relativePath
             do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
             catch { log?.write(.warning, "Prompt saved; immediate index refresh failed") }
             handle(.edit(identity: entry.identity, relativePath: path))
