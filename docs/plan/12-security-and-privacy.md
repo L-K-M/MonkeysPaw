@@ -2,7 +2,7 @@
 
 | Asset | Protection |
 |---|---|
-| API keys, device token | OS secret store. Never stored in settings, argv, or logs. `secret-tool` gets the secret on stdin. Types holding secrets have redacted `description`. |
+| API keys, device token | OS secret store. Never stored in settings, argv, or logs. `secret-tool` gets the secret on stdin. Types holding secrets have redacted descriptions and reflection output. |
 | Prompts on the device | Local files. They leave the machine only on an explicit assistant action (and `private: true` blocks that), or through sync to the user's own server. Android opts out of Auto Backup (§10.6). |
 | Prompts on the server | TLS in transit. On disk they are plaintext in SQLite. Volume encryption is the operator's job, and SECURITY.md says so. No end-to-end encryption in v1 (D12). |
 | Server accounts | bcrypt 12. Hashed device tokens. Login backoff. Invite-only. Admins cannot read private prompts through the API. |
@@ -13,6 +13,25 @@
 | Transport | §7.1 rules for LLM providers. The sync client refuses redirects and requires HTTPS except on loopback and private ranges. |
 | Android keyboard | Picker-only: it reads the field only to choose single- or multi-line insertion, never stores or sends what is typed, and offers no prompts in password fields. The system warning at enable time is explained beforehand. |
 | Android secrets | AES-256-GCM key in AndroidKeyStore (StrongBox when available); nothing in plain SharedPreferences. |
+
+`SecretStore` reports `keychain`, `secretService`, `environment` or `file`
+to the UI without displaying a stored value. Effective reads follow D9;
+persisted reads bypass the read-only environment tier. Writes never edit
+environment variables; deletion removes persisted account copies and leaves
+the environment untouched ([§19 B23](19-m4-m5-decisions.md)). Secret values,
+drafts, resolved connections, HTTP envelopes and assistant errors have redacted
+descriptions and reflection output.
+Persisted provider secrets also carry the destination binding from §7.6;
+metadata edits cannot rebind a stored key to another kind or origin.
+Environment values are raw operator overrides without destination bindings;
+the binding's re-entry gate applies only to persisted secrets.
+
+For Keychain/Secret Service, scans of repository, config, data, logs and
+temporary directories must find zero copies of a saved key. The Linux file
+tier instead permits exactly the named atomic 0600 secrets file, visibly
+labelled "unencrypted", and zero other copies
+([§19 B29](19-m4-m5-decisions.md)). Provider settings contain only a secret
+reference; the file fallback is never a settings file.
 
 `SECURITY.md` lists what is not protected:
 
