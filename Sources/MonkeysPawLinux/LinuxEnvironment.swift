@@ -168,6 +168,9 @@ final class LinuxEnvironment {
     private lazy var settingsStore = SettingsStore(files: configFiles,
         legacyFirstRun: firstRun.needsSetup ? .setupNotPresented : .setupPresented)
     private lazy var settings = SettingsService(store: settingsStore)
+    private lazy var secretStore = LinuxSecretStore(paths: paths, runner: runner)
+    private(set) lazy var providerSettingsService = ProviderSettingsService(
+        store: ProviderSettingsStore(files: configFiles, log: log), secrets: secretStore, log: log)
     private(set) lazy var settingsModel = SettingsModel(settings: settings)
     private lazy var libraryLocation = LibraryLocation(environment: self,
         defaultLibraryPath: defaultLibraryDirectory.path)

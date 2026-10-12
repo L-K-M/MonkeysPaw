@@ -33,6 +33,27 @@ labelled "unencrypted", and zero other copies
 ([§19 B29](19-m4-m5-decisions.md)). Provider settings contain only a secret
 reference; the file fallback is never a settings file.
 
+Linux uses `service=ch.lkmc.monkeyspaw` and the namespaced account as
+Secret Service attributes, with a `Monkey's Paw: <account>` item label.
+The fallback is `<config>/secrets-unencrypted.json`: a version-1 JSON map
+labelled `unencrypted`, written through a private 0600 temporary file and
+atomic rename. Reads and mutations refuse symlinks, nonregular files,
+hardlinks, foreign ownership, insecure file modes and unsupported versions.
+Directory descriptors prevent a replaced config ancestor from redirecting
+secret I/O. Per-store serialization protects account edits.
+
+An absent `secret-tool` enables file storage. An installed tool's failed
+lookup uses an existing file value; a successful empty `search --all`
+distinguishes a missing item from a locked match. Without a file value,
+locked or inaccessible service reads report `locked` or `unavailable`.
+Writes and deletes against an installed but failing or timed-out service
+fail with a typed error, without creating a plaintext copy or discarding
+the fallback. A successful service write removes that account's file copy;
+Clear removes both persisted copies and leaves overrides untouched.
+Subprocesses run only on a worker, with the existing two-second tool budget,
+discarded stderr and bounded stdin/stdout. Secrets larger than the tool's
+8 KiB stdin buffer are rejected before storing, rather than truncated.
+
 `SECURITY.md` lists what is not protected:
 
 - Providers see what you send.
