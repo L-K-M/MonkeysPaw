@@ -27,12 +27,12 @@ command -v create-dmg >/dev/null 2>&1 || fail 'Install create-dmg with: brew ins
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 project="$repo_root/MonkeysPaw.xcodeproj"
-version="${1:-$(awk '$1 == "MARKETING_VERSION" { sub(/;$/, "", $3); print $3; exit }' "$project/project.pbxproj")}"
+version="${1:-$(awk '$1 == "MARKETING_VERSION" { sub(/;$/, "", $3); gsub(/"/, "", $3); print $3; exit }' "$project/project.pbxproj")}"
 version="${version#v}"
 version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$'
 [[ "$version" =~ $version_pattern ]] || fail 'Version must be X.Y.Z, optionally with a prerelease suffix'
 marketing_version="${version%%-*}"
-build_number="${2:-$(awk '$1 == "CURRENT_PROJECT_VERSION" { sub(/;$/, "", $3); print $3; exit }' "$project/project.pbxproj")}"
+build_number="${2:-$(awk '$1 == "CURRENT_PROJECT_VERSION" { sub(/;$/, "", $3); gsub(/"/, "", $3); print $3; exit }' "$project/project.pbxproj")}"
 build_pattern='^[1-9][0-9]*(\.[0-9]+){0,2}$'
 [[ "$build_number" =~ $build_pattern ]] || fail 'Build number must have one to three numeric components, starting with a positive integer'
 
@@ -54,7 +54,7 @@ printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$bui
 built_app="$derived_data/Build/Products/Release/MonkeysPaw.app"
 [[ -d "$built_app" ]] || fail 'Release build did not produce MonkeysPaw.app'
 /usr/bin/ditto "$built_app" "$app"
-/usr/bin/lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/MonkeysPaw"
+/usr/bin/lipo "$app/Contents/MacOS/MonkeysPaw" -verify_arch arm64 x86_64
 
 signing_identity="${MACOS_SIGNING_IDENTITY:--}"
 # Xcode signing is disabled above, so explicitly retain the paste entitlement
@@ -93,4 +93,7 @@ fi
 
 mkdir -p "$repo_root/dist"
 mv -f "$zip" "$dmg" "$repo_root/dist/"
+# Testers record the exact bytes they installed (docs/platform/macos.md).
+(cd "$repo_root/dist" && /usr/bin/shasum -a 256 "MonkeysPaw-$version.zip" "MonkeysPaw-$version.dmg" \
+  > "MonkeysPaw-$version.sha256")
 printf '==> Created dist/MonkeysPaw-%s.zip and dist/MonkeysPaw-%s.dmg\n' "$version" "$version"
