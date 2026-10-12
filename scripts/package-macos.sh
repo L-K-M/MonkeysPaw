@@ -96,4 +96,5 @@ mv -f "$zip" "$dmg" "$repo_root/dist/"
 # Testers record the exact bytes they installed (docs/platform/macos.md).
 (cd "$repo_root/dist" && /usr/bin/shasum -a 256 "MonkeysPaw-$version.zip" "MonkeysPaw-$version.dmg" \
   > "MonkeysPaw-$version.sha256")
-printf '==> Created dist/MonkeysPaw-%s.zip and dist/MonkeysPaw-%s.dmg\n' "$version" "$version"
+printf '==> Created:\n  %s\n  %s\n  %s\n' \
+  "dist/MonkeysPaw-$version.zip" "dist/MonkeysPaw-$version.dmg" "dist/MonkeysPaw-$version.sha256"

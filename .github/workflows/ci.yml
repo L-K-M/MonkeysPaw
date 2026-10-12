@@ -5,14 +5,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 # Least privilege: builds and tests only need to read repository contents.
 permissions:
   contents: read
 
-# Cancel superseded PR runs; keep every main commit's result for bisection.
+# Separate ordinary CI from release calls; cancel superseded PR runs only.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job has a timeout so a wedged build cannot consume the default six hours.
@@ -38,6 +39,8 @@ jobs:
         run: python3 scripts/check-pbxproj.py
       - name: Check committed versions and Debian version mapping
         run: python3 scripts/check-version.py
+      - name: Test packaging scripts
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Build Core
         run: swift build --target MonkeysPawCore
       # swift test builds every test target, even with --filter. Compile Core

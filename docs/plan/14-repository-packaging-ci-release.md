@@ -48,6 +48,9 @@ Rollout by milestone:
   hummingbird-auth (bcrypt), hummingbird-fluent, fluent-sqlite-driver. All
   are pinned with `Package.resolved` committed.
 - **ci.yml.**
+  - Also callable with `workflow_call`: release runs use the same test gates
+    from the tagged commit. Concurrency includes the caller workflow name,
+    so a release's test run cannot cancel ordinary PR CI.
   - The hardening trio: `permissions: contents: read`, concurrency that
     cancels superseded PR runs only, and `timeout-minutes` on every job.
   - Actions are pinned to commit SHAs, with `persist-credentials: false`.
@@ -71,21 +74,46 @@ Rollout by milestone:
   - The flatpak job runs on the bare runner, because bwrap needs a sysctl
     that a container cannot set (Vervellum).
 - **release.yml.**
-  - Trigger: tag `v*`. Gated on tests.
+  - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
+    true. Packaging-related PRs run the dry-run path too. Every path first
+    calls `ci.yml`, then checks committed versions. A real tag's numeric
+    core must equal the committed `MARKETING_VERSION` and README marker;
+    `python3 scripts/check-version.py --check-tag v0.1.0` enforces this.
+    Release tags use `vX.Y.Z[-prerelease]`; build metadata (`+...`) is
+    rejected before packaging because the macOS packager does not accept it.
+    Branch/PR dry runs use the committed version. A manual publish requires
+    selecting an existing `v*` tag and setting `dry_run` to false.
+  - Concurrency is `release-${{ github.ref }}`, without cancellation.
+    Workflow permissions are `contents: write`; every build/verification
+    job reduces these to `contents: read`. Only the real publish job keeps
+    write permission. Actions are SHA-pinned, checkouts do not persist
+    credentials, and each runner job has a timeout.
   - The draft release is published only after every job uploads:
-    - macOS: a universal `.dmg`, plus `.zip` (Vervellum).
+    - macOS: a universal `.dmg`, plus `.zip` and their `.sha256` manifest.
     - Linux: a `.deb` built by `packaging/build-deb.sh` with
       `--static-swift-stdlib` (plus `--build-system native` until swift-build
-      links static Foundation; §16) and `dpkg-shlibdeps`.
+      links static Foundation; §16) and `dpkg-shlibdeps`, plus `.deb.sha256`.
     - Flatpak: repacked from the deb (from M7).
     - Server: the ghcr image (from M5).
-  - The Linux and server jobs run first; the macOS job `needs` them, so a
-    broken deb fails the tag before a release exists (Vervellum).
+  - In M2 the Linux job runs first; the macOS job `needs` it, so a broken
+    deb fails the tag before a release exists. Server publishing joins this
+    ordering in M5; flatpak joins in M7.
   - macOS builds are ad-hoc signed (`codesign --sign -`) unless Q3 provides
     an identity. Signing env is exported only when the secrets are
     non-empty (Obtainintosh lesson).
   - Hyphenated tags are prereleases and never `latest`.
-  - Uploaded assets are downloaded back and byte-compared (Vervellum).
+  - Each build job downloads its uploaded workflow artifact and byte-compares
+    every file, including checksums, against the originals. An assembly job
+    requires all five assets and checks both manifests. The publish job
+    creates a draft with all five assets, downloads every release asset and
+    byte-compares against those verified build outputs before undrafting.
+    Any failure leaves the release unpublished. PRs and manual dry runs do
+    every build and workflow-artifact verification, and skip the publish job.
+  - To cut the first release after CI and owner installation checks pass,
+    run `scripts/release.sh 0.1.0 --push` on current main with the shared
+    `lkm-release` engine installed. It bumps committed versions and pushes
+    the release commit and `v0.1.0` tag. CI derives the artifact version from
+    `${GITHUB_REF_NAME#v}` without modifying committed settings. See `CICD.md`.
   - Deb `Depends:` comes from `dpkg-shlibdeps` (Ubuntu 24.04's t64 renames),
     plus `libglib2.0-bin`. `Recommends:` `libsecret-tools`, `ydotool`,
     `xdotool`. Prerelease versions use a tilde (every prerelease hyphen
@@ -93,11 +121,12 @@ Rollout by milestone:
     numerically (`~beta.9` < `~beta.10`).
 - **macOS packaging.** On a Mac with Xcode and `brew install create-dmg`,
   run `scripts/package-macos.sh [version [build-number]]`. It calls
-  `xcodebuild` directly so CI does not need the external `lkm-build` engine
-  used by `scripts/build.sh`. Release builds use `ONLY_ACTIVE_ARCH=NO` and
-  `ARCHS="arm64 x86_64"`. Without arguments, versions come from the committed
-  project settings; an explicit version overrides `MARKETING_VERSION`, and
-  a second argument overrides `CURRENT_PROJECT_VERSION`. Tag CI can pass
+  `xcodebuild` directly so packaging does not need the external `lkm-build`
+  engine used by `scripts/build.sh app`. Release builds use
+  `ONLY_ACTIVE_ARCH=NO` and `ARCHS="arm64 x86_64"`. Without arguments, versions
+  come from the committed project settings; an explicit version overrides
+  `MARKETING_VERSION`, and a second argument overrides `CURRENT_PROJECT_VERSION`.
+  Tag CI can pass
   `"${GITHUB_REF_NAME#v}"` and `"$GITHUB_RUN_NUMBER"`; prerelease suffixes stay
   in artifact names while the bundle marketing version uses `X.Y.Z`.
   - The app is signed ad-hoc by default, with Hardened Runtime and the
@@ -114,6 +143,18 @@ Rollout by milestone:
     `--skip-jenkins`. A nonzero `create-dmg` status is tolerated only if a
     newly created image exists and passes `hdiutil verify`; stale output
     cannot satisfy this check. Only verified artifacts are copied to `dist/`.
+    `dist/MonkeysPaw-<version>.sha256` records both files; download all three
+    together and run `shasum -a 256 -c MonkeysPaw-<version>.sha256` before
+    installation (`docs/platform/macos.md`).
+- **Local build orchestration.** `scripts/build.sh [mac|deb ...] [--no-open]`
+  builds every artifact this host can produce by default. An unavailable
+  toolchain skips a default target but fails an explicitly named target.
+  Outputs go to `dist/`, followed by one Summary block. On macOS it opens
+  `dist/` when an artifact was built, unless `--no-open` was passed.
+  `mac` calls the packager above; `deb` calls the builder below with the
+  committed version. `scripts/build.sh app [lkm-build flags]` preserves the
+  app-only engine path, including `--clean`, `--debug`, `--run`, `--install`,
+  `--zip` and `--dmg`. Server and APK targets arrive in later milestones.
 - **Linux floor.** Ubuntu 24.04+ (GTK 4.14), like Vervellum; the deb is
   built on noble. Ubuntu 22.04 (GTK 4.6) is Q8.
 - **Building a Linux deb locally.** On Ubuntu 24.04 with Swift 6.4, install
@@ -132,9 +173,9 @@ Rollout by milestone:
   with `dpkg-shlibdeps` without a fallback. It adds `libglib2.0-bin` for
   `gapplication` and recommends `libsecret-tools, ydotool, xdotool`.
   `dpkg-deb --root-owner-group` writes
-  `dist/monkeyspaw_<deb-version>_<architecture>.deb`. Regenerate the
-  committed 16, 24, 32, 48, 64, 128, 256 and 512 pixel PNGs from
-  `media-sources/icon.png` with `scripts/make-linux-icons.sh` (Python 3 and
+  `dist/monkeyspaw_<deb-version>_<architecture>.deb` and its `.deb.sha256`
+  checksum. Regenerate the committed 16, 24, 32, 48, 64, 128, 256 and 512 pixel
+  PNGs from `media-sources/icon.png` with `scripts/make-linux-icons.sh` (Python 3 and
   Pillow; Ubuntu package `python3-pil`); macOS icons still use
   `scripts/make-icons.sh`.
 - **Flatpak.** Runtime `org.gnome.Platform` 50. `finish-args`:

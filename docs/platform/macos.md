@@ -169,9 +169,12 @@ quarantined download, Gatekeeper approval or installation on your Mac.
 - macOS / hardware / signing identity / date / tester:
 - Gatekeeper message and approval steps:
 
-1. Download `MonkeysPaw-<version>.dmg` and `.zip` from the CI artifacts or
-   release. Record the exact build and hashes; check for the download's
-   quarantine attribute with `xattr -p com.apple.quarantine <path>`.
+1. Download `MonkeysPaw-<version>.dmg`, `.zip` and `.sha256` from the CI
+   artifacts or release into the same directory. In that directory, run
+   `shasum -a 256 -c MonkeysPaw-<version>.sha256`; both files must report
+   **OK** before installation. Record the exact build and hashes; check for
+   the download's quarantine attribute with
+   `xattr -p com.apple.quarantine <path>`.
 2. Open the dmg in Finder. Confirm it contains `MonkeysPaw.app` and an
    **Applications** link. Drag the app to Applications, eject the image,
    then open `/Applications/MonkeysPaw.app`.
@@ -189,6 +192,7 @@ quarantined download, Gatekeeper approval or installation on your Mac.
    record whether the `x86_64` slice launches; CI runs the native runner
    architecture only.
 
+- [ ] NOT RUN: both downloaded archives match the `.sha256` manifest.
 - [ ] NOT RUN: the downloaded dmg opens and provides a working Applications link.
 - [ ] NOT RUN: the copied app launches after the image is ejected and after restart.
 - [ ] NOT RUN: Gatekeeper behavior and any approval steps are recorded for ad-hoc signing.

@@ -40,6 +40,10 @@ Run these commands from the repository root:
 
 | Task | Command |
 |---|---|
+| Build every artifact this host can produce | `scripts/build.sh [--no-open]` |
+| Build macOS dmg, zip and checksums | `scripts/build.sh mac [--no-open]` |
+| Build Linux deb and checksum | `scripts/build.sh deb` (set `SWIFT` on the Paseo host) |
+| Use the app-only shared build engine | `scripts/build.sh app [lkm-build flags]` |
 | Build macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build` |
 | Test macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO clean test` |
 | Package universal macOS dmg and zip (requires Xcode and create-dmg) | `scripts/package-macos.sh [version [build-number]]` |
@@ -98,8 +102,9 @@ still builds all test targets, so filtering alone cannot isolate Core from GTK.
 - Run `scripts/make-icons.sh` on macOS to regenerate AppIcon PNGs from
   `media-sources/icon.png` using `sips`, and `build/MonkeysPaw.icns` using
   `iconutil`. The PNGs are committed; the initial set was resized with
-  Pillow on Linux. `scripts/build.sh` and `scripts/release.sh` configure
-  the shared lkm engines. Tag publishing arrives with `release.yml` in M2.
+  Pillow on Linux. `scripts/build.sh` orchestrates local packaging;
+  `scripts/build.sh app` and `scripts/release.sh` configure the shared lkm
+  engines. `release.yml` gates tag publishing on CI and artifact verification.
 - A Linux host cannot build or test the app. XML and object-ID checks are
   structural checks only; the `macos-app` CI job on `macos-26`, pinned to
   Xcode 26.0, runs the app build and hosted tests after push. Launch and

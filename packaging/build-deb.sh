@@ -9,7 +9,7 @@
 #
 # Version is [v]X.Y.Z[-prerelease], from the argument or GITHUB_REF_NAME.
 # The binary reports X.Y.Z[-prerelease]; the deb uses X.Y.Z[~prerelease].
-# Output: dist/monkeyspaw_<deb-version>_<architecture>.deb
+# Output: dist/monkeyspaw_<deb-version>_<architecture>.deb and .deb.sha256
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -149,5 +149,6 @@ mkdir -p "$ROOT/dist"
 OUTPUT="$ROOT/dist/monkeyspaw_${DEB_VERSION}_${ARCH}.deb"
 # Package payloads must be root-owned even when the builder is unprivileged.
 dpkg-deb --root-owner-group --build "$STAGE" "$OUTPUT"
-echo "==> Built $OUTPUT"
+(cd "$ROOT/dist" && sha256sum "$(basename "$OUTPUT")" > "$(basename "$OUTPUT").sha256")
+echo "==> Built $OUTPUT and $OUTPUT.sha256"
 dpkg-deb --info "$OUTPUT"
