@@ -18,7 +18,8 @@ enum LibraryStrings {
 
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {
-        case .saved: return nil
+        // The open editor reports its own unsaved or saving state.
+        case .saved, .editedBuffer, .savePending: return nil
         case .noSelection: return "Select a prompt before changing its favourite."
         case .inactive: return "This library is no longer active. Reopen Library to try again."
         case .fileStoreFailure(let error):
