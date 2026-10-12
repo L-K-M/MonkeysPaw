@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompty",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: Ada\n    description: Person\n  tone:\n    type: choice\n    options:\n    - formal\n    - casual\n    default: casual\ninputs:\n  name:\n    type: string\n    default: Ada\n    description: Person\n  tone:\n    type: string\n    enum:\n    - formal\n    - casual\nsample:\n  name: Other\n  tone: casual\nauthors:\n- Author\nmodel:\n  api: chat\n---\nsystem:\n{{name}} {{tone}}\n",
+    "body": "system:\n{{name}} {{tone}}\n",
+    "mappings": [
+      {
+        "sourceKey": "inputs.name",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": "inputs.name.default"
+      },
+      {
+        "sourceKey": "inputs.tone",
+        "fieldName": "tone",
+        "kind": "choice",
+        "defaultSource": "sample.tone"
+      }
+    ],
+    "preservedKeys": [
+      "inputs",
+      "sample",
+      "authors",
+      "model"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": []
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompt",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: Ada\n    description: Person\n  tone:\n    type: choice\n    options:\n    - formal\n    - casual\n    default: casual\n    description: Voice\n    optional: true\ninput:\n  schema:\n    name: string, Person\n    tone?(enum, Voice):\n    - formal\n    - casual\n  default:\n    name: Ada\n    tone: casual\nmodel: googleai/example\noutput:\n  format: json\nconfig:\n  temperature: 0.5\n---\n{{name}} {{tone}}\n",
+    "body": "{{name}} {{tone}}\n",
+    "mappings": [
+      {
+        "sourceKey": "input.schema.name",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": "input.default.name"
+      },
+      {
+        "sourceKey": "input.schema.tone?(enum, Voice)",
+        "fieldName": "tone",
+        "kind": "choice",
+        "defaultSource": "input.default.tone"
+      }
+    ],
+    "preservedKeys": [
+      "input",
+      "model",
+      "output",
+      "config"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": []
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompty",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\n    default: local\n    optional: true\ninputs:\n- name: name\n  type: string\n  sample: local\n  required: false\nsample:\n  name: root\n---\n{{name}}\n",
+    "body": "{{name}}\n",
+    "mappings": [
+      {
+        "sourceKey": "inputs[0]",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": "inputs[0].sample"
+      }
+    ],
+    "preservedKeys": [
+      "inputs",
+      "sample"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": []
+  }
+}

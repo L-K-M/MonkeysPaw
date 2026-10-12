@@ -1,0 +1,12 @@
+---
+# presentation discarded
+input:
+  schema:
+    name: string, Person
+    tone?(enum, Voice): [formal, casual]
+  default: {name: Ada, tone: casual}
+model: googleai/example
+output: {format: json}
+config: {temperature: 0.5}
+---
+{{name}} {{tone}}

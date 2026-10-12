@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompt",
+  "expected": {
+    "source": "---\nfields:\n  name:\n    type: text\ninput:\n  schema:\n    count: integer\n    tags(array): string\n    date: string\n    name: string\nextra:\n  unknown:\n  - true\n  - 7\n---\n{{name}} {{#if count}}x{{/if}}\n",
+    "body": "{{name}} {{#if count}}x{{/if}}\n",
+    "mappings": [
+      {
+        "sourceKey": "input.schema.name",
+        "fieldName": "name",
+        "kind": "text",
+        "defaultSource": null
+      }
+    ],
+    "preservedKeys": [
+      "input",
+      "extra"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": [
+      {
+        "code": "unsupportedInput",
+        "key": "input.schema.count"
+      },
+      {
+        "code": "unsupportedInput",
+        "key": "input.schema.tags(array)"
+      },
+      {
+        "code": "reservedName",
+        "key": "date"
+      },
+      {
+        "code": "unsupportedTemplate",
+        "format": "dotprompt",
+        "byteOffset": 9
+      },
+      {
+        "code": "unsupportedTemplate",
+        "format": "dotprompt",
+        "byteOffset": 23
+      }
+    ]
+  }
+}

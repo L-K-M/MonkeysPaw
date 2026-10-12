@@ -5,7 +5,7 @@ import XCTest
 /// The corpus is enumerated, not a hand-picked list. Each JSON and source
 /// must be dispatched exactly once so future language consumers share a gate.
 final class PromptConformanceTests: XCTestCase {
-    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking"]
+    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import"]
     private let rankingAccuracy = 1e-12
 
     private var fixtureRoot: URL {
@@ -67,7 +67,7 @@ final class PromptConformanceTests: XCTestCase {
     }
 
     func testRejectsUnknownSchemaVersionsAndContentMembers() throws {
-        for category in categories.subtracting(["ranking"]).sorted() {
+        for category in categories.subtracting(["ranking", "import"]).sorted() {
             let files = try FileManager.default.contentsOfDirectory(atPath: fixtureRoot.appendingPathComponent(category).path)
             let file = try XCTUnwrap(files.sorted().first { $0.hasSuffix(".json") })
             try assertRejectsJSON(category + "/" + file, label: category + " schema") { $0["schema"] = 2 }
@@ -175,6 +175,17 @@ final class PromptConformanceTests: XCTestCase {
             try require(.directory, at: directory)
             let files = try manager.contentsOfDirectory(atPath: directory.path).sorted()
             guard !files.isEmpty else { throw CorpusError.emptyCategory }
+
+            if category == "import" {
+                let imported = try ImportFixtureCorpus.consume(at: directory)
+                for file in imported.files {
+                    let path = "import/" + file
+                    allFiles.insert(RelativePath(path))
+                    try consume(path, in: &consumed)
+                }
+                cases += imported.cases
+                continue
+            }
 
             if category == "ranking" {
                 for name in files {

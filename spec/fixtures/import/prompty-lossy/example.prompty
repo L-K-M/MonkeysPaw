@@ -1,0 +1,9 @@
+---
+inputs:
+  count: {type: number}
+  clipboard: {type: string}
+  name: {type: string}
+sample: {name: Ada}
+model: example
+---
+{% if count %}{{name | upper}}{% endif %}

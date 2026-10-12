@@ -1,0 +1,6 @@
+---
+inputs:
+  - {name: name, type: string, sample: local, required: false}
+sample: {name: root}
+---
+{{name}}

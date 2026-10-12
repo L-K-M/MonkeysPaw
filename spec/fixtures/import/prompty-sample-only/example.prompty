@@ -1,0 +1,5 @@
+---
+sample: {name: Ada, unused: retained}
+model: example
+---
+{{name}}
