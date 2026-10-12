@@ -47,6 +47,7 @@ public final class DeliveryService {
     private let mainThread: MainThread
     private let failureCache: PasteFailureCache
     private var armedTarget: DeliveryTarget?
+    private var presentationGeneration: UInt64 = 0
     private var pending: [() -> Void] = []
     private var operationState = OperationState.idle
 
@@ -73,8 +74,15 @@ public final class DeliveryService {
     /// §4.6: capture the hotkey's target before queuing panel presentation.
     public func show() {
         mainThread.run {
+            let generation = self.presentationGeneration
             self.armedTarget = self.focus.captureTarget()
             self.queue {
+                // Composition can retire a graph while this show is held
+                // behind focus restoration or a self-test.
+                guard generation == self.presentationGeneration else {
+                    self.completeOperation()
+                    return
+                }
                 self.panel.show()
                 self.completeOperation()
             }
@@ -84,9 +92,14 @@ public final class DeliveryService {
     /// The driver must restore only while our app is still frontmost (§4.6).
     public func dismiss() {
         mainThread.run {
+            let generation = self.presentationGeneration
             let target = self.armedTarget
             self.armedTarget = nil
             self.queue {
+                guard generation == self.presentationGeneration else {
+                    self.completeOperation()
+                    return
+                }
                 self.panel.hide()
                 guard let target else {
                     self.completeOperation()
@@ -108,6 +121,15 @@ public final class DeliveryService {
         _ text: String, mode: DeliveryMode, done: @escaping (DeliveryOutcome) -> Void
     ) {
         enqueue(text, mode: mode, done: done)
+    }
+
+    /// Revoke queued picker window requests and their captured target before
+    /// composition replaces the picker graph. Delivery queue slots are retained.
+    public func invalidatePendingPresentation() {
+        mainThread.run {
+            self.presentationGeneration &+= 1
+            self.armedTarget = nil
+        }
     }
 
     public func resetFailures() {

@@ -338,6 +338,38 @@ final class DeliveryServiceTests: XCTestCase {
         ])
     }
 
+    func testGraphReplacementInvalidatesShowQueuedBehindAnEarlierRestore() {
+        let h = DeliveryHarness()
+        h.focus.mode = .deferred
+        h.arm()
+        h.service.dismiss() // Hide now, but hold the queue during restoration.
+        h.service.show() // A picker request from the graph about to be replaced.
+        h.service.dismiss() // Library replacement dismisses that picker first.
+        h.service.invalidatePendingPresentation()
+        h.focus.complete(.unconfirmed)
+
+        XCTAssertFalse(h.recorder.events.contains(.show), "A retired picker must never present the replacement view")
+        h.focus.target = nil
+        h.service.show()
+        XCTAssertEqual(h.recorder.events.filter { $0 == .show }.count, 1, "Discarding stale work must release the queue")
+    }
+
+    func testGraphReplacementInvalidatesOlderDismissalBeforeNewShow() {
+        let h = DeliveryHarness()
+        h.focus.mode = .deferred
+        h.arm()
+        h.service.dismiss()
+        h.service.show()
+        h.service.dismiss()
+        h.service.invalidatePendingPresentation()
+        h.service.show() // The replacement picker is now the user's choice.
+        h.focus.complete(.unconfirmed)
+
+        XCTAssertEqual(h.recorder.events.filter { $0 == .hide }.count, 1)
+        XCTAssertEqual(h.recorder.events.filter { $0 == .show }.count, 1)
+        XCTAssertEqual(h.recorder.events.last, .show)
+    }
+
     func testProcessCacheCanBeSharedAndReset() {
         let cache = SessionPasteFailureCache()
         cache.record(.timeout, for: .remoteDesktopPortal)
