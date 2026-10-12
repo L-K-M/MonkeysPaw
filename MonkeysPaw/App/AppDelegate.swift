@@ -39,11 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let revealLibraryURI: (URL) -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
     private let forgetAllConfirmation: SettingsWindowController.ForgetAllConfirmation
+    private let makeNotifier: (() -> UserNotificationNotifier)?
+    private let activateApplication: () -> Void
     private let windowActivation: WindowActivationCoordinator
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
     private var setupWindow: SetupWindowController?
     private(set) var settingsWindow: SettingsWindowController?
+    private(set) var onboardingWindow: OnboardingWindowController?
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
     private var statusItem: NSStatusItem?
@@ -53,6 +56,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var generalSettingsModel: GeneralSettingsModel?
     private(set) var shortcutsSettingsModel: ShortcutsSettingsModel?
     private(set) var rememberedValuesSettingsModel: RememberedValuesSettingsModel?
+    private(set) var libraryStatusModel: LibraryStatusModel?
+    private(set) var onboardingModel: OnboardingModel?
+    private var libraryStatusObserver: UUID?
+    private var libraryMenuItems: [NSMenuItem] = []
+    private var onboardingStarted = false
+    private var presentedOnboardingStep: OnboardingModel.Step?
+    private var notifier: UserNotificationNotifier?
     private var dataFiles: FileStore?
     private var values: ValuesStore?
     private var usage: UsageStore?
@@ -75,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
          forgetAllConfirmation: @escaping SettingsWindowController.ForgetAllConfirmation = SettingsWindowController.confirmForgetAll,
+         makeNotifier: (() -> UserNotificationNotifier)? = nil,
          setActivationPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          activateApplication: @escaping () -> Void = { NSApp.activate() },
          makeFocusTracker: @escaping (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker = {
@@ -104,6 +115,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         revealLibraryURI = revealLibrary
         self.folderChooser = folderChooser
         self.forgetAllConfirmation = forgetAllConfirmation
+        self.makeNotifier = makeNotifier
+        self.activateApplication = activateApplication
         windowActivation = WindowActivationCoordinator(mainThread: mainThread,
             setPolicy: setActivationPolicy, activate: activateApplication)
         // Injected graphs never read or write the user's legacy preferences.
@@ -116,7 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
-    deinit { watcher?.stop() }
+    deinit {
+        watcher?.stop()
+        if let libraryStatusObserver { libraryStatusModel?.removeObserver(libraryStatusObserver) }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The hosted application's default delegate has production roots.
@@ -128,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.log = log
         compose(log: log)
         startLibrary()
+        composeOnboarding()
         // Graph construction is safe under hosted XCTest. Native registrations,
         // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
@@ -144,8 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         log.write(.info, "Application started")
 
-        // M1's first-run step is Setup (§6.4); library onboarding arrives in M2.
-        if settingsModel?.needsSetupPresentation == true { showSetup() }
+        beginOnboarding()
     }
 
     func applicationWillTerminate(_ notification: Notification) { watcher?.stop() }
@@ -155,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupModel?.refresh()
         shortcutsSettingsModel?.refresh()
         generalSettingsModel?.refresh()
+        onboardingModel?.refresh()
     }
 
     private func compose(log: LogSink) {
@@ -166,11 +183,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let session = MacSessionProbe()
         let clipboard = PasteboardClipboard()
         let notifier: UserNotificationNotifier
-        if Self.isRunningTests {
+        if let makeNotifier {
+            notifier = makeNotifier()
+        } else if Self.isRunningTests {
             notifier = UserNotificationNotifier(requestAuthorization: { _, completion in completion(false) })
         } else {
             notifier = UserNotificationNotifier()
         }
+        self.notifier = notifier
         let cgEvent = CGEventPasteInjector()
         let appleScript = AppleScriptPasteInjector()
         let failureCache = SessionPasteFailureCache()
@@ -207,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let setupModel = SetupModel(setup: setup)
         self.setupModel = setupModel
         setupWindow = SetupWindowController(model: setupModel)
+        setupWindow?.onClose = { [weak self] in self?.presentPendingOnboarding() }
         panel.onHide = { reason in
             switch reason {
             case .delivery: focus.prepareForRestore(.delivery)
@@ -241,6 +262,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSetup: { [weak self] in self?.showSetup() })
     }
 
+    private func composeOnboarding() {
+        guard let settingsModel, let notifier else { return }
+        // Startup includes watcher/rebuild health, not just an openable folder.
+        let status = LibraryStatusModel(initialState: pickerModel?.libraryAvailable == true
+            ? .available : .unavailableAtStartup, mainThread: mainThread,
+            notifyStartupUnavailable: { notifier.libraryUnavailable() })
+        libraryStatusModel = status
+        libraryStatusObserver = status.addObserver { [weak self] _ in self?.updateLibraryMenuItems() }
+        let onboarding = OnboardingModel(settings: settingsModel, library: SettingsLibraryLocation(owner: self),
+            status: status, mainThread: mainThread, isLibraryEmpty: { [weak self] in
+                guard let library = self?.library else { throw LibraryError.operationFailed }
+                return try library.entries().isEmpty
+            }, hasConfiguredSyncServer: { false }, seedIfEmpty: { [weak self] in
+                guard let self else { throw LibraryError.operationFailed }
+                return try self.seedCurrentLibrary()
+            })
+        onboardingModel = onboarding
+        let window = OnboardingWindowController(model: onboarding, activeLibraryPath: libraryDirectory.path,
+            defaultLibraryPath: defaultLibraryDirectory.path, mainThread: mainThread,
+            activateApplication: activateApplication, folderChooser: folderChooser,
+            openSettings: { [weak self] in self?.showSettings() })
+        window.onStateChange = { [weak self] in self?.presentPendingOnboarding() }
+        onboardingWindow = window
+    }
+
+    private func seedCurrentLibrary() throws -> SeedSummary {
+        guard let library, let index, pickerModel?.libraryAvailable == true else {
+            throw LibraryError.operationFailed
+        }
+        // Show successful and partial copies immediately; the watcher still
+        // handles external changes and root loss through the current generation.
+        defer {
+            do { try index.rebuild() }
+            catch { log?.write(.warning, "Starter prompt index refresh failed") }
+        }
+        return try SeedService(library: library).seedIfEmpty()
+    }
+
+    /// Hosted launch constructs models without opening windows. Tests explicitly
+    /// enter this same launch flow with isolated roots and injected drivers.
+    func beginOnboarding() {
+        onboardingModel?.refresh()
+        onboardingStarted = true
+        presentPendingOnboarding()
+    }
+
+    private func presentPendingOnboarding() {
+        guard onboardingStarted, let onboardingModel else { return }
+        let step = onboardingModel.state.step
+        // Setup records progress when shown, but remains the first screen until
+        // you close it. Its close callback runs after native window teardown.
+        guard setupWindow?.isVisible != true else { return }
+        guard presentedOnboardingStep != step else { return }
+        presentedOnboardingStep = step
+        switch step {
+        case .setup: showSetup()
+        case .libraryFolder, .seedOffer:
+            guard onboardingWindow?.window?.isVisible != true else { return }
+            focusTracker?.cancelPendingRestoration()
+            panelController?.cancelForOwnedWindow()
+            pickerModel?.dismiss()
+            panelController?.hide()
+            delivery?.invalidatePendingPresentation()
+            onboardingWindow?.show()
+        case .complete: break // Keep a seed result visible until Done.
+        }
+    }
+
     /// UI-thread composition intent for the later General/onboarding views.
     /// A failed settings write keeps the new graph for this session (§5.1).
     /// libraryUnavailable leaves the new graph installed but degraded, as at
@@ -269,10 +358,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pickerPresentation = nil
         self.pickerModel = nil
         libraryDirectory = directory
+        onboardingWindow?.updateLibraryPaths(active: directory.path, default: defaultLibraryDirectory.path)
         libraryStarted = false
         libraryWarningLogged = false
         installLibrary(files: files, availability: true)
-        if case .failure(let error) = startLibrary() { return .libraryUnavailable(error) }
+        let startup = startLibrary()
+        libraryStatusModel?.libraryReplaced(available: self.pickerModel?.libraryAvailable == true)
+        if case .failure(let error) = startup { return .libraryUnavailable(error) }
 
         // SettingsModel forwards to the shared SettingsService and retains its
         // typed error. Never persist a choice whose watcher/rebuild failed.
@@ -437,6 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func degradeLibrary(_ error: FileStoreError? = nil) {
         watcher?.stop()
         pickerModel?.libraryAvailable = false
+        libraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(error)
     }
 
@@ -531,9 +624,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// without creating a status item or installing native hotkeys.
     func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
+        // Status owns this item's availability; AppKit must not re-enable it
+        // merely because its target implements the reveal action.
+        menu.autoenablesItems = false
         let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
                                 keyEquivalent: "")
         show.target = self
+        let library = menu.addItem(withTitle: libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu,
+                                  action: #selector(openLibraryFromMenu), keyEquivalent: "")
+        library.target = self
+        libraryMenuItems.append(library)
+        updateLibraryMenuItems()
         addSettingsItem(to: menu)
         let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
@@ -541,6 +642,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
         return menu
+    }
+
+    private func updateLibraryMenuItems() {
+        // Menus own their items; discard rows from menus that have been released.
+        libraryMenuItems.removeAll { $0.menu == nil }
+        for item in libraryMenuItems {
+            item.title = libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu
+            item.isEnabled = libraryStatusModel?.libraryAvailable == true
+        }
+    }
+
+    @objc private func openLibraryFromMenu() {
+        guard libraryStatusModel?.libraryAvailable == true else { return }
+        revealLibrary()
     }
 
     private func addSettingsItem(to menu: NSMenu) {
@@ -567,7 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusTracker?.cancelPendingRestoration()
         panelController?.cancelForOwnedWindow()
         setupWindow?.show()
-        settingsModel?.markSetupPresented()
+        onboardingModel?.markSetupPresented()
         recordLegacySetup()
     }
 
