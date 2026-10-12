@@ -84,7 +84,8 @@ enum StatusNotifierWire {
         case "Title": return g_variant_new_string(AppIdentity.displayName)
         case "Status": return g_variant_new_string("Active")
         case "WindowId": return g_variant_new_int32(0)
-        case "ItemIsMenu": return g_variant_new_boolean(1)
+        // False lets hosts send Activate on primary click; the menu stays on secondary click.
+        case "ItemIsMenu": return g_variant_new_boolean(0)
         case "Menu": return g_variant_new_object_path(menuPath)
         case "IconThemePath", "OverlayIconName", "AttentionIconName", "AttentionMovieName":
             return g_variant_new_string("")

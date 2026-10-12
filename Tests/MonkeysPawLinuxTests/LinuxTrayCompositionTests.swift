@@ -74,6 +74,15 @@ final class LinuxTrayCompositionTests: XCTestCase {
         let shortcuts = environment.shortcutsSettingsModel
         shortcuts.beginVerification()
         XCTAssertTrue(GTKTestSupport.spin { shortcuts.togglePicker.verification == .waiting })
+        let propertiesReply = watcher.call(path: "/StatusNotifierItem", interface: "org.freedesktop.DBus.Properties",
+            method: "GetAll", body: "('org.kde.StatusNotifierItem',)")
+        let properties = g_variant_get_child_value(try XCTUnwrap(propertiesReply.value), 0)!
+        defer { g_variant_unref(properties) }
+        let isMenu = try XCTUnwrap(g_variant_lookup_value(properties, "ItemIsMenu", nil))
+        defer { g_variant_unref(isMenu) }
+        XCTAssertEqual(g_variant_get_boolean(isMenu), 0,
+            "The item must advertise primary activation for hosts to route left click to Activate.")
+
         let reply = watcher.call(path: "/StatusNotifierItem", interface: "org.kde.StatusNotifierItem",
             method: "Activate", body: "(0, 0)")
         XCTAssertFalse(reply.failed)
