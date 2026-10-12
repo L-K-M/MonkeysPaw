@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 
 /// Desktop action identifiers must match GSimpleAction names exactly.
@@ -37,6 +38,7 @@ public enum MonkeysPawLinuxApp {
     }
 
     public static func main() -> Int32 {
+        ignoreBrokenPipeSignal()
         let arguments = Array(CommandLine.arguments.dropFirst())
 
         switch arguments {
@@ -61,9 +63,17 @@ public enum MonkeysPawLinuxApp {
         case []:
             return runPanel(mode: .interactive)
         default:
-            FileHandle.standardError.write(Data("\(usage)\n".utf8))
+            try? FileHandle.standardError.write(contentsOf: Data("\(usage)\n".utf8))
             return 2
         }
+    }
+
+    static func ignoreBrokenPipeSignal() {
+        // Closed log pipes or helpers that stop reading stdin must surface
+        // EPIPE to the writer instead of terminating the app with SIGPIPE.
+        // Foundation's Process passes the ignored disposition to helper
+        // tools; their stdout is always drained, so none relies on SIGPIPE.
+        _ = Glibc.signal(SIGPIPE, SIG_IGN)
     }
 
     private static func runPanel(mode: LaunchMode) -> Int32 {

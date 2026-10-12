@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 /// An AppKit lifecycle keeps control of the non-activating, all-Spaces panel.
 @main
@@ -8,6 +9,10 @@ enum MonkeysPawApp {
     private static let delegate = AppDelegate()
 
     static func main() {
+        // Closed log pipes or helpers that stop reading stdin must surface
+        // EPIPE to the writer instead of terminating the app with SIGPIPE.
+        _ = Darwin.signal(SIGPIPE, SIG_IGN)
+
         let app = NSApplication.shared
         app.delegate = delegate
         app.setActivationPolicy(.accessory)

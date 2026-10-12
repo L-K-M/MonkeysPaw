@@ -4,6 +4,9 @@ from contextlib import redirect_stdout
 import importlib.util
 import io
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -31,6 +34,18 @@ class ReleaseVersionTests(unittest.TestCase):
     def check(self, tag):
         with redirect_stdout(io.StringIO()):
             checker.check_versions(self.root, tag)
+
+    def test_committed_version_cli_prints_only_one_version_line(self):
+        script = self.root / "scripts/check-version.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(checker.__file__, script)
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--committed-version"],
+            capture_output=True, text=True, check=True)
+
+        self.assertEqual(result.stdout, "0.1.0\n")
+        self.assertEqual(result.stderr, "")
 
     def test_stable_and_prerelease_tags_match_numeric_version(self):
         for tag in ("v0.1.0", "v0.1.0-beta.1", "v0.1.0-rc-1"):

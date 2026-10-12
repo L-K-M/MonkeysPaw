@@ -130,6 +130,7 @@ final class PickerModelTests: XCTestCase {
             { h.picker.open() }, // hotkey
             { h.picker.use(mode: .paste(.standard)) } // Return
         ]
+        XCTAssertEqual(keys.count, 2)
         keys.forEach { $0() }
         XCTAssertEqual(h.picker.state, .delivering)
         XCTAssertEqual(h.delivery.clipboard.readText(), "First body")
@@ -153,6 +154,7 @@ final class PickerModelTests: XCTestCase {
             { h.picker.use(mode: .paste(.standard)) },
             { try XCTUnwrap(h.picker.fillModel).deliver(mode: .paste(.standard)) }
         ]
+        XCTAssertEqual(keys.count, 3)
         try keys.forEach { try $0() }
         XCTAssertEqual(h.delivery.clipboard.readText(), "Explain Swift")
         h.settle()
@@ -174,22 +176,38 @@ final class PickerModelTests: XCTestCase {
     }
 
     func testRarelyUsedPromptFoundWithTwoToFourLetters() throws {
-        let h = PromptFlowHarness()
-        let frequent = try h.put("---\ntitle: Alpha\n---\nCommon", at: "common.md")
-        _ = try h.put("---\ntitle: Translate\nfields:\n  text:\n    default: hello\n---\nTranslate {{text}}",
-                      at: "rare.md")
-        try h.usage.recordUse(identity: frequent.identity)
-        try h.open()
-        XCTAssertEqual(h.picker.results.first?.title, "Alpha")
         for letters in ["tr", "tra", "tran"] {
+            let h = PromptFlowHarness()
+            let frequent = try h.put("---\ntitle: Alpha\n---\nCommon", at: "common.md")
+            _ = try h.put("---\ntitle: Translate\nfields:\n  text:\n    default: hello\n---\nTranslate {{text}}",
+                          at: "rare.md")
+            try h.usage.recordUse(identity: frequent.identity)
+            try h.open() // hotkey
+            XCTAssertEqual(h.picker.results.first?.title, "Alpha")
+            XCTAssertTrue((2...4).contains(letters.count))
             h.picker.setQuery(letters)
             XCTAssertEqual(h.picker.results.first?.title, "Translate")
+            let form = try h.openForm() // Return
+            XCTAssertEqual(h.picker.state, .fill)
+            form.deliver(mode: .paste(.standard)) // Return
+            h.settle()
+            XCTAssertEqual(h.delivery.clipboard.readText(), "Translate hello", letters)
         }
-        let form = try h.openForm()
-        XCTAssertEqual(h.picker.state, .fill)
-        form.deliver(mode: .paste(.standard))
-        h.settle()
-        XCTAssertEqual(h.delivery.clipboard.readText(), "Translate hello")
+    }
+
+    func testCancelFromPickerBudgetOneEscapeNeverDelivers() throws {
+        let h = PromptFlowHarness()
+        let entry = try h.put("Body")
+        try h.open()
+
+        h.picker.escape() // One Escape, with no selection or delivery intent.
+        h.delivery.main.drain()
+
+        XCTAssertEqual(h.picker.state, .closed)
+        XCTAssertTrue(h.delivery.recorder.events.contains(.hide))
+        XCTAssertNil(h.delivery.clipboard.readText())
+        XCTAssertEqual(try h.usage.useEvents(for: entry.identity), [])
+        XCTAssertNil(try h.data.stamp(at: "values.json"))
     }
 
     func testEscapeChainKeepsValuesAndNeverDelivers() throws {

@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -448,6 +449,51 @@ final class LinuxPickerViewTests: XCTestCase {
         reopened.deliver(mode: reopened.preferredMode)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
         XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+    }
+
+    func testExternalInPlaceSaveReachesPickerWithinOneSecondThroughGFileMonitor() throws {
+        try assertExternalSaveWithinOneSecond(.inPlace)
+    }
+
+    func testExternalAtomicReplaceReachesPickerWithinOneSecondThroughGFileMonitor() throws {
+        try assertExternalSaveWithinOneSecond(.atomicReplace)
+    }
+
+    private enum ExternalSaveMode: String {
+        case inPlace = "in-place"
+        case atomicReplace = "atomic-replace"
+    }
+
+    private func assertExternalSaveWithinOneSecond(_ mode: ExternalSaveMode) throws {
+        try files.write(Data("---\ntitle: Original\n---\nOriginal body".utf8), at: "external.md")
+        try open()
+        XCTAssertEqual(environment.pickerModel.results.map(\.title), ["Original"])
+        XCTAssertEqual(environment.pickerModel.selectedPreview, .body("Original body"))
+        let preview = try widget("picker-preview")
+        let destination = root.appendingPathComponent("external.md")
+        let updated = Data("---\ntitle: Updated\n---\nUpdated body".utf8)
+
+        // Start before all external I/O. Use the production graph's real
+        // GFileMonitor, LibraryWatcher debounce and index, without reloads.
+        let started = ProcessInfo.processInfo.systemUptime
+        switch mode {
+        case .inPlace:
+            try updated.write(to: destination)
+        case .atomicReplace:
+            let temporary = root.appendingPathComponent(".external-save.tmp")
+            try updated.write(to: temporary)
+            XCTAssertEqual(Glibc.rename(temporary.path, destination.path), 0)
+        }
+        let arrived = GTKTestSupport.spin(timeout: .seconds(5)) {
+            self.environment.pickerModel.results.map(\.relativePath) == ["external.md"]
+                && self.environment.pickerModel.results.map(\.title) == ["Updated"]
+                && self.environment.pickerModel.selectedPreview == .body("Updated body")
+                && self.text(in: preview) == "Updated body"
+        }
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        print("External \(mode.rawValue) save -> GTK picker: \(elapsed) seconds")
+        XCTAssertTrue(arrived, "Real GFileMonitor -> debounce -> index -> GTK picker did not refresh within five seconds")
+        XCTAssertLessThan(elapsed, 1.0, "External \(mode.rawValue) save must reach results and preview within one second")
     }
 
     func testWatcherPublishesExternalChangesAndRootLossRetainsCachedPrompts() throws {
