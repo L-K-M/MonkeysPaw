@@ -150,6 +150,9 @@ public enum Limits {
     /// §8.4: bound a complete relative prompt path to 1,024 UTF-8 bytes.
     public static let maxPathBytes: Int = kibibyte
 
+    /// §8.4: bound each NFC sync path segment, including a filename's suffix.
+    public static let syncPathSegmentMaxBytes: Int = 255
+
     /// Desktop creation uses one filename within the common POSIX NAME_MAX.
     public static let promptFilenameMaxBytes: Int = 255
 
