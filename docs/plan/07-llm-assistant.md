@@ -70,8 +70,19 @@ re-entry or Clear before it can be used.
     with `HTTPTransportError.invalidRequest`; adapters enforce the same rules.
   - `RESPONSE_CAP = 2 MiB` for LLM calls. Sync uses
     `SYNC_RESPONSE_CAP = 16 MiB` on the same transport.
+    The request selects the cap; delegate callbacks cancel receipt as soon
+    as the body exceeds it, including chunked bodies without Content-Length.
+    An advertised length above the cap is rejected before body accumulation.
+  - Each request uses an ephemeral URLSession with cookies, URL cache and
+    credential storage disabled. A separate monotonic deadline cancels the
+    task even while bytes keep arriving; caller cancellation does the same.
+    Every 3xx response is refused with a typed error, including responses
+    without a usable Location header. No automatic retry is performed.
   - Provider error bodies are never shown or logged; the user sees a typed
     error instead.
+    Non-3xx HTTP error statuses return bounded data to the protocol layer for
+    its own error parsing. Transport failures contain no underlying error
+    text, provider body, headers or URL. Response header names are lowercase.
   - `HTTPTransporting` carries Foundation-only request/response data, byte
     caps and an absolute monotonic deadline. The portable URLSession adapter
     is the narrow networking exception in Core; its conditional Linux

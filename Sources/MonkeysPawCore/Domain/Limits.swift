@@ -132,6 +132,9 @@ public enum Limits {
     /// §7.1: one explicit model-list operation has a 15-second deadline.
     public static let modelListTimeout: Duration = .seconds(15)
 
+    /// §7.1: platform idle/resource timeouts never replace the monotonic deadline.
+    public static let httpSessionTimeoutFloor: TimeInterval = 300
+
     /// §19 B3: bound the serialized HTTP request envelope separately from content.
     public static let httpRequestCap: Int = 2 * mebibyte
 
