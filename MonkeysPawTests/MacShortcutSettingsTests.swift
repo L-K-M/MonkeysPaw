@@ -315,7 +315,9 @@ private final class ShortcutSettingsHarness {
         let model = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
         let settings = SettingsModel(settings: SettingsService(store: SettingsStore(files: UnavailableFileStore())))
         let general = GeneralSettingsModel(settings: settings, library: ports, mainThread: main)
-        presentation = SettingsViewState(general: general, shortcuts: model, mainThread: main, openSetup: {})
+        let rememberedValues = RememberedValuesSettingsModel(control: ports, mainThread: main)
+        presentation = SettingsViewState(general: general, shortcuts: model, rememberedValues: rememberedValues,
+                                         mainThread: main, openSetup: {})
         shortcuts.configure([.togglePicker: Accelerator.defaultBinding(for: .togglePicker)!]) { [weak self] _ in
             self?.activations += 1
         }
@@ -352,7 +354,7 @@ private struct SettingsShortcutScheduler: MonkeysPawCore.Scheduler {
 }
 
 private final class SettingsShortcutPorts: PanelWindow, FocusTracker, Clipboard, Notifier, SessionProbe,
-                                           SetupProbe, SelfTestTarget, LibraryLocationControl {
+                                           SetupProbe, SelfTestTarget, LibraryLocationControl, RememberedValuesControl {
     private let backend: SettingsHotkeyBackend
     init(backend: SettingsHotkeyBackend) { self.backend = backend }
     func show() {}
@@ -378,4 +380,5 @@ private final class SettingsShortcutPorts: PanelWindow, FocusTracker, Clipboard,
     var defaultLibraryPath: String { "/default" }
     func switchLibrary(to path: String?) -> LibrarySwitchOutcome { .switched }
     func revealLibrary() {}
+    func forgetAllValues() -> RememberedValuesOutcome { .forgotten }
 }

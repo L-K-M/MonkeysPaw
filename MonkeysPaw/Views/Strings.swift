@@ -109,6 +109,8 @@ enum Strings {
     static let chooseValue = "Choose a value"
     static let usePrompt = "Use"
     static let deliver = "Deliver"
+    static let forgetValues = "Forget values"
+    static let forgetAllValues = RememberedValuesStrings.forgetAll + "…"
     static let edit = "Edit"
     static let library = "Library"
     static let emptyLibrary = "Your library is empty. Open the library folder to add a prompt."
@@ -130,6 +132,16 @@ enum Strings {
         case .rememberedValuesNotSaved: return "Delivered, but your field values could not be saved."
         case .usageNotSaved: return "Delivered, but your recent use could not be saved."
         }
+    }
+
+    static func forgetValuesError(_ error: Error, state: PickerModel.State) -> String {
+        if state == .delivering, error as? LibraryError == .operationFailed {
+            return RememberedValuesStrings.message(for: .deliveryInFlight)
+        }
+        if let error = error as? FileStoreError {
+            return RememberedValuesStrings.message(for: .fileStoreFailure(error))
+        }
+        return RememberedValuesStrings.message(for: .libraryFailure(error as? LibraryError ?? .operationFailed))
     }
     static let runSelfTest = "Run self-test"
     static let testing = "Testing paste…"

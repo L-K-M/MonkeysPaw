@@ -60,6 +60,21 @@ final class PickerViewState: ObservableObject {
         transientStatus = message
     }
 
+    var showsForgetValues: Bool {
+        if model.fillModel != nil { return true }
+        guard let position = model.selectionIndex else { return false }
+        return model.results.indices.contains(position)
+    }
+
+    var canForgetValues: Bool {
+        showsForgetValues && model.state != .delivering && model.fillModel?.state != .delivering
+    }
+
+    func forgetSelectedValues() {
+        guard isCurrent(), showsForgetValues else { return }
+        model.forgetSelectedValues()
+    }
+
     var status: String {
         var warnings = model.persistenceWarnings
         for warning in model.fillModel?.persistenceWarnings ?? [] where !warnings.contains(warning) {
@@ -70,7 +85,11 @@ final class PickerViewState: ObservableObject {
         var messages = [model.libraryAvailable ? nil : Strings.libraryUnavailable,
                         resolving ? Strings.preparingPreview : nil].compactMap { $0 }
         if let transientStatus, !messages.contains(transientStatus) { messages.append(transientStatus) }
-        return (messages + warnings.map(Strings.persistenceWarning)).joined(separator: "\n")
+        messages += warnings.map(Strings.persistenceWarning)
+        if let error = model.forgetValuesError {
+            messages.append(Strings.forgetValuesError(error, state: model.state))
+        }
+        return messages.joined(separator: "\n")
     }
 
     var preview: String {

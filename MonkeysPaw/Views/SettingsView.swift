@@ -8,17 +8,23 @@ final class SettingsViewState: ObservableObject {
     @Published private(set) var shortcutError: ShortcutRebindError?
     @Published private(set) var shortcutInstructions: String?
     @Published private(set) var captureError: ShortcutRebindError?
+    @Published private(set) var rememberedValues: RememberedValuesSettingsModel.State
     @Published var isChoosingFolder = false
     let repeatLast: ShortcutsSettingsModel.ActionState
     let generalModel: GeneralSettingsModel
     let shortcutsModel: ShortcutsSettingsModel
+    let rememberedValuesModel: RememberedValuesSettingsModel
     var onChooseFolder: (() -> Void)?
+    var onRememberedValuesChange: (() -> Void)?
     private let openSetup: () -> Void
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
+         rememberedValues: RememberedValuesSettingsModel,
          mainThread: MainThread, openSetup: @escaping () -> Void) {
         generalModel = general
         shortcutsModel = shortcuts
+        rememberedValuesModel = rememberedValues
+        self.rememberedValues = rememberedValues.state
         self.openSetup = openSetup
         self.general = general.state
         togglePicker = shortcuts.togglePicker
@@ -37,6 +43,13 @@ final class SettingsViewState: ObservableObject {
                 self.togglePicker = self.shortcutsModel.togglePicker
                 self.shortcutError = self.shortcutsModel.error
                 self.shortcutInstructions = self.shortcutsModel.instructions
+            }
+        }
+        rememberedValues.onChange = { [weak self] in
+            mainThread.run { [weak self] in
+                guard let self else { return }
+                self.rememberedValues = self.rememberedValuesModel.state
+                self.onRememberedValuesChange?()
             }
         }
     }
@@ -79,6 +92,9 @@ final class SettingsViewState: ObservableObject {
     func chooseFolder() { onChooseFolder?() }
     func useDefaultFolder() { generalModel.useDefaultFolder() }
     func revealFolder() { generalModel.revealFolder() }
+    func requestForgetAll() { rememberedValuesModel.requestForgetAll() }
+    func confirmForgetAll() { rememberedValuesModel.confirmForgetAll() }
+    func cancelForgetAll() { rememberedValuesModel.cancelForgetAll() }
     func beginVerification() { shortcutsModel.beginVerification() }
     func performPlatformChange() { shortcutsModel.performPlatformChange() }
     func showSetup() { openSetup() }
@@ -119,6 +135,16 @@ struct SettingsView: View {
             }
             ForEach(presentation.generalMessages, id: \.self) { message in
                 Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            Button(Strings.forgetAllValues, action: presentation.requestForgetAll)
+                .disabled(presentation.isChoosingFolder || presentation.rememberedValues.confirmation != .none)
+                .accessibilityLabel(Strings.forgetAllValues)
+                .accessibilityIdentifier("settings-forget-all")
+            if let message = presentation.rememberedValues.message {
+                Text(message).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(message)
+                    .accessibilityIdentifier("settings-forget-message")
             }
             Spacer()
         }
