@@ -541,8 +541,9 @@ definitions, with these corpus boundaries:
   are lowercase and hyphenated. Timestamps use exact Gregorian
   `YYYY-MM-DDTHH:mm:ss.SSSZ`, years 0001–9999, rejecting offsets, leap seconds,
   invalid calendar dates and missing/excess precision.
-- Prompt scopes use `private` with absent `group_id`, or `group` with a
-  required ULID `group_id`. Feed identities retain `kind: user|group` and
+- Prompt scopes use `user` with absent `group_id`, or `group` with a
+  required ULID `group_id`; `private` is rejected as a scope wire value.
+  Feed identities use `kind: user|group` and
   `user:<ULID>`/`group:<ULID>` keys. Private feed metadata omits group id,
   name and role; group metadata requires all three.
 - `rev`, successful write/feed `seq`, and delete/move `base_rev` are positive

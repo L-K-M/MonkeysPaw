@@ -45,14 +45,14 @@ extension SyncAPI {
     }
 
     public enum PromptScope: APIObjectDTO, Equatable {
-        case `private`
+        case user
         case group(groupID: String)
 
         public static let schema: SyncAPISchema = .scoped([])
 
         init(object: [String: APIValue]) throws {
             switch try object.string("scope") {
-            case "private": self = .private
+            case "user": self = .user
             case "group": self = .group(groupID: try object.string("group_id"))
             default: throw APIContractError.invalidValue
             }
@@ -60,7 +60,7 @@ extension SyncAPI {
 
         var object: [String: APIValue] {
             switch self {
-            case .private: return ["scope": .string("private")]
+            case .user: return ["scope": .string("user")]
             case .group(let id): return ["scope": .string("group"), "group_id": .string(id)]
             }
         }

@@ -141,9 +141,9 @@ properties. JSON keys are snake_case, ULIDs uppercase Crockford, UUIDs
 lowercase hyphenated, and timestamps Gregorian UTC with exactly three
 fractional digits (`2026-10-12T20:10:56.557Z`). Counters are Int64: `rev` and
 successful write `seq` ≥1, create `base_rev` ≥0, delete/move `base_rev` ≥1,
-feed `seq` ≥1 and `head` ≥0. Prompt scope is `private` or `group`; the latter requires
-`group_id`, and private omits it. The database's internal `user` scope and
-feed key `user:<ULID>` keep their existing spelling (B2).
+feed `seq` ≥1 and `head` ≥0. Prompt scope is `user` or `group`; the latter requires
+`group_id`, and `user` omits it. These values match the database scopes and
+feed kinds, with keys `user:<ULID>` and `group:<ULID>` (B2).
 
 The previously unspecified bodies are pinned as follows (B2/B9/B10):
 

@@ -11,7 +11,7 @@ final class SyncAPITests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(SyncAPI.Prompt.self, from: encoded), prompt)
         XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("9223372036854775807"))
         requireSendable(prompt)
-        requireSendable(SyncAPI.ErrorResponse.conflict(head: .init(rev: 1, scope: .private, path: "a.md", content: "")))
+        requireSendable(SyncAPI.ErrorResponse.conflict(head: .init(rev: 1, scope: .user, path: "a.md", content: "")))
     }
 
     func testExplicitNullAndOmittedPatchMembersRemainDistinct() throws {
@@ -22,8 +22,8 @@ final class SyncAPITests: XCTestCase {
         XCTAssertEqual(cleared.displayName, .null)
         XCTAssertEqual(try decoder.decode(SyncAPI.UpdateUserRequest.self, from: encoder.encode(omitted)), omitted)
         XCTAssertEqual(try decoder.decode(SyncAPI.UpdateUserRequest.self, from: encoder.encode(cleared)), cleared)
-        let privateScope = String(decoding: try encoder.encode(SyncAPI.PromptScope.private), as: UTF8.self)
-        XCTAssertEqual(privateScope, "{\"scope\":\"private\"}")
+        let userScope = String(decoding: try encoder.encode(SyncAPI.PromptScope.user), as: UTF8.self)
+        XCTAssertEqual(userScope, "{\"scope\":\"user\"}")
     }
 
     func testOpaqueCursorsAreNotParsedByDTOs() throws {
@@ -36,7 +36,7 @@ final class SyncAPITests: XCTestCase {
 
     func testConstructedInvalidValuesCannotBeEncoded() throws {
         let encoder = JSONEncoder()
-        XCTAssertThrowsError(try encoder.encode(SyncAPI.Prompt(id: id.lowercased(), rev: 1, scope: .private, path: "a.md", content: "")))
+        XCTAssertThrowsError(try encoder.encode(SyncAPI.Prompt(id: id.lowercased(), rev: 1, scope: .user, path: "a.md", content: "")))
         XCTAssertThrowsError(try encoder.encode(SyncAPI.WriteResponse(rev: 0, seq: 1)))
         XCTAssertThrowsError(try encoder.encode(SyncAPI.GroupInviteRequest(role: .viewer, expiresIn: 604_801)))
         XCTAssertThrowsError(try encoder.encode(SyncAPI.ErrorResponse.validation(issues: [.init(code: "field.unused", severity: .warning)])))
@@ -47,12 +47,12 @@ final class SyncAPITests: XCTestCase {
     func testContentLimitUsesUTF8BytesAndLeaves422ValidationToServices() throws {
         let encoder = JSONEncoder()
         let maximum = String(repeating: "é", count: Limits.maxPromptBytes / 2)
-        let valid = SyncAPI.PutPromptRequest(baseRev: 0, scope: .private, path: "../invalid.MD", content: maximum)
+        let valid = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "../invalid.MD", content: maximum)
         XCTAssertNoThrow(try encoder.encode(valid))
-        XCTAssertThrowsError(try encoder.encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: .private, path: "a.md", content: maximum + "é")))
+        XCTAssertThrowsError(try encoder.encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "a.md", content: maximum + "é")))
         // DTOs accept content/path strings before the shared semantic validators
         // produce 422 issues, rather than turning their errors into malformed JSON.
-        let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .private, path: "", content: "invalid YAML")
+        let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "", content: "invalid YAML")
         XCTAssertNoThrow(try encoder.encode(request))
     }
 

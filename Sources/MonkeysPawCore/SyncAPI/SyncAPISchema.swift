@@ -107,7 +107,7 @@ extension SyncAPISchema {
 
     static func scoped(_ fields: [SyncAPIField]) -> Self {
         .oneOf([
-            .object(fields: fields + [.init("scope", .constant("private"))]),
+            .object(fields: fields + [.init("scope", .constant("user"))]),
             .object(fields: fields + [.init("scope", .constant("group")), .init("group_id", .ulid)])
         ])
     }
