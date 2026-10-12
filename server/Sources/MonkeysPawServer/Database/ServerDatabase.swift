@@ -100,6 +100,7 @@ public final class ServerDatabase: Sendable {
         }
     }
 
+    /// Use the supplied session for related repository work; nested writes wait on their own gate.
     func write<T: Sendable>(
         _ operation: @escaping @Sendable (any SQLDatabase) async throws -> T
     ) async throws -> T {

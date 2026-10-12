@@ -41,6 +41,20 @@ struct ServerPersistenceTests {
         }
     }
 
+    @Test func databaseIdentityRejectsMalformedUUIDsAndAllowsExplicitRestoreRotation() async throws {
+        try await withPersistenceDatabase { repository in
+            let identity = try await MetaRepository(database: repository.database).databaseID()
+            for invalid in ["x", String(repeating: "A", count: 36), identity.uuidString + "\u{0}",
+                            identity.uuidString.replacingOccurrences(of: "-", with: "A")] {
+                await repository.reject("UPDATE meta SET database_id = \(bind: invalid)")
+            }
+            #expect(try await MetaRepository(database: repository.database).databaseID() == identity)
+            let restoredID = UUID()
+            try await repository.execute("UPDATE meta SET database_id = \(bind: restoredID.uuidString)")
+            #expect(try await MetaRepository(database: repository.database).databaseID() == restoredID)
+        }
+    }
+
     @Test func identityAndDataSurviveReopen() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-s5-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -75,6 +89,9 @@ struct ServerPersistenceTests {
             try await repository.seed()
             await repository.reject("INSERT INTO meta (singleton, database_id) VALUES (2, 'other')")
             await repository.reject("INSERT INTO meta (singleton, database_id) VALUES (1, 'other')")
+            await repository.reject("DELETE FROM meta")
+            await repository.reject("INSERT OR REPLACE INTO meta VALUES (1, \(bind: UUID().uuidString))")
+            await repository.reject("UPDATE meta SET singleton = 2")
             for username in ["", "Alice", "é", "a b", "a\u{0}b", String(repeating: "a", count: 65)] {
                 await repository.reject("UPDATE users SET username = \(bind: username) WHERE id = \(bind: Fixtures.user)")
             }
@@ -184,6 +201,8 @@ struct ServerPersistenceTests {
             await repository.reject(Fixtures.revision(rev: 2, scope: "group", owner: nil, group: "missing"))
             await repository.reject("UPDATE prompt_revisions SET rev = 1.5")
             await repository.reject("INSERT INTO prompts SELECT * FROM prompts")
+            await repository.reject("INSERT OR REPLACE INTO prompts SELECT * FROM prompts")
+            #expect(try await repository.count("prompt_revisions") == 1)
             try await repository.execute("DELETE FROM prompts")
             #expect(try await repository.count("prompt_revisions") == 0)
         }
@@ -212,11 +231,17 @@ struct ServerPersistenceTests {
             try await repository.execute(Fixtures.change(kind: "move_out", rev: 4, content: nil))
             try await repository.execute("INSERT INTO scope_floors VALUES (\(bind: "user:\(Fixtures.user)"), 4)")
             await repository.reject("INSERT INTO scope_floors SELECT * FROM scope_floors")
+            await repository.reject("INSERT INTO scope_heads VALUES ('ghost', 100)")
+            await repository.reject("UPDATE scope_heads SET head_seq = 100")
+            await repository.reject("INSERT OR REPLACE INTO scope_heads VALUES (\(bind: "user:\(Fixtures.user)"), 100)")
             await repository.reject("UPDATE scope_floors SET floor_seq = 0")
             await repository.reject("UPDATE scope_floors SET floor_seq = 3")
             await repository.reject("UPDATE scope_floors SET floor_seq = 4.5")
+            await repository.reject("UPDATE scope_floors SET floor_seq = 5")
             await repository.reject("INSERT OR REPLACE INTO scope_floors VALUES (\(bind: "user:\(Fixtures.user)"), 1)")
             await repository.reject("INSERT INTO scope_floors VALUES ('missing', 1)")
+            try await repository.execute("INSERT INTO scope_heads VALUES ('empty', 0)")
+            await repository.reject("INSERT INTO scope_floors VALUES ('empty', 2)")
             await repository.reject("UPDATE scope_heads SET head_seq = -1")
             await repository.reject("UPDATE scope_heads SET head_seq = 2")
             await repository.reject("UPDATE scope_heads SET head_seq = 3.5")
@@ -227,7 +252,7 @@ struct ServerPersistenceTests {
             try await repository.execute("DELETE FROM prompts")
             #expect(try await repository.count("changes") == 3)
             try await repository.execute("DELETE FROM changes")
-            #expect(try await repository.string("SELECT head_seq FROM scope_heads", column: "head_seq") == "3")
+            #expect(try await repository.string("SELECT head_seq FROM scope_heads WHERE scope_key = \(bind: "user:\(Fixtures.user)")", column: "head_seq") == "3")
             #expect(try await repository.string("SELECT floor_seq FROM scope_floors", column: "floor_seq") == "4")
             try await repository.execute(Fixtures.change(rev: 5))
             #expect(try await repository.string("SELECT seq FROM changes", column: "seq") == "4")

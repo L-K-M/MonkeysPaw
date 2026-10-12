@@ -87,6 +87,7 @@ struct ServerDatabaseLifecycleTests {
         try await withPersistenceDatabase { repository in
             try await repository.seed()
             try await repository.execute(Fixtures.change())
+            for _ in 0..<4 { try await repository.execute(Fixtures.change()) }
             let id = try await MetaRepository(database: repository.database).databaseID().uuidString
             let key = "user:\(Fixtures.user)"
             let insert: SQLQueryString = """
@@ -94,7 +95,9 @@ struct ServerDatabaseLifecycleTests {
                     '2026-10-12T00:00:00.000Z', '2026-10-12T00:15:00.000Z')
                 """
             try await repository.execute(insert)
+            await repository.reject("UPDATE meta SET database_id = \(bind: UUID().uuidString)")
             await repository.reject(insert)
+            await repository.reject("INSERT INTO snapshots SELECT database_id, scope_key, 6, manifest, created_at, expires_at FROM snapshots")
             await repository.reject("UPDATE snapshots SET manifest = X'00'")
             await repository.reject("INSERT OR REPLACE INTO snapshots SELECT database_id, scope_key, head_seq, X'00', created_at, expires_at FROM snapshots")
             for (created, expires) in [("invalid", "invalid"), (Fixtures.time, Fixtures.time),

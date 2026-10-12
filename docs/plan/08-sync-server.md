@@ -63,6 +63,8 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
   Usernames use one lowercase ASCII spelling, 1–64 bytes of `a-z`, `0-9`,
   `_`, `.` or `-`, in both users and account login buckets (§19 B7).
   Account-only invites have no role; group invites require a checked role.
+  The database UUID uses uppercase canonical UUID text. Its singleton cannot
+  be deleted/replaced; explicit UUID UPDATE remains available for restore.
 - **Feed payloads.** Changes are immutable event-time scope/path/rev records.
   An upsert carries its own content; delete and move_out carry no content.
   Feed rows have no foreign key to a prompt or revision, so purging heads
@@ -88,6 +90,9 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
   after content/history purge (§19 B15). Scope heads and floors cannot be
   lowered or deleted by ordinary SQL; stale detection uses
   `cursor + 1 < floor_seq` (§19 B18).
+  Empty scopes may initialize head 0. Nonzero head inserts/raises must name an
+  existing change in that scope; floors cannot exceed head + 1, and snapshot
+  heads cannot exceed the scope head at materialization.
 - **Time.** Every stored timestamp is UTC ISO-8601.
 
 ### 8.2 Roles and permissions

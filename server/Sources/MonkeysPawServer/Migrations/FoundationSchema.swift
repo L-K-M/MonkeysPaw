@@ -17,8 +17,22 @@ enum FoundationSchema {
         """
         CREATE TABLE meta (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-            database_id TEXT NOT NULL UNIQUE
+            database_id TEXT NOT NULL UNIQUE CHECK (
+                length(CAST(database_id AS BLOB)) = 36
+                AND substr(database_id, 9, 1) = '-' AND substr(database_id, 14, 1) = '-'
+                AND substr(database_id, 19, 1) = '-' AND substr(database_id, 24, 1) = '-'
+                AND length(replace(database_id, '-', '')) = 32
+                AND replace(database_id, '-', '') NOT GLOB '*[^0-9A-F]*')
         )
+        """,
+        """
+        CREATE TRIGGER meta_durable BEFORE DELETE ON meta
+        BEGIN SELECT RAISE(ABORT, 'Database identity cannot be deleted'); END
+        """,
+        """
+        CREATE TRIGGER meta_no_replace BEFORE INSERT ON meta
+        WHEN EXISTS (SELECT 1 FROM meta)
+        BEGIN SELECT RAISE(ABORT, 'Database identity cannot be replaced'); END
         """,
         """
         CREATE TABLE users (
@@ -74,6 +88,11 @@ enum FoundationSchema {
         CREATE TRIGGER prompts_identity_immutable BEFORE UPDATE OF id ON prompts
         WHEN NEW.id != OLD.id
         BEGIN SELECT RAISE(ABORT, 'Prompt identity is immutable'); END
+        """,
+        """
+        CREATE TRIGGER prompts_no_replace BEFORE INSERT ON prompts
+        WHEN EXISTS (SELECT 1 FROM prompts WHERE id = NEW.id)
+        BEGIN SELECT RAISE(ABORT, 'Prompt identities cannot be replaced'); END
         """,
         """
         CREATE TABLE prompt_revisions (
@@ -134,10 +153,32 @@ enum FoundationSchema {
         END
         """,
         """
+        CREATE TRIGGER scope_heads_valid_insert BEFORE INSERT ON scope_heads
+        WHEN NEW.head_seq != 0 AND NOT EXISTS (
+            SELECT 1 FROM changes WHERE seq = NEW.head_seq AND scope_key = NEW.scope_key)
+        BEGIN SELECT RAISE(ABORT, 'Nonzero scope heads require a change event'); END
+        """,
+        """
+        CREATE TRIGGER scope_heads_valid_raise BEFORE UPDATE OF head_seq ON scope_heads
+        WHEN NEW.head_seq > OLD.head_seq AND NOT EXISTS (
+            SELECT 1 FROM changes WHERE seq = NEW.head_seq AND scope_key = NEW.scope_key)
+        BEGIN SELECT RAISE(ABORT, 'Scope head raises require a change event'); END
+        """,
+        """
         CREATE TABLE scope_floors (
             scope_key TEXT PRIMARY KEY NOT NULL REFERENCES scope_heads(scope_key),
             floor_seq INTEGER NOT NULL CHECK (typeof(floor_seq) = 'integer' AND floor_seq >= 1)
         )
+        """,
+        """
+        CREATE TRIGGER scope_floors_valid_insert BEFORE INSERT ON scope_floors
+        WHEN NEW.floor_seq - 1 > (SELECT head_seq FROM scope_heads WHERE scope_key = NEW.scope_key)
+        BEGIN SELECT RAISE(ABORT, 'Scope floors cannot pass head plus one'); END
+        """,
+        """
+        CREATE TRIGGER scope_floors_valid_raise BEFORE UPDATE OF floor_seq ON scope_floors
+        WHEN NEW.floor_seq - 1 > (SELECT head_seq FROM scope_heads WHERE scope_key = NEW.scope_key)
+        BEGIN SELECT RAISE(ABORT, 'Scope floors cannot pass head plus one'); END
         """,
         """
         CREATE TRIGGER scope_heads_monotonic BEFORE UPDATE ON scope_heads
@@ -210,6 +251,11 @@ enum FoundationSchema {
         )
         """,
         "CREATE INDEX snapshots_expiry ON snapshots(expires_at)",
+        """
+        CREATE TRIGGER snapshots_valid_head BEFORE INSERT ON snapshots
+        WHEN NEW.head_seq > (SELECT head_seq FROM scope_heads WHERE scope_key = NEW.scope_key)
+        BEGIN SELECT RAISE(ABORT, 'Snapshot heads cannot exceed the scope head'); END
+        """,
         """
         CREATE TRIGGER snapshots_storage_bound BEFORE INSERT ON snapshots
         WHEN (SELECT COALESCE(SUM(length(manifest)), 0) FROM snapshots) + length(NEW.manifest) > \(literal: ServerLimits.snapshotTotalMaxBytes)
