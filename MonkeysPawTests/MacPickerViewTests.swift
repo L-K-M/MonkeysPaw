@@ -126,7 +126,9 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(current.results.map(\.relativePath), ["beta.md"])
         XCTAssertTrue(current.libraryAvailable)
         try sendKey(code: UInt16(kVK_ANSI_L), characters: "l", modifiers: .command, to: panel)
-        XCTAssertEqual(launched, [other])
+        // ⌘L opens the Library window for the new graph instead of Finder.
+        XCTAssertTrue(launched.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow?.window).isVisible)
         XCTAssertEqual(current.state, .closed)
         XCTAssertFalse(controller.isVisible)
     }
@@ -157,7 +159,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(panel.firstResponder === sink)
     }
 
-    func testOnDiskPromptAndEditLibraryLaunchURLs() throws {
+    func testOnDiskPromptEditURLAndLibraryWindowOpening() throws {
         let path = "folder name/Prompt #%.md"
         try files.write(Data("---\ntitle: Useful\nfavorite: true\ntags: [code]\n---\nBody".utf8), at: path)
         let picker = try open()
@@ -175,7 +177,8 @@ final class MacPickerViewTests: XCTestCase {
         picker.open()
         picker.openLibrary()
         XCTAssertNil(picker.requestedIntent)
-        XCTAssertEqual(launched, [root.appendingPathComponent(path), root])
+        XCTAssertEqual(launched, [root.appendingPathComponent(path)])
+        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow?.window).isVisible)
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
     }

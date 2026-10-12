@@ -443,6 +443,10 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertFalse(menu.autoenablesItems)
         let action = try XCTUnwrap(item.action)
         XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+        let libraryWindow = try XCTUnwrap(delegate.libraryWindow?.window)
+        XCTAssertTrue(libraryWindow.isVisible)
+        XCTAssertTrue(revealed.isEmpty)
+        delegate.libraryWindow?.presentation.revealFolder()
         XCTAssertEqual(revealed, [root])
         let stale = watchers[0]
         DispatchQueue.global().sync { stale.emit(.rootUnavailable(.notFound)) }
@@ -462,6 +466,10 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertEqual(item.title, OnboardingStrings.libraryAvailableMenu)
         XCTAssertTrue(item.isEnabled)
         XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+        XCTAssertTrue(delegate.libraryWindow?.window === libraryWindow)
+        XCTAssertEqual(delegate.libraryWindow?.presentation.activeLibraryPath, other.path)
+        XCTAssertEqual(revealed, [root])
+        delegate.libraryWindow?.presentation.revealFolder()
         XCTAssertEqual(revealed, [root, other])
         stale.emit(.rootUnavailable(.ioFailure))
         XCTAssertTrue(spin { self.delegate.libraryStatusModel?.state == .available })

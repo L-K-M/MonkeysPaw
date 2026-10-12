@@ -46,11 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var pickerPresentation: PickerViewState?
     private var setupWindow: SetupWindowController?
     private(set) var settingsWindow: SettingsWindowController?
+    private(set) var libraryWindow: LibraryWindowController?
     private(set) var onboardingWindow: OnboardingWindowController?
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
     private var statusItem: NSStatusItem?
     private(set) var pickerModel: PickerModel?
+    private(set) var libraryBrowserModel: LibraryBrowserModel?
     private(set) var setupModel: SetupModel?
     private(set) var settingsModel: SettingsModel?
     private(set) var generalSettingsModel: GeneralSettingsModel?
@@ -171,6 +173,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isShutDown else { return }
         isShutDown = true
         watcher?.stop()
+        libraryBrowserModel?.deactivate()
+        libraryWindow?.tearDown()
+        pickerModel?.onChange = nil
         onboardingStarted = false
         presentedOnboardingStep = nil
         setupWindow?.tearDown()
@@ -397,8 +402,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Stop before releasing: FSEvents marshals teardown via its serial queue.
         watcher?.stop()
         watcher = nil
+        libraryBrowserModel?.deactivate()
         pickerModel.onChange = nil
-        index?.setOnChange(nil)
         pickerPresentation = nil
         self.pickerModel = nil
         libraryDirectory = directory
@@ -445,7 +450,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let data = dataFiles, let values, let usage, let fill, let delivery,
               let panel = panelController, let focus = focusTracker, let log else { return }
         let generation = libraryGeneration
-        let isCurrent: () -> Bool = { [weak self] in self?.libraryGeneration == generation }
+        let isCurrent: () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !self.isShutDown && self.libraryGeneration == generation
+        }
         // Check inside the UI hop, not before queueing: an old index, snapshot
         // or view publish may already be waiting on DispatchQueue.main.
         let libraryMain = LibraryMainThread(main: mainThread, isCurrent: isCurrent)
@@ -453,6 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             entropy: SystemEntropy(), keyedStores: [values, usage])
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain)
+        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: libraryMain)
         model.libraryAvailable = availability
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
             requestedIntent: { [weak self] intent in
@@ -494,6 +503,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         libraryFiles = files
         self.library = library
         self.index = index
+        libraryBrowserModel = browser
+        if let libraryWindow {
+            libraryWindow.rebind(to: browser, libraryPath: libraryDirectory.path, available: availability)
+        } else {
+            libraryWindow = LibraryWindowController(model: browser, libraryPath: libraryDirectory.path,
+                available: availability, mainThread: mainThread, activation: windowActivation,
+                now: { [clock] in clock.now() }, timeZone: { TimeZone.current },
+                revealLibrary: { [weak self] in self?.revealLibrary() })
+        }
         if let raw = try? makeFileWatcher(libraryDirectory, log) {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
         }
@@ -510,6 +528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try Self.startLibrary(index: index, watcher: watcher) { [weak self] update in
                 self?.mainThread.run { [weak self] in
                     guard let self, self.libraryGeneration == generation,
+                          !self.isShutDown,
                           self.pickerModel?.libraryAvailable == true else { return }
                     switch update {
                     case .changes(let changes): self.apply(changes, to: index)
@@ -573,6 +592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func degradeLibrary(_ error: FileStoreError? = nil) {
         watcher?.stop()
         pickerModel?.libraryAvailable = false
+        libraryWindow?.presentation.setLibraryAvailable(false)
         libraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(error)
     }
@@ -583,21 +603,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let url: URL
         switch intent {
-        case .openLibrary: url = libraryDirectory
+        case .openLibrary:
+            showLibrary()
         case .edit(_, let path):
             guard (try? FileStorePath.validate(path)) != nil else {
                 pickerPresentation?.showStatus(Strings.promptFileUnavailable)
                 return
             }
-            url = libraryDirectory.appendingPathComponent(path)
-        }
-        pickerModel?.dismiss()
-        let generation = libraryGeneration
-        mainThread.run { [weak self] in
-            guard let self, self.libraryGeneration == generation else { return }
-            self.launchURI(url)
+            let url = libraryDirectory.appendingPathComponent(path)
+            pickerModel?.dismiss()
+            let generation = libraryGeneration
+            mainThread.run { [weak self] in
+                guard let self, !self.isShutDown, self.libraryGeneration == generation else { return }
+                self.launchURI(url)
+            }
         }
     }
 
@@ -628,6 +648,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        // Library status owns availability, including runtime root loss.
+        appMenu.autoenablesItems = false
+        addLibraryItem(to: appMenu, keyEquivalent: "l")
         addSettingsItem(to: appMenu)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(AppIdentity.displayName)",
@@ -669,16 +692,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
         // Status owns this item's availability; AppKit must not re-enable it
-        // merely because its target implements the reveal action.
+        // merely because its target implements the open action.
         menu.autoenablesItems = false
         let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
                                 keyEquivalent: "")
         show.target = self
-        let library = menu.addItem(withTitle: libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu,
-                                  action: #selector(openLibraryFromMenu), keyEquivalent: "")
-        library.target = self
-        libraryMenuItems.append(library)
-        updateLibraryMenuItems()
+        addLibraryItem(to: menu, keyEquivalent: "")
         addSettingsItem(to: menu)
         let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
@@ -699,7 +718,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openLibraryFromMenu() {
         guard libraryStatusModel?.libraryAvailable == true else { return }
-        revealLibrary()
+        showLibrary()
+    }
+
+    private func addLibraryItem(to menu: NSMenu, keyEquivalent: String) {
+        let item = menu.addItem(withTitle: libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu,
+            action: #selector(openLibraryFromMenu), keyEquivalent: keyEquivalent)
+        item.target = self
+        item.keyEquivalentModifierMask = .command
+        libraryMenuItems.append(item)
+        updateLibraryMenuItems()
     }
 
     private func addSettingsItem(to menu: NSMenu) {
@@ -734,15 +762,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         mainThread.run { [weak self] in
             guard let self, !self.isShutDown else { return }
-            self.focusTracker?.cancelPendingRestoration()
-            self.panelController?.cancelForOwnedWindow()
-            // A summon or dismissal may be queued behind an older restore.
-            // Close model state even if its native panel has not appeared yet.
-            self.pickerModel?.dismiss()
-            self.panelController?.hide()
-            self.delivery?.invalidatePendingPresentation()
+            self.cancelPickerForOwnedWindow()
             self.settingsWindow?.show()
         }
+    }
+
+    @objc func showLibrary() {
+        mainThread.run { [weak self] in
+            guard let self, !self.isShutDown, self.pickerModel?.libraryAvailable == true else { return }
+            self.cancelPickerForOwnedWindow()
+            self.libraryWindow?.show()
+        }
+    }
+
+    private func cancelPickerForOwnedWindow() {
+        focusTracker?.cancelPendingRestoration()
+        panelController?.cancelForOwnedWindow()
+        // Close model state even when a summon is queued behind an older restore.
+        pickerModel?.dismiss()
+        panelController?.hide()
+        delivery?.invalidatePendingPresentation()
     }
 
     fileprivate var defaultLibraryPath: String { defaultLibraryDirectory.path }
