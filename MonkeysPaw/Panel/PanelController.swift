@@ -6,7 +6,18 @@ import SwiftUI
 final class PanelController: PanelWindow {
     enum HideReason { case delivery, dismissal, blur }
 
-    var rootView: (() -> AnyView)?
+    var rootView: (() -> AnyView)? {
+        didSet {
+            rootGeneration &+= 1
+            presentationGeneration &+= 1
+            runForCurrentRoot { controller in
+                guard let content = controller.hostingView else { return }
+                Self.deactivateFocus(in: content)
+                controller.panel?.makeFirstResponder(nil)
+                content.rootView = controller.rootView?() ?? AnyView(EmptyView())
+            }
+        }
+    }
     var onCancel: (() -> Void)?
     var onHide: ((HideReason) -> Void)?
     var onShow: (() -> Void)?
@@ -18,9 +29,11 @@ final class PanelController: PanelWindow {
     private let log: LogSink
     private let keyWindow: () -> NSWindow?
     private var panel: PromptPanel?
+    private weak var hostingView: NSHostingView<AnyView>?
     private var resignObserver: NSObjectProtocol?
     private var keyMonitor: Any?
     private var presentationGeneration = 0
+    private var rootGeneration: UInt64 = 0
     private var pendingDismissal = HideReason.dismissal
 
     var isVisible: Bool { panel?.isVisible == true }
@@ -40,33 +53,41 @@ final class PanelController: PanelWindow {
     }
 
     func show() {
-        mainThread.run { [weak self] in self?.showOnMainThread() }
+        runForCurrentRoot { $0.showOnMainThread() }
     }
 
     func cancelForOwnedWindow() {
-        mainThread.run { [weak self] in
-            guard let self, self.isVisible else { return }
+        runForCurrentRoot { controller in
+            guard controller.isVisible else { return }
             // Opening our own window is a new focus choice before AppKit makes
             // it key. Still cancel through the model to clear the armed target.
-            self.pendingDismissal = .blur
-            self.onCancel?()
+            controller.pendingDismissal = .blur
+            controller.onCancel?()
         }
     }
 
     func hide() {
-        mainThread.run { [weak self] in
-            guard let self, self.isVisible else { return }
+        runForCurrentRoot { controller in
+            guard controller.isVisible else { return }
             // Capture before orderOut: Escape may automatically make Setup key
             // afterward. A queued dismissal must also respect an already-key window.
-            let reason = Self.dismissalReason(requested: self.pendingDismissal, panel: self.panel,
-                                               keyWindow: self.keyWindow())
-            self.pendingDismissal = .dismissal
-            self.hideOnMainThread(reason: reason)
+            let reason = Self.dismissalReason(requested: controller.pendingDismissal, panel: controller.panel,
+                                               keyWindow: controller.keyWindow())
+            controller.pendingDismissal = .dismissal
+            controller.hideOnMainThread(reason: reason)
         }
     }
 
     func hideForDelivery() {
-        mainThread.run { [weak self] in self?.hideOnMainThread(reason: .delivery) }
+        runForCurrentRoot { $0.hideOnMainThread(reason: .delivery) }
+    }
+
+    private func runForCurrentRoot(_ work: @escaping (PanelController) -> Void) {
+        let generation = rootGeneration
+        mainThread.run { [weak self] in
+            guard let self, self.rootGeneration == generation else { return }
+            work(self)
+        }
     }
 
     private func showOnMainThread() {
@@ -114,10 +135,11 @@ final class PanelController: PanelWindow {
 
     private func observeBlur(of panel: PromptPanel) {
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        let rootGeneration = self.rootGeneration
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
+            guard let self, self.rootGeneration == rootGeneration else { return }
             let generation = self.presentationGeneration
             self.scheduler.after(Limits.blurHideDelay) { [weak self] in
                 self?.mainThread.run { [weak self] in
@@ -193,6 +215,13 @@ final class PanelController: PanelWindow {
         return nil
     }
 
+    private static func deactivateFocus(in view: NSView) {
+        if let field = view as? PickerTextField { field.pickerFocus.deactivate() }
+        if let text = view as? PickerMultilineTextView { text.pickerFocus.deactivate() }
+        if let choice = view as? PickerChoiceButton { choice.pickerFocus.deactivate() }
+        for child in view.subviews { deactivateFocus(in: child) }
+    }
+
     static func dismissalReason(requested: HideReason, panel: NSWindow?,
                                 keyWindow: NSWindow?) -> HideReason {
         guard requested == .dismissal, let keyWindow, keyWindow !== panel else { return requested }
@@ -201,6 +230,9 @@ final class PanelController: PanelWindow {
 
     private func makePanel() -> PromptPanel {
         let content = NSHostingView(rootView: rootView?() ?? AnyView(EmptyView()))
+        // PromptPanel puts this view inside a sizing container. Keep the actual
+        // hosting view so root replacement does not mistake that container for it.
+        hostingView = content
         // Placement owns the frame; the hosting view must not propose its own size.
         content.sizingOptions = []
 

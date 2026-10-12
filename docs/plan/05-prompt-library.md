@@ -40,6 +40,20 @@ Atomic `FileStore.write` must succeed before the in-memory value changes. Write
 failure is retryable and retains both the previous file and in-memory value.
 Paths, contents and underlying error bodies are never logged.
 
+macOS composition reads the library choice from this settings store at launch.
+Switching folders replaces the library store, service, index, watcher and picker
+while keeping the native panel, delivery and app-data stores. A chosen folder
+must already exist and be readable; only the platform default is created.
+Delivery in progress refuses a switch. The old picker is dismissed, its watcher
+stopped and its callbacks invalidated before the new graph starts, with the
+picker hook installed before watcher attachment and the initial rebuild.
+The choice is persisted only after startup succeeds. If persistence fails, the
+new folder remains active for this session and Settings reports the error;
+the next launch still uses the last saved choice. A watcher or initial scan
+failure leaves the new graph unavailable and returns a typed error without
+saving the choice. Session drafts are dropped when switching, while remembered
+values, usage and history stay in app data.
+
 `ValuesStore` stores version 1 sorted-key JSON in the single `values.json`:
 `{"values":{<identity-key>:{<field-name>:<value>}},"version":1}`. Keys use the
 same path-hash/ULID identity as usage/history; field names and values are
@@ -152,6 +166,10 @@ Front matter keys (all optional):
 | `fields` | map name → field | Placeholder declarations (§5.3). |
 | `format` | integer | File format version. Absent = 1. A file with a higher `format` than the app supports loads read-only with a banner and cannot be delivered. Migrations run forward-only and snapshot the old file into history first. |
 | anything else | any | Preserved on save (e.g. Prompty or Dotprompt `model:`). |
+
+Identity is shared across library choices: an unassigned prompt at the same
+relative path in two libraries has the same path-hash identity and shares
+remembered values and usage history. Assigned ULIDs retain their own identity.
 
 Save semantics:
 
@@ -388,6 +406,10 @@ user's last choice repeats. Non-remembered fields are not recorded.
 
 ### 5.4 Index, search, ranking
 
+Ranking and remembered values use the shared app-data identity keys (§5.2),
+so changing the library root does not isolate unassigned prompts with the same
+relative path; assigned ULIDs keep their own keys.
+
 - **Index.** Core's `PromptIndex` caches every prompt's title, tags, folder,
   description and body in memory, including invalid entries and their issues
   as returned by `LibraryService.entries()`. `rebuild()` replaces the whole
@@ -491,10 +513,10 @@ through its injected `PanelWindow`
 and retains §4.6's guarded focus restoration. This prevents a pending show from
 reopening a closed picker. Blur hiding belongs to the platform
 timer, while a later open retains the same values. Drafts survive closing and
-reopening until delivery, an explicit forget action or model release at quit;
-delivery clears only that identity's draft. Closed forms and canceled
-fieldless snapshot requests ignore late callbacks. Tab/Shift-Tab follow field
-order and wrap within the fields.
+reopening until delivery, an explicit forget action, a library switch or
+model release at quit; delivery clears only that identity's draft. Closed forms
+and canceled fieldless snapshot requests ignore late callbacks. Tab/Shift-Tab
+follow field order and wrap within the fields.
 The picker carries terminal/copy mode into the form's `preferredMode`; explicit
 form delivery accepts standard paste, terminal paste or copy-only.
 
