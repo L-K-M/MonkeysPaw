@@ -108,9 +108,9 @@ external-save deadline through real FSEvents. Their compile and execution proof
 requires the `macos-app` CI job; hardware checks stay NOT RUN in
 `docs/platform/macos.md`.
 
-The settings/seeds/first-run slice (including library-folder setup) and the
-fixtures and release slice remain outstanding M2 work. Real compositor and
-paste-target checks remain owner-run in `docs/platform/linux.md`.
+Both native pickers, the five-category conformance corpus and the release
+workflow are merged. Native Settings, onboarding/recovery, Forget controls,
+Linux tray, the v0.1.0 tag and owner-run platform checks remain open M2 work.
 
 ```
 ┌ Monkey's Paw ─────────────────────────────────────────────────┐
