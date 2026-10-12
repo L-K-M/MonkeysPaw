@@ -159,7 +159,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(panel.firstResponder === sink)
     }
 
-    func testOnDiskPromptEditURLAndLibraryWindowOpening() throws {
+    func testOnDiskPromptEditAndLibraryWindowOpening() throws {
         let path = "folder name/Prompt #%.md"
         try files.write(Data("---\ntitle: Useful\nfavorite: true\ntags: [code]\n---\nBody".utf8), at: path)
         let picker = try open()
@@ -170,14 +170,16 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.selectedPreview, .body("Body"))
         picker.editSelected()
         XCTAssertNil(picker.requestedIntent)
-        XCTAssertEqual(launched, [root.appendingPathComponent(path)])
+        XCTAssertTrue(launched.isEmpty)
+        XCTAssertEqual(delegate.libraryWindow?.presentation.editorState.prompt?.relativePath, RelativePath(path))
+        XCTAssertEqual(delegate.libraryWindow?.presentation.editorTab, .edit)
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
 
         picker.open()
         picker.openLibrary()
         XCTAssertNil(picker.requestedIntent)
-        XCTAssertEqual(launched, [root.appendingPathComponent(path)])
+        XCTAssertTrue(launched.isEmpty)
         XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow?.window).isVisible)
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
@@ -203,7 +205,9 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(try files.stamp(at: "a b.md"), originalStamp)
         XCTAssertEqual(try files.read(at: "a b 2.md"), Data("---\ntitle: Another\n---\nExisting alternate".utf8))
         XCTAssertEqual(try files.stamp(at: "a b 2.md"), alternateStamp)
-        XCTAssertEqual(launched, [root.appendingPathComponent(path)])
+        XCTAssertTrue(launched.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow?.window).isVisible)
+        XCTAssertEqual(delegate.libraryWindow?.presentation.editorState.prompt?.relativePath, RelativePath(path))
         XCTAssertEqual(picker.state, .closed)
     }
 

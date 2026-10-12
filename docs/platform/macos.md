@@ -148,7 +148,7 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 - [ ] NOT RUN: Escape from fill keeps the draft and returns to picker; another Escape closes.
 - [ ] NOT RUN: Cmd+W/Cancel/toggle-off close fill and keep its draft for reopening.
 - [ ] NOT RUN: clicking another app hides after about 300 ms, keeps its focus and retains the draft.
-- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in its default editor; Cmd+L opens Library.
+- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in Library's Edit tab; Cmd+L opens Library.
 - [ ] NOT RUN: a no-match title creates a safe free filename while retaining the exact title; the new file opens for editing.
 - [ ] NOT RUN: the disabled assistant action displays its Settings hint.
 - [ ] NOT RUN: an external editor save reaches the picker within one second; record elapsed time.
@@ -378,8 +378,9 @@ The Linux implementation host cannot compile or run AppKit. Record the exact
 commit and `MacLibraryWindowTests` hosted results from `macos-app` CI before
 these owner checks. CI exercises presentation state, explicit key routing,
 window reuse and composition; real keyboard traversal, VoiceOver, clipboard
-privacy, activation and Spaces behavior still require a Mac. This shell has
-a read-only preview. Return does not open an editor.
+privacy, activation and Spaces behavior still require a Mac. M1 supplied
+the read-only preview; M2 adds the editor tabs below. Return on a browser row
+does not launch another editor.
 
 - Commit / `macos-app` CI run and hosted-test result:
 - macOS / hardware / signing identity / keyboard navigation setting:
@@ -410,3 +411,60 @@ clipboard contents; leave read-count checks NOT RUN if tracing is unavailable.
 | Escape from each pane clears the filter first, then closes; a real IME consumes Return/Escape during marked-text composition without Library actions | NOT RUN | |
 | VoiceOver identifies sidebar sections/counts, prompt rows/badges/last use, filter, preview, favourite/reveal actions and failure messages | NOT RUN | |
 | Repeated picker-to-Library openings work from a full-screen Space; window resize and Reduce Motion retain usable controls and visible focus | NOT RUN | |
+
+## M3 M2 Library editor tabs: NOT RUN
+
+The Linux implementation host can parse Swift syntax and check the Xcode
+project, but cannot compile AppKit/SwiftUI or run hosted macOS tests. Run
+`MacLibraryEditorTests`, `MacLibraryWindowTests` and `MacPickerViewTests` in
+the `macos-app` CI job before these checks. Hosted tests drive presentation
+state and injected sheet/worker ports, exercise native NSTextView controls,
+end real NSAlert sheets with `.cancel` and `.stop`, and count an injected
+clipboard's reads and writes. They do not prove real
+IME behavior, keyboard focus, VoiceOver, Spaces or sheet appearance.
+
+Hosted undo tests call the text view's `undoManager.undo()` and `redo()`
+after closing explicit undo groups, as described in Apple's
+[Performing Undo and Redo](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/UndoArchitecture/Articles/PerformingUndo.html).
+The coordinator observes that manager's
+[did-undo](https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/nsundomanagerdidundochange)
+and [did-redo](https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/nsundomanagerdidredochange)
+notifications to publish native replacements even when `textDidChange`
+does not fire. Apple's [notification delivery contract](https://developer.apple.com/library/archive/documentation/General/Conceptual/DevPedia-CocoaCore/Notification.html)
+is synchronous; these main-thread tests assert native text, model source
+and dirty state immediately, without a predicate polling UI state from a
+worker thread. They also cover redo back to the saved, clean source.
+
+- Commit / `macos-app` CI run / hosted-test results:
+- macOS / hardware / input source / keyboard navigation setting:
+- VoiceOver / clipboard read-count tracing method:
+- Date / tester:
+
+Use an isolated library and app-data folder. Include valid sources with
+front matter, declared and implicit fields, choice defaults, date/time and
+clipboard builtins, malformed YAML, a future format, non-UTF-8 bytes and an
+oversized file. Use a second editor for external writes and deletions. Do
+not record prompt text, field values or clipboard contents in this checklist.
+
+| Check | Result | Details |
+|---|---|---|
+| Selection opens Edit with exact raw source, monospace text, native undo/redo, cut/copy/paste/select-all and multiline scrolling; a save that adds an id header preserves the body caret and both normalization and prior typing remain undoable; undo/redo immediately update Preview and the unsaved indicator, and redo back to saved text clears it | NOT RUN | |
+| Edit, Preview and Fields tabs remain usable on resize; diagnostics below Edit update during typing and identify severity/location; Fields shows parsed declarations and implicit fields read-only | NOT RUN | |
+| Preview uses defaults or field names, real date/time and a literal {clipboard}; opening, typing and all tab changes make zero clipboard reads or writes | NOT RUN | |
+| Source stays non-editable while its initial load is pending; non-UTF-8, oversized and future-format prompts show distinct read-only reasons and disable source edits, Save and Save as Copy | NOT RUN | |
+| Save button and ⌘S write the file, update picker/favourites, clear dirty state and show Saving/Saved or typed failure; typing during a save retains the newer draft | NOT RUN | |
+| Favourite on the open dirty prompt updates its source without writing; a clean favourite saves through the editor and causes no false conflict | NOT RUN | |
+| Revert asks Save/Discard/Cancel while dirty and reloads the current disk source after approval; Save as Copy creates a distinct identity/path and selects the copy when the watcher publishes it | NOT RUN | |
+| An external write while dirty opens a native sheet; independently exercise Keep Mine, Take Theirs and Save Mine as Copy, confirming original/copy bytes and retained newer edits; Cancel keeps the draft and conflict available, including after an invalid save, so Edit can repair it before Save reopens the choices without writing; Save as Copy and Revert stay disabled until the conflict is resolved | NOT RUN | |
+| An external deletion while dirty leaves its draft visible and offers Keep Mine (recreate), Save Mine as Copy and Discard; exercise all choices; a copy gets a fresh identity and an alternate filename | NOT RUN | |
+| After cancelling a deletion conflict, externally recreate then delete the file again; the new deletion reopens the conflict sheet, while ordinary typing after Cancel does not | NOT RUN | |
+| Selection change, red close button, ⌘W and Escape after clearing the filter ask Save/Discard/Cancel; Cancel keeps the current row/draft and Save completes before navigation/close | NOT RUN | |
+| Return activates Save in an unsaved-edit decision; Return never activates Keep Mine in a conflict sheet; Escape and a programmatic non-button sheet dismissal retain the draft and cancel the pending action | NOT RUN | |
+| With Settings, onboarding or the picker panel focused, ⌘S and ⌘W leave the Library draft and window alone | NOT RUN | |
+| A close requested during Save waits for completion; failed saves preserve the decision and draft with retryable typed feedback | NOT RUN | |
+| Settings Choose Folder/Use Default refuse a dirty draft or a pending save with the editor-specific message and keep the existing library; saving/discarding clears that message in an already-open Settings window; a later switch retires old worker replies, native input and sheet callbacks | NOT RUN | |
+| Menu Quit and ⌘Q defer termination while dirty/saving; Cancel stays resident, Discard quits without writing and Save quits only after a successful save; failed saves keep Library open | NOT RUN | |
+| Picker Edit/⌘Return and no-match create open the selected/new prompt in Library's Edit tab, including with a prior hidden row/filter; Show in Finder still reveals the current library folder | NOT RUN | |
+| With a real Japanese/Chinese IME, Return/Escape during marked text go to the input method; typing/state refresh preserves composition, and document/library replacement never commits the old composition into the new draft | NOT RUN | |
+| VoiceOver identifies source, editor tabs, field headings, save/revert/copy controls, validation/status messages and all sheet choices; Tab/Shift+Tab show visible focus | NOT RUN | |
+| A conflict or decision published while Library is minimized or the app hidden appears on restore/unhide; minimized Library is restored for a quit decision; full-screen Spaces, repeated openings and simultaneous Settings/Library windows preserve activation and Dock policy | NOT RUN | |

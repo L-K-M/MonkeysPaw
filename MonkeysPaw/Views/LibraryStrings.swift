@@ -10,11 +10,11 @@ enum LibraryStrings {
     static let tags = "Tags"
     static let readOnly = "Read-only"
     static let invalid = "Invalid"
-    static let noSelection = "Select a prompt to preview it."
+    static let noSelection = "Select a prompt to edit it."
     static let noRows = "No prompts in this view."
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
-    static let keyboardHint = "↑↓: select · ⌘⇧F: favourite · Esc: clear filter, then close"
+    static let keyboardHint = "↑↓: select · ⌘S: save · ⌘⇧F: favourite · Esc: clear filter, then close"
 
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {
