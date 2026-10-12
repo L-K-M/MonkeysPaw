@@ -25,9 +25,10 @@ enum SchemaJSON: Decodable, Equatable {
 
 struct SchemaValidator {
     enum Failure: Error { case unsupportedSchema }
+    enum Mode { case schema, contract }
     let schemas: [String: SchemaJSON]
 
-    func validate(_ value: SchemaJSON, against schema: SchemaJSON, contractExtensions: Bool = true) throws -> Bool {
+    func validate(_ value: SchemaJSON, against schema: SchemaJSON, mode: Mode = .contract) throws -> Bool {
         guard let object = schema.object else { throw Failure.unsupportedSchema }
         let supported: Set<String> = [
             "$schema", "$id", "title", "$ref", "type", "const", "enum", "oneOf", "allOf",
@@ -40,17 +41,17 @@ struct SchemaValidator {
 
         if let reference = object["$ref"]?.string {
             guard let target = schemas[reference] else { throw Failure.unsupportedSchema }
-            if try !validate(value, against: target, contractExtensions: contractExtensions) { return false }
+            if try !validate(value, against: target, mode: mode) { return false }
         }
         if let constant = object["const"], constant != value { return false }
         if let values = object["enum"]?.array, !values.contains(value) { return false }
         if let alternatives = object["oneOf"]?.array {
-            let matches = try alternatives.filter { try validate(value, against: $0, contractExtensions: contractExtensions) }
+            let matches = try alternatives.filter { try validate(value, against: $0, mode: mode) }
             if matches.count != 1 { return false }
         }
         if let constraints = object["allOf"]?.array {
             for constraint in constraints {
-                if try !validate(value, against: constraint, contractExtensions: contractExtensions) { return false }
+                if try !validate(value, against: constraint, mode: mode) { return false }
             }
         }
 
@@ -73,7 +74,7 @@ struct SchemaValidator {
                 let regex = try NSRegularExpression(pattern: pattern)
                 if regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)) == nil { return false }
             }
-            if contractExtensions {
+            if mode == .contract {
                 if let maximum = object["x-max-utf8-bytes"]?.integer, text.utf8.count > maximum { return false }
                 if let format = object["x-syncapi-format"]?.string {
                     guard format == "utc-milliseconds" else { throw Failure.unsupportedSchema }
@@ -88,7 +89,7 @@ struct SchemaValidator {
             }
             if let items = object["items"] {
                 for item in values {
-                    if try !validate(item, against: items, contractExtensions: contractExtensions) { return false }
+                    if try !validate(item, against: items, mode: mode) { return false }
                 }
             }
         case .object(let values):
@@ -99,16 +100,16 @@ struct SchemaValidator {
             let properties = object["properties"]?.object ?? [:]
             for (key, value) in values {
                 if let keySchema = object["propertyNames"],
-                   try !validate(.string(key), against: keySchema, contractExtensions: contractExtensions) { return false }
+                   try !validate(.string(key), against: keySchema, mode: mode) { return false }
                 if let property = properties[key] {
-                    if try !validate(value, against: property, contractExtensions: contractExtensions) { return false }
+                    if try !validate(value, against: property, mode: mode) { return false }
                 } else if let additional = object["additionalProperties"] {
                     if additional == .boolean(false) { return false }
                     if additional.object != nil,
-                       try !validate(value, against: additional, contractExtensions: contractExtensions) { return false }
+                       try !validate(value, against: additional, mode: mode) { return false }
                 }
             }
-            if contractExtensions, let rules = object["x-syncapi-rules"]?.array {
+            if mode == .contract, let rules = object["x-syncapi-rules"]?.array {
                 for rule in rules { if try !validateRule(rule.string, values) { return false } }
             }
         default: break

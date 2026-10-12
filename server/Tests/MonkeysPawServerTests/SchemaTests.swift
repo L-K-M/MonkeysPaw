@@ -110,7 +110,7 @@ final class SchemaTests: XCTestCase {
         for (name, source) in cases {
             let value = try JSONDecoder().decode(SchemaJSON.self, from: Data(source.utf8))
             let schema = try XCTUnwrap(validator.schemas[name + ".json"])
-            XCTAssertTrue(try validator.validate(value, against: schema, contractExtensions: false), name)
+            XCTAssertTrue(try validator.validate(value, against: schema, mode: .schema), name)
             XCTAssertFalse(try validator.validate(value, against: schema), name)
         }
     }
@@ -135,9 +135,9 @@ final class SchemaTests: XCTestCase {
     }
 
     private func runDumpSchema(_ arguments: [String]) throws -> (status: Int32, error: String) {
-        // SwiftPM builds executable products with tests. Walk from the test runner
-        // so custom scratch paths and macOS XCTest bundle layouts also work.
-        var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        // Find sibling products from this test bundle, including when XCTest
+        // uses an external launcher. SwiftPM builds executable products with tests.
+        var directory = Bundle(for: SchemaTests.self).bundleURL
         var executable: URL?
         for _ in 0..<5 {
             let candidate = directory.appendingPathComponent("dump-schema")
