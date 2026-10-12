@@ -708,4 +708,47 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
 - **Import.** Drop `.md`, `.prompt` (Dotprompt), or `.prompty` files, or a
   folder, onto the library window. Dotprompt `input.schema` and Prompty
   `inputs` map to `fields` where the mapping is lossless. Everything else
-  stays as preserved keys. A report lists what was mapped.
+  stays as preserved keys. Core's pure `ImportMapper` and asynchronous
+  `ImportService` use this mapping table:
+
+  | Source | Monkey's Paw result |
+  |---|---|
+  | Valid `.md` | Copy the complete UTF-8 source as-is, including front matter comments. An absent id stays absent until first save (§5.2). |
+  | Dotprompt Picoschema `name: string[, description]` | `fields.name.type: text`; `name?` maps to `optional: true`. |
+  | Dotprompt Picoschema `name(enum[, description]): [strings]` | A `choice` field with those option values. |
+  | Dotprompt string declarations, including JSON Schema `type: object` / `properties` | `text`, or `choice` for a nonempty string enum; keep string defaults and descriptions. `input.default` supplies a default when the declaration has none. |
+  | Prompty v1 keyed or list `inputs` with `type: string` | The same text/choice mapping; keep defaults and descriptions. A string `sample` value supplies a default only when no default exists. |
+  | Prompty `sample` without an input declaration for a body placeholder | Make its implicit text field explicit with the string sample as its default; do not override unsupported declared inputs or map unused samples. |
+  | Other input types, invalid names/defaults/options, reserved names (§5.3), or a name already declared in `fields` | Preserve the source declaration and report why it was not mapped. |
+  | `model`, `config`, `output`/`outputs`, tools, authors and all other metadata | Preserve under the original keys, including the complete original input and sample metadata alongside mapped fields. |
+  | Template bodies | Keep exact UTF-8 bytes. Unsupported closed Handlebars/Jinja2 expressions and Jinja2 blocks/comments remain literal and are reported, without conversion. |
+
+  Converted front matter uses §5.2's canonical writer; the report discloses
+  the loss of header presentation, including comments. Native validation and
+  the portable YAML subset still apply, and incompatible files are refused
+  with typed reasons. `Limits.importFileCapBytes = 262,144` bounds source
+  reads before decoding; non-UTF-8 is refused. Converted documents must also
+  fit `Limits.maxPromptBytes`.
+
+  Files land in `Imported/` or a chosen library-relative subfolder. Folder
+  imports preserve paths relative to the selected folder, without adding
+  its basename. The source-reader port enumerates recursively without
+  following symlinks and rejects symlinked components when reading; Core
+  validates returned relative paths and reports symlinks/nonregular entries
+  as skips. Ignored library paths are refused rather than created invisibly.
+  Files and reports sort by exact source-path UTF-8 bytes, independently of
+  selection/enumeration order. Each file has a created path or typed skip,
+  mapped fields, preserved keys, presentation losses and warnings; failures
+  leave successful earlier imports intact.
+
+  Library publication is exclusive and uses §5.5's alternate-name rules,
+  retrying raced destinations within `Limits.libraryCreateAttemptCap`.
+  Imports never overwrite and never migrate state from a duplicated id. A
+  supplied id already present anywhere in the library receives a fresh
+  ULID under the library service's lock, including duplicates earlier in
+  the same import. Plain/quoted id values change in place; an escaped or
+  block-style id uses canonical front matter and reports that presentation
+  loss. The body remains exact when replacing an id. Import
+  callbacks and progress use `MainThread`; reads, mapping and writes run
+  through the serial `BackgroundWork` port. Native source-reader drivers
+  and chooser/drop wiring belong to the later desktop import slices.
