@@ -41,6 +41,20 @@ final class SetupModelTests: XCTestCase {
         XCTAssertEqual(Set(h.probe.queried), [.accessibility, .hotkey])
     }
 
+    func testShortcutObserverDoesNotReplaceSetupSubscription() throws {
+        let h = Harness(session: .gnomeWayland)
+        h.probe.hotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal,
+            status: .registered, detail: "User-selected key")
+        var settingsChanges = 0
+        h.shortcuts.addObserver { settingsChanges += 1 }
+
+        h.shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
+
+        XCTAssertGreaterThanOrEqual(settingsChanges, 1)
+        XCTAssertEqual(h.status(.hotkey), .needsAction(fix: SetupStrings.pressShortcut))
+        XCTAssertEqual(h.model.rows.first(where: { $0.kind == .hotkey })?.registration, h.probe.hotkey)
+    }
+
     func testApplicabilityMatchesAllLinuxSessionLaddersIncludingFlatpakHost() {
         let table: [(DesktopSession, SetupStatus, SetupStatus, SetupStatus)] = [
             (.gnomeWayland, .ok, .ok, .notApplicable),

@@ -9,16 +9,22 @@ final class FakeHotkeyBackend: HotkeyBackend {
     private(set) var registered: [(HotkeyAction, Accelerator)] = []
     private(set) var unregistered: [HotkeyRegistration] = []
     private(set) var callbacks: [HotkeyAction: () -> Void] = [:]
+    private(set) var currentRegistrations: [HotkeyAction: HotkeyRegistration] = [:]
 
     func register(
         _ action: HotkeyAction, accelerator: Accelerator, onFire: @escaping () -> Void
     ) -> HotkeyRegistration {
         registered.append((action, accelerator))
         callbacks[action] = onFire
-        return HotkeyRegistration(mechanism: mechanism, status: status, detail: detail)
+        let registration = HotkeyRegistration(mechanism: mechanism, status: status, detail: detail)
+        currentRegistrations[action] = registration
+        return registration
     }
 
-    func unregister(_ registration: HotkeyRegistration) { unregistered.append(registration) }
+    func unregister(_ registration: HotkeyRegistration) {
+        unregistered.append(registration)
+        currentRegistrations = currentRegistrations.filter { $0.value != registration }
+    }
     func fire(_ action: HotkeyAction = .togglePicker) { callbacks[action]?() }
 }
 
@@ -27,6 +33,7 @@ final class FakeSetupProbe: SetupProbe {
     var portal: SetupStatus = .unknown
     var ydotool: SetupStatus = .unknown
     var hotkey = HotkeyRegistration(mechanism: .manual, status: .needsAction, detail: "Bind toggle manually")
+    var liveHotkey: (() -> HotkeyRegistration?)?
     var kde: SetupStatus = .needsAction(fix: SetupStrings.kdeShortcut)
     var fixMode: FakeCompletionMode = .immediate
     private(set) var queried: [SetupRow.Kind] = []
@@ -36,7 +43,10 @@ final class FakeSetupProbe: SetupProbe {
     func accessibilityStatus() -> SetupStatus { queried.append(.accessibility); return accessibility }
     func portalStatus() -> SetupStatus { queried.append(.portal); return portal }
     func ydotoolStatus() -> SetupStatus { queried.append(.ydotool); return ydotool }
-    func hotkeyRegistration() -> HotkeyRegistration { queried.append(.hotkey); return hotkey }
+    func hotkeyRegistration() -> HotkeyRegistration {
+        queried.append(.hotkey)
+        return liveHotkey?() ?? hotkey
+    }
     func kdeStatus() -> SetupStatus { queried.append(.kde); return kde }
 
     func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) {
