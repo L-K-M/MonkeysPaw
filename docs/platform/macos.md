@@ -284,3 +284,86 @@ fresh-install checks do not overwrite your normal settings or prompts.
 | The status menu says Open Library and reveals the current folder; runtime root loss changes the same row to disabled Library unavailable without a notification or reopened onboarding | NOT RUN | |
 | After runtime loss, choose a healthy folder in Settings; Open Library is enabled again and reveals the replacement folder; restoring the old folder alone still requires restart | NOT RUN | |
 | Keyboard and VoiceOver identify the folder paths, chooser/default actions, seed actions, summary/failure and Done; Settings remains reachable and picker dismissal never restores an old target | NOT RUN | |
+
+## M2 VoiceOver, visible focus and reduced motion: NOT RUN
+
+- Commit / `macos-app` CI run / artifact version / SHA-256:
+- macOS / hardware / VoiceOver settings / keyboard navigation setting:
+- Reduce Motion setting / date / tester:
+
+1. Enable VoiceOver and macOS keyboard navigation. Use the picker/fill
+   prompts above with text, multiline and choice fields, descriptions and
+   a required empty field. Summon the panel over an editable target.
+2. Navigate search, results and preview with the keyboard and VoiceOver.
+   Open fill, visit all field kinds, change a choice and read the live
+   preview and validation. Inspect Deliver, Copy, Cancel and Forget values,
+   including disabled states. Escape returns without delivery.
+3. Open Settings from the status-menu Settings… item and inspect
+   General/Shortcuts tabs, the folder path,
+   shortcut recorder/status and actions. Open Forget all confirmation, read
+   its destructive action and Cancel, then cancel without clearing values.
+4. In the isolated account/directories described above, follow onboarding
+   and recovery with VoiceOver: Setup, folder path/chooser/default, seed
+   Add/Skip, summary/Done and failures. Read the status-menu Open Library
+   and Library unavailable states; confirm Settings stays reachable.
+5. Turn VoiceOver off. Traverse picker/fill, Settings, confirmation and
+   onboarding with Tab/Shift+Tab and inspect focus on each reachable control.
+   Enable System Settings → Accessibility → Display → Reduce Motion, then
+   repeat summon/dismiss, picker-to-fill, tab changes and onboarding steps,
+   including a full-screen Space.
+
+| Check | Result | Details |
+|---|---|---|
+| VoiceOver picker and fill: search/results, field kinds, labels/descriptions, choice values, preview, validation and action/disabled states are announced and operable inside the panel | NOT RUN | |
+| VoiceOver Settings and onboarding: tabs, folder/shortcut state, confirmation, actions, progress/failures and status-menu library state are announced and keyboard accessible | NOT RUN | |
+| Visible focus (§11.6): keyboard focus stays visible through every surface and reverse traversal | NOT RUN | |
+| Reduced motion (§11.6): with Reduce Motion enabled, app transitions add no motion and controls/focus remain usable, including in a full-screen Space | NOT RUN | |
+
+## M2 input-method composition: NOT RUN
+
+- Commit / `macos-app` CI run / artifact version / SHA-256:
+- macOS / hardware / input source / keyboard layout:
+- Date / tester:
+
+1. Enable a real conversion input source, such as Japanese or Chinese, in
+   macOS keyboard settings. Confirm marked-text composition and candidate
+   selection work in TextEdit before checking Monkey's Paw.
+2. In picker search, start composition with visible marked text/candidates.
+   Return commits the candidate and updates search without using a prompt.
+   Start another composition and press Escape: it cancels composition and
+   leaves the picker open.
+3. In a prompt's text and multiline fields, repeat Return-to-commit and
+   Escape-to-cancel while marked text is active. Neither key delivers,
+   copies or returns to picker. Committed characters appear once in the
+   native field and live preview.
+4. After composition ends, multiline Return adds a newline. Escape returns
+   to picker retaining the draft; reopen fill and confirm the committed
+   text remains, then Cmd+Return delivers.
+
+| Check | Result | Details |
+|---|---|---|
+| Real IME search: Return/Escape stays with marked text until commit/cancel; the picker remains open and committed search works | NOT RUN | |
+| Text and multiline IME: composition commits/cancels without app actions; normal delivery/cancel keys resume afterward | NOT RUN | |
+
+## M2 conditional clipboard privacy: NOT RUN
+
+- Commit / `macos-app` CI run / artifact version / SHA-256:
+- macOS / hardware / privacy prompt behavior / read-count tracing method:
+- Date / tester / per-step read counts:
+
+Use harmless test clipboard text and fieldless/fielded prompts with and
+without `{{clipboard}}`, including two occurrences in one prompt. Observe
+macOS paste-privacy prompts and count app-origin reads with a permitted
+debugger/trace on `-[NSPasteboard stringForType:]`, identifying the
+`PasteboardClipboard` caller without recording arguments or contents.
+If the tested build cannot be traced, keep the count checks NOT RUN;
+absence of a privacy prompt does not prove zero or exactly one read.
+Change the external clipboard with a background writer such as `pbcopy`
+while the form stays open; switching focus would hide it and require reopening.
+
+| Check | Result | Details |
+|---|---|---|
+| Search and selection (§5.3): reset the count, summon/search and select every prompt without use; zero reads and no app-triggered paste-privacy request, including on selection of a clipboard prompt | NOT RUN | |
+| No clipboard builtin: open/edit/deliver the fielded prompt and use the fieldless prompt without the builtin; zero reads and no app-triggered paste-privacy request | NOT RUN | |
+| One snapshot per form open: open the form and read once for both occurrences; edit fields and update the clipboard in the background without changing the preview snapshot or reading again; Escape and reopen to read the new text once, then deliver without another read | NOT RUN | |
+| One snapshot per fieldless use: each use reads once for both occurrences; change the external clipboard and use again to observe one new read | NOT RUN | |

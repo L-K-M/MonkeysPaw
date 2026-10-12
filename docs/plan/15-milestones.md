@@ -76,6 +76,8 @@
   macos-26 with Xcode 26.0 is the required proof. The picker/fill owner
   checklist in `docs/platform/macos.md` remains NOT RUN. M2 stays open for
   Settings, seeds, library onboarding, fixtures and release acceptance.
+  Those implementation slices are now merged; the v0.1.0 tag and owner-run
+  acceptance remain pending.
 
 - M2f lands the Linux picker/fill view and production library composition,
   replacing the canned Linux panel. Core dismiss retains drafts across blur
@@ -87,6 +89,8 @@
   settings/seeds/first-run slice (including folder selection), and the fixtures
   and release slice remain. X11, GNOME/KDE Wayland and fill-form owner checks
   in `docs/platform/linux.md` remain NOT RUN.
+  Those implementation slices are now merged; the v0.1.0 tag and owner-run
+  acceptance remain pending.
 
 - M2 starts with M2a, a focused source-to-render foundation: pure Core
   values parse Markdown front matter and the body, validate content,

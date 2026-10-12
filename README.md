@@ -3,10 +3,10 @@
 > [!IMPORTANT]
 > LLM disclosure: This codebase was written with substantial help from large language models: AI coding agents working from the [`AGENTS.md`](AGENTS.md) brief in this repo.
 
-**Latest release:** v<!-- version -->0.0.0<!-- /version --> · [Download](https://github.com/L-K-M/MonkeysPaw/releases/latest)
+**Latest release:** v<!-- version -->0.1.0<!-- /version --> · [Download](https://github.com/L-K-M/MonkeysPaw/releases/latest)
 
-Monkey's Paw is a prompt repository planned for macOS, Linux, and Android.
-The desktop apps will let you pick a prompt, fill its placeholders, and paste
+Monkey's Paw is a prompt repository for macOS and Linux, with Android planned.
+The desktop apps let you pick a prompt, fill its placeholders, and paste
 the result into the text field you were using. Prompts live in Markdown files
 with YAML front matter, so you can edit them with your own tools. An optional
 LLM assistant will help write and improve prompts, and a self-hosted server
@@ -17,10 +17,12 @@ exact body bytes. Canonical writing does not preserve comments inside front
 matter. Format and grammar conformance cases live under
 [`spec/fixtures/`](spec/fixtures/), documented in [`spec/README.md`](spec/README.md).
 
-**Status:** Both native desktop pickers, the five-category conformance corpus
-and the release workflow are merged per [PLAN.md](PLAN.md). Native Settings,
-onboarding/recovery, Forget controls, Linux tray, the v0.1.0 tag and owner-run
-platform checks remain open.
+**Status:** The desktop picker/fill loop, General and Shortcuts Settings,
+onboarding and library recovery, Forget controls, Linux tray, five-category
+conformance corpus and release workflow are merged per [PLAN.md](PLAN.md).
+The v0.1.0 tag and [owner-run platform checks](docs/platform/m2-acceptance.md)
+remain before M2 closes. M3 follows with the Library window, editor, history,
+import and first-run tour.
 
 ## Install on Linux
 

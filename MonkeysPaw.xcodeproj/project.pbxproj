@@ -335,7 +335,7 @@
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Paste the text you chose into the active app using System Events when direct paste is unavailable.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				MARKETING_VERSION = 0.0.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ch.lkmc.MonkeysPaw;
 				PRODUCT_NAME = MonkeysPaw;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -359,7 +359,7 @@
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Paste the text you chose into the active app using System Events when direct paste is unavailable.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				MARKETING_VERSION = 0.0.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ch.lkmc.MonkeysPaw;
 				PRODUCT_NAME = MonkeysPaw;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -375,7 +375,7 @@
 				DEVELOPMENT_TEAM = "";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.0.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ch.lkmc.MonkeysPawTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -392,7 +392,7 @@
 				DEVELOPMENT_TEAM = "";
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 0.0.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ch.lkmc.MonkeysPawTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
