@@ -16,6 +16,7 @@ final class SettingsViewState: ObservableObject {
     let rememberedValuesModel: RememberedValuesSettingsModel
     var onChooseFolder: (() -> Void)?
     var onRememberedValuesChange: (() -> Void)?
+    /// An installed override may return nil to hide a resolved busy outcome.
     var librarySwitchMessage: (() -> String?)?
     private let openSetup: () -> Void
 
@@ -58,11 +59,12 @@ final class SettingsViewState: ObservableObject {
     var canUseDefault: Bool { !general.isDefaultLibrary || general.settingsError != nil }
 
     var generalMessages: [String] {
-        let switchMessage = general.lastSwitchMessage.flatMap { outcome in
-            if outcome == .deliveryInFlight, let message = librarySwitchMessage?() { return message }
-            return GeneralSettingsStrings.message(for: outcome)
+        let outcome = general.lastSwitchMessage
+        let switchMessage = outcome.flatMap { state in
+            if state == .deliveryInFlight, let librarySwitchMessage { return librarySwitchMessage() }
+            return GeneralSettingsStrings.message(for: state)
         }
-        return Self.generalMessages(for: general.lastSwitchMessage, switchMessage: switchMessage,
+        return Self.generalMessages(for: outcome, switchMessage: switchMessage,
             settingsError: general.settingsError)
     }
 

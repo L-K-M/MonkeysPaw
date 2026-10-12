@@ -29,6 +29,10 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             mainThread: mainThread, revealLibrary: revealLibrary)
         super.init()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
+        presentation.onConflictRequested = { [weak self] in
+            self?.dismissedConflict = nil
+            self?.updateDialog()
+        }
     }
 
     deinit { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) } }
@@ -92,13 +96,16 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
 
     private func updateDialog() {
         mainThread.run { [weak self] in
-            guard let self, !self.isTornDown, let window = self.window, window.isVisible else { return }
+            guard let self, !self.isTornDown else { return }
             let state = self.presentation.editorState
-            if state.conflict == nil || state.status == .saving { self.dismissedConflict = nil }
-            let desired: LibraryEditorDialog?
             let awaitingConflict = state.conflict.map {
                 $0.kind == .modified && $0.theirsSource == nil && $0.readOnlyReason == nil && $0.failure == nil
             } ?? false
+            // A fresh detection or retry invalidates dismissal, even while hidden.
+            if state.conflict == nil || state.status == .saving || state.status == .loading
+                || state.conflict?.isLoading == true || awaitingConflict { self.dismissedConflict = nil }
+            guard let window = self.window, window.isVisible else { return }
+            let desired: LibraryEditorDialog?
             if state.status == .saving || state.status == .loading || state.conflict?.isLoading == true || awaitingConflict {
                 desired = nil
             } else if let conflict = state.conflict, conflict != self.dismissedConflict {
@@ -192,23 +199,36 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         keyMonitor = nil
     }
 
-    static func presentEditorDialog(in window: NSWindow, dialog: LibraryEditorDialog,
-                                    done: @escaping (LibraryEditorResponse) -> Void) -> (() -> Void) {
+    static func makeEditorAlert(for dialog: LibraryEditorDialog) -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = dialog.title
         alert.informativeText = dialog.message
-        let responses = dialog.responses
-        for response in responses {
+        for response in dialog.responses {
             let button = alert.addButton(withTitle: response.title)
-            // Overwriting an external version must be an explicit choice.
-            button.keyEquivalent = response == .decision(.cancel) || response == .dismissConflict ? "\u{1b}" : ""
+            // Return saves unsaved edits; overwriting an external version requires an explicit choice.
+            switch response {
+            case .decision(.save): button.keyEquivalent = "\r"
+            case .decision(.cancel), .dismissConflict: button.keyEquivalent = "\u{1b}"
+            case .decision(.discard), .conflict: button.keyEquivalent = ""
+            }
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard)
         }
+        return alert
+    }
+
+    static func presentEditorDialog(in window: NSWindow, dialog: LibraryEditorDialog,
+                                    done: @escaping (LibraryEditorResponse) -> Void) -> (() -> Void) {
+        let alert = makeEditorAlert(for: dialog)
+        let responses = dialog.responses
         alert.beginSheetModal(for: window) { response in
             let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            guard responses.indices.contains(index) else { return }
-            done(responses[index])
+            if responses.indices.contains(index) { done(responses[index]); return }
+            // Non-button dismissal must complete the pending dialog without losing the draft.
+            switch dialog {
+            case .decision: done(.decision(.cancel))
+            case .conflict: done(.dismissConflict)
+            }
         }
         return {
             guard alert.window.sheetParent === window else { return }

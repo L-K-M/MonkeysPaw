@@ -25,6 +25,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var sourceRevision: UInt64 = 0
     @Published var editorTab = EditorTab.edit
     var onEditorChange: (() -> Void)?
+    var onConflictRequested: (() -> Void)?
     private(set) var model: LibraryBrowserModel
     private(set) var editor: EditorModel
     private let mainThread: MainThread
@@ -55,10 +56,18 @@ final class LibraryViewState: ObservableObject {
 
     deinit { detachObservers() }
 
-    var canSave: Bool { isActive && libraryAvailable && editorState.canSave }
+    var canSave: Bool {
+        isActive && libraryAvailable && editorState.canSave
+            && editorState.conflict == nil && editorState.pendingDecision == nil
+    }
     var canRevert: Bool {
         isActive && libraryAvailable && editorState.prompt != nil
             && editorState.status != .loading && editorState.status != .saving
+            && editorState.conflict == nil && editorState.pendingDecision == nil
+    }
+    var canShowConflict: Bool {
+        isActive && libraryAvailable && editorState.canSave
+            && editorState.conflict?.isLoading == false && editorState.pendingDecision == nil
     }
 
     var canToggleFavorite: Bool {
@@ -101,6 +110,7 @@ final class LibraryViewState: ObservableObject {
         libraryAvailable = false
         favoriteOutcome = nil
         onEditorChange = nil
+        onConflictRequested = nil
     }
 
     func setLibraryAvailable(_ available: Bool) {
@@ -175,7 +185,11 @@ final class LibraryViewState: ObservableObject {
         editor.edit(source)
     }
 
-    func save() { if canSave { editor.save() } }
+    // After Cancel, Save reopens conflict choices without writing the stale draft.
+    func save() {
+        if canShowConflict { onConflictRequested?() }
+        else if canSave { editor.save() }
+    }
     func saveAsCopy() { if canSave { editor.saveAsCopy() } }
     func revert() { if canRevert { editor.revert() } }
 

@@ -82,12 +82,17 @@ enum EditorStrings {
     }
 
     static func issue(_ issue: PromptIssue) -> String {
+        let severity: String
+        switch issue.severity {
+        case .warning: severity = "Warning"
+        case .error: severity = "Error"
+        }
         let location: String
         switch issue.location {
         case .frontMatter(let line, let column): location = "Line \(line), column \(column): "
         case .body(let offset): location = "Body byte \(offset): "
         case nil: location = ""
         }
-        return issue.severity.rawValue.capitalized + ": " + location + issue.message
+        return severity + ": " + location + issue.message
     }
 }

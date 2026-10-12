@@ -38,10 +38,10 @@ final class MacLibraryEditorTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func start() {
+    private func start(editorDialog: LibraryWindowController.DialogPresenter? = nil) {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data,
             launchURI: { [weak self] in self?.launched.append($0) }, backgroundWork: work,
-            clipboard: clipboard, editorDialog: { [weak self] _, dialog, respond in
+            clipboard: clipboard, editorDialog: editorDialog ?? { [weak self] _, dialog, respond in
                 let request = EditorTestDialog(dialog: dialog, respond: respond)
                 self?.dialogs.append(request)
                 if let response = self?.immediateResponse {
@@ -68,9 +68,10 @@ final class MacLibraryEditorTests: XCTestCase {
         PromptCodec.parseFile(try files.read(at: path), filename: path).body
     }
 
-    private func open(_ source: String = "Original") throws -> LibraryViewState {
+    private func open(_ source: String = "Original",
+                      editorDialog: LibraryWindowController.DialogPresenter? = nil) throws -> LibraryViewState {
         try put(source)
-        start()
+        start(editorDialog: editorDialog)
         delegate.showLibrary()
         let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
         presentation.selectPath("one.md")
@@ -87,7 +88,10 @@ final class MacLibraryEditorTests: XCTestCase {
 
     private func respond(_ response: LibraryEditorResponse) throws {
         let request = try dialog()
-        XCTAssertTrue(request.dialog.responses.contains(response))
+        guard request.dialog.responses.contains(response) else {
+            XCTFail("Dialog offered \(request.dialog.responses), expected \(response)")
+            return
+        }
         request.cancelled = true
         request.respond(response)
     }
@@ -97,10 +101,12 @@ final class MacLibraryEditorTests: XCTestCase {
         presentation.edit("Mine")
         if kind == .deleted {
             try files.delete(at: "one.md")
-            watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .deleted)))
+            try XCTUnwrap(watchers.first, "No file watcher was registered")
+                .emit(.file(FileStoreEvent(relativePath: "one.md", kind: .deleted)))
         } else {
             try put("Theirs")
-            watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+            try XCTUnwrap(watchers.first, "No file watcher was registered")
+                .emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
         }
         work.drain()
         XCTAssertEqual(presentation.editorState.conflict?.kind, kind)
@@ -155,6 +161,185 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(clipboard.reads, 0)
     }
 
+    func testEditorIgnoresShortcutsForOtherWindows() throws {
+        let presentation = try open()
+        presentation.edit("Mine")
+        delegate.showSettings()
+        let settings = try XCTUnwrap(delegate.settingsWindow?.window)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        defer { panel.close(); settings.close() }
+        panel.orderFrontRegardless()
+        let controller = try XCTUnwrap(delegate.libraryWindow)
+        for otherWindow in [settings, panel] {
+            for (characters, keyCode) in [("s", kVK_ANSI_S), ("w", kVK_ANSI_W)] {
+                let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                    modifierFlags: .command, timestamp: 0, windowNumber: otherWindow.windowNumber,
+                    context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                    isARepeat: false, keyCode: UInt16(keyCode)))
+                XCTAssertFalse(controller.handleKeyEvent(event))
+            }
+        }
+        work.drain()
+        XCTAssertEqual(try body(), "Original")
+        XCTAssertEqual(presentation.editorState.source, "Mine")
+        XCTAssertTrue(try window().isVisible)
+        XCTAssertNil(presentation.editorState.pendingDecision)
+        XCTAssertFalse(dialogs.contains { !$0.cancelled })
+    }
+
+    func testLoadingSourceCannotBeEditedOrSaved() throws {
+        try put("Original")
+        start()
+        delegate.showLibrary()
+        let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
+        presentation.selectPath("one.md")
+        XCTAssertNotNil(presentation.editorState.prompt)
+        XCTAssertNil(presentation.editorState.source)
+        XCTAssertFalse(presentation.editorState.canEdit)
+        XCTAssertFalse(presentation.canSave)
+        presentation.edit("Premature draft")
+        presentation.save()
+        work.drain()
+        XCTAssertEqual(presentation.editorState.source, "Original")
+        XCTAssertFalse(presentation.editorState.isDirty)
+        XCTAssertEqual(try body(), "Original")
+    }
+
+    func testPendingDecisionDisablesToolbarFileActions() throws {
+        let presentation = try open()
+        presentation.edit("Mine")
+        try window().close()
+        let decision = try XCTUnwrap(presentation.editorState.pendingDecision)
+        XCTAssertFalse(presentation.canSave)
+        XCTAssertFalse(presentation.canRevert)
+        presentation.save()
+        presentation.saveAsCopy()
+        presentation.revert()
+        work.drain()
+        XCTAssertEqual(presentation.editorState.pendingDecision, decision)
+        XCTAssertTrue(presentation.editorState.queuedActions.isEmpty)
+        XCTAssertEqual(try body(), "Original")
+        XCTAssertNil(presentation.editorState.lastCopy)
+        try respond(.decision(.cancel))
+    }
+
+    func testConflictSaveReopensChoicesWithoutWritingAndOtherFileActionsAreDisabled() throws {
+        let presentation = try externalConflict(.modified)
+        XCTAssertFalse(presentation.canSave)
+        XCTAssertFalse(presentation.canRevert)
+        presentation.saveAsCopy()
+        presentation.revert()
+        presentation.save()
+        work.drain()
+        XCTAssertEqual(try body(), "Theirs")
+        XCTAssertNil(presentation.editorState.lastCopy)
+        XCTAssertNil(presentation.editorState.pendingDecision)
+        XCTAssertEqual(presentation.editorState.status, .idle)
+        try respond(.dismissConflict)
+        presentation.edit("Repaired mine")
+        XCTAssertFalse(dialogs.contains { !$0.cancelled })
+        presentation.save()
+        XCTAssertEqual(presentation.editorState.status, .idle, "Reopening choices must not start a write")
+        guard case .conflict = try dialog().dialog else { return XCTFail("Expected conflict choices") }
+        XCTAssertEqual(try body(), "Theirs")
+        try respond(.conflict(.keepMine))
+        work.drain()
+        XCTAssertEqual(try body(), "Repaired mine")
+    }
+
+    func testNewExternalChangeRePresentsAnIdenticalDismissedDeletionConflict() throws {
+        let presentation = try externalConflict(.deleted)
+        let dismissed = try XCTUnwrap(presentation.editorState.conflict)
+        try respond(.dismissConflict)
+        presentation.edit("Mine plus")
+        XCTAssertFalse(dialogs.contains { !$0.cancelled }, "Ordinary typing must preserve the dismissal")
+        let count = dialogs.count
+        let watcher = try XCTUnwrap(watchers.first)
+        // Recreate then delete before the conflict reread finishes. The newly
+        // detected deletion has exactly the same value as the dismissed one.
+        try put("Recreated")
+        watcher.emit(.file(FileStoreEvent(relativePath: "one.md", kind: .created)))
+        try files.delete(at: "one.md")
+        watcher.emit(.file(FileStoreEvent(relativePath: "one.md", kind: .deleted)))
+        work.drain()
+        XCTAssertEqual(presentation.editorState.conflict, dismissed)
+        XCTAssertEqual(dialogs.count, count + 1)
+        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected new conflict") }
+        XCTAssertEqual(conflict, dismissed)
+        XCTAssertEqual(presentation.editorState.source, "Mine plus")
+    }
+
+    func testDecisionSaveUsesReturnAndCancelUsesEscape() throws {
+        let presentation = try open()
+        presentation.edit("Mine")
+        try window().close()
+        let decision = try XCTUnwrap(presentation.editorState.pendingDecision)
+        let alert = LibraryWindowController.makeEditorAlert(for: .decision(decision, status: .idle))
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\r", "", "\u{1b}"])
+    }
+
+    func testConflictOverwriteNeverUsesReturn() throws {
+        let presentation = try externalConflict(.deleted)
+        let conflict = try XCTUnwrap(presentation.editorState.conflict)
+        let alert = LibraryWindowController.makeEditorAlert(for: .conflict(conflict, status: .idle))
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["", "", "", "\u{1b}"])
+    }
+
+    func testNativeDecisionCancelKeepsDraftAndCompletesRequest() throws {
+        try assertNativeSheetDismissal(.cancel)
+    }
+
+    func testNativeDecisionStopKeepsDraftAndCompletesRequest() throws {
+        try assertNativeSheetDismissal(.stop)
+    }
+
+    func testNativeConflictCancelKeepsDraftAndCompletesRequest() throws {
+        try assertNativeSheetDismissal(.cancel, conflict: .deleted)
+    }
+
+    func testNativeConflictStopKeepsDraftAndCompletesRequest() throws {
+        try assertNativeSheetDismissal(.stop, conflict: .deleted)
+    }
+
+    private func assertNativeSheetDismissal(_ returnCode: NSApplication.ModalResponse,
+                                           conflict: EditorConflict.Kind? = nil) throws {
+        XCTAssertEqual(NSApplication.ModalResponse.cancel.rawValue, 0)
+        XCTAssertEqual(NSApplication.ModalResponse.alertSecondButtonReturn.rawValue, 1001)
+        let presentation = try open(editorDialog: LibraryWindowController.presentEditorDialog)
+        presentation.edit("Mine")
+        if conflict == .deleted {
+            try files.delete(at: "one.md")
+            try XCTUnwrap(watchers.first).emit(.file(FileStoreEvent(relativePath: "one.md", kind: .deleted)))
+            work.drain()
+        }
+        let completed = expectation(description: "Dismissal cancels the editor request")
+        completed.assertForOverFulfill = true
+        var results: [EditorGuardResult] = []
+        presentation.editor.request(.rename) { result in
+            results.append(result)
+            completed.fulfill()
+        }
+        let window = try window()
+        let alertWindow = try XCTUnwrap(window.attachedSheet)
+        window.endSheet(alertWindow, returnCode: returnCode)
+        wait(for: [completed], timeout: 2)
+        work.drain()
+        XCTAssertEqual(results, [.cancelled])
+        XCTAssertNil(presentation.editorState.pendingDecision)
+        XCTAssertEqual(presentation.editorState.source, "Mine")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertTrue(window.isVisible)
+        if let conflict {
+            XCTAssertEqual(presentation.editorState.conflict?.kind, conflict)
+            XCTAssertNil(try files.stamp(at: "one.md"))
+        } else {
+            XCTAssertNil(presentation.editorState.conflict)
+            XCTAssertEqual(try body(), "Original")
+        }
+    }
+
     func testModifiedConflictKeepMine() throws {
         let presentation = try externalConflict(.modified)
         try respond(.conflict(.keepMine))
@@ -181,7 +366,8 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertNotEqual(copy.relativePath, "one.md")
         XCTAssertEqual(try body(at: copy.relativePath.string), "Mine")
         XCTAssertEqual(try body(), "Theirs")
-        watchers[0].emit(.file(FileStoreEvent(relativePath: copy.relativePath.string, kind: .created)))
+        try XCTUnwrap(watchers.first, "No file watcher was registered")
+            .emit(.file(FileStoreEvent(relativePath: copy.relativePath.string, kind: .created)))
         work.drain()
         XCTAssertEqual(presentation.snapshot.selection, copy)
         XCTAssertEqual(presentation.editorState.prompt, copy)
@@ -194,7 +380,8 @@ final class MacLibraryEditorTests: XCTestCase {
         presentation.saveAsCopy()
         work.drain()
         let copy = try XCTUnwrap(presentation.editorState.lastCopy)
-        watchers[0].emit(.file(FileStoreEvent(relativePath: copy.relativePath.string, kind: .created)))
+        try XCTUnwrap(watchers.first, "No file watcher was registered")
+            .emit(.file(FileStoreEvent(relativePath: copy.relativePath.string, kind: .created)))
         work.drain()
         XCTAssertEqual(presentation.snapshot.selection, copy)
         presentation.selectSection(.favourites)
@@ -244,6 +431,7 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertNil(presentation.snapshot.selection)
         XCTAssertEqual(presentation.editorState.source, "Mine", "A deleted row must not hide the draft")
         try respond(.conflict(.discard))
+        work.drain()
         XCTAssertNil(presentation.editorState.prompt)
         XCTAssertNil(try files.stamp(at: "one.md"))
     }
@@ -358,7 +546,8 @@ final class MacLibraryEditorTests: XCTestCase {
         let window = try window()
         window.orderOut(nil) // Simulate hidden/minimized visibility without key-window waits.
         try put("Theirs")
-        watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+        try XCTUnwrap(watchers.first, "No file watcher was registered")
+            .emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
         work.drain()
         XCTAssertEqual(presentation.editorState.conflict?.kind, .modified)
         XCTAssertFalse(dialogs.contains { !$0.cancelled })
@@ -409,7 +598,8 @@ final class MacLibraryEditorTests: XCTestCase {
         let presentation = try open()
         presentation.edit("---\ntitle: [broken\n---\nMine")
         try put("Theirs")
-        watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+        try XCTUnwrap(watchers.first, "No file watcher was registered")
+            .emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
         work.drain()
         try respond(.conflict(.keepMine))
         work.drain()
@@ -570,8 +760,9 @@ final class MacLibraryEditorTests: XCTestCase {
         let presentation = try open(source)
         let identity = presentation.snapshot.selection?.identity
         try files.move(from: "one.md", to: "renamed.md")
-        watchers[0].emit(.file(FileStoreEvent(relativePath: "renamed.md", kind: .created)))
-        watchers[0].emit(.file(FileStoreEvent(relativePath: "one.md", kind: .deleted)))
+        let watcher = try XCTUnwrap(watchers.first, "No file watcher was registered")
+        watcher.emit(.file(FileStoreEvent(relativePath: "renamed.md", kind: .created)))
+        watcher.emit(.file(FileStoreEvent(relativePath: "one.md", kind: .deleted)))
         work.drain()
         XCTAssertEqual(presentation.snapshot.selection?.identity, identity)
         XCTAssertEqual(presentation.snapshot.selection?.relativePath, "renamed.md")
@@ -609,6 +800,29 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(try body(), "Mine")
     }
 
+    func testSettingsRefusalMessageClearsAndPublishesAfterSavingTheDraft() throws {
+        let presentation = try open()
+        defer { delegate.settingsWindow?.window?.close() }
+        let other = directory.appendingPathComponent("other", isDirectory: true)
+        try RootedFileStore(root: other).write(Data("Other".utf8), at: "other.md")
+        presentation.edit("Mine")
+        try XCTUnwrap(delegate.generalSettingsModel).chooseFolder(other.path)
+        let settings = try XCTUnwrap(delegate.settingsWindow?.presentation)
+        XCTAssertEqual(settings.generalMessages, [EditorStrings.librarySwitchRefused])
+        var publications = 0
+        let subscription = settings.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+        presentation.save()
+        let whileSaving = publications
+        work.drain()
+        XCTAssertGreaterThan(publications, whileSaving, "An already-open Settings view must refresh on resolution")
+        XCTAssertNil(settings.librarySwitchMessage?())
+        XCTAssertTrue(settings.generalMessages.isEmpty, "A resolved editor refusal must not become a delivery warning")
+        delegate.showSettings()
+        XCTAssertTrue(settings.generalMessages.isEmpty)
+        XCTAssertEqual(delegate.libraryDirectory, root)
+    }
+
     func testPickerEditAndNoMatchCreateRevealEditorEvenWithAHiddenRow() throws {
         let presentation = try open()
         presentation.setFilter("no such row")
@@ -644,6 +858,7 @@ final class MacLibraryEditorTests: XCTestCase {
             presentation.selectPath(RelativePath(path))
             work.drain()
             let bytes = try files.read(at: path)
+            let paths = try files.listFiles().map(\.relativePath).sorted()
             let source = presentation.editorState.source
             let reason = try XCTUnwrap(presentation.editorState.readOnlyReason)
             XCTAssertFalse(EditorStrings.readOnly(reason).isEmpty)
@@ -655,6 +870,9 @@ final class MacLibraryEditorTests: XCTestCase {
             work.drain()
             XCTAssertEqual(presentation.editorState.source, source)
             XCTAssertEqual(try files.read(at: path), bytes)
+            XCTAssertEqual(presentation.editorState.prompt?.relativePath, RelativePath(path))
+            XCTAssertNil(presentation.editorState.lastCopy)
+            XCTAssertEqual(try files.listFiles().map(\.relativePath).sorted(), paths)
         }
         XCTAssertEqual(clipboard.reads, 0)
     }

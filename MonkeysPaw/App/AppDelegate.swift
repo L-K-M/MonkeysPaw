@@ -189,17 +189,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) { tearDown() }
 
+    private var isEditorBusy: Bool {
+        guard let state = editorModel?.state else { return false }
+        return state.isDirty || state.status == .saving || state.pendingDecision != nil
+            || !state.queuedActions.isEmpty
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isShutDown else { return .terminateNow }
         guard !terminationPending else { return .terminateLater }
-        guard let editor = editorModel,
-              editor.state.isDirty || editor.state.status == .saving || editor.state.pendingDecision != nil
-                || !editor.state.queuedActions.isEmpty else {
+        guard let editor = editorModel, isEditorBusy else {
             return .terminateNow
         }
         terminationPending = true
         // A draft may live in a minimized window. Make the decision sheet visible.
         libraryWindow?.show()
+        // EditorModel owns caller completions and replies exactly once per request.
         editor.request(.quit) { [weak self] result in
             // AppKit must first receive terminateLater, even with an inline
             // injected dialog or a just-completed save.
@@ -352,7 +357,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
             openSetup: { [weak self] in self?.showSetup() })
         settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
-            self?.editorSwitchRefused == true ? EditorStrings.librarySwitchRefused : nil
+            guard let self else { return nil }
+            if self.editorSwitchRefused {
+                return self.isEditorBusy ? EditorStrings.librarySwitchRefused : nil
+            }
+            return GeneralSettingsStrings.message(for: .deliveryInFlight)
         }
     }
 
@@ -441,8 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         assert(Thread.isMainThread, "Library replacement is main-thread-confined")
         guard !isShutDown, let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
         editorSwitchRefused = false
-        if let state = editorModel?.state,
-           state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty {
+        if isEditorBusy {
             editorSwitchRefused = true
             return .editorBusy
         }
@@ -524,6 +532,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: libraryMain)
         let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: libraryMain)
+        editor.onChange = { [weak self] in
+            guard isCurrent(), let self, self.editorSwitchRefused else { return }
+            self.settingsWindow?.presentation.objectWillChange.send()
+        }
         let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain)
         let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: libraryMain, editor: editor)
         model.libraryAvailable = availability

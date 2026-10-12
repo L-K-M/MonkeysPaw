@@ -135,7 +135,8 @@ struct LibraryView: View {
                         .accessibilityIdentifier("library-read-only")
                 }
                 HStack {
-                    Button(EditorStrings.save, action: presentation.save).disabled(!presentation.canSave)
+                    Button(EditorStrings.save, action: presentation.save)
+                        .disabled(!presentation.canSave && !presentation.canShowConflict)
                         .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("library-save")
                     Button(EditorStrings.revert, action: presentation.revert).disabled(!presentation.canRevert)
                         .accessibilityIdentifier("library-revert")
@@ -159,6 +160,7 @@ struct LibraryView: View {
 
     private var source: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Core's canEdit excludes nil source, including an in-flight load.
             LibrarySourceEditor(source: presentation.editorState.source ?? "",
                 path: presentation.editorState.prompt?.relativePath,
                 revision: presentation.sourceRevision,
