@@ -86,6 +86,10 @@ public struct LibraryBrowserState: Equatable, Sendable {
 
 public enum PromptFavoriteOutcome: Sendable {
     case saved(LibraryEntry)
+    /// The open editor retains the toggle in its unsaved source.
+    case editedBuffer
+    /// The clean open editor owns the asynchronous save and its typed status.
+    case savePending
     case noSelection
     case inactive
     case fileStoreFailure(FileStoreError)

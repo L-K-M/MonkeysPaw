@@ -3,6 +3,45 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class LibraryFavoriteTests: XCTestCase {
+    func testAttachedEditorRoutesAnotherPromptsFavoriteThroughPort() throws {
+        for dirty in [false, true] {
+            let e = EditorHarness(heldWork: true)
+            try e.open()
+            let other = try e.put("Other", at: "b.md")
+            let favorites = LibraryService(library: e.h.files, data: e.h.data, clock: e.h.clock,
+                                           entropy: e.h.entropy, keyedStores: [e.h.keyed])
+            let port = FavoritePort(service: favorites)
+            let browser = LibraryBrowserModel(index: e.h.index, usage: e.h.usage,
+                favorites: port, main: e.h.main, editor: e.model)
+            e.ui {
+                browser.selectPrompt(other)
+                if dirty { e.model.edit("Mine") }
+            }
+            let before = e.model.state
+            let entry = try XCTUnwrap(browser.selectedEntry)
+            var outcome: PromptFavoriteOutcome?
+            e.ui { outcome = browser.toggleFavorite() }
+            let first = try saved(try XCTUnwrap(outcome))
+            XCTAssertTrue(first.document.frontMatter.favorite)
+            XCTAssertEqual(port.entries.count, 1)
+            XCTAssertEqual(port.entries.first?.identity, entry.identity)
+            XCTAssertEqual(port.entries.first?.stamp, entry.stamp)
+            XCTAssertEqual(browser.selectedEntry?.stamp, first.stamp)
+            XCTAssertEqual(e.model.state, before, "dirty: \(dirty)")
+            XCTAssertTrue(e.h.held.pending.isEmpty)
+            XCTAssertTrue(try e.h.files.text(at: "b.md").contains("favorite: true"))
+            XCTAssertEqual(try e.h.files.text(at: "a.md"), "Original")
+
+            e.ui { outcome = browser.toggleFavorite() }
+            let second = try saved(try XCTUnwrap(outcome))
+            XCTAssertFalse(second.document.frontMatter.favorite)
+            XCTAssertEqual(port.entries.count, 2)
+            XCTAssertEqual(port.entries.last?.stamp, first.stamp)
+            XCTAssertEqual(e.model.state, before)
+            XCTAssertTrue(try e.h.files.text(at: "b.md").contains("favorite: false"))
+        }
+    }
+
     func testBrowserToggleSavesCanonicalFavoritePreservesBodyUnknownMetadataAndMigratesSelection() throws {
         let h = PromptFlowHarness()
         let body = "  Indented {{topic}}\r\n\nTrailing spaces  \n"
@@ -118,7 +157,15 @@ final class LibraryFavoriteTests: XCTestCase {
         for outcome in [PromptFavoriteOutcome.fileStoreFailure(.outsideRoot), .libraryFailure(.recoveryRequired),
                         .writeFailure(.serializationFailed)] {
             port.outcome = outcome
-            _ = model.toggleFavorite()
+            switch (outcome, model.toggleFavorite()) {
+            case (.fileStoreFailure(let expected), .fileStoreFailure(let actual)):
+                XCTAssertEqual(actual, expected)
+            case (.libraryFailure(let expected), .libraryFailure(let actual)):
+                XCTAssertEqual(actual, expected)
+            case (.writeFailure(let expected), .writeFailure(let actual)):
+                XCTAssertEqual(actual, expected)
+            default: XCTFail("The favourite port's failure was not returned.")
+            }
             XCTAssertFalse(model.rows[0].favorite)
         }
         XCTAssertEqual(port.entries.count, 3)
@@ -156,10 +203,12 @@ final class LibraryFavoriteTests: XCTestCase {
 private enum FavoriteFailure { case externalWrite, deletion, write }
 
 private final class FavoritePort: PromptFavoriteEditing {
+    private let service: PromptFavoriteEditing?
     var entries: [LibraryEntry] = []
     var outcome = PromptFavoriteOutcome.libraryFailure(.operationFailed)
+    init(service: PromptFavoriteEditing? = nil) { self.service = service }
     func toggleFavorite(of entry: LibraryEntry) -> PromptFavoriteOutcome {
         entries.append(entry)
-        return outcome
+        return service?.toggleFavorite(of: entry) ?? outcome
     }
 }

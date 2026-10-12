@@ -50,13 +50,13 @@ final class EditingMainThread: MainThread {
         }
     }
 
-    func releaseAll() {
-        while !pending.isEmpty {
-            let work = pending.removeFirst()
-            beforeRun?()
-            marker.ui(work)
-        }
+    func releaseNext() {
+        let work = pending.removeFirst()
+        beforeRun?()
+        marker.ui(work)
     }
+
+    func releaseAll() { while !pending.isEmpty { releaseNext() } }
 }
 
 /// Covers every filesystem entry point, including history enumeration and
@@ -96,6 +96,7 @@ final class PromptEditingHarness {
     let libraryFiles: EditingFileStore
     let dataFiles: EditingFileStore
     let library: LibraryService
+    let usage: UsageStore
     let index: PromptIndex
     let editor: PromptEditingService
 
@@ -106,7 +107,7 @@ final class PromptEditingHarness {
         dataFiles = EditingFileStore(data, marker: marker)
         library = LibraryService(library: libraryFiles, data: dataFiles, clock: clock,
                                  entropy: entropy, keyedStores: [keyed])
-        let usage = UsageStore(files: dataFiles, clock: clock)
+        usage = UsageStore(files: dataFiles, clock: clock)
         index = PromptIndex(service: library, usage: usage, clock: clock)
         editor = PromptEditingService(library: library, index: index,
                                       work: heldWork ? held : InlineBackgroundWork(marker), main: main)

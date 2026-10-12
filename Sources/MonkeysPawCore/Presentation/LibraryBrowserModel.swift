@@ -22,8 +22,10 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     private let usage: UsageStore
     private let favorites: PromptFavoriteEditing
     private let main: MainThread
+    private weak var editor: EditorModel?
     private var indexObserver: UUID?
     private var usageObserver: UUID?
+    private var editorObserver: UUID?
     private var isActive = true
     private var observers: [UUID: (LibraryBrowserState) -> Void] = [:]
     private var observerOrder: [UUID] = []
@@ -36,11 +38,12 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     /// Share the index's UsageStore, including LibraryService identity migration.
     /// Native composition supplies the same guarded MainThread as its picker.
     public init(index: PromptIndex, usage: UsageStore, favorites: PromptFavoriteEditing,
-                main: MainThread) {
+                main: MainThread, editor: EditorModel? = nil) {
         self.index = index
         self.usage = usage
         self.favorites = favorites
         self.main = main
+        self.editor = editor
         indexObserver = index.addObserver { [weak self] in
             guard let self else { return }
             self.main.run { [weak self] in
@@ -55,6 +58,17 @@ public final class LibraryBrowserModel: @unchecked Sendable {
                 self.refreshUsage()
             }
         }
+        editorObserver = editor?.addObserver { [weak self] state in
+            guard let self else { return }
+            self.main.run { [weak self] in
+                guard let self, self.isActive, let prompt = state.prompt,
+                      self.editor?.state.prompt == prompt,
+                      self.preferredSelection?.relativePath == prompt.relativePath,
+                      self.preferredSelection != prompt else { return }
+                self.preferredSelection = prompt
+                self.refreshContents()
+            }
+        }
         refreshContents()
         lastPublishedState = state
     }
@@ -62,6 +76,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     deinit {
         if let indexObserver { index.removeObserver(indexObserver) }
         if let usageObserver { usage.removeObserver(usageObserver) }
+        if let editorObserver { editor?.removeObserver(editorObserver) }
     }
 
     /// Independent view/editor subscribers, on the UI thread. Registration is
@@ -87,8 +102,10 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         isActive = false
         if let indexObserver { index.removeObserver(indexObserver) }
         if let usageObserver { usage.removeObserver(usageObserver) }
+        if let editorObserver { editor?.removeObserver(editorObserver) }
         indexObserver = nil
         usageObserver = nil
+        editorObserver = nil
         observers = [:]
         observerOrder = []
         onChange = nil
@@ -104,7 +121,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     }
 
     public func selectPrompt(_ selection: LibraryPromptSelection?) {
-        guard isActive, selection != self.selection else { return }
+        guard isActive, selection != preferredSelection else { return }
         if let selection, !rows.contains(where: { $0.selection == selection }) { return }
         preferredSelection = selection
         update(section: selectedSection, filter: filter)
@@ -115,13 +132,13 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         update(section: selectedSection, filter: filter)
     }
 
-    /// No optimistic favourite mutation. The typed result comes from the save
-    /// port, which C2/C3 will adapt to an open editor buffer and async work.
+    /// The open editor owns its buffer and stamped save. Unrelated prompts
+    /// continue through the favourite port; only committed entries enter the index.
     @discardableResult
     public func toggleFavorite() -> PromptFavoriteOutcome {
         guard isActive else { return .inactive }
         guard let entry = selectedEntry else { return .noSelection }
-        let outcome = favorites.toggleFavorite(of: entry)
+        let outcome = editor?.toggleFavorite(of: entry) ?? favorites.toggleFavorite(of: entry)
         if case .saved(let saved) = outcome {
             preferredSelection = LibraryPromptSelection(identity: saved.identity,
                 relativePath: RelativePath(saved.relativePath))
@@ -146,6 +163,10 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         guard let selection = preferredSelection else { return }
         if contents.contains(where: { $0.entry.identity == selection.identity
             && RelativePath($0.entry.relativePath) == selection.relativePath }) { return }
+        // The editor's first save replaces a path hash with a ULID before its
+        // UI reply arrives. Retain the user's choice for that reply, without
+        // following an unrelated selection or an external identity change.
+        if editor?.state.status == .saving, editor?.state.prompt == selection { return }
         let sameIdentity = contents.filter { $0.entry.identity == selection.identity }
         // An assigned rename has one surviving identity. Refuse an ambiguous
         // duplicate id instead of jumping to an arbitrary byte-distinct path.

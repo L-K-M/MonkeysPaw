@@ -333,10 +333,9 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   toggle changes the editor's text instead, and the app's own saves refresh
   the editor's stamp, so they never trigger a conflict. The picker's Library
   control and the menu or tray open this window instead of the file manager.
-  C1 exposes `toggleFavorite` through the narrow `PromptFavoriteEditing` port,
-  with stamped saves and typed outcomes. The later C2/C3 editor slice must
-  intercept a dirty buffer and refresh the editor's stamp after its own save;
-  C1 adds neither an editor buffer nor asynchronous editing work.
+  `LibraryBrowserModel` hands open-prompt favourite toggles to `EditorModel`:
+  dirty buffers stay unsaved, while clean buffers save through the editor's
+  session. Unrelated prompts retain the `PromptFavoriteEditing` port.
 - **Edit · Preview · Fields · History.** Edit shows the raw file, front
   matter and body, with live validation from the same codec and validator as
   the picker. Fields lists the parsed fields read-only. Preview renders with
@@ -355,11 +354,18 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   once: keep mine (save over theirs), take theirs (reload), or save mine as
   a copy. A deletion on disk offers keep mine (recreate), save mine as a
   copy, or discard. A stale save opens the same dialog. Without unsaved
-  edits the editor reloads silently. The app never merges.
+  edits the editor reloads silently. If an external writer replaces a newly
+  created copy before verification, the editor reports a copy failure and
+  keeps the original session, draft, conflict and pending decision. The app
+  never merges.
 - **Unsaved edits.** Changing selection, closing the window, renaming,
-  moving, deleting, or quitting asks Save / Discard / Cancel. A library
-  switch from Settings is refused with a message while an edit is unsaved.
-  Intents wait for a save in flight to finish.
+  moving, deleting, switching libraries, reverting, or quitting asks Save /
+  Discard / Cancel. Core's `EditorModel` publishes a tokenized pending
+  decision for these discard requests; the view resolves it, and file-command
+  callers proceed only after an allowed result through `MainThread`.
+  Requests queue in order while a save is in flight, and a failed save or a
+  newer draft retains the decision. A library switch retires the session
+  only after the guard allows it.
 - **Rename, move, delete.** Rename edits the filename; the title stays in
   front matter. Move targets an existing or new folder. An occupied
   destination is refused, never replaced. Delete removes the file and keeps
