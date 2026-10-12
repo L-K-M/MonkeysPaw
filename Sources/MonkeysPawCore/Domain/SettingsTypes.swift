@@ -38,12 +38,29 @@ public struct FirstRunProgress: Codable, Equatable, Sendable {
     public let setupPresented: Bool
     public let libraryFolderCompleted: Bool
     public let seedsOffered: Bool
+    public let tourCompleted: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case setupPresented, libraryFolderCompleted, seedsOffered, tourCompleted
+    }
 
     public init(setupPresented: Bool = false, libraryFolderCompleted: Bool = false,
-                seedsOffered: Bool = false) {
+                seedsOffered: Bool = false, tourCompleted: Bool = false) {
         self.setupPresented = setupPresented
         self.libraryFolderCompleted = libraryFolderCompleted
         self.seedsOffered = seedsOffered
+        self.tourCompleted = tourCompleted
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        setupPresented = try values.decode(Bool.self, forKey: .setupPresented)
+        libraryFolderCompleted = try values.decode(Bool.self, forKey: .libraryFolderCompleted)
+        seedsOffered = try values.decode(Bool.self, forKey: .seedsOffered)
+        // Version 1 predates the tour. Only an omitted key uses the upgrade
+        // rule; a present non-boolean value must still fail closed.
+        tourCompleted = values.contains(.tourCompleted)
+            ? try values.decode(Bool.self, forKey: .tourCompleted) : setupPresented
     }
 }
 

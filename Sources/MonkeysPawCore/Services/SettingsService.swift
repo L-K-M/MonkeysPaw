@@ -1,7 +1,7 @@
 /// Settings intents keep unrelated first-run progress intact (§11.4).
 /// File access and atomic publication belong to the injected SettingsStore.
 public final class SettingsService: Sendable {
-    private enum Step { case setup, libraryFolder, seeds }
+    private enum Step { case setup, libraryFolder, seeds, tour }
 
     private let store: SettingsStore
 
@@ -19,6 +19,7 @@ public final class SettingsService: Sendable {
     public func markSetupPresented() throws { try complete(.setup) }
     public func completeLibraryFolderStep() throws { try complete(.libraryFolder) }
     public func markSeedsOffered() throws { try complete(.seeds) }
+    public func completeTour() throws { try complete(.tour) }
 
     private func complete(_ step: Step) throws {
         try store.update { document in
@@ -27,7 +28,8 @@ public final class SettingsService: Sendable {
                 firstRun: FirstRunProgress(
                     setupPresented: progress.setupPresented || step == .setup,
                     libraryFolderCompleted: progress.libraryFolderCompleted || step == .libraryFolder,
-                    seedsOffered: progress.seedsOffered || step == .seeds))
+                    seedsOffered: progress.seedsOffered || step == .seeds,
+                    tourCompleted: progress.tourCompleted || step == .tour))
         }
     }
 }
