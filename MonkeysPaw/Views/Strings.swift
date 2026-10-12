@@ -49,12 +49,27 @@ enum Strings {
                 (.superKey, "Super"), (.commandOrControl, "CmdOrCtrl"),
             ]
             for (modifier, name) in modifiers where accelerator.modifiers.contains(modifier) { parts.append(name) }
-            switch accelerator.key {
-            case .character(let key): parts.append(String(key).uppercased())
-            case .function(let number): parts.append("F\(number)")
-            case .named(let key): parts.append(key.rawValue)
-            }
+            parts.append(acceleratorKeyName(accelerator.key))
             return parts.joined(separator: "+")
+        }
+    }
+
+    /// Native capture and binding display share names the Core parser accepts.
+    static func acceleratorKeyName(_ key: Accelerator.Key) -> String {
+        switch key {
+        case .character(let key): return String(key).uppercased()
+        case .function(let number): return "F\(number)"
+        case .named(let key):
+            switch key {
+            case .pageUp: return "PageUp"
+            case .pageDown: return "PageDown"
+            case .quote: return "Quote"
+            case .backspace: return "Backspace"
+            case .bracketLeft: return "BracketLeft"
+            case .bracketRight: return "BracketRight"
+            case .printScreen: return "PrintScreen"
+            default: return key.rawValue.prefix(1).uppercased() + key.rawValue.dropFirst()
+            }
         }
     }
 

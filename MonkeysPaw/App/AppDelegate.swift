@@ -478,8 +478,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func installMainMenu() {
-        // LSUIElement hides the menu bar, but AppKit still routes editing key
-        // equivalents through its items to the first responder.
+        // AppKit routes editing key equivalents through the main menu even
+        // while the accessory policy hides it.
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()

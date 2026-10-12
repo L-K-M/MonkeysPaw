@@ -51,6 +51,7 @@ final class ShortcutRecorderButton: NSButton {
         stopCapture()
         isRecording = true
         title = Strings.recordingShortcut
+        setAccessibilityLabel(Strings.recordingShortcut)
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self, self.isRecording, let window = self.window,
                   event.window === window, window.isKeyWindow else { return event }
@@ -67,6 +68,7 @@ final class ShortcutRecorderButton: NSButton {
     func stopCapture() {
         isRecording = false
         title = Strings.recordShortcut
+        setAccessibilityLabel(Strings.recordShortcut)
         removeObservers()
     }
 

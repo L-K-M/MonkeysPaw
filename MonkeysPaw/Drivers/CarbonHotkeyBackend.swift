@@ -172,15 +172,14 @@ final class CarbonHotkeyBackend: HotkeyBackend {
     /// plus Equal stays Shift+Equal rather than choosing the implicit Plus alias.
     static func keyName(for keyCode: UInt16) -> String? {
         let code = Int(keyCode)
-        if let key = characterCodes.first(where: { $0.value == code })?.key { return String(key).uppercased() }
-        if let number = functionCodes.first(where: { $0.value == code })?.key { return "F\(number)" }
-        guard let key = namedCodes.first(where: { $0.value == code && $0.key != .plus })?.key else { return nil }
-        switch key {
-        case .pageUp: return "PageUp"
-        case .pageDown: return "PageDown"
-        case .quote: return "Quote"
-        default: return key.rawValue
+        if let key = characterCodes.first(where: { $0.value == code })?.key {
+            return Strings.acceleratorKeyName(.character(key))
         }
+        if let number = functionCodes.first(where: { $0.value == code })?.key {
+            return Strings.acceleratorKeyName(.function(number))
+        }
+        guard let key = namedCodes.first(where: { $0.value == code && $0.key != .plus })?.key else { return nil }
+        return Strings.acceleratorKeyName(.named(key))
     }
 
     private static let characterCodes: [Character: Int] = [

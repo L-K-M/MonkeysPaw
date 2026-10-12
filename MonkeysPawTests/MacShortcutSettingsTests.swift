@@ -12,7 +12,7 @@ final class MacShortcutSettingsTests: XCTestCase {
             XCTAssertEqual(ShortcutRecorderButton.capture(event), .accelerator("Ctrl+Alt+P"))
         }
         let cases: [(Int, NSEvent.ModifierFlags, String)] = [
-            (kVK_ANSI_Equal, [.command, .shift], "Shift+Cmd+equal"),
+            (kVK_ANSI_Equal, [.command, .shift], "Shift+Cmd+Equal"),
             (kVK_ANSI_Quote, .option, "Alt+Quote"),
             (kVK_PageUp, .control, "Ctrl+PageUp"),
             (kVK_PageDown, .command, "Cmd+PageDown"),
@@ -38,6 +38,17 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertEqual(count, 81)
     }
 
+    func testNamedBindingDisplayUsesTheSameParseableNamesAsCapture() throws {
+        for name in ["PageUp", "PageDown", "Quote", "Backspace", "BracketLeft", "BracketRight",
+                     "Space", "Tab", "Return", "Escape", "Comma", "Equal", "PrintScreen"] {
+            let text = "Cmd+" + name
+            let accelerator = try Accelerator(text)
+            let display = Strings.shortcutBinding(.accelerator(accelerator))
+            XCTAssertEqual(display, text)
+            XCTAssertEqual(try Accelerator(display), accelerator)
+        }
+    }
+
     func testCaptureRejectsUnmodifiedModifierOnlyAutorepeatAndUnsupportedKeys() throws {
         for flags: NSEvent.ModifierFlags in [[], .capsLock, .function, .numericPad] {
             XCTAssertEqual(ShortcutRecorderButton.capture(try key(kVK_ANSI_P, flags: flags)), .ignored)
@@ -60,8 +71,10 @@ final class MacShortcutSettingsTests: XCTestCase {
         recorder.onError = harness.presentation.captureFailed
         recorder.beginCapture()
         XCTAssertTrue(recorder.isRecording)
+        XCTAssertEqual(recorder.accessibilityLabel(), Strings.recordingShortcut)
         recorder.keyDown(with: try key(kVK_ANSI_K, text: "˚", flags: [.control, .option], window: window))
         XCTAssertFalse(recorder.isRecording)
+        XCTAssertEqual(recorder.accessibilityLabel(), Strings.recordShortcut)
         let binding = try Accelerator("Ctrl+Alt+K")
         XCTAssertEqual(harness.backend.requested.last, binding)
         XCTAssertEqual(harness.presentation.togglePicker.binding, .accelerator(binding))
@@ -97,7 +110,7 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertTrue(captures.isEmpty)
         recorder.beginCapture()
         XCTAssertTrue(recorder.performKeyEquivalent(with: try key(kVK_ANSI_Comma, flags: .command, window: window)))
-        XCTAssertEqual(captures, ["Cmd+comma"])
+        XCTAssertEqual(captures, ["Cmd+Comma"])
         recorder.beginCapture()
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
         XCTAssertFalse(recorder.isRecording)
@@ -142,7 +155,7 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertTrue(captures.isEmpty)
         recorder.beginCapture()
         NSApp.sendEvent(try key(kVK_ANSI_Comma, text: ",", flags: .command, window: window))
-        XCTAssertEqual(captures, ["Cmd+comma"])
+        XCTAssertEqual(captures, ["Cmd+Comma"])
         XCTAssertEqual(menuTarget.opens, 0, "Capture must intercept Command before menu dispatch")
         XCTAssertFalse(recorder.isRecording)
         NSApp.sendEvent(try key(kVK_ANSI_Comma, text: ",", flags: .command, window: window))

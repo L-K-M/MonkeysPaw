@@ -40,7 +40,7 @@ Per OS:
   - **Settings…** in the status menu and **⌘,** open the same reusable
     General/Shortcuts window, including while Setup has focus. Shortcuts has
     **Open Setup…** to reopen the existing Setup screen.
-  - A main menu is installed even though it never shows: AppKit routes
+  - A main menu is installed even while it is hidden: AppKit routes
     ⌘C/⌘V/⌘A/⌘Z through main-menu items, and without them those keys die
     silently in text fields (Vervellum).
 - **Linux.** GTK4 through the shim:

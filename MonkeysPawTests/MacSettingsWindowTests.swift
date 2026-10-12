@@ -99,7 +99,9 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(policies, [.regular])
         XCTAssertEqual(applicationActivations, 2)
-        XCTAssertEqual(NSApp.windows.filter { $0.title == Strings.settingsTitle }.count, 1)
+        XCTAssertEqual(NSApp.windows.filter {
+            !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.settingsTitle
+        }.count, 1)
 
         window.close()
         XCTAssertFalse(window.isVisible)
@@ -123,7 +125,7 @@ final class MacSettingsWindowTests: XCTestCase {
         delegate.showSettings()
         let settings = try settings()
         settings.presentation.showSetup()
-        let setup = try XCTUnwrap(NSApp.windows.first { $0.title == Strings.setupTitle })
+        let setup = try setupWindow()
         setup.makeKeyAndOrderFront(nil)
         XCTAssertTrue(spin { setup.isKeyWindow })
         XCTAssertTrue(delegate.setupModel === model)
@@ -135,7 +137,9 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertEqual(NSApp.activationPolicy(), .accessory)
         XCTAssertEqual(policies.last, .accessory)
         settings.presentation.showSetup()
-        XCTAssertEqual(NSApp.windows.filter { $0.title == Strings.setupTitle }.count, 1)
+        XCTAssertEqual(NSApp.windows.filter {
+            !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.setupTitle
+        }.count, 1)
         XCTAssertEqual(policies.last, .accessory, "Setup never requests regular policy")
     }
 
@@ -275,7 +279,7 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertEqual(applicationActivations, 2)
 
         settings.presentation.showSetup()
-        let setup = try XCTUnwrap(NSApp.windows.first { $0.title == Strings.setupTitle })
+        let setup = try setupWindow()
         XCTAssertTrue(spin { setup.isKeyWindow })
         window.close()
         XCTAssertTrue(main.performKeyEquivalent(with: try commandComma(window: setup)))
@@ -356,6 +360,12 @@ final class MacSettingsWindowTests: XCTestCase {
         try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
             timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil, characters: ",",
             charactersIgnoringModifiers: ",", isARepeat: false, keyCode: UInt16(kVK_ANSI_Comma)))
+    }
+
+    private func setupWindow() throws -> NSWindow {
+        try XCTUnwrap(NSApp.windows.first {
+            !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.setupTitle
+        })
     }
 
     private func spin(_ condition: () -> Bool) -> Bool {
