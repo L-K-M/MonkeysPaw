@@ -43,6 +43,22 @@ final class LibraryFavoriteTests: XCTestCase {
         XCTAssertEqual(changes, 2)
     }
 
+    func testToggleKeepsAnExistingFavoriteKeyInPlace() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("---\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\ntitle: Example\nfavorite: false\nmodel: custom\n---\nBody")
+        try h.open()
+        let model = LibraryBrowserModel(index: h.index, usage: h.usage, favorites: h.service, main: h.delivery.main)
+        model.selectPrompt(model.rows[0].selection)
+        _ = try saved(model.toggleFavorite())
+        let text = try h.library.text(at: "a.md")
+        let keys = text.split(separator: "\n").compactMap { line -> String? in
+            guard let colon = line.firstIndex(of: ":"), !line.hasPrefix(" ") else { return nil }
+            return String(line[..<colon])
+        }
+        // Toggling rewrites the value only; the key keeps its position.
+        XCTAssertEqual(Array(keys.prefix(4)), ["id", "title", "favorite", "model"])
+    }
+
     func testStaleStampDeletionAndTypedWriteFailuresRetainSelectionWithoutOptimisticChanges() throws {
         for failure in [FavoriteFailure.externalWrite, .deletion, .write] {
             let h = PromptFlowHarness()

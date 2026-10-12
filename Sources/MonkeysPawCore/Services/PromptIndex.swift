@@ -108,7 +108,8 @@ public final class PromptIndex: @unchecked Sendable {
                   current.stamp == previous.stamp else { return [] }
             prompts[path] = PromptRanking.Input(entry)
             let cached = usage.cachedUseEvents()
-            useEvents[entry.identity] = cached[entry.identity] ?? []
+            // Keep known usage if the cache ever lacks this identity.
+            useEvents[entry.identity] = cached[entry.identity] ?? useEvents[entry.identity] ?? []
             if entry.identity != previous.identity, !prompts.values.contains(where: { $0.entry.identity == previous.identity }) {
                 useEvents[previous.identity] = nil
             }
