@@ -34,10 +34,16 @@ enum LinuxStrings {
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {
         case .saved: return nil
-        case .noSelection: return selectLibraryPrompt
+        case .noSelection: return "Select a prompt before changing its favourite."
         case .inactive: return "This library is no longer active. Reopen the Library window."
         case .fileStoreFailure(let error):
-            return "Favourite not saved (\(error.rawValue)). Check the library and app-data folders."
+            // User copy never shows internal error codes.
+            switch error {
+            case .notFound: return "The prompt file is missing. Refresh the library before trying again."
+            case .outsideRoot, .invalidRoot, .invalidPath:
+                return "The prompt file is outside the active library or has an invalid path."
+            default: return "Favourite not saved. Check the library and app-data folders."
+            }
         case .libraryFailure(.conflict), .libraryFailure(.identityMismatch):
             return "The prompt changed on disk. Wait for the library to refresh, then try again."
         case .libraryFailure:
