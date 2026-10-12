@@ -139,9 +139,7 @@ private final class HistoryTestDiskStore: FileStore {
     init(root: URL, marker: EditingThreadMarker) throws {
         self.marker = marker
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        // Darwin enumeration may resolve /var to /private/var. Use the same
-        // canonical prefix when deriving relative paths from enumerated URLs.
-        self.root = root.resolvingSymlinksInPath()
+        self.root = root
     }
 
     private func url(_ path: String) throws -> URL {
@@ -152,12 +150,20 @@ private final class HistoryTestDiskStore: FileStore {
 
     func listFiles() throws -> [StoredFile] {
         XCTAssertFalse(marker.isUI)
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
+        // Enumerate the resolved root: Foundation does not descend a symlinked
+        // root. Enumerated URLs may still spell it differently (/var vs
+        // /private/var on Darwin), so resolve both sides the same way; Darwin's
+        // resolver strips /private from each consistently.
+        let resolved = root.resolvingSymlinksInPath()
+        guard let enumerator = FileManager.default.enumerator(at: resolved, includingPropertiesForKeys: [.isRegularFileKey]) else {
             throw FileStoreError.ioFailure
         }
+        let base = resolved.pathComponents
         return try enumerator.compactMap { object in
             guard let file = object as? URL, try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { return nil }
-            let path = String(file.path.dropFirst(root.path.count + 1))
+            let components = file.resolvingSymlinksInPath().pathComponents
+            guard components.starts(with: base) else { throw FileStoreError.invalidPath }
+            let path = components.dropFirst(base.count).joined(separator: "/")
             guard let stamp = try stamp(at: path) else { throw FileStoreError.notFound }
             return StoredFile(relativePath: path, stamp: stamp)
         }
