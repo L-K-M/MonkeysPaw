@@ -430,7 +430,11 @@ public final class EditorModel: @unchecked Sendable {
             else { savesDecision = false }
         } else {
             switch outcome {
-            case .conflict(let stamp): state.status = .idle; openConflict(stamp: stamp)
+            case .conflict(let stamp):
+                // A copy conflict belongs to its destination, so it cannot
+                // replace the original session's conflict or trigger its reread.
+                if purpose == .copy { state.status = .failed(.editing(.library(.conflict))) }
+                else { state.status = .idle; openConflict(stamp: stamp) }
             case .deleted: state.status = .idle; openConflict(stamp: nil)
             case .invalid(let issues): state.status = .failed(.invalid(issues))
             case .readOnly(let reason): state.status = .failed(.readOnly(reason))

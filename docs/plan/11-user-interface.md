@@ -354,7 +354,10 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   once: keep mine (save over theirs), take theirs (reload), or save mine as
   a copy. A deletion on disk offers keep mine (recreate), save mine as a
   copy, or discard. A stale save opens the same dialog. Without unsaved
-  edits the editor reloads silently. The app never merges.
+  edits the editor reloads silently. If an external writer replaces a newly
+  created copy before verification, the editor reports a copy failure and
+  keeps the original session, draft, conflict and pending decision. The app
+  never merges.
 - **Unsaved edits.** Changing selection, closing the window, renaming,
   moving, deleting, switching libraries, reverting, or quitting asks Save /
   Discard / Cancel. Core's `EditorModel` publishes a tokenized pending
