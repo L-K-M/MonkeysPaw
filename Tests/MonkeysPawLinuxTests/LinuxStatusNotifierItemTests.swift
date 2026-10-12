@@ -387,5 +387,22 @@ final class LinuxStatusNotifierItemTests: XCTestCase {
         XCTAssertTrue(menuProperty.failed)
         XCTAssertEqual(toggles, 0)
     }
+
+    func testBusLossClearsAvailabilityAndAllowsCleanStop() throws {
+        let daemon = try PrivatePortalDaemon()
+        defer { daemon.stop() }
+        watcher.shutdown()
+        watcher = try FakeStatusNotifierWatcher(address: daemon.address)
+        item = makeItem(address: daemon.address)
+        try start()
+
+        daemon.stop()
+        XCTAssertTrue(GTKTestSupport.spin { self.availability == [true, false] })
+        XCTAssertFalse(item.isAvailable)
+        item.stop()
+        watcher.shutdown()
+        drain()
+        XCTAssertEqual(availability, [true, false])
+    }
 }
 #endif

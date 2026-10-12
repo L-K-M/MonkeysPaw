@@ -146,7 +146,10 @@ final class FakeStatusNotifierWatcher {
     func send(path: String = "/Menu", interface: String = "com.canonical.dbusmenu", method: String,
               body: String, destination: String = itemName) -> Reply {
         let result = Reply()
-        g_dbus_connection_call(connection, destination, path, interface, method, Self.variant(body), nil,
+        let parameters = Self.variant(body)
+        // parse returns a non-floating ref; call retains its own copy.
+        defer { g_variant_unref(parameters) }
+        g_dbus_connection_call(connection, destination, path, interface, method, parameters, nil,
             G_DBUS_CALL_FLAGS_NO_AUTO_START, 1_000, nil, { source, reply, data in
                 guard let source, let reply, let data else { return }
                 let result = Unmanaged<Reply>.fromOpaque(data).takeRetainedValue()
