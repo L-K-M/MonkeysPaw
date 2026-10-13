@@ -378,6 +378,9 @@ jobs:
             cmp "$payload/usr/share/$icon" "$deployment/files/share/$icon"
             cmp "$payload/usr/share/$icon" "$export_root/$icon"
           done
+          # Show the generated permissions and exports so a failed assertion is diagnosable.
+          cat "$deployment/metadata"
+          find "$export_root" -type f \( -name '*.desktop' -o -name '*.service' \) -print -exec cat {} \;
           python3 - "$deployment/metadata" "$export_root" <<'PY'
           import configparser
           import os
