@@ -20,7 +20,7 @@ final class MacLibraryAssistantTests: XCTestCase {
 
         for (source, expected) in [
             ("---\nprivate: true\n---\nPrivate source", LibraryAssistantStrings.privatePrompt),
-            ("---\nformat: 2\n---\nFuture source", EditorStrings.readOnly(.unsupportedFormat)),
+            ("---\nformat: 2\n---\nFuture source", EditorStrings.readOnly(.unsupportedFormat(PromptFormatVersion(2)!))),
             ("---\ntitle: [broken\n---\nInvalid source", LibraryAssistantStrings.invalid)
         ] {
             let h = try MacLibraryAssistantHarness(source: source)
