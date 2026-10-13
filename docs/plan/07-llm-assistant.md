@@ -341,9 +341,26 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   Final candidate bytes include a preflighted identity before the diff appears;
   a new write or private copy gets a fresh ID, while improve retains an existing
   ID and preflights an absent first-save ID. Accept rechecks the live context
-  and exposes the exact canonical candidate and a completion token. A11 owns
-  the checked file write and provenance, then reports saved or failed through
-  that token. A10 performs no prompt writes; Reject discards the draft.
+  and exposes the exact canonical candidate and a completion token.
+  `AssistantModel.accept(using:completion:)` commits through the active
+  `EditorModel` and `PromptEditingService`. Write creates exclusively with
+  alternate names and the previewed ID; improve passes the captured editor
+  session and load stamp through the normal history save. Final serialization
+  is checked against the preview, and publication uses those exact bytes.
+  A changed buffer (including edits away and back), graph, profile, access,
+  session or cancelled request refuses queued publication. The worker rechecks
+  the source stamp at publication, including when creating a new prompt.
+  Disk modification/deletion opens §11.7's existing conflict dialog, retaining
+  the editor draft. A buffer change requires a fresh Show diff. Write/private
+  copy first uses §11.7's Save / Discard / Cancel guard for unsaved edits;
+  Save or Discard changing that snapshot also requires a fresh preview.
+  Publication already started may finish; newer buffer edits stay dirty and
+  an obsolete Assistant token cannot hide the authoritative editor result.
+  The typed outcome is `saved`, `conflict`, `failed`, or
+  `committedWithProvenanceWarning`; both committed outcomes carry the saved
+  entry, stamp and history-maintenance warning. `AssistantState.acceptanceOutcome`
+  exposes it for native rendering. Provenance follows §5.5. Reject discards
+  the draft and writes no prompt, history or provenance.
   A retired token returns false from `completeAcceptance`; A11 must still
   surface any committed-file or provenance outcome through the editor's save
   contract. Non-secret provider snapshots have a separate short lock so model
@@ -388,6 +405,10 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   access blocks mutation. M6 supplies authoritative role changes and
   invalidates drafts; the server still enforces permissions independently
   ([§19 B32](19-m4-m5-decisions.md)).
+  A viewer's accepted copy is a fresh private prompt in the library root,
+  retaining the previewed copy ID. Group editor/owner writes create beside
+  the open group prompt; improve retains its path and ID. Access is rechecked
+  before accepting and changes invalidate queued publication.
 
 ### 7.4 Shipped system prompts (outline)
 

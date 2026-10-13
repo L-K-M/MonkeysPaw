@@ -137,6 +137,7 @@ public final class EditorModel: @unchecked Sendable {
     private var baseline: LoadedPrompt?
     private var document: PromptDocument?
     private var assistantRevision: UInt64 = 0
+    private var assistantPermit: AssistantSavePermit?
     private var requests: [GuardRequest] = []
     private var pendingRequest: GuardRequest?
     private var savesDecision = false
@@ -163,7 +164,7 @@ public final class EditorModel: @unchecked Sendable {
               let session, let stamp = state.stamp else { return nil }
         let availability: AssistantEditorAvailability
         if state.conflict != nil { availability = .conflicted }
-        else if pendingRequest != nil || !requests.isEmpty || state.status == .loading || state.status == .saving {
+        else if pendingRequest != nil || !requests.isEmpty || state.status == .loading || isWriting {
             availability = .busy
         }
         else { availability = .available }
@@ -253,6 +254,7 @@ public final class EditorModel: @unchecked Sendable {
 
     public func edit(_ text: String) {
         guard isActive, state.canEdit, !editorSourceEqual(state.source, text) else { return }
+        assistantPermit?.invalidate(.conflict(.changedBuffer))
         state.source = text
         state.isDirty = !editorSourceEqual(text, baseline?.source)
         if state.status != .saving { state.status = .idle }
@@ -342,6 +344,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func retireSession() {
+        assistantPermit?.invalidate(.failed(.inactive))
         if let session { editing.retire(session) }
         session = nil
         generation &+= 1
@@ -439,6 +442,11 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func externalChange(_ change: PromptExternalChange) {
+        if let assistantPermit, isWriting {
+            assistantPermit.invalidate(.conflict(change.newStamp.map { .modified(currentStamp: $0) } ?? .deleted))
+            commandHasExternalChange = true
+            return
+        }
         // A UI hop delivered before the service's write barrier may still be
         // queued when a command starts. Its checked outcome must arrive before
         // that hop can retire the session or replace the loaded baseline.
@@ -871,6 +879,126 @@ extension EditorModel {
              .cancelled, .inactive, .noSelection: break
         }
         changed()
+    }
+}
+
+extension EditorModel {
+    /// AssistantModel owns graph/profile/access invalidation. This editor owns
+    /// the buffer/session and the ordinary unsaved-edit/conflict contract.
+    func acceptAssistant(_ acceptance: AssistantAcceptance, destination: AssistantSaveDestination,
+                         permit: AssistantSavePermit, validate: @escaping () -> AssistantSaveRefusal?,
+                         completion: @escaping (AssistantAcceptanceOutcome) -> Void) {
+        guard isActive else { return main.run { completion(.failed(.inactive)) } }
+        guard !isWriting, assistantPermit == nil else { return main.run { completion(.failed(.editorBusy)) } }
+        assistantPermit = permit
+        let generation = self.generation
+        let start: (EditorModel) -> Void = { model in
+            guard model.generation == generation else {
+                model.assistantPermit = nil
+                return completion(.failed(.staleContext))
+            }
+            if let refusal = validate() {
+                permit.invalidate(refusal)
+                model.assistantPermit = nil
+                return completion(refusal.outcome)
+            }
+            guard model.assistantSnapshot == acceptance.candidate.context.editor else {
+                permit.invalidate(.conflict(.changedBuffer))
+                model.assistantPermit = nil
+                return completion(.conflict(.changedBuffer))
+            }
+            model.startAssistantSave(acceptance, destination: destination, permit: permit, completion: completion)
+        }
+        if destination == .improve || !state.isDirty { main.run { [weak self] in
+            guard let self else { return completion(.failed(.inactive)) }
+            start(self)
+        } } else {
+            let content = acceptance.candidate.content.document
+            let path = PromptCreation.relativePath(title: content.frontMatter.title, now: clock.now())
+            let selection = LibraryPromptSelection(identity: PromptIdentity(path: path, id: content.frontMatter.id),
+                                                    relativePath: RelativePath(path))
+            enqueue(.open(selection), operation: start) { [weak self] result in
+                guard result != .allowed else { return }
+                let failure: AssistantAcceptanceFailure = result == .cancelled ? .cancelled : .inactive
+                permit.invalidate(.failed(failure))
+                if self?.assistantPermit === permit { self?.assistantPermit = nil }
+                completion(.failed(failure))
+            }
+        }
+    }
+
+    private func startAssistantSave(_ acceptance: AssistantAcceptance, destination: AssistantSaveDestination,
+                                    permit: AssistantSavePermit, completion: @escaping (AssistantAcceptanceOutcome) -> Void) {
+        guard let profile = acceptance.candidate.context.profile, let host = profile.baseURL.host else {
+            assistantPermit = nil
+            return completion(.failed(.staleContext))
+        }
+        let prepared = AssistantPreparedSave(content: acceptance.candidate.content,
+            metadata: AssistantSaveMetadata(providerHost: host, model: profile.modelID, usage: acceptance.usage),
+            permit: permit)
+        let generation = self.generation
+        loadGeneration &+= 1
+        commandHasExternalChange = false
+        state.status = .saving
+        changed()
+        editing.accept(prepared, source: acceptance.candidate.context.editor, destination: destination) { [weak self] outcome in
+            guard let self, self.isActive, self.generation == generation else { return completion(outcome) }
+            self.assistantPermit = nil
+            self.completedAssistantSave(outcome, source: acceptance.candidate.context.editor,
+                                        destination: destination, completion: completion)
+        }
+    }
+
+    private func completedAssistantSave(_ outcome: AssistantAcceptanceOutcome, source: AssistantEditorSnapshot?,
+                                        destination: AssistantSaveDestination, completion: (AssistantAcceptanceOutcome) -> Void) {
+        let reconcile = commandHasExternalChange
+        commandHasExternalChange = false
+        state.status = .idle
+        if let commit = outcome.committed {
+            let entry = commit.entry
+            let previous = state.prompt
+            let unchanged = source?.revision == assistantSnapshot?.revision
+                && source?.sourceBytes == state.source.map { Data($0.utf8) }
+            let loaded = LoadedPrompt(bytes: Data(entry.document.source.utf8), entry: entry)
+            if destination == .improve {
+                baseline = loaded
+                state.prompt = Self.selection(entry)
+                state.stamp = entry.stamp
+                if unchanged { accept(loaded) }
+                else { state.isDirty = !editorSourceEqual(state.source, loaded.source) }
+            } else {
+                state.lastCopy = Self.selection(entry)
+                if unchanged {
+                    retireSession()
+                    accept(loaded)
+                    bindSession(to: entry.relativePath, committedEntry: entry)
+                }
+            }
+            recordCommittedSelection(from: previous)
+            state.status = .saved
+            state.historyMaintenanceFailed = commit.historyMaintenanceFailed
+            if case .committedWithProvenanceWarning = outcome { state.provenanceMaintenanceFailed = true }
+            else { state.provenanceMaintenanceFailed = false }
+            // Publish the token result after adoption, before observers can
+            // mistake our own changed stamp/session for stale acceptance.
+            completion(outcome)
+            changed()
+            if destination == .improve || unchanged { load(.reconcileCopy) }
+            if historyRequested { loadHistory() }
+        } else {
+            completion(outcome)
+            switch outcome {
+            case .conflict(.modified(let stamp)): openConflict(stamp: stamp)
+            case .conflict(.deleted): openConflict(stamp: nil)
+            case .failed(.editing(let failure)): state.status = .failed(.editing(failure))
+            case .failed(.invalid(let issues)): state.status = .failed(.invalid(issues))
+            case .failed(.readOnly(let reason)): state.status = .failed(.readOnly(reason))
+            default: break
+            }
+            changed()
+            if reconcile, state.conflict == nil { load(.reconcileCopy) }
+        }
+        main.run { [weak self] in self?.processRequests() }
     }
 }
 

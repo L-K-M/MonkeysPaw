@@ -16,6 +16,7 @@ public struct AssistantState: CustomStringConvertible, CustomDebugStringConverti
     public fileprivate(set) var elapsed: TimeInterval = 0
     public fileprivate(set) var isStale = false
     public fileprivate(set) var isAccepting = false
+    public fileprivate(set) var acceptanceOutcome: AssistantAcceptanceOutcome?
     public fileprivate(set) var providerHost: String?
     public fileprivate(set) var modelID: String?
     public fileprivate(set) var mutationAccess = AssistantMutationAccess.unavailable
@@ -48,6 +49,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     private var reviewContext: AssistantContext?
     private var requestID: UUID?
     private var acceptanceID: UUID?
+    private var savingPermit: AssistantSavePermit?
     private var retainedID: ULID?
     private var cancelWork: (() -> Void)?
     private var started: ContinuousClock.Instant?
@@ -71,7 +73,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         updateFooter()
     }
 
-    deinit { cancelWork?() }
+    deinit { cancelWork?(); savingPermit?.invalidate(.failed(.cancelled)) }
 
     public var canAccept: Bool {
         guard isActive, state.phase == .ready, !state.isStale, !state.isAccepting,
@@ -87,9 +89,22 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         guard isActive else { return }
         let latest = currentContext()
         guard latest != context else { return }
+        if savingPermit != nil, acceptanceID != nil, context.sameSession(as: latest),
+           let editor = latest.editor, editor.availability == .busy,
+           context.editor == AssistantEditorSnapshot(source: editor.source, relativePath: editor.relativePath,
+               revision: editor.revision, session: editor.session, stamp: editor.stamp) {
+            // Our editor save barrier changes availability, not the preview.
+            return
+        }
         if !context.sameSession(as: latest) {
+            savingPermit?.invalidate(.failed(.staleContext))
             reset()
         } else {
+            if savingPermit != nil {
+                savingPermit?.invalidate(.conflict(.changedBuffer))
+                savingPermit = nil
+                state.acceptanceOutcome = .conflict(.changedBuffer)
+            }
             state.candidate = nil
             state.isAccepting = false
             acceptanceID = nil
@@ -106,6 +121,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     /// Settings composition forwards them here without exposing a key value.
     public func profileChanged() {
         guard isActive else { return }
+        savingPermit?.invalidate(.failed(.staleContext))
         reset()
         context = currentContext()
         updateFooter()
@@ -203,6 +219,66 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         return true
     }
 
+    /// Native composition uses this overload for the checked Core save. Write
+    /// and viewer copies follow the editor's unsaved-edit guard before opening.
+    public func accept(using editor: EditorModel,
+                       completion: @escaping (AssistantAcceptanceOutcome) -> Void = { _ in }) {
+        guard let attempt, let acceptance = accept() else { return main.run { completion(.failed(.notReady)) } }
+        let access = acceptance.candidate.mutationAccess
+        guard access != .unavailable, access == acceptance.candidate.context.access.mutationAccess else {
+            let outcome = AssistantAcceptanceOutcome.failed(.accessDenied)
+            completeAcceptance(acceptance.id, outcome: outcome)
+            return main.run { completion(outcome) }
+        }
+        let destination: AssistantSaveDestination
+        if access == .privateCopy { destination = .privateCopy }
+        else if case .write = attempt.command { destination = .newPrompt }
+        else { destination = .improve }
+        let permit = AssistantSavePermit()
+        savingPermit = permit
+        editor.acceptAssistant(acceptance, destination: destination, permit: permit, validate: { [weak self] in
+            do { try permit.check() }
+            catch let refusal as AssistantSaveRefusal { return refusal }
+            catch { return .failed(.inactive) }
+            guard let self, self.isActive, self.acceptanceID == acceptance.id else { return .failed(.cancelled) }
+            let latest = self.currentContext()
+            guard acceptance.candidate.context.sameSession(as: latest), self.service.isCurrent(latest) else {
+                return .failed(.staleContext)
+            }
+            guard latest == acceptance.candidate.context else { return .conflict(.changedBuffer) }
+            return nil
+        }) { [weak self] outcome in
+            self?.completeAcceptance(acceptance.id, outcome: outcome)
+            completion(outcome)
+        }
+    }
+
+    /// Editor adoption precedes this callback, and its observers follow it.
+    /// Retired tokens remain retired; callers still receive the actual outcome.
+    @discardableResult
+    public func completeAcceptance(_ id: UUID, outcome: AssistantAcceptanceOutcome) -> Bool {
+        guard isActive, acceptanceID == id else { return false }
+        if outcome.committed == nil {
+            contextChanged()
+            guard acceptanceID == id else { return false }
+        }
+        acceptanceID = nil
+        savingPermit = nil
+        state.isAccepting = false
+        state.acceptanceOutcome = outcome
+        state.failure = nil
+        state.candidate = nil
+        switch outcome {
+        case .saved, .committedWithProvenanceWarning: state.phase = .saved; state.isStale = false
+        case .conflict: state.phase = .draft; state.isStale = true
+        case .failed: state.phase = .failed
+        }
+        context = currentContext()
+        updateFooter()
+        changed()
+        return true
+    }
+
     public func reject() { cancel() }
     public func close() { cancel() }
     public func escape() { cancel() }
@@ -243,6 +319,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         state.candidate = nil
         state.issues = []
         state.failure = nil
+        state.acceptanceOutcome = nil
         state.usage = nil
         state.isStale = false
         state.transcript = []
@@ -355,6 +432,8 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     }
 
     private func reset() {
+        savingPermit?.invalidate(.failed(.cancelled))
+        savingPermit = nil
         invalidateWork()
         attempt = nil
         reviewContext = nil
