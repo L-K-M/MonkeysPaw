@@ -55,7 +55,7 @@ struct ServerLoginTests {
             let user = try await fixture.account.user()
             for _ in 0..<4 { await fixture.failure() }
             let before = try await fixture.buckets()
-            let response = try await fixture.attempt(username: "ALICE", password: AccountTestFixture.password)
+            let response = try await fixture.attempt(password: AccountTestFixture.password)
             #expect(response.user == user.metadata)
             let identity = try await fixture.account.sessions.authenticate(token: response.deviceToken)
             #expect(identity.userID == user.id)
@@ -76,7 +76,7 @@ struct ServerLoginTests {
     @Test func rotatedUsernamesAndIPsCannotBypassIndependentBuckets() async throws {
         try await withLoginFixture { fixture in
             for index in 1...5 {
-                await fixture.failure(username: index % 2 == 0 ? "ALICE" : "alice", ip: "198.51.100.\(index)",
+                await fixture.failure(ip: "198.51.100.\(index)",
                                       retry: index == 5 ? 30 : nil)
             }
             await fixture.failure(ip: "198.51.100.99", retry: 30)
@@ -208,12 +208,28 @@ struct ServerLoginTests {
             await fixture.failure(username: "unknown", ip: "198.51.100.2")
             try await account.persistence.execute("UPDATE users SET disabled_at = created_at")
             await fixture.failure(password: AccountTestFixture.password, ip: "198.51.100.3")
-            await fixture.failure(username: "unknown", password: String(repeating: "a", count: 73), ip: "198.51.100.4")
+            await fixture.failure(username: "unknown", password: String(repeating: "a", count: ServerLimits.passwordMaximumBytes), ip: "198.51.100.4")
             let hashes = await hasher.usedHashes()
             let equivalent = hashes == [user.passwordHash, BcryptPasswordHasher.dummyHash, user.passwordHash, BcryptPasswordHasher.dummyHash]
                 && hashes.allSatisfy { $0.hasPrefix("$2b$12$") }
             #expect(equivalent)
             #expect(try await account.persistence.count("devices") == 0)
+        }
+    }
+
+    @Test func uppercaseAndOversizedLoginValuesFailBeforeBackoffOrBcrypt() async throws {
+        try await withLoginFixture { fixture async throws in
+            for (username, password) in [("ALICE", AccountTestFixture.password),
+                                         ("alice", String(repeating: "a", count: ServerLimits.passwordMaximumBytes + 1)),
+                                         ("alice", String(repeating: "é", count: ServerLimits.passwordMaximumBytes / 2) + "a")] {
+                await #expect(throws: AccountError.malformedRequest) {
+                    _ = try await fixture.attempt(username: username, password: password)
+                }
+            }
+            #expect(await fixture.hasher.usedHashes().isEmpty)
+            #expect(try await fixture.account.persistence.count("login_account_buckets") == 0)
+            #expect(try await fixture.account.persistence.count("login_ip_buckets") == 0)
+            #expect(try await fixture.account.persistence.count("devices") == 0)
         }
     }
 
@@ -288,7 +304,7 @@ struct ServerLoginTests {
             let fixture = LoginTestFixture(account: account, hasher: hasher)
             let first = Task { try await fixture.attempt(username: "user1", ip: "198.51.100.1") }
             await hasher.waitForVerifications(1)
-            await fixture.failure(username: "USER1", ip: "203.0.113.1", retry: 1)
+            await fixture.failure(username: "user1", ip: "203.0.113.1", retry: 1)
             await fixture.failure(username: "different", ip: "198.51.100.1", retry: 1)
             let tasks = [first] + (2...ServerLimits.loginConcurrentRequests).map { index in
                 Task { try await fixture.attempt(username: "user\(index)", ip: "198.51.100.\(index)") }

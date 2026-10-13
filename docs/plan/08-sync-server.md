@@ -223,8 +223,9 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   (B7). Names are 1–255 Unicode scalars and display names 0–255. All password
   fields are at most 72 decoded UTF-8 bytes to avoid bcrypt truncation and
   reject NUL; new passwords require at least 12 scalars (400 otherwise), while
-  login/current-password strings are nonempty and unusable supplied passwords
-  fail authentication without accepting a truncated prefix.
+  login/current-password strings are nonempty. Within those DTO bounds,
+  unusable supplied passwords fail authentication without accepting a truncated
+  prefix.
 - PUT additionally accepts optional `origin: edit|llm|restore`, default edit.
   Revision metadata is `{rev, author_id, created_at, origin, scope, group_id?,
   path}`; lists use `{revisions}`. Reading a revision adds `id` and `content`.
@@ -248,10 +249,13 @@ decoded UTF-8 bytes) at the DTO boundary. Full path rules and normalization
 remain with `SyncPathValidator` (§8.4). Transport header/body limits are
 enforced by later server slices, not by an unbounded Foundation JSON encoder.
 Account JSON decoders, including login, collect streamed bodies with a 2 MiB
-cap before decoding. Login checks credentials only after decoding, returning
-the same 401 envelope for unknown, disabled and wrong-password accounts. Its fifth
-failure and locked requests return 429 with `Retry-After`; neither response
-discloses which independent bucket caused the lock.
+cap before decoding. Uppercase login usernames and passwords over 72 UTF-8
+bytes return 400 `malformed_request` during DTO decoding, before bcrypt,
+admission or either backoff bucket is touched. Login checks credentials only
+after decoding, returning the same 401 envelope for unknown, disabled and
+wrong-password accounts. Its fifth failure and locked requests return 429 with
+`Retry-After`; neither response discloses which independent bucket caused the
+lock.
 
 ### 8.4 Server behaviour
 
@@ -355,10 +359,11 @@ discloses which independent bucket caused the lock.
   UTF-8 bytes, with NUL rejected to avoid C-string truncation. Bcrypt runs on
   the NIO blocking thread pool. Unknown usernames still verify against a
   fixed cost-12 dummy hash; disabled accounts verify before returning 401.
-  Usernames are validated as bounded ASCII before lowercasing, with the same
-  canonical spelling used for account lookup and uniqueness. Password change
-  verifies the current password, then rechecks the session and verified hash
-  inside the transaction that replaces the hash and revokes other devices.
+  DTOs reject uppercase usernames before the service's defensive ASCII
+  validation and lowercasing; the canonical spelling is used for account lookup
+  and uniqueness. Password change verifies the current password, then rechecks
+  the session and verified hash inside the transaction that replaces the hash
+  and revokes other devices.
 - **Device tokens.**
   - 32 random bytes, base64url. The server stores only SHA-256(token) and
     looks tokens up by hash.

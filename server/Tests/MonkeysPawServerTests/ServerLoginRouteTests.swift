@@ -17,7 +17,7 @@ struct ServerLoginRouteTests {
             try await app.test(.live) { client in
                 let response = try await client.execute(uri: "/api/v1/auth/login", method: .post,
                                                         headers: [.contentType: "application/json"],
-                                                        body: Self.body(username: "ALICE", password: AccountTestFixture.password))
+                                                        body: Self.body(password: AccountTestFixture.password))
                 #expect(response.status == .ok)
                 let auth = try JSONDecoder().decode(SyncAPI.AuthResponse.self, from: Data(response.body.readableBytesView))
                 #expect(auth.user == user.metadata)
@@ -126,17 +126,54 @@ struct ServerLoginRouteTests {
         }
     }
 
+    @Test func uppercaseAndOversizedLoginBodiesFailBeforeBackoffOrBcryptEvenWhenLocked() async throws {
+        try await withLoginFixture { fixture in
+            _ = try await fixture.account.user()
+            let app = try Self.application(fixture, proxies: "127.0.0.1,::1")
+            let headers: HTTPFields = [.contentType: "application/json", Self.forwardedFor: "198.51.100.1"]
+            try await app.test(.live) { client in
+                for locked in [false, true] {
+                    if locked {
+                        for _ in 0..<4 { await fixture.failure() }
+                        await fixture.failure(retry: 30)
+                        fixture.account.clock.advance(1)
+                    }
+                    let before = try await fixture.buckets()
+                    let hashes = await fixture.hasher.usedHashes()
+                    for (username, password) in [("ALICE", AccountTestFixture.password),
+                                                 ("alice", String(repeating: "a", count: ServerLimits.passwordMaximumBytes + 1)),
+                                                 ("alice", String(repeating: "é", count: ServerLimits.passwordMaximumBytes / 2) + "a")] {
+                        // Invalid wire values must bypass the validating DTO encoder.
+                        let body = try JSONSerialization.data(withJSONObject: ["username": username, "password": password, "device_name": "Test"])
+                        try await client.execute(uri: "/api/v1/auth/login", method: .post, headers: headers, body: .init(bytes: body)) {
+                            try Self.failure($0, .malformedRequest)
+                        }
+                    }
+                    let after = try await fixture.buckets()
+                    #expect(after.account.failures == before.account.failures && after.ip.failures == before.ip.failures)
+                    #expect(after.account.lockedUntil == before.account.lockedUntil && after.ip.lockedUntil == before.ip.lockedUntil)
+                    #expect(after.account.updatedAt == before.account.updatedAt && after.ip.updatedAt == before.ip.updatedAt)
+                    #expect(await fixture.hasher.usedHashes() == hashes)
+                    #expect(try await fixture.account.persistence.count("login_account_buckets") == (locked ? 1 : 0))
+                    #expect(try await fixture.account.persistence.count("login_ip_buckets") == (locked ? 1 : 0))
+                    #expect(try await fixture.account.persistence.count("devices") == 0)
+                }
+            }
+        }
+    }
+
     @Test func exactEnvelopeLimitIsAcceptedAndTheNextByteIs413() async throws {
         try await withLoginFixture { fixture in
             let app = try Self.application(fixture)
-            let prefix = "{\"username\":\"alice\",\"password\":\""
-            let suffix = "\",\"device_name\":\"Test\"}"
-            let password = String(repeating: "a", count: SyncAPI.requestEnvelopeMaxBytes - prefix.utf8.count - suffix.utf8.count)
+            let json = try Self.body()
+            let padding = String(repeating: " ", count: SyncAPI.requestEnvelopeMaxBytes - json.readableBytes)
+            let body = String(decoding: json.readableBytesView, as: UTF8.self) + padding
+            #expect(body.utf8.count == SyncAPI.requestEnvelopeMaxBytes)
             try await app.test(.live) { client in
-                try await client.execute(uri: "/api/v1/auth/login", method: .post, body: ByteBuffer(string: prefix + password + suffix)) {
+                try await client.execute(uri: "/api/v1/auth/login", method: .post, body: ByteBuffer(string: body)) {
                     try Self.failure($0, .unauthorized)
                 }
-                try await client.execute(uri: "/api/v1/auth/login", method: .post, body: ByteBuffer(string: prefix + password + "a" + suffix)) {
+                try await client.execute(uri: "/api/v1/auth/login", method: .post, body: ByteBuffer(string: body + " ")) {
                     try Self.failure($0, .envelopeTooLarge)
                 }
                 #expect(await fixture.hasher.usedHashes().count == 1)
