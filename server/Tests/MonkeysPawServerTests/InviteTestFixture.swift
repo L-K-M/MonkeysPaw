@@ -35,6 +35,7 @@ extension GroupTestFixture {
         publicURL: String? = "https://sync.example.test:8443/paw?value=a+b&next=%2F",
         auditWrite: @escaping @Sendable (AuditRepository, AuditEvent) async throws -> Void = { try await $0.insert($1) }
     ) -> InviteService {
+        // Inject the hasher through a stateless account service sharing the database and clock.
         .init(accounts: .init(database: persistence.database, passwords: passwords, clock: account.clock.now),
               sessions: account.sessions, publicURL: publicURL, auditWrite: auditWrite)
     }
@@ -42,6 +43,7 @@ extension GroupTestFixture {
 
 extension PersistenceTestRepository {
     func storedInvite(_ token: String) async throws -> InviteRecord {
+        // InviteService shares DeviceToken's SHA-256 scheme.
         let hash = DeviceToken(value: token).hash
         return try await InviteRepository(database: database).read { invites, _ in
             try #require(await invites.invite(tokenHash: hash))

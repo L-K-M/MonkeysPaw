@@ -41,23 +41,33 @@ struct ServerInviteRouteTests {
                         #expect($0.status == .ok)
                         guard $0.status == .ok else { return }
                         let auth = try JSONDecoder().decode(SyncAPI.AuthResponse.self, from: Data($0.body.readableBytesView))
-                        #expect(auth.user.username == "new-member" && auth.user.accountKind == .member)
-                        #expect(auth.user.displayName == nil && auth.user.disabledAt == nil)
+                        #expect(auth.user.username == "new-member")
+                        #expect(auth.user.accountKind == .member)
+                        #expect(auth.user.displayName == nil)
+                        #expect(auth.user.disabledAt == nil)
                         try await client.execute(uri: "/api/v1/me", method: .get, headers: [.authorization: "Bearer \(auth.deviceToken)"]) {
                             let me = try JSONDecoder().decode(SyncAPI.MeResponse.self, from: Data($0.body.readableBytesView))
                             let groups: [SyncAPI.GroupMembership] = target == .account ? [] : [.init(groupID: group.id, name: group.name, role: .editor)]
-                            #expect($0.status == .ok && me.groups == groups)
-                            #expect(me.devices.count == 1 && me.devices.first?.isCurrent == true && me.devices.first?.name == "New device")
+                            #expect($0.status == .ok)
+                            #expect(me.groups == groups)
+                            #expect(me.devices.count == 1)
+                            #expect(me.devices.first?.isCurrent == true)
+                            #expect(me.devices.first?.name == "New device")
                         }
-                        try await fixture.account.assertNoPlaintext([invite.inviteToken, auth.deviceToken, AccountTestFixture.password])
+                        try await fixture.account.assertNoPlaintext([invite.inviteToken, auth.deviceToken, AccountTestFixture.password, session.token.value])
                         let log = String(decoding: capture.snapshot(), as: UTF8.self)
-                        #expect(!log.contains(invite.inviteToken) && !log.contains(auth.deviceToken) && !log.contains(AccountTestFixture.password))
-                        #expect(!log.contains("New device") && !log.contains("new-member"))
+                        #expect(!log.contains(invite.inviteToken))
+                        #expect(!log.contains(auth.deviceToken))
+                        #expect(!log.contains(AccountTestFixture.password))
+                        #expect(!log.contains(session.token.value))
+                        #expect(!log.contains("New device"))
+                        #expect(!log.contains("new-member"))
                         let events = try await fixture.persistence.auditEvents()
                         #expect(events.map(\.action) == (target == .account ? ["invite.create", "user.create", "invite.consume"] :
                                                         ["invite.create", "user.create", "membership.upsert", "invite.consume"]))
                         #expect(events.dropLast().allSatisfy { $0.actorID == owner.id })
-                        #expect(events.last?.actorID == auth.user.id && events.last?.targetID == auth.user.id)
+                        #expect(events.last?.actorID == auth.user.id)
+                        #expect(events.last?.targetID == auth.user.id)
                         #expect(events.allSatisfy { $0.at == ServerTimestamp.string(fixture.account.clock.now()) })
                     }
                 }
@@ -119,14 +129,15 @@ struct ServerInviteRouteTests {
                 for session in [adminSession, ownerSession] {
                     for body in ["{\"role\":\"owner\"}", "{\"role\":\"viewer\",\"group_id\":\"\(group.id)\"}",
                                  "{}", "{\"role\":null}", "{\"role\":\"viewer\",\"expires_in\":null}",
-                                 "{\"role\":\"viewer\",\"expires_in\":0}", "{\"role\":\"editor\",\"expires_in\":604801}"] {
+                                 "{\"role\":\"viewer\",\"expires_in\":0}", "{\"role\":\"viewer\",\"expires_in\":-1}",
+                                 "{\"role\":\"editor\",\"expires_in\":604801}"] {
                         try await client.execute(uri: "/api/v1/groups/\(group.id)/invites", method: .post,
                                                  headers: Self.headers(session), body: .init(string: body)) { try Self.failure($0, .malformedRequest) }
                     }
                 }
                 for body in ["{\"role\":\"owner\"}", "{\"role\":\"viewer\"}", "{\"group_id\":\"\(group.id)\"}",
                              "{\"group_id\":\"\(group.id)\",\"role\":\"owner\"}", "{\"group_id\":null,\"role\":null}",
-                             "{\"expires_in\":null}", "{\"expires_in\":0}", "{\"expires_in\":604801}", "{\"extra\":1}"] {
+                             "{\"expires_in\":null}", "{\"expires_in\":0}", "{\"expires_in\":-1}", "{\"expires_in\":604801}", "{\"extra\":1}"] {
                     try await client.execute(uri: "/api/v1/admin/invites", method: .post, headers: Self.headers(adminSession),
                                              body: .init(string: body)) { try Self.failure($0, .malformedRequest) }
                 }

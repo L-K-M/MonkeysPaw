@@ -38,8 +38,13 @@ struct ServerInviteServiceTests {
             #expect(try await fixture.account.sessions.authenticate(token: auth.token.value) == auth.identity)
             #expect(try await fixture.persistence.storedInvite(issued.response.inviteToken).consumedAt == ServerTimestamp.string(fixture.account.clock.now()))
             let work = await hasher.hashes()
-            await #expect(throws: AccountError.malformedRequest) { _ = try await service.register(registration) }
+            let replay = SyncAPI.RegisterRequest(inviteToken: issued.response.inviteToken, username: "replay",
+                                                password: AccountTestFixture.password, deviceName: "Replay device")
+            await #expect(throws: AccountError.malformedRequest) { _ = try await service.register(replay) }
             #expect(await hasher.hashes() == work)
+            #expect(try await fixture.persistence.count("users") == 2)
+            #expect(try await fixture.persistence.count("devices") == 2)
+            #expect(try await fixture.persistence.count("audit_events") == 3)
 
             let short = try await service.createGroup(id: group.id, request: .init(role: .viewer, expiresIn: 1), session: session.identity)
             fixture.account.clock.advance(1)
@@ -159,10 +164,14 @@ struct ServerInviteServiceTests {
                     continue
                 }
                 let joined = try await service.join(request, session: session.identity)
+                // Member-kind accounts below owner already gained/retained editor on the first iteration.
+                // The viewer iteration must keep it; current is the pre-loop role.
                 let expected: SyncAPI.Role = current == .owner ? .owner : (current == .editor || role == .editor || kind == .member ? .editor : .viewer)
                 #expect(joined == .init(groupID: group.id, name: group.name, role: expected))
                 let member = try await fixture.repository.read { groups, _, _ in try await groups.member(groupID: group.id, userID: user.id) }
+                #expect(member?.role == expected)
                 #expect(member?.joinedAt == (current == .nonMember ? ServerTimestamp.string(fixture.account.clock.now()) : user.createdAt))
+                #expect(try await fixture.persistence.storedInvite(issued.response.inviteToken).consumedAt != nil)
             }
             #expect(try await fixture.repository.read { groups, _, _ in try await groups.ownerCount(groupID: group.id) } >= 1)
         }

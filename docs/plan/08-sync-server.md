@@ -462,14 +462,19 @@ lock.
     write transaction. Issued invites remain valid until consumed or expired,
     even if their issuer later loses authority; deleted groups cannot be joined.
   - Unknown, expired or consumed tokens return `400 malformed_request`.
+    A token is expired at or after `expires_at`. Username collisions use
+    the same error envelope.
     Account-only tokens cannot be used with `/groups/join`. Registration
     creates a member account, its device and any membership while consuming
     the invite in one serialized write. A username collision, device failure
     or audit failure rolls back consumption and every related mutation.
   - Existing-account join retains an existing higher role and `joined_at`,
-    or grants the invite role when it is higher. Admins cannot self-add or
-    elevate even with an invite (`403 forbidden`); a denied attempt leaves
-    the token usable. A deleted group returns 404 without consuming the token.
+    or grants the invite role when it is higher. An existing member redeeming
+    an equal/lower-role invite succeeds with their current role and still
+    consumes the token, including an admin already in the group (§8.2).
+    Admins cannot self-add or elevate even with an invite (`403 forbidden`);
+    a denied attempt leaves the token usable. A deleted group returns 404
+    without consuming the token.
   - `MONKEYSPAW_PUBLIC_URL`, when set, must be an absolute HTTP(S) URL with a
     host and no credentials or fragment. Server issuance provides a one-time
     link for CLI output; the unchanged HTTP DTO exposes the token and clients

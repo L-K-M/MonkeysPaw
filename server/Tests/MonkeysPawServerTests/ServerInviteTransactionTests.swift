@@ -80,12 +80,11 @@ struct ServerInviteTransactionTests {
                 """)
             let request = SyncAPI.RegisterRequest(inviteToken: issued.response.inviteToken, username: "retry",
                                                   password: AccountTestFixture.password, deviceName: "Broken device")
-            do {
+            await #expect(performing: {
                 _ = try await service.register(request)
-                Issue.record("Device insert should fail")
-            } catch {
-                #expect((error as? any DatabaseError)?.isConstraintFailure == true)
-            }
+            }, throws: { error in
+                (error as? any DatabaseError)?.isConstraintFailure == true
+            })
             #expect(try await fixture.persistence.count("users") == 1)
             #expect(try await fixture.persistence.count("devices") == 1)
             #expect(try await fixture.persistence.count("memberships") == 1)
@@ -109,14 +108,16 @@ struct ServerInviteTransactionTests {
             let issued = try await fixture.inviteService().createGroup(id: group.id, request: .init(role: .viewer, expiresIn: 1), session: issuer.identity)
             let entered = LoginTestLatch()
             let release = LoginTestLatch()
+            defer { Task { await release.open() } }
             let service = fixture.inviteService(passwords: InviteTestHasher(entered: entered, release: release))
             let pending = Task {
-                try await service.register(.init(inviteToken: issued.response.inviteToken, username: "pending",
-                                                 password: AccountTestFixture.password, deviceName: "Pending device"))
+                defer { Task { await entered.open() } }
+                return try await service.register(.init(inviteToken: issued.response.inviteToken, username: "pending",
+                                                        password: AccountTestFixture.password, deviceName: "Pending device"))
             }
-            await entered.wait()
+            try await entered.wait(timeout: .seconds(5))
             switch change {
-            case "expire": fixture.account.clock.advance(1)
+            case "expire": fixture.account.clock.advance(1) // Expired when now == expires_at.
             case "consume": _ = try await fixture.inviteService().join(.init(inviteToken: issued.response.inviteToken), session: session.identity)
             default: try await fixture.service.delete(id: group.id, session: issuer.identity)
             }
@@ -129,7 +130,7 @@ struct ServerInviteTransactionTests {
         }
     }
 
-    @Test(arguments: ["demote", "remove", "disable", "revoke", "admin_demote", "delete"])
+    @Test(arguments: ["demote", "remove", "disable", "revoke", "admin_demote", "delete", "mutation_failure"])
     func queuedIssuanceRechecksAuthority(change: String) async throws {
         try await withGroupFixture { fixture in
             let owner = try await fixture.user("owner")
@@ -139,7 +140,9 @@ struct ServerInviteTransactionTests {
             let session = try await fixture.account.session(actor)
             let entered = LoginTestLatch()
             let release = LoginTestLatch()
+            defer { Task { await release.open() } }
             let blocker = Task {
+                defer { Task { await entered.open() } }
                 try await fixture.persistence.database.write { sql in
                     switch change {
                     case "demote": try await sql.raw("UPDATE memberships SET role = 'editor' WHERE user_id = \(bind: actor.id)").run()
@@ -147,16 +150,24 @@ struct ServerInviteTransactionTests {
                     case "disable": try await sql.raw("UPDATE users SET disabled_at = created_at WHERE id = \(bind: actor.id)").run()
                     case "revoke": try await sql.raw("UPDATE devices SET revoked_at = created_at WHERE id = \(bind: session.identity.deviceID)").run()
                     case "delete": try await sql.raw("UPDATE groups SET deleted_at = created_at WHERE id = \(bind: group.id)").run()
+                    case "mutation_failure": throw InjectedAuditError.failure
                     default: try await sql.raw("UPDATE users SET account_kind = 'member' WHERE id = \(bind: actor.id)").run()
                     }
                     await entered.open()
                     await release.wait()
                 }
             }
-            await entered.wait()
+            try await entered.wait(timeout: .seconds(5))
+            if change == "mutation_failure" {
+                await #expect(throws: InjectedAuditError.failure) { try await blocker.value }
+                #expect(try await fixture.persistence.count("invites") == 0)
+                #expect(try await fixture.persistence.count("audit_events") == 0)
+                return
+            }
             let pending = Task { try await fixture.inviteService().createGroup(id: group.id, request: .init(role: .viewer), session: session.identity) }
             await release.open()
             try await blocker.value
+            // A demoted admin has no membership to fall back to, so issuance is invisible.
             let expected: AccountError = change == "demote" ? .forbidden : (["disable", "revoke"].contains(change) ? .unauthorized : .notFound)
             await #expect(throws: expected) { _ = try await pending.value }
             #expect(try await fixture.persistence.count("invites") == 0)
@@ -175,7 +186,9 @@ struct ServerInviteTransactionTests {
             let issued = try await fixture.inviteService().createGroup(id: group.id, request: .init(role: .editor), session: issuer.identity)
             let entered = LoginTestLatch()
             let release = LoginTestLatch()
+            defer { Task { await release.open() } }
             let blocker = Task {
+                defer { Task { await entered.open() } }
                 try await fixture.persistence.database.write { sql in
                     switch change {
                     case "disable": try await sql.raw("UPDATE users SET disabled_at = created_at WHERE id = \(bind: member.id)").run()
@@ -187,10 +200,11 @@ struct ServerInviteTransactionTests {
                     await release.wait()
                 }
             }
-            await entered.wait()
+            try await entered.wait(timeout: .seconds(5))
             let pending = Task { try await fixture.inviteService().join(.init(inviteToken: issued.response.inviteToken), session: session.identity) }
             await release.open()
             try await blocker.value
+            // Promotion forbids adding this non-member admin to an existing group.
             let expected: AccountError = change == "admin_promote" ? .forbidden : (change == "delete" ? .notFound : .unauthorized)
             await #expect(throws: expected) { _ = try await pending.value }
             #expect(try await fixture.persistence.storedInvite(issued.response.inviteToken).consumedAt == nil)
@@ -213,7 +227,8 @@ struct ServerInviteTransactionTests {
                 let issued = try await service.createAdmin(.init(target: .account, expiresIn: index == 0 ? 604_800 : nil), session: session.identity)
                 let token = DeviceToken(value: issued.response.inviteToken)
                 #expect(token.isValid && token.hash.count == 64 && issued.link == nil)
-                let decoded = Data(base64Encoded: token.value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/") + "=")
+                let base64 = token.value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+                let decoded = Data(base64Encoded: base64 + String(repeating: "=", count: (4 - base64.count % 4) % 4))
                 #expect(decoded?.count == 32)
                 let stored = try await fixture.persistence.storedInvite(token.value)
                 #expect(stored.tokenHash == token.hash && stored.target == .account && stored.consumedAt == nil)
@@ -232,7 +247,20 @@ struct ServerInviteTransactionTests {
             let token = try #require(tokens.first)
             let request = SyncAPI.RegisterRequest(inviteToken: token, username: "restarted", password: AccountTestFixture.password, deviceName: "Restart device")
             _ = try await service.register(request)
-            await #expect(throws: AccountError.malformedRequest) { _ = try await service.register(request) }
+            #expect(try await fixture.persistence.storedInvite(token).consumedAt != nil)
+            try await fixture.account.assertNoPlaintext(tokens)
+        }
+        try await ServerDatabase.withMigratedDatabase(configuration: configuration) { database in
+            let fixture = GroupTestFixture(account: .init(persistence: .init(database: database)))
+            let service = fixture.inviteService()
+            let token = try #require(tokens.first)
+            let replay = SyncAPI.RegisterRequest(inviteToken: token, username: "replay",
+                                                password: AccountTestFixture.password, deviceName: "Replay device")
+            await #expect(throws: AccountError.malformedRequest) { _ = try await service.register(replay) }
+            #expect(try await fixture.persistence.storedInvite(token).consumedAt != nil)
+            #expect(try await fixture.persistence.count("users") == 2)
+            #expect(try await fixture.persistence.count("devices") == 2)
+            #expect(try await fixture.persistence.count("audit_events") == 66)
             #expect(try await fixture.persistence.count("invites") == 64)
             try await fixture.account.assertNoPlaintext(tokens)
         }

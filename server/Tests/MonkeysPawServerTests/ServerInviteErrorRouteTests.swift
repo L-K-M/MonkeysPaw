@@ -85,6 +85,7 @@ struct ServerInviteErrorRouteTests {
                 try await client.execute(uri: "/api/v1/auth/register", method: .post, body: .init(bytes: JSONEncoder().encode(collision))) {
                     try Self.failure($0, .malformedRequest)
                 }
+                // Uniqueness is checked in the writer; bcrypt must stay outside it.
                 #expect(await hasher.hashes() == 1)
                 let expiring = try await service.createAdmin(.init(target: .account, expiresIn: 1), session: session.identity)
                 fixture.account.clock.advance(1)
@@ -94,11 +95,74 @@ struct ServerInviteErrorRouteTests {
                     try Self.failure($0, .malformedRequest)
                 }
                 #expect(await hasher.hashes() == 1)
+                #expect(try await fixture.persistence.storedInvite(expiring.response.inviteToken).consumedAt == nil)
             }
             #expect(try await fixture.persistence.storedInvite(issued.response.inviteToken).consumedAt == nil)
             #expect(try await fixture.persistence.count("users") == 1)
             #expect(try await fixture.persistence.count("devices") == 1)
             #expect(try await fixture.persistence.count("audit_events") == 2)
+        }
+    }
+
+    @Test func expiredGroupInviteRejectsRegistrationAndJoinWithoutMutations() async throws {
+        try await withGroupFixture { fixture in
+            let owner = try await fixture.user("owner")
+            let member = try await fixture.user("member")
+            let group = try await fixture.group(owner: owner)
+            let issuer = try await fixture.account.session(owner)
+            let session = try await fixture.account.session(member)
+            let hasher = InviteTestHasher()
+            let service = fixture.inviteService(passwords: hasher)
+            let issued = try await service.createGroup(id: group.id, request: .init(role: .viewer, expiresIn: 1), session: issuer.identity)
+            fixture.account.clock.advance(2)
+            let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts,
+                                      sessions: fixture.account.sessions, invites: service)
+            let registration = SyncAPI.RegisterRequest(inviteToken: issued.response.inviteToken, username: "expired",
+                                                       password: AccountTestFixture.password, deviceName: "Expired device")
+            let join = SyncAPI.JoinGroupRequest(inviteToken: issued.response.inviteToken)
+            try await app.test(.router) { client in
+                try await client.execute(uri: "/api/v1/auth/register", method: .post, body: .init(bytes: JSONEncoder().encode(registration))) {
+                    try Self.failure($0, .malformedRequest)
+                }
+                try await client.execute(uri: "/api/v1/groups/join", method: .post, headers: Self.headers(session),
+                                         body: .init(bytes: JSONEncoder().encode(join))) { try Self.failure($0, .malformedRequest) }
+            }
+            #expect(await hasher.hashes() == 0)
+            #expect(try await fixture.persistence.storedInvite(issued.response.inviteToken).consumedAt == nil)
+            #expect(try await fixture.persistence.count("users") == 2)
+            #expect(try await fixture.persistence.count("devices") == 2)
+            #expect(try await fixture.persistence.count("memberships") == 1)
+            #expect(try await fixture.persistence.count("audit_events") == 1)
+        }
+    }
+
+    @Test(arguments: [SyncAPI.AccountKind.member, .admin])
+    func soleOwnerRedeemsLowerRoleInviteWithoutLosingOwnership(kind: SyncAPI.AccountKind) async throws {
+        try await withGroupFixture { fixture in
+            let owner = try await fixture.user("owner", kind: kind)
+            let group = try await fixture.group(owner: owner)
+            let session = try await fixture.account.session(owner)
+            let issued = try await fixture.inviteService().createGroup(id: group.id, request: .init(role: .viewer), session: session.identity)
+            fixture.account.clock.advance(60)
+            let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts, sessions: fixture.account.sessions)
+            let body = try JSONEncoder().encode(SyncAPI.JoinGroupRequest(inviteToken: issued.response.inviteToken))
+            try await app.test(.router) { client in
+                try await client.execute(uri: "/api/v1/groups/join", method: .post, headers: Self.headers(session), body: .init(bytes: body)) {
+                    #expect($0.status == .ok)
+                    let joined = try JSONDecoder().decode(SyncAPI.GroupMembership.self, from: Data($0.body.readableBytesView))
+                    #expect(joined == .init(groupID: group.id, name: group.name, role: .owner))
+                }
+                try await client.execute(uri: "/api/v1/groups/join", method: .post, headers: Self.headers(session), body: .init(bytes: body)) {
+                    try Self.failure($0, .malformedRequest)
+                }
+            }
+            let stored = try await fixture.repository.read { groups, _, _ in try await groups.member(groupID: group.id, userID: owner.id) }
+            #expect(stored?.role == .owner)
+            #expect(stored?.joinedAt == group.createdAt)
+            #expect(try await fixture.repository.read { groups, _, _ in try await groups.ownerCount(groupID: group.id) } == 1)
+            #expect(try await fixture.persistence.count("memberships") == 1)
+            #expect(try await fixture.persistence.storedInvite(issued.response.inviteToken).consumedAt != nil)
+            #expect(try await fixture.persistence.count("audit_events") == 3)
         }
     }
 
@@ -131,6 +195,15 @@ struct ServerInviteErrorRouteTests {
                     }
                 }
             }
+            #expect(try await fixture.persistence.storedInvite(accountInvite.response.inviteToken).consumedAt != nil)
+            #expect(try await fixture.persistence.storedInvite(groupInvite.response.inviteToken).consumedAt != nil)
+            #expect(try await fixture.persistence.count("users") == 2)
+            #expect(try await fixture.persistence.count("devices") == 2)
+            #expect(try await fixture.persistence.count("memberships") == 1)
+            let owner = try await fixture.repository.read { groups, _, _ in try await groups.member(groupID: group.id, userID: admin.id) }
+            #expect(owner?.role == .owner)
+            #expect(owner?.joinedAt == group.createdAt)
+            #expect(try await fixture.repository.read { groups, _, _ in try await groups.ownerCount(groupID: group.id) } == 1)
         }
     }
 
