@@ -328,9 +328,10 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   and checked disk stamp, plus the profile, library graph and access state.
   Review and improve require a validated, writable, nonprivate buffer. Write
   creates a new prompt from the brief alone and does not check an open document's
-  health or privacy. All actions wait for editor I/O, queued or pending guard
-  decisions and unresolved disk conflicts. Requests send template source for
-  review and improve, never the rendered preview.
+  health or privacy. New requests and diff preparation refuse while editor I/O,
+  queued or pending guard decisions or unresolved disk conflicts remain.
+  Requests send template source for review and improve, never the rendered
+  preview.
   Later buffer or disk changes keep the generated artifact but withdraw its
   acceptable candidate and diff. Returning to the same text does not restore
   acceptance. An explicit Show diff revalidates and merges against a fresh
@@ -345,8 +346,13 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   unassigned file preflights its first-save ID. Accept rechecks the live context
   and exposes the exact canonical candidate and a completion token.
   `AssistantModel.accept(using:completion:)` commits through the active
-  `EditorModel` and `PromptEditingService`. Write creates exclusively with
-  alternate names and the previewed ID; improve passes the captured editor
+  `EditorModel` and `PromptEditingService`. Guard availability changing between
+  available and busy alone does not invalidate an already previewed candidate.
+  Accept queues behind earlier guard requests and rechecks the preview when its
+  turn arrives; editor I/O and conflicts still refuse acceptance. Cancelling
+  acceptance removes only its own guard and preserves earlier decisions.
+  Write creates exclusively with alternate names and the previewed ID;
+  improve passes the captured editor
   session and load stamp through the normal history save. Final serialization
   is checked against the preview, and publication uses those exact bytes.
   A changed buffer (including edits away and back), graph, profile, access,

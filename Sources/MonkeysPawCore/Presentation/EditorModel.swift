@@ -898,7 +898,9 @@ extension EditorModel {
                          permit: AssistantSavePermit, validate: @escaping () -> AssistantSaveRefusal?,
                          completion: @escaping (AssistantAcceptanceOutcome) -> Void) {
         guard isActive else { return main.run { completion(.failed(.inactive)) } }
-        guard !isWriting, assistantPermit == nil else { return main.run { completion(.failed(.editorBusy)) } }
+        guard !isWriting, state.status != .loading, assistantPermit == nil else {
+            return main.run { completion(.failed(.editorBusy)) }
+        }
         assistantPermit = permit
         let generation = self.generation
         let start: (EditorModel) -> Void = { model in
@@ -912,21 +914,30 @@ extension EditorModel {
                 model.releaseAssistantPermit(permit)
                 return completion(refusal.outcome)
             }
-            guard model.assistantSnapshot == acceptance.candidate.context.editor else {
+            guard !model.isWriting, model.state.status != .loading else {
+                permit.invalidate(.failed(.editorBusy))
+                model.releaseAssistantPermit(permit)
+                return completion(.failed(.editorBusy))
+            }
+            guard AssistantEditorSnapshot.matchesForAcceptance(model.assistantSnapshot, acceptance.candidate.context.editor) else {
                 permit.invalidate(.conflict(.changedBuffer))
                 model.releaseAssistantPermit(permit)
                 return completion(.conflict(.changedBuffer))
             }
             model.startAssistantSave(acceptance, destination: destination, permit: permit, completion: completion)
         }
-        if destination == .improve || !state.isDirty { main.run { [weak self] in
+        if pendingRequest == nil, requests.isEmpty, destination == .improve || !state.isDirty { main.run { [weak self] in
             guard let self else { return completion(.failed(.inactive)) }
             start(self)
         } } else {
-            let content = acceptance.candidate.content.document
-            let path = PromptCreation.relativePath(title: content.frontMatter.title, now: clock.now())
-            let selection = LibraryPromptSelection(identity: PromptIdentity(path: path, id: content.frontMatter.id),
-                                                    relativePath: RelativePath(path))
+            let selection: LibraryPromptSelection
+            if destination == .improve, let prompt = state.prompt { selection = prompt }
+            else {
+                let content = acceptance.candidate.content.document
+                let path = PromptCreation.relativePath(title: content.frontMatter.title, now: clock.now())
+                selection = LibraryPromptSelection(identity: PromptIdentity(path: path, id: content.frontMatter.id),
+                                                   relativePath: RelativePath(path))
+            }
             let decisionID = UUID()
             assistantDecisionID = decisionID
             enqueue(.open(selection), operation: start, decisionID: decisionID) { [weak self] result in

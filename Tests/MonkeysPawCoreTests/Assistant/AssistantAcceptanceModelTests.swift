@@ -371,28 +371,41 @@ final class AssistantAcceptanceModelTests: XCTestCase {
     }
 
     func testWriteProtectsUnsavedOriginalWithExistingSaveDiscardCancelGuard() async throws {
-        for decision in [EditorDecision.save, .discard, .cancel] {
-            let h = try AssistantAcceptanceHarness(source: "Original")
-            h.e.ui { h.e.model.edit("Unsaved") }
-            try await h.ready()
-            var result: AssistantAcceptanceOutcome?
-            h.e.ui { h.model.accept(using: h.e.model) { result = $0 } }
-            h.e.h.main.releaseAll()
-            XCTAssertNotNil(h.e.model.state.pendingDecision)
-            XCTAssertNil(result)
-            XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
-            try h.e.decide(decision)
-            h.e.settle()
-            if decision == .cancel {
-                guard case .failed(.cancelled) = result else { return XCTFail("Expected cancelled guard.") }
-                XCTAssertEqual(h.e.model.state.source, "Unsaved")
-                XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
-            } else {
-                guard case .conflict(.changedBuffer) = result else { return XCTFail("Save/discard requires a fresh preview.") }
+        for queued in [false, true] {
+            for decision in [EditorDecision.save, .discard, .cancel] {
+                let h = try AssistantAcceptanceHarness(source: "Original", queued: queued)
+                h.e.ui { h.e.model.edit("Unsaved") }
+                try await h.ready()
+                let candidate = try XCTUnwrap(h.model.state.candidate)
+                var result: AssistantAcceptanceOutcome?
+                var replies = 0
+                h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1; XCTAssertTrue(h.e.h.marker.isUI) } }
+                h.e.h.main.releaseAll()
+                XCTAssertNotNil(h.e.model.state.pendingDecision)
+                XCTAssertTrue(h.model.state.isAccepting)
+                XCTAssertEqual(h.model.state.phase, .ready)
+                XCTAssertEqual(h.model.state.candidate?.content.canonicalBytes, candidate.content.canonicalBytes)
+                let guarded = try XCTUnwrap(h.e.model.assistantSnapshot)
+                XCTAssertEqual(guarded.availability, .busy)
+                XCTAssertEqual(guarded.sourceBytes, candidate.context.editor?.sourceBytes)
+                XCTAssertEqual(guarded.revision, candidate.context.editor?.revision)
+                XCTAssertEqual(guarded.stamp, candidate.context.editor?.stamp)
+                XCTAssertNil(result)
+                XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
+                try h.e.decide(decision)
+                h.e.settle()
+                if decision == .cancel {
+                    guard case .failed(.cancelled) = result else { return XCTFail("Expected cancelled guard.") }
+                    XCTAssertEqual(h.e.model.state.source, "Unsaved")
+                    XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+                } else {
+                    guard case .conflict(.changedBuffer) = result else { return XCTFail("Save/discard requires a fresh preview.") }
+                }
+                XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
+                let expected = decision == .save ? try XCTUnwrap(h.e.model.state.source) : "Original"
+                XCTAssertEqual(try h.e.h.files.text(at: "a.md"), expected)
+                XCTAssertEqual(replies, 1)
             }
-            XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
-            let expected = decision == .save ? try XCTUnwrap(h.e.model.state.source) : "Original"
-            XCTAssertEqual(try h.e.h.files.text(at: "a.md"), expected)
         }
     }
 
@@ -456,24 +469,169 @@ final class AssistantAcceptanceModelTests: XCTestCase {
     }
 
     func testCancellingQueuedAcceptancePreservesAnEarlierEditorDecision() async throws {
+        for queued in [false, true] {
+            let h = try AssistantAcceptanceHarness(source: "Original", queued: queued)
+            h.e.ui { h.e.model.edit("Unsaved") }
+            try await h.ready()
+            h.e.ui { h.e.model.revert() }
+            h.e.h.main.releaseAll()
+            let earlier = try XCTUnwrap(h.e.model.state.pendingDecision)
+            var result: AssistantAcceptanceOutcome?
+            var replies = 0
+            h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1; XCTAssertTrue(h.e.h.marker.isUI) } }
+            h.e.h.main.releaseAll()
+            XCTAssertNil(result, "Acceptance must wait behind the earlier decision.")
+            XCTAssertTrue(h.model.state.isAccepting)
+            XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
+            XCTAssertEqual(h.e.model.state.queuedActions.count, 1)
+            h.e.ui { h.model.close() }
+            h.e.settle()
+            switch result {
+            case .failed(.cancelled): break
+            default: XCTFail("Queued acceptance must complete on close.")
+            }
+            XCTAssertEqual(replies, 1)
+            XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
+            XCTAssertTrue(h.e.model.state.queuedActions.isEmpty)
+            XCTAssertEqual(h.e.model.state.source, "Unsaved")
+            XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+            try h.e.decide(.cancel)
+            h.e.settle()
+            XCTAssertEqual(replies, 1)
+        }
+    }
+
+    func testQueuedPendingAndResolvingGuardPreserveTheAcceptancePreview() async throws {
         let h = try AssistantAcceptanceHarness(source: "Original")
         h.e.ui { h.e.model.edit("Unsaved") }
         try await h.ready()
-        h.e.ui { h.e.model.revert() }
+        let candidate = try XCTUnwrap(h.model.state.candidate)
+        h.e.ui { h.e.model.request(.quit) }
+        XCTAssertNil(h.e.model.state.pendingDecision)
+        XCTAssertEqual(h.e.model.assistantSnapshot?.availability, .busy)
+        XCTAssertTrue(h.model.canAccept)
         h.e.h.main.releaseAll()
-        let earlier = try XCTUnwrap(h.e.model.state.pendingDecision)
-        var result: AssistantAcceptanceOutcome?
-        h.e.ui { h.model.accept(using: h.e.model) { result = $0 } }
-        h.e.h.main.releaseAll()
-        h.e.ui { h.model.close() }
-        h.e.settle()
-        guard case .failed(.cancelled) = result else { return XCTFail("Queued acceptance must complete on close.") }
-        XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
-        XCTAssertTrue(h.e.model.state.queuedActions.isEmpty)
-        XCTAssertEqual(h.e.model.state.source, "Unsaved")
-        XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+        XCTAssertNotNil(h.e.model.state.pendingDecision)
+        XCTAssertTrue(h.model.canAccept)
         try h.e.decide(.cancel)
+        XCTAssertNil(h.e.model.state.pendingDecision)
+        XCTAssertEqual(h.e.model.assistantSnapshot?.availability, .busy)
+        XCTAssertTrue(h.model.canAccept)
         h.e.settle()
+        XCTAssertEqual(h.e.model.assistantSnapshot?.availability, .available)
+        XCTAssertTrue(h.model.canAccept)
+        XCTAssertEqual(h.model.state.candidate?.content.canonicalBytes, candidate.content.canonicalBytes)
+        XCTAssertFalse(h.model.state.isStale)
+        XCTAssertEqual(h.model.state.phase, .ready)
+    }
+
+    func testImproveQueuesBehindEarlierDecisionAndStartsBeforeLaterGuard() async throws {
+        for queued in [false, true] {
+            let h = try AssistantAcceptanceHarness(source: "Original", queued: queued)
+            h.e.ui { h.e.model.edit("Unsaved") }
+            try await h.ready(improve: true)
+            let candidate = try XCTUnwrap(h.model.state.candidate)
+            h.e.ui { h.e.model.revert() }
+            h.e.h.main.releaseAll()
+            let earlier = try XCTUnwrap(h.e.model.state.pendingDecision)
+            var outcomes: [AssistantAcceptanceOutcome] = []
+            h.e.ui { h.model.accept(using: h.e.model) { outcomes.append($0); XCTAssertTrue(h.e.h.marker.isUI) } }
+            h.e.h.main.releaseAll()
+            XCTAssertTrue(outcomes.isEmpty)
+            XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
+            XCTAssertEqual(h.e.model.state.queuedActions, [.open(try XCTUnwrap(h.e.model.state.prompt))])
+            var later: [EditorGuardResult] = []
+            h.e.ui { h.e.model.request(.quit) { later.append($0); XCTAssertTrue(h.e.h.marker.isUI) } }
+            try h.e.decide(.cancel)
+            h.e.h.main.releaseAll()
+            XCTAssertEqual(h.e.model.state.status, .saving)
+            XCTAssertEqual(h.e.model.assistantSnapshot?.availability, .busy)
+            XCTAssertEqual(h.e.model.state.queuedActions, [.quit])
+            XCTAssertTrue(outcomes.isEmpty)
+            XCTAssertTrue(later.isEmpty)
+            h.e.settle()
+            XCTAssertEqual(outcomes.count, 1)
+            XCTAssertNotNil(outcomes.first?.committed)
+            XCTAssertEqual(later, [.allowed])
+            XCTAssertEqual(try h.e.h.files.read(at: "a.md"), candidate.content.canonicalBytes)
+            XCTAssertEqual(h.model.state.phase, .saved)
+            XCTAssertNil(h.e.model.state.pendingDecision)
+            XCTAssertTrue(h.e.model.state.queuedActions.isEmpty)
+            XCTAssertEqual(h.e.model.assistantSnapshot?.availability, .available)
+        }
+    }
+
+    func testCleanWriteQueuesAfterEarlierRequestAndBeforeLaterGuard() async throws {
+        let h = try AssistantAcceptanceHarness(source: "Original")
+        try await h.ready()
+        let candidate = try XCTUnwrap(h.model.state.candidate)
+        var earlier: [EditorGuardResult] = []
+        h.e.ui { h.e.model.request(.quit) { earlier.append($0) } }
+        var outcomes: [AssistantAcceptanceOutcome] = []
+        h.e.ui { h.model.accept(using: h.e.model) { outcomes.append($0); XCTAssertEqual(earlier, [.allowed]) } }
+        h.e.ui { h.e.model.request(.revert) }
+        XCTAssertEqual(h.e.model.state.queuedActions.count, 3)
+        h.e.h.main.releaseAll()
+        XCTAssertEqual(h.e.model.state.status, .saving)
+        XCTAssertEqual(h.e.model.state.queuedActions, [.revert])
+        XCTAssertTrue(outcomes.isEmpty)
+        h.e.settle()
+        XCTAssertEqual(outcomes.count, 1)
+        let entry = try XCTUnwrap(outcomes.first?.committed?.entry)
+        XCTAssertEqual(try h.e.h.files.read(at: entry.relativePath), candidate.content.canonicalBytes)
+        XCTAssertEqual(try h.e.h.files.text(at: "a.md"), "Original")
+        XCTAssertEqual(h.model.state.phase, .saved)
+        XCTAssertTrue(h.e.model.state.queuedActions.isEmpty)
+    }
+
+    func testAcceptanceRefusesEditorIOEvenWhenThePreviewContentMatches() async throws {
+        for operation in 0..<3 {
+            let h = try AssistantAcceptanceHarness(source: "Original")
+            try await h.ready(improve: true)
+            var outcomes: [AssistantAcceptanceOutcome] = []
+            let accept = { h.model.accept(using: h.e.model) { outcomes.append($0); XCTAssertTrue(h.e.h.marker.isUI) } }
+            if operation == 2 { h.e.ui(accept) }
+            h.e.ui {
+                if operation == 0 { h.e.model.revert() }
+                else { h.e.model.save() }
+            }
+            if operation != 2 {
+                h.e.h.main.releaseAll()
+                h.e.ui(accept)
+            }
+            h.e.h.main.releaseAll()
+            XCTAssertEqual(outcomes.count, 1)
+            switch outcomes.first {
+            case .failed(.editorBusy): break
+            default: XCTFail("Editor I/O must refuse acceptance.")
+            }
+            h.e.settle()
+            XCTAssertEqual(outcomes.count, 1)
+            XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
+            XCTAssertNil(try h.e.h.library.provenance(at: "a.md"))
+            XCTAssertFalse(try h.e.h.files.text(at: "a.md").contains("文書"))
+        }
+    }
+
+    func testCloseBeforeQueuedAcceptanceStartWinsOverLaterEditorSave() async throws {
+        let h = try AssistantAcceptanceHarness(source: "Original")
+        try await h.ready(improve: true)
+        var outcomes: [AssistantAcceptanceOutcome] = []
+        h.e.ui {
+            h.model.accept(using: h.e.model) { outcomes.append($0); XCTAssertTrue(h.e.h.marker.isUI) }
+            h.model.close()
+            h.e.model.save()
+        }
+        h.e.h.main.releaseAll()
+        XCTAssertEqual(outcomes.count, 1)
+        switch outcomes.first {
+        case .failed(.cancelled): break
+        default: XCTFail("Close must retain its cancellation outcome.")
+        }
+        h.e.settle()
+        XCTAssertEqual(outcomes.count, 1)
+        XCTAssertNil(try h.e.h.library.provenance(at: "a.md"))
+        XCTAssertFalse(try h.e.h.files.text(at: "a.md").contains("文書"))
     }
 
     func testSentinelScanFindsNoKeyBriefNotesInstructionOrTranscriptAfterAcceptAndReject() async throws {

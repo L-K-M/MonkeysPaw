@@ -85,7 +85,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
               !state.issues.contains(where: { $0.severity == .error }),
               let candidate = state.candidate else { return false }
         let latest = currentContext()
-        return candidate.context == latest && service.isCurrent(latest)
+        return candidate.context.matchesForAcceptance(latest) && service.isCurrent(latest)
     }
 
     /// Also rechecked at every intent and callback. Notifications are necessary
@@ -95,11 +95,9 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         let latest = currentContext()
         guard latest != context else { return }
         var cancelledGuard: (() -> Void)?
-        if savingPermit != nil, acceptanceID != nil, context.sameSession(as: latest),
-           let editor = latest.editor, editor.availability == .busy,
-           context.editor == AssistantEditorSnapshot(source: editor.source, relativePath: editor.relativePath,
-               revision: editor.revision, session: editor.session, stamp: editor.stamp) {
-            // Our editor save barrier changes availability, not the preview.
+        if context.matchesForAcceptance(latest) {
+            // Preserve the preview, but new actions must see the live busy gate.
+            context = latest
             return
         }
         if !context.sameSession(as: latest) {
@@ -257,7 +255,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
             guard acceptance.candidate.context.sameSession(as: latest), self.service.isCurrent(latest) else {
                 return .failed(.staleContext)
             }
-            guard latest == acceptance.candidate.context else { return .conflict(.changedBuffer) }
+            guard acceptance.candidate.context.matchesForAcceptance(latest) else { return .conflict(.changedBuffer) }
             return nil
         }) { [weak self] outcome in
             self?.completeAcceptance(acceptance.id, outcome: outcome)

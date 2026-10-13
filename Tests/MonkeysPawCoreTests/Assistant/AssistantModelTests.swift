@@ -3,6 +3,37 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class AssistantModelTests: XCTestCase {
+    func testGuardPreservingAReadyPreviewStillBlocksEveryNewAction() async throws {
+        let intents: [(String, (AssistantModel) -> Void)] = [
+            ("write", { $0.write(brief: "New brief") }), ("review", { $0.review() }),
+            ("improve", { $0.improve() }), ("retry", { $0.retryWithFeedback("Feedback") }),
+            ("diff", { $0.showDiff() })
+        ]
+        for queued in [false, true] {
+            for (name, intent) in intents {
+                let h = try AssistantActionHarness(source: "Original", queued: queued)
+                h.editor.ui { h.editor.model.edit("Unsaved") }
+                h.ui { h.model.write(brief: "Brief") }
+                try await h.sent()
+                try await h.artifact()
+                try await h.phase(.ready)
+                h.editor.ui { h.editor.model.request(.quit) }
+                h.changed()
+                XCTAssertTrue(h.model.canAccept, "for \(name)")
+                let reads = h.provider.secrets.reads.count
+                h.ui { intent(h.model) }
+                try await h.phase(.failed)
+                XCTAssertEqual(h.model.state.failure, .editorBusy, "for \(name)")
+                XCTAssertEqual(h.provider.secrets.reads.count, reads, "for \(name)")
+                let requests = await h.transport.snapshot()
+                XCTAssertEqual(requests.count, 1, "for \(name)")
+                XCTAssertNil(h.model.state.candidate, "for \(name)")
+                try h.editor.decide(.cancel)
+                h.editor.settle()
+            }
+        }
+    }
+
     func testFailedStartClearsPriorCandidateAndResultState() async throws {
         for queued in [false, true] {
             let h = try AssistantActionHarness(queued: queued)

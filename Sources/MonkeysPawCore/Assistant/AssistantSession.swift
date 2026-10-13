@@ -24,6 +24,20 @@ public struct AssistantEditorSnapshot: Equatable, Sendable, CustomStringConverti
 
     var source: String { String(decoding: sourceBytes, as: UTF8.self) }
     var document: PromptDocument { PromptCodec.parseFile(sourceBytes, filename: LibraryPath.filename(relativePath.string)) }
+
+    /// Guard scheduling changes availability without changing the preview.
+    /// The editor separately checks I/O before starting an acceptance save.
+    static func matchesForAcceptance(_ lhs: Self?, _ rhs: Self?) -> Bool {
+        switch (lhs, rhs) {
+        case (.none, .none): return true
+        case (.some(let lhs), .some(let rhs)):
+            return lhs.availability != .conflicted && rhs.availability != .conflicted
+                && lhs.sourceBytes == rhs.sourceBytes && lhs.relativePath == rhs.relativePath
+                && lhs.revision == rhs.revision && lhs.session == rhs.session && lhs.stamp == rhs.stamp
+        default: return false
+        }
+    }
+
     public var description: String { "<assistant editor snapshot redacted>" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: ["snapshot": description]) }
@@ -49,6 +63,10 @@ public struct AssistantContext: Equatable, Sendable, CustomStringConvertible,
     func sameSession(as other: Self) -> Bool {
         libraryID == other.libraryID && Self.sameProfile(profile, other.profile)
             && editor?.session == other.editor?.session && access == other.access
+    }
+
+    func matchesForAcceptance(_ other: Self) -> Bool {
+        sameSession(as: other) && AssistantEditorSnapshot.matchesForAcceptance(editor, other.editor)
     }
 
     static func sameProfile(_ lhs: ProviderProfile?, _ rhs: ProviderProfile?) -> Bool {
