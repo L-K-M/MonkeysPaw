@@ -51,6 +51,17 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
         try validate()
     }
 
+    func encode(to encoder: Encoder) throws {
+        var value = encoder.container(keyedBy: CodingKeys.self)
+        try value.encode(version, forKey: .version)
+        try value.encode(id, forKey: .id)
+        // Explicit null prevents supported-field preservation resurrecting a
+        // superseded plan's baseline after an authorized recovery reset.
+        try value.encode(expectedState, forKey: .expectedState)
+        try value.encode(nextState, forKey: .nextState)
+        try value.encode(steps, forKey: .steps)
+    }
+
     func validate() throws {
         try SyncIdentifiers.version(version, current: Limits.syncApplyJournalVersion)
         try expectedState?.validate()

@@ -128,6 +128,19 @@ final class SyncLibraryMutationTests: XCTestCase {
         }
     }
 
+    func testNonPromptTextRescueRemainsRawAndHeld() throws {
+        let rig = try SyncApplyTestRig()
+        let raw = Data("Unmanaged documentation\r\n".utf8)
+        try rig.files.write(raw, at: "notes.txt")
+        let file = try XCTUnwrap(rig.mutations.read(at: "notes.txt"))
+        let edit = try rig.mutations.rescue(file, at: "Conflicts/notes.md", freshID: SyncTestValues.groupPrompt)
+        XCTAssertEqual(edit.heldIssue, .localVisibility)
+        XCTAssertNil(edit.copyID)
+        XCTAssertEqual(edit.bytes, raw)
+        XCTAssertEqual(try rig.journal.apply(rig.plan([edit])), .committed)
+        XCTAssertEqual(try rig.files.read(at: "Conflicts/notes.md"), raw)
+    }
+
     func testInvalidServerBytesAndWrongTransitionFailBeforePublication() throws {
         let rig = try SyncApplyTestRig()
         let transition = try SyncIdentityTransition(from: nil, to: .assigned(SyncTestValues.personalPrompt))

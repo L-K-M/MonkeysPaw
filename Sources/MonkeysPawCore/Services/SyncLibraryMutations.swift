@@ -79,7 +79,9 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   let wire = try? SyncPathValidator.validate(path, scope: .user),
                   wire.path.utf8.elementsEqual(path.utf8) else { throw SyncError.invalidState }
             if heldIssue != nil {
-                guard bytes == retainedBytes, copyID == nil, !document.canRender else { throw SyncError.invalidState }
+                let nonPrompt = !LibraryPath.isPrompt(retainedSourcePath!)
+                guard bytes == retainedBytes, copyID == nil,
+                      !document.canRender || (nonPrompt && heldIssue == .localVisibility) else { throw SyncError.invalidState }
                 return
             }
             let original = PromptCodec.parseFile(retainedBytes!, filename: LibraryPath.filename(retainedSourcePath!))
@@ -146,6 +148,7 @@ final class SyncLibraryMutations {
         let document = PromptCodec.parseFile(file.bytes, filename: LibraryPath.filename(file.path))
         var issue = document.issues.first(where: { $0.severity == .error }).map { SyncIssueCode.content($0.code) }
         if document.isReadOnly { issue = .content(.unsupportedFormat) }
+        if !LibraryPath.isPrompt(file.path) { issue = .localVisibility }
         var bytes = file.bytes
         var copyID: String?
         if issue == nil {

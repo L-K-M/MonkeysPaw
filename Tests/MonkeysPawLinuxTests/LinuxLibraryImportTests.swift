@@ -483,9 +483,16 @@ final class LinuxLibraryImportTests: XCTestCase {
         let sibling = try source("Folder/valid.md", "Sibling")
         let folder = sibling.deletingLastPathComponent()
         var deep = folder
-        while deep.path.utf8.count - folder.path.utf8.count <= Limits.maxPathBytes {
-            deep.appendPathComponent(String(repeating: "x", count: 128))
+        for segment in Array(repeating: String(repeating: "x", count: 200), count: 4)
+            + [String(repeating: "y", count: 220)] {
+            deep.appendPathComponent(segment)
         }
+        XCTAssertEqual(deep.path.utf8.count - folder.path.utf8.count - 1, Limits.maxPathBytes)
+        // The reader reports the pruned subtree; give that node an eligible
+        // suffix so Core checks its Imported/ destination against the local cap.
+        deep.appendPathComponent(String(repeating: "z", count: 252) + ".md")
+        XCTAssertGreaterThan("Imported/".utf8.count + deep.path.utf8.count - folder.path.utf8.count - 1,
+                             Limits.maxRootedPathBytes)
         try XCTSkipIf(deep.appendingPathComponent("deep.md").path.utf8.count >= Int(PATH_MAX),
                       "The overlong Core path fixture exceeds this host's absolute path limit")
         try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
