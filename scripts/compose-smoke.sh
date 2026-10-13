@@ -48,6 +48,7 @@ try:
             response_file = work / "response.json"
             command = [
                 "curl", "--disable", "--fail", "--silent", "--show-error",
+                "--noproxy", "*",
                 "--connect-timeout", "5", "--max-time", "15",
                 "--request", method, "--output", str(response_file),
                 "--write-out", "%{http_code}",

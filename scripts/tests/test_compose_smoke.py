@@ -24,6 +24,7 @@ assert args[0] == "--disable"
 assert all(os.environ["FAKE_PASSWORD"] not in arg and "A" * 43 not in arg for arg in args)
 assert args[args.index("--connect-timeout") + 1] == "5"
 assert args[args.index("--max-time") + 1] == "15"
+assert args[args.index("--noproxy") + 1] == "*"
 assert "--fail" in args and "--silent" in args and "--location" not in args
 state_file = Path(os.environ["FAKE_STATE"])
 state = json.loads(state_file.read_text()) if state_file.exists() else {"step": 0}
@@ -148,7 +149,9 @@ class ComposeSmokeTests(unittest.TestCase):
             state = work / "state.json"
             env = {**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
                    "TMPDIR": str(temporary), "FAKE_PASSWORD": PASSWORD,
-                   "FAKE_STATE": str(state), "FAKE_CASE": case}
+                   "FAKE_STATE": str(state), "FAKE_CASE": case,
+                   "http_proxy": "http://proxy.invalid:9999", "https_proxy": "http://proxy.invalid:9999",
+                   "all_proxy": "http://proxy.invalid:9999", "no_proxy": "", "NO_PROXY": ""}
             result = subprocess.run(["bash", "-x", str(SMOKE), "http://127.0.0.1:8790", str(password)],
                                     env=env, capture_output=True, text=True, timeout=30)
             self.assertNotIn(PASSWORD, result.stdout + result.stderr)
