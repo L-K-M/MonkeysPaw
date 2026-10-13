@@ -5,6 +5,7 @@ import SwiftUI
 
 final class LibraryWindowController: NSObject, NSWindowDelegate {
     typealias DialogPresenter = (NSWindow, LibraryEditorDialog, @escaping (LibraryEditorResponse) -> Void) -> (() -> Void)
+    typealias ImportChooser = (NSWindow, @escaping ([URL]) -> Void) -> (() -> Void)
     let presentation: LibraryViewState
     private(set) var window: NSWindow?
     private let mainThread: MainThread
@@ -12,6 +13,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     private var keyMonitor: Any?
     private var isTornDown = false
     private let presentDialog: DialogPresenter
+    private let importChooser: ImportChooser
     private var activeDialog: LibraryEditorDialog?
     private var cancelDialog: (() -> Void)?
     private var dialogRevision: UInt64 = 0
@@ -21,13 +23,17 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, activation: WindowActivationCoordinator,
          presentDialog: @escaping DialogPresenter = LibraryWindowController.presentEditorDialog,
+         imports: LibraryImportViewState? = nil,
+         importChooser: @escaping ImportChooser = MacImportChooser.choose,
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
         self.activation = activation
         self.presentDialog = presentDialog
+        self.importChooser = importChooser
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
-            mainThread: mainThread, revealLibrary: revealLibrary)
+            mainThread: mainThread, imports: imports, revealLibrary: revealLibrary)
         super.init()
+        connectImportChooser()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
         presentation.onConflictRequested = { [weak self] in
             self?.dismissedConflict = nil
@@ -37,12 +43,22 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
 
     deinit { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) } }
 
-    func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool) {
+    func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
+                imports: LibraryImportViewState? = nil) {
         guard !isTornDown else { return }
         endDialog()
         dismissedConflict = nil
         closeRequested = false
-        presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available)
+        presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available, imports: imports)
+        connectImportChooser()
+    }
+
+    private func connectImportChooser() {
+        presentation.imports?.onChoose = { [weak self] done in
+            guard let self, !self.isTornDown, let window = self.window,
+                  window.isVisible, window.attachedSheet == nil else { done([]); return {} }
+            return self.importChooser(window, done)
+        }
     }
 
     func show() {
@@ -74,6 +90,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        presentation.imports?.cancelChoosing()
         endDialog()
         removeKeyMonitor()
     }
@@ -86,6 +103,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
 
     func requestClose() {
         guard !isTornDown, !closeRequested else { return }
+        presentation.imports?.cancelChoosing()
         closeRequested = true
         presentation.requestClose { [weak self] result in
             guard let self, !self.isTornDown else { return }
@@ -115,6 +133,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             guard desired != self.activeDialog else { return }
             self.endDialog()
             guard let desired else { return }
+            self.presentation.imports?.cancelChoosing()
             self.activeDialog = desired
             let revision = self.dialogRevision
             let cancel = self.presentDialog(window, desired) { [weak self] response in

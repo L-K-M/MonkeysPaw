@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let backgroundWork: BackgroundWork
     private let clipboard: Clipboard
     private let editorDialog: LibraryWindowController.DialogPresenter
+    private let importChooser: LibraryWindowController.ImportChooser
     private let replyToTermination: (Bool) -> Void
     private let revealLibraryURI: (URL) -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var pickerModel: PickerModel?
     private(set) var libraryBrowserModel: LibraryBrowserModel?
     private(set) var editorModel: EditorModel?
+    private(set) var importModel: ImportModel?
     private var promptEditing: PromptEditingService?
     private var terminationPending = false
     private var editorSwitchRefused = false
@@ -74,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var onboardingModel: OnboardingModel?
     private var libraryStatusObserver: UUID?
     private var libraryMenuItems: [NSMenuItem] = []
+    private var importMenuItem: NSMenuItem?
     private var isShutDown = false
     private var onboardingStarted = false
     private var presentedOnboardingStep: OnboardingModel.Step?
@@ -101,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          backgroundWork: BackgroundWork = DispatchBackgroundWork(),
          clipboard: Clipboard = PasteboardClipboard(),
          editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
+         importChooser: @escaping LibraryWindowController.ImportChooser = MacImportChooser.choose,
          replyToTermination: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) },
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
@@ -135,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.backgroundWork = backgroundWork
         self.clipboard = clipboard
         self.editorDialog = editorDialog
+        self.importChooser = importChooser
         self.replyToTermination = replyToTermination
         revealLibraryURI = revealLibrary
         self.folderChooser = folderChooser
@@ -231,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         libraryBrowserModel?.deactivate()
         editorModel?.deactivate()
         promptEditing?.deactivate()
+        importModel?.deactivate()
         libraryWindow?.tearDown()
         pickerModel?.onChange = nil
         onboardingStarted = false
@@ -480,6 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         libraryBrowserModel?.deactivate()
         editorModel?.deactivate()
         promptEditing?.deactivate()
+        importModel?.deactivate()
         pickerModel.onChange = nil
         pickerPresentation = nil
         self.pickerModel = nil
@@ -539,6 +546,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: libraryMain)
         let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: libraryMain)
+        let importSources = MacImportSourceReader()
+        let importer = ImportModel(service: ImportService(library: library, sources: importSources,
+            work: backgroundWork, main: libraryMain))
+        let imports = LibraryImportViewState(model: importer, available: availability, main: libraryMain,
+            prepare: { [backgroundWork] urls, done in
+                backgroundWork.run { done(importSources.requests(for: urls)) }
+            }, openImported: { [weak self] path in
+                guard isCurrent(), let self,
+                      let entry = index.browseContents().first(where: { $0.entry.relativePath.utf8.elementsEqual(path.utf8) })?.entry
+                else { return false }
+                self.libraryWindow?.presentation.openPrompt(LibraryPromptSelection(identity: entry.identity,
+                    relativePath: RelativePath(entry.relativePath)))
+                return true
+            })
+        imports.onAvailabilityChange = { [weak self] in self?.updateLibraryMenuItems() }
         editor.onChange = { [weak self] in
             guard isCurrent(), let self, self.editorSwitchRefused else { return }
             self.settingsWindow?.presentation.objectWillChange.send()
@@ -588,15 +610,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.index = index
         libraryBrowserModel = browser
         editorModel = editor
+        importModel = importer
         promptEditing = editing
         if let libraryWindow {
-            libraryWindow.rebind(to: browser, editor: editor, libraryPath: libraryDirectory.path, available: availability)
+            libraryWindow.rebind(to: browser, editor: editor, libraryPath: libraryDirectory.path, available: availability,
+                imports: imports)
         } else {
             libraryWindow = LibraryWindowController(model: browser, editor: editor, libraryPath: libraryDirectory.path,
                 available: availability, mainThread: mainThread, activation: windowActivation,
-                presentDialog: editorDialog,
+                presentDialog: editorDialog, imports: imports, importChooser: importChooser,
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
+        updateLibraryMenuItems()
         if let raw = try? makeFileWatcher(libraryDirectory, log) {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
         }
@@ -737,6 +762,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Library status owns availability, including runtime root loss.
         appMenu.autoenablesItems = false
         addLibraryItem(to: appMenu, keyEquivalent: "l")
+        let importItem = appMenu.addItem(withTitle: ImportStrings.action, action: #selector(importFromMenu), keyEquivalent: "i")
+        importItem.target = self
+        importItem.keyEquivalentModifierMask = [.command, .shift]
+        importMenuItem = importItem
+        updateLibraryMenuItems()
         addSettingsItem(to: appMenu)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit \(AppIdentity.displayName)",
@@ -800,6 +830,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.title = libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu
             item.isEnabled = libraryStatusModel?.libraryAvailable == true
         }
+        importMenuItem?.isEnabled = libraryWindow?.presentation.imports?.canImport == true
+    }
+
+    @objc private func importFromMenu() {
+        guard libraryWindow?.presentation.imports?.canImport == true else { return }
+        showLibrary()
+        libraryWindow?.presentation.imports?.choose()
     }
 
     @objc private func openLibraryFromMenu() {

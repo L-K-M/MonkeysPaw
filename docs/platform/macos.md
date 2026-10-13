@@ -494,3 +494,37 @@ identity, and record any new access request.
 | ACL prompts: record requests across both provider profiles sharing one item; allow, deny and cancel behave as expected, and denied/locked edits preserve saved credentials | NOT RUN | |
 | Signed-build access: the intended signed build and an update can read, replace and delete their saved keys; record signing identities and any new ACL prompts | NOT RUN | |
 | Key never shown after save: Assistant settings show only saved status and Keychain tier after save/reopen/restart; no stored value appears in the key field, errors or diagnostics | NOT RUN | |
+
+## M3 M4 Library import: NOT RUN
+
+The Linux implementation host cannot compile AppKit/SwiftUI or run hosted
+macOS tests. Run `MacLibraryImportTests` and `MacImportSourceReaderTests` in
+`macos-app` CI before these checks. Hosted tests inject chooser replies,
+decode item-provider file URLs, release worker jobs and drive presentation
+state. They cover mixed files/folders, destination choice, progress, typed
+reports, exclusive creation, symlink refusal, bounded reads, report opening
+through the watcher/editor guard and retirement on a library switch. They
+do not prove native chooser appearance, real Finder drops or VoiceOver.
+
+- Commit / `macos-app` CI run / hosted-test results:
+- macOS / hardware / keyboard navigation setting / VoiceOver:
+- Date / tester:
+
+Use an isolated library and source folder. Include `.md`, `.prompt` and
+`.prompty` sources, nested directories, preserved foreign metadata,
+unsupported inputs/templates, a duplicate id, invalid YAML, a future format,
+non-UTF-8 bytes, a file over 256 KiB and file/directory symlinks. Prepopulate
+a destination filename to check alternate naming. Keep source and existing
+destination bytes for comparison, without recording prompt content here.
+
+| Check | Result | Details |
+|---|---|---|
+| Library Import… and app-menu Import… (⌘⇧I) open a sheet accepting multiple `.md`, `.prompt`, `.prompty` files and folders together; Cancel leaves the library untouched and the next chooser works | NOT RUN | |
+| Finder drops onto the prompt list work with one file, multiple files, folders and a mixed selection, including spaces and non-ASCII names; folder-relative structure is preserved | NOT RUN | |
+| Destination defaults to Imported/; selecting an existing nested folder writes there, and the destination and both Import actions stay disabled throughout enumeration and every selection in the batch | NOT RUN | |
+| Progress shows enumeration and processed-file counts; completion lists every created library path, each typed skip, mapped fields, preserved metadata keys, header-formatting loss and warnings; partial success remains available | NOT RUN | |
+| Existing destination bytes and all sources stay unchanged; occupied names use alternates and duplicate ids receive fresh identities; symlinked sources and nested symlinks never import their targets | NOT RUN | |
+| Imported rows appear through the watcher; opening a report path reveals it even with a filter or another sidebar section, and an unsaved editor draft still requires Save/Discard/Cancel | NOT RUN | |
+| Dismiss report clears its contents; close/reopen keeps a completed import usable; switching libraries retires queued imports, drop loads and chooser replies and resets destination/report for the new graph | NOT RUN | |
+| Runtime library loss disables Import and report opening; native chooser dismissal, minimized windows and simultaneous editor sheets never leave Import stuck or revive a closed chooser | NOT RUN | |
+| Tab/Shift+Tab reach Import, destination, report paths and Dismiss with visible focus; VoiceOver identifies each control, progress, created path and skip/warning text; resize and Reduce Motion keep the Library usable | NOT RUN | |

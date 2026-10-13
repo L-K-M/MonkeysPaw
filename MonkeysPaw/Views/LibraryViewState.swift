@@ -23,6 +23,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var focusRevision: UInt64 = 0
     @Published private(set) var editorState: EditorState
     @Published private(set) var sourceRevision: UInt64 = 0
+    @Published private(set) var imports: LibraryImportViewState?
     @Published var editorTab = EditorTab.edit
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
@@ -41,13 +42,15 @@ final class LibraryViewState: ObservableObject {
     private var lastClosedPromptPath: RelativePath?
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
-         mainThread: MainThread, revealLibrary: @escaping () -> Void) {
+         mainThread: MainThread, imports: LibraryImportViewState? = nil, revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
         editorState = editor.state
         snapshot = model.state
         activeLibraryPath = libraryPath
         libraryAvailable = available
+        self.imports = imports
+        imports?.updateDestinations(model.state.sections)
         self.mainThread = mainThread
         self.revealLibrary = revealLibrary
         observeModel()
@@ -79,8 +82,12 @@ final class LibraryViewState: ObservableObject {
 
     var favoriteMessage: String? { favoriteOutcome.flatMap(LibraryStrings.favoriteMessage) }
 
-    func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool) {
+    func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
+                imports: LibraryImportViewState? = nil) {
         guard isActive else { return }
+        self.imports?.deactivate()
+        self.imports = imports
+        imports?.updateDestinations(model.state.sections)
         detachObservers()
         bindingRevision &+= 1
         sourceRevision &+= 1
@@ -102,6 +109,7 @@ final class LibraryViewState: ObservableObject {
 
     func deactivate() {
         guard isActive else { return }
+        imports?.deactivate()
         isActive = false
         bindingRevision &+= 1
         sourceRevision &+= 1
@@ -116,6 +124,7 @@ final class LibraryViewState: ObservableObject {
     func setLibraryAvailable(_ available: Bool) {
         guard isActive else { return }
         libraryAvailable = available
+        imports?.setLibraryAvailable(available)
     }
 
     func didShow() {
@@ -247,6 +256,7 @@ final class LibraryViewState: ObservableObject {
                       self.bindingRevision == revision, self.model === model else { return }
                 if self.snapshot.selection != state.selection { self.favoriteOutcome = nil }
                 self.snapshot = state
+                self.imports?.updateDestinations(state.sections)
                 if let copy = self.copySelection, state.rows.contains(where: { $0.selection == copy }) {
                     self.copySelection = nil
                     self.model.selectPrompt(copy)
