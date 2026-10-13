@@ -168,8 +168,7 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
 Run these on X11 and GNOME/KDE Wayland, including GNOME without a tray
 extension. Record the commit, date, desktop/compositor, GTK, Orca and portal
 versions. The implementation uses GTK 4.8 controls; private-bus/Xvfb tests
-do not complete these owner checks. History and file management remain
-for later M3 slices; the editor checks follow below.
+do not complete these owner checks. The editor and History checks follow below.
 
 | Check | Expected result | Status |
 |---|---|---|
@@ -189,8 +188,7 @@ Run these on X11 and GNOME/KDE Wayland with GTK 4.8 or newer. Record the
 commit, date, desktop/compositor, GTK, Orca and input-method versions.
 Private-bus/Xvfb tests exercise saves, guards and native controls, including
 Core file-command busy states and selection following; these real desktop
-checks remain owner-run. History and rename/move/delete controls belong to
-a later slice. While a Core command runs, the editor shows "Updating the
+checks remain owner-run. While a Core command runs, the editor shows "Updating the
 file…", disables Revert and holds conflict/discard dialogs until completion.
 
 | Check | Expected result | Status |
@@ -207,6 +205,27 @@ file…", disables Revert and holds conflict/discard dialogs until completion.
 | Real IBus/Fcitx editor composition | Compose with a real conversion engine. Return commits and Escape cancels through the input method without saving or closing. Model refreshes preserve active preedit; committed characters appear once and update validation/preview. Switch/reopen the session and confirm no old composition survives. | NOT RUN |
 | Orca and visible focus | Tab/Shift+Tab reach source, tabs, actions, validation, Fields and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |
 | Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, tab changes and saves read zero times when the prompt source contains `{{clipboard}}`; Preview renders the literal marker `{clipboard}`. | NOT RUN |
+
+## History and file commands (M3L3, NOT RUN)
+
+Run these on X11 and GNOME/KDE Wayland with GTK 4.8 or newer. Record the
+commit, date, desktop/compositor, GTK and Orca versions. Use disposable
+prompts and isolated app data. Private-bus/Xvfb tests with fatal GTK warnings
+cover the controls, typed outcomes, guards and selection changes; they do
+not complete these owner checks.
+
+| Check | Expected result | Status |
+|---|---|---|
+| History list and refresh | Save several revisions, open History and use Refresh History. Revisions appear newest first with local timestamp, exact byte size and Valid or Forensic only status. Opening a different prompt refreshes its own list. | NOT RUN |
+| Read-only revision preview | Select valid and malformed revisions. Exact source appears in a read-only monospace control and leaves the live draft untouched. Non-UTF-8 and oversized revisions show the specific reason without fabricated text. | NOT RUN |
+| Restore and refusals | Restore a valid revision: the editor and history reload and the current id stays. Forensic and future-format revisions remain selectable; Restore reports the typed refusal without changing the file. | NOT RUN |
+| Rename | Use Rename… in the editor header with a .md filename. File bytes and front-matter title stay; the selection follows the new path, including an unassigned prompt. Occupied, ignored and invalid names show an error without replacing another file. | NOT RUN |
+| Move | Choose an existing folder, type a new nested relative folder, then move to the root with an empty input. Parents are created and selection follows. Occupied destinations and invalid paths are refused. | NOT RUN |
+| Delete and Cancel | Delete… names the exact relative path and initially focuses Cancel. Cancel, Escape and native close preserve the file. Confirming closes the editor and clears selection while keeping history. | NOT RUN |
+| Unsaved decisions | Repeat Rename, Move, Delete and Restore with a dirty draft. Save commits before the command; Discard uses the loaded baseline; Cancel preserves draft, file, history and selection. A failed save keeps the decision pending. | NOT RUN |
+| Stale or missing file | Change or delete the file externally while a form is open, then confirm. The existing modified/deleted conflict dialog opens without overwriting or recreating it. Resolve it, then retry the intended command. | NOT RUN |
+| Disabled controls and graph replacement | No open prompt, read-only files, unavailable library, saving, pending decisions and running commands disable file actions and Restore. Losing the library or switching its graph cancels an open form and drops stale replies. | NOT RUN |
+| Keyboard, Orca and privacy | Tab/Shift+Tab reach the header actions, History list, preview and labelled form controls. Orca announces revision metadata, refusal/status copy and delete confirmation. Escape respects native input-method preedit. Browsing History and using these commands read no clipboard contents. | NOT RUN |
 
 ## Orca, visible focus and reduced motion (M2, NOT RUN)
 

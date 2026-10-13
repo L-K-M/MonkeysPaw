@@ -50,7 +50,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         let window = try open("a.md")
         let text = try widget("library-source", in: window)
         let tabs = try widget("library-editor-tabs", in: window)
-        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 3)
+        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 4)
         XCTAssertEqual(gtk_text_view_get_monospace(mp_text_view(text)), 1)
         XCTAssertEqual(gtk_text_buffer_get_enable_undo(buffer(text)), 1)
         XCTAssertEqual(contents(text), source)
