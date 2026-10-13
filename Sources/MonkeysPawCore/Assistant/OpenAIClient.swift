@@ -108,14 +108,20 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
     }
 
     public func listModels(using connection: ProviderConnection) async throws -> AssistantModelPage {
-        let deadline = now().advanced(by: Limits.modelListTimeout)
-        let request = try httpRequest(url: connection.modelsURL, method: .get,
+        try await listModels(using: connection, afterID: nil,
+                             deadline: now().advanced(by: Limits.modelListTimeout))
+    }
+
+    public func listModels(using connection: ProviderConnection, afterID: String?,
+                           deadline: ContinuousClock.Instant) async throws -> AssistantModelPage {
+        let request = try httpRequest(url: AssistantModelList.url(for: connection, afterID: afterID), method: .get,
             headers: headers(for: connection, operation: .models), deadline: deadline)
         try checkActive(until: deadline)
         let response = try await AssistantHTTP.send(request, through: transport)
         try checkActive(until: deadline)
         guard let page = try? JSONDecoder().decode(ModelPage.self, from: response.body),
-              page.data.allSatisfy({ !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+              page.data.allSatisfy({ AssistantModelList.validID($0.id) }),
+              [page.firstID, page.lastID].compactMap({ $0 }).allSatisfy(AssistantModelList.validID) else {
             throw AssistantError.invalidOutput
         }
         try checkActive(until: deadline)

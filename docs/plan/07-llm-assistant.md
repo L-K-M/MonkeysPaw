@@ -36,6 +36,38 @@ re-entry or Clear before it can be used.
   `MODEL_LIST_TIMEOUT = 15 s` and fills the model picker. Typing a model id
   by hand always works. Protocol clients decode one page, retaining model IDs,
   display names and pagination metadata for the connection-testing service.
+  Page calls also accept an `after_id` cursor and the original absolute
+  deadline. OpenAI-compatible lists normally finish in one page; compatible
+  endpoints advertising Anthropic-style `has_more`/`last_id` paging use the
+  same `after_id` query convention. Unknown envelope/model fields are ignored;
+  malformed known fields and empty/control-containing IDs are invalid.
+  `AssistantService.testConnection(draft:completion:)` resolves the draft
+  through `ProviderSettingsService.resolveForTesting` on `BackgroundWork`.
+  It writes no settings, secrets or capability state. One 15-second monotonic
+  deadline starts at the intent and covers credential resolution and every
+  page. The returned `AssistantConnectionTest.cancel()` cancels network work;
+  cancellation or timeout completes promptly even while a queued or blocking
+  secret read cannot itself be aborted. Every result arrives once through
+  `MainThread`; a result already queued there has completed the test.
+  Success contains the complete list, sorted by UTF-8 model ID. Exact duplicate
+  IDs collapse, preferring a display name and then its UTF-8 order. Partial
+  lists are never published. Missing/repeated continuation cursors, empty pages
+  claiming more data, or exceeding 100 pages, 10,000 total entries or 2 MiB of
+  total model/cursor ID and display-name bytes fail as an invalid response.
+  Ordinary empty lists succeed.
+  Test outcomes distinguish authentication, not found (404), rate limited with
+  parsed Retry-After, network, timeout, unsupported listing (405/501), invalid
+  response, cancellation, local provider-settings errors and other provider
+  statuses. No failed request is retried automatically, and no provider body
+  or raw diagnostic becomes a result.
+  `AssistantModelPickerState` holds suggestions from the last successful test
+  for the current draft. Manual model IDs are independent of those suggestions
+  and survive empty/failed/unsupported tests. Every draft edit or profile switch
+  clears suggestions and invalidates pending replies, comparing text/key edits
+  by exact UTF-8 bytes. A fresh request generation rejects older tests, even
+  after switching away and back; cancellation also
+  invalidates that generation. Retesting an unchanged draft preserves its last
+  successful suggestions if the new test fails.
 - **Anthropic defaults.**
   - Model `claude-opus-5-5`, `ANTHROPIC_MAX_TOKENS = 16000`.
   - The system prompt goes in the top-level `system` field. OpenAI-compatible

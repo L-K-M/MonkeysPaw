@@ -60,16 +60,30 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
     }
 
     public func listModels(using connection: ProviderConnection) async throws -> AssistantModelPage {
-        let deadline = ContinuousClock.now.advanced(by: Limits.modelListTimeout)
-        let request = try httpRequest(url: connection.modelsURL, method: .get,
+        try await listModels(using: connection, afterID: nil,
+                             deadline: ContinuousClock.now.advanced(by: Limits.modelListTimeout))
+    }
+
+    public func listModels(using connection: ProviderConnection, afterID: String?,
+                           deadline: ContinuousClock.Instant) async throws -> AssistantModelPage {
+        try checkActive(until: deadline)
+        let request = try httpRequest(url: AssistantModelList.url(for: connection, afterID: afterID), method: .get,
             headers: headers(for: connection, operation: .models), deadline: deadline)
         let response = try await AssistantHTTP.send(request, through: transport)
+        try checkActive(until: deadline)
         guard let page = try? JSONDecoder().decode(ModelPage.self, from: response.body),
-              page.data.allSatisfy({ !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+              page.data.allSatisfy({ AssistantModelList.validID($0.id) }),
+              [page.firstID, page.lastID].compactMap({ $0 }).allSatisfy(AssistantModelList.validID) else {
             throw AssistantError.invalidOutput
         }
+        try checkActive(until: deadline)
         return AssistantModelPage(models: page.data.map { ModelDescriptor(id: $0.id, displayName: $0.displayName) },
             hasMore: page.hasMore ?? false, firstID: page.firstID, lastID: page.lastID)
+    }
+
+    private func checkActive(until deadline: ContinuousClock.Instant) throws {
+        guard !Task.isCancelled else { throw AssistantError.transport(.cancelled) }
+        guard ContinuousClock.now < deadline else { throw AssistantError.transport(.deadlineExceeded) }
     }
 
     private enum Operation { case messages, models }

@@ -134,6 +134,10 @@ public enum Limits {
 
     /// §7.1: platform idle/resource timeouts never replace the monotonic deadline.
     public static let httpSessionTimeoutFloor: TimeInterval = 300
+    /// §7.1: bound accumulated model lists even on a fast loopback endpoint.
+    public static let modelListPageCap: Int = 100
+    public static let modelListEntryCap: Int = 10_000
+    public static let modelListByteCap: Int = 2 * mebibyte
 
     /// §19 B3: bound the serialized HTTP request envelope separately from content.
     public static let httpRequestCap: Int = 2 * mebibyte
