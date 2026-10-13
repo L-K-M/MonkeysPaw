@@ -223,41 +223,48 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertEqual(creations, 0)
         let presentation = try XCTUnwrap(controller?.presentation)
         XCTAssertNil(presentation.assistant)
-        controller?.show()
-        let window = try XCTUnwrap(controller?.window)
-        defer { window.close() }
-        work.drain()
-        let assistant = try XCTUnwrap(presentation.assistant)
-        XCTAssertNotNil(liveModel, "The factory's Core model must be alive before checking retirement")
-        assistant.addProfile()
-        assistant.renameProfile("Staged")
-        controller?.show()
-        XCTAssertEqual(creations, 1)
-        XCTAssertTrue(presentation.assistant === assistant)
-        XCTAssertEqual(assistant.state.draft?.displayName, "Staged")
-        assistant.testConnection()
-        XCTAssertTrue(assistant.state.isTesting)
-        window.close()
-        XCTAssertTrue(presentation.assistant === assistant)
-        XCTAssertNotNil(liveModel, "A retained Settings window owns one model across reopenings")
-        XCTAssertFalse(assistant.state.isTesting, "Closing cancels its queued Test")
-        work.drain()
-        controller?.show()
-        work.drain()
-        XCTAssertEqual(creations, 1)
-        XCTAssertTrue(controller?.window === window)
-        XCTAssertTrue(presentation.assistant === assistant)
-        XCTAssertEqual(assistant.state.draft?.displayName, "Staged")
-        XCTAssertFalse(assistant.state.isTesting)
+        weak var liveController = controller
+        // AppKit autoreleases the window delegate while showing and closing.
+        // Drain that pool so releasing `controller` drops the last reference.
+        let wrapper = try autoreleasepool { () throws -> AssistantSettingsViewState in
+            controller?.show()
+            let window = try XCTUnwrap(controller?.window)
+            defer { window.close() }
+            work.drain()
+            let assistant = try XCTUnwrap(presentation.assistant)
+            XCTAssertNotNil(liveModel, "The factory's Core model must be alive before checking retirement")
+            assistant.addProfile()
+            assistant.renameProfile("Staged")
+            controller?.show()
+            XCTAssertEqual(creations, 1)
+            XCTAssertTrue(presentation.assistant === assistant)
+            XCTAssertEqual(assistant.state.draft?.displayName, "Staged")
+            assistant.testConnection()
+            XCTAssertTrue(assistant.state.isTesting)
+            window.close()
+            XCTAssertTrue(presentation.assistant === assistant)
+            XCTAssertNotNil(liveModel, "A retained Settings window owns one model across reopenings")
+            XCTAssertFalse(assistant.state.isTesting, "Closing cancels its queued Test")
+            work.drain()
+            controller?.show()
+            work.drain()
+            XCTAssertEqual(creations, 1)
+            XCTAssertTrue(controller?.window === window)
+            XCTAssertTrue(presentation.assistant === assistant)
+            XCTAssertEqual(assistant.state.draft?.displayName, "Staged")
+            XCTAssertFalse(assistant.state.isTesting)
 
-        window.close()
-        assistant.testConnection()
-        XCTAssertTrue(assistant.state.isTesting)
+            window.close()
+            assistant.testConnection()
+            XCTAssertTrue(assistant.state.isTesting)
+            return assistant
+        }
         // The view wrapper deliberately outlives its released Core model.
         controller = nil
+        XCTAssertNil(liveController, "Nothing outside the test may retain the Settings controller")
         XCTAssertNil(liveModel, "Window teardown releases the model and cancels queued Test work")
         work.drain()
-        XCTAssertFalse(assistant.canChangeProfiles)
+        XCTAssertFalse(wrapper.canChangeProfiles)
     }
 
     func testSetupFromSettingsReusesSetupAndClosingSettingsWithSetupVisibleReturnsToAccessory() throws {
