@@ -31,12 +31,16 @@ final class MemorySyncFileOperations: SyncFileOperations {
         let known = try allDirectories()
         guard !known.contains(path) else { throw SyncFileOperationError(.occupied) }
         var displaced = try check(path, expecting: expecting)
-        if let racingBytesAfterCheck, displaced != nil {
+        if let racingBytesAfterCheck {
             try fileStoreOperation { try files.write(racingBytesAfterCheck, at: path.string) }
+            if case .absent = expecting { throw SyncFileOperationError(.occupied, displacedBytes: racingBytesAfterCheck) }
             displaced = racingBytesAfterCheck
         }
         guard !failMode else { throw SyncFileOperationError(.ioFailure) }
-        try fileStoreOperation { try files.write(bytes, at: path.string) }
+        switch expecting {
+        case .absent: try fileStoreOperation { try files.create(bytes, at: path.string) }
+        case .matching: try fileStoreOperation { try files.write(bytes, at: path.string) }
+        }
         modes[path] = mode
         do {
             guard try fileStoreOperation({ try files.read(at: path.string) }) == bytes else {

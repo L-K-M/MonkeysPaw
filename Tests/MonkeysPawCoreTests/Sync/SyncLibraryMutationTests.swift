@@ -2,6 +2,20 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncLibraryMutationTests: XCTestCase {
+    func testCreateRaceAfterExpectationKeepsOccupyingBytes() throws {
+        let rig = try SyncApplyTestRig()
+        let edit = try rig.replacement()
+        let racing = SyncApplyTestRig.bytes("Racing creator", id: SyncTestValues.groupPrompt)
+        rig.libraryOperations.racingBytesAfterCheck = racing
+        let result = try rig.mutations.apply(edit, attempt: .first)
+        if case .applied = result.outcome { XCTFail("An absent expectation must not replace the racing creator") }
+        XCTAssertEqual(result.effect, .unchanged)
+        XCTAssertEqual(result.displacedBytes, racing)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), racing)
+        XCTAssertNil(rig.libraryOperations.modes["a.md"])
+        XCTAssertTrue(rig.libraryOperations.flushedFiles.isEmpty)
+    }
+
     func testDecodedEditRejectsTamperedHashBeforeAnyIO() throws {
         for attempt in [SyncLibraryMutations.Attempt.first, .replay] {
             let rig = try SyncApplyTestRig()
@@ -21,17 +35,19 @@ final class SyncLibraryMutationTests: XCTestCase {
     }
 
     func testDecodedPublicationWithoutBytesThrowsBeforeAnyIO() throws {
-        let rig = try SyncApplyTestRig()
-        var object = try SyncTestValues.object(rig.replacement())
-        object.removeValue(forKey: "bytes")
-        let edit = try JSONDecoder().decode(SyncLibraryEdit.self,
-            from: JSONSerialization.data(withJSONObject: object))
-        let accesses = rig.files.accessCount
-        XCTAssertThrowsError(try rig.mutations.apply(edit, attempt: .replay)) {
-            XCTAssertEqual($0 as? SyncError, .invalidState)
+        for attempt in [SyncLibraryMutations.Attempt.first, .replay] {
+            let rig = try SyncApplyTestRig()
+            var object = try SyncTestValues.object(rig.replacement())
+            object.removeValue(forKey: "bytes")
+            let edit = try JSONDecoder().decode(SyncLibraryEdit.self,
+                from: JSONSerialization.data(withJSONObject: object))
+            let accesses = rig.files.accessCount
+            XCTAssertThrowsError(try rig.mutations.apply(edit, attempt: attempt)) {
+                XCTAssertEqual($0 as? SyncError, .invalidState)
+            }
+            XCTAssertEqual(rig.files.accessCount, accesses)
+            XCTAssertEqual(rig.libraryOperations.operationCount, 0)
         }
-        XCTAssertEqual(rig.files.accessCount, accesses)
-        XCTAssertEqual(rig.libraryOperations.operationCount, 0)
     }
 
     func testDecodedEditsRejectIncorrectRetainedSourceMetadata() throws {
