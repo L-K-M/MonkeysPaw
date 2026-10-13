@@ -52,7 +52,7 @@ seed() {
 count_backups() {
     local file count=0
     for file in "$fixture/backups/"????????T??????Z.db; do
-        [ -f "$file" ] && [ ! -L "$file" ] || continue
+        if [ ! -f "$file" ] || [ -L "$file" ]; then continue; fi
         count=$((count + 1))
     done
     printf '%s\n' "$count"
