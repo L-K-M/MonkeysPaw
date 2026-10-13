@@ -243,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentedOnboardingStep = nil
         setupWindow?.tearDown()
         onboardingWindow?.tearDown()
+        settingsWindow?.presentation.retireAssistant()
         windowActivation.tearDown()
     }
 

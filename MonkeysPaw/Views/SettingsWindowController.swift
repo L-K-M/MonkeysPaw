@@ -14,6 +14,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let activation: WindowActivationCoordinator
     private let folderChooser: FolderChooser
     private let forgetAllConfirmation: ForgetAllConfirmation
+    private let makeAssistant: () -> AssistantSettingsModel?
     private var chooserRequest: UUID?
     private var cancelChooser: (() -> Void)?
     private var confirmationRequest: UUID?
@@ -23,7 +24,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          rememberedValues: RememberedValuesSettingsModel,
          forgetAllConfirmation: @escaping ForgetAllConfirmation,
          mainThread: MainThread, activation: WindowActivationCoordinator,
-         folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void) {
+         folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
+         makeAssistant: @escaping () -> AssistantSettingsModel? = { nil }) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          mainThread: mainThread, openSetup: openSetup)
@@ -31,6 +33,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.activation = activation
         self.folderChooser = folderChooser
         self.forgetAllConfirmation = forgetAllConfirmation
+        self.makeAssistant = makeAssistant
         super.init()
         presentation.onChooseFolder = { [weak self] in self?.chooseFolder() }
         presentation.onRememberedValuesChange = { [weak self] in self?.updateForgetAllConfirmation() }
@@ -39,11 +42,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     deinit {
         cancelConfirmation?()
         presentation.cancelForgetAll()
+        presentation.retireAssistant()
     }
 
     func show() {
         mainThread.run { [weak self] in
             guard let self else { return }
+            if self.presentation.assistant == nil, let model = self.makeAssistant() {
+                self.presentation.openAssistant(model, mainThread: self.mainThread)
+            }
             self.presentation.refresh()
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
@@ -61,6 +68,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         cancel?()
         endForgetAllConfirmation()
         presentation.cancelForgetAll()
+        presentation.retireAssistant()
     }
 
     private func updateForgetAllConfirmation() {

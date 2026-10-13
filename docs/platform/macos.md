@@ -560,3 +560,35 @@ destination bytes for comparison, without recording prompt content here.
 | Runtime library loss retires queued imports and disables Import/report opening while preserving completed reports; native chooser dismissal, minimized windows and simultaneous editor sheets never leave Import stuck or revive a closed chooser | NOT RUN | |
 | A source deleted during enumeration is a typed skip while readable prompts still import; inaccessible subdirectories appear as container skips; exceeding the path or enumeration budget fails the folder before writes | NOT RUN | |
 | Tab/Shift+Tab reach Import, destination, report paths and Dismiss with visible focus; VoiceOver identifies each control, progress, created path and skip/warning text; resize and Reduce Motion keep the Library usable | NOT RUN | |
+
+## M4 A13 Assistant Settings: NOT RUN
+
+The Linux host can check Swift syntax and Xcode project structure, but cannot
+compile SwiftUI/AppKit or run these hosted tests. Record the `macos-app` CI
+build and `MacAssistantSettingsTests` results before performing the checks
+below. Hosted tests use memory-only secrets and stub clients; they do not
+establish real provider, Keychain prompt or VoiceOver behavior.
+
+- Commit / `macos-app` CI run / hosted test result:
+- macOS / hardware / signing identity / login-keychain state:
+- Date / tester / Anthropic model ID / Ollama version and model ID:
+- VoiceOver / keyboard navigation settings:
+
+Use nonproduction credentials and a disposable profile. Record statuses and
+tiers only. Do not put keys, request headers or provider response bodies in
+this checklist, screenshots or logs.
+
+| Check | Result | Details |
+|---|---|---|
+| Open Settings → Assistant; loading/progress finishes without freezing the window; repeated opening preserves the current draft, and close/reopen discards unsaved edits | NOT RUN | |
+| Add, select, rename and delete profiles; selecting a saved profile makes it active, Disable Assistant clears the active selection, and saving a new profile preserves an existing active provider | NOT RUN | |
+| Real Anthropic: enter the base URL and a test key, explicitly Test connection, observe typed success and listed models; select a listed ID, Save, then restart and verify saved metadata and Keychain tier | NOT RUN | |
+| Real Ollama: choose OpenAI-compatible, enter a loopback base URL and installed model ID with no key; Test connection lists models, Save and restart retain the keyless profile | NOT RUN | |
+| Enter an unlisted model ID before/after Test; success with no models, listing unsupported, authentication failure, network failure and timeout leave manual entry usable and show actionable typed copy | NOT RUN | |
+| Test an unsaved draft without Save; no profile or key is persisted. Editing or switching profiles cancels Test and no stale result or model list reappears | NOT RUN | |
+| Key field: saved keys never appear after selection, Save, close/reopen or restart; blank keeps, replacement stages, Keep discards typed input, and Clear empties the field without reverting to Keep | NOT RUN | |
+| Save after Clear removes the persisted key and saved status; failed Clear/delete preserves the saved profile/status and shows a typed error; deleting the active profile leaves no stale draft, key tier or model list | NOT RUN | |
+| Change kind or destination with a saved key; Save/Test requires re-entry or explicit Clear, and the previous key is never sent to the changed destination | NOT RUN | |
+| Record Keychain prompt timing/count; allow, deny, cancel and locked-keychain cases leave Settings responsive and show typed status/errors without exposing credentials | NOT RUN | |
+| Close Settings during Test and reopen; Test is cancelled and retired replies do not update the new pane. Close during Save; the accepted Save completes and reopen shows its committed result | NOT RUN | |
+| VoiceOver identifies Assistant, profile list/active provider, kind, base URL, model ID/picker, secure key input, key mode/tier, Save/Test/Cancel and progress/errors; Tab/Shift+Tab keep visible focus and all controls operable | NOT RUN | |
