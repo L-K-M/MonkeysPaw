@@ -19,7 +19,7 @@ public struct SyncServerURL: Hashable, Sendable {
         var path = components.path
         while path.hasSuffix("/") { path.removeLast() }
         // Reach a fixed point, including a pasted, repeated API suffix.
-        while path.hasSuffix("/api/v1") { path.removeLast(7) }
+        while path.hasSuffix("/api/v1") { path.removeLast("/api/v1".count) }
         components.path = path
         guard let url = components.url else { throw SyncServerURLError.invalidURL }
         baseURL = url
