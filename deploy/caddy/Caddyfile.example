@@ -1,0 +1,12 @@
+{
+	# No management endpoint or request access log in this public-facing proxy.
+	admin off
+}
+
+# Compose supplies the URL. For tls use https://prompts.example.com with DNS
+# pointed at this host and TCP 80/443 open. Keep the certificate /data private.
+{$MONKEYSPAW_PUBLIC_URL} {
+	# Caddy discards client-supplied X-Forwarded-* values by default. The server
+	# trusts only this container's fixed peer address on the dedicated bridge.
+	reverse_proxy monkeyspaw-server:8080
+}

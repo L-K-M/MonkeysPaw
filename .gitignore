@@ -12,5 +12,10 @@ xcuserdata/
 .DS_Store
 /config/
 .env
+# Local deployment overrides, secrets and database/backup files.
+/.env.*
+!/.env.example
+/secrets/
+/data/
 # Written only while build-deb.sh compiles the packaged Linux executable.
 /Sources/MonkeysPawLinux/PackagedBuildVersion.generated.swift
