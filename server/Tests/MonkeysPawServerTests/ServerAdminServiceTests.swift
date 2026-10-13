@@ -298,7 +298,8 @@ struct ServerAdminServiceTests {
     @Test func auditHasStableActionsUTCAndAnExplicitOperatorActor() async throws {
         #expect(AuditAction.allCases.map(\.rawValue) == [
             "user.create", "user.update", "user.disable", "user.enable", "user.reset_password",
-            "group.create", "group.rename", "group.delete", "membership.upsert", "membership.remove"
+            "group.create", "group.rename", "group.delete", "membership.upsert", "membership.remove",
+            "invite.create", "invite.consume"
         ])
         try await withAccountFixture { fixture in
             let target = try await fixture.user()
