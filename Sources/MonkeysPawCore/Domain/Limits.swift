@@ -138,6 +138,9 @@ public enum Limits {
     /// §7.1: cap LLM response bodies at 2 MiB to bound transport memory.
     public static let responseCap: Int = 2 * mebibyte
 
+    /// §7.2: bound recovery/parser recursion; shipped schemas need five levels.
+    public static let llmJSONNestingCap: Int = 32
+
     /// §7.1: allow sync batches up to 16 MiB on the same bounded transport.
     public static let syncResponseCap: Int = 16 * mebibyte
 
