@@ -296,8 +296,9 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   Escape, profile changes and library graph retirement do the same; even
   replies already queued on `MainThread` cannot revive an older request.
   No action runs automatically. Retry with feedback retains the session-only
-  user/assistant transcript and appends escaped feedback; the original template
-  snapshot remains the quote-matching and merge baseline. Each explicit retry
+  user/assistant transcript unchanged. Its newest user turn contains the current
+  template snapshot and instruction plus escaped feedback; quote matching and
+  merge use this fresh snapshot. Each explicit retry
   starts a fresh action budget; format probes share that action's deadline.
 - **Editor snapshot and acceptance.** At an explicit action, Core captures the
   current editor source bytes, buffer revision, editing session, relative path
@@ -317,6 +318,10 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   and exposes the exact canonical candidate and a completion token. A11 owns
   the checked file write and provenance, then reports saved or failed through
   that token. A10 performs no prompt writes; Reject discards the draft.
+  A retired token returns false from `completeAcceptance`; A11 must still
+  surface any committed-file or provenance outcome through the editor's save
+  contract. Non-secret provider snapshots have a separate short lock so model
+  callbacks and cancellation cannot wait behind a blocked credential read.
 - **Diffs.** Line-level, computed in Core with a Myers diff. Lines that add,
   remove, or rename a placeholder carry a warning marker, because a rename
   silently drops remembered values. Front matter (including delimiters) and

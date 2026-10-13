@@ -152,11 +152,6 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     public func retryWithFeedback(_ feedback: String) {
         contextChanged()
         guard isActive, state.phase != .working, !state.isAccepting, let attempt else { return }
-        guard attempt.context == context else {
-            state.failure = .staleContext
-            changed()
-            return
-        }
         begin(attempt.command, effort: attempt.request.effort, transcript: state.transcript, feedback: feedback)
     }
 
@@ -190,9 +185,12 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         return acceptanceID == id ? acceptance : nil
     }
 
-    public func completeAcceptance(_ id: UUID, result: Result<Void, AssistantFailure>) {
+    /// False means the token was retired. A11 still owns reporting any committed
+    /// file or provenance failure through the editor's save-outcome contract.
+    @discardableResult
+    public func completeAcceptance(_ id: UUID, result: Result<Void, AssistantFailure>) -> Bool {
         contextChanged()
-        guard isActive, acceptanceID == id else { return }
+        guard isActive, acceptanceID == id else { return false }
         acceptanceID = nil
         state.isAccepting = false
         switch result {
@@ -200,6 +198,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         case .failure(let failure): state.phase = .failed; state.failure = failure
         }
         changed()
+        return true
     }
 
     public func reject() { cancel() }
@@ -270,6 +269,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     }
 
     private func received(_ result: Result<AssistantResponse, AssistantFailure>, id: UUID) {
+        guard isActive, requestID == id else { return }
         contextChanged()
         guard isActive, requestID == id, let attempt else { return }
         guard service.isCurrent(context) else { cancel(); return }
@@ -307,7 +307,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
 
     private func prepare(_ artifact: LlmArtifact, command: AssistantCommand, context: AssistantContext, id: UUID) {
         let operation = service.prepare(artifact, for: command, context: context, retainingID: retainedID) { [weak self] result in
-            guard let self else { return }
+            guard let self, self.isActive, self.requestID == id else { return }
             self.contextChanged()
             guard self.isActive, self.requestID == id else { return }
             self.cancelWork = nil

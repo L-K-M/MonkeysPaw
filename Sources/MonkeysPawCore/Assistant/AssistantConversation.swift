@@ -20,16 +20,14 @@ public struct AssistantMessage: Equatable, Sendable, CustomStringConvertible,
 
 extension AssistantRequest {
     var userMessage: AssistantMessage {
-        if let feedback {
-            return AssistantMessage(role: .user, content: AssistantPrompts.data(feedback, tag: "feedback"))
-        }
-        let content: String
+        var content: String
         switch action {
         case .write(let brief): content = AssistantPrompts.writeData(brief: brief)
         case .review(let source): content = AssistantPrompts.reviewData(source: source)
         case .improve(let source, let instruction, let findings):
             content = AssistantPrompts.improveData(source: source, instruction: instruction, selectedFindings: findings)
         }
+        if let feedback { content += "\n" + AssistantPrompts.data(feedback, tag: "feedback") }
         return AssistantMessage(role: .user, content: content)
     }
 

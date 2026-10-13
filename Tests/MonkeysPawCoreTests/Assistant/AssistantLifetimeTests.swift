@@ -66,7 +66,7 @@ final class AssistantLifetimeTests: XCTestCase {
         XCTAssertEqual(h.model.state.artifact?.body, "New candidate")
         let accepted = try XCTUnwrap(h.model.accept())
         h.model.reject()
-        h.model.completeAcceptance(accepted.id, result: .success(()))
+        XCTAssertFalse(h.model.completeAcceptance(accepted.id, result: .success(())))
         XCTAssertEqual(h.model.state.phase, .idle)
     }
 
@@ -200,9 +200,9 @@ final class AssistantLifetimeTests: XCTestCase {
         try await h.artifact()
         try await h.phase(.ready)
         let acceptance = try XCTUnwrap(h.model.accept())
-        h.model.completeAcceptance(UUID(), result: .success(()))
+        XCTAssertFalse(h.model.completeAcceptance(UUID(), result: .success(())))
         XCTAssertTrue(h.model.state.isAccepting)
-        h.model.completeAcceptance(acceptance.id, result: .failure(.write(.serializationFailed)))
+        XCTAssertTrue(h.model.completeAcceptance(acceptance.id, result: .failure(.write(.serializationFailed))))
         XCTAssertEqual(h.model.state.phase, .failed)
         XCTAssertEqual(h.model.state.failure, .write(.serializationFailed))
         XCTAssertNotNil(h.model.state.candidate)
@@ -291,5 +291,44 @@ final class AssistantLifetimeTests: XCTestCase {
                 XCTAssertTrue(h.model.state.issues.contains { $0.severity == .error })
             } else { XCTAssertEqual(h.model.state.failure, .assistant(.privatePrompt)) }
         }
+    }
+
+    func testRetrySnapshotsNewBufferWhilePreservingPriorTranscript() async throws {
+        let h = try AssistantActionHarness([.held, .held], source: "Original template")
+        h.ui { h.model.editInstruction("Clarify it"); h.model.improve() }
+        try await h.sent()
+        try await h.artifact()
+        try await h.phase(.ready)
+        let transcript = h.model.state.transcript
+        h.editor.ui { h.editor.model.edit("Current unsaved {{topic}}") }
+        h.changed()
+        let snapshot = try XCTUnwrap(h.editor.model.assistantSnapshot)
+        h.ui { h.model.retryWithFeedback("Use the latest template") }
+        XCTAssertEqual(h.model.state.phase, .working)
+        guard h.model.state.phase == .working else { return }
+        try await h.sent(2)
+        let messages = try await h.messages(at: 1)
+        XCTAssertEqual(Array(messages.prefix(2)), transcript.map(\.wireValue))
+        let latest = try XCTUnwrap(messages.last?["content"])
+        XCTAssertTrue(latest.contains("Current unsaved {{topic}}"))
+        XCTAssertTrue(latest.contains("<feedback>\nUse the latest template\n</feedback>"))
+        try await h.artifact()
+        try await h.phase(.ready)
+        XCTAssertEqual(h.model.state.candidate?.context.editor, snapshot)
+    }
+
+    func testRetryRevalidatesPrivateBufferBeforeSendingRetainedTranscript() async throws {
+        let h = try AssistantActionHarness(source: "Original template")
+        h.ui { h.model.improve() }
+        try await h.sent()
+        try await h.artifact()
+        try await h.phase(.ready)
+        h.editor.ui { h.editor.model.edit("---\nprivate: true\n---\nSensitive") }
+        h.ui { h.model.retryWithFeedback("Try again") }
+        try await h.phase(.failed)
+        XCTAssertEqual(h.model.state.failure, .assistant(.privatePrompt))
+        XCTAssertNil(h.model.state.candidate)
+        let requests = await h.transport.snapshot()
+        XCTAssertEqual(requests.count, 1)
     }
 }
