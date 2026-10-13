@@ -33,6 +33,7 @@ jobs:
       core-linux: ${{ steps.select.outputs.core-linux }}
       linux-app: ${{ steps.select.outputs.linux-app }}
       deb: ${{ steps.select.outputs.deb }}
+      flatpak: ${{ steps.select.outputs.flatpak }}
       android: ${{ steps.select.outputs.android }}
       core-macos: ${{ steps.select.outputs.core-macos }}
       macos-app: ${{ steps.select.outputs.macos-app }}
@@ -277,7 +278,8 @@ jobs:
 
   flatpak:
     name: GNOME 50 Flatpak from the tested deb
-    needs: deb
+    needs: [changes, deb]
+    if: needs.changes.outputs.flatpak == 'true'
     # bubblewrap's unprivileged user namespaces require the bare runner.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
