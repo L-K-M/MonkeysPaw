@@ -1,3 +1,6 @@
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
 }
@@ -15,4 +18,17 @@ kotlin {
 
 dependencies {
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.serialization.json)
+}
+
+val fixtureDirectory = rootProject.layout.projectDirectory.dir("../spec/fixtures")
+val schemaDirectory = rootProject.layout.projectDirectory.dir("../spec/schema")
+
+tasks.withType<Test>().configureEach {
+    systemProperty("monkeyspaw.fixtures", fixtureDirectory.asFile.absolutePath)
+    systemProperty("monkeyspaw.schema", schemaDirectory.asFile.absolutePath)
+    inputs.dir(fixtureDirectory).withPropertyName("promptFixtures")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(schemaDirectory).withPropertyName("syncSchemas")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
