@@ -582,6 +582,7 @@ this checklist, screenshots or logs.
 |---|---|---|
 | Open Settings → Assistant; loading/progress finishes without freezing the window; repeated opening preserves the current draft, and close/reopen discards unsaved edits | NOT RUN | |
 | Add, select, rename and delete profiles; selecting a saved profile makes it active, Disable Assistant clears the active selection, and saving a new profile preserves an existing active provider | NOT RUN | |
+| With one active profile, add a draft; no saved row is highlighted and clicking the active row returns to it. Add and Save another profile; its edited row is highlighted while the old provider stays active, and Make active selects the new provider | NOT RUN | |
 | Real Anthropic: enter the base URL and a test key, explicitly Test connection, observe typed success and listed models; select a listed ID, Save, then restart and verify saved metadata and Keychain tier | NOT RUN | |
 | Real Ollama: choose OpenAI-compatible, enter a loopback base URL and installed model ID with no key; Test connection lists models, Save and restart retain the keyless profile | NOT RUN | |
 | Enter an unlisted model ID before/after Test; success with no models, listing unsupported, authentication failure, network failure and timeout leave manual entry usable and show actionable typed copy | NOT RUN | |

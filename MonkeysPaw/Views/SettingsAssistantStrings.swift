@@ -6,6 +6,7 @@ enum SettingsAssistantStrings {
     static let add = "Add profile"
     static let delete = "Delete profile"
     static let disable = "Disable Assistant"
+    static let makeActive = "Make active"
     static let name = "Profile name"
     static let kind = "Provider kind"
     static let anthropic = "Anthropic"

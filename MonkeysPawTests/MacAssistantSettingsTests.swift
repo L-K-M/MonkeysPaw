@@ -103,6 +103,35 @@ final class MacAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(h.client.calls, 0)
     }
 
+    func testNewDraftUnselectsOldRowAndSavedInactiveDraftCanBeActivated() throws {
+        let original = ProviderDraft(displayName: "Original")
+        let h = try MacAssistantSettingsHarness(profiles: [original])
+        h.work.drain()
+        let view = h.presentation
+        XCTAssertEqual(view.profileSelection, original.id)
+        view.addProfile()
+        XCTAssertNil(view.profileSelection, "No saved row is selected while editing a new draft")
+        XCTAssertEqual(view.state.selectedProfileID, original.id)
+        XCTAssertFalse(view.canActivateDraft)
+        view.selectProfile(original.id)
+        h.work.drain()
+        XCTAssertEqual(view.state.draft?.id, original.id, "The active row can return from a new draft")
+        view.addProfile()
+        view.renameProfile("New saved profile")
+        let newID = try XCTUnwrap(view.state.draft?.id)
+        view.save()
+        h.work.drain()
+        XCTAssertEqual(view.state.selectedProfileID, original.id)
+        XCTAssertEqual(view.profileSelection, newID)
+        XCTAssertTrue(view.canActivateDraft, "The edited saved row needs an explicit activation path")
+        view.activateProfile()
+        h.work.drain()
+        XCTAssertEqual(view.state.selectedProfileID, newID)
+        XCTAssertEqual(view.state.draft?.id, newID)
+        XCTAssertFalse(view.canActivateDraft)
+        XCTAssertEqual(h.client.calls, 0)
+    }
+
     func testKeyNeverEntersPublishedOrDisplayedStringsAndNativeResetPreservesClear() throws {
         let sentinel = "saved-key-" + UUID().uuidString
         let profile = ProviderDraft(displayName: "Private", key: .replace(SecretValue(sentinel)))
@@ -321,6 +350,18 @@ final class MacAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(h.files.writes, 0)
         XCTAssertEqual(h.secrets.reads, 0)
         XCTAssertEqual(h.client.calls, 0)
+    }
+
+    /// The controller tests use this public Core graph without native I/O.
+    static func makeModel(work: BackgroundWork) -> AssistantSettingsModel {
+        let files = MacAssistantSettingsFiles()
+        let settings = ProviderSettingsService(store: ProviderSettingsStore(files: files),
+            secrets: MacAssistantSettingsSecrets())
+        let client = MacAssistantSettingsClient()
+        let main = DispatchMainThread()
+        let assistant = AssistantService(providerSettings: settings, anthropic: client,
+            openAICompatible: client, work: work, main: main)
+        return AssistantSettingsModel(settings: settings, assistant: assistant, work: work, mainThread: main)
     }
 
     private func runTest(_ h: MacAssistantSettingsHarness, expecting result: ConnectionTestResult,

@@ -24,6 +24,10 @@ final class AssistantSettingsViewState: ObservableObject {
     }
     var canSave: Bool { canChangeProfiles && state.draft != nil }
     var canTest: Bool { canSave && !state.isTesting }
+    var profileSelection: ProviderProfileID? { state.isNewProfile ? nil : state.draft?.id }
+    var canActivateDraft: Bool {
+        canChangeProfiles && profileSelection != nil && profileSelection != state.selectedProfileID
+    }
     var activeProfileMessage: String {
         guard let profile = state.profiles.first(where: { $0.id == state.selectedProfileID }) else {
             return SettingsAssistantStrings.inactive
@@ -49,6 +53,7 @@ final class AssistantSettingsViewState: ObservableObject {
 
     func addProfile() { if canChangeProfiles { model?.addProfile() } }
     func selectProfile(_ id: ProviderProfileID?) { if canChangeProfiles { model?.selectProfile(id) } }
+    func activateProfile() { if canActivateDraft { model?.selectProfile(profileSelection) } }
     func renameProfile(_ name: String) { if canEditDraft { model?.renameProfile(name) } }
     func setKind(_ kind: ProviderKind) { if canEditDraft { model?.setKind(kind) } }
     func setBaseURL(_ url: String) { if canEditDraft { model?.setBaseURL(url) } }
@@ -94,7 +99,7 @@ struct SettingsAssistantView: View {
     private var profiles: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(SettingsAssistantStrings.profiles).font(.headline)
-            List(selection: Binding(get: { presentation.state.selectedProfileID }, set: presentation.selectProfile)) {
+            List(selection: Binding(get: { presentation.profileSelection }, set: presentation.selectProfile)) {
                 ForEach(presentation.state.profiles, id: \.id) { profile in
                     Text(SettingsAssistantStrings.profileRow(profile.displayName,
                         isActive: profile.id == presentation.state.selectedProfileID))
@@ -109,6 +114,9 @@ struct SettingsAssistantView: View {
                 Button(SettingsAssistantStrings.add, action: presentation.addProfile)
                 Button(SettingsAssistantStrings.delete, action: presentation.deleteProfile)
                     .disabled(presentation.state.draft == nil)
+                if presentation.canActivateDraft {
+                    Button(SettingsAssistantStrings.makeActive, action: presentation.activateProfile)
+                }
                 Button(SettingsAssistantStrings.disable) { presentation.selectProfile(nil) }
             }
             .disabled(!presentation.canChangeProfiles)

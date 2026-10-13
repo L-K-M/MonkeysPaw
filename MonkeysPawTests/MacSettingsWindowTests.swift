@@ -119,6 +119,53 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertFalse(panel.isVisible)
     }
 
+    func testAssistantFactoryIsLazyAndClosingRetiresTestBeforeReopeningSameWindow() throws {
+        try start()
+        let existing = try settings().presentation
+        let main = DispatchMainThread()
+        let work = SettingsAssistantWork()
+        var creations = 0
+        weak var liveModel: AssistantSettingsModel?
+        let controller = SettingsWindowController(general: existing.generalModel,
+            shortcuts: existing.shortcutsModel, rememberedValues: existing.rememberedValuesModel,
+            forgetAllConfirmation: { _, _ in {} }, mainThread: main,
+            activation: WindowActivationCoordinator(mainThread: main, setPolicy: { _ in }, activate: {}),
+            folderChooser: { _, _ in {} }, openSetup: {}, makeAssistant: {
+                creations += 1
+                let model = MacAssistantSettingsTests.makeModel(work: work)
+                liveModel = model
+                return model
+            })
+        XCTAssertEqual(creations, 0)
+        XCTAssertNil(controller.presentation.assistant)
+        controller.show()
+        let window = try XCTUnwrap(controller.window)
+        defer { window.close() }
+        work.drain()
+        let retired = try XCTUnwrap(controller.presentation.assistant)
+        retired.addProfile()
+        retired.renameProfile("Staged")
+        controller.show()
+        XCTAssertEqual(creations, 1)
+        XCTAssertTrue(controller.presentation.assistant === retired)
+        XCTAssertEqual(retired.state.draft?.displayName, "Staged")
+        retired.testConnection()
+        XCTAssertTrue(retired.state.isTesting)
+        window.close()
+        XCTAssertNil(controller.presentation.assistant)
+        XCTAssertNil(liveModel, "Closing releases the model and cancels its queued Test")
+        work.drain()
+        XCTAssertFalse(retired.canChangeProfiles)
+        controller.show()
+        work.drain()
+        XCTAssertEqual(creations, 2)
+        XCTAssertTrue(controller.window === window)
+        let reopened = try XCTUnwrap(controller.presentation.assistant)
+        XCTAssertFalse(reopened === retired)
+        XCTAssertNil(reopened.state.draft)
+        XCTAssertFalse(reopened.state.isTesting)
+    }
+
     func testSetupFromSettingsReusesSetupAndClosingSettingsWithSetupVisibleReturnsToAccessory() throws {
         try start()
         let model = try XCTUnwrap(delegate.setupModel)
@@ -403,6 +450,12 @@ final class MacSettingsWindowTests: XCTestCase {
 private final class SettingsWindowScheduler: MonkeysPawCore.Scheduler {
     private var pending: [() -> Void] = []
     func after(_ delay: Duration, _ work: @escaping () -> Void) { pending.append(work) }
+    func drain() { while !pending.isEmpty { pending.removeFirst()() } }
+}
+
+private final class SettingsAssistantWork: BackgroundWork {
+    private var pending: [() -> Void] = []
+    func run(_ work: @escaping () -> Void) { pending.append(work) }
     func drain() { while !pending.isEmpty { pending.removeFirst()() } }
 }
 
