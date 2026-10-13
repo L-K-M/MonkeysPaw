@@ -229,7 +229,9 @@ public final class PromptEditingService: @unchecked Sendable {
             catch LibraryError.conflict {
                 if let source {
                     switch checkedLoad(at: source.relativePath.string) {
-                    case .loaded(let loaded): outcome = .conflict(.modified(currentStamp: loaded.stamp))
+                    case .loaded(let loaded):
+                        outcome = loaded.stamp == source.stamp ? .failed(.editing(.library(.conflict)))
+                            : .conflict(.modified(currentStamp: loaded.stamp))
                     case .deleted: outcome = .conflict(.deleted)
                     case .failed(let failure): outcome = .failed(.editing(failure))
                     }

@@ -129,10 +129,16 @@ public final class LibraryService: PromptFavoriteEditing {
             let folder = destination == .privateCopy ? "" : (current?.entry.folder ?? "")
             let name = PromptCreation.relativePath(title: prepared.content.document.frontMatter.title, now: clock.now())
             let path = (folder.isEmpty ? "" : folder + "/") + name
-            return try editingCommit {
-                try createDocument(prepared.content.document, near: path, naming: .preferredPath,
-                                   prepared: prepared, creationSource: source)
-            }
+            do {
+                let outcome = try editingCommit {
+                    try createDocument(prepared.content.document, near: path, naming: .preferredPath,
+                                       prepared: prepared, creationSource: source)
+                }
+                // Verification belongs to the new path, never the open editor's
+                // source. Source stamp checks use AssistantSaveRefusal instead.
+                if case .conflict = outcome { return .failed(.library(.conflict)) }
+                return outcome
+            } catch LibraryError.conflict { return .failed(.library(.conflict)) }
         }
     }
 

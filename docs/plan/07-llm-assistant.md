@@ -352,9 +352,12 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   A changed buffer (including edits away and back), graph, profile, access,
   session or cancelled request refuses queued publication. The worker rechecks
   the source stamp at publication, including when creating a new prompt.
-  Disk modification/deletion opens §11.7's existing conflict dialog, retaining
-  the editor draft. A buffer change requires a fresh Show diff. Write/private
-  copy first uses §11.7's Save / Discard / Cancel guard for unsaved edits;
+  Source disk modification/deletion opens §11.7's existing conflict dialog,
+  retaining the editor draft. A buffer change requires a fresh Show diff.
+  If verification sees a replaced or missing newly created prompt, acceptance
+  reports failure and retains the original editor (§5.5).
+  Write and private copy first use §11.7's Save / Discard / Cancel guard for
+  unsaved edits;
   Save or Discard changing that snapshot also requires a fresh preview.
   Retiring acceptance cancels its pending discard dialog and completes its
   caller without blocking later editor navigation.

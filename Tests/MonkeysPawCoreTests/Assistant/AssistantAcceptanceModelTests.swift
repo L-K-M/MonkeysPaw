@@ -144,6 +144,34 @@ final class AssistantAcceptanceModelTests: XCTestCase {
         }
     }
 
+    func testReplacementOfCreatedPromptKeepsOriginalEditorAndReportsCreationFailure() async throws {
+        for (hasSource, viewerCopy) in [(false, false), (true, false), (true, true)] {
+            let original = "---\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\n---\nOriginal"
+            let h = try AssistantAcceptanceHarness(source: hasSource ? original : nil)
+            if viewerCopy { h.access = .group(.viewer); h.e.ui { h.model.contextChanged() } }
+            try await h.ready(improve: viewerCopy)
+            let selection = h.e.model.state.prompt
+            let stamp = h.e.model.state.stamp
+            h.e.h.files.onWrite = { path in
+                guard path == "Candidate.md" else { return }
+                h.e.h.files.onWrite = nil
+                do { try h.e.h.files.put("External copy", at: path) }
+                catch { XCTFail("Could not replace the new test prompt.") }
+            }
+            guard case .failed(.editing(.library(.conflict))) = try h.accept() else {
+                return XCTFail("A destination replacement cannot open the original's conflict dialog.")
+            }
+            XCTAssertEqual(h.e.model.state.prompt, selection)
+            XCTAssertEqual(h.e.model.state.stamp, stamp)
+            XCTAssertEqual(h.e.model.state.source, hasSource ? original : nil)
+            XCTAssertNil(h.e.model.state.conflict)
+            XCTAssertEqual(try h.e.h.files.text(at: "Candidate.md"), "External copy")
+            if hasSource { XCTAssertEqual(try h.e.h.files.text(at: "a.md"), original) }
+            XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+            XCTAssertEqual(h.model.state.phase, .failed)
+        }
+    }
+
     func testBufferEditsAwayAndBackRefuseQueuedAcceptanceWithoutOverwriting() async throws {
         let h = try AssistantAcceptanceHarness(source: "Original")
         try await h.ready(improve: true)
