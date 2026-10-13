@@ -50,6 +50,9 @@ final class LinuxLibraryWindow {
     private let save = GTK.button(LinuxEditorStrings.save) {}
     private let revert = GTK.button(LinuxEditorStrings.revert) {}
     private let saveCopy = GTK.button(LinuxEditorStrings.saveAsCopy) {}
+    private let history = LinuxLibraryHistoryView()
+    private let commands: LinuxLibraryCommands
+    private var historyPrompt: LibraryPromptSelection?
     private var renderedFields: [PromptField]?
     private var renderedPreview: String?
 
@@ -59,6 +62,7 @@ final class LinuxLibraryWindow {
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
+        commands = LinuxLibraryCommands(parent: window)
         filter = gtk_entry_new()!
         sidebar = gtk_list_box_new()!
         list = gtk_list_box_new()!
@@ -67,6 +71,7 @@ final class LinuxLibraryWindow {
         favorite = GTK.button(LinuxStrings.addFavorite) {}
         status = GTK.label("")
         empty = GTK.label(LinuxStrings.noLibraryMatches)
+        commands.onChange = { [weak self] in self?.render() }
 
         GTK.hideOnClose(window)
         GTK.onCloseRequested(window) { [weak self] in self?.requestClose() }
@@ -79,8 +84,9 @@ final class LinuxLibraryWindow {
             self.unbind()
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.updateDialog()
+            guard let self, !self.isDestroyed else { return }
+            if self.isVisible { self.updateDialog() }
+            else { self.commands.cancelDialog() }
         }
         GTK.observeKeys(window) { [weak self] key, modifiers in
             self?.keyPressed(key, modifiers: modifiers) ?? false
@@ -153,6 +159,8 @@ final class LinuxLibraryWindow {
         unbind()
         self.browser = browser
         self.editor = editor
+        commands.bind(editor: editor, browser: browser)
+        historyPrompt = nil
         previousPrompt = nil
         copySelection = nil
         revealAfterOpen = []
@@ -213,6 +221,7 @@ final class LinuxLibraryWindow {
 
     private func unbind() {
         endDialog()
+        commands.unbind()
         bindingRevision &+= 1
         sourceRevision &+= 1
         if let observer { browser?.removeObserver(observer) }
@@ -319,6 +328,7 @@ final class LinuxLibraryWindow {
             guard let self, self.isVisible, self.available else { return }
             self.editor?.revert()
         }
+        gtk_box_append(mp_box(actions), commands.widget)
         gtk_box_append(mp_box(detail), actions)
         let editPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
         gtk_box_append(mp_box(editPage), scrolled(source.widget, width: Limits.panelSize.width / 2))
@@ -342,6 +352,14 @@ final class LinuxLibraryWindow {
         gtk_notebook_append_page(mp_notebook(tabs), editPage, GTK.label(LinuxStrings.edit))
         gtk_notebook_append_page(mp_notebook(tabs), scrolled(preview, width: Limits.panelSize.width / 2), GTK.label(LinuxStrings.preview))
         gtk_notebook_append_page(mp_notebook(tabs), scrolled(fields, width: Limits.panelSize.width / 2), GTK.label(LinuxEditorStrings.fields))
+        gtk_notebook_append_page(mp_notebook(tabs), history.widget, GTK.label(LinuxEditorStrings.history))
+        GTK.onNotify(UnsafeMutableRawPointer(tabs), "page") { [weak self] in
+            guard let self, !self.isDestroyed, gtk_notebook_get_current_page(mp_notebook(self.tabs)) == 3 else { return }
+            self.loadHistory()
+        }
+        history.onLoad = { [weak self] in self?.loadHistory() }
+        history.onSelect = { [weak self] revision in self?.editor?.selectRevision(revision) }
+        history.onRestore = { [weak self] revision in self?.commands.restore(revision) }
         gtk_box_append(mp_box(detail), tabs)
         gtk_widget_set_name(editorStatus, "library-editor-status")
         gtk_box_append(mp_box(detail), editorStatus)
@@ -395,7 +413,19 @@ final class LinuxLibraryWindow {
         gtk_widget_set_sensitive(saveCopy, available && state.canSave ? 1 : 0)
         gtk_widget_set_sensitive(revert, available && state.prompt != nil && state.status != .loading
             && state.status != .saving && state.status != .commandRunning ? 1 : 0)
-        gtk_label_set_text(mp_label(editorStatus), LinuxEditorStrings.status(state))
+        commands.update(state, available: available)
+        history.update(state, available: available, canRestore: commands.canRun && !commands.hasDialog)
+        gtk_label_set_text(mp_label(editorStatus), commands.message ?? LinuxEditorStrings.status(state))
+        if state.prompt == nil { historyPrompt = nil }
+        if gtk_notebook_get_current_page(mp_notebook(tabs)) == 3, state.prompt != historyPrompt { loadHistory() }
+    }
+
+    private func loadHistory() {
+        guard !isDestroyed, available, let editor, let prompt = editor.state.prompt,
+              editor.state.stamp != nil, editor.state.status != .loading,
+              editor.state.status != .saving, editor.state.status != .commandRunning else { return }
+        historyPrompt = prompt
+        editor.loadHistory()
     }
 
     @discardableResult
@@ -522,7 +552,7 @@ final class LinuxLibraryWindow {
         let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
             | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
         let modifiers = modifiers & relevant
-        guard activeDialog == nil else { return false }
+        guard activeDialog == nil, !commands.hasDialog else { return false }
         if key == UInt32(GDK_KEY_Escape), modifiers == 0 {
             if !browser.filter.isEmpty { browser.setFilter(""); render(); return true }
             return requestClose()
