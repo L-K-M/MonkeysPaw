@@ -23,8 +23,9 @@ struct ServerSyncFeedPagingTests {
             let last = try second.scope(identity.key)
             #expect(last.items.map(\.seq) == [sequences[200]] && last.cursor == String(sequences[200]) && !last.hasMore)
             let empty = try await fixture.feed.pull(request: second.continuation, session: session.identity)
-            #expect(empty.scopes[0].items.isEmpty && !empty.scopes[0].hasMore)
-            #expect(empty.scopes[0].cursor == last.cursor && empty.scopes[0].head == last.head)
+            let emptyPage = try empty.scope(identity.key)
+            #expect(emptyPage.items.isEmpty && !emptyPage.hasMore)
+            #expect(emptyPage.cursor == last.cursor && emptyPage.head == last.head)
         }
     }
 
@@ -189,7 +190,7 @@ struct ServerSyncFeedPagingTests {
                 try await client.execute(uri: "/api/v1/sync/pull", method: .post, headers: PromptHTTPTest.headers(session),
                                          body: .init(bytes: JSONEncoder().encode(request))) {
                     let response = try PromptHTTPTest.success($0, as: SyncAPI.PullResponse.self)
-                    #expect($0.body.readableBytes <= 8 * 1_024 * 1_024 && $0.body.readableBytes <= SyncAPI.responseEnvelopeMaxBytes)
+                    #expect($0.body.readableBytes <= ServerLimits.syncPageBytes && $0.body.readableBytes <= SyncAPI.responseEnvelopeMaxBytes)
                     #expect(response.scopes.reduce(0) { $0 + $1.items.count } == (escaped ? 5 : 31))
                     #expect(response.scopes.allSatisfy { $0.hasMore })
                     #expect(response.removed == removed.keys.sorted())
@@ -203,7 +204,8 @@ struct ServerSyncFeedPagingTests {
             var collected: [String: [Int64]] = [:]
             for _ in 0..<10 {
                 let response = try await fixture.feed.pull(request: next, session: session.identity)
-                #expect(try JSONEncoder().encode(response).count <= 8 * 1_024 * 1_024)
+                let encodedBytes = try JSONEncoder().encode(response).count
+                #expect(encodedBytes <= ServerLimits.syncPageBytes && encodedBytes <= SyncAPI.responseEnvelopeMaxBytes)
                 #expect(!response.scopes.flatMap(\.items).isEmpty)
                 for scope in response.scopes { collected[scope.identity.key, default: []] += scope.items.map(\.seq) }
                 next = response.continuation

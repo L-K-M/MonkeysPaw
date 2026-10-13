@@ -12,13 +12,17 @@ struct FeedTestChange: Sendable {
     var content: String? = "Event payload"
 }
 
-func feedTestID(_ index: Int) -> String { String(format: "%026d", index) }
+func feedTestID(_ index: Int) -> String {
+    let digits = String(index)
+    return String(repeating: "0", count: max(0, 26 - digits.count)) + digits
+}
 
 extension GroupTestFixture {
     var feed: SyncFeedService { .init(database: persistence.database) }
     var feedRepository: SyncFeedRepository { .init(database: persistence.database) }
 
-    /// Seed immutable feed rows without heads/revisions, proving the feed does not need either.
+    /// Seed immutable changes with rev values but no prompts or prompt_revisions rows.
+    /// Scope-head triggers still run; feed payloads need only the changes table.
     func seedFeed(identity: PromptOwnership, changes: [FeedTestChange]) async throws -> [Int64] {
         try await persistence.database.write { sql in
             var sequences: [Int64] = []
@@ -49,8 +53,15 @@ extension GroupTestFixture {
 
 extension SyncAPI.PullResponse {
     var continuation: SyncAPI.PullRequest {
-        .init(databaseID: databaseID, cursors: Dictionary(uniqueKeysWithValues: scopes.map { ($0.identity.key, $0.cursor) }))
+        var cursors: [String: String] = [:]
+        for scope in scopes {
+            let previous = cursors.updateValue(scope.cursor, forKey: scope.identity.key)
+            #expect(previous == nil, "Duplicate sync scope key '\(scope.identity.key)'")
+        }
+        return .init(databaseID: databaseID, cursors: cursors)
     }
 
-    func scope(_ key: String) throws -> SyncAPI.SyncScope { try #require(scopes.first { $0.identity.key == key }) }
+    func scope(_ key: String) throws -> SyncAPI.SyncScope {
+        try #require(scopes.first { $0.identity.key == key }, "Missing sync scope '\(key)'")
+    }
 }

@@ -71,7 +71,9 @@ struct ServerSyncFeedRouteTests {
             let baseline = try #require(await fixture.seedFeed(identity: identity, count: 1).last)
             let request = try await fixture.feedRequest(cursors: [identity.key: baseline])
             let json = try JSONEncoder().encode(request)
-            let exact = json + Data(repeating: 32, count: SyncAPI.requestEnvelopeMaxBytes - json.count)
+            let padding = SyncAPI.requestEnvelopeMaxBytes - json.count
+            try #require(padding >= 0, "Fixture request must fit inside the request envelope limit")
+            let exact = json + Data(repeating: 32, count: padding)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts,
                                       sessions: fixture.account.sessions)
             try await app.test(.router) { client in
