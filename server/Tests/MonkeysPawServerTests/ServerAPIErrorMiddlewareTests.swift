@@ -7,6 +7,27 @@ import Testing
 @testable import MonkeysPawServer
 
 struct ServerAPIErrorMiddlewareTests {
+    @Test func canonicalSerializationFailureKeepsTheSanitizedInternalEnvelope() async throws {
+        let capture = CapturedServerLogs()
+        let logger = ServerLogging.makeLogger(level: .trace, sink: capture.write)
+        let router = Router(context: ServerRequestContext.self)
+        router.add(middleware: APIErrorMiddleware())
+        router.put("/serialization") { _, _ async throws -> Response in
+            throw PromptWriteError.serializationFailed
+        }
+        try await Application(router: router, logger: logger).test(.router) { client in
+            try await client.execute(uri: "/serialization", method: .put) {
+                try PromptHTTPTest.error($0, .failure(.internalError))
+                #expect(String(buffer: $0.body) == "{\"code\":\"internal_error\"}")
+            }
+        }
+        let failures = try capture.events().filter { $0.message == "API request failed" }
+        #expect(failures.count == 1)
+        let failure = try #require(failures.first)
+        #expect(failure.level == "error")
+        #expect(failure.fields == ["code": "internal_error", "status": "500", "method": "PUT", "error_type": "PromptWriteError"])
+    }
+
     @Test func unexpectedErrorsLogOnlyTheirTypeAndKeepTheGenericEnvelope() async throws {
         let capture = APIErrorLogCapture()
         let logger = Logger(label: "api-error-test") { _ in APIErrorLogHandler(capture: capture) }

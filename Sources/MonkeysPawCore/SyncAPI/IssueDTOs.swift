@@ -78,7 +78,7 @@ extension SyncAPI {
             .unbalancedOpener
         ].map(\.rawValue) + [
             SyncPathIssueCode.emptyPath, .normalizationFailed, .absolutePath, .pathTooLong,
-            .emptySegment, .dotSegment, .backslash, .controlCharacter, .trailingDotOrSpace,
+            .emptySegment, .dotSegment, .hiddenDirectory, .backslash, .controlCharacter, .trailingDotOrSpace,
             .segmentTooLong, .invalidExtension, .reservedGroupsPrefix
         ].map(\.rawValue) + ["prompt.id_mismatch"]
 

@@ -13,7 +13,8 @@ public func buildApplication(configuration: ServerConfiguration, database: Serve
 
 func makeApplication(
     configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil,
-    admin: AdminUserService? = nil, groups: GroupService? = nil, invites: InviteService? = nil, logger suppliedLogger: Logger? = nil
+    admin: AdminUserService? = nil, groups: GroupService? = nil, invites: InviteService? = nil,
+    prompts: PromptService? = nil, logger suppliedLogger: Logger? = nil
 ) -> some ApplicationProtocol {
     let logger = suppliedLogger ?? ServerLogging.logger(level: configuration.logLevel)
     let router = Router(context: ServerRequestContext.self)
@@ -29,6 +30,7 @@ func makeApplication(
         AdminUserRoutes(admin: admin ?? .init(accounts: accounts, logger: logger), sessions: sessions).add(to: router)
         GroupRoutes(groups: groups ?? .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
         InviteRoutes(invites: invites ?? .init(accounts: accounts, sessions: sessions, publicURL: configuration.publicURL), sessions: sessions).add(to: router)
+        PromptRoutes(prompts: prompts ?? .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
     }
 
     return Application(
