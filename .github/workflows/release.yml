@@ -164,7 +164,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded deb artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: MonkeysPaw-release-deb
           path: ${{ runner.temp }}/deb-roundtrip
@@ -229,7 +229,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded macOS artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: MonkeysPaw-release-macos
           path: ${{ runner.temp }}/macos-roundtrip
@@ -253,7 +253,7 @@ jobs:
       DEB_FILE: ${{ needs.linux.outputs.deb_file }}
     steps:
       - name: Assemble verified workflow artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: MonkeysPaw-release-*
           merge-multiple: true
@@ -411,7 +411,7 @@ jobs:
     # No checkout or repository scripts execute with the registry write token.
     steps:
       - name: Fetch both smoke-tested OCI archives
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: MonkeysPaw-server-image-*
           merge-multiple: true
@@ -490,7 +490,7 @@ jobs:
     # No checkout or repository scripts execute with the write-enabled token.
     steps:
       - name: Fetch the verified build outputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: MonkeysPaw-release-*
           merge-multiple: true
