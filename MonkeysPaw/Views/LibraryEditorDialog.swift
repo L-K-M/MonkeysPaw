@@ -5,6 +5,19 @@ enum LibraryEditorDialog: Equatable {
     case conflict(EditorConflict, status: EditorStatus)
     case fileCommand(LibraryFileCommandRequest)
 
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.decision(let left, let leftStatus), .decision(let right, let rightStatus)):
+            return left == right && leftStatus == rightStatus
+        case (.conflict(let left, let leftStatus), .conflict(let right, let rightStatus)):
+            return left == right && leftStatus == rightStatus
+        case (.fileCommand(let left), .fileCommand(let right)):
+            // Reopened forms must replace their native sheet and callback token.
+            return left.id == right.id && left == right
+        default: return false
+        }
+    }
+
     var title: String {
         switch self {
         case .decision: return "Save your edits?"

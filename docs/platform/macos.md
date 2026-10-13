@@ -489,12 +489,14 @@ Record outcomes without recording prompt content.
 
 | Check | Result | Details |
 |---|---|---|
-| History opens as the fourth tab and refreshes when opened or when selecting another prompt; revisions appear newest first with local timestamp, exact byte size and Valid/Forensic only status | NOT RUN | |
+| History opens as the fourth tab and refreshes when opened or when selecting another prompt; revisions appear newest first with local timestamp, locale-formatted file size and Valid/Forensic only status | NOT RUN | |
+| Select History while a Rename or Move is running, including an occupied/invalid destination; history loads after the command settles, an empty history stays settled, and the typed command outcome remains visible | NOT RUN | |
+| Keep History open during a plain file's first save and a same-path external identity assignment; revisions follow the assigned identity, first save preserves source undo/caret, and rename/move refresh history at the new path | NOT RUN | |
 | Selecting a revision shows its exact source in a selectable, read-only monospace preview without changing the draft; non-UTF-8 and oversized revisions show distinct preview reasons | NOT RUN | |
 | Restore updates the editor and reloads history, preserves the prompt identity and revision body, and shows Restored or a committed history-maintenance warning | NOT RUN | |
 | Restore of malformed, non-UTF-8, oversized or future-format revisions displays the typed refusal and leaves current file bytes unchanged | NOT RUN | |
 | Restore while dirty asks Save/Discard/Cancel; Cancel keeps draft, selection and history; a stale restore opens the same conflict sheet as Save and never silently overwrites external changes | NOT RUN | |
-| Editor header and File menu offer Rename…, Move… and Delete… for the open prompt; File → Save uses ⌘S, and native text editing keeps its existing Cut/Copy/Paste equivalents | NOT RUN | |
+| The menu bar shows File between the application and Edit menus; the editor header and File menu offer Rename…, Move… and Delete… for the open prompt; File → Save uses ⌘S, and native text editing keeps its existing Cut/Copy/Paste equivalents | NOT RUN | |
 | Rename starts with the current .md filename and changes only the filename; Move offers known folders and accepts a new nested relative folder or empty text for root; selection follows assigned and unassigned prompts | NOT RUN | |
 | An occupied destination or invalid name/folder produces typed status copy, preserves the source and never replaces the destination | NOT RUN | |
 | Delete confirmation names the exact relative file path; Cancel/Escape/non-button dismissal preserves it, and an explicit Delete closes the editor, clears the selection and keeps history | NOT RUN | |

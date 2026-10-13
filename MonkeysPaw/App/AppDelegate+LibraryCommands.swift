@@ -2,7 +2,7 @@ import AppKit
 
 extension AppDelegate: NSMenuItemValidation {
     func makeLibraryFileMenu() -> NSMenuItem {
-        let item = NSMenuItem()
+        let item = NSMenuItem(title: LibraryCommandStrings.fileMenu, action: nil, keyEquivalent: "")
         let menu = NSMenu(title: LibraryCommandStrings.fileMenu)
         let actions: [(String, Selector, String)] = [
             (EditorStrings.save, #selector(saveLibraryPrompt), "s"),

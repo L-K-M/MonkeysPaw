@@ -52,7 +52,9 @@ enum LibraryCommandStrings {
         date.formatted(date: .abbreviated, time: .standard)
     }
 
-    static func byteSize(_ count: Int) -> String { "\(count) bytes" }
+    static func byteSize(_ count: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .file)
+    }
 
     static func restoreRefusal(_ error: PromptWriteError) -> String {
         switch error {

@@ -5,10 +5,20 @@ enum LibraryFileCommand: Equatable { case rename, move, delete }
 
 /// Binds a native form to the prompt that was open when it was requested.
 struct LibraryFileCommandRequest: Equatable {
+    // Callback ownership is separate from the form's value equality.
     let id = UUID()
     let command: LibraryFileCommand
     let prompt: LibraryPromptSelection
     let folders: [String]
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.command == rhs.command && lhs.prompt == rhs.prompt && lhs.folders == rhs.folders
+    }
+
+    /// A first save can assign identity without changing the form's target file.
+    func matchesFile(_ selection: LibraryPromptSelection?) -> Bool {
+        prompt.relativePath == selection?.relativePath
+    }
 
     var filename: String {
         let path = prompt.relativePath.string

@@ -30,7 +30,7 @@ extension LibraryWindowController {
     }
 
     static func fileCommandResponse(_ response: LibraryEditorResponse, alert: NSAlert) -> LibraryEditorResponse {
-        let input = alert.accessoryView?.subviews.compactMap { $0 as? NSTextField }.last
+        let input = alert.window.initialFirstResponder as? NSTextField
         let text = input?.currentEditor()?.string ?? input?.stringValue ?? ""
         switch response {
         case .rename: return .rename(text)

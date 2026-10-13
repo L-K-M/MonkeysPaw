@@ -254,7 +254,7 @@ final class LibraryViewState: ObservableObject {
               LibraryEditorDialog.fileCommand(request).accepts(response) else { return }
         fileCommandRequest = nil
         onEditorChange?()
-        guard response != .cancelFileCommand, canRunFileCommand, editorState.prompt == request.prompt else { return }
+        guard response != .cancelFileCommand, canRunFileCommand, request.matchesFile(editorState.prompt) else { return }
         switch response {
         case .rename(let filename):
             editor.rename(to: filename, completion: commandCompletion(success: LibraryCommandStrings.renamed))
@@ -352,14 +352,18 @@ final class LibraryViewState: ObservableObject {
                 guard let self, let editor, self.isActive,
                       self.bindingRevision == revision, self.editor === editor else { return }
                 let previousPrompt = self.editorState.prompt
+                let pathChanged = previousPrompt?.relativePath != state.prompt?.relativePath
+                let identityChanged = previousPrompt?.identity != state.prompt?.identity
+                let commandFinished = self.editorState.status == .commandRunning && state.status != .commandRunning
                 // Conflict rereads must preserve the command's typed outcome.
                 let newConflict = self.editorState.conflict == nil && state.conflict != nil
-                if previousPrompt != state.prompt || state.status == .loading
+                if pathChanged || identityChanged || state.status == .loading
                     || state.status == .saving || state.status == .commandRunning
                     || newConflict || state.pendingDecision != nil {
                     self.commandMessage = nil
                 }
-                if previousPrompt?.relativePath != state.prompt?.relativePath { self.sourceRevision &+= 1 }
+                // First-save identity assignment keeps this path's native undo/caret.
+                if pathChanged { self.sourceRevision &+= 1 }
                 // External deletion and conflict discard can clear the editor
                 // before the browser retires its selected row.
                 if let previousPrompt, state.prompt == nil {
@@ -369,7 +373,7 @@ final class LibraryViewState: ObservableObject {
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
                 if let request = self.fileCommandRequest,
-                   request.prompt != state.prompt || !self.canRunFileCommand { self.fileCommandRequest = nil }
+                   !request.matchesFile(state.prompt) || !self.canRunFileCommand { self.fileCommandRequest = nil }
                 self.refreshPreview()
                 // Copy adoption selects a new path. An external deletion keeps
                 // the draft visible even when the browser clears its selection.
@@ -387,7 +391,8 @@ final class LibraryViewState: ObservableObject {
                     self.select(selection)
                 }
                 self.onEditorChange?()
-                if self.editorTab == .history, previousPrompt != state.prompt,
+                // History keys follow identity; moving also retires Core's path-bound load.
+                if self.editorTab == .history, pathChanged || identityChanged || commandFinished,
                    state.prompt != nil, !state.history.isLoading { self.loadHistory() }
             }
         }
