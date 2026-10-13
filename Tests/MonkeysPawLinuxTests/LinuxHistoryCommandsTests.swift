@@ -293,6 +293,36 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertEqual(data.lists, lists)
     }
 
+    func testAvailabilityRecoveryDuringSamePromptLoadRetriesHistoryAfterCompletion() throws {
+        let first = try snapshot(Data("Earlier".utf8))
+        let window = try open()
+        try showHistory(in: window)
+        try selectRevision(0, in: window)
+        let prompt = editor.state.prompt
+        data.listFailure = .ioFailure
+        try click("library-history-refresh", in: window)
+        wait { self.editor.state.history.failure == .fileStore(.ioFailure) }
+        try click("library-revert", in: window)
+        XCTAssertEqual(editor.state.status, .loading)
+        controller.setLibraryAvailable(false)
+        data.listFailure = nil
+        let second = try snapshot(Data("Later".utf8), sequence: 1)
+        let lists = data.lists
+        controller.setLibraryAvailable(true)
+        XCTAssertFalse(editor.state.history.isLoading, "History waits for the prompt load")
+        wait { self.editor.state.status != .loading && !self.editor.state.history.isLoading
+            && self.editor.state.history.failure == nil && self.editor.state.history.revisions.count == 2 }
+        drain()
+        XCTAssertEqual(editor.state.prompt, prompt)
+        XCTAssertNil(editor.state.history.failure)
+        XCTAssertEqual(editor.state.history.revisions.map(\.revision.filename), [second, first])
+        XCTAssertEqual(editor.state.history.selectedRevision?.filename, first)
+        XCTAssertEqual(data.lists, lists + 1)
+        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(try widget("library-editor-tabs", in: window))), 3)
+        XCTAssertNotNil(gtk_list_box_get_row_at_index(mp_list_box(try widget("library-history-list", in: window)), 1))
+        XCTAssertEqual(contents(try widget("library-history-preview", in: window)), "Earlier")
+    }
+
     func testAvailabilityRecoveryRetiresAnInFlightHistoryFailure() throws {
         let filename = try snapshot(Data("Earlier".utf8))
         let window = try open()

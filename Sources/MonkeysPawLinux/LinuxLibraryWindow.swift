@@ -217,7 +217,7 @@ final class LinuxLibraryWindow {
                 self.selectPrompt(selection)
             }
             self.render()
-            // A tab opened while busy must retry even if its prompt stayed the same.
+            // A History request made while busy must retry even if its prompt stayed the same.
             if gtk_notebook_get_current_page(mp_notebook(self.tabs)) == 3, self.historyReloadPending { self.loadHistory() }
         }
         render()
@@ -448,8 +448,9 @@ final class LinuxLibraryWindow {
 
     private func loadHistory() {
         guard !isDestroyed, available, let editor, let prompt = editor.state.prompt,
-              editor.state.stamp != nil, editor.state.status != .loading else { return }
-        guard editor.state.status != .saving, editor.state.status != .commandRunning else {
+              editor.state.stamp != nil else { return }
+        guard editor.state.status != .loading, editor.state.status != .saving,
+              editor.state.status != .commandRunning else {
             historyReloadPending = true
             return
         }
