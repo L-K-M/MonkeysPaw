@@ -26,7 +26,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     private var indexObserver: UUID?
     private var usageObserver: UUID?
     private var editorObserver: UUID?
-    private var editorPrompt: LibraryPromptSelection?
+    private var committedSelectionChange: EditorCommittedSelectionChange?
     private var isActive = true
     private var observers: [UUID: (LibraryBrowserState) -> Void] = [:]
     private var observerOrder: [UUID] = []
@@ -45,7 +45,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         self.favorites = favorites
         self.main = main
         self.editor = editor
-        editorPrompt = editor?.state.prompt
+        committedSelectionChange = editor?.state.committedSelectionChange
         indexObserver = index.addObserver { [weak self] in
             guard let self else { return }
             self.main.run { [weak self] in
@@ -63,12 +63,18 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         editorObserver = editor?.addObserver { [weak self] state in
             guard let self else { return }
             self.main.run { [weak self] in
-                guard let self, self.isActive, self.editor?.state.prompt == state.prompt else { return }
-                let previous = self.editorPrompt
-                self.editorPrompt = state.prompt
-                guard let previous, self.preferredSelection == previous,
-                      self.preferredSelection != state.prompt else { return }
-                self.preferredSelection = state.prompt
+                guard let self, self.isActive else { return }
+                guard let change = state.committedSelectionChange,
+                      change != self.committedSelectionChange else { return }
+                self.committedSelectionChange = change
+                switch change {
+                case .adopted(let previous, let prompt, _):
+                    guard self.preferredSelection == previous else { return }
+                    self.preferredSelection = prompt
+                case .deleted(let previous, _):
+                    guard self.preferredSelection == previous else { return }
+                    self.preferredSelection = nil
+                }
                 self.refreshContents()
             }
         }
@@ -172,6 +178,8 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         if editor?.state.status == .saving || editor?.state.status == .commandRunning,
            editor?.state.prompt == selection { return }
         let sameIdentity = contents.filter { $0.entry.identity == selection.identity }
+        // External deletion hides the row but retains its key for restoration.
+        guard !sameIdentity.isEmpty else { return }
         // An assigned rename has one surviving identity. Refuse an ambiguous
         // duplicate id instead of jumping to an arbitrary byte-distinct path.
         guard sameIdentity.count == 1, let entry = sameIdentity.first?.entry else {

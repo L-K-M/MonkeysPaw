@@ -388,10 +388,16 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   A change detected after the physical move keeps the editor at the
   destination; keep mine, take theirs or recreation applies to that path.
   Keyed values, usage and history follow §5.2's identity migration.
-  `LibraryBrowserModel` follows the committed rename/move only while that
-  editor prompt remains selected, including an unassigned path-hash move (§5.2).
-  Delete clears that selection, closes the editor and keeps its history;
-  restoring a deleted prompt arrives later.
+  `LibraryBrowserModel` follows the committed rename/move or Save as Copy
+  adoption only while that editor prompt remains selected, including an
+  unassigned path-hash move (§5.2). A committed editor Delete command explicitly
+  clears that selection, closes the editor and keeps its history; restoring a
+  deleted prompt arrives later. Window close and Cmd+W retain the browser
+  selection, filter and section for reopening; Escape retains the selection
+  when it closes the window after the filter is clear. External deletion
+  also retains the selection key, including after discarding a deleted draft;
+  a missing row has no selected preview, and restoration can recover the
+  retained selection. Closing an editor with no prompt is not a Delete signal.
 - **Import.** Drop or choose `.md`, `.prompt` (Dotprompt) or `.prompty`
   files or a folder. `string` inputs map to text fields, `string` with an
   enum to choice fields, and defaults/descriptions are kept; Prompty sample

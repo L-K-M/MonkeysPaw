@@ -50,6 +50,12 @@ public struct EditorConflict: Equatable, Sendable {
     }
 }
 
+/// Each id distinguishes a new commit, including deleting a restored prompt again.
+enum EditorCommittedSelectionChange: Equatable, Sendable {
+    case adopted(from: LibraryPromptSelection, to: LibraryPromptSelection, id: UUID)
+    case deleted(LibraryPromptSelection, id: UUID)
+}
+
 public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var prompt: LibraryPromptSelection?
     /// Nil for undecodable/oversized sources, rather than fabricated text.
@@ -68,6 +74,7 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var historyMaintenanceFailed = false
     public fileprivate(set) var lastCopy: LibraryPromptSelection?
     public fileprivate(set) var history = EditorHistoryState()
+    fileprivate(set) var committedSelectionChange: EditorCommittedSelectionChange?
 
     public var canEdit: Bool {
         source != nil && readOnlyReason == nil && status != .loading && status != .commandRunning
@@ -82,7 +89,7 @@ public struct EditorState: Equatable, Sendable {
             && lhs.previewFailure == rhs.previewFailure && lhs.conflict == rhs.conflict
             && lhs.pendingDecision == rhs.pendingDecision && lhs.queuedActions == rhs.queuedActions
             && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed && lhs.lastCopy == rhs.lastCopy
-            && lhs.history == rhs.history
+            && lhs.history == rhs.history && lhs.committedSelectionChange == rhs.committedSelectionChange
     }
 }
 
@@ -335,9 +342,12 @@ public final class EditorModel: @unchecked Sendable {
         commandHasExternalChange = false
         let pending = state.pendingDecision
         let queued = state.queuedActions
+        let selectionChange = state.committedSelectionChange
         state = EditorState()
         state.pendingDecision = pending
         state.queuedActions = queued
+        // Keep the command signal through a close/open before queued observers run.
+        state.committedSelectionChange = selectionChange
     }
 
     private func load(_ purpose: LoadPurpose) {
@@ -455,6 +465,7 @@ public final class EditorModel: @unchecked Sendable {
     private func saved(_ outcome: PromptSaveOutcome, submitted: String, purpose: SavePurpose) {
         var adoptedCopyGeneration: UInt64?
         if let entry = outcome.committedEntry {
+            let previousPrompt = state.prompt
             let unchanged = editorSourceEqual(state.source, submitted)
             let loaded = LoadedPrompt(bytes: Data(entry.document.source.utf8), entry: entry)
             if purpose == .copy {
@@ -475,6 +486,7 @@ public final class EditorModel: @unchecked Sendable {
                 if unchanged { accept(loaded) }
                 else { state.isDirty = !editorSourceEqual(state.source, loaded.source) }
             }
+            recordCommittedSelection(from: previousPrompt)
             state.status = .saved
             if case .savedButHistoryMaintenanceFailed = outcome { state.historyMaintenanceFailed = true }
             else { state.historyMaintenanceFailed = false }
@@ -651,6 +663,11 @@ public final class EditorModel: @unchecked Sendable {
         LibraryPromptSelection(identity: entry.identity, relativePath: RelativePath(entry.relativePath))
     }
 
+    private func recordCommittedSelection(from previous: LibraryPromptSelection?) {
+        guard let previous, let prompt = state.prompt, previous != prompt else { return }
+        state.committedSelectionChange = .adopted(from: previous, to: prompt, id: UUID())
+    }
+
     private func changed() { main.run { [weak self] in self?.publishLatest() } }
 
     private func publishLatest() {
@@ -777,8 +794,10 @@ extension EditorModel {
         let needsReconciliation = commandHasExternalChange
         commandHasExternalChange = false
         state.status = .idle
+        let previousPrompt = state.prompt
         if let entry = outcome.committedEntry {
             accept(LoadedPrompt(bytes: Data(entry.document.source.utf8), entry: entry))
+            recordCommittedSelection(from: previousPrompt)
             state.status = .saved
             if case .updatedButHistoryMaintenanceFailed = outcome { state.historyMaintenanceFailed = true }
             if case .restore = command { historyRequested = true }
@@ -792,6 +811,7 @@ extension EditorModel {
         switch outcome {
         case .relocated(let baseline, let current):
             accept(LoadedPrompt(bytes: Data(baseline.document.source.utf8), entry: baseline))
+            recordCommittedSelection(from: previousPrompt)
             switch current {
             case .loaded(let loaded): openConflict(stamp: loaded.stamp)
             case .deleted: openConflict(stamp: nil)
@@ -800,7 +820,11 @@ extension EditorModel {
                 load(.reconcileCopy)
             }
             if historyRequested { loadHistory() }
-        case .deleted: resetEditor()
+        case .deleted:
+            resetEditor()
+            if case .delete = command, let previousPrompt {
+                state.committedSelectionChange = .deleted(previousPrompt, id: UUID())
+            }
         case .missing: openConflict(stamp: nil)
         case .conflict(let stamp): openConflict(stamp: stamp)
         case .destinationOccupied:
