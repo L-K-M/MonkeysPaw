@@ -11,3 +11,9 @@
 -keepclasseswithmembers class ch.lkmc.monkeyspaw.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# Keep the sync entry point while the M8 app skeleton has no sync caller, so
+# release builds exercise ICU's reachable code and packaged data through R8.
+-keep,allowoptimization class ch.lkmc.monkeyspaw.core.domain.paths.SyncPathValidator {
+    public *;
+}

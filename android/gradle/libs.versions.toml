@@ -17,6 +17,7 @@ datastore = "1.2.0"
 kotlinxSerialization = "1.11.0"
 kotlinxCoroutines = "1.11.0"
 junit = "4.13.2"
+icu4j = "78.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -45,6 +46,7 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
+icu4j = { group = "com.ibm.icu", name = "icu4j", version.ref = "icu4j" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

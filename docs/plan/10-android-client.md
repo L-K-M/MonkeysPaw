@@ -66,6 +66,11 @@ android/app    ch.lkmc.monkeyspaw
   `android.*` import does not compile, the way the Linux CI job guards the
   Swift core. It is tested on the JVM with fakes, so there is no
   `androidTest` and no emulator job, as in HalloMiao.
+- **Unicode parity.** `core` ships catalog-pinned ICU4J for NFC and Unicode
+  properties, independent of Android's runtime Unicode version. Sync keys
+  use the frozen Swift C/F table (§19 B4); search normalization remains a
+  separate port. The [Android checklist](../platform/android.md) distinguishes
+  dex/R8 packaging proof from the remaining minimum-API device check.
 - **One process.** The IME, the tile, and the activities share one process
   and one warm in-memory prompt index in `Application`, so the keyboard picker
   opens instantly and never waits for disk or network.

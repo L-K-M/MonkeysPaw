@@ -11,6 +11,11 @@ including strict envelopes and exactly one reference to every visible file.
 Semantic consumption arrives per category in K3-K10, with the full conformance
 gate in K10. K2 does not establish M8 acceptance.
 
+K6 adds semantic path consumption in `PathFixturesTest`: every dynamically
+enumerated `paths` case checks normalized path/key bytes or the exact first
+issue and nullable segment. The structural inventory still covers all nine
+categories. Run the same `:core:test` command above for both gates.
+
 This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
 their slice.
@@ -380,6 +385,16 @@ the fold oracle. The source data is not vendored. The verifier is
 dot-prefixed so it remains outside the strict fixture-case enumeration.
 `SyncPathCaseFoldTests` also checks table invariants and exclusion of simple
 and Turkic alternatives in the normal offline Swift test suite.
+
+The Kotlin sync table is generated from the frozen Swift source, without
+network access or host Unicode tables. Regenerate it with
+`python3 scripts/generate-kotlin-sync-fold.py`, or check it with the same
+command plus `--check`. Kotlin tests compare every table entry and every
+valid scalar's fold with the Swift source; Gradle tracks that file as a test
+input. NFC and Cc/Cf properties use the catalog-pinned ICU4J dependency in
+the pure JVM module. This sync transform does not define search folding.
+Release packaging and the remaining device check are documented in
+[the Android checklist](../docs/platform/android.md).
 
 M5 adds `canonical/<case>/`, consumed by `CanonicalFixtureCorpus` in
 `CanonicalConformanceTests` and dispatched by the generic consumer. The
