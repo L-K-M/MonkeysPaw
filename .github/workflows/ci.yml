@@ -250,7 +250,7 @@ jobs:
       - name: Test, lint and assemble both APKs
         run: ./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
       - name: Upload debug APK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
@@ -258,7 +258,7 @@ jobs:
           retention-days: 3
       - name: Upload Android reports on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-android-reports
           path: |
@@ -308,7 +308,7 @@ jobs:
             clean test
       - name: Upload app test results on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MacAppTests
           path: MacAppTests.xcresult
@@ -439,7 +439,7 @@ jobs:
           /usr/bin/hdiutil detach "$mountpoint"
           image_attached=false
       - name: Upload dmg and zip for inspection
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-macos-artifacts
           path: |
