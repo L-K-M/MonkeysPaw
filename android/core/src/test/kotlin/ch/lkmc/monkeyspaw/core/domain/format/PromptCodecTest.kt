@@ -30,12 +30,30 @@ class PromptCodecTest {
         assertTrue(replacement.decodingIssues.isEmpty())
     }
 
+    @Test fun malformedUtf16TextFailsClosedWithoutRepair() {
+        for (source in listOf("\uD800plain text", "plain text\uDC00")) {
+            val document = PromptCodec.parse(source, "Fallback.md")
+            assertEquals(listOf(PromptIssueCode.INVALID_UTF8), codes(document))
+            assertEquals("", document.source)
+            assertEquals("", document.body)
+            assertTrue(document.frontMatter.isPrivate)
+        }
+        val source = "\uFFFDplain text 🐒"
+        val document = PromptCodec.parse(source, "Fallback.md")
+        assertTrue(document.decodingIssues.isEmpty())
+        assertEquals(source, document.source)
+        assertEquals(source, document.body)
+    }
+
     @Test fun bomRemainsBodyDataAndRoundTripsWithoutStripping() {
-        for (source in listOf("\uFEFF", "\uFEFF---\ntitle: Hidden\n---\nBody", "\uFEFF\uFEFFBody")) {
+        for (source in listOf("\uFEFF", "\uFEFF---\ntitle: Hidden\n---\nBody", "\uFEFF\uFEFFBody",
+            "\uFEFF---\nprivate: true\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\n---\nBody")) {
             val document = PromptCodec.parseFile(source.toByteArray(), "Fallback.md")
             assertEquals(source, document.source)
             assertEquals(source, document.body)
             assertEquals("Fallback", document.frontMatter.title)
+            assertFalse(document.frontMatter.isPrivate)
+            assertNull(document.frontMatter.id)
             assertNull(document.preservedHeader)
             assertTrue(document.decodingIssues.isEmpty())
         }
@@ -55,9 +73,15 @@ class PromptCodecTest {
             assertTrue(document.decodingIssues.isEmpty())
             assertEquals("", PromptCodec.parse("---${newline}---", "Fallback.md").body)
         }
-        for (source in listOf("---\rtitle: Value\r---\rBody", " ---\nBody", "--- \nBody", "\n---\nBody")) {
+        for (source in listOf("---\rtitle: Value\r---\rBody", " ---\nBody", "--- \nBody", "\n---\nBody",
+            "---\t\nBody", "--- x\nBody", "---\r")) {
             assertEquals(source, PromptCodec.parse(source, "Fallback.md").body)
         }
+        val crAtEnd = PromptCodec.parse("---\r\ntitle: Present\r\n---\r", "Fallback.md")
+        assertEquals("title: Present\r\n---\r", crAtEnd.body)
+        assertEquals("Fallback", crAtEnd.frontMatter.title)
+        assertEquals(listOf(PromptIssueCode.UNCLOSED_FRONT_MATTER), codes(crAtEnd))
+        assertTrue(crAtEnd.frontMatter.isPrivate)
         val unclosed = PromptCodec.parse("---\nprivate: false\n--- \nBody", "Fallback.md")
         assertEquals("private: false\n--- \nBody", unclosed.body)
         assertEquals(listOf(PromptIssueCode.UNCLOSED_FRONT_MATTER), codes(unclosed))
@@ -125,7 +149,7 @@ class PromptCodecTest {
             assertEquals(listOf(PromptIssueCode.ANCHOR_OR_ALIAS, PromptIssueCode.ANCHOR_OR_ALIAS), codes(document))
             assertEquals("Retained", document.frontMatter.title)
             assertFalse(document.frontMatter.isPrivate)
-            assertEquals(document.decodingIssues[0].location, document.decodingIssues[1].location)
+            assertEquals(document.decodingIssues[0].location, document.decodingIssues[1].location, rejected)
         }
         val keyed = read("title: Retained\nprivate: false\n? &a title\n: rejected")
         assertEquals(listOf(PromptIssueCode.ANCHOR_OR_ALIAS), codes(keyed))
@@ -185,6 +209,80 @@ class PromptCodecTest {
             assertEquals(listOf(PromptIssueCode.DUPLICATE_KEY), codes(read(keys)), keys)
         }
         assertEquals(listOf(PromptIssueCode.NON_PORTABLE_SCALAR), codes(read("!!float invalid: value")))
+    }
+
+    @Test fun duplicateMetadataAndFieldNamesAlwaysHaveDiagnostics() {
+        for (header in listOf("fields: {a: {}}\nfields: {b: {}}", "title: First\ntitle: Second",
+            "id: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PE",
+            "fields: {a: {}, a: {}}")) {
+            val document = read(header)
+            assertEquals(listOf(PromptIssueCode.DUPLICATE_KEY), codes(document), header)
+            assertNull(document.preservedHeader, header)
+            assertTrue(document.frontMatter.isPrivate, header)
+        }
+        val ambiguous = read("title: First\n\"title\": Second\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\n" +
+            "\"id\": 01K6Z4V9KQWZX7MPQ4T8ZNB2PE\nfields: {a: {}}\n\"fields\": {b: {}}")
+        assertEquals(List(3) { PromptIssueCode.DUPLICATE_KEY }, codes(ambiguous))
+        assertEquals("Fallback", ambiguous.frontMatter.title)
+        assertNull(ambiguous.frontMatter.id)
+        assertTrue(ambiguous.frontMatter.fields.isEmpty())
+        assertNotNull(ambiguous.preservedHeader)
+    }
+
+    @Test fun rejectedBooleanAndUnderscoredKeySpellingsKeepSwiftIdentity() {
+        for ((keys, expected) in listOf(
+            "True: a\ntrue: b" to listOf(PromptIssueCode.NON_PORTABLE_SCALAR),
+            "on: a\nON: b" to List(2) { PromptIssueCode.NON_PORTABLE_SCALAR },
+            "1_000: a\n1000: b" to listOf(PromptIssueCode.NON_PORTABLE_SCALAR),
+            "1_000.5: a\n1000.5: b" to listOf(PromptIssueCode.NON_PORTABLE_SCALAR),
+            "0x_1f: a\n31: b" to listOf(PromptIssueCode.NON_PORTABLE_SCALAR),
+            "1.0_0: a\n1.0: b" to listOf(PromptIssueCode.NON_PORTABLE_SCALAR),
+            "'True': a\ntrue: b" to emptyList(),
+        )) {
+            val document = read("title: Retained\n$keys")
+            assertEquals(expected, codes(document), keys)
+            assertEquals("Retained", document.frontMatter.title, keys)
+            assertNotNull(document.preservedHeader, keys)
+        }
+        assertEquals(listOf(PromptIssueCode.NON_PORTABLE_SCALAR, PromptIssueCode.INVALID_FORMAT),
+            codes(read("format: 1_000")))
+    }
+
+    @Test fun syntaxDuplicatesUseSwiftStringEqualityBeforeByteExactTypedIdentity() {
+        val syntax = read("title: Lost\ncafé: first\ncafe\u0301: second")
+        assertEquals(listOf(PromptIssueCode.DUPLICATE_KEY), codes(syntax))
+        assertEquals("Fallback", syntax.frontMatter.title)
+        assertNull(syntax.preservedHeader)
+        assertTrue(syntax.frontMatter.isPrivate)
+
+        // Different syntax tags defer equality to Swift's byte-framed typed identity.
+        val typed = read("title: Retained\ncafé: first\n'cafe\u0301': second")
+        assertTrue(typed.decodingIssues.isEmpty())
+        assertEquals("Retained", typed.frontMatter.title)
+        assertNotNull(typed.preservedHeader)
+    }
+
+    @Test fun invalidAndReservedDeclarationsAreRetainedWithErrorsAsInSwift() {
+        for (name in listOf("clipboard", "date", "time", "selection", "cursor", "datetime", "uuid", "bad name", "1bad")) {
+            val document = read("fields: {'$name': {default: spoof}}", "{{$name}}")
+            val expected = if (name in listOf("bad name", "1bad")) PromptIssueCode.INVALID_FIELD_NAME
+                else PromptIssueCode.RESERVED_FIELD_NAME
+            assertEquals(listOf(expected), codes(document), name)
+            assertEquals(PromptIssueSeverity.ERROR, document.decodingIssues.single().severity, name)
+            assertEquals(name, document.frontMatter.fields.single().name, name)
+        }
+    }
+
+    @Test fun malformedYamlReturnsSafeIssuesThroughDirectAndAdapterPaths() {
+        for (header in listOf("a: [unclosed_secret", "title: \"unterminated_secret", "x: &bad#secret value",
+            "title: '\\u literal'\na: [unclosed_secret")) {
+            val document = read(header)
+            assertEquals(listOf(PromptIssueCode.INVALID_YAML), codes(document), header)
+            assertTrue(document.frontMatter.isPrivate, header)
+            assertNull(document.preservedHeader, header)
+            assertNotNull(document.decodingIssues.single().location, header)
+            assertFalse(document.decodingIssues.single().toString().contains("secret"), header)
+        }
     }
 
     @Test fun syntaxDuplicateLocationUsesSwiftKeyOrdering() {
@@ -302,6 +400,21 @@ class PromptCodecTest {
         assertEquals(listOf("\\L", "\\P"), document.frontMatter.tags)
         val block = read("title: |-\n  \\L\\P\n  literal\u2028  last\n")
         assertEquals("\\L\\P\nliteral\u2028last", block.frontMatter.title)
+    }
+
+    @Test fun unrelatedLiteralUnicodeEscapesKeepAdapterValuesAndMarksIdentical() {
+        val header = "title: Plain 🐒\ndescription: 'single ''quote'''\nprivate: on\n" +
+            "fields:\n  x:\n    description: |-\n      literal text"
+        val direct = read(header)
+        val adapted = read("$header\nextra: C:\\users\\u_literal")
+        assertEquals("Plain 🐒", direct.frontMatter.title)
+        assertEquals("single 'quote'", direct.frontMatter.description)
+        assertEquals("literal text", direct.frontMatter.fields.single().description)
+        assertEquals(listOf(PromptIssueCode.NON_PORTABLE_SCALAR, PromptIssueCode.INVALID_METADATA_TYPE), codes(direct))
+        assertNotNull(direct.preservedHeader)
+        assertEquals(direct.frontMatter, adapted.frontMatter)
+        assertEquals(direct.decodingIssues, adapted.decodingIssues)
+        assertEquals(direct.body, adapted.body)
     }
 
     @Test fun adaptedFoldingKeepsBlankLinesEscapedBreaksAndCompactIndentation() {

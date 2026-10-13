@@ -226,6 +226,11 @@ class CorpusInventoryTest {
     fun `category unions and scalar types are checked without semantic execution`() {
         mutateRejects(Category.RENDER, "unknown builtin") { this["builtins"] = JsonObject(mapOf("random" to JsonPrimitive("x"))) }
         mutateRejects(Category.IMPORT, "zero repeat") { this["repeat"] = JsonPrimitive(0) }
+        for (category in listOf(Category.FORMAT, Category.VALIDATION)) {
+            for (count in listOf(0, -1)) {
+                mutateRejects(category, "nonpositive repeat $count") { this["repeat"] = JsonPrimitive(count) }
+            }
+        }
         mutateRejects(Category.IMPORT, "import expansion over cap") { this["repeat"] = JsonPrimitive(262_146) }
         mutateRejects(Category.CANONICAL, "numeric favorite") {
             this["expected"] = changed(this["expected"]) { this["favorite"] = JsonPrimitive(1) }
