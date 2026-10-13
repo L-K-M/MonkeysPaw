@@ -20,8 +20,9 @@ design record; read its index, then the sections relevant to your task.
   `Sources/monkeyspaw-server/`, and tests in `Tests/MonkeysPawServerTests/`.
   Server layers are Routes → Services → Repositories; database migrations
   and admin commands arrive in M5.
-- `android/`: the future Kotlin core port and native app. `spec/fixtures/`
-  and `spec/schema/` will keep the Swift and Kotlin implementations aligned.
+- `android/`: a Gradle root with a pure Kotlin/JVM `:core` and a Compose
+  `:app`. `spec/fixtures/` and `spec/schema/` will keep the Swift and Kotlin
+  implementations aligned as the port grows.
 - `docs/plan/`: the specification. `docs/platform/`: owner-run checklists.
   Packaging, deployment, seeds, and release scripts follow their milestones.
 
@@ -55,6 +56,9 @@ Run these commands from the repository root:
 | Test portal transport on a required private bus (no display) | `dbus-run-session -- env MONKEYSPAW_REQUIRE_PORTAL_BUS=1 swift test --filter LinuxPortalTransportTests` |
 | Test Linux app with a required display and private bus (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 MONKEYSPAW_REQUIRE_PORTAL_BUS=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
 | Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
+| Test Android Core on the JVM | `android/gradlew -p android :core:test` |
+| Test Android app logic on the JVM | `android/gradlew -p android testDebugUnitTest` |
+| Run the Android CI gate and build both APKs | `android/gradlew -p android :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease` |
 | Build server | `swift build --package-path server` |
 | Test server | `swift test --package-path server` |
 | Run server | `swift run --package-path server monkeyspaw-server serve` |
@@ -65,6 +69,19 @@ On the Paseo implementation host, use `/home/paseo/.local/bin/swift64`
 instead of `swift` for every build/test command. This wrapper supplies
 Swift 6.4 and the host's userland sysroot. Docker is unavailable there; the
 image job in CI builds and exercises the container.
+
+Android uses the checked-in Gradle wrapper and JDK 17 in CI. JDK 21 can run
+the local build; both modules target Java/Kotlin 17 without downloading a
+toolchain. Set `ANDROID_HOME` to your SDK or use ignored
+`android/local.properties`; install `platforms;android-37.0` and
+`build-tools;36.0.0`. On this host the SDK is `/home/paseo/Android/Sdk` and
+the JDK is `/opt/java/openjdk`. From `android/`, the gate is
+`./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease`.
+This host's Google Maven HTTP/1.1 connection times out. Set
+`MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/`
+to use Google's CDN locally; CI uses the default Google Maven endpoint.
+Both APKs use the committed public signer described in
+[the signing ADR](docs/decisions/0001-android-zero-secret-signing.md).
 
 The lifecycle test skips without a display unless `MONKEYSPAW_REQUIRE_DISPLAY=1`,
 which makes a missing display fail. Portal transport tests skip unless

@@ -24,3 +24,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+  # Android pins follow HalloMiao; coupled Kotlin and KSP updates stay together.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      androidx:
+        patterns: ["androidx.*"]
+      kotlin:
+        patterns: ["org.jetbrains.kotlin*", "com.google.devtools.ksp*"]

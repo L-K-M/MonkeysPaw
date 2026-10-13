@@ -34,7 +34,7 @@ pins move only as one set; see the AGP 9 deadlock in Kararead's
 | Build | AGP 9.3.1, Gradle 9.7.0, Kotlin 2.4.10, JDK 17. No `kotlin-android` plugin: AGP 9 has built-in Kotlin. |
 | SDK | `minSdk = 26`, `targetSdk = 37`, `compileSdkVersion("android-37.0")` with `android.suppressUnsupportedCompileSdk=37` |
 | UI | Jetpack Compose (BOM 2026.08.00), Material 3, single activity + entry activities |
-| DI | Hilt 2.60.1 (KSP) |
+| DI | Hilt 2.60.1 with KSP 2.3.11; graph wiring starts with app data drivers in M8 K12. |
 | Serialization | kotlinx.serialization (JSON); snakeyaml-engine 3.x for front matter (kaml is archived) |
 | Networking | OkHttp (+ okhttp-coroutines) behind an `HttpTransport` port, with `followRedirects(false)` (§7.1 transport rules). OkHttp is the fleet standard (Kararead, Neutrodyne). |
 | Storage | app-private files (§10.6) + DataStore for settings |
@@ -274,17 +274,36 @@ risk, so it is contained by contract:
   HalloMiao: `gradle.properties`, the version catalog (minus its sherpa
   pins), the wrapper, `proguard-rules.pro` (enum and kotlinx.serialization
   keeps), and `.editorconfig`.
+  - K1 adds a Kotlin JVM plugin alias using the same Kotlin pin, a wrapper
+    distribution SHA-256, and a two-worker limit. Java source/target and
+    Kotlin `jvmTarget` are 17 in both modules; Gradle can run on the host's
+    JDK 21 without toolchain provisioning. CI remains on Temurin 17.
+  - The implementation host times out on Google Maven over HTTP/1.1.
+    A local `MONKEYSPAW_GOOGLE_MAVEN_URL` environment override points at
+    Google's `https://redirector.gvt1.com/edgedl/android/maven2/` CDN with
+    the same artifacts. CI leaves this unset and uses `google()` normally.
+    Maven Central is searched first; AGP resolves directly to its pinned
+    module to avoid the absent plugin-marker JAR's CDN fallback.
+  - The initial app displays the string-resource launcher label and uses
+    Core's shared display name. Its adaptive launcher icon uses resized
+    `media-sources/icon.png`. Hilt/KSP pins are retained; graph construction
+    is deferred to K12, when drivers exist to inject.
 - **CI (ci.yml `android` job).**
   - `gradle/actions/wrapper-validation`, Temurin 17, `setup-gradle` (root
-    `android`).
-  - `./gradlew :core:test testDebugUnitTest lintDebug assembleDebug`, plus
-    `assembleRelease` on every PR to prove R8.
-  - Uploads the debug APK as an artifact.
+    `android`), on `ubuntu-24.04` with a 45-minute timeout. Actions are
+    SHA-pinned, checkouts discard credentials, and permissions are
+    `contents: read`. SDK packages are explicitly `platforms;android-37.0`
+    and `build-tools;36.0.0`.
+  - One invocation: `./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease`
+    on every PR to prove JVM compatibility, lint and R8.
+  - Only `setup-gradle` caches Gradle state, read-only outside main.
+    Uploads the debug APK as an artifact retained for three days.
   - Dependabot: a `gradle` entry for `/android`, with HalloMiao's `androidx`
     and `kotlin`+`ksp` groups.
 - **Signing.** `android/app/debug.keystore` is checked in and signs both
   build types, so CI needs no secrets (the HalloMiao decision, recorded as an
-  ADR). `.gitignore` blocks keystores except that one.
+  [ADR](../decisions/0001-android-zero-secret-signing.md)). `.gitignore`
+  blocks keystores except that one. Both variants use `ch.lkmc.monkeyspaw`.
   - Consequence: moving to a real key later breaks upgrades for every
     installed copy. That is a product decision, and Q12 records it.
 - **Release.** The same `v*` tag as the desktop apps and the server. An
