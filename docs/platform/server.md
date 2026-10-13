@@ -98,3 +98,15 @@ working database. Wait for the S16/S17 commands and follow [§8.6](../plan/08-sy
    database identity rotation must trigger resnapshot without data loss.
 4. Record desktop versions, deployed commit and outcomes. The two-user group
    sharing checks remain the separate [§15 M6 acceptance](../plan/15-milestones.md).
+
+## Client filenames after M6: NOT RUN
+
+§8.4 requires client sanitization before group names become local folder
+names or device names appear in filenames. M5's server tests do not assert
+that client boundary. Use disposable data after M6 supplies it; record the
+client version, platform and resulting paths without prompt contents.
+
+| Check | Status | Required observation |
+|---|---|---|
+| Group names | **NOT RUN** | Names with separators, traversal/dot components and Unicode normalize into safe client folder names without leaving or overwriting the library. |
+| Device names | **NOT RUN** | A device name containing separators/control characters cannot create an unsafe filename when the client includes it in a local path. |
