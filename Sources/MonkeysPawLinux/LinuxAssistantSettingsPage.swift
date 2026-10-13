@@ -15,6 +15,7 @@ final class LinuxAssistantSettingsPage {
     private var renderedProfiles: [ProviderProfile] = []
     private var renderedActiveID: ProviderProfileID?
     private var renderedModels: [ModelDescriptor] = []
+    private var pendingInputs: [GTK.Widget: UUID] = [:]
 
     private let profiles: GTK.Widget
     private let activeProfile: GTK.Widget
@@ -159,6 +160,7 @@ final class LinuxAssistantSettingsPage {
         model?.cancelTest()
         model = nil
         keyInputReset = nil
+        pendingInputs.removeAll()
         if reason == .hidden { render() }
     }
 
@@ -177,6 +179,11 @@ final class LinuxAssistantSettingsPage {
         defer { isRendering = false }
         let state = model?.state
         let draft = state?.draft
+        if draft == nil || !canEditDraft, let root = gtk_widget_get_root(widget),
+           let focus = gtk_root_get_focus(root), gtk_widget_is_ancestor(focus, editor) != 0 {
+            // GTK 4.8 loses GtkText's focus-out if its page is hidden/disabled first.
+            gtk_root_set_focus(root, nil)
+        }
         let savedProfiles = state?.profiles ?? []
         if savedProfiles != renderedProfiles || state?.selectedProfileID != renderedActiveID {
             while let child = gtk_widget_get_first_child(profiles) { gtk_list_box_remove(mp_list_box(profiles), child) }
@@ -207,7 +214,10 @@ final class LinuxAssistantSettingsPage {
             mp_entry_set_text(key, "")
         }
         let models = state?.availableModels ?? []
-        if models != renderedModels {
+        if !models.elementsEqual(renderedModels, by: { left, right in
+            left.id.utf8.elementsEqual(right.id.utf8)
+                && left.displayName.map { Data($0.utf8) } == right.displayName.map { Data($0.utf8) }
+        }) {
             renderedModels = models
             gtk_combo_box_text_remove_all(mp_combo_box_text(modelPicker))
             gtk_combo_box_text_append_text(mp_combo_box_text(modelPicker), LinuxAssistantSettingsStrings.chooseModel)
@@ -256,11 +266,27 @@ final class LinuxAssistantSettingsPage {
     private func onInput(_ entry: GTK.Widget, intent: @escaping (AssistantSettingsModel, String) -> Void) {
         GTK.onSignal(entry, "changed") { [weak self] in
             guard let self, !self.isRendering, self.canEditDraft, let model = self.model else { return }
+            // Password resets follow the model's explicit commit/discard token.
+            guard entry != self.key else {
+                intent(model, String(cString: mp_entry_text(entry)))
+                return
+            }
+            let revision = UUID()
+            self.pendingInputs[entry] = revision
             intent(model, String(cString: mp_entry_text(entry)))
+            // Model intents hop through GLib. Preserve native text until this
+            // field's newest intent has run, even across unrelated publications.
+            GTK.onMainLoop { [weak self, weak model] in
+                guard let self, let model, self.model === model,
+                      self.pendingInputs[entry] == revision else { return }
+                self.pendingInputs[entry] = nil
+                self.render()
+            }
         }
     }
 
     private func setEntry(_ entry: GTK.Widget, _ text: String) {
+        guard pendingInputs[entry] == nil else { return }
         guard !String(cString: mp_entry_text(entry)).utf8.elementsEqual(text.utf8) else { return }
         mp_entry_set_text(entry, text)
     }

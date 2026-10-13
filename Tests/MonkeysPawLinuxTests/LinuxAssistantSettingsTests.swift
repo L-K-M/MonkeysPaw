@@ -314,6 +314,57 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
+    func testUnrelatedPublishCannotOverwriteTypingBeforeDeferredInputArrives() throws {
+        _ = try seed()
+        try show()
+        for suffix in ["name", "base-url", "model-id"] {
+            let entry = try control(suffix)
+            XCTAssertNotEqual(gtk_widget_grab_focus(entry), 0)
+            let first = "typed-" + suffix
+            let expected = first + "-second"
+            var preservedFirstInput = false
+            var typedSecondInput = false
+            // Queue an unrelated publication before the field's first intent,
+            // then simulate the next keystroke between publication and intent.
+            model?.keepKey()
+            GTK.onMainLoop {
+                let text = String(cString: mp_entry_text(entry))
+                preservedFirstInput = text.utf8.elementsEqual(first.utf8)
+                mp_entry_set_text(entry, text + "-second")
+                typedSecondInput = true
+            }
+            mp_entry_set_text(entry, first)
+            XCTAssertTrue(GTKTestSupport.spin { typedSecondInput })
+            drainUI()
+            XCTAssertTrue(preservedFirstInput, "A stale publication overwrote native input")
+            XCTAssertEqual(String(cString: mp_entry_text(entry)), expected)
+            let draft = try XCTUnwrap(model?.state.draft)
+            let staged = suffix == "name" ? draft.displayName : (suffix == "base-url" ? draft.baseURL : draft.modelID)
+            XCTAssertEqual(staged, expected)
+        }
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testRetestedPickerPreservesByteDistinctUnicodeModelIDs() throws {
+        _ = try seed()
+        try show()
+        let composed = "é"
+        let decomposed = "e\u{301}"
+        for id in [composed, decomposed] {
+            let body = try JSONSerialization.data(withJSONObject: ["data": [["id": id]]])
+            transport.enqueue(.response(HTTPResponse(statusCode: 200, body: body)))
+            try runTest(.ok(models: [ModelDescriptor(id: id)]))
+        }
+        let returned = try XCTUnwrap(model?.state.availableModels.first?.id)
+        XCTAssertTrue(returned.utf8.elementsEqual(decomposed.utf8))
+        gtk_combo_box_set_active(mp_combo_box(try control("model-picker")), 1)
+        XCTAssertTrue(GTKTestSupport.spin { self.model?.state.draft?.modelID != "manual" })
+        let picked = try XCTUnwrap(model?.state.draft?.modelID)
+        XCTAssertTrue(picked.utf8.elementsEqual(decomposed.utf8), "Picker used a previous Test's byte-distinct ID")
+        XCTAssertTrue(try entryText("model-id").utf8.elementsEqual(decomposed.utf8))
+        XCTAssertEqual(transport.requests.count, 2)
+    }
+
     func testDestinationGateAndFailedSaveClearDeleteKeepCoherentState() throws {
         let saved = try seed()
         try show()
