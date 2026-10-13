@@ -80,7 +80,7 @@ public final class ServerDatabase: Sendable {
         }
     }
 
-    func migrate(_ migrations: [ServerMigration] = [.foundation]) async throws {
+    func migrate(_ migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata]) async throws {
         try await MigrationRepository(database: self).apply(migrations)
     }
 
@@ -172,6 +172,7 @@ private struct StartupError: Error, CustomStringConvertible {
 }
 
 enum PersistenceError: Error {
+    case invalidAccountRecord
     case unsupportedDriver
     case invalidPragma
     case walUnavailable

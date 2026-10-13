@@ -20,9 +20,10 @@ private struct Serve: AsyncParsableCommand {
 
     mutating func run() async throws {
         let configuration = try ServerConfiguration()
-        let application = buildApplication(configuration: configuration)
-
-        try await ServerDatabase.withMigratedDatabase(configuration: DatabaseConfiguration()) { _ in
+        let bootstrap = BootstrapConfiguration()
+        try await ServerDatabase.withMigratedDatabase(configuration: DatabaseConfiguration()) { database in
+            try await bootstrapAccounts(database: database, configuration: bootstrap)
+            let application = buildApplication(configuration: configuration, database: database)
             try await application.runService()
         }
     }

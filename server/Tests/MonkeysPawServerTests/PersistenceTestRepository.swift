@@ -106,13 +106,16 @@ struct PersistenceTestRepository: Sendable {
     }
 }
 
-func withPersistenceDatabase(_ operation: @Sendable (PersistenceTestRepository) async throws -> Void) async throws {
+func withPersistenceDatabase(
+    migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata],
+    _ operation: @Sendable (PersistenceTestRepository) async throws -> Void
+) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-s5-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     let configuration = DatabaseConfiguration(environment: ["MONKEYSPAW_DATA_DIR": directory.path])
     let database = try await ServerDatabase.open(configuration: configuration)
     do {
-        try await database.migrate()
+        try await database.migrate(migrations)
         try await operation(PersistenceTestRepository(database: database))
         await database.shutdown()
     } catch {

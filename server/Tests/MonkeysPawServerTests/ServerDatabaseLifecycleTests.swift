@@ -164,13 +164,13 @@ struct ServerDatabaseLifecycleTests {
         }
     }
 
-    private struct CLIResult: Sendable {
+    struct CLIResult: Sendable {
         let status: Int32
         let exitedNormally: Bool
         let error: String
     }
 
-    private static func runCLI(_ command: String, dataDirectory: URL) async throws -> CLIResult {
+    static func runCLI(_ command: String, dataDirectory: URL, overrides: [String: String] = [:]) async throws -> CLIResult {
         // Linux test binaries and macOS test bundles both live beneath the product directory.
         var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
         var executable: URL?
@@ -191,6 +191,10 @@ struct ServerDatabaseLifecycleTests {
                 var environment = ProcessInfo.processInfo.environment
                 environment["MONKEYSPAW_DATA_DIR"] = dataDirectory.path
                 environment["MONKEYSPAW_HTTP_HOST"] = "127.0.0.1"
+                for key in ["MONKEYSPAW_ADMIN_USERNAME", "MONKEYSPAW_ADMIN_PASSWORD", "MONKEYSPAW_ADMIN_PASSWORD_FILE"] {
+                    environment.removeValue(forKey: key)
+                }
+                environment.merge(overrides) { _, supplied in supplied }
                 process.environment = environment
                 process.standardOutput = FileHandle.nullDevice
                 let errors = Pipe()
