@@ -88,9 +88,10 @@ Rollout by milestone:
     that a container cannot set (Vervellum).
 - **release.yml.**
   - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
-    true. Packaging-related PRs run the dry-run path too. Every path first
-    calls `ci.yml`, then checks committed versions. A real tag's numeric
-    core must equal the committed `MARKETING_VERSION` and README marker;
+    true. PRs touching packaging, `server/Dockerfile` or the release
+    workflow run the dry-run path too. Every path first calls `ci.yml`, then
+    checks committed versions. A real tag's numeric core must equal the
+    committed `MARKETING_VERSION` and README marker;
     `python3 scripts/check-version.py --check-tag v0.1.0` enforces this.
     Release tags use `vX.Y.Z[-prerelease]`; build metadata (`+...`) is
     rejected before packaging because the macOS packager does not accept it.
@@ -98,30 +99,51 @@ Rollout by milestone:
     selecting an existing `v*` tag and setting `dry_run` to false.
   - Concurrency is `release-${{ github.ref }}`, without cancellation.
     Workflow permissions are `contents: write`; every build/verification
-    job reduces these to `contents: read`. Only the real publish job keeps
-    write permission. Actions are SHA-pinned, checkouts do not persist
+    job reduces these to `contents: read`. Only GitHub publishing keeps
+    `contents: write`; only image publishing gets `packages: write`, with
+    `contents: read`. Actions are SHA-pinned, checkouts do not persist
     credentials, and each runner job has a timeout.
-  - The draft release is published only after every job uploads:
+  - The draft release is published only after all build and verification
+    gates pass and the server image tags are promoted and verified. Server
+    images are ghcr objects, never a sixth release asset. Release assets:
+
     - macOS: a universal `.dmg`, plus `.zip` and their `.sha256` manifest.
     - Linux: a `.deb` built by `packaging/build-deb.sh` with
       `--static-swift-stdlib` (plus `--build-system native` until swift-build
       links static Foundation; §16) and `dpkg-shlibdeps`, plus `.deb.sha256`.
     - Flatpak: repacked from the deb (from M7).
-    - Server: the ghcr image (from M5).
   - In M2 the Linux job runs first; the macOS job `needs` it, so a broken
-    deb fails the tag before a release exists. Server publishing joins this
-    ordering in M5; flatpak joins in M7.
+    deb fails the tag before a release exists. Native server image builds
+    run alongside macOS packaging after the Linux and version gates;
+    flatpak joins in M7.
+  - Server image builds run natively on `ubuntu-24.04` (amd64) and hosted
+    `ubuntu-24.04-arm` (arm64), without QEMU/binfmt. Each passes `VERSION`,
+    `REVISION` (commit SHA) and `CREATED` (commit timestamp), checks OCI
+    labels, then smoke-tests container health and `/api/health` 200 with a
+    throwaway admin password file bind-mounted read-only. OCI archives and
+    digests use separate workflow artifacts outside `MonkeysPaw-release-*`.
+  - Image publishing requires tests, verify, Linux, macOS, artifacts and
+    both native image builds. It pushes untagged digests, creates a
+    multiarch manifest and verifies exactly amd64 and arm64 with the
+    expected digests for each tag before GitHub publishing can run. This
+    ordering keeps a failed image publish from undrafting the release;
+    a later GitHub failure can leave verified image tags published.
+    The owner must make the first, initially private ghcr package public.
+    `update.sh` still builds the repo-owned image locally (§8.6).
   - macOS builds are ad-hoc signed (`codesign --sign -`) unless Q3 provides
     an identity. Signing env is exported only when the secrets are
     non-empty (Obtainintosh lesson).
-  - Hyphenated tags are prereleases and never `latest`.
-  - Each build job downloads its uploaded workflow artifact and byte-compares
+  - Stable `vX.Y.Z` tags publish image tags `X.Y.Z`, `X.Y` and `latest` at
+    `ghcr.io/l-k-m/monkeyspaw-server`. Hyphenated tags are prereleases and
+    publish only the exact version image tag, never `X.Y` or `latest`.
+  - Each desktop packaging job downloads its workflow artifact and byte-compares
     every file, including checksums, against the originals. An assembly job
     requires all five assets and checks both manifests. The publish job
     creates a draft with all five assets, downloads every release asset and
     byte-compares against those verified build outputs before undrafting.
     Any failure leaves the release unpublished. PRs and manual dry runs do
-    every build and workflow-artifact verification, and skip the publish job.
+    every build and workflow-artifact verification, including both image
+    smoke tests, and skip both publish jobs without logging in to ghcr.
   - To cut the first release after CI and owner installation checks pass,
     run `scripts/release.sh 0.1.0 --push` on current main with the shared
     `lkm-release` engine installed. It bumps committed versions and pushes
