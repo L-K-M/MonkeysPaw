@@ -1,19 +1,22 @@
 import Foundation
+import Logging
 import MonkeysPawCore
 
 struct AdminUserService: Sendable {
     private let repository: AccountRepository
     private let passwords: any PasswordHashing
     private let clock: @Sendable () -> Date
+    private let logger: Logger
     private let auditWrite: @Sendable (AuditRepository, AuditEvent) async throws -> Void
 
     init(
-        accounts: AccountService,
+        accounts: AccountService, logger: Logger = ServerLogging.logger(),
         auditWrite: @escaping @Sendable (AuditRepository, AuditEvent) async throws -> Void = { try await $0.insert($1) }
     ) {
         repository = accounts.repository
         passwords = accounts.passwords
         clock = accounts.clock
+        self.logger = logger
         self.auditWrite = auditWrite
     }
 
@@ -26,7 +29,7 @@ struct AdminUserService: Sendable {
         }
         // Reject non-admins before bcrypt; recheck authority after it completes.
         let hash = try await passwords.hash(request.password)
-        return try await repository.writeAudited { accounts, devices, audit in
+        let user = try await repository.writeAudited { accounts, devices, audit in
             let actor = try await Self.requireAdmin(session, accounts: accounts, devices: devices)
             guard try await accounts.user(username: username) == nil else { throw AccountError.malformedRequest }
             let now = clock()
@@ -39,6 +42,8 @@ struct AdminUserService: Sendable {
             try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: .userCreate, targetID: user.id, at: now))
             return user.metadata
         }
+        log(.userCreate, actorID: session.userID, targetID: user.id)
+        return user
     }
 
     func update(id: String, request: SyncAPI.UpdateUserRequest, session: SessionIdentity) async throws -> SyncAPI.User {
@@ -52,7 +57,7 @@ struct AdminUserService: Sendable {
         let hash: String?
         if let password = request.password { hash = try await passwords.hash(password) } else { hash = nil }
         let actions = Self.actions(for: request)
-        return try await repository.writeAudited { accounts, devices, audit in
+        let user = try await repository.writeAudited { accounts, devices, audit in
             let actor = try await Self.requireAdmin(session, accounts: accounts, devices: devices)
             guard let current = try await accounts.user(id: id) else { throw AccountError.notFound }
             let now = clock()
@@ -78,6 +83,14 @@ struct AdminUserService: Sendable {
             }
             return updated.metadata
         }
+        for action in actions { log(action, actorID: session.userID, targetID: id) }
+        return user
+    }
+
+    private func log(_ action: AuditAction, actorID: String, targetID: String) {
+        logger.info("Account mutation committed", metadata: [
+            "action": .string(action.rawValue), "actor_id": .string(actorID), "target_id": .string(targetID)
+        ])
     }
 
     private static func requireAdmin(

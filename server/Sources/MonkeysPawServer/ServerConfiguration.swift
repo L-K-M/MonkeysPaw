@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import MonkeysPawCore
 
 /// Environment configuration shared by serving and the Docker healthcheck.
@@ -7,6 +8,7 @@ public struct ServerConfiguration: Sendable {
     let version: String
     public let httpPort: Int
     let trustedProxies: TrustedProxies
+    let logLevel: Logger.Level
 
     /// Treats empty or whitespace-only environment values as unset before applying defaults.
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) throws {
@@ -16,6 +18,7 @@ public struct ServerConfiguration: Sendable {
 
         httpHost = environment["MONKEYSPAW_HTTP_HOST"] ?? ServerLimits.defaultHTTPHost
         version = environment["MONKEYSPAW_VERSION"] ?? AppIdentity.fallbackVersion
+        logLevel = ServerLogging.logLevel(environment: environment)
 
         do {
             trustedProxies = try TrustedProxies(configuration: environment["MONKEYSPAW_TRUSTED_PROXIES"] ?? "")

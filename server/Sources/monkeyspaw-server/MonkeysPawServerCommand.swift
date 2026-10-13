@@ -50,7 +50,7 @@ private struct Healthcheck: AsyncParsableCommand {
         do {
             configuration = try ServerConfiguration()
         } catch {
-            FileHandle.standardError.write(Data("\(error)\n".utf8))
+            ServerLogging.logger().error("Healthcheck configuration invalid")
             throw ExitCode.failure
         }
 

@@ -26,6 +26,9 @@ struct APIErrorMiddleware: RouterMiddleware {
                 context.logger.error("Unexpected API error", metadata: ["error_type": .string(String(reflecting: type(of: error)))])
                 code = .internalError
             }
+            context.logger.log(level: code == .internalError ? .error : .debug, "API request failed", metadata: [
+                "code": .string(code.rawValue), "status": .string(String(code.httpStatus)), "method": .string(request.method.rawValue)
+            ])
             var response = try context.responseEncoder.encode(SyncAPI.ErrorResponse.failure(code), from: request, context: context)
             response.status = .init(code: code.httpStatus)
             if code == .unauthorized { response.headers[.wwwAuthenticate] = "Bearer" }

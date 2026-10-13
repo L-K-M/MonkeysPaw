@@ -105,7 +105,7 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
 | Component | Sinks | Level control |
 |---|---|---|
 | Desktop | macOS unified log or Linux stderr, plus `<data>/logs/monkeyspaw.log`: `<ISO-8601 UTC timestamp> <level>: <message>\n`; rotate before exceeding `LOG_FILE_MAX_BYTES = 1 MiB`, retaining the active file plus `.1` through `.4` (`LOG_FILE_KEEP = 5` total) | `warning` by default; `MONKEYSPAW_LOG` accepts case-insensitive `debug`, `info`, `warning`/`warn`, `error`; unknown values keep the default |
-| Server | JSON to stdout (`docker compose logs`) | `MONKEYSPAW_LOG_LEVEL` |
+| Server | One JSON event per line to stdout (`docker compose logs`), with UTC `at`, `level`, `message` and safe `fields` | `MONKEYSPAW_LOG_LEVEL`: case-insensitive SwiftLog levels (`trace`, `debug`, `info`, `notice`, `warning`/`warn`, `error`, `critical`); default `info`, including unknown values |
 
 - **File diagnostics:** create the logs directory at 0700 and files at 0600;
   append across restarts and serialize records within each sink. Escape CR/LF
@@ -116,4 +116,12 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
   leaves the other sinks running.
 - **Never logged:** keys, tokens, passwords, prompt content, field values,
   provider/tool error bodies.
+- **Server diagnostics:** messages use fixed safe text. Framework messages
+  containing addresses, paths or errors are reduced to a fixed event name.
+  Only validated action names, actor/target ids, HTTP methods/statuses and
+  failure codes enter `fields`. Arbitrary metadata, error descriptions,
+  credential hashes, headers, query strings and request bodies are dropped,
+  including at trace level. JSON encoding escapes embedded line breaks; a
+  serialized stdout sink keeps concurrent events on separate lines. Account
+  success events are emitted only after their audit transaction commits.
 - **Bug reports:** the `--selftest` output plus the log tail.

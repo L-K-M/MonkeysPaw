@@ -18,8 +18,7 @@ public final class ServerDatabase: Sendable {
         )
 
         // SQL and driver errors can contain credentials or prompt text (§12).
-        var logger = Logger(label: "monkeyspaw-database")
-        logger.logLevel = .critical
+        let logger = ServerLogging.logger(level: .critical)
         fluent = Fluent(logger: logger)
         let sqlite = SQLiteConfiguration(storage: .file(path: configuration.databasePath), enableForeignKeys: true)
         for id in [DatabaseID.sqlite, Self.readers] {
