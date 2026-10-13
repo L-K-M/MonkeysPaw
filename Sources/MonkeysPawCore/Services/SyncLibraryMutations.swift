@@ -40,7 +40,7 @@ struct SyncIdentityTransition: Codable {
 }
 
 struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
-    enum Kind: String, Codable { case apply, adopt, rescue, trash }
+    enum Kind: String, Codable { case apply, adopt, repairDuplicate, rescue, trash }
     let id: UUID
     let kind: Kind
     let path: String
@@ -56,6 +56,9 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
     let heldIssue: SyncIssueCode?
     /// Also retained when raw forensic bytes cannot carry a front-matter marker.
     var copyOrigin: SyncPromptOrigin? = nil
+    /// A byte-distinct spelling of the same adoption path on a case-sensitive
+    /// filesystem. Its keyed state migrates when the exact server bytes publish.
+    var adoptingSource: SyncLibraryFile? = nil
 
     var description: String { "<sync library edit>" }
     var customMirror: Mirror { Mirror(self, children: ["edit": description]) }
@@ -63,6 +66,14 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
     func validate() throws {
         try FileStorePath.validate(path)
         try expected?.validate()
+        try adoptingSource?.validate()
+        if let source = adoptingSource {
+            guard kind == .adopt, expected == nil, RelativePath(source.path) != RelativePath(path),
+                  try SyncNaming.pathKey(RelativePath(source.path)) == SyncNaming.pathKey(RelativePath(path)),
+                  retainedBytes == source.bytes, retainedSourcePath.map({ RelativePath($0) }) == RelativePath(source.path) else {
+                throw SyncError.invalidState
+            }
+        }
         if let expected, RelativePath(expected.path) != RelativePath(path) { throw SyncError.invalidState }
         if let retainedSourcePath { try FileStorePath.validate(retainedSourcePath) }
         if kind == .trash {
@@ -73,7 +84,7 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
             return
         }
         guard let bytes, hash == SyncHash(bytes: bytes), let transition,
-              transition.source == expected?.identityKey else { throw SyncError.invalidState }
+              transition.source == (expected ?? adoptingSource)?.identityKey else { throw SyncError.invalidState }
         let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
         let destination = try SyncIdentifiers.promptIdentity(transition.destination)
         guard destination == PromptIdentity(path: path, id: document.frontMatter.id) else { throw SyncError.invalidState }
@@ -96,10 +107,16 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   original.frontMatter.id?.rawValue != copyID else { throw SyncError.invalidState }
         } else {
             try LibraryPath.validate(path)
-            guard copyOrigin == nil, copyID == nil, retainedBytes == expected?.bytes,
-                  retainedSourcePath.map({ RelativePath($0) }) == expected.map({ RelativePath($0.path) }),
+            guard copyOrigin == nil, copyID == nil, retainedBytes == (expected ?? adoptingSource)?.bytes,
+                  retainedSourcePath.map({ RelativePath($0) }) == (expected ?? adoptingSource).map({ RelativePath($0.path) }),
                   heldIssue == nil || (heldIssue == .content(.invalidMetadataType)
                     && SyncConflictMetadata.hasInvalidOrigin(in: document)) else { throw SyncError.invalidState }
+        }
+        if kind == .repairDuplicate {
+            guard let expected, case .assigned = try expected.identity,
+                  case .assigned = destination, expected.identityKey != transition.destination else {
+                throw SyncError.invalidState
+            }
         }
         guard !document.isReadOnly, !document.issues.contains(where: { $0.severity == .error }) else {
             throw SyncError.invalidState
@@ -140,13 +157,28 @@ final class SyncLibraryMutations {
         try library.withSyncLock { files in try Self.read(files, at: path.string) }
     }
 
+    /// Include files outside browser enumeration. A racing/unreadable listing
+    /// aborts the scan, rather than supplying partial evidence for deletions.
+    func listedFiles() throws -> [SyncLibraryFile] {
+        try library.withSyncLock { files in
+            try files.listFiles().sorted { RelativePath($0.relativePath) < RelativePath($1.relativePath) }.map {
+                guard let file = try Self.read(files, at: $0.relativePath), file.stamp == $0.stamp else {
+                    throw LibraryError.conflict
+                }
+                return file
+            }
+        }
+    }
+
     func publication(_ bytes: Data, at path: RelativePath, expecting expected: SyncLibraryFile?,
                      transition: SyncIdentityTransition, mode: SyncFileMode = .normal,
                      kind: SyncLibraryEdit.Kind = .apply, markerIssue: SyncIssueCode? = nil,
-                     id: UUID = UUID()) throws -> SyncLibraryEdit {
-        let edit = SyncLibraryEdit(id: id, kind: kind, path: path.string, expected: expected, bytes: bytes,
-            hash: SyncHash(bytes: bytes), transition: transition, mode: mode, retainedBytes: expected?.bytes,
-            retainedSourcePath: expected?.path, copyID: nil, heldIssue: markerIssue)
+                     adoptingSource: SyncLibraryFile? = nil, id: UUID = UUID()) throws -> SyncLibraryEdit {
+        let source = expected ?? adoptingSource
+        var edit = SyncLibraryEdit(id: id, kind: kind, path: path.string, expected: expected, bytes: bytes,
+            hash: SyncHash(bytes: bytes), transition: transition, mode: mode, retainedBytes: source?.bytes,
+            retainedSourcePath: source?.path, copyID: nil, heldIssue: markerIssue)
+        edit.adoptingSource = adoptingSource
         try edit.validate()
         return edit
     }
@@ -199,13 +231,16 @@ final class SyncLibraryMutations {
     var hasUnreadableJournal: Bool { library.hasUnreadableSyncJournal }
 
     func prepareMigrations(for edit: SyncLibraryEdit) throws -> [SyncKeyedMigration] {
+        // A duplicate's old key belongs to the lexically first file.
+        guard edit.kind != .repairDuplicate else { return [] }
         guard let transition = edit.transition, let source = transition.source,
               source != transition.destination else { return [] }
         let from = try SyncIdentifiers.promptIdentity(source)
         let to = try SyncIdentifiers.promptIdentity(transition.destination)
         return try library.syncKeyedStores().flatMap {
             try $0.prepareSyncMigration(from: from, to: to,
-                rebindingHeadTo: edit.kind == .adopt ? edit.bytes : nil, originalBytes: edit.expected?.bytes)
+                rebindingHeadTo: edit.kind == .adopt ? edit.bytes : nil,
+                originalBytes: (edit.expected ?? edit.adoptingSource)?.bytes)
         }
     }
 
@@ -249,6 +284,15 @@ final class SyncLibraryMutations {
             }
             guard Self.matches(edit.expected, current: current) else {
                 return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: nil)
+            }
+            if let source = edit.adoptingSource {
+                do {
+                    guard try Self.matches(source, current: Self.read(files, at: source.path)) else {
+                        return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: nil)
+                    }
+                } catch LibraryError.conflict {
+                    return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: nil)
+                }
             }
             let expectation: SyncFileExpectation = current.map { .matching(stamp: $0.stamp, bytes: $0.bytes) } ?? .absent
             var displaced: Data?
