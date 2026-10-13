@@ -30,7 +30,11 @@ class ImportMapperTest {
             assertUtf8(source, mapped.document.source)
             assertTrue(mapped.report.mappings.isEmpty())
             assertTrue(mapped.report.dropped.isEmpty())
-            if (!source.contains("id:")) assertNull(mapped.document.frontMatter.id)
+            if (!source.contains("id:")) {
+                assertNull(mapped.document.frontMatter.id)
+            } else {
+                assertEquals("01K6Z4V9KQWZX7MPQ4T8ZNB2PD", mapped.document.frontMatter.id?.rawValue)
+            }
         }
         val warnings = map(sources.last(), "Example.md").report.warnings
         assertEquals(listOf(ImportWarning.Validation(PromptIssueCode.INVALID_PLACEHOLDER),
@@ -70,6 +74,29 @@ class ImportMapperTest {
             assertEquals(ImportSkipReason.UnsupportedExtension, assertFailsWith<ImportSkipReason> { map("{{unclosed", filename) })
         }
         assertEquals(Limits.importFileCapBytes, map("a".repeat(Limits.importFileCapBytes), "x.md").document.source.length)
+    }
+
+    @Test fun importExtensionsUseSwiftCaseSensitiveSuffixes() {
+        for ((filename, format) in listOf("NOTES.md" to ImportFormat.MARKDOWN,
+            "FLOW.prompt" to ImportFormat.DOTPROMPT, "Resume.prompty" to ImportFormat.PROMPTY)) {
+            assertEquals(format, ImportFormat.filename(filename))
+            assertUtf8("body", map("body", filename).document.source)
+        }
+        for (filename in listOf("Notes.MD", "Notes.Md", "Notes.mD", "FLOW.PROMPT", "Flow.Prompt",
+            "Flow.pRoMpT", "Resume.PROMPTY", "Resume.Prompty", "Resume.pRoMpTy", "Notes", "Notes.prompt.bak")) {
+            assertNull(ImportFormat.filename(filename))
+            assertEquals(ImportSkipReason.UnsupportedExtension, assertFailsWith<ImportSkipReason> { map("body", filename) })
+        }
+    }
+
+    @Test fun multibyteNativeSourcesAreBoundedByUtf8Bytes() {
+        for (unit in listOf("é", "🦊")) {
+            val source = unit.repeat(Limits.importFileCapBytes / unit.toByteArray(Charsets.UTF_8).size)
+            val mapped = map(source, "Example.md")
+            assertEquals(Limits.importFileCapBytes, mapped.document.source.toByteArray(Charsets.UTF_8).size)
+            assertUtf8(source, mapped.document.source)
+            assertEquals(ImportSkipReason.FileTooLarge, assertFailsWith<ImportSkipReason> { map(source + "a", "Example.md") })
+        }
     }
 
     @Test fun nativeErrorsAreOrderedAndFutureFormatTakesPrecedence() {
@@ -217,6 +244,44 @@ class ImportMapperTest {
         assertEquals(listOf(ImportWarning.InvalidDefault("inputs.name")), invalidLocal.report.warnings)
     }
 
+    @Test fun unusableDefaultsPreserveDeclarationsWithoutMappingFieldsAsInSwift() {
+        for (filename in listOf("Example.prompt", "Example.prompty")) {
+            val dotprompt = filename.endsWith(".prompt")
+            val heading = if (dotprompt) "input:\n  schema:\n    " else "inputs:\n  "
+            val sourceKey = if (dotprompt) "input.schema.name" else "inputs.name"
+            for (declaration in listOf("{type: string, enum: [formal, casual], default: loud, description: Voice, required: false}",
+                "{type: string, default: 7, description: Person, required: false}")) {
+                val source = "---\n${heading}name: $declaration\n---\n{{name}}"
+                val mapped = map(source, filename)
+                assertTrue(mapped.document.frontMatter.fields.isEmpty())
+                assertTrue(mapped.document.effectiveFields.single().isImplicit)
+                assertTrue(mapped.report.mappings.isEmpty())
+                assertEquals(listOf(ImportWarning.InvalidDefault(sourceKey)), mapped.report.warnings)
+                assertPreserved(source, mapped.document)
+                assertUtf8("{{name}}", mapped.document.body)
+            }
+            val withoutDefault = map("---\n${heading}name: {type: string, description: Person, required: false}\n---\n{{name}}", filename)
+            assertEquals("name", withoutDefault.document.frontMatter.fields.single().name)
+            assertTrue(withoutDefault.document.frontMatter.fields.single().optional)
+            assertNull(withoutDefault.report.mappings.single().defaultSource)
+            assertTrue(withoutDefault.report.warnings.isEmpty())
+        }
+    }
+
+    @Test fun unusableLocalPromptySamplesDoNotSelectGlobalSamplesAsInSwift() {
+        for (sample in listOf("7", "null", "false", "[local]")) {
+            for (global in listOf("", "sample: {name: usable}\n")) {
+                val source = "---\ninputs: {name: {type: string, sample: $sample, description: Person}}\n${global}---\n{{name}}"
+                val mapped = map(source, "Example.prompty")
+                assertTrue(mapped.document.frontMatter.fields.isEmpty())
+                assertTrue(mapped.document.effectiveFields.single().isImplicit)
+                assertTrue(mapped.report.mappings.isEmpty())
+                assertEquals(listOf(ImportWarning.InvalidDefault("inputs.name")), mapped.report.warnings)
+                assertPreserved(source, mapped.document)
+            }
+        }
+    }
+
     @Test fun enumDefaultMembershipUsesSwiftCanonicalEqualityButRetainsBytesAndOrder() {
         val source = "---\ninputs:\n  tone: {type: string, enum: ['é', 'a', 'é'], default: 'e\u0301'}\n" +
             "  blank: {type: string, enum: ['', value], default: ''}\n---\n{{tone}} {{blank}}"
@@ -253,6 +318,16 @@ class ImportMapperTest {
         assertEquals(listOf(ImportWarning.UnsupportedInput("input.schema.tags(array)"), ImportWarning.FieldCollision("name"),
             ImportWarning.FieldCollision("extra"), ImportWarning.ReservedName("date")), mapped.report.warnings)
         assertTrue(mapped.document.source.contains("custom: retained"))
+        assertPreserved(source, mapped.document)
+    }
+
+    @Test fun mappingValuedPicoKeysRemainLiteralAsInSwift() {
+        val source = "---\ninput:\n  schema:\n    tone?(enum): [formal, casual]\n" +
+            "    color?(enum): {type: string, enum: [red, blue]}\n---\n{{tone}} {{color}}"
+        val mapped = map(source)
+        assertEquals(listOf("tone"), mapped.report.mappings.map { it.fieldName })
+        assertTrue(mapped.document.frontMatter.fields.single().optional)
+        assertEquals(listOf(ImportWarning.InvalidName("input.schema.color?(enum)")), mapped.report.warnings)
         assertPreserved(source, mapped.document)
     }
 
@@ -313,6 +388,9 @@ class ImportMapperTest {
         val mapped = map("---\nmodel: example\n---\n$body", "Example.prompty")
         assertEquals(listOf(3, 13, 26, 39), mapped.report.warnings.map { (it as ImportWarning.UnsupportedTemplate).byteOffset })
         assertUtf8(body, mapped.document.body)
+        val repeated = map("---\nmodel: example\n---\n$body {% if x %}", "Example.prompty")
+        assertEquals(listOf(3, 13, 26, 39, 51), repeated.report.warnings.map { (it as ImportWarning.UnsupportedTemplate).byteOffset })
+        assertUtf8("$body {% if x %}", repeated.document.body)
         val escaped = map("\\{{bad.helper}} {% unclosed {# comment", "Example.prompty")
         assertEquals(listOf(ImportWarning.UnsupportedTemplate(ImportFormat.PROMPTY, 16),
             ImportWarning.UnsupportedTemplate(ImportFormat.PROMPTY, 28)), escaped.report.warnings)
