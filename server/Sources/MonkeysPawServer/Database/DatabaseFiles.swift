@@ -80,7 +80,7 @@ enum DatabaseFiles {
 
     static func preserve(_ file: URL, at recovery: URL) throws {
         guard link(file.path, recovery.path) == 0 else { throw BackupRestoreError.failed }
-        try sync(file.deletingLastPathComponent())
+        try sync(recovery.deletingLastPathComponent())
     }
 
     static func replace(_ file: URL, with staged: URL) throws {

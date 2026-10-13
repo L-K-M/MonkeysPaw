@@ -100,7 +100,7 @@ struct BackupTestServer {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
         }
         close(fd)
-        #expect(bound == 0 && named == 0)
+        try #require(bound == 0 && named == 0)
         let port = UInt16(bigEndian: address.sin_port)
         let process = Process()
         process.executableURL = try AdminCLITestFixture.executableURL()

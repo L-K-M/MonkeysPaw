@@ -24,12 +24,18 @@ struct ServerBackupTests {
                 let started = BackupTestLatch()
                 let release = BackupTestLatch()
                 let writer = Task {
-                    try await database.write { sql in
-                        try await sql.raw("UPDATE prompts SET rev = 2, content = 'uncommitted'").run()
-                        try await sql.raw(Fixture.revision(rev: 2)).run()
-                        try await sql.raw(Fixture.change(rev: 2, content: "uncommitted")).run()
+                    do {
+                        try await database.write { sql in
+                            try await sql.raw("UPDATE prompts SET rev = 2, content = 'uncommitted'").run()
+                            try await sql.raw(Fixture.revision(rev: 2)).run()
+                            try await sql.raw(Fixture.change(rev: 2, content: "uncommitted")).run()
+                            await started.open()
+                            await release.wait()
+                        }
+                    } catch {
+                        // Also wake the backup if transaction setup or fixture SQL fails.
                         await started.open()
-                        await release.wait()
+                        throw error
                     }
                 }
                 await started.wait()
@@ -42,7 +48,7 @@ struct ServerBackupTests {
                     try await writer.value
                 } catch {
                     await release.open()
-                    _ = await writer.result
+                    try await writer.value
                     throw error
                 }
                 #expect(try await repository.string("SELECT content FROM prompts", column: "content") == "uncommitted")
@@ -65,6 +71,7 @@ struct ServerBackupTests {
                 #expect(try await repository.string("SELECT rev FROM prompts", column: "rev") == "1")
                 #expect(try await repository.count("changes") == 1)
                 #expect(try await repository.count("prompt_revisions") == 1)
+                // Restore clears frozen manifests whose payloads retain the previous UUID.
                 #expect(try await repository.count("snapshots") == 0)
             }
             let recovering = directory.appendingPathComponent("recovered-previous")
@@ -191,7 +198,7 @@ struct ServerBackupTests {
             let original = try Data(contentsOf: file)
             let refused = try await AdminCLITestFixture.run(["restore", file.path, "--json"], dataDirectory: directory)
             refused.assertFailure(excluding: [file.path])
-            #expect(refused.error.contains(BackupRestoreError.databaseInUse.description))
+            #expect(refused.error == "Error: Database is in use. Stop the server and other database commands before restoring.\n")
             #expect(try Data(contentsOf: file) == original)
             server.stop()
             let restored = try await AdminCLITestFixture.run(["restore", file.path], dataDirectory: directory)
@@ -207,10 +214,55 @@ struct ServerBackupTests {
             for arguments in [["serve"], ["migrate"], ["backup", directory.appendingPathComponent("blocked.db").path]] {
                 let result = try await AdminCLITestFixture.run(arguments, dataDirectory: directory)
                 result.assertFailure()
+                if arguments[0] == "backup" {
+                    #expect(result.error == "Error: Database is in use. Stop the server and other database commands before restoring.\n")
+                }
             }
             await #expect(throws: BackupRestoreError.databaseInUse) {
                 _ = try await ServerDatabase.open(configuration: .init(environment: ["MONKEYSPAW_DATA_DIR": directory.path]))
             }
+        }
+    }
+
+    @Test(arguments: ["shared", "exclusive"])
+    func restoreReportsDatabaseInUseForAHeldLock(mode: String) async throws {
+        try await withBackupDirectory { directory in
+            let lock = try DatabaseFileLock(directory: directory, mode: mode == "shared" ? .shared : .exclusive)
+            defer { lock.release() }
+            let service = ServerBackupService(configuration: .init(environment: ["MONKEYSPAW_DATA_DIR": directory.path]))
+            let file = directory.appendingPathComponent("backup.db")
+            await #expect(throws: BackupRestoreError.databaseInUse) {
+                _ = try await service.restore(from: file.path)
+            }
+            let result = try await AdminCLITestFixture.run(["restore", file.path], dataDirectory: directory)
+            result.assertFailure(excluding: [file.path])
+            #expect(result.error == "Error: Database is in use. Stop the server and other database commands before restoring.\n")
+        }
+    }
+
+    @Test(arguments: ["-wal", "-shm", "-journal"])
+    func restoreRefusesOrphanedJournalsWithoutDiscardingThem(suffix: String) async throws {
+        try await withBackupDirectory { directory in
+            let source = directory.appendingPathComponent("source")
+            let file = directory.appendingPathComponent("backup.db")
+            try await withBackupDatabase(source) { database in
+                try await Fixture(database: database).seed()
+                let backup = try await AdminCLITestFixture.run(["backup", file.path], dataDirectory: source)
+                try #require(backup.status == 0 && backup.error.isEmpty)
+            }
+            let target = directory.appendingPathComponent("target")
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+            let sidecar = target.appendingPathComponent(ServerLimits.databaseFilename + suffix)
+            let journal = Data("orphaned journal recovery bytes".utf8)
+            try journal.write(to: sidecar)
+            let original = try Data(contentsOf: file)
+            let result = try await AdminCLITestFixture.run(["restore", file.path], dataDirectory: target)
+            result.assertFailure(excluding: [sidecar.path, "orphaned journal recovery bytes"])
+            #expect(result.error == "Error: Database file is missing but journal files remain. Preserve them for recovery and move them aside before restoring.\n")
+            #expect(try Data(contentsOf: sidecar) == journal)
+            #expect(try Data(contentsOf: file) == original)
+            #expect(try !DatabaseFiles.occupied(target.appendingPathComponent(ServerLimits.databaseFilename)))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).allSatisfy { !$0.hasPrefix(".monkeyspaw-restore-") })
         }
     }
 
@@ -302,7 +354,7 @@ struct ServerBackupTests {
             } else if kind == "migration" {
                 try await editBackup(file, "ALTER TABLE audit_events ADD COLUMN group_id TEXT")
             } else {
-                try FileManager.default.createDirectory(at: directory.appendingPathComponent("monkeyspaw.db-wal"),
+                try FileManager.default.createDirectory(at: directory.appendingPathComponent(ServerLimits.databaseFilename + "-wal"),
                                                         withIntermediateDirectories: false)
             }
             let live = directory.appendingPathComponent(ServerLimits.databaseFilename)
@@ -313,7 +365,7 @@ struct ServerBackupTests {
             #expect(try Data(contentsOf: live) == original)
             #expect(try Data(contentsOf: file) == backupBytes)
             #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).allSatisfy { !$0.hasPrefix(".monkeyspaw-restore-") })
-            if kind == "wal-directory" { try FileManager.default.removeItem(at: directory.appendingPathComponent("monkeyspaw.db-wal")) }
+            if kind == "wal-directory" { try FileManager.default.removeItem(at: directory.appendingPathComponent(ServerLimits.databaseFilename + "-wal")) }
             try await withBackupDatabase(directory) { (database) async throws -> Void in
                 #expect(try await Fixture(database: database).count("users") == 2)
             }
@@ -331,13 +383,13 @@ struct ServerBackupTests {
             // The serve connection keeps WAL resident after this separate writer closes.
             try await editBackup(directory.appendingPathComponent(ServerLimits.databaseFilename),
                                  "UPDATE users SET display_name = 'committed before crash'")
-            let wal = directory.appendingPathComponent("monkeyspaw.db-wal")
+            let wal = directory.appendingPathComponent(ServerLimits.databaseFilename + "-wal")
             #expect(try Data(contentsOf: wal).count > 0)
             server.crash()
             let result = try await AdminCLITestFixture.run(["restore", file.path, "--json"], dataDirectory: directory)
             let metadata = try result.value(BackupMetadata.self)
             #expect(!FileManager.default.fileExists(atPath: wal.path))
-            #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("monkeyspaw.db-shm").path))
+            #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent(ServerLimits.databaseFilename + "-shm").path))
             let previous = URL(fileURLWithPath: try #require(metadata.previousPath))
             let recovery = directory.appendingPathComponent("verify-crashed-previous")
             let recovered = try await AdminCLITestFixture.run(["restore", previous.path], dataDirectory: recovery)

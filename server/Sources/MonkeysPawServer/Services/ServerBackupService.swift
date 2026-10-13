@@ -67,16 +67,17 @@ public struct ServerBackupService: Sendable {
             try Task.checkCancellation()
 
             var previous: URL?
-            if try DatabaseFiles.occupied(live) {
+            let hasPrevious = try DatabaseFiles.occupied(live)
+            if hasPrevious {
                 try await BackupRepository.preparePrevious(live)
             }
-            // Never associate old or orphaned journal files with the replacement.
+            // Orphaned journals may hold recovery pages; never discard them or pair them with the replacement.
             for suffix in ["-wal", "-shm", "-journal"] {
                 guard try !DatabaseFiles.occupied(URL(fileURLWithPath: live.path + suffix)) else {
-                    throw BackupRestoreError.failed
+                    throw hasPrevious ? BackupRestoreError.failed : .orphanedJournals
                 }
             }
-            if try DatabaseFiles.occupied(live) {
+            if hasPrevious {
                 let recovery = configuration.dataDirectory.appendingPathComponent("monkeyspaw.pre-restore-\(UUID().uuidString).db")
                 try DatabaseFiles.preserve(live, at: recovery)
                 previous = recovery
@@ -102,7 +103,7 @@ public struct DatabaseBackupResult: Sendable, Encodable {
 }
 
 public enum BackupRestoreError: Error, CustomStringConvertible {
-    case databaseInUse, destinationOccupied, invalidBackup, foreignBackup, newerSchema, failed
+    case databaseInUse, destinationOccupied, invalidBackup, foreignBackup, newerSchema, orphanedJournals, failed
 
     public var description: String {
         switch self {
@@ -111,6 +112,7 @@ public enum BackupRestoreError: Error, CustomStringConvertible {
         case .invalidBackup: return "Backup must be a regular, valid SQLite database."
         case .foreignBackup: return "Backup is not a Monkey's Paw database."
         case .newerSchema: return "Backup schema is not supported by this server version."
+        case .orphanedJournals: return "Database file is missing but journal files remain. Preserve them for recovery and move them aside before restoring."
         case .failed: return "Database backup or restore failed."
         }
     }
