@@ -2,6 +2,139 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncApplyJournalTests: XCTestCase {
+    func testReplanReplacementBeforePermitSwapRecoversWithFreshGraph() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.files.write(SyncApplyTestRig.bytes("Old"), at: "a.md")
+        let first = try rig.plan([rig.replacement()])
+        try rig.files.write(SyncApplyTestRig.bytes("Changed"), at: "a.md")
+        XCTAssertEqual(try rig.journal.apply(first), .replanAsConflict(operationID: first.edits[0].id))
+        let replacement = try rig.plan([rig.replacement(body: "Replanned")])
+        var interrupted = false
+        rig.dataOperations.onOperation = { operation in
+            guard operation == "directory:/" else { return }
+            do {
+                let record = try JSONDecoder().decode(SyncApplyRecord.self, from: rig.data.read(at: "sync/apply.json"))
+                guard record.id == replacement.id else { return }
+                interrupted = true
+                // The replacement is on disk while the old graph still holds
+                // its permit. A fresh process cannot retain that in-memory gate.
+                rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+            } catch { XCTFail("Cannot inspect replacement journal: \(error)") }
+        }
+        XCTAssertThrowsError(try rig.journal.replan(replacement)) {
+            XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+        }
+        XCTAssertTrue(interrupted)
+        XCTAssertThrowsError(try rig.library.load(at: "a.md")) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        let restarted = try SyncApplyTestRig(files: rig.files, data: rig.data)
+        XCTAssertEqual(restarted.journal.pending?.id, replacement.id)
+        XCTAssertEqual(try restarted.journal.replay(), .committed)
+        XCTAssertEqual(try restarted.journal.replay(), .committed)
+        XCTAssertEqual(try restarted.files.read(at: "a.md"), replacement.edits[0].bytes)
+        XCTAssertNoThrow(try restarted.library.load(at: "a.md"))
+    }
+
+    func testJournalLoadErrorSurvivesAnAlreadyHeldPermit() throws {
+        for (json, expected) in [("broken", SyncError.corruptFile), ("{\"version\":99}", .futureVersion(99))] {
+            let rig = try SyncApplyTestRig()
+            try rig.data.put(json, at: "sync/apply.json")
+            let owner = UUID()
+            try rig.mutations.begin(owner)
+            let accesses = rig.files.accessCount
+            XCTAssertThrowsError(try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                    mutations: rig.mutations, states: rig.states)) {
+                XCTAssertEqual($0 as? SyncError, expected)
+            }
+            XCTAssertEqual(rig.files.accessCount, accesses)
+            XCTAssertThrowsError(try rig.library.entries()) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+            }
+            rig.mutations.finish(owner)
+            XCTAssertNoThrow(try rig.library.entries())
+        }
+    }
+
+    func testDecodedValuesFileMigrationFailsBeforeLibraryIO() throws {
+        let fixture = try preparedAdoption()
+        let edit = fixture.plan.edits[0]
+        let source = try XCTUnwrap(edit.transition?.source)
+        let destination = try XCTUnwrap(edit.transition?.destination)
+        let migration = SyncKeyedMigration(store: .history, change: .file(SyncKeyedFileMove(
+            source: "history/" + source + "/head.json", destination: "history/" + destination + "/head.json",
+            bytes: Data("opaque history".utf8))))
+        let record = try SyncApplyRecord(plan: fixture.plan, steps: [SyncApplyStep(edit: edit, migrations: [migration])])
+        var object = try SyncTestValues.object(record)
+        var steps = try XCTUnwrap(object["steps"] as? [[String: Any]])
+        var migrations = try XCTUnwrap(steps[0]["migrations"] as? [[String: Any]])
+        migrations[0]["store"] = "values"
+        steps[0]["migrations"] = migrations
+        object["steps"] = steps
+        let bytes = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncApplyRecord.self, from: bytes)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        try fixture.rig.data.writePrivate(bytes, at: "sync/apply.json")
+        let accesses = fixture.rig.files.accessCount
+        XCTAssertThrowsError(try SyncApplyJournal(files: fixture.rig.data, operations: fixture.rig.dataOperations,
+                                                mutations: fixture.rig.mutations, states: fixture.rig.states)) {
+            XCTAssertEqual($0 as? SyncError, .corruptFile)
+        }
+        XCTAssertEqual(fixture.rig.files.accessCount, accesses)
+    }
+
+    func testOversizedHistoryIntentFailsBeforeMutationAndReleasesPermit() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.files.write(SyncApplyTestRig.bytes("Local"), at: "a.md")
+        // Base64 source and destination bytes together exceed the journal cap.
+        let history = Data(repeating: 65, count: 6 * 1_024 * 1_024 + 1)
+        let path = "history/" + SyncTestValues.personalPrompt.rawValue + "/revision.md"
+        try rig.data.writePrivate(history, at: path)
+        let file = try XCTUnwrap(rig.mutations.read(at: "a.md"))
+        let edit = try rig.mutations.publication(SyncApplyTestRig.bytes("Server", id: SyncTestValues.groupPrompt),
+            at: "a.md", expecting: file, transition: SyncIdentityTransition(from: file.identity,
+                to: .assigned(SyncTestValues.groupPrompt)))
+        let writes = rig.files.writeCount
+        XCTAssertThrowsError(try rig.journal.apply(rig.plan([edit]))) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        XCTAssertEqual(rig.files.writeCount, writes)
+        XCTAssertEqual(rig.libraryOperations.operationCount, 0)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), file.bytes)
+        XCTAssertEqual(try rig.data.read(at: path), history)
+        XCTAssertNil(try rig.data.stamp(at: "sync/apply.json"))
+        XCTAssertNoThrow(try rig.library.load(at: "a.md"))
+    }
+
+    func testDecodedInvalidUsagePayloadFailsBeforeLibraryIO() throws {
+        let fixture = try preparedAdoption()
+        let edit = fixture.plan.edits[0]
+        let valid = Data("{\"events\":[12],\"version\":1}".utf8)
+        let move = SyncKeyedFileMove(source: "usage/" + (try XCTUnwrap(edit.transition?.source)),
+            destination: "usage/" + (try XCTUnwrap(edit.transition?.destination)), bytes: valid)
+        let record = try SyncApplyRecord(plan: fixture.plan, steps: [SyncApplyStep(edit: edit,
+            migrations: [SyncKeyedMigration(store: .usage, change: .file(move))])])
+        var object = try SyncTestValues.object(record)
+        var steps = try XCTUnwrap(object["steps"] as? [[String: Any]])
+        // Hash-consistent bytes can still violate the usage payload format.
+        steps[0]["migrations"] = [try SyncTestValues.object(SyncKeyedMigration(store: .usage,
+            change: .file(SyncKeyedFileMove(source: move.source, destination: move.destination,
+                                          bytes: Data("broken".utf8)))))]
+        object["steps"] = steps
+        let bytes = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncApplyRecord.self, from: bytes)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        try fixture.rig.data.writePrivate(bytes, at: "sync/apply.json")
+        let accesses = fixture.rig.files.accessCount
+        XCTAssertThrowsError(try SyncApplyJournal(files: fixture.rig.data, operations: fixture.rig.dataOperations,
+                                                mutations: fixture.rig.mutations, states: fixture.rig.states)) {
+            XCTAssertEqual($0 as? SyncError, .corruptFile)
+        }
+        XCTAssertEqual(fixture.rig.files.accessCount, accesses)
+    }
+
     func testJournalIsPrivateDurableAndPrecedesAllLibraryMutations() throws {
         let rig = try SyncApplyTestRig()
         let edit = try rig.replacement()

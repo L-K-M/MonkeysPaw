@@ -130,7 +130,7 @@ final class SyncApplyJournal {
             if let record = try persistence.load() { try mutations.begin(record.id) }
         } catch {
             // Corrupt/future journals cannot authorize editing around recovery.
-            try mutations.begin(UUID())
+            try? mutations.begin(UUID())
             throw error
         }
     }
