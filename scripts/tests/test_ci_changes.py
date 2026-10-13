@@ -85,7 +85,8 @@ class SelectionTests(unittest.TestCase):
             "scripts/tests/test-update.sh": frozenset({"core-linux", "deb"}),
             "scripts/tests/test_compose_smoke.py": frozenset({"core-linux", "compose-smoke"}),
             "scripts/tests/test_check_version.py": frozenset({"core-linux"}),
-            "scripts/tests/test_future.py": frozenset({"core-linux"}),
+            # A new test may run in any job; it selects everything until mapped.
+            "scripts/tests/test_future.py": ALL,
             "README.md": frozenset({"core-linux", "deb"}),
             "README.android.md": frozenset(),
             "AGENTS.md": frozenset(),

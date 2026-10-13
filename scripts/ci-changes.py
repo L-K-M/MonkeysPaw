@@ -52,6 +52,8 @@ FILES = {
     "scripts/tests/test-backup.sh": frozenset({"core-linux", "deb"}),
     "scripts/tests/test-update.sh": frozenset({"core-linux", "deb"}),
     "scripts/tests/test_compose_smoke.py": frozenset({"core-linux", "compose-smoke"}),
+    # Python tests run through core-linux unittest discovery.
+    "scripts/tests/test_check_version.py": frozenset({"core-linux"}),
     "scripts/ci-changes.py": ALL_JOBS,
     "scripts/tests/test_ci_changes.py": ALL_JOBS,
 }
@@ -76,7 +78,6 @@ PREFIXES = (
     ("server/", SERVER_JOBS),
     ("deploy/caddy/", SERVER_JOBS),
     ("android/", frozenset({"android"})),
-    ("scripts/tests/", frozenset({"core-linux"})),
     ("docs/", frozenset()),
 )
 
