@@ -1,6 +1,6 @@
 import Foundation
 
-/// M2 settings contain only a library choice and first-run progress (§5.1).
+/// Version-1 settings contain library, first-run and desktop preferences.
 /// Platform composition computes the default folder when the path is nil.
 public struct SettingsDocument: Equatable, Sendable {
     public static let currentVersion = 1
@@ -8,13 +8,19 @@ public struct SettingsDocument: Equatable, Sendable {
     public var version: Int { Self.currentVersion }
     public let libraryFolderPath: String?
     public let firstRun: FirstRunProgress
+    public let delivery: DeliveryPreferences
+    public let automaticUpdateChecks: AutomaticUpdateChecks
 
     public init() {
         libraryFolderPath = nil
         firstRun = FirstRunProgress()
+        delivery = DeliveryPreferences()
+        automaticUpdateChecks = .enabled
     }
 
-    public init(libraryFolderPath: String?, firstRun: FirstRunProgress = FirstRunProgress()) throws {
+    public init(libraryFolderPath: String?, firstRun: FirstRunProgress = FirstRunProgress(),
+                delivery: DeliveryPreferences = DeliveryPreferences(),
+                automaticUpdateChecks: AutomaticUpdateChecks = .enabled) throws {
         if let path = libraryFolderPath {
             // A combining scalar can join the slash's grapheme; POSIX paths
             // are absolute based on the separator byte, not text prefixes.
@@ -25,13 +31,23 @@ public struct SettingsDocument: Equatable, Sendable {
         }
         self.libraryFolderPath = libraryFolderPath
         self.firstRun = firstRun
+        self.delivery = delivery
+        self.automaticUpdateChecks = automaticUpdateChecks
     }
 
     // A chosen root can distinguish canonically equivalent filenames (§5.1).
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.libraryFolderPath.map { Data($0.utf8) } == rhs.libraryFolderPath.map { Data($0.utf8) }
             && lhs.firstRun == rhs.firstRun
+            && lhs.delivery == rhs.delivery
+            && lhs.automaticUpdateChecks == rhs.automaticUpdateChecks
     }
+}
+
+/// General owns update controls; the preference shares settings.json (§17 Q11).
+public enum AutomaticUpdateChecks: String, Codable, CaseIterable, Sendable {
+    case enabled
+    case disabled
 }
 
 public struct FirstRunProgress: Codable, Equatable, Sendable {
@@ -84,4 +100,8 @@ public struct SettingsSnapshot: Equatable, Sendable {
     public let document: SettingsDocument
     public let readOnlyError: SettingsError?
     public var isReadOnly: Bool { readOnlyError != nil }
+    /// Failed-closed defaults must never be mistaken for update-check consent.
+    public var allowsAutomaticUpdateChecks: Bool {
+        !isReadOnly && document.automaticUpdateChecks == .enabled
+    }
 }

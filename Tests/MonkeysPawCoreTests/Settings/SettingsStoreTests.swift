@@ -3,7 +3,7 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SettingsStoreTests: XCTestCase {
-    private let defaultsJSON = #"{"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false,"tourCompleted":false},"libraryFolderPath":null,"version":1}"#
+    private let defaultsJSON = #"{"automaticUpdateChecks":"enabled","delivery":{"clipboardRestore":"off","linuxDefaultPasteChord":"standard"},"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false,"tourCompleted":false},"libraryFolderPath":null,"version":1}"#
 
     func testPreTourSettingsInferCompletionFromSetupWhileFreshDefaultsStayPending() throws {
         for setupPresented in [false, true] {
@@ -454,6 +454,9 @@ final class SettingsStoreTests: XCTestCase {
     private func allChanges(_ settings: SettingsService) -> [() throws -> Void] {
         [ { try settings.setLibraryFolder("/new") }, { try settings.setLibraryFolder(nil) },
           { try settings.markSetupPresented() }, { try settings.completeLibraryFolderStep() },
-          { try settings.markSeedsOffered() }, { try settings.completeTour() } ]
+          { try settings.markSeedsOffered() }, { try settings.completeTour() },
+          { try settings.setLinuxDefaultPasteChord(.terminal) },
+          { try settings.setClipboardRestore(.previousText) },
+          { try settings.setAutomaticUpdateChecks(.disabled) } ]
     }
 }

@@ -113,7 +113,10 @@ final class SettingsModelTests: XCTestCase {
             XCTAssertFalse(model.needsTourPresentation)
             let intents = [ { model.setLibraryFolder("/chosen") }, { model.clearLibraryFolder() },
                             { model.markSetupPresented() }, { model.completeLibraryFolderStep() },
-                            { model.markSeedsOffered() }, { model.completeTour() }, { model.refresh() } ]
+                            { model.markSeedsOffered() }, { model.completeTour() },
+                            { model.setLinuxDefaultPasteChord(.terminal) },
+                            { model.setClipboardRestore(.previousText) },
+                            { model.setAutomaticUpdateChecks(.disabled) }, { model.refresh() } ]
             for intent in intents {
                 intent()
                 XCTAssertEqual(model.error, expected)
@@ -229,7 +232,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(secondChanges, 2)
     }
 
-    func testDocumentAndPersistedSchemaContainOnlyLibraryChoiceAndFirstRunFlags() throws {
+    func testDocumentAndPersistedSchemaContainOnlyTypedNonSecretSettings() throws {
         // The public document has no arbitrary string map or content/secret API.
         let document = try SettingsDocument(libraryFolderPath: "/library", firstRun:
             FirstRunProgress(setupPresented: true, libraryFolderCompleted: true,
@@ -248,7 +251,10 @@ final class SettingsModelTests: XCTestCase {
         model.completeTour()
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with:
             files.read(at: "settings.json")) as? [String: Any])
-        XCTAssertEqual(Set(object.keys), ["version", "libraryFolderPath", "firstRun"])
+        XCTAssertEqual(Set(object.keys), ["version", "libraryFolderPath", "firstRun", "delivery", "automaticUpdateChecks"])
+        XCTAssertEqual(object["delivery"] as? [String: String],
+            ["linuxDefaultPasteChord": "standard", "clipboardRestore": "off"])
+        XCTAssertEqual(object["automaticUpdateChecks"] as? String, "enabled")
         let progress = try XCTUnwrap(object["firstRun"] as? [String: Bool])
         XCTAssertEqual(Set(progress.keys), ["setupPresented", "libraryFolderCompleted", "seedsOffered", "tourCompleted"])
         XCTAssertTrue(progress.values.allSatisfy { $0 })

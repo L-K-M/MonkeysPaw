@@ -265,7 +265,11 @@ DeliveryService.deliver(text, mode)
     the chord per delivery: `Return` sends the standard chord,
     `Ctrl+Shift+Return` sends Ctrl+Shift+V.
   - Settings has a "default chord" option for users who mostly paste into
-    terminals.
+    terminals. Version-1 settings records it as
+    `delivery.linuxDefaultPasteChord`: `standard` (the missing-field default)
+    or `terminal`. It supplies the Linux preferred intent; an explicit
+    per-delivery standard/terminal chord or Copy intent overrides it.
+    macOS keeps Cmd+V regardless of this Linux preference.
   - On X11 the target's class is read at `arm()` with
     `xdotool getactivewindow`, then `xprop -id <id> WM_CLASS` (`x11-utils`).
     The class is matched against a terminal list, and the terminal chord is
@@ -276,7 +280,10 @@ DeliveryService.deliver(text, mode)
 - **Clipboard restore.** Off by default: the result stays on the clipboard,
   which is predictable and doubles as the fallback. When enabled, the
   previous text clipboard is restored `CLIPBOARD_RESTORE_MS = 750` after the
-  chord. The delay is a guess, and the setting says so.
+  chord. Version-1 settings uses `delivery.clipboardRestore`: `off` (the
+  missing-field default) or `previousText`. Settings says "previous text
+  only; 750 ms delay may be too short for some apps". This preference does
+  not authorize reads merely to display Settings or change the preference.
 - **Secure input.** macOS blocks synthetic keystrokes into password fields
   without reporting an error. The copy-only notification is the user's cue.
 

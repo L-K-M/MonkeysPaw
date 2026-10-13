@@ -30,6 +30,39 @@ graph replacement and folder reveal to the platform composition root.
 General also offers **Forget all values** with confirmation through
 `RememberedValuesSettingsModel`, including while the picker panel is closed.
 
+M7 Settings → Delivery uses `DeliverySettingsModel` for the saved Linux
+default chord and clipboard-restore mode. Both desktops show the restore
+control and its previous-text/750 ms caveat, sanitized paste backend,
+permission and failure facts, **Test paste**, and **Open Setup…**. Test
+reuses the existing Setup self-test; opening Setup requests the existing
+window. Refresh never reads the clipboard, captures a target, registers a
+shortcut or starts permission consent. macOS displays fixed Cmd+V without
+a Linux selector. Native Linux offers Standard/Terminal and explains X11
+detection; Wayland/Flatpak explains the default/manual chord, portal consent
+and copy fallback. Repeat assignment stays in Shortcuts. General owns
+automatic update checks and the later Check Now/result controls.
+
+These are additive fields in the existing version-1 `settings.json` at
+each desktop's current settings location, without a version bump:
+
+```json
+"delivery": {"linuxDefaultPasteChord": "standard", "clipboardRestore": "off"},
+"automaticUpdateChecks": "enabled"
+```
+
+`linuxDefaultPasteChord` accepts `standard`/`terminal`; `clipboardRestore`
+accepts `off`/`previousText`; `automaticUpdateChecks` accepts
+`enabled`/`disabled` (§17 Q11). A missing delivery object or member uses its
+default; only a missing update-check field defaults to enabled. A present
+null, wrong type or unknown enum value follows the corrupt/read-only rule.
+Loading an older version-1 file does not rewrite it just to add defaults.
+Every folder, first-run and preference change preserves all other fields
+and unknown JSON keys, including keys inside `delivery`. Failed saves
+publish the prior committed preference and a typed error. A read-only
+snapshot never permits automatic update checks, even when its fallback
+document contains the enabled default. No update requests or restore
+behavior are activated by the Core preference/model slice.
+
 Settings → Assistant renders `AssistantSettingsModel`: saved profiles and
 the active profile, a staged name/kind/base URL/model draft, key edit mode,
 saved-key tier, typed save errors, and Test results/model suggestions. You

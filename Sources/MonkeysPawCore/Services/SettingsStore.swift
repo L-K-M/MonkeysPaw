@@ -8,6 +8,23 @@ public final class SettingsStore: @unchecked Sendable {
         let version: Int
         let libraryFolderPath: String?
         let firstRun: FirstRunProgress
+        let delivery: DeliveryPreferences
+        let automaticUpdateChecks: AutomaticUpdateChecks
+
+        private enum CodingKeys: String, CodingKey {
+            case version, libraryFolderPath, firstRun, delivery, automaticUpdateChecks
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int.self, forKey: .version)
+            libraryFolderPath = try values.decodeIfPresent(String.self, forKey: .libraryFolderPath)
+            firstRun = try values.decode(FirstRunProgress.self, forKey: .firstRun)
+            delivery = values.contains(.delivery)
+                ? try values.decode(DeliveryPreferences.self, forKey: .delivery) : DeliveryPreferences()
+            automaticUpdateChecks = values.contains(.automaticUpdateChecks)
+                ? try values.decode(AutomaticUpdateChecks.self, forKey: .automaticUpdateChecks) : .enabled
+        }
     }
 
     private struct Loaded {
@@ -84,7 +101,8 @@ public final class SettingsStore: @unchecked Sendable {
             let payload = try JSONDecoder().decode(Payload.self, from: normalized)
             guard payload.version == SettingsDocument.currentVersion else { throw SettingsError.corruptFile }
             let document = try SettingsDocument(libraryFolderPath: payload.libraryFolderPath,
-                                                firstRun: payload.firstRun)
+                firstRun: payload.firstRun, delivery: payload.delivery,
+                automaticUpdateChecks: payload.automaticUpdateChecks)
             return Loaded(document: document, object: object,
                           needsRewrite: sourceVersion != SettingsDocument.currentVersion)
         } catch { throw SettingsError.corruptFile }
@@ -98,6 +116,11 @@ public final class SettingsStore: @unchecked Sendable {
         progress["seedsOffered"] = document.firstRun.seedsOffered
         progress["tourCompleted"] = document.firstRun.tourCompleted
         object["firstRun"] = progress
+        var delivery = object["delivery"] as? [String: Any] ?? [:]
+        delivery["linuxDefaultPasteChord"] = document.delivery.linuxDefaultPasteChord.rawValue
+        delivery["clipboardRestore"] = document.delivery.clipboardRestore.rawValue
+        object["delivery"] = delivery
+        object["automaticUpdateChecks"] = document.automaticUpdateChecks.rawValue
         object["libraryFolderPath"] = document.libraryFolderPath.map { $0 as Any } ?? NSNull()
         object["version"] = document.version
 
