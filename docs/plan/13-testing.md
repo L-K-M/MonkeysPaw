@@ -10,7 +10,7 @@
 | macOS drivers | Unit tests for the CGEvent sequence builder, the AX-focus wait (fake clock), Carbon modifier translation, and Keychain blob encoding. |
 | Server | Hummingbird's test client against an in-memory SQLite:<br>• every endpoint and every row of the §8.2 permission matrix (allowed and denied)<br>• compare-and-swap conflicts; per-scope feeds after moves and membership changes (a non-member never receives a row)<br>• snapshot mode for new and stale cursors; login backoff; invite single-use; migrations from an empty database |
 | Sync integration | §13.1. |
-| Deployment | In CI:<br>• `docker compose config -q` (default and `--profile tls`)<br>• image build; `compose up --wait`; `/api/health`<br>• a login + push + pull smoke test with `curl`; `shellcheck update.sh` |
+| Deployment | CI job `compose-smoke`:<br>• `docker compose config --quiet` (default and `--profile tls`; TLS configuration only)<br>• local image build; `compose up --wait --wait-timeout 120`; unauthenticated `/api/health`<br>• bootstrap login, private PUT + GET, initial snapshot, second PUT + GET and delta from the snapshot cursor, asserting id/rev/path/content and database identity<br>• `shellcheck`, Bash syntax and fake-command smoke tests; `shellcheck update.sh` when S19 supplies it |
 | Conformance | `spec/fixtures/` run by `MonkeysPawCoreTests` and the Android `:core` tests; each suite fails on a fixture it does not consume. Server Schema tests call `MonkeysPawServer.SchemaRenderer` directly, check deterministic bytes and complete catalog coverage, and validate every DTO fixture against the emitted keywords plus documented contract annotations, comparing with strict Codable. One CLI test runs the built `dump-schema` executable with a deadline. These schema tests need no database, GTK or network. CI regenerates `spec/schema/` into a fresh directory and compares recursively, including missing and extra files. |
 | Android | `:core` JVM tests with fakes, including the `sync/*.json` scenarios and the §13.1 suite against the real server in CI. App JVM tests for ViewModels, the IME `inputType` decision table, and the entry activities' intent handling. No emulator job (HalloMiao decision). |
 | End-to-end, manual | A per-release checklist in `docs/platform/`: macOS (Safari, Chrome, Terminal, full-screen Space), GNOME Wayland, KDE Wayland, X11, Android (Chrome, ChatGPT, Claude, Termux; Gboard and Samsung Keyboard). Run the §6.5 self-test plus a browser chat box and a terminal. Two devices and two users syncing a group prompt, one of them a phone. |
@@ -26,6 +26,26 @@ Every UTF-8 byte cap also emits a standard `maxLength`
 backstop: generic validation rejects excess code points, while contract
 validation additionally rejects excess bytes below the code-point cap.
 ASCII and multi-byte boundary cases cover passwords, content and paths.
+
+The [Compose smoke script](../../scripts/compose-smoke.sh) uses a fresh,
+disposable database. PUT returns only rev/seq and optional warnings (§8.3),
+so GET verifies the stored representation before each pull verifies its feed
+payload. The input uses canonical front matter and LF body bytes; private
+storage preserves those exact bytes. Initial pull sends explicit
+`database_id: null` with no cursors; the delta sends the returned database
+identity and completed snapshot cursor. Every HTTP call has connection and
+total deadlines and requires 200. Password JSON, bearer headers and responses
+stay in private files removed on exit; bodies and curl stderr are never
+printed. CI writes a random bootstrap secret into a 0600 `.env`, provisions
+0700 binds with UID/GID 1000, prints server logs on failure, and always runs
+`compose down -v` and removes private files. Fake curl tests prove request
+shapes, secret-free argv/output, cleanup and rejection of incorrect responses;
+they do not prove Docker runtime behavior.
+
+[Server owner checks](../platform/server.md) cover a fresh host, real-domain
+HTTPS and TLS persistence across two `update.sh` re-runs, plus backup/restore.
+Desktop login/push/pull is recorded after M6 supplies the client. CI validates
+the TLS configuration without starting Caddy or requesting certificates.
 
 ### 13.1 Sync tests
 

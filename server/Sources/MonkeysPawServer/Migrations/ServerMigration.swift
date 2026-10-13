@@ -6,7 +6,7 @@ struct ServerMigration: Sendable {
     let prepare: @Sendable (any SQLDatabase) async throws -> Void
 
     // Append migrations only; restore accepts a prefix of this historical order.
-    static let current: [ServerMigration] = [.foundation, .nullableAccountMetadata, .membershipAuditContext, .snapshotCursors]
+    static let current: [ServerMigration] = [.foundation, .nullableAccountMetadata, .membershipAuditContext, .snapshotCursors, .retentionIndexes]
 
     static let foundation = ServerMigration(name: "001_persistence_foundation") { sql in
         for statement in FoundationSchema.statements {

@@ -8,13 +8,14 @@ public func buildApplication(configuration: ServerConfiguration) -> some Applica
 
 public func buildApplication(configuration: ServerConfiguration, database: ServerDatabase) -> some ApplicationProtocol {
     makeApplication(configuration: configuration, accounts: AccountService(database: database),
-                    sessions: SessionService(database: database))
+                    sessions: SessionService(database: database),
+                    retention: RetentionService(database: database, logger: ServerLogging.logger(level: configuration.logLevel)))
 }
 
 func makeApplication(
     configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil,
     admin: AdminUserService? = nil, groups: GroupService? = nil, invites: InviteService? = nil,
-    prompts: PromptService? = nil, logger suppliedLogger: Logger? = nil
+    prompts: PromptService? = nil, retention: RetentionService? = nil, logger suppliedLogger: Logger? = nil
 ) -> some ApplicationProtocol {
     let logger = suppliedLogger ?? ServerLogging.logger(level: configuration.logLevel)
     let router = Router(context: ServerRequestContext.self)
@@ -34,11 +35,13 @@ func makeApplication(
         SyncFeedRoutes(feed: .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
     }
 
-    return Application(
+    var application = Application(
         router: router,
         configuration: .init(address: .hostname(configuration.httpHost, port: configuration.httpPort)),
         logger: logger
     )
+    if let retention { application.addServices(RetentionScheduler(maintenance: retention, logger: logger)) }
+    return application
 }
 
 private struct HealthResponse: ResponseCodable {
