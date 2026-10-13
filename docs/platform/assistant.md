@@ -182,6 +182,20 @@ tier must report **1** while saved, exactly
 Clear/Delete, every tier must report **0**. Record only paths/counts, mode,
 tier and pass/fail. Remove the sentinel profile and temporary roots afterward.
 
+## Native controls and desktop behavior: NOT RUN
+
+Record the exact build, platform, input method, screen reader and tester.
+Run every applicable row in the linked platform sections with Anthropic and
+local Ollama. These are real desktop checks; injected transports and key
+events do not establish native provider, IME or accessibility behavior.
+
+| Check | Status | Procedure and detailed result rows |
+|---|---|---|
+| macOS native Keychain ACL/unlock/update behavior | **NOT RUN** | [Keychain secrets](macos.md#m4-a3-keychain-secrets-not-run) |
+| Linux GNOME Keyring/KWallet, locked/unavailable service, environment/file tiers, migration and temporary cleanup | **NOT RUN** | [Secret storage](linux.md#secret-storage-m4-a4-not-run) |
+| Assistant Settings: profiles/keys/models/Test, warning, lifetime, keyboard, screen reader and focus | **NOT RUN** | [macOS Assistant Settings](macos.md#m4-a13-assistant-settings-not-run), [Linux Assistant Settings](linux.md#assistant-settings-m4-a14-not-run) |
+| Library Assistant: all action/privacy/staleness/acceptance/cancellation rows, real IME, keyboard and screen reader | **NOT RUN** | [macOS Library Assistant](macos.md#m4-library-assistant-flows-73-76-117), [Linux Library Assistant](linux.md#library-assistant-flows-m4-a16-not-run) |
+
 ## Automated proof and remaining owner work
 
 [LinuxSecretScanTests](../../Tests/MonkeysPawLinuxTests/LinuxSecretScanTests.swift)
