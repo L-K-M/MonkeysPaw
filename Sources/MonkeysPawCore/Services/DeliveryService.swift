@@ -311,15 +311,15 @@ public final class DeliveryService {
         guard pendingClipboardRestore === restoration,
               let resume = restoration.resumeCapture else { return }
         restoration.resumeCapture = nil
-        restoration.read = nil
 
         // A busy UI loop may deliver a late read before its timeout callback.
         if ContinuousClock.now < restoration.captureDeadline, let snapshot,
            snapshot.withText({ $0.utf8.prefix(Limits.clipboardSnapshotMaxBytes + 1).count })
             <= Limits.clipboardSnapshotMaxBytes {
+            restoration.read = nil
             restoration.snapshot = snapshot
         } else {
-            pendingClipboardRestore = nil
+            discardClipboardRestore()
         }
 
         resume()
@@ -391,7 +391,6 @@ public final class DeliveryService {
         }
 
         if case .ladder = request.selection, let reason = failureCache.failure(for: backend) {
-            discardClipboardRestore(for: request)
             attempt(remaining.dropFirst(), for: request, chord: chord, focus: focus,
                     failures: failures + [BackendFailure(backend: backend, reason: reason)])
             return
@@ -429,7 +428,7 @@ public final class DeliveryService {
         _ reason: PasteFailure, backend: PasteBackend, remaining: ArraySlice<PasteBackend>,
         request: Request, chord: PasteChord, focus: FocusConfirmation, failures: [BackendFailure]
     ) {
-        discardClipboardRestore(for: request)
+        // Keep capture through retries; the final sent/copy-only outcome decides restore.
         failureCache.record(reason, for: backend)
         attempt(remaining.dropFirst(), for: request, chord: chord, focus: focus,
                 failures: failures + [BackendFailure(backend: backend, reason: reason)])

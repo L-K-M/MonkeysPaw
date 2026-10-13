@@ -49,6 +49,12 @@ final class ClipboardRestoreTests: XCTestCase {
             XCTAssertLessThan(write, hide)
             XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
             h.settle()
+            let settled = h.recorder.events
+            let focus = try XCTUnwrap(settled.firstIndex(of: .restore(try XCTUnwrap(h.focus.target))))
+            let backend: PasteBackend = session == .macOS ? .cgEvent : .remoteDesktopPortal
+            let paste = try XCTUnwrap(settled.firstIndex(of: .paste(backend, .standard)))
+            XCTAssertLessThan(hide, focus)
+            XCTAssertLessThan(focus, paste)
             XCTAssertEqual(doneCount(h), 1)
         }
     }
@@ -65,7 +71,7 @@ final class ClipboardRestoreTests: XCTestCase {
         h.injectors[.cgEvent]?.complete(.sent)
         XCTAssertEqual(doneCount(h), 1)
         XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.cgEvent))
-        h.scheduler.advance(by: .milliseconds(749))
+        h.scheduler.advance(by: Limits.clipboardRestoreDelay - .milliseconds(1))
         XCTAssertEqual(h.clipboard.restoreCalls, 0)
         h.scheduler.advance(by: .milliseconds(1))
         XCTAssertEqual(h.clipboard.restoreCalls, 1)
@@ -85,6 +91,7 @@ final class ClipboardRestoreTests: XCTestCase {
             XCTAssertEqual(h.clipboard.readCount, 1)
             XCTAssertEqual(h.clipboard.ownershipWrites, 0)
             XCTAssertEqual(h.clipboard.restoreCalls, 0)
+            XCTAssertEqual(h.clipboard.snapshotCancellations, 1)
             XCTAssertEqual(h.clipboard.text, "test")
             XCTAssertNil(h.clipboard.lastSnapshot)
             XCTAssertEqual(doneCount(h), 1)
@@ -127,13 +134,15 @@ final class ClipboardRestoreTests: XCTestCase {
 
     func testLateReadSkipsRestoreEvenBeforeTimeoutCallbackRuns() {
         let h = enabled()
-        // Model a stalled owning loop: the fake scheduler cannot run yet.
+        // Stall the owning loop past ContinuousClock's monotonic capture deadline
+        // while the fake scheduler's timeout remains pending.
         h.clipboard.onSnapshot = { Thread.sleep(forTimeInterval: 0.3) }
         completePaste(h)
         h.scheduler.advance(by: .seconds(2))
         XCTAssertEqual(h.clipboard.readCount, 1)
         XCTAssertEqual(h.clipboard.ownershipWrites, 0)
         XCTAssertEqual(h.clipboard.restoreCalls, 0)
+        XCTAssertEqual(h.clipboard.snapshotCancellations, 1)
         XCTAssertEqual(h.clipboard.text, "test")
         XCTAssertNil(h.clipboard.lastSnapshot)
         h.clipboard.onSnapshot = nil
@@ -147,8 +156,27 @@ final class ClipboardRestoreTests: XCTestCase {
         XCTAssertEqual(h.clipboard.readCount, 1)
         XCTAssertEqual(h.clipboard.ownershipWrites, 0)
         XCTAssertEqual(h.clipboard.restoreCalls, 0)
+        XCTAssertEqual(h.clipboard.snapshotCancellations, 1)
         XCTAssertEqual(h.clipboard.text, "test")
         XCTAssertNil(h.clipboard.lastSnapshot)
+    }
+
+    func testRejectedDeferredCaptureCancelsReadAndContinuesDeliveryOnce() {
+        for previous in [nil, String(repeating: "x", count: Limits.clipboardSnapshotMaxBytes + 1)] {
+            let h = enabled()
+            h.clipboard.replaceText(previous)
+            h.clipboard.snapshotMode = .deferred
+            h.deliver()
+            h.clipboard.completeSnapshot(repeating: 2)
+            XCTAssertEqual(h.clipboard.snapshotCancellations, 1)
+            h.settle()
+            h.scheduler.advance(by: .seconds(2))
+            XCTAssertEqual(h.recorder.events.filter { $0 == .write("test") }.count, 1)
+            XCTAssertEqual(doneCount(h), 1)
+            XCTAssertEqual(h.clipboard.restoreCalls, 0)
+            XCTAssertEqual(h.clipboard.text, "test")
+            XCTAssertNil(h.clipboard.lastSnapshot)
+        }
     }
 
     func testExactByteCapUnicodeMultilineAndEmptyTextCanRestore() {
@@ -229,18 +257,31 @@ final class ClipboardRestoreTests: XCTestCase {
         })
     }
 
-    func testSuccessfulFallbackBackendKeepsDeliveredText() {
-        let h = enabled()
-        h.injectors[.cgEvent]?.result = .failed(.permissionDenied)
-        completePaste(h)
-        XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.appleScript))
-        XCTAssertNil(h.clipboard.lastSnapshot)
-        h.scheduler.advance(by: .seconds(2))
-        XCTAssertEqual(h.clipboard.restoreCalls, 0)
-        XCTAssertEqual(h.clipboard.text, "test")
+    func testSuccessfulLaterBackendRestoresAfterEveryFailureReason() {
+        let reasons: [PasteFailure] = [.permissionDenied, .toolMissing, .timeout, .portalDenied,
+                                      .backendUnavailable, .notReceived, .unknown]
+        for reason in reasons {
+            let h = enabled()
+            h.focus.confirmation = .unconfirmed
+            h.injectors[.cgEvent]?.result = .failed(reason)
+            completePaste(h)
+            XCTAssertEqual(h.service.lastDelivery,
+                DeliveryReceipt(outcome: .pasted(.appleScript), focus: .unconfirmed))
+            XCTAssertEqual(h.cache.failure(for: .cgEvent), reason)
+            XCTAssertNotNil(h.clipboard.lastSnapshot)
+            XCTAssertEqual(h.clipboard.text, "test")
+            h.scheduler.advance(by: Limits.clipboardRestoreDelay - .milliseconds(1))
+            XCTAssertEqual(h.clipboard.restoreCalls, 0)
+            h.scheduler.advance(by: .milliseconds(1))
+            XCTAssertEqual(h.clipboard.restoreCalls, 1)
+            XCTAssertEqual(h.clipboard.restorationWrites, 1)
+            XCTAssertEqual(h.clipboard.text, "previous")
+            XCTAssertNil(h.clipboard.lastSnapshot)
+            XCTAssertEqual(doneCount(h), 1)
+        }
     }
 
-    func testCachedOrMissingBackendFallbackAlsoSkipsRestore() {
+    func testCachedOrMissingBackendStillAllowsLaterSentToRestore() {
         for cached in [false, true] {
             let h = DeliveryHarness(available: cached ? PasteBackend.allCases : [.appleScript],
                                     clipboardRestore: .previousText)
@@ -248,10 +289,49 @@ final class ClipboardRestoreTests: XCTestCase {
             if cached { h.cache.record(.permissionDenied, for: .cgEvent) }
             h.arm()
             completePaste(h)
+            XCTAssertEqual(h.clipboard.text, "test")
             h.scheduler.advance(by: .seconds(2))
             XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.appleScript))
-            XCTAssertEqual(h.clipboard.restoreCalls, 0)
-            XCTAssertEqual(h.clipboard.text, "test")
+            XCTAssertEqual(h.clipboard.restoreCalls, 1)
+            XCTAssertEqual(h.clipboard.restorationWrites, 1)
+            XCTAssertEqual(h.clipboard.text, "previous")
+            XCTAssertNil(h.clipboard.lastSnapshot)
+            XCTAssertEqual(doneCount(h), 1)
+        }
+    }
+
+    func testLaterBackendRestoreDelayStartsAtItsSentCallback() {
+        let h = enabled()
+        h.injectors[.cgEvent]?.mode = .deferred
+        h.injectors[.appleScript]?.mode = .deferred
+        completePaste(h)
+        h.scheduler.advance(by: .seconds(2))
+        h.injectors[.cgEvent]?.complete(.failed(.timeout))
+        h.scheduler.advance(by: .seconds(2))
+        XCTAssertEqual(h.clipboard.restoreCalls, 0)
+        XCTAssertEqual(doneCount(h), 0)
+        h.injectors[.appleScript]?.complete(.sent)
+        XCTAssertEqual(doneCount(h), 1)
+        h.scheduler.advance(by: Limits.clipboardRestoreDelay - .milliseconds(1))
+        XCTAssertEqual(h.clipboard.restoreCalls, 0)
+        h.scheduler.advance(by: .milliseconds(1))
+        XCTAssertEqual(h.clipboard.restorationWrites, 1)
+        XCTAssertEqual(h.clipboard.text, "previous")
+    }
+
+    func testNewerCopyDuringLadderRetryIsNeverOverwritten() {
+        for newer in ["user copy", "test"] {
+            let h = enabled()
+            h.injectors[.cgEvent]?.onPaste = { h.clipboard.replaceText(newer) }
+            h.injectors[.cgEvent]?.result = .failed(.timeout)
+            completePaste(h)
+            XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.appleScript))
+            h.scheduler.advance(by: Limits.clipboardRestoreDelay)
+            XCTAssertEqual(h.clipboard.restoreCalls, 1)
+            XCTAssertEqual(h.clipboard.restorationWrites, 0)
+            XCTAssertEqual(h.clipboard.text, newer)
+            XCTAssertNil(h.clipboard.lastSnapshot)
+            h.injectors[.cgEvent]?.onPaste = nil
         }
     }
 
@@ -507,6 +587,7 @@ final class ClipboardRestoreTests: XCTestCase {
         XCTAssertFalse(reflection.contains(secret))
         h.settle()
         h.scheduler.advance(by: Limits.clipboardRestoreDelay)
+        XCTAssertEqual(h.clipboard.restorationWrites, 1)
         XCTAssertFalse(String(reflecting: h.recorder.events).contains(secret))
         h.service.readStatus { status in
             XCTAssertFalse(String(reflecting: status).contains(secret))
