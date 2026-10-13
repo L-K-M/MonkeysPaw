@@ -4,10 +4,22 @@ import Foundation
 public struct PromptEditingSession: Hashable, Sendable {
     let token: UUID
     let isInactive: Bool
+    /// Checked editor-load hint for assistant preflight, not token membership.
+    let loadedID: ULID?
 
-    init(token: UUID, isInactive: Bool = false) {
+    init(token: UUID, isInactive: Bool = false, loadedID: ULID? = nil) {
         self.token = token
         self.isInactive = isInactive
+        self.loadedID = loadedID
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.token == rhs.token && lhs.isInactive == rhs.isInactive
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(token)
+        hasher.combine(isInactive)
     }
 }
 

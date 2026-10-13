@@ -340,7 +340,9 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   use `profileChanged()` even when the non-secret profile remains identical.
   Final candidate bytes include a preflighted identity before the diff appears;
   a new write or private copy gets a fresh ID, while improve retains an existing
-  ID and preflights an absent first-save ID. Accept rechecks the live context
+  ID even when the unsaved buffer omits it: the editing token carries the
+  checked load's identity hint without changing token membership. A genuinely
+  unassigned file preflights its first-save ID. Accept rechecks the live context
   and exposes the exact canonical candidate and a completion token.
   `AssistantModel.accept(using:completion:)` commits through the active
   `EditorModel` and `PromptEditingService`. Write creates exclusively with

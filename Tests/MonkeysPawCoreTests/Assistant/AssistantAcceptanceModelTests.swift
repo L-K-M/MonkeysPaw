@@ -105,6 +105,20 @@ final class AssistantAcceptanceModelTests: XCTestCase {
         }
     }
 
+    func testImproveKeepsLoadedIdentityWhenUnsavedBufferOmitsID() async throws {
+        let id = ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PD")!
+        let original = "---\nid: \(id.rawValue)\n---\nOriginal"
+        let h = try AssistantAcceptanceHarness(source: original)
+        h.e.ui { h.e.model.edit("Unsaved without front matter") }
+        try await h.ready(improve: true)
+        let candidate = try XCTUnwrap(h.model.state.candidate)
+        XCTAssertEqual(candidate.content.document.frontMatter.id, id)
+        let entry = try XCTUnwrap(h.accept().committed?.entry)
+        XCTAssertEqual(entry.identity, .assigned(id))
+        XCTAssertEqual(try h.e.h.files.read(at: "a.md"), candidate.content.canonicalBytes)
+        XCTAssertEqual(try h.e.h.library.historyForEditing(entry.identity, filename: "a.md").map(\.source), [original])
+    }
+
     func testChangedOrDeletedDiskUsesExistingEditorConflictDialog() async throws {
         for deleted in [false, true] {
             let h = try AssistantAcceptanceHarness(source: "Original")

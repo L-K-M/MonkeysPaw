@@ -169,8 +169,10 @@ public final class EditorModel: @unchecked Sendable {
             availability = .busy
         }
         else { availability = .available }
+        let snapshotSession = PromptEditingSession(token: session.token, isInactive: session.isInactive,
+                                                   loadedID: baseline?.document.frontMatter.id)
         return AssistantEditorSnapshot(source: source, relativePath: prompt.relativePath,
-            revision: assistantRevision, session: session, stamp: stamp, availability: availability)
+            revision: assistantRevision, session: snapshotSession, stamp: stamp, availability: availability)
     }
 
     @discardableResult
