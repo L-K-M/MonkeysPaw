@@ -151,12 +151,10 @@ enum SyncConflictPolicy {
             return .fileError(.init(code: .notFound, fingerprint: intent.fingerprint))
         case .forbidden:
             var restore: SyncConflictHead?
-            if let recorded, recorded.rev > 0, let accessibleHead {
-                let head = try SyncConflictHead(accessibleHead, userID: userID)
-                // A create or a head belonging elsewhere cannot authorize rollback.
-                if intent.baseRev > 0, head.id == intent.id, head.scope == recorded.scope, head.path == recorded.path {
-                    restore = head
-                }
+            if intent.baseRev > 0, let recorded, recorded.rev > 0, let accessibleHead,
+               let head = try? SyncConflictHead(accessibleHead, userID: userID),
+               head.id == intent.id, head.scope == recorded.scope, head.path == recorded.path {
+                restore = head
             }
             return .denied(restore: restore, local: local, error: .init(code: .forbidden, fingerprint: intent.fingerprint))
         case .validation(let issues):
@@ -173,6 +171,7 @@ enum SyncConflictPolicy {
     static func copy(_ file: SyncLibraryFile, origin requested: SyncPromptOrigin, userID: ULID,
                      groupFolder: String? = nil, device: String, at date: Date, freshID: ULID,
                      occupiedPaths: [RelativePath], existingCopies: [SyncConflictCopyCandidate] = [],
+                     excludingPaths: Set<RelativePath> = [],
                      mutations: SyncLibraryMutations) throws -> SyncReconciliationCopy {
         try file.validate()
         let document = PromptCodec.parseFile(file.bytes, filename: LibraryPath.filename(file.path))
@@ -184,7 +183,10 @@ enum SyncConflictPolicy {
         }
         for candidate in existingCopies.sorted(by: { RelativePath($0.file.path) < RelativePath($1.file.path) }) {
             let current = candidate.file
-            guard candidate.scope == .user(userID), RelativePath(current.path) != RelativePath(file.path),
+            // Rescued true carries no original ID, so equal bodies cannot prove lineage.
+            guard case .conflictOf = origin,
+                  candidate.scope == .user(userID), RelativePath(current.path) != RelativePath(file.path),
+                  !excludingPaths.contains(RelativePath(current.path)),
                   let identity = try? current.identity, case .assigned(let id) = identity,
                   id != document.frontMatter.id,
                   (try? SyncConflictMetadata.origin(in: current.bytes, filename: LibraryPath.filename(current.path))) == origin,
@@ -204,6 +206,48 @@ enum SyncConflictPolicy {
         }
         let edit = try mutations.rescue(file, at: destination, freshID: freshID, origin: origin)
         return SyncReconciliationCopy(edit: edit, origin: origin)
+    }
+
+    /// Plan a complete pull's copies together. Reserve incoming server paths and
+    /// earlier allocations, and never reuse a copy this same plan will retire.
+    static func copies(for plan: SyncReconciliationPlan, device: String, at date: Date,
+                       freshID: () throws -> ULID, existingCopies: [SyncConflictCopyCandidate] = [],
+                       mutations: SyncLibraryMutations) throws -> [RelativePath: SyncReconciliationCopy] {
+        var occupied = plan.occupiedPaths
+        var excluded = Set<RelativePath>()
+        var losses: [SyncReconciliationPreservation] = []
+        func exclude(_ installation: SyncReconciliationInstall) {
+            occupied.insert(installation.remote.libraryPath)
+            excluded.insert(installation.remote.libraryPath)
+            if let source = installation.source { excluded.insert(RelativePath(source.path)) }
+        }
+        for operation in plan.operations {
+            switch operation {
+            case .preserve(let loss):
+                losses.append(loss)
+                excluded.insert(RelativePath(loss.local.path))
+                if let installation = loss.installation { exclude(installation) }
+            case .install(let installation): exclude(installation)
+            case .remove(let file): excluded.insert(RelativePath(file.path))
+            case .restoreUpdate: break
+            default: throw SyncReconciliationError.requiresPolicy
+            }
+        }
+        var result: [RelativePath: SyncReconciliationCopy] = [:]
+        for loss in losses.sorted(by: { RelativePath($0.local.path) < RelativePath($1.local.path) }) {
+            var folder: String?
+            if case .group(let id) = plan.expectedState?.prompts[.assigned(loss.id)]?.scope {
+                folder = plan.expectedState?.groups[id]?.folder
+            }
+            let copy = try copy(loss.local, origin: loss.reason == .restoreMissing ? .rescued : .conflictOf(loss.id),
+                userID: plan.nextState.binding.account.userID, groupFolder: folder, device: device, at: date,
+                freshID: freshID(), occupiedPaths: Array(occupied), existingCopies: existingCopies,
+                excludingPaths: excluded, mutations: mutations)
+            result[RelativePath(loss.local.path)] = copy
+            occupied.insert(RelativePath(copy.edit.path))
+            excluded.insert(RelativePath(copy.edit.path))
+        }
+        return result
     }
 
     private static func wireScope(_ scope: SyncScopeKey) -> SyncAPI.PromptScope {

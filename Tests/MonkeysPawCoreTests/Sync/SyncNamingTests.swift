@@ -63,6 +63,17 @@ final class SyncNamingTests: XCTestCase {
         XCTAssertLessThanOrEqual(LibraryPath.filename(collision.string).utf8.count, 255)
     }
 
+    func testAWholeCharacterTooLargeForTheRemainingStemGetsASafeFallback() throws {
+        let stem = "q" + String(repeating: "\u{301}", count: 100)
+        XCTAssertEqual(stem.count, 1)
+        let source = RelativePath(stem + ".md")
+        XCTAssertNoThrow(try SyncPathValidator.validate(source.string, scope: .user))
+        let conflict = try SyncNaming.conflict(source: source, groupFolder: nil,
+            device: String(repeating: "D", count: 64), at: date, occupiedPaths: [])
+        XCTAssertTrue(LibraryPath.filename(conflict.string).hasPrefix("Prompt (conflict "))
+        XCTAssertNoThrow(try SyncPathValidator.validate(conflict.string, scope: .user))
+    }
+
     func testMaximumRootedGroupPathRescueFlattensWithStableSourceSuffix() throws {
         let segment = String(repeating: "a", count: 255)
         let wire = segment + "/" + segment + "/" + String(repeating: "c", count: 254) + "/d/" + String(repeating: "b", count: 252) + ".md"

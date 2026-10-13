@@ -60,6 +60,7 @@ extension SyncReconciler {
                 }
             } else if edit.kind == .apply, let existing = edit.expected,
                       case .assigned(let id) = try existing.identity {
+                guard case .conflictOf = copy.origin else { throw SyncReconciliationError.requiresPolicy }
                 let path = RelativePath(edit.path)
                 guard path != source, plan.occupiedPaths.contains(path), plan.localIdentities.contains(.assigned(id)),
                       !serverPaths.contains(try folded(path)), reused.insert(try folded(path)).inserted,
@@ -89,7 +90,9 @@ extension SyncReconciler {
                 throw SyncReconciliationError.requiresPolicy
             }
             edits.append(try mutations.publication(remote.bytes, at: remote.libraryPath, expecting: target,
-                transition: SyncIdentityTransition(from: target?.identity, to: .assigned(remote.id)), mode: remote.mode))
+                transition: SyncIdentityTransition(from: target?.identity, to: .assigned(remote.id)), mode: remote.mode,
+                markerIssue: SyncConflictMetadata.ingest(remote.bytes, filename: LibraryPath.filename(remote.path.string),
+                                                         scope: remote.scope.pathScope).issue))
             if let source = installation.source, RelativePath(source.path) != remote.libraryPath {
                 removals[RelativePath(source.path)] = source
             }

@@ -35,7 +35,7 @@ enum SyncReconciler {
         let mode: SyncReconciliationPlan.Mode = old.databaseID == nil ? .firstSync
             : old.databaseID == pull.databaseID ? .normal : .restore
         let groups = try groups(for: pull, old: old, folders: groupFolders)
-        let files = try index(local.files)
+        let files = try index(local.files, heldPaths: local.heldPaths)
         var heads = Dictionary(uniqueKeysWithValues: old.prompts.compactMap { identity, prompt -> (ULID, Head)? in
             guard case .assigned(let id) = identity else { return nil }
             return (id, .recorded(prompt.scope))
@@ -117,10 +117,21 @@ enum SyncReconciler {
             case .remote(let remote, let headMode):
                 // Folding ownership precedes this shortcut, so an old move_out
                 // cannot turn an echoed move-back upsert into a deletion.
-                if mode != .restore, headMode == .delta, let previous, remote.rev <= previous.rev { continue }
+                let markers = try SyncConflictMetadata.ingest(remote.bytes, filename: LibraryPath.filename(remote.path.string), scope: remote.scope.pathScope)
+                if mode != .restore, headMode == .delta, let previous, remote.rev <= previous.rev {
+                    if let issue = markers.issue, remote.hash == previous.canonicalHash {
+                        prompts[identity] = try SyncPromptState(scope: previous.scope, path: previous.path, rev: previous.rev,
+                            canonicalHash: previous.canonicalHash, origin: nil, lastError: SyncPromptError(code: issue,
+                                fingerprint: SyncInputFingerprint(bytes: remote.bytes, path: remote.path, scope: remote.scope,
+                                                                  accessGeneration: 0, operation: .put)))
+                    }
+                    continue
+                }
                 prompts[identity] = try SyncPromptState(scope: remote.scope, path: remote.path, rev: remote.rev,
-                    canonicalHash: remote.hash, origin: SyncConflictMetadata.origin(in: remote.bytes,
-                        filename: LibraryPath.filename(remote.path.string), scope: remote.scope.pathScope))
+                    canonicalHash: remote.hash, origin: markers.origin,
+                    lastError: try markers.issue.map { SyncPromptError(code: $0,
+                        fingerprint: try SyncInputFingerprint(bytes: remote.bytes, path: remote.path, scope: remote.scope,
+                                                               accessGeneration: 0, operation: .put)) })
                 if remote.scope.pathScope == .user { favorites[identity] = nil }
                 if !LibraryPath.isPrompt(remote.libraryPath.string) {
                     operations.append(.localVisibility(remote))
@@ -132,6 +143,10 @@ enum SyncReconciler {
                     continue
                 }
                 let target = occupants.first
+                if let target, local.heldPaths.contains(RelativePath(target.path)) {
+                    operations.append(.pathClash(remote: remote, occupant: target))
+                    continue
+                }
                 if let target, try RelativePath(target.path) != remote.libraryPath || target.identity != identity {
                     if mode == .firstSync, previous == nil {
                         operations.append(.adoption(remote: remote, local: target))
@@ -190,7 +205,7 @@ enum SyncReconciler {
         var byID: [ULID: SyncLibraryFile] = [:]
     }
 
-    private static func index(_ snapshot: [SyncLibraryFile]) throws -> Files {
+    private static func index(_ snapshot: [SyncLibraryFile], heldPaths: Set<RelativePath>) throws -> Files {
         var files = Files()
         for file in snapshot {
             do { try file.validate() } catch { throw SyncReconciliationError.invalidLocalSnapshot }
@@ -199,7 +214,7 @@ enum SyncReconciler {
                 throw SyncReconciliationError.invalidLocalSnapshot
             }
             files.byFoldedPath[try folded(path), default: []].append(file)
-            if case .assigned(let id) = try file.identity {
+            if !heldPaths.contains(path), case .assigned(let id) = try file.identity {
                 guard files.byID.updateValue(file, forKey: id) == nil else {
                     throw SyncReconciliationError.invalidLocalSnapshot // Y7 repairs duplicate identities.
                 }
@@ -247,7 +262,6 @@ enum SyncReconciler {
                 : CanonicalForm.group(bytes, filename: LibraryPath.filename(path.string))
             let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path.string))
             guard document.frontMatter.id == id, form.bytes == bytes else { throw SyncReconciliationError.invalidPull }
-            _ = try SyncConflictMetadata.origin(in: document)
             let mode: SyncFileMode
             if case .group(let group) = scope, groups[group]?.role == .viewer { mode = .readOnly }
             else { mode = .normal }

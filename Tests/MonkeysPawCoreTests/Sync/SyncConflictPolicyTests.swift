@@ -202,6 +202,74 @@ final class SyncConflictPolicyTests: XCTestCase {
         XCTAssertNil(try resolve(.transport(.networkFailure), intent))
     }
 
+    func testForbiddenWithMalformedOrMismatchedAccessibleHeadStillRescues() throws {
+        let rig = try SyncApplyTestRig()
+        let local = try file(rig, body: "Keep me")
+        let recorded = try SyncPromptState(scope: personal, path: "a.md", rev: 1, canonicalHash: SyncHash(bytes: bytes("Old")))
+        let badHeads = [
+            SyncAPI.Prompt(id: id.rawValue, rev: 2, scope: .user, path: "a.md", content: "---\ntitle: [\n---\nBad"),
+            SyncAPI.Prompt(id: id.rawValue, rev: 2, scope: .user, path: "a.md", content: String(decoding: bytes("Wrong ID", id: fresh), as: UTF8.self))
+        ]
+        for head in badHeads {
+            for operation in [SyncOperation.put, .move] {
+                guard case .denied(let restore, let saved, _) = try resolve(.forbidden, request(operation: operation),
+                    local: local, recorded: recorded, accessible: head) else { return XCTFail("Expected local preservation") }
+                XCTAssertNil(restore)
+                XCTAssertEqual(saved?.bytes, local.bytes)
+            }
+        }
+    }
+
+    func testBatchCopiesReserveDestinationsAndExcludeOtherLosingCopies() throws {
+        let rig = try SyncApplyTestRig()
+        let first = try file(rig, body: "Losing version")
+        let oldCopy = try makeCopy(first, rig)
+        try rig.files.write(try XCTUnwrap(oldCopy.edit.bytes), at: "other/a.md")
+        let second = try XCTUnwrap(rig.mutations.read(at: "other/a.md"))
+        let old = try SyncState(binding: rig.binding, databaseID: SyncTestValues.uuid, cursors: [personal: "old"],
+            prompts: [.assigned(id): SyncPromptState(scope: personal, path: "a.md", rev: 1, canonicalHash: SyncHash(bytes: bytes("Base"))),
+                .assigned(fresh): SyncPromptState(scope: personal, path: "other/a.md", rev: 1, canonicalHash: second.hash, origin: .conflictOf(id))])
+        try rig.states.update(for: rig.binding) { $0 = old }
+        var next = old
+        next.prompts = [:]
+        next.cursors[personal] = "new"
+        let plan = SyncReconciliationPlan(mode: .normal, expectedState: old, nextState: next,
+            operations: [.preserve(.init(id: id, reason: .dirtyRemoval, local: first, installation: nil)),
+                         .preserve(.init(id: fresh, reason: .dirtyRemoval, local: second, installation: nil))],
+            occupiedPaths: ["a.md", "other/a.md"], localIdentities: [.assigned(id), .assigned(fresh)])
+        var ids = [SyncTestValues.device, SyncTestValues.otherUser].makeIterator()
+        let copies = try SyncConflictPolicy.copies(for: plan, device: "Device", at: date,
+            freshID: { try XCTUnwrap(ids.next()) }, existingCopies: [.init(scope: personal, file: second)], mutations: rig.mutations)
+        XCTAssertEqual(copies.count, 2)
+        XCTAssertTrue(copies.values.allSatisfy { $0.edit.kind == .rescue })
+        XCTAssertEqual(Set(copies.values.map { $0.edit.path }).count, 2)
+        XCTAssertTrue(copies.values.contains { $0.edit.path.hasSuffix(" (2).md") })
+        XCTAssertEqual(try rig.journal.apply(SyncReconciler.application(plan, mutations: rig.mutations, copies: copies)), .committed)
+        XCTAssertEqual(try rig.files.listFiles().count, 2)
+        XCTAssertEqual(rig.states.snapshot.value?.cursors[personal], "new")
+    }
+
+    func testBatchCopiesReserveAnIncomingServerConflictShapedPath() throws {
+        let rig = try SyncApplyTestRig()
+        let local = try file(rig, body: "Losing")
+        let incoming = try SyncNaming.conflict(source: "a.md", groupFolder: nil, device: "Device", at: date, occupiedPaths: [])
+        let data = bytes("Ordinary server prompt", id: fresh)
+        var plan = try reconciliation(rig, local: local)
+        var next = plan.nextState
+        next.prompts[.assigned(fresh)] = try SyncPromptState(scope: personal, path: incoming, rev: 1, canonicalHash: SyncHash(bytes: data))
+        let remote = SyncReconciliationRemote(id: fresh, scope: personal, path: incoming, libraryPath: incoming,
+            rev: 1, bytes: data, hash: SyncHash(bytes: data), mode: .normal)
+        plan = SyncReconciliationPlan(mode: plan.mode, expectedState: plan.expectedState, nextState: next,
+            operations: plan.operations + [.install(.init(remote: remote, source: nil, target: nil))],
+            occupiedPaths: plan.occupiedPaths, localIdentities: plan.localIdentities)
+        let copies = try SyncConflictPolicy.copies(for: plan, device: "Device", at: date,
+            freshID: { SyncTestValues.device }, mutations: rig.mutations)
+        XCTAssertNotEqual(copies["a.md"]?.edit.path, incoming.string)
+        XCTAssertEqual(try rig.journal.apply(SyncReconciler.application(plan, mutations: rig.mutations, copies: copies)), .committed)
+        XCTAssertEqual(try rig.files.read(at: incoming.string), data)
+        XCTAssertEqual(rig.states.snapshot.value?.cursors[personal], "new")
+    }
+
     func testSameMinuteDifferentVersionsGetDistinctCopiesAndSameVersionReusesAfterRename() throws {
         let rig = try SyncApplyTestRig()
         let local = try file(rig, body: "Version one")
@@ -239,6 +307,25 @@ final class SyncConflictPolicyTests: XCTestCase {
         XCTAssertEqual(result.edit.kind, .rescue)
         XCTAssertEqual(result.origin, .conflictOf(id))
         XCTAssertEqual(try SyncConflictMetadata.origin(in: XCTUnwrap(result.edit.bytes), filename: "Copy.md"), .conflictOf(id))
+    }
+
+    func testRescuesOfDistinctSourcesWithEqualBodiesRemainDistinct() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.files.write(bytes("Same body"), at: "Groups/Team/First.md")
+        let firstSource = try XCTUnwrap(rig.mutations.read(at: "Groups/Team/First.md"))
+        let first = try SyncConflictPolicy.copy(firstSource, origin: .rescued, userID: user, device: "Device", at: date,
+            freshID: SyncTestValues.device, occupiedPaths: ["Groups/Team/First.md"], mutations: rig.mutations)
+        try rig.files.write(try XCTUnwrap(first.edit.bytes), at: first.edit.path)
+        let existing = try XCTUnwrap(rig.mutations.read(at: RelativePath(first.edit.path)))
+        try rig.files.write(bytes("Same body", id: fresh), at: "Groups/Team/Second.md")
+        let secondSource = try XCTUnwrap(rig.mutations.read(at: "Groups/Team/Second.md"))
+        let second = try SyncConflictPolicy.copy(secondSource, origin: .rescued, userID: user, device: "Device", at: date,
+            freshID: SyncTestValues.otherUser, occupiedPaths: [RelativePath(first.edit.path), "Groups/Team/Second.md"],
+            existingCopies: [.init(scope: personal, file: existing)], mutations: rig.mutations)
+        XCTAssertEqual(second.edit.kind, .rescue)
+        XCTAssertEqual(second.edit.copyID, SyncTestValues.otherUser.rawValue)
+        XCTAssertNotEqual(second.edit.path, first.edit.path)
+        XCTAssertEqual(second.edit.retainedBytes, secondSource.bytes)
     }
 
     func testReconciliationReusesCopyDurablyBeforeReplacingSource() throws {

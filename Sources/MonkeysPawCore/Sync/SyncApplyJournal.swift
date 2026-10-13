@@ -233,7 +233,7 @@ final class SyncApplyJournal {
         do {
             for index in record.steps.indices {
                 let step = record.steps[index]
-                try retain(step.edit)
+                try retain(step.edit, binding: record.nextState.binding)
                 if !step.started {
                     record.steps[index].started = true
                     try save(record)
@@ -331,17 +331,85 @@ final class SyncApplyJournal {
         let hash: SyncHash
         let copyID: String?
         let heldIssue: SyncIssueCode?
+        // Optional for existing version-1 records, which remain readable.
+        let serverURL: String?
+        let userID: String?
+        let libraryRoot: SyncLibraryRoot?
+        let destinationPath: String?
+        let origin: SyncPromptOrigin?
     }
 
-    private func retain(_ edit: SyncLibraryEdit) throws {
+    private func retain(_ edit: SyncLibraryEdit, binding: SyncLibraryIdentity) throws {
         guard let bytes = edit.retainedBytes else { return }
         let prefix = retentionPrefix(edit)
         try retain(bytes, path: prefix + ".bin")
         let metadata = Retention(version: Limits.syncApplyJournalVersion, sourcePath: edit.retainedSourcePath,
-            hash: SyncHash(bytes: bytes), copyID: edit.copyID, heldIssue: edit.heldIssue)
+            hash: SyncHash(bytes: bytes), copyID: edit.copyID, heldIssue: edit.kind == .rescue ? edit.heldIssue : nil,
+            serverURL: binding.account.serverURL.absoluteString, userID: binding.account.userID.rawValue,
+            libraryRoot: binding.root, destinationPath: edit.kind == .rescue ? edit.path : nil, origin: edit.copyOrigin)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        try retain(encoder.encode(metadata), path: prefix + ".json")
+        let path = prefix + ".json"
+        let encoded = try encoder.encode(metadata)
+        if let current = try SyncDurability.readIfPresent(path, files: files), current != encoded {
+            let old: Retention
+            do { old = try JSONDecoder().decode(Retention.self, from: current) }
+            catch { throw SyncError.invalidState }
+            guard old.version == metadata.version,
+                  old.sourcePath.map({ RelativePath($0) }) == metadata.sourcePath.map({ RelativePath($0) }), old.hash == metadata.hash,
+                  old.copyID == metadata.copyID, old.heldIssue == metadata.heldIssue,
+                  old.serverURL == nil || old.serverURL == metadata.serverURL,
+                  old.userID == nil || old.userID == metadata.userID,
+                  old.libraryRoot == nil || old.libraryRoot == metadata.libraryRoot,
+                  old.destinationPath == nil || old.destinationPath.map({ RelativePath($0) }) == metadata.destinationPath.map({ RelativePath($0) }),
+                  old.origin == nil || old.origin == metadata.origin,
+                  var object = try JSONSerialization.jsonObject(with: current) as? [String: Any],
+                  let fields = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
+                throw SyncError.invalidState
+            }
+            // Upgrade old retained records during replay, preserving supported
+            // unknown fields. The pending journal supplies the bound destination.
+            object.merge(fields) { _, new in new }
+            let upgraded = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            guard upgraded.count <= Limits.syncRecordMaxBytes else { throw SyncError.invalidState }
+            try files.writePrivate(upgraded, at: path)
+            try SyncDurability.flushFileAndParents(path, operations: operations)
+        } else { try retain(encoded, path: path) }
+    }
+
+    /// Raw holds have no wire identity/marker. Never infer upload consent from
+    /// their absent state entry, or let their embedded IDs shadow managed heads.
+    func heldRescues(in root: SyncLibraryRoot) throws -> [SyncRetainedRescue] {
+        var result: [SyncRetainedRescue] = []
+        for file in try files.listFiles() {
+            let path = file.relativePath
+            guard path.hasPrefix("sync/retained/"), path.hasSuffix(".json") else { continue }
+            let stem = String(path.dropFirst("sync/retained/".count).dropLast(5))
+            guard let operationID = UUID(uuidString: stem), operationID.uuidString.lowercased() == stem else { continue }
+            let data = try files.read(at: path)
+            guard data.count <= Limits.syncRecordMaxBytes else { throw SyncError.invalidState }
+            let metadata: Retention
+            do { metadata = try JSONDecoder().decode(Retention.self, from: data) }
+            catch { throw SyncError.invalidState }
+            try SyncIdentifiers.version(metadata.version, current: Limits.syncApplyJournalVersion)
+            guard let issue = metadata.heldIssue else { continue }
+            guard let server = metadata.serverURL, let user = metadata.userID, let libraryRoot = metadata.libraryRoot,
+                  let destination = metadata.destinationPath,
+                  let source = metadata.sourcePath else {
+                // Legacy hold records cannot safely identify a destination.
+                throw SyncError.invalidState
+            }
+            let binding = try SyncLibraryIdentity(account: SyncAccountIdentity(serverURL: server, userID: SyncIdentifiers.ulid(user)), root: libraryRoot)
+            guard binding.root == root else { continue }
+            let wire = try SyncPathValidator.validate(destination, scope: .user)
+            guard wire.path.utf8.elementsEqual(destination.utf8) else { throw SyncError.invalidState }
+            try FileStorePath.validate(source)
+            let raw = try files.read(at: "sync/retained/" + stem + ".bin")
+            guard SyncHash(bytes: raw) == metadata.hash else { throw SyncError.invalidState }
+            result.append(SyncRetainedRescue(operationID: operationID, binding: binding, path: RelativePath(destination),
+                sourcePath: RelativePath(source), hash: metadata.hash, issue: issue, origin: metadata.origin ?? .rescued))
+        }
+        return result.sorted { $0.path < $1.path }
     }
 
     private func retain(_ bytes: Data, path: String) throws {

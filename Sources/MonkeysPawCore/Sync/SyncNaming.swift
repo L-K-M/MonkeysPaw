@@ -96,8 +96,8 @@ enum SyncNaming {
     private static func filename(_ stem: String, suffix: String, parent: String) throws -> RelativePath {
         let budget = min(Limits.syncPathSegmentMaxBytes, Limits.maxPathBytes - parent.utf8.count) - suffix.utf8.count
         guard budget > 0 else { throw SyncNamingError.exhausted }
-        let name = prefix(stem, maxBytes: budget)
-        guard !name.isEmpty else { throw SyncNamingError.exhausted }
+        let truncated = prefix(stem, maxBytes: budget)
+        let name = truncated.isEmpty ? prefix("Prompt", maxBytes: budget) : truncated
         return RelativePath(parent + name + suffix)
     }
 

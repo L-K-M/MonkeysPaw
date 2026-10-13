@@ -16,11 +16,15 @@ struct SyncReconciliationSnapshot {
     let binding: SyncLibraryIdentity
     let files: [SyncLibraryFile]
     let availability: Availability
+    /// Y7 supplies durable raw-copy/account holds before any ID matching/repair.
+    let heldPaths: Set<RelativePath>
 
-    init(binding: SyncLibraryIdentity, files: [SyncLibraryFile], availability: Availability = .available) {
+    init(binding: SyncLibraryIdentity, files: [SyncLibraryFile], availability: Availability = .available,
+         heldPaths: Set<RelativePath> = []) {
         self.binding = binding
         self.files = files
         self.availability = availability
+        self.heldPaths = heldPaths
     }
 }
 

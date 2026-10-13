@@ -6,6 +6,20 @@ enum SyncConflictMetadataError: Error, Equatable {
     case invalidOrigin
 }
 
+/// Permanent raw retention identifies held destinations even after journal
+/// removal. Y7 must consult these before ID matching or duplicate-ID repair.
+struct SyncRetainedRescue: CustomStringConvertible, CustomReflectable {
+    let operationID: UUID
+    let binding: SyncLibraryIdentity
+    let path: RelativePath
+    let sourcePath: RelativePath
+    let hash: SyncHash
+    let issue: SyncIssueCode
+    let origin: SyncPromptOrigin
+    var description: String { "<retained sync rescue>" }
+    var customMirror: Mirror { Mirror(self, children: ["rescue": description]) }
+}
+
 /// These unknown front-matter keys travel in private content, not WriteOrigin.
 enum SyncConflictMetadata {
     static let conflictKey = "x-monkeyspaw-conflict-of"
@@ -42,6 +56,14 @@ enum SyncConflictMetadata {
         do { _ = try origin(in: document); return false }
         catch SyncConflictMetadataError.invalidOrigin { return true }
         catch { return false }
+    }
+
+    /// A canonical-valid server file can contain an invalid unknown marker.
+    /// Keep its bytes and a per-file diagnostic without trusting the marker.
+    static func ingest(_ bytes: Data, filename: String, scope: SyncPathValidator.Scope) throws
+        -> (origin: SyncPromptOrigin?, issue: SyncIssueCode?) {
+        do { return (try origin(in: bytes, filename: filename, scope: scope), nil) }
+        catch SyncConflictMetadataError.invalidOrigin { return (nil, .content(.invalidMetadataType)) }
     }
 
     static func settingOrigin(_ origin: SyncPromptOrigin?, in bytes: Data, filename: String) throws -> Data {
