@@ -36,6 +36,7 @@ let package = Package(
             name: "monkeyspaw-server",
             dependencies: [
                 "MonkeysPawServer",
+                .product(name: "MonkeysPawCore", package: "MonkeysPaw"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),

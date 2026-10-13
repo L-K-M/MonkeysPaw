@@ -8,6 +8,15 @@ struct IssuedInvite: Sendable, CustomStringConvertible, CustomDebugStringConvert
     var debugDescription: String { description }
 }
 
+struct InviteSecret: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    let token: DeviceToken
+    let expiresAt: String
+    let link: String?
+    var description: String { "InviteSecret(<redacted>)" }
+    var debugDescription: String { description }
+    var customMirror: Mirror { Mirror(self, children: [:]) }
+}
+
 struct InviteService: Sendable {
     private let repository: InviteRepository
     private let passwords: any PasswordHashing
@@ -31,13 +40,20 @@ struct InviteService: Sendable {
     func createGroup(id: String, request: SyncAPI.GroupInviteRequest, session: SessionIdentity) async throws -> IssuedInvite {
         try AccountValidation.dto(SyncAPI.IDPath(id: id))
         try AccountValidation.dto(request)
-        return try await create(target: .group(groupID: id, role: request.role), expiresIn: request.expiresIn,
-                                session: session, authority: .ownerOrAdmin)
+        let target = SyncAPI.InviteTarget.group(groupID: id, role: request.role)
+        let secret = try await create(target: Self.storedTarget(target), expiresIn: request.expiresIn, authority: .ownerOrAdmin(session))
+        return .init(response: .init(inviteToken: secret.token.value, expiresAt: secret.expiresAt, target: target), link: secret.link)
     }
 
     func createAdmin(_ request: SyncAPI.AdminInviteRequest, session: SessionIdentity) async throws -> IssuedInvite {
         try AccountValidation.dto(request)
-        return try await create(target: request.target, expiresIn: request.expiresIn, session: session, authority: .admin)
+        let secret = try await create(target: Self.storedTarget(request.target), expiresIn: request.expiresIn, authority: .admin(session))
+        return .init(response: .init(inviteToken: secret.token.value, expiresAt: secret.expiresAt, target: request.target), link: secret.link)
+    }
+
+    func createOperator(target: InviteRecord.Target, issuerID: String, expiresIn: Int64?) async throws -> InviteSecret {
+        try AccountValidation.dto(SyncAPI.IDPath(id: issuerID))
+        return try await create(target: target, expiresIn: expiresIn, authority: .cliOperator(issuerID: issuerID))
     }
 
     func register(_ request: SyncAPI.RegisterRequest) async throws -> IssuedSession {
@@ -107,25 +123,53 @@ struct InviteService: Sendable {
         }
     }
 
-    private enum Authority { case ownerOrAdmin, admin }
+    private enum Authority: Sendable {
+        case ownerOrAdmin(SessionIdentity)
+        case admin(SessionIdentity)
+        case cliOperator(issuerID: String)
+    }
+
+    private static func storedTarget(_ target: SyncAPI.InviteTarget) -> InviteRecord.Target {
+        switch target {
+        case .account: return .account
+        case .group(let id, let role): return .group(groupID: id, role: role == .editor ? .editor : .viewer)
+        }
+    }
 
     private func create(
-        target: SyncAPI.InviteTarget, expiresIn: Int64?, session: SessionIdentity, authority: Authority
-    ) async throws -> IssuedInvite {
-        try await repository.write { invites, accounts, devices, groups, audit in
-            let actor = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
-            if authority == .admin && actor.accountKind != .admin { throw AccountError.forbidden }
-            let storedTarget: InviteRecord.Target
+        target: InviteRecord.Target, expiresIn: Int64?, authority: Authority
+    ) async throws -> InviteSecret {
+        if let expiresIn, !(1...ServerLimits.inviteMaximumLifetimeSeconds).contains(expiresIn) {
+            throw AccountError.malformedRequest
+        }
+        if case .group(let id, _) = target { try AccountValidation.dto(SyncAPI.IDPath(id: id)) }
+
+        return try await repository.write { invites, accounts, devices, groups, audit in
+            let issuer: AccountRecord
+            let actor: AuditActor
+            switch authority {
+            case .ownerOrAdmin(let session):
+                issuer = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+                actor = .user(issuer.id)
+            case .admin(let session):
+                issuer = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+                guard issuer.accountKind == .admin else { throw AccountError.forbidden }
+                actor = .user(issuer.id)
+            case .cliOperator(let issuerID):
+                guard let user = try await accounts.user(id: issuerID) else { throw AccountError.notFound }
+                guard user.disabledAt == nil, user.accountKind == .admin else { throw AccountError.forbidden }
+                issuer = user
+                actor = .cliOperator
+            }
             let groupID: String?
             switch target {
-            case .account: storedTarget = .account; groupID = nil
-            case .group(let id, let role):
+            case .account: groupID = nil
+            case .group(let id, _):
                 guard try await groups.group(id: id) != nil else { throw AccountError.notFound }
-                if actor.accountKind != .admin {
-                    guard let member = try await groups.member(groupID: id, userID: actor.id) else { throw AccountError.notFound }
+                if issuer.accountKind != .admin {
+                    guard let member = try await groups.member(groupID: id, userID: issuer.id) else { throw AccountError.notFound }
                     guard member.role == .owner else { throw AccountError.forbidden }
                 }
-                storedTarget = .group(groupID: id, role: role == .editor ? .editor : .viewer)
                 groupID = id
             }
             let now = clock()
@@ -133,10 +177,10 @@ struct InviteService: Sendable {
             // Invites use the same 32-byte CSPRNG/base64url/SHA-256 primitive as devices.
             let token = DeviceToken.generate()
             let link = try publicURL.map { try InviteLink.make(publicURL: $0, token: token.value) }
-            try await invites.insert(.init(tokenHash: token.hash, target: storedTarget, createdBy: actor.id, expiresAt: expiresAt, consumedAt: nil))
-            try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: .inviteCreate,
-                                                  targetID: groupID ?? actor.id, groupID: groupID, at: now))
-            return .init(response: .init(inviteToken: token.value, expiresAt: expiresAt, target: target), link: link)
+            try await invites.insert(.init(tokenHash: token.hash, target: target, createdBy: issuer.id, expiresAt: expiresAt, consumedAt: nil))
+            try await auditWrite(audit, AuditEvent(actor: actor, action: .inviteCreate,
+                                                  targetID: groupID ?? issuer.id, groupID: groupID, at: now))
+            return .init(token: token, expiresAt: expiresAt, link: link)
         }
     }
 

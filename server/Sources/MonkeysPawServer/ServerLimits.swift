@@ -25,6 +25,7 @@ public enum ServerLimits {
     static let passwordMinimumLength = 12
     static let passwordMaximumBytes = 72
     static let bootstrapSecretFileMaximumBytes = 4 * 1_024
+    public static let operatorPasswordInputMaximumBytes = bootstrapSecretFileMaximumBytes
     static let deviceTokenEncodedBytes = 43
     static let inviteMaximumLifetimeSeconds: Int64 = 7 * 24 * 60 * 60
     static let deviceSeenUpdateInterval: TimeInterval = 5 * 60

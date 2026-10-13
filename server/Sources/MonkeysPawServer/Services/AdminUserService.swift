@@ -21,16 +21,20 @@ struct AdminUserService: Sendable {
     }
 
     func create(_ request: SyncAPI.CreateUserRequest, session: SessionIdentity) async throws -> SyncAPI.User {
+        try await create(request, actor: .session(session))
+    }
+
+    func create(_ request: SyncAPI.CreateUserRequest, actor: AdministrationActor) async throws -> SyncAPI.User {
         try AccountValidation.dto(request)
         let username = try AccountValidation.username(request.username)
         try AccountValidation.newPassword(request.password)
         try await repository.read { accounts, devices in
-            _ = try await Self.requireAdmin(session, accounts: accounts, devices: devices)
+            try await actor.requireAdmin(accounts: accounts, devices: devices)
         }
         // Reject non-admins before bcrypt; recheck authority after it completes.
         let hash = try await passwords.hash(request.password)
         let user = try await repository.writeAudited { accounts, devices, audit in
-            let actor = try await Self.requireAdmin(session, accounts: accounts, devices: devices)
+            try await actor.requireAdmin(accounts: accounts, devices: devices)
             // §8.3 retains the S1 malformed_request envelope for duplicate usernames.
             guard try await accounts.user(username: username) == nil else { throw AccountError.malformedRequest }
             let now = clock()
@@ -40,25 +44,29 @@ struct AdminUserService: Sendable {
                 accountKind: request.accountKind ?? .member, createdAt: ServerTimestamp.string(now), disabledAt: nil
             )
             try await accounts.insert(user)
-            try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: .userCreate, targetID: user.id, at: now))
+            try await auditWrite(audit, AuditEvent(actor: actor.auditActor, action: .userCreate, targetID: user.id, at: now))
             return user.metadata
         }
-        log(.userCreate, actorID: session.userID, targetID: user.id)
+        log(.userCreate, actorID: actor.auditActor.userID ?? "operator", targetID: user.id)
         return user
     }
 
     func update(id: String, request: SyncAPI.UpdateUserRequest, session: SessionIdentity) async throws -> SyncAPI.User {
+        try await update(id: id, request: request, actor: .session(session))
+    }
+
+    func update(id: String, request: SyncAPI.UpdateUserRequest, actor: AdministrationActor) async throws -> SyncAPI.User {
         try AccountValidation.dto(SyncAPI.IDPath(id: id))
         try AccountValidation.dto(request)
         if let password = request.password { try AccountValidation.newPassword(password) }
         try await repository.read { accounts, devices in
-            _ = try await Self.requireAdmin(session, accounts: accounts, devices: devices)
+            try await actor.requireAdmin(accounts: accounts, devices: devices)
             guard try await accounts.user(id: id) != nil else { throw AccountError.notFound }
         }
         let hash: String?
         if let password = request.password { hash = try await passwords.hash(password) } else { hash = nil }
         let (user, actions) = try await repository.writeAudited { accounts, devices, audit in
-            let actor = try await Self.requireAdmin(session, accounts: accounts, devices: devices)
+            try await actor.requireAdmin(accounts: accounts, devices: devices)
             guard let current = try await accounts.user(id: id) else { throw AccountError.notFound }
             let now = clock()
             let timestamp = ServerTimestamp.string(now)
@@ -84,11 +92,11 @@ struct AdminUserService: Sendable {
                 try await devices.revokeAll(userID: id, at: timestamp)
             }
             for action in actions {
-                try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: action, targetID: id, at: now))
+                try await auditWrite(audit, AuditEvent(actor: actor.auditActor, action: action, targetID: id, at: now))
             }
             return (updated.metadata, actions)
         }
-        for action in actions { log(action, actorID: session.userID, targetID: id) }
+        for action in actions { log(action, actorID: actor.auditActor.userID ?? "operator", targetID: id) }
         return user
     }
 
@@ -96,14 +104,6 @@ struct AdminUserService: Sendable {
         logger.info("Account mutation committed", metadata: [
             "action": .string(action.rawValue), "actor_id": .string(actorID), "target_id": .string(targetID)
         ])
-    }
-
-    private static func requireAdmin(
-        _ session: SessionIdentity, accounts: AccountRepository.Transaction, devices: DeviceRepository
-    ) async throws -> AccountRecord {
-        let user = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
-        guard user.accountKind == .admin else { throw AccountError.forbidden }
-        return user
     }
 
     private static func displayName(_ value: SyncAPI.OptionalValue<String>, keeping current: String?) -> String? {

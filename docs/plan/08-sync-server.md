@@ -405,13 +405,50 @@ lock.
   - Group names become folder names only after the client sanitizes them
     (§9.1). Device names are sanitized before they appear in a file name.
 - **Admin CLI** (inside the container), run with
-  `docker compose exec monkeyspaw-server monkeyspaw-server …`
-  (ManorsAndMenaces precedent):
-  - `user add|disable|reset-password`
-  - `group add|add-member`
-  - `invite create` (any role)
-  - `backup <path>`
-  - `restore <path>` (rotates `database_id`)
+  `docker compose exec -T monkeyspaw-server monkeyspaw-server …`
+  (ManorsAndMenaces precedent). S16 supplies these commands:
+
+  | Command | Arguments and output |
+  |---|---|
+  | `user add <username>` | `--kind member|admin` (default member), optional `--display-name`; prints the new user ULID |
+  | `user disable <user-id>` | Revokes every target device; prints the user ULID |
+  | `user reset-password <user-id>` | Revokes every target device; prints the user ULID |
+  | `group add <name> --owner <user-id>` | Creates the group with this enabled user as creator and initial owner; prints the group ULID |
+  | `group add-member <group-id> <user-id>` | `--role viewer|editor|owner` (default viewer); adds or changes the membership and prints the user ULID |
+  | `invite create --issuer <user-id>` | Enabled admin issuer; omit both `--group` and `--role` for an account-only invite, or supply both for any group role, including owner; optional `--expires-in` seconds (1–604800, default seven days) |
+  | `migrate` | Applies pending migrations and exits |
+
+  Usernames, password bounds, live-group checks, role rules, the last owner
+  and the last enabled admin use the same services and transactions as HTTP.
+  The CLI is the local database operator, with no fabricated user session;
+  account and membership audit rows use the explicit operator actor
+  (`actor_id = NULL`, §19 B12). The `--owner` and `--issuer` identities satisfy
+  stored creator fields; they do not impersonate the audit actor. Invite
+  redemption still attributes the delegated grant to its stored issuer.
+  HTTP admin self-grant restrictions and its owner-invite prohibition remain.
+
+  `user add` and `user reset-password` read UTF-8 passwords from stdin until
+  EOF, or from `--password-file <path>` (a regular file). Never pass a password
+  in argv; there is no password-value option. Reads are bounded to 4 KiB and
+  remove at most one terminal LF or CRLF, preserving spaces, before applying
+  the same bcrypt/password validation as HTTP. CLI parser errors never echo
+  supplied arguments, and secret-bearing output types redact descriptions
+  and reflection. The CLI never bootstraps accounts implicitly.
+
+  Successful mutations print only the explicit result and exit zero. Each
+  mutation accepts `--json` for one JSON object on stdout; account/group/member
+  objects use the existing metadata shapes. Invite output prints exactly one
+  bare token, or one `monkeyspaw://join` link when `MONKEYSPAW_PUBLIC_URL` is
+  set. Its JSON object has `secret`, `expires_at`, and optional `group_id` and
+  `role`; the secret appears once and cannot be retrieved later. Success logs
+  are suppressed for CLI output, while transactional audits remain mandatory.
+  Failures exit nonzero with a short safe stderr message, including with
+  `--json`; no password, token, hash, argument value or backend error is logged.
+  Commands use `MONKEYSPAW_DATA_DIR` and migrate before administration.
+
+  S17 adds `backup <path>` and offline `restore <path>` (rotates
+  `database_id`); they are not S16 subcommands. Restore must follow the stopped
+  server procedure in §8.6 rather than `compose exec` into a running server.
 
 ### 8.5 Auth details
 
@@ -643,12 +680,20 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   successful migrations are forward-only and operator rollback uses a
   stopped-server backup restore, not automatic down migrations.
 - **Backups.**
+  - Backup and restore commands are supplied by S17, after the S16 account,
+    group and invite CLI.
   - `monkeyspaw-server backup /data/backups/<UTC>.db` uses `VACUUM INTO`, a
     consistent online snapshot.
   - `scripts/backup.sh` wraps it through `docker compose exec` and keeps
     `BACKUP_KEEP = 14`.
   - Restores go only through `monkeyspaw-server restore`, which rotates
     `database_id` so every client resnapshots.
+  - Stop `serve` first, then use a one-shot
+    `docker compose run --rm --no-deps monkeyspaw-server monkeyspaw-server
+    restore <path>`; never use `compose exec` to restore a live database.
+    Restore takes an exclusive lock, validates integrity/schema compatibility,
+    stages replacement with safe WAL handling, migrates and rotates the UUID
+    before restart. Live, newer-schema or corrupt inputs are refused (§19 B20).
   - Never copy a live database file. A Litestream sidecar is documented as
     an option, not shipped.
 - **Image publishing.** `release.yml` publishes
