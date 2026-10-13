@@ -220,6 +220,29 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertNil(environment.assistantModel?.state.artifact)
     }
 
+    func testUndecodableEditorSessionChangeCancelsWriteWithoutSnapshot() throws {
+        try files.write(Data([0xff]), at: "bytes-a.md")
+        try files.write(Data([0xfe]), at: "bytes-b.md")
+        try open("bytes-a.md")
+        XCTAssertNil(environment.editorModel.assistantSnapshot)
+        XCTAssertNotNil(environment.editorModel.assistantSession)
+        let session = environment.editorModel.assistantSession
+        let old = try XCTUnwrap(environment.assistantModel)
+        transport.hold(try artifact())
+        try input("brief", "Write a new prompt")
+        try click("write")
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.heldCount == 1 })
+        try select("bytes-b.md")
+        XCTAssertNil(environment.editorModel.assistantSnapshot)
+        XCTAssertNotEqual(environment.editorModel.assistantSession, session)
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.cancellations == 1 })
+        XCTAssertFalse(environment.assistantModel === old)
+        transport.releaseHeld()
+        drain()
+        XCTAssertEqual(environment.assistantModel?.state.phase, .idle)
+        XCTAssertNil(environment.assistantModel?.state.artifact)
+    }
+
     func testChangedBufferAwayAndBackRequiresNewDiffBeforeAccept() throws {
         try open()
         transport.enqueue(try artifact())
@@ -354,6 +377,24 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertEqual(try widgetLabel("library-editor-status"), LinuxEditorStrings.provenanceWarning)
         XCTAssertEqual(try label("status"), LinuxEditorStrings.provenanceWarning)
         XCTAssertFalse(try sensitive("accept"))
+    }
+
+    func testAcceptanceMessageYieldsToSubsequentEditorReload() throws {
+        try open()
+        transport.enqueue(try artifact())
+        try click("improve")
+        try ready()
+        try click("accept")
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .saved })
+        drain()
+        XCTAssertEqual(try widgetLabel("library-editor-status"), LinuxAssistantStrings.saved)
+        let accepted = try files.read(at: "a.md")
+        try files.write(accepted + Data("\nExternal addition".utf8), at: "a.md")
+        environment.editorModel.revert()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .idle })
+        drain()
+        XCTAssertTrue(environment.editorModel.state.source?.contains("External addition") == true)
+        XCTAssertEqual(try widgetLabel("library-editor-status"), LinuxEditorStrings.status(environment.editorModel.state))
     }
 
     func testViewerGetsPrivateCopyAndAccessChangeDropsCandidate() throws {

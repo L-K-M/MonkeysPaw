@@ -144,7 +144,7 @@ final class LinuxEnvironment {
 
         func refreshAssistant() {
             guard callbacks.isActive else { return }
-            let session = editor.assistantSnapshot?.session
+            let session = editor.assistantSession
             if assistant == nil || assistantSession != session {
                 assistant?.deactivate()
                 assistantSession = session

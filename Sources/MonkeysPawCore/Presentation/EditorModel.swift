@@ -159,6 +159,9 @@ public final class EditorModel: @unchecked Sendable {
 
     deinit { deactivate() }
 
+    /// Read-only buffers can have a live session without a decodable snapshot.
+    public var assistantSession: PromptEditingSession? { isActive ? session : nil }
+
     /// Capture at the assistant action, before any later edit can change its
     /// baseline. Conflicts, guard decisions and editor I/O must first be resolved.
     public var assistantSnapshot: AssistantEditorSnapshot? {

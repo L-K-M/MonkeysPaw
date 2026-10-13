@@ -19,6 +19,7 @@ final class LinuxLibraryWindow {
     private let assistantPanel = LinuxAssistantPanel()
     private var assistantMessage: String?
     private var assistantMessagePrompt: LibraryPromptSelection?
+    private var assistantMessageStamp: FileStamp?
     private var observer: UUID?
     private var editorObserver: UUID?
     private var bindingRevision: UInt64 = 0
@@ -85,7 +86,10 @@ final class LinuxLibraryWindow {
         favorite = GTK.button(LinuxStrings.addFavorite) {}
         status = GTK.label("")
         empty = GTK.label(LinuxStrings.noLibraryMatches)
-        commands.onChange = { [weak self] in self?.render() }
+        commands.onChange = { [weak self] in
+            self?.assistantMessage = nil
+            self?.render()
+        }
 
         GTK.hideOnClose(window)
         GTK.onCloseRequested(window) { [weak self] in self?.requestClose() }
@@ -190,6 +194,7 @@ final class LinuxLibraryWindow {
                   self.editor === editor else { return }
             self.assistantMessage = LinuxAssistantStrings.outcome(outcome)
             self.assistantMessagePrompt = editor.state.prompt
+            self.assistantMessageStamp = editor.state.stamp
             self.render()
         }
         commands.bind(editor: editor, browser: browser)
@@ -479,10 +484,14 @@ final class LinuxLibraryWindow {
             && state.status != .saving && state.status != .commandRunning ? 1 : 0)
         commands.update(state, available: available)
         history.update(state, available: available, canRestore: commands.canRun && !commands.hasDialog)
-        if assistantMessagePrompt != state.prompt { assistantMessage = nil }
-        let outcomeMessage = assistantMessage ?? (state.provenanceMaintenanceFailed
-            ? (state.historyMaintenanceFailed ? LinuxEditorStrings.historyAndProvenanceWarning : LinuxEditorStrings.provenanceWarning) : nil)
-        gtk_label_set_text(mp_label(editorStatus), outcomeMessage ?? commands.message ?? LinuxEditorStrings.status(state))
+        if assistantMessagePrompt != state.prompt || assistantMessageStamp != state.stamp
+            || state.status == .loading || state.status == .saving || state.status == .commandRunning { assistantMessage = nil }
+        var status = assistantMessage ?? commands.message ?? LinuxEditorStrings.status(state)
+        if assistantMessage != nil, state.isDirty { status += " Newer edits are unsaved." }
+        if assistantMessage == nil, commands.message == nil, state.provenanceMaintenanceFailed {
+            status += (status.isEmpty ? "" : " ") + LinuxEditorStrings.provenanceWarning
+        }
+        gtk_label_set_text(mp_label(editorStatus), status)
         if state.prompt == nil { historyPrompt = nil }
         if isHistorySelected, state.prompt != historyPrompt { loadHistory() }
     }

@@ -229,7 +229,8 @@ final class LinuxAssistantPanel {
         mp_accessible_label(improve, improveTitle)
         gtk_widget_set_sensitive(write, common == nil ? 1 : 0)
         for control in [review!, improve!] { gtk_widget_set_sensitive(control, common == nil && template == nil ? 1 : 0) }
-        gtk_widget_set_sensitive(accept, available && model.canAccept ? 1 : 0)
+        let editorIO = editorState.status == .loading || editorState.status == .saving || editorState.status == .commandRunning
+        gtk_widget_set_sensitive(accept, available && !editorIO && model.canAccept ? 1 : 0)
         gtk_widget_set_sensitive(showDiff, common == nil && state.artifact != nil && (flow == .write || template == nil) ? 1 : 0)
         gtk_widget_set_sensitive(retry, common == nil && flow != nil && state.phase != .idle && (flow == .write || template == nil) ? 1 : 0)
         gtk_widget_set_sensitive(reject, state.artifact != nil || state.review != nil ? 1 : 0)
