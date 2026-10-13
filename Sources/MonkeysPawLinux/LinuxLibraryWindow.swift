@@ -455,8 +455,6 @@ final class LinuxLibraryWindow {
         }
         historyReloadPending = false
         historyPrompt = prompt
-        // Core may already be refreshing a committed save or restore.
-        guard !editor.state.history.isLoading else { return }
         editor.loadHistory()
     }
 

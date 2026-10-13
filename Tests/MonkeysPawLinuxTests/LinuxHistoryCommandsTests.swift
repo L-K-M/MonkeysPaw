@@ -293,6 +293,30 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertEqual(data.lists, lists)
     }
 
+    func testAvailabilityRecoveryRetiresAnInFlightHistoryFailure() throws {
+        let filename = try snapshot(Data("Earlier".utf8))
+        let window = try open()
+        data.listFailure = .ioFailure
+        let lists = data.lists
+        gtk_notebook_set_current_page(mp_notebook(try widget("library-editor-tabs", in: window)), 3)
+        XCTAssertTrue(editor.state.history.isLoading)
+        // Compute the old failure but leave its reply queued on GLib.
+        work.releaseAll()
+        XCTAssertEqual(data.lists, lists + 1)
+        XCTAssertTrue(editor.state.history.isLoading)
+        controller.setLibraryAvailable(false)
+        data.listFailure = nil
+        controller.setLibraryAvailable(true)
+        wait { !self.editor.state.history.isLoading && self.editor.state.history.failure == nil
+            && self.editor.state.history.revisions.count == 1 }
+        drain()
+        XCTAssertNil(editor.state.history.failure)
+        XCTAssertEqual(editor.state.history.revisions.map(\.revision.filename), [filename])
+        _ = try XCTUnwrap(editor.state.history.revisions.first)
+        try selectRevision(0, in: window)
+        XCTAssertEqual(contents(try widget("library-history-preview", in: window)), "Earlier")
+    }
+
     func testRestoreHistoryMaintenanceWarningReportsCommittedWrite() throws {
         for sequence in 0..<Limits.historyCapPerPrompt { try snapshot(Data("Previous \(sequence)".utf8), sequence: sequence) }
         let window = try open()
