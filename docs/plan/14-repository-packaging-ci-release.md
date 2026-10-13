@@ -236,13 +236,26 @@ Rollout by milestone:
   PNGs from `media-sources/icon.png` with `scripts/make-linux-icons.sh` (Python 3 and
   Pillow; Ubuntu package `python3-pil`); macOS icons still use
   `scripts/make-icons.sh`.
-- **Flatpak.** Runtime `org.gnome.Platform` 50. `finish-args`:
+- **Flatpak.** App id `ch.lkmc.monkeyspaw`, runtime `org.gnome.Platform` 50,
+  SDK `org.gnome.Sdk` 50, command `monkeyspaw`, x86_64 only (M7 G18).
+  `scripts/build-flatpak.sh <deb-path> <app-version>` repacks an explicit
+  tested amd64 deb with a matching Debian version. It copies `/usr` under
+  `/app`, preserving executable bytes, icons and copyright, and rewrites
+  only desktop/service executable paths. No Swift build runs in Flatpak.
+  GNOME 50 runtime dependency/version checks must pass; unavailable GNOME
+  50 or an ABI mismatch requires a new plan decision, never a runtime fallback.
+  Outputs are `dist/monkeyspaw_<app-version>_x86_64.flatpak` and
+  `.flatpak.sha256`, with hyphenated prereleases preserved. `finish-args`:
   - `--share=ipc` (X11/MIT-SHM; the Vervellum pairing)
   - `--share=network` (LLM, sync)
   - `--socket=wayland --socket=fallback-x11`
   - `--talk-name=org.freedesktop.secrets`
-  - `--talk-name=ca.desrt.dconf --filesystem=xdg-run/dconf --filesystem=xdg-config/dconf` (GNOME keybindings)
-  - `--filesystem=home` (a user-chosen library)
+  - `--filesystem=home` (read/write access to the whole home for a user-chosen library)
+
+  Portal/manual shortcuts use the filtered session bus; there are no host
+  dconf grants, unrestricted buses, host-spawn or native injection grants
+  (M7 G19). The optional tray permission lands with its app-namespace
+  ownership change. Runtime tool availability does not permit host settings writes.
 
   CI asserts that `secret-tool` and `gsettings` exist in the runtime.
   Documented limits:
