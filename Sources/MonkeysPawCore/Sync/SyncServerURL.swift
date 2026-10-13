@@ -66,7 +66,9 @@ public struct SyncServerURL: Hashable, Sendable {
         var host = urlHost.lowercased()
         if host.hasPrefix("[") && host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
         if host.hasSuffix(".") { host.removeLast() }
-        guard !host.isEmpty, host.unicodeScalars.allSatisfy(\.isASCII) else { throw SyncServerURLError.invalidURL }
+        guard !host.isEmpty, !host.hasSuffix("."), host.unicodeScalars.allSatisfy(\.isASCII) else {
+            throw SyncServerURLError.invalidURL
+        }
 
         if host.contains(":") {
             guard let words = ipv6(host) else { throw SyncServerURLError.invalidURL }

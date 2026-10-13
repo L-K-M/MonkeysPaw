@@ -56,6 +56,8 @@ final class SyncServerURLTests: XCTestCase {
             ("", .invalidURL), ("example.com", .invalidURL), ("//example.com", .invalidURL),
             ("ftp://localhost", .invalidURL), ("https://example.com:0", .invalidURL),
             ("https://example.com:65536", .invalidURL), ("https://example.com:abc", .invalidURL),
+            ("https://example.com..", .invalidURL), ("https://localhost..", .invalidURL),
+            ("http://10.0.0.1..", .invalidURL),
             ("https://[not:ipv6]", .invalidURL), ("https://[fc00:::1]", .invalidURL),
             ("http://[fe80::1%25eth0]", .invalidURL), ("http://%31%32%37.0.0.1", .invalidURL),
             ("https://exam ple.com", .invalidURL), ("https://example.com\\evil", .invalidURL),
