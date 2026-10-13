@@ -81,17 +81,24 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     }
 
     func testAdvertisedOversizeCancelsBeforeCompleteBodyArrives() async throws {
-        let closed = expectation(description: "Oversized length closed the peer")
+        let returned = DispatchSemaphore(value: 0)
+        let completed = expectation(description: "Headers-only peer finished")
         let server = try LoopbackHTTPServer { connection, _, _ in
             // An explicit type avoids Darwin's MIME sniffing. Send no body:
             // refusal must happen from the advertised length alone.
             connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
+            XCTAssertEqual(returned.wait(timeout: .now() + 4), .success,
+                           "Transport must return while the peer withholds the body")
+            // Darwin cancellation does not promise prompt TCP closure.
+            #if canImport(FoundationNetworking)
             XCTAssertTrue(connection.waitForPeerClose())
-            closed.fulfill()
+            #endif
+            completed.fulfill()
         }
         defer { server.stop() }
         await assertError(.responseTooLarge, request: try request(server.url(), cap: 64))
-        await fulfillment(of: [closed], timeout: 4)
+        returned.signal()
+        await fulfillment(of: [completed], timeout: 4)
     }
 
     func testChunkedOversizeCancelsBeforeFinalChunk() async throws {

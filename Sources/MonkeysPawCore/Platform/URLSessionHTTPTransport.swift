@@ -157,18 +157,9 @@ final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        #if canImport(FoundationNetworking)
-        // corelibs cancels on rejectProtectionSpace. With storage nil, default
-        // handling has no credential and delivers the original HTTP error.
+        // With storage nil, default handling has no stored credential to try
+        // and preserves normal TLS server-trust validation.
         completionHandler(.performDefaultHandling, nil)
-        #else
-        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-            completionHandler(.performDefaultHandling, nil)
-        } else {
-            // Reject credentials without retrying or discarding the HTTP body.
-            completionHandler(.rejectProtectionSpace, nil)
-        }
-        #endif
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask,

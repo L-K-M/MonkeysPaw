@@ -79,11 +79,15 @@ re-entry or Clear before it can be used.
     delegates; callback boundaries need not match the peer's writes.
   - Each request uses an ephemeral URLSession with cookies, URL cache and
     credential storage explicitly set to nil. Authentication challenges
-    never supply credentials or retry the request. Darwin rejects credential
-    protection spaces while retaining standard TLS server-trust validation;
-    corelibs uses default handling with no credential store to retain bounded
-    HTTP error bodies. A separate monotonic deadline cancels the
-    task even while bytes keep arriving; caller cancellation does the same.
+    use [default handling](https://developer.apple.com/documentation/foundation/urlsession/authchallengedisposition/performdefaulthandling)
+    on both Foundations. With [no credential store](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/urlcredentialstorage),
+    they retain standard TLS server-trust validation and bounded HTTP error
+    bodies without supplying credentials or retrying the request.
+    Every terminal result cancels the task and invalidates its session;
+    Foundation controls when the peer observes TCP closure, which is not part
+    of the early response-cap refusal contract. A separate monotonic deadline
+    cancels the task even while bytes keep arriving; caller cancellation does
+    the same.
     Every 3xx response is refused with a typed error, including responses
     without a usable Location header. No automatic retry is performed.
   - Provider error bodies are never shown or logged; the user sees a typed
