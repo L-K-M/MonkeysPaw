@@ -20,7 +20,7 @@ struct ServerRetentionSchedulerTests {
             try await repository.execute(PersistenceTestRepository.change())
             let logs = CapturedServerLogs()
             let logger = ServerLogging.makeLogger(level: .info, sink: logs.write)
-            let now = try #require(ServerTimestamp.date("2027-01-12T00:00:00.000Z"))
+            let now = try #require(ServerTimestamp.date(PersistenceTestRepository.purgeCutoff))
             let maintenance = RetentionService(database: repository.database, clock: { now }, logger: logger)
             let scheduler = RetentionScheduler(maintenance: maintenance, logger: logger, interval: .milliseconds(30))
             let group = ServiceGroup(services: [scheduler], logger: logger)
@@ -55,12 +55,12 @@ struct ServerRetentionSchedulerTests {
                 """)
             let logs = CapturedServerLogs()
             let logger = ServerLogging.makeLogger(level: .trace, sink: logs.write)
-            let now = try #require(ServerTimestamp.date("2027-01-12T00:00:00.000Z"))
+            let now = try #require(ServerTimestamp.date(PersistenceTestRepository.purgeCutoff))
             let maintenance = RetentionService(database: repository.database, clock: { now }, logger: logger)
             let scheduler = RetentionScheduler(maintenance: maintenance, logger: logger, interval: .milliseconds(30))
             let running = Task { try await scheduler.run() }
             do {
-                try await waitForRetention { try logs.events().contains { $0.message == "Retention maintenance failed" } }
+                try await waitForRetention { try logs.events().filter { $0.message == "Retention maintenance failed" }.count >= 2 }
                 #expect(try await repository.count("changes") == 1)
                 #expect(try await repository.count("scope_floors") == 0)
                 try await repository.execute("DROP TRIGGER retention_scheduler_failure")
@@ -73,7 +73,11 @@ struct ServerRetentionSchedulerTests {
                 throw error
             }
             let events = try logs.events()
-            #expect(events.filter { $0.message == "Retention maintenance failed" }.allSatisfy { $0.fields == ["failed_runs": "1"] })
+            let failures = events.filter { $0.message == "Retention maintenance failed" }
+            #expect(failures.count >= 2)
+            #expect(failures.first?.fields == ["failed_runs": "1"])
+            // Each failed attempt reports its own count, including retries before the trigger is dropped.
+            #expect(failures.allSatisfy { $0.fields == ["failed_runs": "1"] })
             let committed = events.filter { $0.message == "Retention batch committed" }
             #expect(committed.count == 1)
             #expect(committed.first?.fields == ["changes_purged": "1", "floors_raised": "1", "revisions_pruned": "0", "tombstones_purged": "0"])
@@ -88,6 +92,12 @@ struct ServerRetentionSchedulerTests {
         try await withPersistenceDatabase { repository in
             try await repository.seed()
             try await repository.execute(PersistenceTestRepository.change())
+            let gate = try #require(Mirror(reflecting: repository.database).children
+                .first { $0.label == "gate" }?.value as? WriterGate)
+            let logs = CapturedServerLogs()
+            let logger = ServerLogging.makeLogger(level: .trace, sink: logs.write)
+            let now = try #require(ServerTimestamp.date(PersistenceTestRepository.purgeCutoff))
+            let scheduler = RetentionScheduler(maintenance: .init(database: repository.database, clock: { now }, logger: logger), logger: logger)
             let entered = RetentionTestLatch()
             let release = RetentionTestLatch()
             let writer = Task {
@@ -97,17 +107,21 @@ struct ServerRetentionSchedulerTests {
                 }
             }
             await entered.wait()
-            let logs = CapturedServerLogs()
-            let logger = ServerLogging.makeLogger(level: .trace, sink: logs.write)
-            let now = try #require(ServerTimestamp.date("2027-01-12T00:00:00.000Z"))
-            let scheduler = RetentionScheduler(maintenance: .init(database: repository.database, clock: { now }, logger: logger), logger: logger)
             let running = Task { try await scheduler.run() }
-            // The writer remains held while the startup pass waits for its gate.
-            try await Task.sleep(for: .milliseconds(30))
-            running.cancel()
-            await release.open()
-            try await writer.value
-            try await running.value
+            do {
+                // Only the startup pass can enter this queue while the writer's latch is held.
+                try await waitForRetention { try await gate.queuedWriterCount() == 1 }
+                running.cancel()
+                await release.open()
+                try await writer.value
+                try await running.value
+            } catch {
+                running.cancel()
+                await release.open()
+                _ = await writer.result
+                _ = await running.result
+                throw error
+            }
             #expect(try await repository.count("changes") == 1)
             #expect(try await repository.count("scope_floors") == 0)
             #expect(try logs.events().isEmpty)
@@ -126,15 +140,24 @@ struct ServerRetentionSchedulerTests {
     }
 }
 
-private func waitForRetention(_ condition: @Sendable () throws -> Bool) async throws {
+private func waitForRetention(_ condition: @Sendable () async throws -> Bool) async throws {
     for _ in 0..<1_000 {
-        if try condition() { return }
+        if try await condition() { return }
         try await Task.sleep(for: .milliseconds(10))
     }
     throw RetentionTestTimeout()
 }
 
 private struct RetentionTestTimeout: Error {}
+
+private extension WriterGate {
+    // Reflect under actor isolation so queue observation needs no production test hook.
+    func queuedWriterCount() throws -> Int {
+        let waiters = try #require(Mirror(reflecting: self).children
+            .first { $0.label == "waiters" }?.value as? [CheckedContinuation<Void, Never>])
+        return waiters.count
+    }
+}
 
 private actor RetentionTestLatch {
     private var opened = false

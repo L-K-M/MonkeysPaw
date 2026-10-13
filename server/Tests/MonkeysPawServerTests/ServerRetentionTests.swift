@@ -1,3 +1,4 @@
+import FluentSQLiteDriver
 import Foundation
 import SQLKit
 import Testing
@@ -5,12 +6,15 @@ import Testing
 
 @Suite(.serialized)
 struct ServerRetentionTests {
+    private static let batchRowCount = ServerLimits.retentionBatchSize * 2 + 5
+
     @Test func oldChangesPurgeAndQuietScopesKeepHeadPlusOneFloor() async throws {
         try await withPersistenceDatabase { repository in
             try await repository.seed()
             try await repository.execute(PersistenceTestRepository.change())
             try await repository.execute(PersistenceTestRepository.change())
-            let now = try #require(ServerTimestamp.date(PersistenceTestRepository.time)).addingTimeInterval(91 * 24 * 60 * 60)
+            let now = try #require(ServerTimestamp.date(PersistenceTestRepository.time))
+                .addingTimeInterval(TimeInterval((ServerLimits.changeRetentionDays + 1) * 24 * 60 * 60))
             let result = try await RetentionService(database: repository.database, clock: { now }).run()
             #expect(result.changes == 2 && result.floors == 1)
             #expect(try await repository.count("changes") == 0)
@@ -25,21 +29,24 @@ struct ServerRetentionTests {
         try await withPersistenceDatabase { repository in
             try await repository.seed()
             try await repository.insertPrompt(id: PersistenceTestRepository.prompt)
+            let pruned = Self.batchRowCount
+            let count = ServerLimits.revisionsPerPrompt + pruned
             try await repository.database.write { sql in
-                for rev in 1...405 {
+                for rev in 1...count {
                     try await sql.raw(PersistenceTestRepository.revision(rev: rev)).run()
                 }
-                try await sql.raw("UPDATE prompts SET rev = 405").run()
+                try await sql.raw("UPDATE prompts SET rev = \(bind: count)").run()
             }
             let logs = CapturedServerLogs()
             let result = try await RetentionService(database: repository.database,
                 logger: ServerLogging.makeLogger(level: .info, sink: logs.write)).run()
-            #expect(result.revisions == 205)
-            #expect(try await repository.count("prompt_revisions") == 200)
-            #expect(try await repository.string("SELECT MIN(rev) AS rev FROM prompt_revisions", column: "rev") == "206")
-            #expect(try await repository.string("SELECT MAX(rev) AS rev FROM prompt_revisions", column: "rev") == "405")
-            #expect(try logs.events().map { $0.fields["revisions_pruned"] } == ["100", "100", "5"])
-            #expect(try await repository.string("SELECT rev FROM prompts", column: "rev") == "405")
+            #expect(result.revisions == pruned)
+            #expect(try await repository.count("prompt_revisions") == ServerLimits.revisionsPerPrompt)
+            #expect(try await repository.string("SELECT MIN(rev) AS rev FROM prompt_revisions", column: "rev") == String(pruned + 1))
+            #expect(try await repository.string("SELECT MAX(rev) AS rev FROM prompt_revisions", column: "rev") == String(count))
+            let batchSize = String(ServerLimits.retentionBatchSize)
+            #expect(try logs.events().map { $0.fields["revisions_pruned"] } == [batchSize, batchSize, "5"])
+            #expect(try await repository.string("SELECT rev FROM prompts", column: "rev") == String(count))
         }
     }
 
@@ -60,31 +67,42 @@ struct ServerRetentionTests {
                 BEGIN SELECT RAISE(ABORT, 'retention failure sentinel'); END
                 """)
             let maintenance = RetentionRepository(database: repository.database)
-            await #expect(throws: (any Error).self) { _ = try await maintenance.purgeChanges(before: "2027-01-12T00:00:00.000Z") }
+            let error = await #expect(throws: SQLiteError.self) {
+                _ = try await maintenance.purgeChanges(before: PersistenceTestRepository.purgeCutoff)
+            }
+            #expect(error?.message == "retention failure sentinel")
             #expect(try await repository.promptStorageState() == before)
             #expect(try await repository.string("SELECT MIN(floor_seq) AS floor_seq FROM scope_floors", column: "floor_seq") == "1")
             #expect(try await repository.string("SELECT MAX(floor_seq) AS floor_seq FROM scope_floors", column: "floor_seq") == "1")
             try await repository.execute("DROP TRIGGER retention_floor_failure")
-            let result = try await maintenance.purgeChanges(before: "2027-01-12T00:00:00.000Z")
+            let result = try await maintenance.purgeChanges(before: PersistenceTestRepository.purgeCutoff)
             #expect(result.changes == 2 && result.floors == 2)
             #expect(try await repository.string("SELECT floor_seq FROM scope_floors WHERE scope_key = \(bind: user)", column: "floor_seq") == "2")
             #expect(try await repository.string("SELECT floor_seq FROM scope_floors WHERE scope_key = \(bind: group)", column: "floor_seq") == "3")
         }
     }
 
-    @Test func changeBatchesStayBoundedAndNeverLowerAnExistingFloor() async throws {
+    @Test(arguments: [1, batchRowCount + 1, batchRowCount + 50])
+    func changeBatchesStayBoundedAndNeverLowerAnExistingFloor(initialFloor: Int) async throws {
         try await withPersistenceDatabase { repository in
             try await repository.seed()
-            let count = ServerLimits.retentionBatchSize * 2 + 5
+            let count = Self.batchRowCount
             try await repository.database.write { sql in
                 for _ in 0..<count { try await sql.raw(PersistenceTestRepository.change()).run() }
-                try await sql.raw("INSERT INTO scope_floors VALUES (\(bind: "user:\(PersistenceTestRepository.user)"), \(bind: count + 1))").run()
+                if initialFloor > count + 1 {
+                    // Inject a floor above every derived value; keep the no-lowering guards.
+                    try await sql.raw("DROP TRIGGER scope_floors_valid_insert").run()
+                }
+                try await sql.raw("INSERT INTO scope_floors VALUES (\(bind: "user:\(PersistenceTestRepository.user)"), \(bind: initialFloor))").run()
             }
             let maintenance = RetentionRepository(database: repository.database)
-            for expected in [100, 100, 5, 0] {
-                let batch = try await maintenance.purgeChanges(before: "2027-01-12T00:00:00.000Z")
-                #expect(batch.changes == expected && batch.floors == 0)
-                #expect(try await repository.string("SELECT floor_seq FROM scope_floors", column: "floor_seq") == String(count + 1))
+            var purged = 0
+            for expected in [ServerLimits.retentionBatchSize, ServerLimits.retentionBatchSize, 5, 0] {
+                let batch = try await maintenance.purgeChanges(before: PersistenceTestRepository.purgeCutoff)
+                purged += expected
+                #expect(batch.changes == expected)
+                #expect(batch.floors == (expected > 0 && initialFloor < purged + 1 ? 1 : 0))
+                #expect(try await repository.string("SELECT floor_seq FROM scope_floors", column: "floor_seq") == String(max(initialFloor, purged + 1)))
                 #expect(try await repository.string("SELECT head_seq FROM scope_heads", column: "head_seq") == String(count))
             }
             #expect(try await repository.count("changes") == 0)
@@ -117,13 +135,14 @@ struct ServerRetentionTests {
         try await withPersistenceDatabase { repository in
             try await repository.seed()
             try await repository.insertPrompt(id: PersistenceTestRepository.prompt, deleted: PersistenceTestRepository.time)
+            let count = Self.batchRowCount
             try await repository.database.write { sql in
-                for rev in 1...205 { try await sql.raw(PersistenceTestRepository.revision(rev: rev)).run() }
-                try await sql.raw("UPDATE prompts SET rev = 205").run()
+                for rev in 1...count { try await sql.raw(PersistenceTestRepository.revision(rev: rev)).run() }
+                try await sql.raw("UPDATE prompts SET rev = \(bind: count)").run()
             }
             let maintenance = RetentionRepository(database: repository.database)
-            for (revisions, tombstones) in [(100, 0), (100, 0), (5, 1)] {
-                let batch = try await maintenance.purgeTombstone(before: "2027-01-12T00:00:00.000Z")
+            for (revisions, tombstones) in [(ServerLimits.retentionBatchSize, 0), (ServerLimits.retentionBatchSize, 0), (5, 1)] {
+                let batch = try await maintenance.purgeTombstone(before: PersistenceTestRepository.purgeCutoff)
                 #expect(batch.revisions == revisions && batch.tombstones == tombstones)
                 #expect(try await repository.count("retired_prompt_ids") == 1)
                 #expect(try await repository.count("prompts") == 1 - tombstones)
@@ -149,10 +168,13 @@ struct ServerRetentionTests {
                 BEGIN SELECT RAISE(ABORT, 'retention failure sentinel'); END
                 """)
             let maintenance = RetentionRepository(database: repository.database)
-            await #expect(throws: (any Error).self) { _ = try await maintenance.purgeTombstone(before: "2027-01-12T00:00:00.000Z") }
+            let error = await #expect(throws: SQLiteError.self) {
+                _ = try await maintenance.purgeTombstone(before: PersistenceTestRepository.purgeCutoff)
+            }
+            #expect(error?.message == "retention failure sentinel")
             #expect(try await repository.promptStorageState() == before)
             try await repository.execute("DROP TRIGGER retention_head_failure")
-            #expect(try await maintenance.purgeTombstone(before: "2027-01-12T00:00:00.000Z") == RetentionCounts(tombstones: 1, revisions: 1))
+            #expect(try await maintenance.purgeTombstone(before: PersistenceTestRepository.purgeCutoff) == RetentionCounts(tombstones: 1, revisions: 1))
         }
     }
 
@@ -167,7 +189,7 @@ struct ServerRetentionTests {
                 try await sql.raw("UPDATE prompts SET rev = 499").run()
             }
             #expect(try await RetentionService(database: repository.database).run().revisions == 5)
-            #expect(try await repository.count("prompt_revisions") == 200)
+            #expect(try await repository.count("prompt_revisions") == ServerLimits.revisionsPerPrompt)
             #expect(try await repository.string("SELECT MIN(rev) AS rev FROM prompt_revisions", column: "rev") == "6")
             #expect(try await repository.string("SELECT MAX(rev) AS rev FROM prompt_revisions", column: "rev") == "499")
         }
@@ -175,6 +197,9 @@ struct ServerRetentionTests {
 }
 
 extension PersistenceTestRepository {
+    /// Strictly later than the persistence fixtures, including the retention age.
+    static let purgeCutoff = "2027-01-12T00:00:00.000Z"
+
     func retentionChange(key: String, owner: String, at: String) async throws -> Int64 {
         try await database.write { sql in
             let row = try #require(await sql.raw("""
