@@ -82,29 +82,45 @@ final class URLSessionHTTPTransportTests: XCTestCase {
 
     func testAdvertisedOversizeCancelsBeforeCompleteBodyArrives() async throws {
         let returned = DispatchSemaphore(value: 0)
+        let withheld = DispatchSemaphore(value: 0)
+        #if canImport(FoundationNetworking)
+        let peerClosed = DispatchSemaphore(value: 0)
+        #endif
         let completed = expectation(description: "Headers-only peer finished")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            // An explicit type avoids Darwin's MIME sniffing. Send no body:
-            // refusal must happen from the advertised length alone.
-            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
-            XCTAssertEqual(returned.wait(timeout: .now() + 4), .success,
-                           "Transport must return while the peer withholds the body")
+            // JSON models API responses. An ambiguous type may make Darwin
+            // wait for sniffing bytes (inferred from CI). Send no body.
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
+            if returned.wait(timeout: .now() + 4) == .success { withheld.signal() }
             // Darwin cancellation does not promise prompt TCP closure.
             #if canImport(FoundationNetworking)
-            XCTAssertTrue(connection.waitForPeerClose())
+            if connection.waitForPeerClose() { peerClosed.signal() }
             #endif
             completed.fulfill()
         }
         defer { server.stop() }
-        await assertError(.responseTooLarge, request: try request(server.url(), cap: 64))
+        let request = try request(server.url(), cap: 64)
+        let result: Result<HTTPResponse, Error>
+        do { result = .success(try await transport.send(request)) }
+        catch { result = .failure(error) }
         returned.signal()
         await fulfillment(of: [completed], timeout: 4)
+        let message = diagnostics(result, peer: server)
+        switch result {
+        case .success: XCTFail("Expected responseTooLarge; \(message)")
+        case .failure(let error): XCTAssertEqual(error as? HTTPTransportError, .responseTooLarge, message)
+        }
+        XCTAssertEqual(withheld.wait(timeout: .now()), .success,
+                       "Transport must return while the peer withholds the body; \(message)")
+        #if canImport(FoundationNetworking)
+        XCTAssertEqual(peerClosed.wait(timeout: .now()), .success, "Expected peer closure; \(message)")
+        #endif
     }
 
     func testChunkedOversizeCancelsBeforeFinalChunk() async throws {
         let closed = expectation(description: "Chunked overflow closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
             connection.write("40\r\n" + String(repeating: "a", count: 64) + "\r\n")
             connection.write("1\r\nb\r\n")
             XCTAssertTrue(connection.waitForPeerClose())
@@ -129,7 +145,7 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     func testUnknownLengthErrorBodyIsCappedDuringReceipt() async throws {
         let closed = expectation(description: "Unknown length overflow closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 500 Test\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+            connection.write("HTTP/1.1 500 Test\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n")
             connection.write(String(repeating: "a", count: 32))
             connection.write(String(repeating: "a", count: 32))
             connection.write("b")
@@ -157,7 +173,7 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     func testDripResponseCannotExtendMonotonicDeadline() async throws {
         let closed = expectation(description: "Drip response closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n")
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n")
             for _ in 0..<100 {
                 if !connection.write("a") { break }
                 Thread.sleep(forTimeInterval: 0.02)
@@ -176,7 +192,7 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         let receiving = expectation(description: "Response began")
         let closed = expectation(description: "Cancellation closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nConnection: close\r\n\r\na")
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: close\r\n\r\na")
             receiving.fulfill()
             XCTAssertTrue(connection.waitForPeerClose())
             closed.fulfill()
@@ -210,7 +226,7 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         let receiving = expectation(description: "Slow operation began")
         let closed = expectation(description: "Slow operation closed")
         let slow = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\na")
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: close\r\n\r\na")
             receiving.fulfill()
             XCTAssertTrue(connection.waitForPeerClose())
             closed.fulfill()
@@ -307,6 +323,7 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     }
 
     func testSharedCredentialStorageIsNotUsed() async throws {
+        let payload = Data("{\"input\":\"hello\"}".utf8)
         let server = try LoopbackHTTPServer { connection, _, _ in
             connection.respond(status: 401, headers: "WWW-Authenticate: Basic realm=\"test\"\r\n",
                 body: Data("auth error".utf8))
@@ -317,11 +334,47 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         let credential = URLCredential(user: "private-user", password: "private-password", persistence: .forSession)
         URLCredentialStorage.shared.setDefaultCredential(credential, for: space)
         defer { URLCredentialStorage.shared.remove(credential, for: space) }
-        let response = try await transport.send(request(server.url()))
-        XCTAssertEqual(response.statusCode, 401)
-        XCTAssertEqual(response.body, Data("auth error".utf8))
-        XCTAssertEqual(server.requests.count, 1)
-        XCTAssertTrue(server.requests.allSatisfy { $0.headers["authorization"] == nil })
+        // LLM calls use POST; a lost GET connection may be retried by CFNetwork.
+        let request = try HTTPRequest(url: server.url(), method: .post,
+            headers: ["Content-Type": "application/json"], body: payload, deadline: .now.advanced(by: .seconds(3)))
+        let result: Result<HTTPResponse, Error>
+        do { result = .success(try await transport.send(request)) }
+        catch { result = .failure(error) }
+        let message = diagnostics(result, peer: server)
+        switch result {
+        case .success(let response):
+            XCTAssertEqual(response.statusCode, 401, message)
+            XCTAssertEqual(response.body, Data("auth error".utf8), message)
+        case .failure: XCTFail("Expected bounded 401 response; \(message)")
+        }
+        let requests = server.requests
+        XCTAssertEqual(requests.count, 1, "Expected no retry; \(message)")
+        XCTAssertTrue(requests.allSatisfy { $0.method == "POST" && $0.body == payload },
+                      "Peer must read the complete POST before replying; \(message)")
+        XCTAssertTrue(requests.allSatisfy { $0.headers["authorization"] == nil }, message)
+    }
+
+    func testPeerDiagnosticsOmitHeaderValuesAndBodies() async throws {
+        let secret = UUID().uuidString
+        let server = try LoopbackHTTPServer { connection, _, _ in
+            connection.respond(body: Data(secret.utf8))
+        }
+        defer { server.stop() }
+        let request = try HTTPRequest(url: server.url("/diagnostics"), method: .post,
+            headers: ["Authorization": "Bearer \(secret)", "Cookie": "test=\(secret)", "X-Secret": secret],
+            body: Data(secret.utf8), deadline: .now.advanced(by: .seconds(3)))
+        let response = try await transport.send(request)
+        let message = diagnostics(.success(response), peer: server)
+        XCTAssertTrue(message.contains("POST /diagnostics HTTP/1.1"))
+        XCTAssertTrue(message.contains("authorization"))
+        XCTAssertTrue(message.contains("cookie"))
+        XCTAssertTrue(message.contains("x-secret"))
+        XCTAssertTrue(message.contains("connection[0] accepted+"))
+        XCTAssertTrue(message.contains("received+"))
+        XCTAssertTrue(message.contains("transportError=none, status=200"))
+        XCTAssertFalse(message.contains(secret))
+        let observed = try XCTUnwrap(server.requests.first)
+        XCTAssertGreaterThanOrEqual(observed.receivedAfter, observed.acceptedAfter)
     }
 
     func testErrorsAndActualStderrNeverContainSecretHeadersBodiesOrURLs() async throws {
@@ -366,6 +419,16 @@ final class URLSessionHTTPTransportTests: XCTestCase {
 
     private func request(_ url: URL, cap: Int = Limits.responseCap, budget: Duration = .seconds(3)) throws -> HTTPRequest {
         try HTTPRequest(url: url, method: .get, responseByteCap: cap, deadline: .now.advanced(by: budget))
+    }
+
+    private func diagnostics(_ result: Result<HTTPResponse, Error>, peer: LoopbackHTTPServer) -> String {
+        let outcome: String
+        switch result {
+        case .success(let response): outcome = "transportError=none, status=\(response.statusCode)"
+        case .failure(let error):
+            outcome = "transportError=" + ((error as? HTTPTransportError).map { String(describing: $0) } ?? "untyped error")
+        }
+        return "\(outcome); \(peer.diagnostics)"
     }
 
     private func assertError(_ expected: HTTPTransportError, request: HTTPRequest,

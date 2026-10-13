@@ -11,14 +11,27 @@ import Glibc
 /// of recorded requests. All blocking socket operations have a finite timeout.
 final class LoopbackHTTPServer: @unchecked Sendable {
     struct Request {
+        let requestLine: String
         let method: String
         let target: String
         let headers: [String: String]
         let body: Data
+        let connectionIndex: Int
+        let acceptedAfter: Duration
+        let receivedAfter: Duration
+
+        var diagnostics: String {
+            // Header values and bodies can contain credentials or prompts.
+            "connection[\(connectionIndex)] accepted+\(acceptedAfter), received+\(receivedAfter), " +
+                "\(requestLine), headers=[\(headers.keys.sorted().joined(separator: ", "))], bodyBytes=\(body.count)"
+        }
     }
 
     struct Connection {
         fileprivate let descriptor: Int32
+        fileprivate let index: Int
+        fileprivate let acceptedAfter: Duration
+        fileprivate let startedAt: ContinuousClock.Instant
 
         @discardableResult
         func write(_ text: String) -> Bool { write(Data(text.utf8)) }
@@ -44,7 +57,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
 
         @discardableResult
         func respond(status: Int = 200, headers: String = "", body: Data = Data()) -> Bool {
-            write("HTTP/1.1 \(status) Test\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\(headers)\r\n") && write(body)
+            write("HTTP/1.1 \(status) Test\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\(headers)\r\n") && write(body)
         }
 
         /// EOF/reset proves the client cancelled while the response was still
@@ -84,8 +97,9 @@ final class LoopbackHTTPServer: @unchecked Sendable {
                 let length = Int(headers["content-length"] ?? "0") ?? 0
                 guard (0...65_536).contains(length) else { return nil }
                 guard data.count - range.upperBound >= length else { continue }
-                return Request(method: String(first[0]), target: String(first[1]), headers: headers,
-                    body: Data(data[range.upperBound..<(range.upperBound + length)]))
+                return Request(requestLine: lines[0], method: String(first[0]), target: String(first[1]), headers: headers,
+                    body: Data(data[range.upperBound..<(range.upperBound + length)]), connectionIndex: index,
+                    acceptedAfter: acceptedAfter, receivedAfter: startedAt.duration(to: .now))
             }
             return nil
         }
@@ -99,6 +113,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
     private var active: Int32?
     private var recorded = [Request]()
     private var accepted = 0
+    private let startedAt = ContinuousClock.now
 
     var requests: [Request] {
         lock.lock()
@@ -110,6 +125,13 @@ final class LoopbackHTTPServer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return accepted
+    }
+
+    var diagnostics: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return "peer connections=\(accepted), requests=\(recorded.count): [" +
+            recorded.map(\.diagnostics).joined(separator: "; ") + "]"
     }
 
     func url(_ path: String = "/", host: String = "127.0.0.1") -> URL {
@@ -158,6 +180,7 @@ final class LoopbackHTTPServer: @unchecked Sendable {
                 guard poll(&event, 1, 50) > 0, event.revents & Int16(POLLIN) != 0 else { continue }
                 let peer = accept(listener, nil, nil)
                 guard peer >= 0 else { continue }
+                let acceptedAt = ContinuousClock.now
                 var timeout = timeval(tv_sec: 3, tv_usec: 0)
                 _ = setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
                 _ = setsockopt(peer, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
@@ -173,9 +196,11 @@ final class LoopbackHTTPServer: @unchecked Sendable {
                 lock.lock()
                 active = peer
                 accepted += 1
+                let connectionIndex = accepted - 1
                 let cancelled = stopped
                 lock.unlock()
-                let connection = Connection(descriptor: peer)
+                let connection = Connection(descriptor: peer, index: connectionIndex,
+                    acceptedAfter: startedAt.duration(to: acceptedAt), startedAt: startedAt)
                 if !cancelled, let request = connection.readRequest() {
                     lock.lock()
                     recorded.append(request)
