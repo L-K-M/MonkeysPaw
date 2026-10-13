@@ -99,7 +99,8 @@ struct SyncReconciliationPlan: CustomStringConvertible, CustomReflectable {
 }
 
 /// Y6 chooses naming, metadata and a stable fresh ID before journal creation.
-/// The rescue edit must retain the exact losing version and its source mapping.
+/// A new rescue retains exact losing bytes/source mapping. A reused copy is a
+/// checked .apply of its unchanged bytes, so racing edits block source retirement.
 struct SyncReconciliationCopy {
     let edit: SyncLibraryEdit
     let origin: SyncPromptOrigin
