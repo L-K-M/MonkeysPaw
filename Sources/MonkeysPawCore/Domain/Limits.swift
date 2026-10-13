@@ -176,6 +176,11 @@ public enum Limits {
     static let syncCollectionBudget: Duration = .seconds(300)
     static let syncCollectionRestartLimit: Int = 1
 
+    /// §9.6: sync clashes use (2) through (20), separately from editor copies.
+    static let syncPathClashMax: Int = 20
+    static let syncConflictDeviceMaxBytes: Int = 64
+    static let syncRescuePathHashLength: Int = 12
+
     /// §8.3: cap prompt bodies at 256 KiB on both clients and the server.
     public static let maxPromptBytes: Int = 256 * kibibyte
 

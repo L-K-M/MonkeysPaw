@@ -83,7 +83,10 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
             if heldIssue != nil {
                 let nonPrompt = !LibraryPath.isPrompt(retainedSourcePath)
                 guard bytes == retainedBytes, copyID == nil,
-                      !document.canRender || (nonPrompt && heldIssue == .localVisibility) else { throw SyncError.invalidState }
+                      !document.canRender || (nonPrompt && heldIssue == .localVisibility)
+                        || (heldIssue == .content(.invalidMetadataType) && SyncConflictMetadata.hasInvalidOrigin(in: document)) else {
+                    throw SyncError.invalidState
+                }
                 return
             }
             let original = PromptCodec.parseFile(retainedBytes, filename: LibraryPath.filename(retainedSourcePath))
@@ -99,6 +102,8 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         guard !document.isReadOnly, !document.issues.contains(where: { $0.severity == .error }) else {
             throw SyncError.invalidState
         }
+        do { _ = try SyncConflictMetadata.origin(in: document) }
+        catch { throw SyncError.invalidState }
     }
 }
 
@@ -150,10 +155,11 @@ final class SyncLibraryMutations {
     /// The planner chooses destination and fresh ID once, before journaling.
     /// Unsupported/forensic files stay byte-exact and held, with no injected text.
     func rescue(_ file: SyncLibraryFile, at destination: RelativePath, freshID: ULID,
-                id: UUID = UUID()) throws -> SyncLibraryEdit {
+                origin: SyncPromptOrigin = .rescued, id: UUID = UUID()) throws -> SyncLibraryEdit {
         let document = PromptCodec.parseFile(file.bytes, filename: LibraryPath.filename(file.path))
         var issue = document.issues.first(where: { $0.severity == .error }).map { SyncIssueCode.content($0.code) }
         if document.isReadOnly { issue = .content(.unsupportedFormat) }
+        if issue == nil, SyncConflictMetadata.hasInvalidOrigin(in: document) { issue = .content(.invalidMetadataType) }
         if !LibraryPath.isPrompt(file.path) { issue = .localVisibility }
         var bytes = file.bytes
         var copyID: String?
@@ -161,6 +167,7 @@ final class SyncLibraryMutations {
             guard document.frontMatter.id != freshID else { throw SyncError.invalidState }
             bytes = PromptUTF8.encode(try ImportMapper.replacingIdentity(freshID, in: document,
                 filename: LibraryPath.filename(destination.string)).document.source)
+            bytes = try SyncConflictMetadata.settingOrigin(origin, in: bytes, filename: LibraryPath.filename(destination.string))
             copyID = freshID.rawValue
         }
         let target = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(destination.string))
