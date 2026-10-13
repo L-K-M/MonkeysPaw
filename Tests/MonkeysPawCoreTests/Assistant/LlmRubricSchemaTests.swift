@@ -39,7 +39,6 @@ final class LlmRubricSchemaTests: XCTestCase {
           "body":{"type":"string"},"notes":{"type":"string"}}}
         """#
         try assertSnapshot(LlmArtifact.jsonSchema, snapshot: snapshot)
-        XCTAssertEqual(LlmArtifact.jsonSchema, LlmArtifact.jsonSchema)
     }
 
     func testPinsCompleteReviewRequestSchemaSnapshot() throws {
@@ -55,13 +54,12 @@ final class LlmRubricSchemaTests: XCTestCase {
             "quote":{"type":"string"},"problem":{"type":"string"},"suggestion":{"type":"string"}}}}}}
         """#
         try assertSnapshot(LlmReview.jsonSchema, snapshot: snapshot)
-        XCTAssertEqual(LlmReview.jsonSchema, LlmReview.jsonSchema)
     }
 
     private func assertSnapshot(_ schema: Data, snapshot: String) throws {
         let expected = try JSONSerialization.jsonObject(with: Data(snapshot.utf8))
         XCTAssertEqual(schema, try JSONSerialization.data(withJSONObject: expected, options: [.sortedKeys]))
-        try assertStrictObjects(try JSONSerialization.jsonObject(with: schema) as! [String: Any])
+        try assertStrictObjects(try XCTUnwrap(JSONSerialization.jsonObject(with: schema) as? [String: Any]))
     }
 
     private func assertStrictObjects(_ schema: [String: Any]) throws {

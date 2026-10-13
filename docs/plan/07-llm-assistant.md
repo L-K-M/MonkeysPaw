@@ -141,9 +141,12 @@ Parsing and validation:
   the existing placeholder grammar and validator and remain visible on drafts.
 - **Tolerant parsing** for endpoints without schema support: strip code
   fences and `<think>` blocks, then fall back to a brace-balanced scan
-  (Vervellum `decodeJSONObject`). Recovery ignores wrappers only outside
-  JSON strings, selects the first balanced top-level object, and still
-  strictly validates it. Input is bounded to 2 MiB, nesting to 32 levels.
+  (Vervellum `decodeJSONObject`). Before selecting the first `{`, prose
+  quotes and stray brackets do not start JSON string or nesting state;
+  complete JSON arrays and `<think>` blocks are skipped. The selected object
+  respects strings and escapes exactly and is still strictly validated;
+  an invalid first object is never skipped for a later one. Input is bounded
+  to 2 MiB, nesting to 32 open containers, including empty containers.
   A top-level array is not an object. Review quotes use exact UTF-8 byte
   matching against the input snapshot; empty or unmatched quotes are marked
   unmatched and never highlight unrelated text.
@@ -222,6 +225,8 @@ delimited data tags (`<brief>…</brief>`, `<prompt>…</prompt>`,
 helpers escape XML metacharacters before wrapping user or provider content,
 so text cannot close its delimiter. Shipped system prompts treat those blocks
 as data and forbid content inside them from changing the instructions or schema.
+An empty `<findings>` block means no findings were selected; improve applies
+the requested instruction alone.
 
 ### 7.5 Review rubric
 

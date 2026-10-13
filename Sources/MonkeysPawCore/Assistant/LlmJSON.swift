@@ -10,20 +10,29 @@ indirect enum LlmJSONValue {
     case number
     case null
 
-    var object: [String: LlmJSONValue] {
-        guard case .object(let value) = self else { preconditionFailure("Validated JSON object required") }
-        return value
-    }
     var array: [LlmJSONValue] {
-        guard case .array(let value) = self else { preconditionFailure("Validated JSON array required") }
-        return value
+        get throws {
+            guard case .array(let value) = self else { throw AssistantError.invalidOutput }
+            return value
+        }
     }
     var string: String {
-        guard case .string(let value) = self else { preconditionFailure("Validated JSON string required") }
-        return value
+        get throws {
+            guard case .string(let value) = self else { throw AssistantError.invalidOutput }
+            return value
+        }
     }
     var boolean: Bool {
-        guard case .boolean(let value) = self else { preconditionFailure("Validated JSON boolean required") }
+        get throws {
+            guard case .boolean(let value) = self else { throw AssistantError.invalidOutput }
+            return value
+        }
+    }
+
+    func member(_ key: String) throws -> LlmJSONValue {
+        guard case .object(let properties) = self, let value = properties[key] else {
+            throw AssistantError.invalidOutput
+        }
         return value
     }
 }
@@ -39,10 +48,28 @@ enum LlmJSONRecovery {
         var inString = false
         var escaped = false
 
-        // Fences and prose live outside the selected object. Never strip text
-        // inside JSON strings, where fences and <think> can be literal data.
+        // Only the selected object owns string/bracket state. Complete array
+        // preambles remain wrappers, so recovery never unwraps [artifact].
         while position < bytes.count {
             let byte = bytes[position]
+            if start == nil {
+                if byte == 60, bytes[position...].starts(with: thinkingOpener) {
+                    position = try endOfThinking(in: bytes, from: position)
+                    continue
+                }
+                if byte == 91 {
+                    var parser = LlmJSONParser(bytes: bytes, position: position)
+                    if let (_, end) = try? parser.parsePrefix() {
+                        position = end
+                        continue
+                    }
+                }
+                guard byte == 123 else {
+                    position += 1
+                    continue
+                }
+                start = position
+            }
             if inString {
                 if escaped { escaped = false }
                 else if byte == 92 { escaped = true }
@@ -50,13 +77,8 @@ enum LlmJSONRecovery {
                 position += 1
                 continue
             }
-            if byte == 60, stack.isEmpty, bytes[position...].starts(with: thinkingOpener) {
-                position = try endOfThinking(in: bytes, from: position)
-                continue
-            }
             if byte == 34 { inString = true }
             else if byte == 123 || byte == 91 {
-                if stack.isEmpty, byte == 123 { start = position }
                 stack.append(byte == 123 ? 125 : 93)
                 guard stack.count <= Limits.llmJSONNestingCap else { throw AssistantError.invalidOutput }
             } else if byte == 125 || byte == 93, !stack.isEmpty {
@@ -91,19 +113,30 @@ struct LlmJSONParser {
     private let bytes: [UInt8]
     private var position = 0
 
-    init(bytes: [UInt8]) { self.bytes = bytes }
+    init(bytes: [UInt8], position: Int = 0) {
+        self.bytes = bytes
+        self.position = position
+    }
 
     mutating func parse() throws -> LlmJSONValue {
-        let parsed = try value(depth: 0)
+        let (parsed, _) = try parsePrefix()
         whitespace()
         guard position == bytes.count else { throw AssistantError.invalidOutput }
         return parsed
     }
 
+    mutating func parsePrefix() throws -> (LlmJSONValue, Int) {
+        let parsed = try value(depth: 0)
+        return (parsed, position)
+    }
+
     private mutating func value(depth: Int) throws -> LlmJSONValue {
-        guard depth <= Limits.llmJSONNestingCap else { throw AssistantError.invalidOutput }
         whitespace()
         guard position < bytes.count else { throw AssistantError.invalidOutput }
+        // Depth counts enclosing containers; a scalar at the cap opens none.
+        if bytes[position] == 123 || bytes[position] == 91 {
+            guard depth < Limits.llmJSONNestingCap else { throw AssistantError.invalidOutput }
+        }
         switch bytes[position] {
         case 123:
             position += 1

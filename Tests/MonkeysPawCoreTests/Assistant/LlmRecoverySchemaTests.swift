@@ -3,6 +3,68 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class LlmRecoverySchemaTests: XCTestCase {
+    func testProseCannotStartJSONStringOrBracketStateBeforeTheObject() throws {
+        let json = #"{"a":1}"#
+        for output in [
+            #"He said "hi {"a":1}"#,
+            #"see [note {"a":1}"#,
+            "[note \(json)",
+            "He said \"hi <think>\" [ { ignored</think>\(json)",
+            "see [note <think>\" [ { ignored</think>\(json)",
+            "<think>\" [ { <think>\" [ {</think></think>\(json)",
+            "```json\nHe said \"hi [note\n\(json)\n```",
+            "~~~json\n\" [note\n\(json)\n~~~"
+        ] {
+            XCTAssertEqual(try LlmJSONRecovery.object(in: output), Array(json.utf8), output)
+        }
+    }
+
+    func testBothDecodersRecoverObjectsAfterUnbalancedProse() throws {
+        let artifactJSON = try AssistantOutputFixtures.json(AssistantOutputFixtures.artifact)
+        let reviewJSON = try AssistantOutputFixtures.json(AssistantOutputFixtures.review)
+        let artifact = try LlmOutputDecoder.artifact(from: artifactJSON)
+        let review = try LlmOutputDecoder.review(from: reviewJSON, source: "Use sources.")
+        for prefix in ["He said \"hi ", "see [note ", "```json\n\" [note\n",
+                       "<think>\" [ { ignored</think>\" [note "] {
+            XCTAssertEqual(try LlmOutputDecoder.artifact(from: prefix + artifactJSON), artifact)
+            XCTAssertEqual(try LlmOutputDecoder.review(from: prefix + reviewJSON, source: "Use sources."), review)
+        }
+    }
+
+    func testRecoveryDoesNotUnwrapTopLevelArrays() throws {
+        let json = #"{"a":1}"#
+        for output in ["[\(json)]", "```json\n[\(json)]\n```", "~~~json\n[\(json)]\n~~~"] {
+            XCTAssertThrowsError(try LlmJSONRecovery.object(in: output)) {
+                XCTAssertEqual($0 as? AssistantError, .invalidOutput)
+            }
+        }
+    }
+
+    func testParserAndRecoveryCountEmptyContainersAtTheSameNestingLimit() throws {
+        for depth in [Limits.llmJSONNestingCap, Limits.llmJSONNestingCap + 1] {
+            let documents = [
+                "{\"x\":" + String(repeating: "[", count: depth - 1)
+                    + String(repeating: "]", count: depth - 1) + "}",
+                String(repeating: "{\"x\":", count: depth - 1) + "{}"
+                    + String(repeating: "}", count: depth - 1)
+            ]
+            for document in documents {
+                var parser = LlmJSONParser(bytes: Array(document.utf8))
+                if depth == Limits.llmJSONNestingCap {
+                    XCTAssertNoThrow(try LlmJSONRecovery.object(in: document))
+                    XCTAssertNoThrow(try parser.parse())
+                } else {
+                    XCTAssertThrowsError(try LlmJSONRecovery.object(in: document)) {
+                        XCTAssertEqual($0 as? AssistantError, .invalidOutput)
+                    }
+                    XCTAssertThrowsError(try parser.parse()) {
+                        XCTAssertEqual($0 as? AssistantError, .invalidOutput)
+                    }
+                }
+            }
+        }
+    }
+
     func testRecoversFencesProseAndThinkingWithoutReadingThoughtObjects() throws {
         let json = try AssistantOutputFixtures.json(AssistantOutputFixtures.artifact)
         let expected = try LlmOutputDecoder.artifact(from: json)
@@ -11,7 +73,6 @@ final class LlmRecoverySchemaTests: XCTestCase {
             "Here is the result:\n\(json)\nThat is all.", "\u{feff} \t\n\(json)\r\n",
             "<think>{\"title\":\"wrong\"}</think>\n```json\n\(json)\n```",
             "<think>outer <think>{invalid}</think> more thought</think>\n\(json)",
-            "Here is a quoted \"{brace}\":\n\(json)",
             "[\"prose\", {\"nested\": true}]\n\(json)", "\(json)\n\(json)"
         ] {
             XCTAssertEqual(try LlmOutputDecoder.artifact(from: output), expected)
@@ -37,6 +98,7 @@ final class LlmRecoverySchemaTests: XCTestCase {
         let invalid = ["", "prose only", "{}", "[]", "[\(valid)]", "\"{}\"", "null", "true", "42",
             "{", "{\"body\":\"unterminated}", "<think>unclosed\n\(valid)", "{invalid} \(valid)",
             "{} \(valid)", "{\"tags\":[} \(valid)", valid.replacingOccurrences(of: "\"title\":", with: "\"title\" "),
+            "Here is a quoted \"{brace}\":\n\(valid)",
             valid.replacingOccurrences(of: "\"title\":\"Research\"", with: "\"title\":\"bad\\q\""),
             valid.replacingOccurrences(of: "\"title\":\"Research\"", with: "\"title\":\"bad\nline\""),
             String(valid.dropLast()) + ",}", valid.replacingOccurrences(of: "\"research\",\"work\"", with: "\"research\",\"work\",")]

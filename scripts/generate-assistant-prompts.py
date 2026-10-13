@@ -19,6 +19,8 @@ def swift_string(value: str) -> str:
 def catalog(root: Path) -> bytes:
     source = root / "Assistant/Prompts"
     names = ("write", "review", "improve")
+    if not source.is_dir():
+        raise SystemExit(f"Missing prompt source directory: {source}")
     paths = {path.name for path in source.iterdir()}
     if paths != {f"{name}.md" for name in names}:
         raise SystemExit("Expected exactly write.md, review.md, and improve.md under Assistant/Prompts/")
@@ -31,7 +33,10 @@ def catalog(root: Path) -> bytes:
         path = source / f"{name}.md"
         if path.is_symlink() or not path.is_file():
             raise SystemExit("Assistant prompt sources must be regular files, not symlinks")
-        prompt = path.read_bytes().decode("utf-8")
+        try:
+            prompt = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise SystemExit(f"{path} is not valid UTF-8; save the prompt as UTF-8: {error}") from error
         lines.append(f"    public static let {name}: String = {swift_string(prompt)}")
     lines += ["}", ""]
     return "\n".join(lines).encode("utf-8")
