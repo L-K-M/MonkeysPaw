@@ -9,6 +9,9 @@ import org.snakeyaml.engine.v2.exceptions.MarkedYamlEngineException
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException
 
 object PromptCodec {
+    /** Content only: optional-key presence and body bytes survive; stores own identity and atomic writes. */
+    fun write(document: PromptDocument): String = PromptWriter.write(document)
+
     /** Checks the byte cap before decoding or invoking YAML. A leading BOM remains body data. */
     fun parseFile(bytes: ByteArray, filename: String): PromptDocument {
         if (bytes.size > Limits.maxPromptBytes) return failedBytes(filename, PromptIssueCode.SOURCE_TOO_LARGE)

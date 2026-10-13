@@ -33,6 +33,7 @@ jobs:
       core-linux: ${{ steps.select.outputs.core-linux }}
       linux-app: ${{ steps.select.outputs.linux-app }}
       deb: ${{ steps.select.outputs.deb }}
+      flatpak: ${{ steps.select.outputs.flatpak }}
       android: ${{ steps.select.outputs.android }}
       core-macos: ${{ steps.select.outputs.core-macos }}
       macos-app: ${{ steps.select.outputs.macos-app }}
@@ -217,7 +218,8 @@ jobs:
       - name: Inspect package metadata and payload
         run: |
           set -euo pipefail
-          deb="dist/monkeyspaw_0.1.0~beta.1_$(dpkg --print-architecture).deb"
+          test "$(dpkg --print-architecture)" = amd64
+          deb='dist/monkeyspaw_0.1.0~beta.1_amd64.deb'
           dpkg-deb --info "$deb"
           test "$(dpkg-deb --field "$deb" Package)" = monkeyspaw
           test "$(dpkg-deb --field "$deb" Version)" = '0.1.0~beta.1'
@@ -258,11 +260,254 @@ jobs:
       - name: Install and check the packaged version
         run: |
           set -euo pipefail
-          apt-get install -y --no-install-recommends ./dist/*.deb
+          apt-get install -y --no-install-recommends './dist/monkeyspaw_0.1.0~beta.1_amd64.deb'
           command -v gapplication
           version="$(/usr/bin/monkeyspaw --version)"
           printf '%s\n' "$version"
           test "$version" = 'monkeyspaw 0.1.0-beta.1'
+          (cd dist && sha256sum -c 'monkeyspaw_0.1.0~beta.1_amd64.deb.sha256')
+      - name: Upload the tested amd64 deb and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MonkeysPaw-tested-deb
+          path: |
+            dist/monkeyspaw_0.1.0~beta.1_amd64.deb
+            dist/monkeyspaw_0.1.0~beta.1_amd64.deb.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+  flatpak:
+    name: GNOME 50 Flatpak from the tested deb
+    needs: [changes, deb]
+    if: needs.changes.outputs.flatpak == 'true'
+    # bubblewrap's unprivileged user namespaces require the bare runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_ID: ch.lkmc.monkeyspaw
+      ARTIFACT_VERSION: '0.1.0-beta.1'
+      DEB_FILE: 'monkeyspaw_0.1.0~beta.1_amd64.deb'
+      BUNDLE_FILE: 'monkeyspaw_0.1.0-beta.1_x86_64.flatpak'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch this run's tested Debian package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MonkeysPaw-tested-deb
+          path: ${{ runner.temp }}/monkeyspaw-tested-deb
+      - name: Install Flatpak and sandbox verification tools
+        run: |
+          # runner context is unavailable in job-level env. Set these from
+          # the runner's shell environment and persist them for later steps.
+          export XDG_DATA_HOME="$RUNNER_TEMP/monkeyspaw-flatpak-data"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/monkeyspaw-flatpak-runtime"
+          printf 'XDG_DATA_HOME=%s\nXDG_RUNTIME_DIR=%s\n' "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder \
+            dbus libglib2.0-bin xvfb xauth x11-utils xdotool desktop-file-utils shellcheck python3 python3-yaml
+          mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+          chmod 0700 "$XDG_RUNTIME_DIR"
+          # Relax only this Ubuntu knob, only on this disposable runner, and
+          # restore its original value in the always() cleanup step below.
+          if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns \
+              > "$RUNNER_TEMP/monkeyspaw-flatpak-userns"
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          timeout 10s bwrap --unshare-user --uid 0 --gid 0 --ro-bind / / /usr/bin/true
+      - name: Check the manifest and packaging script
+        run: |
+          shellcheck scripts/build-flatpak.sh scripts/tests/test-build-flatpak.sh
+          bash -n scripts/build-flatpak.sh scripts/tests/test-build-flatpak.sh
+          bash scripts/tests/test-build-flatpak.sh
+          flatpak-builder --show-manifest "flatpak/$APP_ID.yml" >/dev/null
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          manifest = yaml.safe_load(Path('flatpak/' + os.environ['APP_ID'] + '.yml').read_text())
+          assert manifest['id'] == os.environ['APP_ID']
+          assert (manifest['runtime'], manifest['runtime-version'], manifest['sdk'], manifest['command']) == (
+              'org.gnome.Platform', '50', 'org.gnome.Sdk', 'monkeyspaw')
+          assert set(manifest['finish-args']) == {
+              '--share=ipc', '--share=network', '--socket=wayland', '--socket=fallback-x11',
+              '--filesystem=home', '--talk-name=org.freedesktop.secrets'}
+          assert manifest['build-options']['no-debuginfo'] is True
+          assert manifest['build-options']['strip'] is False
+          assert len(manifest['modules']) == 1
+          module = manifest['modules'][0]
+          assert module['only-arches'] == ['x86_64'] and module['buildsystem'] == 'simple'
+          assert module['sources'] == [{'type': 'dir', 'path': 'stage'}]
+          assert module['build-commands'] == ['cp -a . /app/']
+          PY
+      - name: Install the exact GNOME 50 Platform and SDK
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          timeout --kill-after=10s 15m dbus-run-session -- \
+            flatpak install --user --noninteractive --assumeyes --arch=x86_64 flathub \
+            org.gnome.Platform//50 org.gnome.Sdk//50
+      - name: Repack the explicit tested deb and install the bundle
+        run: |
+          (cd "$RUNNER_TEMP/monkeyspaw-tested-deb" && sha256sum -c "$DEB_FILE.sha256")
+          dbus-run-session -- scripts/build-flatpak.sh \
+            "$RUNNER_TEMP/monkeyspaw-tested-deb/$DEB_FILE" "$ARTIFACT_VERSION"
+          (cd dist && sha256sum -c "$BUNDLE_FILE.sha256")
+          dbus-run-session -- flatpak install --user --noninteractive --assumeyes "dist/$BUNDLE_FILE"
+      - name: Compare the installed payload and exported identity
+        run: |
+          set -euo pipefail
+          payload=$(mktemp -d "$RUNNER_TEMP/monkeyspaw-flatpak-payload.XXXXXX")
+          trap 'rm -rf -- "$payload"' EXIT
+          dpkg-deb --extract "$RUNNER_TEMP/monkeyspaw-tested-deb/$DEB_FILE" "$payload"
+          deployment=$(flatpak info --user --show-location "$APP_ID")
+          test "$(flatpak info --user --show-runtime "$APP_ID")" = org.gnome.Platform/x86_64/50
+          cmp "$payload/usr/bin/monkeyspaw" "$deployment/files/bin/monkeyspaw"
+          cmp "$payload/usr/share/doc/monkeyspaw/copyright" "$deployment/files/share/doc/monkeyspaw/copyright"
+          export_root="$XDG_DATA_HOME/flatpak/exports/share"
+          desktop-file-validate "$export_root/applications/$APP_ID.desktop"
+          grep -Fxq 'Exec=/app/bin/monkeyspaw --gapplication-service' \
+            "$deployment/files/share/dbus-1/services/$APP_ID.service"
+          for size in 16 24 32 48 64 128 256 512; do
+            icon="icons/hicolor/${size}x${size}/apps/$APP_ID.png"
+            cmp "$payload/usr/share/$icon" "$deployment/files/share/$icon"
+            cmp "$payload/usr/share/$icon" "$export_root/$icon"
+          done
+          # Show the generated permissions and exports so a failed assertion is diagnosable.
+          cat "$deployment/metadata"
+          find "$export_root" -type f \( -name '*.desktop' -o -name '*.service' \) -print -exec cat {} \;
+          python3 - "$deployment/metadata" "$export_root" <<'PY'
+          import configparser
+          import os
+          from pathlib import Path
+          import shlex
+          import sys
+
+          def read(path):
+              config = configparser.ConfigParser(interpolation=None)
+              config.optionxform = str
+              with open(path) as file:
+                  config.read_file(file)
+              return config
+
+          app_id = os.environ['APP_ID']
+          metadata = read(sys.argv[1])
+          assert metadata['Application']['name'] == app_id
+          assert metadata['Application']['command'] == 'monkeyspaw'
+          assert set(metadata['Context']['shared'].strip(';').split(';')) == {'ipc', 'network'}
+          # Flatpak records --socket=fallback-x11 as x11 plus fallback-x11; the
+          # runtime uses X11 only when no Wayland socket is available.
+          assert set(metadata['Context']['sockets'].strip(';').split(';')) == {'wayland', 'x11', 'fallback-x11'}
+          assert metadata['Context']['filesystems'] == 'home;'
+          assert not metadata['Context'].get('devices')
+          assert dict(metadata['Session Bus Policy']) == {'org.freedesktop.secrets': 'talk'}
+          assert not metadata.has_section('System Bus Policy')
+          exports = Path(sys.argv[2])
+          desktop = read(exports / 'applications' / (app_id + '.desktop'))
+          entry = desktop['Desktop Entry']
+          assert entry['Icon'] == entry['StartupWMClass'] == app_id
+          assert entry['DBusActivatable'] == 'true'
+          command = shlex.split(entry['Exec'])
+          assert Path(command[0]).name == 'flatpak' and app_id in command
+          assert '--command=monkeyspaw' in command
+          native = read('packaging/linux/' + app_id + '.desktop')
+          assert entry['Actions'] == native['Desktop Entry']['Actions']
+          for action in entry['Actions'].strip(';').split(';'):
+              command = shlex.split(desktop['Desktop Action ' + action]['Exec'])
+              assert '--command=gapplication' in command and command[-3:] == ['action', app_id, action]
+          service = read(exports / 'dbus-1/services' / (app_id + '.service'))['D-BUS Service']
+          assert service['Name'] == app_id
+          command = shlex.split(service['Exec'])
+          assert Path(command[0]).name == 'flatpak' and app_id in command
+          assert any(value in command for value in ('--command=monkeyspaw', '--command=/app/bin/monkeyspaw'))
+          assert command[-1] == '--gapplication-service'
+          PY
+      - name: Check Platform tools and launch with a required display and private bus
+        run: |
+          timeout --kill-after=5s 60s dbus-run-session -- xvfb-run -a bash <<'SH'
+          set -euo pipefail
+          test -n "${DISPLAY:-}"
+          xdpyinfo -display "$DISPLAY" >/dev/null
+          # The installed app uses Platform, without --devel or permission overrides.
+          # shellcheck disable=SC2016
+          flatpak run --user --die-with-parent --command=sh "$APP_ID" -eu -c '
+            command -v secret-tool
+            command -v gsettings
+            dependencies=$(ldd /app/bin/monkeyspaw)
+            printf "%s\n" "$dependencies"
+            case "$dependencies" in *"not found"*) exit 1 ;; esac
+            test "$(LD_BIND_NOW=1 /app/bin/monkeyspaw --version)" = "monkeyspaw $1"
+          ' _ "$ARTIFACT_VERSION"
+          app_pid=
+          cleanup() {
+            status=$?
+            if [[ "$status" -ne 0 ]]; then cat "$RUNNER_TEMP/monkeyspaw-flatpak-launch.log" >&2 || true; fi
+            timeout 5s flatpak kill "$APP_ID" >/dev/null 2>&1 || true
+            if [[ -n "$app_pid" ]]; then
+              kill -KILL "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+          flatpak run --user --die-with-parent --env=GTK_A11Y=none --env=GSK_RENDERER=cairo \
+            --env=GSETTINGS_BACKEND=memory --env=GDK_BACKEND=x11 "$APP_ID" --gapplication-service \
+            > "$RUNNER_TEMP/monkeyspaw-flatpak-launch.log" 2>&1 &
+          app_pid=$!
+          ready=false
+          for ((attempt=0; attempt<20; attempt++)); do
+            kill -0 "$app_pid"
+            owner=$(timeout 2s gdbus call --session --dest org.freedesktop.DBus \
+              --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner "$APP_ID")
+            if [[ "$owner" == '(true,)' ]]; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+          timeout 5s gapplication action "$APP_ID" toggle
+          visible=false
+          for ((attempt=0; attempt<20; attempt++)); do
+            kill -0 "$app_pid"
+            if timeout 2s xdotool search --onlyvisible --class '^ch[.]lkmc[.]monkeyspaw$'; then
+              visible=true; break
+            fi
+            sleep 1
+          done
+          test "$visible" = true
+          sleep 5
+          kill -0 "$app_pid"
+          timeout 5s gapplication action "$APP_ID" quit
+          wait "$app_pid"
+          app_pid=
+          SH
+      - name: Upload the verified bundle and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MonkeysPaw-flatpak-artifacts
+          path: |
+            dist/${{ env.BUNDLE_FILE }}
+            dist/${{ env.BUNDLE_FILE }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+      - name: Restore user namespaces and remove sandbox files
+        if: always()
+        run: |
+          set -euo pipefail
+          # Cleanup must also work if setup failed before writing GITHUB_ENV.
+          XDG_DATA_HOME="$RUNNER_TEMP/monkeyspaw-flatpak-data"
+          XDG_RUNTIME_DIR="$RUNNER_TEMP/monkeyspaw-flatpak-runtime"
+          if [[ -f "$RUNNER_TEMP/monkeyspaw-flatpak-userns" ]]; then
+            sudo sysctl -w "kernel.apparmor_restrict_unprivileged_userns=$(cat "$RUNNER_TEMP/monkeyspaw-flatpak-userns")"
+          fi
+          rm -rf -- "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" "$HOME/.var/app/$APP_ID" \
+            "$RUNNER_TEMP/monkeyspaw-tested-deb"
+          rm -f -- "$RUNNER_TEMP/monkeyspaw-flatpak-userns" \
+            "$RUNNER_TEMP/monkeyspaw-flatpak-launch.log"
 
   android:
     name: Android JVM tests, lint and APKs

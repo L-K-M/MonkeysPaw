@@ -1,0 +1,32 @@
+# build-flatpak.sh copies this manifest beside its private stage/ directory.
+# The tested amd64 deb supplies every app file; there is no Swift build here.
+id: ch.lkmc.monkeyspaw
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: monkeyspaw
+build-options:
+  # Even debug-info extraction would change the tested executable's bytes.
+  no-debuginfo: true
+  strip: false
+finish-args:
+  - --share=ipc # X11 shared-memory transport
+  - --share=network # Assistant providers and optional sync
+  - --socket=wayland
+  - --socket=fallback-x11
+  # The editable, watched library may be anywhere under the user's home.
+  # This grants read/write access to the whole home, not just the library.
+  - --filesystem=home
+  - --talk-name=org.freedesktop.secrets
+  # Portals and the app's own bus namespace use Flatpak's filtered defaults.
+  # No host dconf, unrestricted bus, host-spawn or native injection access.
+  # D2 adds the precise optional tray permission with its ownership change.
+modules:
+  - name: monkeyspaw
+    only-arches: [x86_64]
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: stage
+    build-commands:
+      - cp -a . /app/
