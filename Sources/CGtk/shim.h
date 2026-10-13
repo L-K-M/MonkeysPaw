@@ -30,6 +30,16 @@
 #define MONKEYSPAW_CGTK_SHIM_H
 
 #include <gtk/gtk.h>
+
+/* GtkTextTag properties require a C variadic; the buffer's table owns the tag. */
+static inline GtkTextTag *mp_text_buffer_background_tag(GtkTextBuffer *buffer,
+                                                       const char *name, const char *color) {
+    GtkTextTag *tag = gtk_text_tag_new(name);
+    g_object_set(tag, "background", color, "foreground", "#1b1b1b", NULL);
+    gtk_text_tag_table_add(gtk_text_buffer_get_tag_table(buffer), tag);
+    g_object_unref(tag);
+    return tag;
+}
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
 #endif
@@ -50,6 +60,7 @@ static inline GtkWidget    *mp_entry_text_delegate(GtkWidget *w) {
     return delegate != NULL ? GTK_WIDGET(delegate) : NULL;
 }
 static inline GtkTextView  *mp_text_view(GtkWidget *w) { return GTK_TEXT_VIEW(w); }
+static inline GtkCheckButton *mp_check_button(GtkWidget *w) { return GTK_CHECK_BUTTON(w); }
 static inline GtkListBox   *mp_list_box(GtkWidget *w) { return GTK_LIST_BOX(w); }
 static inline GtkListBoxRow *mp_list_box_row(GtkWidget *w) { return GTK_LIST_BOX_ROW(w); }
 static inline GtkComboBox  *mp_combo_box(GtkWidget *w) { return GTK_COMBO_BOX(w); }

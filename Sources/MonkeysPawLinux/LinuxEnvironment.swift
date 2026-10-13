@@ -86,6 +86,7 @@ final class LinuxEnvironment {
     }
 
     private final class LibraryGraph {
+        let id = UUID()
         let directory: URL
         let files: FileStore
         let library: LibraryService
@@ -101,6 +102,10 @@ final class LinuxEnvironment {
         let initializationError: FileStoreError?
         var started = false
         var warningLogged = false
+        var assistant: AssistantModel?
+        var makeAssistant: (() -> AssistantModel)?
+        var assistantObserver: UUID?
+        private var assistantSession: PromptEditingSession?
 
         init(directory: URL, files: FileStore, library: LibraryService,
              index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel, browser: LibraryBrowserModel,
@@ -124,12 +129,27 @@ final class LinuxEnvironment {
 
         func stop() {
             imports.deactivate()
+            assistant?.deactivate()
+            assistant = nil
+            makeAssistant = nil
+            if let assistantObserver { editor.removeObserver(assistantObserver) }
+            assistantObserver = nil
             callbacks.deactivate()
             browser.deactivate()
             editor.deactivate()
             editing.deactivate()
             watcher?.stop()
             picker.onChange = nil
+        }
+
+        func refreshAssistant() {
+            guard callbacks.isActive else { return }
+            let session = editor.assistantSession
+            if assistant == nil || assistantSession != session {
+                assistant?.deactivate()
+                assistantSession = session
+                assistant = makeAssistant?()
+            } else { assistant?.contextChanged() }
         }
     }
 
@@ -170,6 +190,7 @@ final class LinuxEnvironment {
     var editorModel: EditorModel { libraryGraph.editor }
     var importModel: ImportModel { libraryGraph.importModel }
     var libraryImportState: LinuxLibraryImportState { libraryGraph.imports }
+    var assistantModel: AssistantModel? { libraryGraph.assistant }
 
     private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
@@ -454,8 +475,12 @@ final class LinuxEnvironment {
                     rememberedValues: self.rememberedValuesSettingsModel,
                     makeAssistant: { [weak self] in
                         guard let self, !self.isShutDown else { return nil }
-                        return AssistantSettingsModel(settings: self.providerSettingsService,
+                        let model = AssistantSettingsModel(settings: self.providerSettingsService,
                             assistant: self.assistantService, work: self.backgroundWork, mainThread: self.mainThread)
+                        model.onProfilesChanged = { [weak self] in
+                            self?.currentLibraryGraph?.assistant?.profileChanged()
+                        }
+                        return model
                     },
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
                     librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
@@ -487,9 +512,11 @@ final class LinuxEnvironment {
 
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
+            let graph = libraryGraph
             currentLibraryWindow = LinuxLibraryWindow(application: application,
                 browser: libraryBrowserModel, editor: editorModel,
-                imports: .init(state: libraryImportState, chooser: importChooser), openFolder: { [weak self] in
+                imports: .init(state: libraryImportState, chooser: importChooser),
+                assistant: { [weak graph] in graph?.assistant }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
@@ -667,6 +694,18 @@ final class LinuxEnvironment {
             index: index, watcher: watcher, picker: picker, browser: browser, editing: editing, editor: editor,
             importModel: importModel, imports: imports, callbacks: callbacks,
             initializationError: initializationError)
+        let service = assistantService
+        let main = mainThread
+        graph.makeAssistant = { [weak graph] in
+            AssistantModel(service: service, main: main, context: { [weak graph] in
+                AssistantContext(libraryID: graph?.id ?? UUID(), profile: service.selectedProfile,
+                    editor: graph?.editor.assistantSnapshot,
+                    access: graph?.callbacks.isActive == true && graph?.picker.libraryAvailable == true
+                        ? .privatePrompt : .unavailable)
+            })
+        }
+        graph.refreshAssistant()
+        graph.assistantObserver = editor.addObserver { [weak graph] _ in graph?.refreshAssistant() }
         panel.rebind(picker: picker, session: session.currentSession(),
             openSetup: { [weak self, weak callbacks] in
                 guard callbacks?.isActive == true else { return }
@@ -706,7 +745,9 @@ final class LinuxEnvironment {
         quitPending = false
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
-        currentLibraryWindow?.rebind(browser: libraryGraph.browser, editor: libraryGraph.editor, imports: libraryGraph.imports)
+        let graph = libraryGraph
+        currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
+            assistant: { [weak graph] in graph?.assistant })
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
@@ -797,6 +838,7 @@ final class LinuxEnvironment {
         graph.watcher?.stop()
         graph.picker.libraryAvailable = false
         graph.imports.setLibraryAvailable(false)
+        graph.assistant?.contextChanged()
         currentLibraryWindow?.setLibraryAvailable(false)
         currentLibraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(graph, error)

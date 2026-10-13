@@ -3,13 +3,15 @@ import CGtk
 import Foundation
 import MonkeysPawCore
 
-/// GTK owns the widgets. Each visible Settings session owns a fresh model;
+/// GTK owns the widgets. Each Settings window owns one presentation model;
 /// only the native password entry holds typed text, never a stored key.
 final class LinuxAssistantSettingsPage {
     enum Retirement { case hidden, destroyed }
     let widget: GTK.Widget
     private let makeModel: () -> AssistantSettingsModel?
     private var model: AssistantSettingsModel?
+    private var isShown = false
+    private var needsRefresh = false
     private var isRendering = false
     private var keyInputReset: UUID?
     private var renderedProfiles: [ProviderProfile] = []
@@ -109,9 +111,11 @@ final class LinuxAssistantSettingsPage {
         delete = button("settings-assistant-delete", title: LinuxAssistantSettingsStrings.delete, in: profileButtons) {
             if let id = $0.state.draft?.id { $0.deleteProfile(id) }
         }
-        disable = button("settings-assistant-disable", title: LinuxAssistantSettingsStrings.disable, in: profileButtons) { $0.selectProfile(nil) }
+        disable = button("settings-assistant-disable", title: LinuxAssistantSettingsStrings.disable, in: profileButtons) {
+            Self.selectProfile(nil, in: $0)
+        }
         activate = button("settings-assistant-activate", title: LinuxAssistantSettingsStrings.makeActive, in: profileButtons) {
-            $0.selectProfile($0.state.draft?.id)
+            Self.selectProfile($0.state.draft?.id, in: $0)
         }
         keepKey = button("settings-assistant-keep-key", title: LinuxAssistantSettingsStrings.keepKey, in: keyButtons) { $0.keepKey() }
         clearKey = button("settings-assistant-clear-key", title: LinuxAssistantSettingsStrings.clearKey, in: keyButtons) { $0.clearKey() }
@@ -123,7 +127,7 @@ final class LinuxAssistantSettingsPage {
         GTK.onRow(profiles, "row-selected") { [weak self] index in
             guard let self, !self.isRendering, self.canChangeProfiles, let index,
                   self.renderedProfiles.indices.contains(index) else { return }
-            self.model?.selectProfile(self.renderedProfiles[index].id)
+            if let model = self.model { Self.selectProfile(self.renderedProfiles[index].id, in: model) }
         }
         onInput(name) { $0.renameProfile($1) }
         onInput(baseURL) { $0.setBaseURL($1) }
@@ -148,36 +152,61 @@ final class LinuxAssistantSettingsPage {
     }
 
     func show() {
-        guard model == nil else { return }
-        model = makeModel()
-        model?.onChange = { [weak self] in self?.render() }
+        guard !isShown else { return }
+        isShown = true
+        if model == nil { model = makeModel() }
+        else { needsRefresh = true }
+        model?.onChange = { [weak self] in
+            self?.refreshIfNeeded()
+            self?.render()
+        }
+        refreshIfNeeded()
         render()
     }
 
     /// Accepted saves can finish on their worker; retired callbacks cannot touch GTK.
     func retire(_ reason: Retirement) {
+        guard isShown || reason == .destroyed else { return }
+        isShown = false
         model?.onChange = nil
         model?.cancelTest()
-        model = nil
+        model?.keepKey()
         keyInputReset = nil
         pendingInputs.removeAll()
-        if reason == .hidden { render() }
+        if reason == .destroyed {
+            model = nil
+        } else {
+            needsRefresh = true
+            render()
+        }
+    }
+
+    private func refreshIfNeeded() {
+        guard isShown, needsRefresh, let model, model.state.operation == nil else { return }
+        needsRefresh = false
+        model.refresh()
     }
 
     private var canChangeProfiles: Bool {
-        guard let state = model?.state else { return false }
+        guard isShown, let state = model?.state else { return false }
         return state.operation == nil && !state.isReadOnly
     }
 
     private var canEditDraft: Bool {
-        guard let state = model?.state else { return false }
+        guard isShown, let state = model?.state else { return false }
         return state.draft != nil && !state.isReadOnly && (state.operation == nil || state.operation == .saving)
+    }
+
+    private static func selectProfile(_ id: ProviderProfileID?, in model: AssistantSettingsModel) {
+        // Refresh still discards staged edits without reporting a provider mutation.
+        if id == model.state.selectedProfileID { model.refresh() }
+        else { model.selectProfile(id) }
     }
 
     private func render() {
         isRendering = true
         defer { isRendering = false }
-        let state = model?.state
+        let state = isShown ? model?.state : nil
         let draft = state?.draft
         if draft == nil || !canEditDraft, let root = gtk_widget_get_root(widget),
            let focus = gtk_root_get_focus(root), gtk_widget_is_ancestor(focus, editor) != 0 {
@@ -223,7 +252,8 @@ final class LinuxAssistantSettingsPage {
             gtk_combo_box_text_append_text(mp_combo_box_text(modelPicker), LinuxAssistantSettingsStrings.chooseModel)
             for model in models { gtk_combo_box_text_append_text(mp_combo_box_text(modelPicker), LinuxAssistantSettingsStrings.modelLabel(model)) }
         }
-        gtk_combo_box_set_active(mp_combo_box(modelPicker), 0)
+        let modelIndex = models.firstIndex { $0.id.utf8.elementsEqual((draft?.modelID ?? "").utf8) }
+        gtk_combo_box_set_active(mp_combo_box(modelPicker), modelIndex.map { Int32($0 + 1) } ?? 0)
         setMessage(keyEdit, state.map { LinuxAssistantSettingsStrings.keyEdit($0.keyEdit) })
         setMessage(storage, state.map { LinuxAssistantSettingsStrings.storage($0.keyStorage) })
         setMessage(storageWarning, state?.keyStorage.tier == .file ? LinuxAssistantSettingsStrings.unencrypted : nil)
@@ -254,7 +284,7 @@ final class LinuxAssistantSettingsPage {
     private func button(_ name: String, title: String, in box: GTK.Widget,
                         intent: @escaping (AssistantSettingsModel) -> Void) -> GTK.Widget {
         let button = GTK.button(title) { [weak self] in
-            guard let self, let model = self.model else { return }
+            guard let self, self.isShown, let model = self.model else { return }
             intent(model)
         }
         gtk_widget_set_name(button, name)

@@ -42,7 +42,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         view?.hide()
         environment?.shutdown()
         view = nil
-        try worker {}
+        if work != nil { try worker {} }
         drainUI()
         if let application { GTKTestSupport.destroy(application) }
         environment = nil
@@ -271,21 +271,126 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         drainUI()
         XCTAssertTrue(model?.state.availableModels.isEmpty == true)
         try startHeldTest()
-        weak var retired = model
+        let retained = model
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(self.window) == 0 && self.transport.cancellations == 3 })
         drainUI()
-        XCTAssertNil(retired)
-        retired = nil
+        XCTAssertTrue(model === retained)
         XCTAssertEqual(try entryText("key"), "")
         view.show()
         waitLoaded()
-        XCTAssertEqual(modelCount, 2)
+        XCTAssertEqual(modelCount, 1)
         transport.releaseHeld()
         drainUI()
         XCTAssertTrue(model?.state.availableModels.isEmpty == true)
         XCTAssertNil(model?.state.testResult)
         XCTAssertEqual(try entryText("model-id"), "manual")
+    }
+
+    func testModelPickerReflectsDraftAfterListingAndUnrelatedPublication() throws {
+        _ = try seed()
+        try show()
+        let models = [ModelDescriptor(id: "a"), ModelDescriptor(id: "manual")]
+        transport.enqueue(.response(HTTPResponse(statusCode: 200,
+            body: Data(#"{"data":[{"id":"a"},{"id":"manual"}]}"#.utf8))))
+        try runTest(.ok(models: models))
+        XCTAssertEqual(gtk_combo_box_get_active(mp_combo_box(try control("model-picker"))), 2)
+        model?.keepKey()
+        drainUI()
+        XCTAssertEqual(gtk_combo_box_get_active(mp_combo_box(try control("model-picker"))), 2)
+        view.hide()
+        view.show()
+        waitLoaded()
+        XCTAssertEqual(modelCount, 1)
+    }
+
+    func testHiddenSettingsIgnoresNativeActionsWithRetainedModel() throws {
+        _ = try seed()
+        try show()
+        view.hide()
+        drainUI()
+        waitLoaded()
+        let draft = model?.state.draft?.id
+        let profiles = service.snapshot.settings
+        var instance = GValue()
+        g_value_init(&instance, gtk_button_get_type())
+        g_value_set_object(&instance, try control("add"))
+        g_signal_emitv(&instance, g_signal_lookup("clicked", gtk_button_get_type()), 0, nil)
+        g_value_unset(&instance)
+        try input("name", "Hidden edit")
+        drainUI()
+        XCTAssertEqual(model?.state.draft?.id, draft)
+        XCTAssertEqual(model?.state.keyEdit, .keep)
+        XCTAssertEqual(service.snapshot.settings, profiles)
+        view.show()
+        waitLoaded()
+        XCTAssertEqual(modelCount, 1)
+        XCTAssertEqual(try entryText("name"), "Saved")
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testHiddenPageDetachesAndRefreshesOnceWhenShown() throws {
+        _ = try seed()
+        try show()
+        let reads = secrets.readCount
+        try input("key", "Staged replacement")
+        drainUI()
+        view.hide()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(try entryText("key"), "")
+        XCTAssertNil(model?.onChange)
+        XCTAssertEqual(model?.state.keyEdit, .keep)
+        XCTAssertEqual(secrets.readCount, reads)
+        model?.renameProfile("Background update")
+        drainUI()
+        XCTAssertEqual(secrets.readCount, reads)
+        view.show()
+        waitLoaded()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(modelCount, 1)
+        XCTAssertEqual(secrets.readCount, reads + 1)
+        XCTAssertEqual(try entryText("name"), "Saved")
+        view.show()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(secrets.readCount, reads + 1)
+    }
+
+    func testShowDuringAcceptedSaveDefersOneRefreshAndKeepsMutationCallbacks() throws {
+        _ = try seed()
+        try show()
+        var mutations = 0
+        var refreshes = 0
+        var previousOperation = model?.state.operation
+        model?.onProfilesChanged = { mutations += 1 }
+        secrets.blockNextWrite()
+        try input("key", "Replacement")
+        drainUI()
+        try click("save")
+        XCTAssertTrue(GTKTestSupport.spin { self.secrets.isWriteBlocked })
+        view.hide()
+        drainUI()
+        XCTAssertEqual(try entryText("key"), "")
+        XCTAssertNil(model?.onChange)
+        view.show()
+        let render = model?.onChange
+        model?.onChange = {
+            render?()
+            let operation = self.model?.state.operation
+            if operation == .loading, previousOperation != .loading { refreshes += 1 }
+            previousOperation = operation
+        }
+        secrets.releaseWrite()
+        waitLoaded()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(mutations, 2)
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertEqual(modelCount, 1)
+        XCTAssertEqual(try entryText("key"), "")
+        XCTAssertEqual(service.snapshot.settings.profiles.first?.displayName, "Saved")
     }
 
     func testSavingStaysResponsivePreservesNewerMetadataAndClearsCommittedKey() throws {
@@ -408,10 +513,12 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(try labelText("error"), LinuxAssistantSettingsStrings.settingsError(.secret(.locked)))
         try assertStoredKeyAbsent()
         view.hide()
+        gtk_window_destroy(mp_window(window))
+        view = nil
+        window = nil
         try files.write(Data(#"{"version":999}"#.utf8), at: "provider-settings.json")
         service = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: secrets)
-        view.show()
-        waitLoaded()
+        try show()
         XCTAssertTrue(model?.state.isReadOnly == true)
         XCTAssertEqual(try labelText("error"), LinuxAssistantSettingsStrings.settingsError(.futureVersion(999)))
         XCTAssertFalse(try sensitive("add"))
@@ -424,7 +531,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         environment.showSettings()
         XCTAssertTrue(GTKTestSupport.spin { self.settingsWindow() != nil })
         window = try XCTUnwrap(settingsWindow())
-        gtk_notebook_set_current_page(mp_notebook(try settingsWidget("settings-tabs", in: window)), 2)
+        try GTKTestSupport.selectAssistantTab(in: window)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitive("add")) == true })
         try click("add")
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitive("key")) == true })
@@ -434,8 +541,13 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         try input("model-id", "manual-composed")
         try input("key", sentinel)
         drainUI()
+        var saveClicked = false
+        GTK.onSignal(try control("save"), "clicked") { saveClicked = true }
         try click("save")
-        XCTAssertTrue(GTKTestSupport.spin { (try? self.labelText("storage")) == LinuxAssistantSettingsStrings.storage(.saved(.file)) })
+        XCTAssertTrue(GTKTestSupport.spin { saveClicked }, "GTK did not dispatch Save")
+        let stored = GTKTestSupport.spin { (try? self.labelText("storage")) == LinuxAssistantSettingsStrings.storage(.saved(.file)) }
+        let saveStatus = "\(try labelText("progress")); \(try labelText("error"))"
+        XCTAssertTrue(stored, saveStatus)
         XCTAssertTrue(try visible("storage-warning"))
         try assertStoredKeyAbsent()
         XCTAssertTrue(transport.requests.isEmpty)
@@ -484,13 +596,20 @@ final class LinuxAssistantSettingsTests: XCTestCase {
     }
 
     private func waitLoaded() {
-        XCTAssertTrue(GTKTestSupport.spin { self.model != nil && self.model?.state.operation == nil && self.model?.state.keyStorage != .loading })
+        drainUI() // A retained model can still be idle before show()'s queued refresh starts.
+        XCTAssertTrue(settled { self.model != nil && self.model?.state.operation == nil && self.model?.state.keyStorage != .loading })
+    }
+
+    /// Loads and saves reach the secret store on a worker; a loaded host can
+    /// exceed the default three-second spin (observed at load average 10).
+    private func settled(_ predicate: () -> Bool) -> Bool {
+        GTKTestSupport.spin(until: predicate, timeout: .seconds(10))
     }
 
     private func save() throws {
         let reset = model?.state.keyInputReset
         try click("save")
-        XCTAssertTrue(GTKTestSupport.spin { self.model?.state.operation == nil && self.model?.state.keyInputReset != reset })
+        XCTAssertTrue(settled { self.model?.state.operation == nil && self.model?.state.keyInputReset != reset })
         waitLoaded()
         XCTAssertNil(model?.state.error)
     }
@@ -556,9 +675,9 @@ final class LinuxAssistantSettingsTests: XCTestCase {
     }
 
     private func worker(_ body: @escaping () throws -> Void) throws {
-        guard let work else { return }
+        let running = try XCTUnwrap(work, "Assistant settings worker unavailable")
         var result: Result<Void, Error>?
-        work.run {
+        running.run {
             let outcome = Result(catching: body)
             GTK.onMainLoop { result = outcome }
         }
@@ -582,8 +701,10 @@ private final class AssistantPageSecrets: SecretStore {
     private var deleteError: SecretStoreError?
     private var writeGate: DispatchSemaphore?
     private var writeBlocked = false
+    private var reads = 0
 
     var isWriteBlocked: Bool { locked { writeBlocked } }
+    var readCount: Int { locked { reads } }
     func setTier(_ value: SecretTier) { locked { tier = value } }
     func setEnvironment(_ value: SecretValue, account: SecretAccount) { locked { environment[account] = value } }
     func hasEnvironment(_ account: SecretAccount) -> Bool { locked { environment[account] != nil } }
@@ -596,6 +717,7 @@ private final class AssistantPageSecrets: SecretStore {
     func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
         XCTAssertFalse(Thread.isMainThread, "Secret I/O must stay off GLib")
         return try locked {
+            reads += 1
             if let readError { throw readError }
             if case .effective = source, let value = environment[account] {
                 return StoredSecret(value: value, tier: .environment)
