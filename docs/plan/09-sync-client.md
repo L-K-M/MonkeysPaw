@@ -13,13 +13,14 @@
   asks to rename it.
 - **Group folders.**
   - Wire scope paths remain capped at 1,024 UTF-8 bytes. Joined library
-    paths use the compatible 1,287-byte rooted cap, including
+    paths use the compatible 1,287-byte rooted cap (1,024 + 7 + 255 + 1), including
     `Groups/<255-byte folder>/` (§5.1, §20 E37). Private conflict/rescue
     destinations still fit the 1,024-byte wire cap; their planners safely
     shorten/flatten long source names and retain source mappings.
   - A folder is keyed by `group_id` in sync state. Its name is the group
     name, sanitized: path-validation rules applied, then de-duplicated
-    with ` (2)`.
+    with ` (2)`. Reserve the suffix's UTF-8 bytes before safely shortening
+    the sanitized stem so the complete folder name stays within 255 bytes.
   - A group rename renames the folder.
   - A folder under `Groups/` that maps to no current group, or a file
     sitting loose directly under `Groups/`, is never pushed. It is rescued
@@ -83,8 +84,16 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   partly migrated, until replay completes or a planner resolves a typed conflict.
   Direct usage/value writes, removals and ordinary key migrations check the same
   recovery gate under their own store locks; in-flight writes finish before
-  preparation snapshots their store. Checked library read/hash/mutation uses the existing
-  LibraryService lock; journal, state and keyed-store I/O never hold that lock.
+  preparation snapshots their store. Ordinary library reads and edits check
+  the recovery gate under the LibraryService lock and fail immediately with
+  typed recovery-required. Internal recovery's checked read/hash/mutation
+  uses that lock without the ordinary gate; journal, state and keyed-store
+  I/O never hold that lock. Explicit replay revalidates and reflushes uncertain
+  journal/state records on the same live graph before releasing the permit.
+  A replacement journal instance may resume the validated on-disk plan after
+  abandoning its predecessor; each graph still serializes one journal.
+  Corrupt/future journals stay blocked until explicitly restored or reset;
+  a reset's deletion must be flushed before ordinary access resumes.
   Publish exact server bytes, verify the result, flush files and affected
   directories, durably commit state, then durably remove the journal. Replay
   rechecks installed bytes and modes even for completed steps; an uncertain
