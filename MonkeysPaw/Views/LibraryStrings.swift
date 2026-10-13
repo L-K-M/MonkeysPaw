@@ -14,7 +14,7 @@ enum LibraryStrings {
     static let noRows = "No prompts in this view."
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
-    static let keyboardHint = "↑↓: select · ⌘S: save · ⌘⇧F: favourite · Esc: clear filter, then close"
+    static let keyboardHint = "↑↓: select · ⌘S: save · ⌘⇧F: favourite · ⌘⇧A: Assistant · Esc: close Assistant, clear filter, then close"
 
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {

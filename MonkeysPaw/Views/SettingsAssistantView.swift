@@ -6,13 +6,22 @@ final class AssistantSettingsViewState: ObservableObject {
     @Published private(set) var state: AssistantSettingsModel.State
     private var model: AssistantSettingsModel?
 
-    init(model: AssistantSettingsModel, mainThread: MainThread) {
+    init(model: AssistantSettingsModel, mainThread: MainThread, onProviderChange: @escaping () -> Void = {}) {
         self.model = model
         state = model.state
         model.onChange = { [weak self] in
             mainThread.run { [weak self] in
                 guard let self, let model = self.model else { return }
+                let previous = self.state.operation
                 self.state = model.state
+                if previous != self.state.operation {
+                    // Cancel before a saved credential can change, including a
+                    // byte-identical profile or a failed credential rollback.
+                    switch self.state.operation ?? previous {
+                    case .saving, .selecting, .deleting: onProviderChange()
+                    case .loading, nil: break
+                    }
+                }
             }
         }
     }

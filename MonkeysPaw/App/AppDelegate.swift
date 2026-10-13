@@ -85,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notifier: UserNotificationNotifier?
     private var dataFiles: FileStore?
     private(set) var providerSettingsService: ProviderSettingsService?
+    private(set) var assistantService: AssistantService?
     private var values: ValuesStore?
     private var usage: UsageStore?
     private var fill: FillService?
@@ -235,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isShutDown else { return }
         isShutDown = true
         watcher?.stop()
+        libraryWindow?.presentation.retireAssistant()
         libraryBrowserModel?.deactivate()
         editorModel?.deactivate()
         promptEditing?.deactivate()
@@ -339,6 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             anthropic: AnthropicClient(transport: httpTransport),
             openAICompatible: OpenAIClient(transport: httpTransport, providerState: ProviderStateStore(files: data)),
             work: backgroundWork, main: mainThread)
+        assistantService = assistant
         dataFiles = data
         self.values = values
         self.usage = usage
@@ -386,7 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             makeAssistant: {
                 AssistantSettingsModel(settings: providers, assistant: assistant,
                     work: backgroundWork, mainThread: mainThread)
-            })
+            }, onProviderChange: { [weak self] in self?.libraryWindow?.presentation.assistantProfileChanged() })
         settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
             guard let self else { return nil }
             if self.editorSwitchRefused {
@@ -501,6 +504,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Stop before releasing: FSEvents marshals teardown via its serial queue.
         watcher?.stop()
         watcher = nil
+        libraryWindow?.presentation.retireAssistant()
         libraryBrowserModel?.deactivate()
         editorModel?.deactivate()
         promptEditing?.deactivate()
@@ -630,13 +634,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editorModel = editor
         importModel = importer
         promptEditing = editing
+        let graphID = UUID()
+        let assistantMain = mainThread
+        let makeAssistant: LibraryViewState.AssistantFactory? = assistantService.map { assistant in
+            { [weak editor, weak self] in
+                AssistantModel(service: assistant, main: assistantMain, context: { [weak self, weak editor] in
+                    AssistantContext(libraryID: graphID, profile: assistant.selectedProfile,
+                        editor: editor?.assistantSnapshot,
+                        access: isCurrent() && self?.pickerModel?.libraryAvailable == true ? .privatePrompt : .unavailable)
+                })
+            }
+        }
         if let libraryWindow {
             libraryWindow.rebind(to: browser, editor: editor, libraryPath: libraryDirectory.path, available: availability,
-                imports: imports)
+                imports: imports, makeAssistant: makeAssistant)
         } else {
             libraryWindow = LibraryWindowController(model: browser, editor: editor, libraryPath: libraryDirectory.path,
                 available: availability, mainThread: mainThread, activation: windowActivation,
-                presentDialog: editorDialog, imports: imports, importChooser: importChooser,
+                presentDialog: editorDialog, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
+                importChooser: importChooser,
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
         updateLibraryMenuItems()
@@ -816,7 +832,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(saveLibraryPrompt), #selector(renameLibraryPrompt),
-             #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt):
+             #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt), #selector(showLibraryAssistant):
             return validateLibraryFileMenuItem(menuItem, in: NSApp.keyWindow)
         case #selector(importFromMenu):
             return libraryWindow?.presentation.imports?.canImport == true

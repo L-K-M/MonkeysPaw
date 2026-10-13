@@ -15,6 +15,15 @@ struct LibraryView: View {
                 sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
                 importablePrompts.frame(minWidth: 180, idealWidth: 240)
                 editor.frame(minWidth: 240, maxWidth: .infinity)
+                if presentation.isAssistantVisible, let assistant = presentation.assistant {
+                    LibraryAssistantView(presentation: assistant, close: presentation.closeAssistant)
+                        .frame(minWidth: 320, idealWidth: 420)
+                }
+            }
+            if let message = presentation.assistantSaveMessage {
+                Text(message).font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                    .accessibilityIdentifier("library-assistant-save-outcome")
             }
             if let imports = presentation.imports { LibraryImportReportView(presentation: imports) }
             if !presentation.libraryAvailable {
@@ -57,6 +66,11 @@ struct LibraryView: View {
                 .disabled(!presentation.libraryAvailable)
                 .help(presentation.activeLibraryPath)
                 .accessibilityIdentifier("library-reveal")
+            Button(LibraryAssistantStrings.title, action: presentation.showAssistant)
+                .disabled(!presentation.canShowAssistant)
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .help(LibraryAssistantStrings.shortcutHint)
+                .accessibilityIdentifier("library-open-assistant")
         }
         .padding(12)
     }
@@ -185,7 +199,7 @@ struct LibraryView: View {
                 path: presentation.editorState.prompt?.relativePath,
                 revision: presentation.sourceRevision,
                 isEditable: presentation.libraryAvailable && presentation.editorState.canEdit,
-                onEdit: presentation.edit)
+                onEdit: presentation.edit, highlight: presentation.quoteHighlight)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(presentation.editorState.issues.enumerated()), id: \.offset) { issue in

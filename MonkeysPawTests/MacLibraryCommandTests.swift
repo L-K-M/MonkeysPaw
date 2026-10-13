@@ -760,12 +760,14 @@ final class MacLibraryCommandTests: XCTestCase {
         let menu = try XCTUnwrap(fileItem.submenu)
         XCTAssertEqual(menu.title, LibraryCommandStrings.fileMenu)
         XCTAssertEqual(menu.items.map(\.title), [EditorStrings.save, LibraryCommandStrings.rename,
-            LibraryCommandStrings.move, LibraryCommandStrings.delete])
+            LibraryCommandStrings.move, LibraryCommandStrings.delete, LibraryAssistantStrings.title])
         XCTAssertEqual(menu.items[0].keyEquivalent, "s")
         XCTAssertEqual(menu.items[0].keyEquivalentModifierMask, .command)
         XCTAssertEqual(menu.items.map(\.action), [#selector(AppDelegate.saveLibraryPrompt),
             #selector(AppDelegate.renameLibraryPrompt), #selector(AppDelegate.moveLibraryPrompt),
-            #selector(AppDelegate.deleteLibraryPrompt)])
+            #selector(AppDelegate.deleteLibraryPrompt), #selector(AppDelegate.showLibraryAssistant)])
+        XCTAssertEqual(menu.items.last?.keyEquivalent, "A")
+        XCTAssertEqual(menu.items.last?.keyEquivalentModifierMask, [.command, .shift])
         let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false
         defer { other.close() }
@@ -777,7 +779,7 @@ final class MacLibraryCommandTests: XCTestCase {
         }
         presentation.edit(original + " draft")
         try command(.rename, response: .rename("renamed.md"), in: presentation)
-        for item in menu.items { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
+        for item in menu.items.dropLast() { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
         try respond(.decision(.cancel))
         presentation.setLibraryAvailable(false)
         for item in menu.items { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
@@ -805,7 +807,7 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertFalse(presentation.canSave)
         XCTAssertTrue(presentation.canShowConflict)
         XCTAssertTrue(delegate.validateLibraryFileMenuItem(save, in: try window()))
-        for item in menu.items.dropFirst() {
+        for item in menu.items.dropFirst().dropLast() {
             XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window()))
         }
         let dismissed = dialogs.count

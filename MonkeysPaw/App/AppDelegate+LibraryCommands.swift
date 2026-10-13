@@ -8,11 +8,13 @@ extension AppDelegate: NSMenuItemValidation {
             (EditorStrings.save, #selector(saveLibraryPrompt), "s"),
             (LibraryCommandStrings.rename, #selector(renameLibraryPrompt), ""),
             (LibraryCommandStrings.move, #selector(moveLibraryPrompt), ""),
-            (LibraryCommandStrings.delete, #selector(deleteLibraryPrompt), "")
+            (LibraryCommandStrings.delete, #selector(deleteLibraryPrompt), ""),
+            (LibraryAssistantStrings.title, #selector(showLibraryAssistant), "A")
         ]
         for (title, action, key) in actions {
             let command = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
             command.target = self
+            if action == #selector(showLibraryAssistant) { command.keyEquivalentModifierMask = [.command, .shift] }
         }
         item.submenu = menu
         return item
@@ -26,6 +28,8 @@ extension AppDelegate: NSMenuItemValidation {
             return presentation.canSave || presentation.canShowConflict
         case #selector(renameLibraryPrompt), #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt):
             return libraryCommandTarget(in: window)?.canRunFileCommand == true
+        case #selector(showLibraryAssistant):
+            return libraryCommandTarget(in: window)?.canShowAssistant == true
         default: return false
         }
     }
@@ -34,6 +38,7 @@ extension AppDelegate: NSMenuItemValidation {
     @objc func renameLibraryPrompt() { libraryCommandTarget(in: NSApp.keyWindow)?.requestFileCommand(.rename) }
     @objc func moveLibraryPrompt() { libraryCommandTarget(in: NSApp.keyWindow)?.requestFileCommand(.move) }
     @objc func deleteLibraryPrompt() { libraryCommandTarget(in: NSApp.keyWindow)?.requestFileCommand(.delete) }
+    @objc func showLibraryAssistant() { libraryCommandTarget(in: NSApp.keyWindow)?.showAssistant() }
 
     private func libraryCommandTarget(in candidate: NSWindow?) -> LibraryViewState? {
         guard let window = libraryWindow?.window, candidate === window, window.isVisible,

@@ -2,6 +2,12 @@ import AppKit
 import MonkeysPawCore
 import SwiftUI
 
+struct LibrarySourceHighlight {
+    let byteRange: Range<Int>
+    let sourceBytes: Data
+    let id = UUID()
+}
+
 /// NSTextView supplies undo, the editing responder chain and input methods.
 /// SwiftUI publications must never replace an active marked-text composition.
 struct LibrarySourceEditor: NSViewRepresentable {
@@ -10,6 +16,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
     let revision: UInt64
     let isEditable: Bool
     let onEdit: (String) -> Void
+    var highlight: LibrarySourceHighlight? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(onEdit: onEdit) }
 
@@ -17,7 +24,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
         let scroll = Self.makeScrollView(coordinator: context.coordinator)
         if let text = scroll.documentView as? LibrarySourceTextView {
             context.coordinator.update(text, source: source, path: path, revision: revision,
-                isEditable: isEditable, onEdit: onEdit)
+                isEditable: isEditable, onEdit: onEdit, highlight: highlight)
         }
         return scroll
     }
@@ -60,7 +67,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let text = scroll.documentView as? LibrarySourceTextView else { return }
         context.coordinator.update(text, source: source, path: path, revision: revision,
-            isEditable: isEditable, onEdit: onEdit)
+            isEditable: isEditable, onEdit: onEdit, highlight: highlight)
     }
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
@@ -76,6 +83,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
         private var revision: UInt64 = 0
         private var isActive = true
         private var isUpdating = false
+        private var highlightID: UUID?
         private weak var textView: NSTextView?
         private let undo = UndoManager()
 
@@ -93,7 +101,8 @@ struct LibrarySourceEditor: NSViewRepresentable {
         deinit { NotificationCenter.default.removeObserver(self) }
 
         func update(_ text: NSTextView, source: String, path: RelativePath?, revision: UInt64 = 0,
-                    isEditable: Bool, onEdit: @escaping (String) -> Void) {
+                    isEditable: Bool, onEdit: @escaping (String) -> Void,
+                    highlight: LibrarySourceHighlight? = nil) {
             guard isActive else { return }
             textView = text
             let changedSession = self.path != path || self.revision != revision
@@ -111,7 +120,11 @@ struct LibrarySourceEditor: NSViewRepresentable {
             guard !text.hasMarkedText() else { return }
             self.path = path
             self.revision = revision
-            guard changedSession || !text.string.utf8.elementsEqual(source.utf8) else { return }
+            guard changedSession || !text.string.utf8.elementsEqual(source.utf8) else {
+                updateHighlight(text, highlight: highlight)
+                return
+            }
+            updateHighlight(text, highlight: nil)
             isUpdating = true
             defer { isUpdating = false }
             let selection = Self.selectionAfterReplacement(text.selectedRange(), from: text.string, to: source)
@@ -134,6 +147,31 @@ struct LibrarySourceEditor: NSViewRepresentable {
             }
             text.setSelectedRange(changedSession ? NSRange(location: 0, length: 0)
                 : selection)
+            highlightID = nil
+            updateHighlight(text, highlight: highlight)
+        }
+
+        private func updateHighlight(_ text: NSTextView, highlight: LibrarySourceHighlight?) {
+            guard highlightID != highlight?.id else { return }
+            let fullRange = NSRange(location: 0, length: (text.string as NSString).length)
+            text.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: fullRange)
+            highlightID = nil
+            guard let highlight, highlight.sourceBytes == Data(text.string.utf8),
+                  let range = Self.utf16Range(for: highlight.byteRange, in: text.string) else { return }
+            highlightID = highlight.id
+            // Temporary layout attributes never enter the source or undo stack.
+            text.layoutManager?.addTemporaryAttribute(.backgroundColor,
+                value: NSColor.systemYellow.withAlphaComponent(0.35), forCharacterRange: range)
+            text.setSelectedRange(range)
+            text.scrollRangeToVisible(range)
+        }
+
+        static func utf16Range(for byteRange: Range<Int>, in source: String) -> NSRange? {
+            let bytes = Array(source.utf8)
+            guard byteRange.lowerBound >= 0, byteRange.upperBound <= bytes.count, !byteRange.isEmpty,
+                  let prefix = String(bytes: bytes[..<byteRange.lowerBound], encoding: .utf8),
+                  let quote = String(bytes: bytes[byteRange], encoding: .utf8) else { return nil }
+            return NSRange(location: prefix.utf16.count, length: quote.utf16.count)
         }
 
         /// Canonical saves can prepend an id/header. Keep a caret or selection

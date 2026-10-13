@@ -5,6 +5,7 @@ import SwiftUI
 /// The reusable window follows one browser graph at a time. Tokens and a
 /// binding revision also protect against already-queued retired publications.
 final class LibraryViewState: ObservableObject {
+    typealias AssistantFactory = () -> AssistantModel
     enum Preview: Equatable {
         case none
         case rendered(String)
@@ -29,12 +30,21 @@ final class LibraryViewState: ObservableObject {
     }
     @Published private(set) var fileCommandRequest: LibraryFileCommandRequest?
     @Published private(set) var commandMessage: String?
+    @Published private(set) var assistant: LibraryAssistantViewState?
+    @Published private(set) var isAssistantVisible = false
+    @Published private(set) var assistantSaveMessage: String?
+    @Published private(set) var quoteHighlight: LibrarySourceHighlight?
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
+    var onAssistantVisibilityChange: (() -> Void)?
     private(set) var model: LibraryBrowserModel
     private(set) var editor: EditorModel
     private let mainThread: MainThread
     private let revealLibrary: () -> Void
+    private var makeAssistant: AssistantFactory?
+    private let scheduler: MonkeysPawCore.Scheduler
+    private var assistantSession: PromptEditingSession?
+    private var assistantPrompt: LibraryPromptSelection?
     private var observer: UUID?
     private var editorObserver: UUID?
     private var bindingRevision: UInt64 = 0
@@ -46,7 +56,9 @@ final class LibraryViewState: ObservableObject {
     private var lastClosedPromptPath: RelativePath?
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
-         mainThread: MainThread, imports: LibraryImportViewState? = nil, revealLibrary: @escaping () -> Void) {
+         mainThread: MainThread, imports: LibraryImportViewState? = nil,
+         makeAssistant: AssistantFactory? = nil, scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
+         revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
         editorState = editor.state
@@ -57,11 +69,70 @@ final class LibraryViewState: ObservableObject {
         imports?.updateDestinations(model.state.sections)
         self.mainThread = mainThread
         self.revealLibrary = revealLibrary
+        self.makeAssistant = makeAssistant
+        self.scheduler = scheduler
         observeModel()
         refresh()
     }
 
-    deinit { detachObservers() }
+    deinit { assistant?.retire(); detachObservers() }
+
+    var canShowAssistant: Bool { isActive && libraryAvailable && makeAssistant != nil }
+
+    func showAssistant() {
+        guard canShowAssistant, let makeAssistant else { return }
+        if assistant == nil {
+            let revision = bindingRevision
+            let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,
+                available: libraryAvailable, main: mainThread, scheduler: scheduler) { [weak self] outcome in
+                    guard let self, self.isActive, self.bindingRevision == revision else { return }
+                    self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
+                }
+            view.onHighlight = { [weak self] range in
+                guard let self, self.isActive, self.bindingRevision == revision else { return }
+                self.quoteHighlight = range.flatMap { range in
+                    self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
+                }
+                if range != nil { self.editorTab = .edit }
+            }
+            assistantSession = editor.assistantSnapshot?.session
+            assistantPrompt = editor.state.prompt
+            assistant = view
+        }
+        isAssistantVisible = true
+        onAssistantVisibilityChange?()
+    }
+
+    func closeAssistant() {
+        isAssistantVisible = false
+        assistant?.close()
+        quoteHighlight = nil
+        onAssistantVisibilityChange?()
+    }
+
+    func retireAssistant() {
+        isAssistantVisible = false
+        let old = assistant
+        assistant = nil
+        old?.retire()
+        assistantSession = nil
+        assistantPrompt = nil
+        quoteHighlight = nil
+        onAssistantVisibilityChange?()
+    }
+
+    func assistantProfileChanged() { assistant?.profileChanged() }
+
+    private func updateAssistantSession() {
+        guard let assistant else { return }
+        if assistantSession != editor.assistantSnapshot?.session || assistantPrompt?.relativePath != editor.state.prompt?.relativePath {
+            let visible = isAssistantVisible
+            retireAssistant()
+            if visible { showAssistant() }
+            return
+        }
+        assistant.editorChanged(available: libraryAvailable)
+    }
 
     var canSave: Bool {
         isActive && libraryAvailable && editorState.canSave
@@ -101,8 +172,11 @@ final class LibraryViewState: ObservableObject {
     var favoriteMessage: String? { favoriteOutcome.flatMap(LibraryStrings.favoriteMessage) }
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
-                imports: LibraryImportViewState? = nil) {
+                imports: LibraryImportViewState? = nil, makeAssistant: AssistantFactory? = nil) {
         guard isActive else { return }
+        retireAssistant()
+        self.makeAssistant = makeAssistant
+        assistantSaveMessage = nil
         self.imports?.deactivate()
         self.imports = imports
         imports?.updateDestinations(model.state.sections)
@@ -129,6 +203,7 @@ final class LibraryViewState: ObservableObject {
 
     func deactivate() {
         guard isActive else { return }
+        retireAssistant()
         imports?.deactivate()
         isActive = false
         bindingRevision &+= 1
@@ -141,6 +216,7 @@ final class LibraryViewState: ObservableObject {
         commandMessage = nil
         onEditorChange = nil
         onConflictRequested = nil
+        onAssistantVisibilityChange = nil
     }
 
     func setLibraryAvailable(_ available: Bool) {
@@ -148,6 +224,7 @@ final class LibraryViewState: ObservableObject {
         let becameAvailable = available && !libraryAvailable
         libraryAvailable = available
         imports?.setLibraryAvailable(available)
+        assistant?.editorChanged(available: available)
         if !available { fileCommandRequest = nil }
         if becameAvailable, editorTab == .history { loadHistory() }
         onEditorChange?()
@@ -378,6 +455,7 @@ final class LibraryViewState: ObservableObject {
                 let adoptedCopy = previousPrompt != nil
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
+                self.updateAssistantSession()
                 if let request = self.fileCommandRequest,
                    !request.matchesFile(state.prompt) || !self.canRunFileCommand { self.fileCommandRequest = nil }
                 self.refreshPreview()

@@ -64,6 +64,7 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var isDirty = false
     public fileprivate(set) var status = EditorStatus.idle
     public fileprivate(set) var readOnlyReason: PromptReadOnlyReason?
+    public fileprivate(set) var isPrivate = false
     public fileprivate(set) var issues: [PromptIssue] = []
     public fileprivate(set) var fields: [PromptField] = []
     public fileprivate(set) var preview = ""
@@ -85,7 +86,7 @@ public struct EditorState: Equatable, Sendable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.prompt == rhs.prompt && editorSourceEqual(lhs.source, rhs.source)
             && lhs.stamp == rhs.stamp && lhs.isDirty == rhs.isDirty && lhs.status == rhs.status
-            && lhs.readOnlyReason == rhs.readOnlyReason && lhs.issues == rhs.issues
+            && lhs.readOnlyReason == rhs.readOnlyReason && lhs.isPrivate == rhs.isPrivate && lhs.issues == rhs.issues
             && lhs.fields == rhs.fields && editorSourceEqual(lhs.preview, rhs.preview)
             && lhs.previewFailure == rhs.previewFailure && lhs.conflict == rhs.conflict
             && lhs.pendingDecision == rhs.pendingDecision && lhs.queuedActions == rhs.queuedActions
@@ -641,6 +642,7 @@ public final class EditorModel: @unchecked Sendable {
     private func updateDocument(_ document: PromptDocument) {
         if !editorSourceEqual(self.document?.source, document.source) { assistantRevision &+= 1 }
         self.document = document
+        state.isPrivate = document.frontMatter.isPrivate
         state.issues = document.issues
         let effective = document.effectiveFields
         let names = Set(effective.map(\.name))
