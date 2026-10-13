@@ -163,7 +163,7 @@ struct ServerLoginTests {
             for index in 1...5 {
                 do { _ = try await service.login(.init(username: "alice", password: "wrong", deviceName: "Test"), ip: ClientIPAddress("198.51.100.1")) }
                 catch {
-                    if index == 5 { #expect(error as? LoginError == .rateLimited(.init(seconds: 30))) }
+                    if index == 5 { #expect(error as? LoginError == .limited(30)) }
                     else { #expect(error as? AccountError == .unauthorized) }
                 }
             }
@@ -173,18 +173,18 @@ struct ServerLoginTests {
             let service = LoginService(accounts: .init(database: database, passwords: hasher, clock: clock.now),
                                        sessions: .init(database: database, clock: clock.now))
             let wrong = SyncAPI.LoginRequest(username: "alice", password: "wrong", deviceName: "Test")
-            await #expect(throws: LoginError.rateLimited(.init(seconds: 30))) {
+            await #expect(throws: LoginError.limited(30)) {
                 _ = try await service.login(wrong, ip: ClientIPAddress("198.51.100.2"))
             }
-            await #expect(throws: LoginError.rateLimited(.init(seconds: 30))) {
+            await #expect(throws: LoginError.limited(30)) {
                 _ = try await service.login(.init(username: "other", password: "wrong", deviceName: "Test"), ip: ClientIPAddress("198.51.100.1"))
             }
             #expect(await hasher.usedHashes().isEmpty)
             clock.advance(30)
-            await #expect(throws: LoginError.rateLimited(.init(seconds: 60))) {
+            await #expect(throws: LoginError.limited(60)) {
                 _ = try await service.login(wrong, ip: ClientIPAddress("198.51.100.2"))
             }
-            await #expect(throws: LoginError.rateLimited(.init(seconds: 60))) {
+            await #expect(throws: LoginError.limited(60)) {
                 _ = try await service.login(.init(username: "other", password: "wrong", deviceName: "Test"), ip: ClientIPAddress("198.51.100.1"))
             }
             clock.advance(60)

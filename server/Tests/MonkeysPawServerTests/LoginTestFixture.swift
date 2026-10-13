@@ -89,7 +89,7 @@ struct LoginTestFixture: Sendable {
             Issue.record("Expected failed login", sourceLocation: sourceLocation)
         } catch {
             if let retry {
-                #expect(error as? LoginError == .rateLimited(.init(seconds: retry)), sourceLocation: sourceLocation)
+                #expect(error as? LoginError == .limited(retry), sourceLocation: sourceLocation)
             } else {
                 #expect(error as? AccountError == .unauthorized, sourceLocation: sourceLocation)
             }
@@ -99,4 +99,11 @@ struct LoginTestFixture: Sendable {
 
 func withLoginFixture(_ operation: @Sendable (LoginTestFixture) async throws -> Void) async throws {
     try await withAccountFixture { try await operation(LoginTestFixture(account: $0)) }
+}
+
+extension LoginError {
+    /// Test-only: Retry-After values here are fixed, in-range constants.
+    static func limited(_ seconds: Int64) -> LoginError {
+        .rateLimited(try! SyncAPI.RetryAfter(seconds: seconds))
+    }
 }
