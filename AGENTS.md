@@ -54,7 +54,7 @@ Run these commands from the repository root:
 | Build Linux deb (Ubuntu 24.04) | `packaging/build-deb.sh 0.1.0` (or omit the version with `GITHUB_REF_NAME` set) |
 | Test Core and Linux app | `swift test` |
 | Test portal transport on a required private bus (no display) | `dbus-run-session -- env MONKEYSPAW_REQUIRE_PORTAL_BUS=1 swift test --filter LinuxPortalTransportTests` |
-| Test Linux app with a required display and private bus (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 MONKEYSPAW_REQUIRE_PORTAL_BUS=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test --filter MonkeysPawLinuxTests` (matches CI) |
+| Test Core and the Linux app with a required display and private bus (requires the `dbus` and `xvfb` packages CI installs) | `dbus-run-session -- xvfb-run -a env MONKEYSPAW_REQUIRE_DISPLAY=1 MONKEYSPAW_REQUIRE_PORTAL_BUS=1 GSETTINGS_BACKEND=memory GTK_A11Y=none GSK_RENDERER=cairo swift test` (matches CI; a module-wide `--filter` expands to every test name in one argument and fails on Linux once it passes 128 KiB) |
 | Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
 | Test Android Core on the JVM | `android/gradlew -p android :core:test` |
 | Test Android app logic on the JVM | `android/gradlew -p android testDebugUnitTest` |
