@@ -108,7 +108,6 @@ final class LinuxSettingsWindow {
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
         rememberedValues.cancelForgetAll()
-        assistant.retire(.hidden)
     }
 
     private func generalPage() -> GTK.Widget {

@@ -271,21 +271,62 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         drainUI()
         XCTAssertTrue(model?.state.availableModels.isEmpty == true)
         try startHeldTest()
-        weak var retired = model
+        let retained = model
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(self.window) == 0 && self.transport.cancellations == 3 })
         drainUI()
-        XCTAssertNil(retired)
-        retired = nil
+        XCTAssertTrue(model === retained)
         XCTAssertEqual(try entryText("key"), "")
         view.show()
         waitLoaded()
-        XCTAssertEqual(modelCount, 2)
+        XCTAssertEqual(modelCount, 1)
         transport.releaseHeld()
         drainUI()
         XCTAssertTrue(model?.state.availableModels.isEmpty == true)
         XCTAssertNil(model?.state.testResult)
         XCTAssertEqual(try entryText("model-id"), "manual")
+    }
+
+    func testModelPickerReflectsDraftAfterListingAndUnrelatedPublication() throws {
+        _ = try seed()
+        try show()
+        let models = [ModelDescriptor(id: "a"), ModelDescriptor(id: "manual")]
+        transport.enqueue(.response(HTTPResponse(statusCode: 200,
+            body: Data(#"{"data":[{"id":"a"},{"id":"manual"}]}"#.utf8))))
+        try runTest(.ok(models: models))
+        XCTAssertEqual(gtk_combo_box_get_active(mp_combo_box(try control("model-picker"))), 2)
+        model?.keepKey()
+        drainUI()
+        XCTAssertEqual(gtk_combo_box_get_active(mp_combo_box(try control("model-picker"))), 2)
+        view.hide()
+        view.show()
+        waitLoaded()
+        XCTAssertEqual(modelCount, 1)
+    }
+
+    func testHiddenSettingsIgnoresNativeActionsWithRetainedModel() throws {
+        _ = try seed()
+        try show()
+        view.hide()
+        drainUI()
+        waitLoaded()
+        let draft = model?.state.draft?.id
+        let profiles = service.snapshot.settings
+        var instance = GValue()
+        g_value_init(&instance, gtk_button_get_type())
+        g_value_set_object(&instance, try control("add"))
+        g_signal_emitv(&instance, g_signal_lookup("clicked", gtk_button_get_type()), 0, nil)
+        g_value_unset(&instance)
+        try input("name", "Hidden edit")
+        drainUI()
+        XCTAssertEqual(model?.state.draft?.id, draft)
+        XCTAssertEqual(model?.state.keyEdit, .keep)
+        XCTAssertEqual(service.snapshot.settings, profiles)
+        view.show()
+        waitLoaded()
+        XCTAssertEqual(modelCount, 1)
+        XCTAssertEqual(try entryText("name"), "Saved")
+        XCTAssertTrue(transport.requests.isEmpty)
     }
 
     func testSavingStaysResponsivePreservesNewerMetadataAndClearsCommittedKey() throws {
@@ -408,10 +449,12 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(try labelText("error"), LinuxAssistantSettingsStrings.settingsError(.secret(.locked)))
         try assertStoredKeyAbsent()
         view.hide()
+        gtk_window_destroy(mp_window(window))
+        view = nil
+        window = nil
         try files.write(Data(#"{"version":999}"#.utf8), at: "provider-settings.json")
         service = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: secrets)
-        view.show()
-        waitLoaded()
+        try show()
         XCTAssertTrue(model?.state.isReadOnly == true)
         XCTAssertEqual(try labelText("error"), LinuxAssistantSettingsStrings.settingsError(.futureVersion(999)))
         XCTAssertFalse(try sensitive("add"))
