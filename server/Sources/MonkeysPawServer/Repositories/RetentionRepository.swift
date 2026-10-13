@@ -24,9 +24,10 @@ struct RetentionRepository: Sendable {
                 // A quiet scope still has its durable head after its last event is gone.
                 floors += try await sql.raw("""
                     INSERT INTO scope_floors (scope_key, floor_seq)
-                    SELECT scope_key, CASE WHEN EXISTS (SELECT 1 FROM changes WHERE scope_key = \(bind: key))
-                        THEN \(bind: seq) + 1 ELSE head_seq + 1 END
-                    FROM scope_heads WHERE scope_key = \(bind: key)
+                    SELECT h.scope_key, MAX(COALESCE(f.floor_seq, 1),
+                        CASE WHEN EXISTS (SELECT 1 FROM changes WHERE scope_key = \(bind: key))
+                            THEN \(bind: seq) + 1 ELSE h.head_seq + 1 END)
+                    FROM scope_heads h LEFT JOIN scope_floors f USING (scope_key) WHERE h.scope_key = \(bind: key)
                     ON CONFLICT (scope_key) DO UPDATE SET floor_seq = excluded.floor_seq
                         WHERE excluded.floor_seq > scope_floors.floor_seq
                     RETURNING scope_key
