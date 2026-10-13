@@ -41,6 +41,8 @@ enum LibraryCommandStrings {
     static let noSelection = "Open a prompt before using a file command."
     static let cancelled = "Cancelled. Your prompt and edits are kept."
     static let historyWarning = "The prompt was updated, but its history needs maintenance."
+    static let provenanceWarning = "The prompt was updated, but its provenance record needs maintenance."
+    static let historyAndProvenanceWarning = "The prompt was updated, but its history and provenance record need maintenance."
     static let relocated = "The file moved, but its destination changed or could not be checked. Resolve the conflict or check the library before retrying."
 
     static func deleteTitle(_ path: String) -> String { "Delete “\(path)”?" }
@@ -69,6 +71,8 @@ enum LibraryCommandStrings {
         switch outcome {
         case .updated: return success
         case .updatedButHistoryMaintenanceFailed: return historyWarning
+        case .updatedButProvenanceFailed(_, let historyFailed):
+            return historyFailed ? historyAndProvenanceWarning : provenanceWarning
         case .relocated: return relocated
         case .deleted: return deleted
         case .missing: return missing
