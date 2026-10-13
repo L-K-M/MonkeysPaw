@@ -92,8 +92,19 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
   - `floor_seq` is one past the highest purged seq in the scope. For a
     scope whose every row was purged, that is `head + 1`.
   - The floor is never cleared, so a cursor in a purged gap is always
-    detected. Revisions are capped at
-  `SERVER_REVISIONS_PER_PROMPT = 200`.
+    detected. Exactly 90-day-old rows remain until they are older than the
+    cutoff, captured once per maintenance run.
+  Revisions are capped at `SERVER_REVISIONS_PER_PROMPT = 200`, keeping the
+  newest revision numbers. Retained changes and live snapshot manifests own
+  their payloads, so pruning history cannot invalidate either (§19 B16/B17).
+  `serve` starts one lifecycle-managed maintenance task after migrations and
+  account bootstrap: it runs immediately, then hourly. Changes, tombstone
+  history and excess revisions are removed in batches of at most 100 rows
+  per write transaction, releasing the writer between batches. Tombstone
+  heads are deleted only after their history is gone; missing retired-ID
+  records are saved before purge. Shutdown cancels and waits for maintenance
+  before closing the database. Logs contain only committed counts or a
+  failed-run count; a failed run is retried at the next interval.
   Retired prompt IDs keep only their last scope and retirement time forever
   after content/history purge (§19 B15). Scope heads and floors cannot be
   lowered or deleted by ordinary SQL; stale detection uses
@@ -461,6 +472,10 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
   - Heads are durable high-water marks, independent of retained change rows
     and never reset by retention (B18). A snapshot with head 0 is empty; every
     emitted item has a positive seq (B2/B17/B18).
+    Retention raises a scope's floor in the transaction that purges its feed
+    rows. When every row is gone, floor is head + 1; a completed snapshot at
+    floor − 1 remains current, while an earlier gap cursor starts a snapshot.
+    Frozen pages retain their own payloads across history and tombstone purge.
 - **Delete** increments the revision once, preserves content and creation
   metadata in the tombstone, and appends a delete revision, a content-free
   delete event and an indefinitely retained retired-ID/ownership record in

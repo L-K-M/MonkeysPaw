@@ -42,6 +42,9 @@ public enum ServerLimits {
     static let forwardedForMaxHops = 64
     static let ipAddressMaxBytes = 45
     static let revisionsPerPrompt = 200
+    static let changeRetentionDays = 90
+    static let retentionBatchSize = 100
+    static let retentionInterval: Duration = .seconds(60 * 60)
     static let syncPageMaxItems = 200
     static let syncPageBytes = 8 * 1_024 * 1_024
     /// Bound transaction work even when a long run collapses to one emitted item.
