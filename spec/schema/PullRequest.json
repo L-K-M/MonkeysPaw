@@ -10,7 +10,6 @@
       },
       "propertyNames" : {
         "format" : "scope-key",
-        "minLength" : 0,
         "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
         "type" : "string"
       },
@@ -23,7 +22,6 @@
         },
         {
           "format" : "uuid",
-          "minLength" : 0,
           "pattern" : "^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\\s\\S])",
           "type" : "string"
         }

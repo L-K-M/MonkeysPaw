@@ -8,7 +8,6 @@
         "$ref" : "RevisionSummary.json"
       },
       "maxItems" : 200,
-      "minItems" : 0,
       "type" : "array"
     }
   },

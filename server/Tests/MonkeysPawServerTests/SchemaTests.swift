@@ -31,7 +31,7 @@ final class SchemaTests: XCTestCase {
                 var sorted = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes])
                 sorted.append(0x0A)
                 XCTAssertEqual(data, sorted, name)
-                let schema = try JSONDecoder().decode(SchemaJSON.self, from: data)
+                let schema = try SchemaJSON(data: data)
                 XCTAssertEqual(schema.object?["$schema"]?.string, SyncAPI.schemaDialect)
                 XCTAssertEqual(schema.object?["$id"]?.string, "https://lkmc.ch/monkeyspaw/sync-api/schema/" + name)
             }
@@ -51,7 +51,47 @@ final class SchemaTests: XCTestCase {
         try Data().write(to: file)
         let result = try runDumpSchema([file.path])
         XCTAssertEqual(result.status, 1)
-        XCTAssertEqual(result.error, "dump-schema: could not write schemas.\n")
+        let prefix = "dump-schema: could not write schemas: "
+        XCTAssertTrue(result.error.hasPrefix(prefix), result.error)
+        XCTAssertGreaterThan(result.error.utf8.count, prefix.utf8.count + 1, result.error)
+        XCTAssertTrue(result.error.hasSuffix("\n"), result.error)
+    }
+
+    func testSchemaRendererBoundsBytesAndOmitsRedundantConstraints() throws {
+        let temporary = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        XCTAssertEqual(try runDumpSchema([temporary.path]).status, 0)
+        let validator = try loadValidator(at: temporary)
+        var byteSchemas: [Int64: SchemaJSON] = [:]
+        for (name, schema) in validator.schemas {
+            visit(schema, path: name) { path, object in
+                XCTAssertNotEqual(object["minLength"], .integer(0), path)
+                XCTAssertNotEqual(object["minItems"], .integer(0), path)
+                if let pattern = object["pattern"]?.string {
+                    XCTAssertFalse(pattern.hasPrefix("^(?:^"), path)
+                    XCTAssertFalse(pattern.hasSuffix("$)(?![\\s\\S])"), path)
+                }
+                if let maximum = object["x-max-utf8-bytes"]?.integer {
+                    XCTAssertEqual(object["maxLength"]?.integer, maximum, path)
+                    byteSchemas[maximum] = .object(object)
+                }
+            }
+        }
+        XCTAssertEqual(Set(byteSchemas.keys), [72, 1_024, 262_144])
+        for (maximum, schema) in byteSchemas {
+            let limit = Int(maximum)
+            for text in [String(repeating: "a", count: limit), String(repeating: "é", count: limit / 2)] {
+                XCTAssertEqual(text.utf8.count, limit)
+                XCTAssertTrue(try validator.validate(.string(text), against: schema, mode: .schema), "\(limit)")
+                XCTAssertTrue(try validator.validate(.string(text), against: schema), "\(limit)")
+            }
+            let tooManyScalars = SchemaJSON.string(String(repeating: "a", count: limit + 1))
+            XCTAssertFalse(try validator.validate(tooManyScalars, against: schema, mode: .schema), "\(limit)")
+            XCTAssertFalse(try validator.validate(tooManyScalars, against: schema), "\(limit)")
+            let tooManyBytes = SchemaJSON.string(String(repeating: "é", count: limit / 2 + 1))
+            XCTAssertTrue(try validator.validate(tooManyBytes, against: schema, mode: .schema), "\(limit)")
+            XCTAssertFalse(try validator.validate(tooManyBytes, against: schema), "\(limit)")
+        }
     }
 
     func testSchemaValidationAgreesWithStrictDTOFixtures() throws {
@@ -90,7 +130,7 @@ final class SchemaTests: XCTestCase {
             let schema = try XCTUnwrap(validator.schemas[fixture.dto + ".json"], name)
             let data = try Data(contentsOf: directory.appendingPathComponent(fixture.source))
             let decoded = (try? JSONDecoder().decode(type, from: data)) != nil
-            let value = try? JSONDecoder().decode(SchemaJSON.self, from: data)
+            let value = try? SchemaJSON(data: data)
             let validated = try value.map { try validator.validate($0, against: schema) } ?? false
             XCTAssertEqual(decoded, fixture.expected.valid, name)
             XCTAssertEqual(validated, decoded, name)
@@ -108,7 +148,7 @@ final class SchemaTests: XCTestCase {
             ("FeedPrompt", "{\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"rev\":1,\"path\":\"a.md\",\"content\":\"" + String(repeating: "é", count: 131_073) + "\"}")
         ]
         for (name, source) in cases {
-            let value = try JSONDecoder().decode(SchemaJSON.self, from: Data(source.utf8))
+            let value = try SchemaJSON(data: Data(source.utf8))
             let schema = try XCTUnwrap(validator.schemas[name + ".json"])
             XCTAssertTrue(try validator.validate(value, against: schema, mode: .schema), name)
             XCTAssertFalse(try validator.validate(value, against: schema), name)
@@ -122,10 +162,19 @@ final class SchemaTests: XCTestCase {
         let expected: Expected
     }
 
+    private func visit(_ value: SchemaJSON, path: String, check: (String, [String: SchemaJSON]) -> Void) {
+        if let object = value.object {
+            check(path, object)
+            for (key, value) in object { visit(value, path: path + "." + key, check: check) }
+        } else if let array = value.array {
+            for (index, value) in array.enumerated() { visit(value, path: path + ".\(index)", check: check) }
+        }
+    }
+
     private func loadValidator(at directory: URL) throws -> SchemaValidator {
         let schemas = try SyncAPI.schemas.map { description in
             let name = description.name + ".json"
-            return (name, try JSONDecoder().decode(SchemaJSON.self, from: Data(contentsOf: directory.appendingPathComponent(name))))
+            return (name, try SchemaJSON(data: Data(contentsOf: directory.appendingPathComponent(name))))
         }
         return SchemaValidator(schemas: Dictionary(uniqueKeysWithValues: schemas))
     }

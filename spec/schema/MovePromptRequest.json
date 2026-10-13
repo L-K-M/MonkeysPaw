@@ -18,7 +18,6 @@
         },
         "scope" : {
           "const" : "user",
-          "minLength" : 0,
           "type" : "string"
         }
       },
@@ -39,7 +38,6 @@
         },
         "group_id" : {
           "format" : "ulid",
-          "minLength" : 0,
           "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
@@ -51,7 +49,6 @@
         },
         "scope" : {
           "const" : "group",
-          "minLength" : 0,
           "type" : "string"
         }
       },

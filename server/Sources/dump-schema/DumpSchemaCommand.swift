@@ -11,7 +11,7 @@ struct DumpSchemaCommand {
         do {
             try SchemaRenderer.write(to: URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true))
         } catch {
-            FileHandle.standardError.write(Data("dump-schema: could not write schemas.\n".utf8))
+            FileHandle.standardError.write(Data("dump-schema: could not write schemas: \(error)\n".utf8))
             exit(1)
         }
     }

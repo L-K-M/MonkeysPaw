@@ -5,7 +5,6 @@
   "properties" : {
     "status" : {
       "const" : "ok",
-      "minLength" : 0,
       "type" : "string"
     },
     "version" : {

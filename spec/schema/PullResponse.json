@@ -5,18 +5,15 @@
   "properties" : {
     "database_id" : {
       "format" : "uuid",
-      "minLength" : 0,
       "pattern" : "^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![\\s\\S])",
       "type" : "string"
     },
     "removed" : {
       "items" : {
         "format" : "scope-key",
-        "minLength" : 0,
         "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
         "type" : "string"
       },
-      "minItems" : 0,
       "type" : "array",
       "uniqueItems" : true
     },

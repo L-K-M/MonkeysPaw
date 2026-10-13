@@ -7,14 +7,12 @@
       "items" : {
         "$ref" : "Device.json"
       },
-      "minItems" : 0,
       "type" : "array"
     },
     "groups" : {
       "items" : {
         "$ref" : "GroupMembership.json"
       },
-      "minItems" : 0,
       "type" : "array"
     },
     "user" : {

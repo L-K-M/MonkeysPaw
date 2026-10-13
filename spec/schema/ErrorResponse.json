@@ -7,7 +7,6 @@
       "properties" : {
         "code" : {
           "const" : "conflict",
-          "minLength" : 0,
           "type" : "string"
         },
         "head" : {
@@ -25,7 +24,6 @@
       "properties" : {
         "code" : {
           "const" : "path_taken",
-          "minLength" : 0,
           "type" : "string"
         },
         "existing" : {
@@ -43,7 +41,6 @@
       "properties" : {
         "code" : {
           "const" : "deleted",
-          "minLength" : 0,
           "type" : "string"
         }
       },
@@ -98,7 +95,6 @@
                   "yaml.scalar_not_portable",
                   "yaml.tag_not_portable"
                 ],
-                "minLength" : 0,
                 "type" : "string"
               },
               "location" : {
@@ -106,7 +102,6 @@
               },
               "severity" : {
                 "const" : "error",
-                "minLength" : 0,
                 "type" : "string"
               }
             },
@@ -142,13 +137,11 @@
       "properties" : {
         "code" : {
           "const" : "snapshot_expired",
-          "minLength" : 0,
           "type" : "string"
         },
         "scopes" : {
           "items" : {
             "format" : "scope-key",
-            "minLength" : 0,
             "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
             "type" : "string"
           },

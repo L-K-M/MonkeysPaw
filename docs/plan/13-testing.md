@@ -15,6 +15,13 @@
 | Android | `:core` JVM tests with fakes, including the `sync/*.json` scenarios and the §13.1 suite against the real server in CI. App JVM tests for ViewModels, the IME `inputType` decision table, and the entry activities' intent handling. No emulator job (HalloMiao decision). |
 | End-to-end, manual | A per-release checklist in `docs/platform/`: macOS (Safari, Chrome, Terminal, full-screen Space), GNOME Wayland, KDE Wayland, X11, Android (Chrome, ChatGPT, Claude, Termux; Gboard and Samsung Keyboard). Run the §6.5 self-test plus a browser chat box and a terminal. Two devices and two users syncing a group prompt, one of them a phone. |
 
+Schema regression tests distinguish numeric 0/1 from literal true/false,
+retain exact Int64 bounds, and reject malformed `type`/`required` values in
+the test validator. Every UTF-8 byte cap also emits a standard `maxLength`
+backstop: generic validation rejects excess code points, while contract
+validation additionally rejects excess bytes below the code-point cap.
+ASCII and multi-byte boundary cases cover passwords, content and paths.
+
 ### 13.1 Sync tests
 
 `SyncService` runs against a real `MonkeysPawServer` started in-process on a

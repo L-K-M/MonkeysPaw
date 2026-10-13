@@ -7,7 +7,6 @@
       "properties" : {
         "kind" : {
           "const" : "upsert",
-          "minLength" : 0,
           "type" : "string"
         },
         "prompt" : {
@@ -31,13 +30,11 @@
       "properties" : {
         "id" : {
           "format" : "ulid",
-          "minLength" : 0,
           "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {
           "const" : "delete",
-          "minLength" : 0,
           "type" : "string"
         },
         "seq" : {
@@ -58,13 +55,11 @@
       "properties" : {
         "id" : {
           "format" : "ulid",
-          "minLength" : 0,
           "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {
           "const" : "move_out",
-          "minLength" : 0,
           "type" : "string"
         },
         "seq" : {

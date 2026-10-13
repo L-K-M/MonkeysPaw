@@ -6,7 +6,6 @@
     "llm",
     "restore"
   ],
-  "minLength" : 0,
   "title" : "WriteOrigin",
   "type" : "string"
 }

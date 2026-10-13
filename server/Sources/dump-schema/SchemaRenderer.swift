@@ -28,7 +28,8 @@ enum SchemaRenderer {
         case .boolean: return ["type": "boolean"]
         case .null: return ["type": "null"]
         case .array(let items, let minimum, let maximum, let unique):
-            var result: [String: Any] = ["type": "array", "items": render(items), "minItems": minimum]
+            var result: [String: Any] = ["type": "array", "items": render(items)]
+            if minimum > 0 { result["minItems"] = minimum }
             if let maximum { result["maxItems"] = maximum }
             if unique { result["uniqueItems"] = true }
             return result
@@ -50,9 +51,13 @@ enum SchemaRenderer {
     }
 
     private static func renderString(_ constraints: SyncAPIString) -> [String: Any] {
-        var result: [String: Any] = ["type": "string", "minLength": constraints.minimumLength]
+        var result: [String: Any] = ["type": "string"]
+        if constraints.minimumLength > 0 { result["minLength"] = constraints.minimumLength }
         if let maximum = constraints.maximumLength { result["maxLength"] = maximum }
-        if let maximum = constraints.maximumUTF8Bytes { result["x-max-utf8-bytes"] = maximum }
+        if let maximum = constraints.maximumUTF8Bytes {
+            result["maxLength"] = min(constraints.maximumLength ?? maximum, maximum)
+            result["x-max-utf8-bytes"] = maximum
+        }
         if let values = constraints.allowedValues {
             if values.count == 1 { result["const"] = values[0] }
             else { result["enum"] = values.sorted() }
@@ -77,7 +82,12 @@ enum SchemaRenderer {
 
     private static func fullMatch(_ pattern: String) -> String {
         // JSON Schema searches for a match; `$` alone also admits a final newline.
-        "^(?:" + pattern + ")(?![\\s\\S])"
+        var body = pattern
+        if body.hasPrefix("^"), body.hasSuffix("$"),
+           body.dropLast().reversed().prefix(while: { $0 == "\\" }).count.isMultiple(of: 2) {
+            body = String(body.dropFirst().dropLast())
+        }
+        return "^(?:" + body + ")(?![\\s\\S])"
     }
 
     private static func ruleName(_ rule: SyncAPIRule) -> String {
@@ -126,6 +136,11 @@ enum SchemaRenderer {
 
     Patterns assert full spelling, including uppercase Crockford ULIDs, lowercase
     hyphenated UUIDs and UTC timestamps with exactly three fractional digits.
+    Every UTF-8 byte cap also supplies a standard `maxLength` at most that cap
+    (72 for passwords, 262144 for content, 1024 for paths). UTF-8 bytes are at
+    least the Unicode scalar count, so this backstop never rejects a byte-valid
+    string. Generic validators reject excess scalars; exact byte enforcement
+    still needs `x-max-utf8-bytes`, including multi-byte strings below `maxLength`.
     `format` is an annotation by default in this dialect. The following extensions
     require application validation in addition to a generic schema engine:
 

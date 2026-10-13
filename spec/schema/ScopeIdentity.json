@@ -6,13 +6,11 @@
       "additionalProperties" : false,
       "properties" : {
         "key" : {
-          "minLength" : 0,
-          "pattern" : "^(?:^user:[0-7][0-9A-HJKMNP-TV-Z]{25}$)(?![\\s\\S])",
+          "pattern" : "^(?:user:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {
           "const" : "user",
-          "minLength" : 0,
           "type" : "string"
         }
       },
@@ -27,19 +25,16 @@
       "properties" : {
         "group_id" : {
           "format" : "ulid",
-          "minLength" : 0,
           "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "key" : {
           "format" : "scope-key",
-          "minLength" : 0,
           "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {
           "const" : "group",
-          "minLength" : 0,
           "type" : "string"
         },
         "name" : {

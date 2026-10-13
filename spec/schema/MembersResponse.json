@@ -7,7 +7,6 @@
       "items" : {
         "$ref" : "Member.json"
       },
-      "minItems" : 0,
       "type" : "array"
     }
   },

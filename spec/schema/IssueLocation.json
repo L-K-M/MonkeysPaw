@@ -12,7 +12,6 @@
         },
         "kind" : {
           "const" : "front_matter",
-          "minLength" : 0,
           "type" : "string"
         },
         "line" : {
@@ -38,7 +37,6 @@
         },
         "kind" : {
           "const" : "body",
-          "minLength" : 0,
           "type" : "string"
         }
       },
@@ -53,7 +51,6 @@
       "properties" : {
         "kind" : {
           "const" : "path",
-          "minLength" : 0,
           "type" : "string"
         },
         "segment" : {

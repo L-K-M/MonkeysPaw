@@ -5,13 +5,11 @@
   "properties" : {
     "id" : {
       "format" : "ulid",
-      "minLength" : 0,
       "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
       "type" : "string"
     },
     "user_id" : {
       "format" : "ulid",
-      "minLength" : 0,
       "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
       "type" : "string"
     }

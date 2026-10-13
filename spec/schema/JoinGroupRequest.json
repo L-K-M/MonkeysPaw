@@ -4,8 +4,7 @@
   "additionalProperties" : false,
   "properties" : {
     "invite_token" : {
-      "minLength" : 0,
-      "pattern" : "^(?:^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$)(?![\\s\\S])",
+      "pattern" : "^(?:[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?![\\s\\S])",
       "type" : "string"
     }
   },

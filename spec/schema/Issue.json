@@ -44,7 +44,6 @@
             "yaml.scalar_not_portable",
             "yaml.tag_not_portable"
           ],
-          "minLength" : 0,
           "type" : "string"
         },
         "location" : {
@@ -52,7 +51,6 @@
         },
         "severity" : {
           "const" : "error",
-          "minLength" : 0,
           "type" : "string"
         }
       },
@@ -71,7 +69,6 @@
             "metadata.group_private_removed",
             "template.invalid_placeholder"
           ],
-          "minLength" : 0,
           "type" : "string"
         },
         "location" : {
@@ -79,7 +76,6 @@
         },
         "severity" : {
           "const" : "warning",
-          "minLength" : 0,
           "type" : "string"
         }
       },

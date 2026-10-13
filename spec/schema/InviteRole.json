@@ -5,7 +5,6 @@
     "editor",
     "viewer"
   ],
-  "minLength" : 0,
   "title" : "InviteRole",
   "type" : "string"
 }

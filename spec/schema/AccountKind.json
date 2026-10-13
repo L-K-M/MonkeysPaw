@@ -5,7 +5,6 @@
     "admin",
     "member"
   ],
-  "minLength" : 0,
   "title" : "AccountKind",
   "type" : "string"
 }

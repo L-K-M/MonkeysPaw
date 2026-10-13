@@ -1,20 +1,37 @@
+import CoreFoundation
 import Foundation
 
 // Test-only subset: exact Int64s, emitted 2020-12 keywords and documented
 // SyncAPI extensions. This deliberately does not implement arbitrary schemas.
-enum SchemaJSON: Decodable, Equatable {
+enum SchemaJSON: Equatable {
     case string(String), integer(Int64), number(Double), boolean(Bool), null
     case array([SchemaJSON]), object([String: SchemaJSON])
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null; return }
-        if let value = try? container.decode(Bool.self) { self = .boolean(value); return }
-        if let value = try? container.decode(Int64.self) { self = .integer(value); return }
-        if let value = try? container.decode(String.self) { self = .string(value); return }
-        if let value = try? container.decode([SchemaJSON].self) { self = .array(value); return }
-        if let value = try? container.decode([String: SchemaJSON].self) { self = .object(value); return }
-        self = .number(try container.decode(Double.self))
+    init(data: Data) throws {
+        try self.init(jsonObject: JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]))
+    }
+
+    private init(jsonObject value: Any) throws {
+        if let number = value as? NSNumber {
+            // Swift casts also bridge numeric 0/1 to Bool; CF identity retains the literal kind.
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { self = .boolean(number.boolValue); return }
+            // Read integer spelling before Double so Int64.max does not lose precision.
+            if let integer = Int64(number.stringValue) { self = .integer(integer); return }
+            // NSNumber.compare can round an underflow back into range; compare decimal spelling.
+            if let integer = Int64(exactly: number.doubleValue),
+               let decimal = Decimal(string: number.stringValue, locale: Locale(identifier: "en_US_POSIX")),
+               decimal == Decimal(integer) {
+                self = .integer(integer)
+                return
+            }
+            self = .number(number.doubleValue)
+            return
+        }
+        if let value = value as? String { self = .string(value); return }
+        if let value = value as? [Any] { self = .array(try value.map { try Self(jsonObject: $0) }); return }
+        if let value = value as? [String: Any] { self = .object(try value.mapValues { try Self(jsonObject: $0) }); return }
+        if value is NSNull { self = .null; return }
+        throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unsupported JSON value."))
     }
 
     var string: String? { if case .string(let value) = self { return value }; return nil }
@@ -38,6 +55,15 @@ struct SchemaValidator {
             "x-syncapi-format", "x-syncapi-rules"
         ]
         guard Set(object.keys).isSubset(of: supported) else { throw Failure.unsupportedSchema }
+        if let type = object["type"], type.string == nil { throw Failure.unsupportedSchema }
+        let required = try object["required"].map { value -> [String] in
+            guard let entries = value.array else { throw Failure.unsupportedSchema }
+            return try entries.map {
+                guard let key = $0.string else { throw Failure.unsupportedSchema }
+                return key
+            }
+        } ?? []
+        // Other keyword value shapes are trusted to the renderer's emitted subset.
 
         if let reference = object["$ref"]?.string {
             guard let target = schemas[reference] else { throw Failure.unsupportedSchema }
@@ -94,9 +120,7 @@ struct SchemaValidator {
             }
         case .object(let values):
             if let minimum = object["minProperties"]?.integer, values.count < minimum { return false }
-            if let required = object["required"]?.array {
-                for key in required { if values[key.string ?? ""] == nil { return false } }
-            }
+            for key in required { if values[key] == nil { return false } }
             let properties = object["properties"]?.object ?? [:]
             for (key, value) in values {
                 if let keySchema = object["propertyNames"],

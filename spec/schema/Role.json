@@ -6,7 +6,6 @@
     "owner",
     "viewer"
   ],
-  "minLength" : 0,
   "title" : "Role",
   "type" : "string"
 }

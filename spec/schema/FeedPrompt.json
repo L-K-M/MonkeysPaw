@@ -4,13 +4,12 @@
   "additionalProperties" : false,
   "properties" : {
     "content" : {
-      "minLength" : 0,
+      "maxLength" : 262144,
       "type" : "string",
       "x-max-utf8-bytes" : 262144
     },
     "id" : {
       "format" : "ulid",
-      "minLength" : 0,
       "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
       "type" : "string"
     },

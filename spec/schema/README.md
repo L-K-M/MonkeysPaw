@@ -35,6 +35,11 @@ only an explicit null branch admits null, independently of `required`.
 
 Patterns assert full spelling, including uppercase Crockford ULIDs, lowercase
 hyphenated UUIDs and UTC timestamps with exactly three fractional digits.
+Every UTF-8 byte cap also supplies a standard `maxLength` at most that cap
+(72 for passwords, 262144 for content, 1024 for paths). UTF-8 bytes are at
+least the Unicode scalar count, so this backstop never rejects a byte-valid
+string. Generic validators reject excess scalars; exact byte enforcement
+still needs `x-max-utf8-bytes`, including multi-byte strings below `maxLength`.
 `format` is an annotation by default in this dialect. The following extensions
 require application validation in addition to a generic schema engine:
 

@@ -8,7 +8,6 @@
     "move",
     "restore"
   ],
-  "minLength" : 0,
   "title" : "RevisionOrigin",
   "type" : "string"
 }

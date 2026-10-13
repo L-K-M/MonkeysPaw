@@ -22,17 +22,14 @@
             "$ref" : "FeedItem.json"
           },
           "maxItems" : 200,
-          "minItems" : 0,
           "type" : "array"
         },
         "key" : {
-          "minLength" : 0,
-          "pattern" : "^(?:^user:[0-7][0-9A-HJKMNP-TV-Z]{25}$)(?![\\s\\S])",
+          "pattern" : "^(?:user:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {
           "const" : "user",
-          "minLength" : 0,
           "type" : "string"
         },
         "mode" : {
@@ -62,7 +59,6 @@
         },
         "group_id" : {
           "format" : "ulid",
-          "minLength" : 0,
           "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
@@ -79,18 +75,15 @@
             "$ref" : "FeedItem.json"
           },
           "maxItems" : 200,
-          "minItems" : 0,
           "type" : "array"
         },
         "key" : {
           "format" : "scope-key",
-          "minLength" : 0,
           "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {
           "const" : "group",
-          "minLength" : 0,
           "type" : "string"
         },
         "mode" : {

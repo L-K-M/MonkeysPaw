@@ -10,7 +10,6 @@
     "rate_limited",
     "unauthorized"
   ],
-  "minLength" : 0,
   "title" : "FailureCode",
   "type" : "string"
 }

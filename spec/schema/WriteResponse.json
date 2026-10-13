@@ -23,7 +23,6 @@
               "metadata.group_private_removed",
               "template.invalid_placeholder"
             ],
-            "minLength" : 0,
             "type" : "string"
           },
           "location" : {
@@ -31,7 +30,6 @@
           },
           "severity" : {
             "const" : "warning",
-            "minLength" : 0,
             "type" : "string"
           }
         },
@@ -41,7 +39,6 @@
         ],
         "type" : "object"
       },
-      "minItems" : 0,
       "type" : "array"
     }
   },
