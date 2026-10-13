@@ -155,7 +155,7 @@ jobs:
           (cd dist && sha256sum -c "$deb_file.sha256")
           echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
       - name: Upload deb and checksum
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-release-deb
           path: |
@@ -219,7 +219,7 @@ jobs:
           /bin/bash scripts/package-macos.sh "$VERSION" "$GITHUB_RUN_NUMBER"
           (cd dist && shasum -a 256 -c "MonkeysPaw-$VERSION.sha256")
       - name: Upload dmg, zip and checksum manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-release-macos
           path: |
@@ -380,7 +380,7 @@ jobs:
           docker logs monkeyspaw-server-release
           exit 1
       - name: Upload smoke-tested OCI archive and digest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Keep images outside the MonkeysPaw-release-* five-file assembly.
           name: MonkeysPaw-server-image-${{ matrix.arch }}
