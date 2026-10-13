@@ -60,6 +60,26 @@ class CorpusInventoryTest {
     }
 
     @Test
+    fun `corpus rejects invalid UTF-8 sources and envelopes`() {
+        for (category in Category.entries - setOf(Category.DTO, Category.CANONICAL)) {
+            rejects("invalid UTF-8 ${category.directory} source") { root ->
+                val source = Corpus.load(root, root.parent.resolve("schema")).cases(category).single()
+                    .sources.values.first().path
+                Files.write(source, byteArrayOf(0xc3.toByte(), 0x28))
+            }
+        }
+        withSynthetic { root, schema ->
+            val path = root.resolve(envelopePath(Category.PATHS))
+            val bytes = Files.readAllBytes(path)
+            val offset = bytes.indexOf('T'.code.toByte()) // The T in expected.path's Tiny.md string.
+            assertTrue(offset >= 0)
+            bytes[offset] = 0xff.toByte()
+            Files.write(path, bytes)
+            assertFailsWith<CorpusException> { Corpus.load(root, schema) }
+        }
+    }
+
+    @Test
     fun `unknown and missing categories cannot pass`() {
         rejects("unknown category") { root -> Files.createDirectory(root.resolve("future")) }
         Category.entries.forEach { category ->
