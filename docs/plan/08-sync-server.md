@@ -128,6 +128,13 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
     other, not from the operator.
 - **Out-of-scope reads return 404, not 403**, so ids don't leak.
 - **Viewers writing get 403.**
+- **Prompt transfers.** Moving out of a group requires its owner role, or
+  editor role and immutable `created_by` equal to the caller. Entering a
+  group requires editor or owner membership there. Admin status grants no
+  bypass. Group to private transfers assign the caller as the private owner;
+  every move preserves `created_by` and creation time and sets `updated_by`
+  to the caller. Entering a group always canonicalizes the stored content
+  (B14).
 - **Prompt history.** Reading a head, revision list or revision content and
   authors requires current prompt visibility, including a live group and
   membership. Admin account status grants no extra access. The creator may
@@ -327,7 +334,9 @@ wrong-password accounts. Its fifth failure and locked requests return 429 with
 `Retry-After`; neither response discloses which independent bucket caused the
 lock.
 
-Prompt PUT uses the same streamed envelope cap. S1 wire bounds reject decoded
+Prompt PUT and move use the same streamed envelope cap. DELETE requires exactly
+one `base_rev` query parameter, a positive Int64 in decimal without a sign or
+leading zeroes. S1 wire bounds reject decoded
 content over 256 KiB, empty paths and paths over 1,024 UTF-8 bytes as malformed
 requests (400). Within those bounds, Core content/path errors and a missing
 or mismatched front-matter id return 422. Group canonicalization that expands
@@ -420,8 +429,22 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
   - Heads are durable high-water marks, independent of retained change rows
     and never reset by retention (B18). A snapshot with head 0 is empty; every
     emitted item has a positive seq (B2/B17/B18).
-- **Moves** write `move_out` in the old scope and `upsert` in the new one,
-  in one transaction.
+- **Delete** increments the revision once, preserves content and creation
+  metadata in the tombstone, and appends a delete revision, a content-free
+  delete event and an indefinitely retained retired-ID/ownership record in
+  the same transaction. Authorized tombstones and retired IDs return 410
+  before checking the supplied revision; inaccessible identities remain 404.
+- **Moves** authorize the actual source and destination inside the write
+  transaction, and check stale revision before destination validation or
+  path collision. A destination equal to the current ownership returns 409
+  conflict; renames use PUT. Destination paths use the same per-scope folded uniqueness
+  as PUT. Each accepted move increments the revision once and appends a move
+  revision stamped with destination ownership, path and content, establishing
+  the history era boundary (B13/B14). It writes a content-free `move_out` with
+  the old scope/path and an immutable `upsert` with the new scope/path/content,
+  both at the new revision and mutation time. The head, revision, paired events
+  and both scope heads commit or roll back together; the response `seq` is the
+  destination upsert's sequence (B16).
 - **Deleting a group** deletes its prompts. The group's scope disappears for
   everyone.
 - **Path and name validation.** Shared by Core on the client and the server.

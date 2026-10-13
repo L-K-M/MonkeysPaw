@@ -160,9 +160,10 @@ struct PromptRepository: Sendable {
 
         func update(_ head: PromptRecord, baseRev: Int64) async throws {
             guard try await sql.raw("""
-                UPDATE prompts SET path = \(bind: head.path), path_key = \(bind: head.pathKey),
+                UPDATE prompts SET scope = \(bind: head.identity.scopeName), owner_id = \(bind: head.identity.ownerID),
+                    group_id = \(bind: head.identity.groupID), path = \(bind: head.path), path_key = \(bind: head.pathKey),
                     content = \(bind: head.content), title = \(bind: head.title), rev = rev + 1,
-                    updated_by = \(bind: head.updatedBy), updated_at = \(bind: head.updatedAt)
+                    updated_by = \(bind: head.updatedBy), updated_at = \(bind: head.updatedAt), deleted_at = \(bind: head.deletedAt)
                 WHERE id = \(bind: head.id) AND rev = \(bind: baseRev) AND deleted_at IS NULL
                 RETURNING id
                 """).first() != nil else { throw PromptPersistenceError.casFailed }
@@ -187,6 +188,28 @@ struct PromptRepository: Sendable {
                 RETURNING seq
                 """).first() else { throw PromptPersistenceError.invalidRecord }
             return try row.decode(column: "seq", as: Int64.self)
+        }
+
+        enum RemovalKind: String { case delete, moveOut = "move_out" }
+
+        func appendRemoval(_ source: PromptRecord, kind: RemovalKind, rev: Int64, at: String) async throws -> Int64 {
+            guard let row = try await sql.raw("""
+                INSERT INTO changes (scope_key, scope, owner_id, group_id, prompt_id, kind, path, rev, content, at)
+                VALUES (\(bind: source.identity.key), \(bind: source.identity.scopeName), \(bind: source.identity.ownerID),
+                        \(bind: source.identity.groupID), \(bind: source.id), \(bind: kind.rawValue), \(bind: source.path),
+                        \(bind: rev), NULL, \(bind: at))
+                RETURNING seq
+                """).first() else { throw PromptPersistenceError.invalidRecord }
+            return try row.decode(column: "seq", as: Int64.self)
+        }
+
+        func retire(_ head: PromptRecord) async throws {
+            guard let at = head.deletedAt else { throw PromptPersistenceError.invalidRecord }
+            try await sql.raw("""
+                INSERT INTO retired_prompt_ids (prompt_id, scope, owner_id, group_id, retired_at)
+                VALUES (\(bind: head.id), \(bind: head.identity.scopeName), \(bind: head.identity.ownerID),
+                        \(bind: head.identity.groupID), \(bind: at))
+                """).run()
         }
 
         /// A later move back into the same scope must not expose its earlier era.
