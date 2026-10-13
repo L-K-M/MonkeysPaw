@@ -106,7 +106,6 @@ jobs:
             LinuxLibrarySwitchTests/testSettingsWriteFailureKeepsNewGraphForTheSessionAndReportsTheError
             LinuxSecretStoreTests/testFailedFileCleanupRestoresThePreviousServiceValue
             LinuxSecretStoreTests/testFailedFileCleanupClearsANewServiceItemWhenThePreviousTierWasFile
-            LinuxLibraryEditorTests/testUnwritableLibraryKeepsCloseAndDraftPendingUntilSaveRetry
             LinuxOnboardingTests/testUnreadableChosenFolderOpensRecoveryAndCanUseTheDefault
             LinuxOnboardingTests/testSeedWriteFailureShowsTypedCopyAndDoesNotRepeatAfterRestart
             LinuxOnboardingTests/testFailedSeedOfferRecordingCopiesNothingAndLeavesTheOfferPending
