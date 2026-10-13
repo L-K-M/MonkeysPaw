@@ -8,11 +8,12 @@ import ch.lkmc.monkeyspaw.core.domain.format.PromptIssue
 import ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError
 import ch.lkmc.monkeyspaw.core.domain.format.PromptRenderer
 import ch.lkmc.monkeyspaw.core.domain.format.PromptValidator
+import ch.lkmc.monkeyspaw.core.domain.format.PromptWriteError
 import ch.lkmc.monkeyspaw.core.domain.format.TemplateToken
 import java.math.BigInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -20,9 +21,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** All content cases are enumerated; only actual writer expectations remain pending for K5. */
+/** Every expectation in the four content categories is executed, including writer refusals. */
 internal class PromptConformanceTest {
-    @Test fun everyContentExpectationAndPendingSliceIsAccounted() {
+    @Test fun everyContentExpectationIsAccounted() {
         val corpus = Corpus.load()
         val registrations = corpus.cases.filter { it.category in categories }
             .map(::registration)
@@ -33,32 +34,26 @@ internal class PromptConformanceTest {
 
         for (entry in registrations) {
             val fixture = entry.fixture
-            assertEquals(fixture.expected.keys, entry.completed + entry.pending.keys,
+            assertEquals(fixture.expected.keys, entry.completed,
                 "Unregistered expectation in ${fixture.envelopeFile.relativePath}")
-            entry.pending.values.forEach { assertTrue(it.slice == "K5" && it.reason.isNotBlank()) }
             checkContent(entry)
         }
         for (category in categories) {
             val entries = registrations.filter { it.fixture.category == category }
             println("${category.directory}: ${entries.size} cases / ${entries.sumOf { it.fixture.files.size }} files; " +
-                "completed expectations ${entries.sumOf { it.completed.size }}; K5 pending ${entries.sumOf { it.pending.size }}.")
+                "completed expectations ${entries.sumOf { it.completed.size }}; pending 0.")
         }
         println("Content conformance: ${registrations.size} cases / ${checkedFiles.size} files; " +
-            "${registrations.count { "issues" in it.completed }} complete issue lists; K4 pending 0; " +
-            "K5 pending cases ${registrations.count { it.pending.isNotEmpty() }}, " +
-            "expectations ${registrations.sumOf { it.pending.size }}.")
+            "${registrations.count { "issues" in it.completed }} complete issue lists; pending 0.")
     }
 
-    private data class Pending(val slice: String, val reason: String)
-    private data class Registration(val fixture: FixtureCase, val completed: Set<String>, val pending: Map<String, Pending>)
+    private data class Registration(val fixture: FixtureCase, val completed: Set<String>)
 
     private fun registration(fixture: FixtureCase): Registration = when (fixture.category) {
-        Category.FORMAT -> Registration(fixture, setOf("metadata", "body", "issues"),
-            mapOf("canonical" to Pending("K5", "Exact canonical writer bytes")))
-        Category.GRAMMAR -> Registration(fixture, setOf("tokens", "names", "fields", "issues"), emptyMap())
-        Category.RENDER -> Registration(fixture, setOf("fields", "builtins", "issues", "result"), emptyMap())
-        Category.VALIDATION -> Registration(fixture, setOf("private", "readOnly", "issues", "fields", "canRender"),
-            mapOf("canWrite" to Pending("K5", "Writer refusal after final validation")))
+        Category.FORMAT -> Registration(fixture, setOf("metadata", "body", "issues", "canonical"))
+        Category.GRAMMAR -> Registration(fixture, setOf("tokens", "names", "fields", "issues"))
+        Category.RENDER -> Registration(fixture, setOf("fields", "builtins", "issues", "result"))
+        Category.VALIDATION -> Registration(fixture, setOf("private", "readOnly", "issues", "fields", "canRender", "canWrite"))
         else -> error("Unsupported content category")
     }
 
@@ -78,11 +73,29 @@ internal class PromptConformanceTest {
             Category.FORMAT -> {
                 assertEquals(fixture.expected["metadata"], metadataJson(document.frontMatter), "$label metadata")
                 assertUtf8Equal(fixture.expected["body"].stringValue(), document.body, "$label body")
+                if (fixture.expected["canonical"] == JsonNull) {
+                    val expected = if (document.isReadOnly) PromptWriteError.UnsupportedFormat(document.frontMatter.format)
+                        else PromptWriteError.InvalidPrompt
+                    assertEquals(expected, assertFailsWith<PromptWriteError> { PromptCodec.write(document) }, "$label writer refusal")
+                } else {
+                    val written = PromptCodec.write(document)
+                    assertUtf8Equal(fixture.expected["canonical"].stringValue(), written, "$label canonical")
+                    val repeated = PromptCodec.parse(written, fixture.envelope["filename"].stringValue())
+                    assertUtf8Equal(written, PromptCodec.write(repeated), "$label idempotence")
+                    assertUtf8Equal(document.body, repeated.body, "$label stored body")
+                }
             }
             Category.VALIDATION -> {
                 assertEquals(fixture.expected["private"].booleanValue(), document.frontMatter.isPrivate, "$label private")
                 assertEquals(fixture.expected["readOnly"].booleanValue(), document.isReadOnly, "$label readOnly")
                 assertEquals(fixture.expected["canRender"].booleanValue(), document.canRender, "$label canRender")
+                if (fixture.expected["canWrite"].booleanValue()) {
+                    PromptCodec.write(document)
+                } else {
+                    val expected = if (fixture.expected["readOnly"].booleanValue()) PromptWriteError.UnsupportedFormat(document.frontMatter.format)
+                        else PromptWriteError.InvalidPrompt
+                    assertEquals(expected, assertFailsWith<PromptWriteError> { PromptCodec.write(document) }, "$label writer refusal")
+                }
             }
             Category.GRAMMAR -> {
                 assertEquals(fixture.expected["tokens"], JsonArray(document.template.tokens.map(::tokenJson)), "$label tokens")

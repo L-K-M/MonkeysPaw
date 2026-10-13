@@ -16,17 +16,18 @@ enumerated `paths` case checks normalized path/key bytes or the exact first
 issue and nullable segment. The structural inventory still covers all nine
 categories. Run the same `:core:test` command above for both gates.
 
-K3 added reading checks; K4 extends them in `PromptConformanceTest` to all
-22 grammar, 22 render and 113 validation cases (314 files), plus the 16 format
-cases (32 files). Tokens, first-use order, effective fields, builtin order,
-rendered bytes or typed failures, complete issue lists, private/read-only
-recovery and rendering eligibility are checked. All 232 expectations K3
-registered for K4 are complete, including the six mixed issue lists.
-Every expectation is registered as completed or explicitly pending: only
-16 canonical-output and 113 write-eligibility expectations remain for K5.
-The test reports dynamic counts and rejects unregistered expectations;
-pending writer work is not claimed as complete format/validation conformance.
-K2's all-category structural gate remains mandatory.
+K3 added reading checks; K4 added grammar, rendering and validation. K5
+completes `PromptConformanceTest` with all 16 canonical outputs and all 113
+write-eligibility checks. The four content categories now execute every
+expectation: 173 cases, 346 files and 918 expectation members, with nothing
+pending. `CanonicalConformanceTest` adds all 19 canonical cases (50 files),
+checking exact stored bytes/body, hashes, favourite extraction, warning order,
+typed refusals, idempotence and symmetric adoption. It executes all 83
+expectation members and 12 adoption comparisons in both directions.
+The tests report dynamic counts and reject unregistered expectations;
+no golden is changed to fit Kotlin. Paths (K6), ranking (K7), import (K8)
+and DTOs (K9/K10) retain their semantic work. K2's all-category structural
+gate remains mandatory; the full nine-category semantic gate belongs to K10.
 
 This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
