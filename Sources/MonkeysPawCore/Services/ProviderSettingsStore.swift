@@ -35,20 +35,28 @@ public final class ProviderSettingsStore: @unchecked Sendable {
     private let log: LogSink?
     private let loader = SettingsLoader(currentVersion: ProviderSettings.currentVersion, migrations: [])
     private let lock = NSLock()
+    // UI snapshots must not wait behind a native secret prompt under lock.
+    private let snapshotLock = NSLock()
     private let path = "provider-settings.json"
     private var cached = ProviderSettingsSnapshot(settings: try! ProviderSettings(), readOnlyError: nil)
 
     public init(files: FileStore, log: LogSink? = nil) {
         self.files = files
         self.log = log
-        do { cached = ProviderSettingsSnapshot(settings: try read().settings, readOnlyError: nil) }
+        do { publish(ProviderSettingsSnapshot(settings: try read().settings, readOnlyError: nil)) }
         catch { failClosed(error) }
     }
 
     var snapshot: ProviderSettingsSnapshot {
-        lock.lock()
-        defer { lock.unlock() }
+        snapshotLock.lock()
+        defer { snapshotLock.unlock() }
         return cached
+    }
+
+    private func publish(_ snapshot: ProviderSettingsSnapshot) {
+        snapshotLock.lock()
+        cached = snapshot
+        snapshotLock.unlock()
     }
 
     /// Revalidate disk metadata before handing credentials to an outbound call.
@@ -56,7 +64,7 @@ public final class ProviderSettingsStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let loaded = try loadCurrent()
-        cached = ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: nil)
+        publish(ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: nil))
         return try body(loaded.settings)
     }
 
@@ -73,11 +81,11 @@ public final class ProviderSettingsStore: @unchecked Sendable {
             if next != loaded.settings || loaded.needsRewrite {
                 try write(next, preserving: loaded.object)
             }
-            cached = ProviderSettingsSnapshot(settings: next, readOnlyError: nil)
+            publish(ProviderSettingsSnapshot(settings: next, readOnlyError: nil))
         } catch {
             do { try rollback() }
             catch {
-                cached = ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: .secretRollbackFailed)
+                publish(ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: .secretRollbackFailed))
                 log?.write(.error, "Provider secret restoration failed.")
                 throw ProviderSettingsError.secretRollbackFailed
             }
@@ -86,7 +94,7 @@ public final class ProviderSettingsStore: @unchecked Sendable {
     }
 
     private func loadCurrent() throws -> Loaded {
-        if let error = cached.readOnlyError { throw error }
+        if let error = snapshot.readOnlyError { throw error }
         do { return try read() }
         catch { throw failClosed(error) }
     }
@@ -151,7 +159,7 @@ public final class ProviderSettingsStore: @unchecked Sendable {
     @discardableResult
     private func failClosed(_ error: Error) -> ProviderSettingsError {
         let sanitized = error as? ProviderSettingsError ?? .readFailed(.ioFailure)
-        cached = ProviderSettingsSnapshot(settings: try! ProviderSettings(), readOnlyError: sanitized)
+        publish(ProviderSettingsSnapshot(settings: try! ProviderSettings(), readOnlyError: sanitized))
         log?.write(.warning, "Provider settings read failed; settings are read-only.")
         return sanitized
     }

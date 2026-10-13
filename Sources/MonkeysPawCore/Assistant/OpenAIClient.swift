@@ -21,7 +21,12 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
     }
 
     public func perform(_ request: AssistantRequest, using connection: ProviderConnection) async throws -> AssistantResponse {
-        let deadline = now().advanced(by: Limits.llmBudget)
+        try await perform(request, using: connection, deadline: now().advanced(by: Limits.llmBudget))
+    }
+
+    public func perform(_ request: AssistantRequest, using connection: ProviderConnection,
+                        deadline: ContinuousClock.Instant) async throws -> AssistantResponse {
+        try checkActive(until: deadline)
         guard !connection.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !connection.modelID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw AssistantError.notConfigured
@@ -36,30 +41,26 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
         }
 
         let prompt: String
-        let data: String
         let schema: Data
         let schemaName: String
         switch request.action {
-        case .write(let brief):
+        case .write:
             prompt = AssistantPrompts.write
-            data = AssistantPrompts.writeData(brief: brief)
             schema = LlmArtifact.jsonSchema
             schemaName = "prompt_artifact"
-        case .review(let source):
+        case .review:
             prompt = AssistantPrompts.review
-            data = AssistantPrompts.reviewData(source: source)
             schema = LlmReview.jsonSchema
             schemaName = "prompt_review"
-        case .improve(let source, let instruction, let findings):
+        case .improve:
             prompt = AssistantPrompts.improve
-            data = AssistantPrompts.improveData(source: source, instruction: instruction, selectedFindings: findings)
             schema = LlmArtifact.jsonSchema
             schemaName = "prompt_artifact"
         }
 
         guard let schemaObject = try? JSONSerialization.jsonObject(with: schema) else { throw AssistantError.invalidOutput }
         var body: [String: Any] = ["model": connection.modelID,
-            "messages": [["role": "system", "content": prompt], ["role": "user", "content": data]]]
+            "messages": [["role": "system", "content": prompt]] + request.wireMessages.map(\.wireValue)]
         if let effort = request.effort { body["reasoning_effort"] = effort.rawValue }
         var format = initialFormat
         while true {

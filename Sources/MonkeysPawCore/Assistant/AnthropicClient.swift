@@ -9,27 +9,28 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
     public init(transport: HTTPTransporting) { self.transport = transport }
 
     public func perform(_ request: AssistantRequest, using connection: ProviderConnection) async throws -> AssistantResponse {
-        let deadline = ContinuousClock.now.advanced(by: Limits.llmBudget)
+        try await perform(request, using: connection, deadline: ContinuousClock.now.advanced(by: Limits.llmBudget))
+    }
+
+    public func perform(_ request: AssistantRequest, using connection: ProviderConnection,
+                        deadline: ContinuousClock.Instant) async throws -> AssistantResponse {
+        try checkActive(until: deadline)
         guard !connection.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !connection.modelID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw AssistantError.notConfigured
         }
         let headers = try headers(for: connection, operation: .messages)
         let prompt: String
-        let data: String
         let schema: Data
         switch request.action {
-        case .write(let brief):
+        case .write:
             prompt = AssistantPrompts.write
-            data = AssistantPrompts.writeData(brief: brief)
             schema = LlmArtifact.jsonSchema
-        case .review(let source):
+        case .review:
             prompt = AssistantPrompts.review
-            data = AssistantPrompts.reviewData(source: source)
             schema = LlmReview.jsonSchema
-        case .improve(let source, let instruction, let findings):
+        case .improve:
             prompt = AssistantPrompts.improve
-            data = AssistantPrompts.improveData(source: source, instruction: instruction, selectedFindings: findings)
             schema = LlmArtifact.jsonSchema
         }
 
@@ -37,7 +38,7 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
         var outputConfig: [String: Any] = ["format": ["type": "json_schema", "schema": schemaObject]]
         if let effort = request.effort { outputConfig["effort"] = effort.rawValue }
         var body: [String: Any] = ["model": connection.modelID, "max_tokens": 16_000,
-            "system": prompt, "messages": [["role": "user", "content": data]], "output_config": outputConfig]
+            "system": prompt, "messages": request.wireMessages.map(\.wireValue), "output_config": outputConfig]
         if isOfficial(connection) { body["fallbacks"] = "default" }
         guard let encoded = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else {
             throw AssistantError.invalidOutput

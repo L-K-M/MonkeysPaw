@@ -24,10 +24,15 @@ public struct AssistantRequest: Equatable, Sendable, CustomStringConvertible,
     CustomDebugStringConvertible, CustomReflectable {
     public let action: AssistantAction
     public let effort: AssistantEffort?
+    public let transcript: [AssistantMessage]
+    public let feedback: String?
 
-    public init(action: AssistantAction, effort: AssistantEffort? = nil) {
+    public init(action: AssistantAction, effort: AssistantEffort? = nil,
+                transcript: [AssistantMessage] = [], feedback: String? = nil) {
         self.action = action
         self.effort = effort
+        self.transcript = transcript
+        self.feedback = feedback
     }
 
     public var description: String { "<assistant request redacted>" }
@@ -95,6 +100,9 @@ public struct AssistantModelPage: Equatable, Sendable, CustomStringConvertible,
 /// Transport cancellation/deadlines apply to each single-shot operation.
 public protocol AssistantClient: Sendable {
     func perform(_ request: AssistantRequest, using connection: ProviderConnection) async throws -> AssistantResponse
+    /// Includes time spent queued and resolving credentials at the service.
+    func perform(_ request: AssistantRequest, using connection: ProviderConnection,
+                 deadline: ContinuousClock.Instant) async throws -> AssistantResponse
     func listModels(using connection: ProviderConnection) async throws -> AssistantModelPage
     /// All pages of a connection test share its original absolute deadline.
     func listModels(using connection: ProviderConnection, afterID: String?,

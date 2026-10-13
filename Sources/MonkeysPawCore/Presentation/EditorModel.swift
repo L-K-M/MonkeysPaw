@@ -134,6 +134,7 @@ public final class EditorModel: @unchecked Sendable {
     private var isActive = true
     private var baseline: LoadedPrompt?
     private var document: PromptDocument?
+    private var assistantRevision: UInt64 = 0
     private var requests: [GuardRequest] = []
     private var pendingRequest: GuardRequest?
     private var savesDecision = false
@@ -152,6 +153,21 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     deinit { deactivate() }
+
+    /// Capture at the assistant action, before any later edit can change its
+    /// baseline. Conflicts, guard decisions and editor I/O must first be resolved.
+    public var assistantSnapshot: AssistantEditorSnapshot? {
+        guard isActive, let source = state.source, let prompt = state.prompt,
+              let session, let stamp = state.stamp else { return nil }
+        let availability: AssistantEditorAvailability
+        if state.conflict != nil { availability = .conflicted }
+        else if pendingRequest != nil || !requests.isEmpty || state.status == .loading || state.status == .saving {
+            availability = .busy
+        }
+        else { availability = .available }
+        return AssistantEditorSnapshot(source: source, relativePath: prompt.relativePath,
+            revision: assistantRevision, session: session, stamp: stamp, availability: availability)
+    }
 
     @discardableResult
     public func addObserver(_ observer: @escaping (EditorState) -> Void) -> UUID {
@@ -599,6 +615,7 @@ public final class EditorModel: @unchecked Sendable {
     private func updateQueuedActions() { state.queuedActions = requests.map { $0.decision.action } }
 
     private func updateDocument(_ document: PromptDocument) {
+        if !editorSourceEqual(self.document?.source, document.source) { assistantRevision &+= 1 }
         self.document = document
         state.issues = document.issues
         let effective = document.effectiveFields
