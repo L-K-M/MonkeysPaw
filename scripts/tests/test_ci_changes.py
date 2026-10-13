@@ -18,13 +18,18 @@ changes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(changes)
 
 ALL = frozenset({
-    "core-linux", "linux-app", "deb", "android", "core-macos", "macos-app",
+    "core-linux", "linux-app", "deb", "flatpak", "android", "core-macos", "macos-app",
     "macos-artifacts", "server", "server-image", "compose-smoke",
 })
 SWIFT = ALL - {"android"}
 LINUX = frozenset({"linux-app", "deb"})
 MACOS = frozenset({"macos-app", "macos-artifacts"})
 SERVER = frozenset({"server", "server-image", "compose-smoke"})
+
+
+def with_flatpak(jobs):
+    """The Flatpak job repacks the deb, so any deb selection includes it."""
+    return jobs | {"flatpak"} if "deb" in jobs else jobs
 
 
 class SelectionTests(unittest.TestCase):
@@ -97,7 +102,7 @@ class SelectionTests(unittest.TestCase):
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
-                self.assertEqual(changes.select_jobs("pull_request", [path]), expected)
+                self.assertEqual(changes.select_jobs("pull_request", [path]), with_flatpak(expected))
 
     def test_fail_open_paths(self):
         for path in (

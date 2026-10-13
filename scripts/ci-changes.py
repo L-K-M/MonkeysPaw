@@ -9,7 +9,7 @@ import subprocess
 
 
 JOBS = (
-    "core-linux", "linux-app", "deb", "android", "core-macos", "macos-app",
+    "core-linux", "linux-app", "deb", "flatpak", "android", "core-macos", "macos-app",
     "macos-artifacts", "server", "server-image", "compose-smoke",
 )
 ALL_JOBS = frozenset(JOBS)
@@ -54,6 +54,9 @@ FILES = {
     "scripts/tests/test_compose_smoke.py": frozenset({"core-linux", "compose-smoke"}),
     # Python tests run through core-linux unittest discovery.
     "scripts/tests/test_check_version.py": frozenset({"core-linux"}),
+    # The Flatpak job repacks the deb job's tested artifact.
+    "scripts/build-flatpak.sh": frozenset({"deb", "flatpak"}),
+    "scripts/tests/test-build-flatpak.sh": frozenset({"deb", "flatpak"}),
     "scripts/ci-changes.py": ALL_JOBS,
     "scripts/tests/test_ci_changes.py": ALL_JOBS,
 }
@@ -78,6 +81,7 @@ PREFIXES = (
     ("server/", SERVER_JOBS),
     ("deploy/caddy/", SERVER_JOBS),
     ("android/", frozenset({"android"})),
+    ("flatpak/", frozenset({"deb", "flatpak"})),
     ("docs/", frozenset()),
 )
 
@@ -97,7 +101,9 @@ def jobs_for_path(path):
 def select_jobs(event_name, paths):
     if event_name != "pull_request":
         return ALL_JOBS
-    return frozenset().union(*(jobs_for_path(path) for path in paths))
+    selected = frozenset().union(*(jobs_for_path(path) for path in paths))
+    # Every deb change also changes the Flatpak bundle built from it.
+    return selected | {"flatpak"} if "deb" in selected else selected
 
 
 def changed_paths(base, head):
