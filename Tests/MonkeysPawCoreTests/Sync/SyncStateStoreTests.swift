@@ -216,6 +216,49 @@ final class SyncStateStoreTests: XCTestCase {
         }
     }
 
+    func testClearRetryMustFlushAnAlreadyDeletedDocumentBeforeRecovery() throws {
+        for acknowledged in [false, true] {
+            for offset in 1...2 {
+                let files = MemoryFileStore()
+                let operations = MemorySyncFileOperations(files: files)
+                try operations.createDirectory(at: "sync")
+                let state = try SyncTestValues.state()
+                let store = SyncStateStore(files: files, operations: operations)
+                if acknowledged {
+                    try store.update(for: state.binding) { $0 = state }
+                } else {
+                    operations.failFlushNumber = operations.flushCount + 1
+                    XCTAssertThrowsError(try store.update(for: state.binding) { $0 = state }) {
+                        XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+                    }
+                }
+                operations.failFlushNumber = operations.flushCount + offset
+                XCTAssertThrowsError(try store.clear()) {
+                    XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+                }
+                XCTAssertNil(try files.stamp(at: path))
+                let failedFlushCount = operations.flushCount
+                operations.failFlushNumber = failedFlushCount + 1
+                XCTAssertThrowsError(try store.clear()) {
+                    XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+                }
+                XCTAssertEqual(operations.flushCount, failedFlushCount + 1)
+                XCTAssertEqual(store.snapshot.error, .durabilityUncertain)
+
+                operations.failFlushNumber = nil
+                let retryFlushCount = operations.flushCount
+                try store.clear()
+                XCTAssertEqual(operations.flushCount, retryFlushCount + 2)
+                XCTAssertEqual(Array(operations.flushedDirectories.suffix(2)), [RelativePath("sync"), nil])
+                XCTAssertNil(store.snapshot.error)
+                XCTAssertNil(store.snapshot.value)
+                XCTAssertNil(try store.load(for: state.binding))
+                try store.clear()
+                XCTAssertEqual(operations.flushCount, retryFlushCount + 2)
+            }
+        }
+    }
+
     func testExternalCorruptionOrRemovalBlocksEditsWithoutReset() throws {
         for remove in [false, true] {
             let files = MemoryFileStore()

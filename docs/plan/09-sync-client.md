@@ -65,8 +65,9 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   `SyncFileOperations`. Its library capability also covers checked durable
   publication, 0444/normal modes, trash and managed directory lifecycle.
   Existing `FileStore` semantics are unchanged. A failure after publication
-  reports uncertain durability and blocks further edits pending recovery;
-  best-effort directory fsync is not a successful sync commit. Scope cursors
+  reports uncertain durability and blocks further edits pending recovery.
+  Retrying a clear must flush the deletion even if the file is already gone.
+  Best-effort directory fsync is not a successful sync commit. Scope cursors
   commit only after the journaled pull's files and affected directories are
   on disk (§9.3).
 - **Connection metadata.** `<data>/sync/account.json` is a version-1 optional

@@ -68,7 +68,9 @@ final class SyncPersistence<Document: Codable> {
             catch FileStoreError.notFound { deleted = false }
             catch let error as FileStoreError { throw SyncError.writeFailed(error) }
             catch { throw SyncError.writeFailed(.ioFailure) }
-            if deleted { try flush(.deletion) }
+            // A prior mutation may still need durable deletion even when the
+            // file is gone. Fresh installs need no possibly-missing directory.
+            if deleted || hasDocument || cached.error == .durabilityUncertain { try flush(.deletion) }
         }
         cached = SyncStoreSnapshot(value: next, error: nil)
         hasDocument = next != nil
