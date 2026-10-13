@@ -61,7 +61,8 @@ re-entry or Clear before it can be used.
   elapsed time, and `Esc` cancels the HTTP task. Retries happen only on user
   action. The two HTTP-400 format probes in §7.2 are the sole automatic
   retry exception and share the same monotonic 300-second action deadline
-  ([§19 B24](19-m4-m5-decisions.md)).
+  ([§19 B24](19-m4-m5-decisions.md)). An OpenAI-compatible response received
+  within that deadline is retained if parsing and validation finish after it.
 - **Transport rules** (Vervellum `HTTPTransport`):
   - HTTPS required, except on loopback.
   - No userinfo in URLs.
@@ -126,10 +127,28 @@ How each provider is asked for the schema:
   json_schema: {name, schema, strict: true}}`. Strict mode requires every
   property to be listed in `required` on every object, and the emitted
   schema does so.
-  - On HTTP 400 the app retries once with `{type: "json_object"}`, then once
-    with no `response_format`. It remembers what the endpoint rejected, per
-    profile and model, in `<config>/provider-state.json` (Vervellum's
-    adaptive rule).
+  - Only an HTTP 400 explicitly rejecting the current format or
+    `response_format` parameter permits a probe with `{type: "json_object"}`,
+    then one with no `response_format`. Generic 400s and invalid schemas or
+    unsupported schema keywords fail without a probe. At most two downgrades
+    share the original monotonic 300-second deadline.
+  - Persist the lower format only after its response passes stop checks,
+    recovery and strict validation. A failed probe leaves the capability
+    unchanged. `<config>/provider-state.json`, beside provider settings, is a
+    version-1 non-secret FileStore record. Unknown root/profile keys from parsed
+    files survive rewrites for retained profile IDs. Entries are isolated by
+    profile ID, kind, normalized base URL (including its path) and model; a
+    changed identity resets to schema mode.
+    Missing files start empty. Decode, version or validation failures also
+    start empty at `json_schema`; the next successful lower-format record
+    replaces corrupt capabilities with a valid version-1 file. A read I/O
+    failure means no cached capability for that action, and later actions
+    retry the read. Never overwrite a file that could not be read. Cache
+    failures never block an assistant action or discard a validated response:
+    failed atomic writes leave disk state intact and log only a static warning.
+    Failed identity-reset writes keep the observed profile at schema mode
+    until a reset or validated capability can be published. Model listing
+    does not need this cache.
   - A schema test pins the schema, so a 400 caused by our own schema is
     caught in CI rather than mistaken for a missing capability.
 
@@ -176,6 +195,13 @@ and other non-200 statuses → providerFailure with the status code only.
 Missing or malformed Retry-After values supply no delay; past dates supply zero.
 The client does not schedule retries from that metadata. Transport failures and
 cancellation remain typed, without underlying diagnostic strings.
+OpenAI-compatible decoding uses only the first choice's message content,
+including when later choices are malformed. `tool_calls`, `function_call` and
+unknown finish reasons are unexpected stops; a nonempty `message.refusal` is
+declined even with `stop`. Optional effort maps to `reasoning_effort`, and token
+usage maps `prompt_tokens`/`completion_tokens` to input/output counts. Model
+listing accepts IDs with optional `display_name` or `name` and retains the same
+pagination metadata as Anthropic for A8; it fetches only one page.
 
 ### 7.3 Flows
 

@@ -41,6 +41,8 @@ public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible,
     case rateLimited(retryAfter: TimeInterval?)
     case overloaded
     case providerFailure(statusCode: Int)
+    /// Local, non-secret capability state could not be read or published.
+    case providerState(SettingsError)
     case truncated
     case declined
     case emptyResponse
@@ -58,6 +60,7 @@ public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible,
         case .rateLimited: return "rateLimited"
         case .overloaded: return "overloaded"
         case .providerFailure: return "providerFailure"
+        case .providerState: return "providerState"
         case .truncated: return "truncated"
         case .declined: return "declined"
         case .emptyResponse: return "emptyResponse"
