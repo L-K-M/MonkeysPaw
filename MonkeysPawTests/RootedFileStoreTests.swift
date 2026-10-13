@@ -379,7 +379,7 @@ final class RootedFileStoreTests: XCTestCase {
     func testPathsRejectTraversalAbsoluteEmptySegmentsControlsAndByteOverflow() throws {
         try store.write(Data("Original".utf8), at: "a.md")
         let badPaths = ["", "/a.md", ".", "..", "./a.md", "a/../b.md", "a/./b.md", "a//b.md",
-                        "a/", "a\\b.md", "a\0.md", "a\r.md", String(repeating: "é", count: 513)]
+                        "a/", "a\\b.md", "a\0.md", "a\r.md", String(repeating: "é", count: Limits.maxRootedPathBytes / 2 + 1)]
         for path in badPaths {
             let operations: [() throws -> Void] = [
                 { _ = try self.store.stamp(at: path) }, { _ = try self.store.read(at: path) },
@@ -391,8 +391,8 @@ final class RootedFileStoreTests: XCTestCase {
             }
         }
         XCTAssertEqual(try store.listFiles().map(\.relativePath), ["a.md"])
-        let boundary = Array(repeating: "folder", count: 145).joined(separator: "/") + "/" + String(repeating: "x", count: 6) + ".md"
-        XCTAssertEqual(boundary.utf8.count, Limits.maxPathBytes)
+        let boundary = Array(repeating: "folder", count: 183).joined(separator: "/") + "/" + "xxx.md"
+        XCTAssertEqual(boundary.utf8.count, Limits.maxRootedPathBytes)
         // macOS also bounds the absolute OS path; the root adds bytes to this
         // valid relative boundary. Linux exercises the actual deep-tree write.
         try FileStorePath.validate(boundary)

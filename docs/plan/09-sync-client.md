@@ -12,6 +12,11 @@
   level are reserved. If either already exists when sync is enabled, setup
   asks to rename it.
 - **Group folders.**
+  - Wire scope paths remain capped at 1,024 UTF-8 bytes. Joined library
+    paths use the compatible 1,287-byte rooted cap, including
+    `Groups/<255-byte folder>/` (§5.1, §20 E37). Private conflict/rescue
+    destinations still fit the 1,024-byte wire cap; their planners safely
+    shorten/flatten long source names and retain source mappings.
   - A folder is keyed by `group_id` in sync state. Its name is the group
     name, sanitized: path-validation rules applied, then de-duplicated
     with ` (2)`.

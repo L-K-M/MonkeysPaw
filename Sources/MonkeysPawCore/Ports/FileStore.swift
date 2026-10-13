@@ -91,7 +91,7 @@ public enum FileStorePath {
         let components: String.UTF8View.SubSequence
         switch mode {
         case .relative:
-            guard bytes.count <= Limits.maxPathBytes else { return false }
+            guard bytes.count <= Limits.maxRootedPathBytes else { return false }
             components = bytes[...]
         case .absolute:
             guard bytes.first == slash else { return false }
