@@ -23,7 +23,7 @@ struct LoginService: Sendable {
         } catch LoginAdmission.AdmissionError.busy {
             // A durable lock takes precedence over the transient admission delay.
             let retry = try await retrySeconds(username: username, ip: ip.value)
-            throw LoginError.rateLimited(.init(seconds: max(1, retry)))
+            throw LoginError.rateLimited(try .init(seconds: max(1, retry)))
         }
     }
 
@@ -37,7 +37,7 @@ struct LoginService: Sendable {
 
     private func attempt(_ request: SyncAPI.LoginRequest, username: String, ip: String) async throws -> SyncAPI.AuthResponse {
         let retry = try await retrySeconds(username: username, ip: ip)
-        guard retry == 0 else { throw LoginError.rateLimited(.init(seconds: retry)) }
+        guard retry == 0 else { throw LoginError.rateLimited(try .init(seconds: retry)) }
 
         do {
             // Exactly one bcrypt verification; no hashing or retry on this path.
@@ -46,7 +46,7 @@ struct LoginService: Sendable {
                 let now = accounts.clock()
                 let pair = try await buckets.buckets(username: username, ip: ip, at: now)
                 let retry = max(pair.account.retrySeconds(at: now), pair.ip.retrySeconds(at: now))
-                guard retry == 0 else { throw LoginError.rateLimited(.init(seconds: retry)) }
+                guard retry == 0 else { throw LoginError.rateLimited(try .init(seconds: retry)) }
                 let issued = try await sessions.issueSession(for: verified, deviceName: request.deviceName,
                                                             accounts: accountRecords, devices: devices)
                 try await buckets.resetAccount(username: username)
@@ -64,7 +64,7 @@ struct LoginService: Sendable {
                 return max(account.retrySeconds(at: now), address.retrySeconds(at: now))
             }
             // Throw after committing so a failed login cannot roll back history.
-            if retry > 0 { throw LoginError.rateLimited(.init(seconds: retry)) }
+            if retry > 0 { throw LoginError.rateLimited(try .init(seconds: retry)) }
             throw AccountError.unauthorized
         }
     }
