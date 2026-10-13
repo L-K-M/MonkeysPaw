@@ -138,6 +138,19 @@ public final class DeliveryService {
         mainThread.run { self.failureCache.reset() }
     }
 
+    /// Read-only UI diagnostics: no clipboard/focus access or permission action.
+    public func readStatus(done: @escaping (DeliveryStatusSnapshot) -> Void) {
+        mainThread.run {
+            let session = self.session.currentSession()
+            let ladder = PasteLadder.backends(for: session)
+            let failures = ladder.compactMap { backend in
+                self.failureCache.failure(for: backend).map { BackendFailure(backend: backend, reason: $0) }
+            }
+            done(DeliveryStatusSnapshot(session: session, pasteLadder: ladder,
+                cachedFailures: failures, lastDelivery: self.lastDelivery))
+        }
+    }
+
     // Self-test has stronger evidence than exit 0; do not reuse a proven failure.
     func recordUnreceived(_ backend: PasteBackend) {
         mainThread.run { self.failureCache.record(.notReceived, for: backend) }

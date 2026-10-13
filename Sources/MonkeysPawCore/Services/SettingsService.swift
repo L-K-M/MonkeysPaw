@@ -1,4 +1,4 @@
-/// Settings intents keep unrelated first-run progress intact (§11.4).
+/// Field-specific intents preserve every unrelated preference and flag (§11).
 /// File access and atomic publication belong to the injected SettingsStore.
 public final class SettingsService: Sendable {
     private enum Step { case setup, libraryFolder, seeds, tour }
@@ -12,7 +12,32 @@ public final class SettingsService: Sendable {
     /// Nil selects the platform default; no filesystem resolution occurs here.
     public func setLibraryFolder(_ path: String?) throws {
         try store.update { document in
-            try SettingsDocument(libraryFolderPath: path, firstRun: document.firstRun)
+            try SettingsDocument(libraryFolderPath: path, firstRun: document.firstRun,
+                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks)
+        }
+    }
+
+    public func setLinuxDefaultPasteChord(_ chord: PasteChord) throws {
+        try store.update { document in
+            try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
+                delivery: DeliveryPreferences(linuxDefaultPasteChord: chord,
+                    clipboardRestore: document.delivery.clipboardRestore),
+                automaticUpdateChecks: document.automaticUpdateChecks)
+        }
+    }
+
+    public func setClipboardRestore(_ mode: ClipboardRestoreMode) throws {
+        try store.update { document in
+            try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
+                delivery: DeliveryPreferences(linuxDefaultPasteChord: document.delivery.linuxDefaultPasteChord,
+                    clipboardRestore: mode), automaticUpdateChecks: document.automaticUpdateChecks)
+        }
+    }
+
+    public func setAutomaticUpdateChecks(_ mode: AutomaticUpdateChecks) throws {
+        try store.update { document in
+            try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
+                delivery: document.delivery, automaticUpdateChecks: mode)
         }
     }
 
@@ -29,7 +54,8 @@ public final class SettingsService: Sendable {
                     setupPresented: progress.setupPresented || step == .setup,
                     libraryFolderCompleted: progress.libraryFolderCompleted || step == .libraryFolder,
                     seedsOffered: progress.seedsOffered || step == .seeds,
-                    tourCompleted: progress.tourCompleted || step == .tour))
+                    tourCompleted: progress.tourCompleted || step == .tour),
+                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks)
         }
     }
 }

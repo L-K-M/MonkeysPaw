@@ -13,6 +13,9 @@ public final class SettingsModel {
     /// Nil is the default marker; composition supplies the resolved path.
     public var libraryFolderPath: String? { state.document.libraryFolderPath }
     public var firstRun: FirstRunProgress { state.document.firstRun }
+    public var deliveryPreferences: DeliveryPreferences { state.document.delivery }
+    public var automaticUpdateChecks: AutomaticUpdateChecks { state.document.automaticUpdateChecks }
+    public var allowsAutomaticUpdateChecks: Bool { state.allowsAutomaticUpdateChecks }
     public var isReadOnly: Bool { state.isReadOnly }
     public var needsSetupPresentation: Bool { !isReadOnly && !firstRun.setupPresented }
     public var needsLibraryFolderStep: Bool { !isReadOnly && !firstRun.libraryFolderCompleted }
@@ -58,6 +61,18 @@ public final class SettingsModel {
 
     public func clearLibraryFolder() {
         perform { try settings.setLibraryFolder(nil) }
+    }
+
+    public func setLinuxDefaultPasteChord(_ chord: PasteChord) {
+        perform { try settings.setLinuxDefaultPasteChord(chord) }
+    }
+
+    public func setClipboardRestore(_ mode: ClipboardRestoreMode) {
+        perform { try settings.setClipboardRestore(mode) }
+    }
+
+    public func setAutomaticUpdateChecks(_ mode: AutomaticUpdateChecks) {
+        perform { try settings.setAutomaticUpdateChecks(mode) }
     }
 
     public func markSetupPresented() {
