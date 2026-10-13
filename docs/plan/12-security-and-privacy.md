@@ -49,6 +49,30 @@ labelled "unencrypted", and zero other copies
 ([§19 B29](19-m4-m5-decisions.md)). Provider settings contain only a secret
 reference; the file fallback is never a settings file.
 
+The integration tests generate a fresh runtime sentinel and save through
+`ProviderSettingsService` and the native secret driver in isolated roots.
+They scan after Save, successful and failed Test connection with stub HTTP,
+graph reconstruction, profile rename, switching away and back, and deletion.
+Scans include hidden files and build products and detect raw, base64,
+percent-encoded and JSON-escaped keys, including the nested JSON credential
+envelope. The Linux strict-tier fixture keeps fake service secrets in memory
+on the existing private test bus; it does not prove a desktop's real Secret
+Service or consent behavior. The macOS test uses a unique real Keychain item
+with interaction suppressed per operation. A locked or unavailable Keychain
+skips that integration test; a skip does not satisfy acceptance. Real store
+and signed-build checks remain in the [assistant owner checklist](../platform/assistant.md).
+
+The [README](../../README.md#assistant-privacy-and-key-storage) carries M4's
+minimum assistant disclosures ([§19 B33](19-m4-m5-decisions.md)). Write sends
+the supplied brief; Review and Improve send the current template source,
+including front matter, with Improve's instruction and selected findings.
+Explicit retries may send the session transcript and feedback. Requests also
+include system instructions, schema and model selection. `private: true`
+blocks Review and Improve for that prompt; Write never imports an open
+private template. Fill values, rendered fill previews and remembered values
+are never sent. Test connection sends only a model-list request. Full
+SECURITY.md and PRIVACY.md remain M7 work.
+
 Linux uses `service=ch.lkmc.monkeyspaw` and the namespaced account as
 Secret Service attributes, with a `Monkey's Paw: <account>` item label.
 The fallback is `<config>/secrets-unencrypted.json`: a version-1 JSON map
