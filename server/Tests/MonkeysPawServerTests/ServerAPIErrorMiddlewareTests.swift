@@ -27,7 +27,8 @@ struct ServerAPIErrorMiddlewareTests {
         #expect(errors.count == 1)
         let entry = try #require(errors.first)
         #expect(entry.error == nil)
-        #expect(entry.message.description == "Unexpected API error")
+        #expect(entry.message.description == "API request failed")
+        #expect(entry.metadata?["code"] == .string("internal_error"))
         #expect(entry.metadata?["error_type"] == .string(String(reflecting: SecretBearingError.self)))
         let logged = entry.message.description + String(describing: entry.metadata)
         for secret in ["private request data", "/secret/path", "token", "SELECT", "password_hash"] {
