@@ -51,6 +51,13 @@ final class UnboundHotkeyActions {
         return true
     }
 
+    /// A live registration may keep its initial id. Relinquish catalogue
+    /// ownership so unregister reaches the live driver's teardown.
+    func retire(_ action: HotkeyAction) {
+        callbacks.removeValue(forKey: action)
+        registrations.removeValue(forKey: action)
+    }
+
     func clearCallbacks() { callbacks.removeAll() }
 }
 
@@ -70,6 +77,7 @@ final class ManualHotkeyBackend: LinuxHotkeyBackend {
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
+        unboundActions.retire(action)
         self.onFire = onFire
         currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
                                                 detail: GnomeKeybindingInstaller.command)
@@ -115,6 +123,7 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
+        unboundActions.retire(action)
         self.onFire = onFire
         self.accelerator = accelerator
         currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,

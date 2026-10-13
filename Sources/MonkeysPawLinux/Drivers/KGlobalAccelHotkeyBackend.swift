@@ -151,6 +151,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         guard state != .stopped else {
             return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
         }
+        unboundActions.retire(action)
         if self.onFire != nil { unregister(currentRegistration) }
         self.onFire = onFire
         suggestion = KGlobalAccelWire.translate(accelerator)

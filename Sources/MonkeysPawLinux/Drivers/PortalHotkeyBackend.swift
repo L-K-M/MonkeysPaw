@@ -103,6 +103,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
+        unboundActions.retire(action)
         close(.close)
         completeConfiguration()
         self.onFire = onFire

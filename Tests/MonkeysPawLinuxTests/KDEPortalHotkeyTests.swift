@@ -105,6 +105,25 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
     }
 
+    func testLiveRegistrationAfterUnboundDeclarationStillTearsDownUsingInitialSnapshot() throws {
+        start()
+        let unbound = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker") }
+        XCTAssertEqual(unbound.status, .unbound)
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        let pending = backend.register(.togglePicker,
+            accelerator: Accelerator.defaultBinding(for: .togglePicker)) { [weak self] in self?.fires += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .registered })
+        XCTAssertEqual(backend.currentRegistration.id, pending.id)
+        XCTAssertTrue(daemon.present)
+
+        // ShortcutService owns the initial result, before the driver's live
+        // status changes. Its old unbound catalogue must not claim teardown.
+        backend.unregister(pending)
+
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        XCTAssertTrue(service.calls.isEmpty)
+    }
+
     private func activate(_ timestamp: UInt64 = 1) throws {
         service.emit(member: "Activated", body: "(objectpath '\(try session())', 'toggle', uint64 \(timestamp), {'activation_token': <'fixture-token'>})")
         PortalSessionTestSupport.barrier(transport)

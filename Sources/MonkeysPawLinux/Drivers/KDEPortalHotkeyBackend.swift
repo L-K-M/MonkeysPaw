@@ -69,6 +69,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             return registration
         }
         guard phase != .stopped else { return currentRegistration }
+        unboundActions.retire(action)
         self.onFire = onFire
         self.accelerator = accelerator
         let lease = UUID()
