@@ -1,5 +1,25 @@
 # Linux picker and delivery checks
 
+## Secret storage (M4 A4, NOT RUN)
+
+- Commit / artifact version / desktop / keyring and libsecret-tools versions:
+- Date / tester / isolated XDG config and data directories:
+
+Use disposable provider profiles and test keys. Settings integration arrives
+in A14; exercise the driver through that build. Do not record key values,
+stdin contents or keyring/tool error bodies in this checklist or logs.
+
+| Check | Expected result | Status |
+|---|---|---|
+| GNOME Keyring lookup/store/Clear | With an unlocked GNOME Keyring, save and reload two profiles with separate keys. Each item is labelled `Monkey's Paw: provider:<UUID>` and has service/account attributes. The reported tier is Secret Service. Clear removes only that profile; its key appears nowhere in config, data or logs. | NOT RUN |
+| KWallet lookup/store/Clear | Enable KWallet's Secret Service support and repeat the two-profile save/reload/Clear checks. The tier is Secret Service and accounts remain isolated. | NOT RUN |
+| Locked keyring prompt and deadline | Lock the keyring, then read/save a profile. The keyring may prompt; unlock and retry if the two-second budget expires. Cancel or let the deadline expire: a typed locked/unavailable failure appears without hanging GTK, changing persisted credentials or creating plaintext. An existing fallback remains readable. | NOT RUN |
+| Environment override | Set `MONKEYSPAW_PROVIDER_<UUID without hyphens, uppercase>_API_KEY` before launch. That profile reports Environment; replacing it is read-only. Clear removes persisted credentials and disables profile auth while the environment stays untouched. Another profile never borrows the override. | NOT RUN |
+| Unencrypted fallback visibility | Launch with `secret-tool` absent from PATH. Save/reload a disposable key: Settings visibly reports unencrypted storage and only `<config>/secrets-unencrypted.json` contains it, with version 1, the `unencrypted` label and mode 0600. No private temporary file remains. Restore the tool, save through an unlocked service, and confirm that account's plaintext copy is removed. | NOT RUN |
+| Unavailable service and symlink refusal | With the tool installed but Secret Service stopped or inaccessible, save/Clear fails with a typed error and preserves existing data. Replace the fallback or a config ancestor with a symlink: file operations refuse it and leave the target unchanged. | NOT RUN |
+| Tool removal and restoration | Save a disposable service key, remove the tool from PATH, and save a different file key. Restoring the tool restores priority to the older service item. Re-enter and save the intended key through the unlocked service; it replaces that item and removes the file copy. Restore the tool before Clear to remove both copies. | NOT RUN |
+| Crash temporary cleanup | Terminate during a file save, then retry a file or service save. Any abandoned private `.secrets-<UUID>` files are removed before the next mutation; a live file writer's lock causes a typed failure without deleting its temporary. | NOT RUN |
+
 ## Release deb installation (M2, NOT RUN)
 
 Use an amd64 Ubuntu 24.04+ desktop for the release's amd64 package. Candidate

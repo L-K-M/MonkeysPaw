@@ -1,0 +1,251 @@
+#if os(Linux)
+import Foundation
+import Glibc
+import MonkeysPawCore
+import XCTest
+@testable import MonkeysPawLinux
+
+final class LinuxSecretFileTests: XCTestCase {
+    private let account = try! SecretAccount(namespace: "provider", name: "test")
+
+    func testLabelVersionModeAndAtomicReplacementPreserveOtherAccounts() throws {
+        let (tools, store, file) = try fixture()
+        let other = try SecretAccount(namespace: "device", name: "test")
+        XCTAssertNil(try store.read(account: account))
+        try store.write(SecretValue("old-key"), account: account)
+        let descriptor = Glibc.open(file.path, O_RDONLY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        let old = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? old.close() }
+        let original = try Data(contentsOf: file)
+        var oldInfo = stat()
+        XCTAssertEqual(fstat(descriptor, &oldInfo), 0)
+
+        try store.write(SecretValue("device-token"), account: other)
+        try store.write(SecretValue("new-key"), account: account)
+        XCTAssertEqual(try old.readToEnd(), original, "An open reader sees the complete old inode")
+        var newInfo = stat()
+        XCTAssertEqual(lstat(file.path, &newInfo), 0)
+        XCTAssertNotEqual(newInfo.st_ino, oldInfo.st_ino)
+        XCTAssertEqual(newInfo.st_mode & 0o777, 0o600)
+        XCTAssertEqual(newInfo.st_uid, geteuid())
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertEqual(object["storage"] as? String, "unencrypted")
+        XCTAssertEqual(try store.read(account: account), SecretValue("new-key"))
+        XCTAssertEqual(try store.read(account: other), SecretValue("device-token"))
+        try store.write(nil, account: account)
+        try store.write(nil, account: account)
+        XCTAssertNil(try store.read(account: account))
+        XCTAssertEqual(try store.read(account: other), SecretValue("device-token"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path),
+            [file.lastPathComponent])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tools.directory.path))
+    }
+
+    func testOversizedWritePreservesOldMapAndLeavesNoTemporaryCopies() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let original = try Data(contentsOf: file)
+        XCTAssertThrowsError(try store.write(SecretValue(String(repeating: "s", count: Limits.valuesFileCapBytes)),
+            account: account))
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path),
+            [file.lastPathComponent])
+    }
+
+    func testWriteRemovesAnAbandonedPrivateTemporaryButKeepsUnrelatedFiles() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let directory = file.deletingLastPathComponent()
+        let abandoned = directory.appendingPathComponent(".secrets-\(UUID().uuidString)")
+        try Data("abandoned-key".utf8).write(to: abandoned)
+        XCTAssertEqual(chmod(abandoned.path, 0o600), 0)
+        let unrelated = directory.appendingPathComponent(".secrets-not-a-temporary")
+        try Data("unrelated".utf8).write(to: unrelated)
+        try store.write(SecretValue("new-key"), account: account)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandoned.path))
+        XCTAssertEqual(try String(contentsOf: unrelated, encoding: .utf8), "unrelated")
+        XCTAssertEqual(try store.read(account: account), SecretValue("new-key"))
+    }
+
+    func testWriterLockPreventsSweepingAnActiveTemporary() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let original = try Data(contentsOf: file)
+        let directory = file.deletingLastPathComponent()
+        let active = directory.appendingPathComponent(".secrets-\(UUID().uuidString)")
+        try Data("active-bytes".utf8).write(to: active)
+        XCTAssertEqual(chmod(active.path, 0o600), 0)
+        let descriptor = Glibc.open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { _ = Glibc.close(descriptor) }
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertEqual(try String(contentsOf: active, encoding: .utf8), "active-bytes")
+        XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        try store.write(SecretValue("new-key"), account: account)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: active.path))
+    }
+
+    func testWriterLockIsTakenBeforeLoadingTheMap() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let corrupt = Data("not-json".utf8)
+        try corrupt.write(to: file)
+        let descriptor = Glibc.open(file.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { _ = Glibc.close(descriptor) }
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account)) {
+            XCTAssertEqual($0 as? SecretStoreError, .writeFailed, "Contention must be refused before reading the map")
+        }
+        XCTAssertEqual(try Data(contentsOf: file), corrupt)
+    }
+
+    func testConcurrentWritersPreserveBothAccounts() throws {
+        let (tools, first, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        let second = LinuxSecretFile(paths: LinuxPaths(environment: tools.environment))
+        let other = try SecretAccount(namespace: "device", name: "test")
+        let paddingAccount = try SecretAccount(namespace: "device", name: "padding")
+        // Many accounts keep the two independent loads overlapping.
+        let padding = SecretValue(String(repeating: "p", count: Limits.valuesFileCapBytes / 4))
+        try first.write(padding, account: paddingAccount)
+        var secrets = Dictionary(uniqueKeysWithValues: (0..<8_192).map { ("device:padding-\($0)", "padding") })
+        secrets[paddingAccount.rawValue] = padding.withValue { $0 }
+        try JSONSerialization.data(withJSONObject: ["version": 1, "storage": "unencrypted", "secrets": secrets])
+            .write(to: file)
+
+        for round in 0..<8 {
+            try first.write(nil, account: other)
+            let ready = DispatchSemaphore(value: 0)
+            let start = DispatchSemaphore(value: 0)
+            let done = expectation(description: "Two file writers finish round \(round)")
+            done.expectedFulfillmentCount = 2
+            let firstValue = SecretValue("first-\(round)")
+            let secondValue = SecretValue("second-\(round)" + String(repeating: "s", count: Limits.valuesFileCapBytes / 4))
+            for (writer, key, value) in [(first, account, firstValue), (second, other, secondValue)] {
+                DispatchQueue.global().async {
+                    defer { done.fulfill(); withExtendedLifetime(tools) {} }
+                    ready.signal()
+                    guard start.wait(timeout: .now() + 10) == .success else {
+                        return XCTFail("Writer start timed out")
+                    }
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while true {
+                        do { try writer.write(value, account: key); return }
+                        catch let error as SecretStoreError where error == .writeFailed && ContinuousClock.now < deadline {
+                            // Contention is nonblocking; retries must reload under the lock.
+                            Thread.sleep(forTimeInterval: 0.01)
+                        } catch { return XCTFail("File writer failed: \(error)") }
+                    }
+                }
+            }
+            XCTAssertEqual(ready.wait(timeout: .now() + 10), .success)
+            XCTAssertEqual(ready.wait(timeout: .now() + 10), .success)
+            start.signal()
+            start.signal()
+            wait(for: [done], timeout: 10)
+            XCTAssertEqual(try first.read(account: account), firstValue)
+            XCTAssertEqual(try first.read(account: other), secondValue)
+            XCTAssertEqual(try first.read(account: paddingAccount), padding)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path),
+            [file.lastPathComponent])
+    }
+
+    func testLeafSymlinksIncludingDanglingLinksAreRefusedWithoutChangingTarget() throws {
+        let (tools, store, file) = try fixture()
+        try store.write(SecretValue("initial"), account: account)
+        try FileManager.default.removeItem(at: file)
+        let target = tools.directory.appendingPathComponent("target")
+        try Data("target-bytes".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("secret"), account: account))
+        XCTAssertThrowsError(try store.write(nil, account: account))
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "target-bytes")
+        try FileManager.default.removeItem(at: target)
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("secret"), account: account))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+    }
+
+    func testConfigRootAndAncestorSymlinksAreRefused() throws {
+        let (tools, store, file) = try fixture()
+        try store.write(SecretValue("old-key"), account: account)
+        let root = file.deletingLastPathComponent()
+        let original = try Data(contentsOf: file)
+        let moved = tools.directory.appendingPathComponent("moved")
+        try FileManager.default.moveItem(at: root, to: moved)
+        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: moved)
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+        XCTAssertEqual(try Data(contentsOf: moved.appendingPathComponent(file.lastPathComponent)), original)
+        try FileManager.default.removeItem(at: root)
+        try FileManager.default.moveItem(at: moved, to: root)
+        let config = root.deletingLastPathComponent()
+        let movedConfig = tools.directory.appendingPathComponent("moved-config")
+        try FileManager.default.moveItem(at: config, to: movedConfig)
+        try FileManager.default.createSymbolicLink(at: config, withDestinationURL: movedConfig)
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+    }
+
+    func testHardlinksInsecureModesAndNonregularFilesAreRefused() throws {
+        let (tools, store, file) = try fixture()
+        try store.write(SecretValue("key"), account: account)
+        let link = tools.directory.appendingPathComponent("hardlink")
+        XCTAssertEqual(Glibc.link(file.path, link.path), 0)
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+        try FileManager.default.removeItem(at: link)
+        XCTAssertEqual(chmod(file.path, 0o644), 0)
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+        try FileManager.default.removeItem(at: file)
+        XCTAssertEqual(mkfifo(file.path, 0o600), 0)
+        let start = ContinuousClock.now
+        XCTAssertThrowsError(try store.read(account: account))
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+    }
+
+    func testCorruptFutureUnlabelledAndOversizedRecordsArePreserved() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("key"), account: account)
+        for record in [
+            Data("not-json".utf8),
+            Data(#"{"version":2,"storage":"unencrypted","secrets":{}}"#.utf8),
+            Data(#"{"version":1,"storage":"encrypted","secrets":{}}"#.utf8),
+            Data(#"{"version":1,"storage":"unencrypted","secrets":{"bad:account:name":"key"}}"#.utf8),
+            Data(repeating: 65, count: Limits.valuesFileCapBytes + 1)
+        ] {
+            try record.write(to: file)
+            XCTAssertEqual(chmod(file.path, 0o600), 0)
+            XCTAssertThrowsError(try store.read(account: account))
+            XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
+            XCTAssertThrowsError(try store.write(nil, account: account))
+            XCTAssertEqual(try Data(contentsOf: file), record)
+        }
+    }
+
+    private func fixture() throws -> (FakeLinuxTools, LinuxSecretFile, URL) {
+        let tools = try FakeLinuxTools()
+        tools.environment["XDG_CONFIG_HOME"] = tools.directory.appendingPathComponent("config").path
+        let paths = LinuxPaths(environment: tools.environment)
+        return (tools, LinuxSecretFile(paths: paths), paths.configDirectory.appendingPathComponent("secrets-unencrypted.json"))
+    }
+}
+#endif
