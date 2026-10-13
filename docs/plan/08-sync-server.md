@@ -437,7 +437,12 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     profile-gated services (dl-tool lesson).
   - Requires Docker Compose ≥ 2.20.0: this is the minimum supported release,
     including the environment-secret permission fix, `pull_policy: build`
-    and `up --wait --wait-timeout` (verified against upstream release/source).
+    and `up --wait --wait-timeout`. The v2.20.0 `create.go` also consults
+    explicit `bind.create_host_path: false` and uses the Mount API for it
+    (verified against upstream release/source, not just schema keys).
+    Host directory provisioning remains mandatory; validate missing-path
+    refusal on the target Engine/Compose combination and do not replay a
+    rendered config as the deployment file.
     YAML/static validation does not prove a container deployment; CI or the
     owner must run both default and TLS configurations on a Docker host.
 - **`.env.example`.** `PUID`, `PGID`, `TZ`, `CONFIG_DIR`,

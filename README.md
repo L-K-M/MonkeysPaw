@@ -57,8 +57,8 @@ The [CI and release guide](CICD.md) describes dry runs and cutting a release.
 
 ## Host the sync server
 
-Use Docker Engine on Linux and **Docker Compose 2.20.0 or newer** (`docker
-compose version`). This minimum includes the
+Use Docker Engine on Linux with BuildKit enabled and **Docker Compose
+2.20.0 or newer** (`docker compose version`). This minimum includes the
 [environment-secret permission fix](https://github.com/docker/compose/releases/tag/v2.20.0),
 local image builds and bounded health waits. The server is built from this
 checkout as `monkeyspaw-server:local`; Caddy is the external `caddy:2` image.
@@ -81,6 +81,9 @@ the server container's environment and `docker inspect`, but remains
 plaintext in `.env` and in Compose's secret file. Keep `.env` at 0600 and
 keep it out of logs and version control. Bootstrap runs only on an empty
 database; editing these values later does not reset an account's password.
+Some Compose versions warn that secret UID/GID/mode settings are ignored.
+That warning is spurious for this environment-sourced secret, whose file
+is created with those settings. File-sourced secrets have different behavior.
 
 ```sh
 docker compose config --quiet
@@ -97,6 +100,9 @@ host ownership; missing bind directories fail startup. `CONFIG_DIR` defaults
 to `./config`; use local disk, not a network filesystem, for SQLite. Mounts
 replace the image's `/data`, so its build-time owner cannot fix a host bind.
 Stored timestamps remain UTC regardless of `TZ`.
+Provision these directories before every fresh deployment; do not use
+rendered `docker compose config` output as a replacement deployment file.
+Verify missing-path refusal on your actual Engine/Compose combination.
 
 For public HTTPS, point a domain's DNS at this host and allow TCP 80/443.
 Set `MONKEYSPAW_PUBLIC_URL=https://prompts.example.com` to your bare HTTPS
