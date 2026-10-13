@@ -86,20 +86,22 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         #if canImport(FoundationNetworking)
         let peerClosed = DispatchSemaphore(value: 0)
         #endif
-        let completed = expectation(description: "Headers-only peer finished")
+        let completed = expectation(description: "Incomplete response peer finished")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            // JSON models API responses. An ambiguous type may make Darwin
-            // wait for sniffing bytes (inferred from CI). Send no body.
-            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
+            // Darwin buffers initial body bytes before delivering the response.
+            // The prefix fits the cap, so only the advertised length can fail.
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n" + String(repeating: "a", count: 1_024))
             if returned.wait(timeout: .now() + 4) == .success { withheld.signal() }
             // Darwin cancellation does not promise prompt TCP closure.
             #if canImport(FoundationNetworking)
             if connection.waitForPeerClose() { peerClosed.signal() }
+            #else
+            _ = connection.waitForPeerClose()
             #endif
             completed.fulfill()
         }
         defer { server.stop() }
-        let request = try request(server.url(), cap: 64)
+        let request = try request(server.url(), cap: 4_096)
         let result: Result<HTTPResponse, Error>
         do { result = .success(try await transport.send(request)) }
         catch { result = .failure(error) }
@@ -344,7 +346,12 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         switch result {
         case .success(let response):
             XCTAssertEqual(response.statusCode, 401, message)
+            XCTAssertEqual(response.headers["www-authenticate"], "Basic realm=\"test\"", message)
+            #if canImport(FoundationNetworking)
             XCTAssertEqual(response.body, Data("auth error".utf8), message)
+            #else
+            XCTAssertTrue(response.body.isEmpty, message)
+            #endif
         case .failure: XCTFail("Expected bounded 401 response; \(message)")
         }
         let requests = server.requests

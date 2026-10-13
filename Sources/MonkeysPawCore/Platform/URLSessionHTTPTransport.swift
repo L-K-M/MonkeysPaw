@@ -157,8 +157,26 @@ final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        // With storage nil, default handling has no stored credential to try
-        // and preserves normal TLS server-trust validation.
+        #if !canImport(FoundationNetworking)
+        switch challenge.protectionSpace.authenticationMethod {
+        case NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest,
+             NSURLAuthenticationMethodNTLM, NSURLAuthenticationMethodNegotiate:
+            // Darwin's default HTTP authentication handling can replay without credentials.
+            let outcome: Result<HTTPResponse, HTTPTransportError>
+            if let response = challenge.failureResponse as? HTTPURLResponse,
+               response.statusCode == 401 || response.statusCode == 407 {
+                outcome = .success(Self.httpResponse(response, body: Data()))
+            } else { outcome = .failure(.invalidResponse) }
+
+            lock.lock()
+            let complete = finishLocked(outcome)
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            complete()
+            return
+        default: break
+        }
+        #endif
+        // Keep normal TLS server-trust validation and corelibs authentication handling.
         completionHandler(.performDefaultHandling, nil)
     }
 
@@ -213,15 +231,19 @@ final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable 
             // for redirects with no usable Location header.
             if (300..<400).contains(response.statusCode) { outcome = .failure(.redirectRefused) }
             else {
-                var headers = [String: String]()
-                for (key, value) in response.allHeaderFields {
-                    if let name = key as? String, let value = value as? String {
-                        headers[name.lowercased()] = value
-                    }
-                }
-                outcome = .success(HTTPResponse(statusCode: response.statusCode, headers: headers, body: body))
+                outcome = .success(Self.httpResponse(response, body: body))
             }
         } else { outcome = .failure(.invalidResponse) }
         finishLocked(outcome)()
+    }
+
+    private static func httpResponse(_ response: HTTPURLResponse, body: Data) -> HTTPResponse {
+        var headers = [String: String]()
+        for (key, value) in response.allHeaderFields {
+            if let name = key as? String, let value = value as? String {
+                headers[name.lowercased()] = value
+            }
+        }
+        return HTTPResponse(statusCode: response.statusCode, headers: headers, body: body)
     }
 }

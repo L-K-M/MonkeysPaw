@@ -77,12 +77,19 @@ re-entry or Clear before it can be used.
     before appending; an observed cap failure survives later cancellation
     and deadline callbacks. Foundation may buffer bytes before invoking
     delegates; callback boundaries need not match the peer's writes.
+    Darwin may wait for initial body bytes before delivering the response
+    callback; advertised oversize is refused before the complete body arrives.
   - Each request uses an ephemeral URLSession with cookies, URL cache and
-    credential storage explicitly set to nil. Authentication challenges
-    use [default handling](https://developer.apple.com/documentation/foundation/urlsession/authchallengedisposition/performdefaulthandling)
-    on both Foundations. With [no credential store](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/urlcredentialstorage),
-    they retain standard TLS server-trust validation and bounded HTTP error
-    bodies without supplying credentials or retrying the request.
+    credential storage explicitly set to nil. Server-trust challenges keep
+    default handling for standard TLS validation. On Darwin, default HTTP
+    authentication handling can resend a request even without credentials.
+    The task delegate cancels Basic, Digest, NTLM and Negotiate challenges,
+    preserving the 401/407 status and headers from
+    [failureResponse](https://developer.apple.com/documentation/foundation/urlauthenticationchallenge/failureresponse)
+    with an empty body before
+    [cancelling the challenge](https://developer.apple.com/documentation/foundation/urlsession/authchallengedisposition/cancelauthenticationchallenge).
+    Corelibs retains default handling with no credential store and bounded
+    HTTP error bodies. Neither path supplies credentials or retries.
     Every terminal result cancels the task and invalidates its session;
     Foundation controls when the peer observes TCP closure, which is not part
     of the early response-cap refusal contract. A separate monotonic deadline
