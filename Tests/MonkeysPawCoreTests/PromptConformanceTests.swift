@@ -5,7 +5,7 @@ import XCTest
 /// The corpus is enumerated, not a hand-picked list. Each JSON and source
 /// must be dispatched exactly once so future language consumers share a gate.
 final class PromptConformanceTests: XCTestCase {
-    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import", "paths", "canonical"]
+    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import", "paths", "canonical", "dto"]
     private let rankingAccuracy = 1e-12
 
     private var fixtureRoot: URL {
@@ -26,7 +26,7 @@ final class PromptConformanceTests: XCTestCase {
             for category in categories {
                 let directory = root.appendingPathComponent(category)
                 directories.append(directory)
-                if ["import", "ranking", "paths", "canonical"].contains(category) {
+                if ["import", "ranking", "paths", "canonical", "dto"].contains(category) {
                     let cases = try FileManager.default.contentsOfDirectory(atPath: directory.path)
                         .filter { !$0.hasPrefix(".") }
                     directories += cases.map { directory.appendingPathComponent($0) }
@@ -91,7 +91,7 @@ final class PromptConformanceTests: XCTestCase {
     }
 
     func testRejectsUnknownSchemaVersionsAndContentMembers() throws {
-        for category in categories.subtracting(["ranking", "import", "paths", "canonical"]).sorted() {
+        for category in categories.subtracting(["ranking", "import", "paths", "canonical", "dto"]).sorted() {
             let files = try FileManager.default.contentsOfDirectory(atPath: fixtureRoot.appendingPathComponent(category).path)
                 .filter { !$0.hasPrefix(".") }
             let file = try XCTUnwrap(files.sorted().first { $0.hasSuffix(".json") })
@@ -233,6 +233,17 @@ final class PromptConformanceTests: XCTestCase {
                     try consume(path, in: &consumed)
                 }
                 cases += canonical.cases
+                continue
+            }
+
+            if category == "dto" {
+                let dto = try DTOFixtureCorpus.consume(at: directory)
+                for file in dto.files {
+                    let path = "dto/" + file
+                    allFiles.insert(RelativePath(path))
+                    try consume(path, in: &consumed)
+                }
+                cases += dto.cases
                 continue
             }
 

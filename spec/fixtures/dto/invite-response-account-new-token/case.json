@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "category": "dto",
+  "dto": "InviteResponse",
+  "source": "body.json",
+  "expected": {
+    "valid": true
+  }
+}

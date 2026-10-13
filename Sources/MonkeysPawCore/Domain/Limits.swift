@@ -154,6 +154,9 @@ public enum Limits {
     /// §8.3: cap prompt bodies at 256 KiB on both clients and the server.
     public static let maxPromptBytes: Int = 256 * kibibyte
 
+    /// §8.3: bound passwords to 72 UTF-8 bytes to avoid bcrypt truncation.
+    public static let maxPasswordBytes: Int = 72
+
     /// §5.5: cap import reads before UTF-8 decoding or YAML composition.
     public static let importFileCapBytes: Int = 256 * kibibyte
 
