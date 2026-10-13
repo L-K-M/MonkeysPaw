@@ -79,6 +79,9 @@ final class SyncLocalScannerTests: XCTestCase {
         let pending = try SyncPromptState(scope: SyncScanTestSupport.team, path: "a.md", rev: 0)
         try SyncScanTestSupport.installState(rig, groups: SyncScanTestSupport.groups(), prompts: [local: pending], favorites: [local: true])
         _ = try HistoryStore(files: rig.data).snapshot(bytes, for: local, at: Date(timeIntervalSince1970: 1))
+        let provenance = PromptProvenance(timestamp: Date(timeIntervalSince1970: 1),
+            providerHost: "example.test", model: "test", usage: nil)
+        try HistoryStore(files: rig.data).setHeadProvenance(provenance, for: local, bytes: bytes)
         try rig.usage.recordUse(identity: local)
         try rig.values.record(identity: local, values: ["field": "remembered"])
         let first = try SyncScanTestSupport.scan(rig)
@@ -96,6 +99,7 @@ final class SyncLocalScannerTests: XCTestCase {
         XCTAssertEqual(try rig.values.rememberedValues(for: identity), ["field": "remembered"])
         XCTAssertTrue(try rig.values.rememberedValues(for: local).isEmpty)
         let rewritten = try rig.files.read(at: path)
+        XCTAssertEqual(try HistoryStore(files: rig.data).headProvenance(for: identity, bytes: rewritten), provenance)
         let form = try CanonicalForm.group(rewritten, filename: "a.md")
         XCTAssertEqual(form.bytes, rewritten)
         XCTAssertNil(form.favorite)
@@ -143,6 +147,53 @@ final class SyncLocalScannerTests: XCTestCase {
         guard case .update(let prompt, _) = try XCTUnwrap(scan.changes.first) else { return XCTFail("Expected update") }
         XCTAssertEqual(prompt.identity, .assigned(id))
         XCTAssertEqual(scan.changes.count, 1)
+    }
+
+    func testExternalIdentityAssignmentMigratesLocalPathStateBeforeCreate() throws {
+        let rig = try SyncApplyTestRig()
+        let path = "Groups/Team/a.md"
+        let local = PromptIdentity(path: path, id: nil)
+        let bytes = try CanonicalForm.group(SyncScanTestSupport.bytes(id: other), filename: "a.md").bytes
+        try rig.files.write(bytes, at: path)
+        let pending = try SyncPromptState(scope: SyncScanTestSupport.team, path: "a.md", rev: 0)
+        try SyncScanTestSupport.installState(rig, groups: SyncScanTestSupport.groups(), prompts: [local: pending], favorites: [local: true])
+        _ = try HistoryStore(files: rig.data).snapshot(bytes, for: local, at: Date(timeIntervalSince1970: 1))
+        try rig.usage.recordUse(identity: local)
+        try rig.values.record(identity: local, values: ["field": "remembered"])
+        let first = try SyncScanTestSupport.scan(rig)
+        let plan = try XCTUnwrap(first.preparation)
+        XCTAssertNil(plan.nextState.prompts[local])
+        XCTAssertEqual(plan.nextState.favorites[.assigned(other)], true)
+        XCTAssertEqual(plan.edits.count, 1)
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        XCTAssertEqual(try rig.values.rememberedValues(for: .assigned(other)), ["field": "remembered"])
+        XCTAssertEqual(try rig.usage.useEvents(for: .assigned(other)).count, 1)
+        XCTAssertEqual(try rig.library.history(for: .assigned(other)).count, 1)
+        XCTAssertTrue(try rig.values.rememberedValues(for: local).isEmpty)
+        XCTAssertEqual(try rig.files.read(at: path), bytes)
+        let second = try SyncScanTestSupport.scan(rig)
+        XCTAssertNil(second.preparation)
+        guard case .create(let candidate) = try XCTUnwrap(second.changes.first) else { return XCTFail("Expected create") }
+        XCTAssertEqual(candidate.identity, .assigned(other))
+    }
+
+    func testExternalAssignmentReplansUntouchedKeyedMigrationAfterRacingEdit() throws {
+        let rig = try SyncApplyTestRig()
+        let local = PromptIdentity(path: "a.md", id: nil)
+        try rig.files.write(SyncScanTestSupport.bytes(id: other), at: "a.md")
+        let pending = try SyncPromptState(scope: SyncScanTestSupport.personal, path: "a.md", rev: 0)
+        try SyncScanTestSupport.installState(rig, prompts: [local: pending])
+        try rig.values.record(identity: local, values: ["field": "remembered"])
+        let plan = try XCTUnwrap(SyncScanTestSupport.scan(rig).preparation)
+        let latest = SyncScanTestSupport.bytes("Changed during preparation", id: other)
+        try rig.files.write(latest, at: "a.md")
+        XCTAssertEqual(try rig.journal.apply(plan), .replanAsConflict(operationID: plan.edits[0].id))
+        XCTAssertEqual(try rig.files.read(at: "a.md"), latest)
+        let replan = try XCTUnwrap(SyncScanTestSupport.scan(rig).preparation)
+        XCTAssertEqual(try rig.journal.replan(replan), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), latest)
+        XCTAssertEqual(try rig.values.rememberedValues(for: .assigned(other)), ["field": "remembered"])
+        XCTAssertTrue(try rig.values.rememberedValues(for: local).isEmpty)
     }
 
     func testDuplicateRepairUsesExactUTF8OrderAndKeepsWinnerKeyedState() throws {
@@ -202,6 +253,19 @@ final class SyncLocalScannerTests: XCTestCase {
         XCTAssertNil(scan.preparation)
         XCTAssertTrue(scan.snapshot.heldPaths.isSuperset(of: Set(samples.map { RelativePath($0) })))
         XCTAssertEqual(rig.files.writeCount, samples.count + 1)
+    }
+
+    func testForeignOwnedGroupFolderIsRescuedBeforeMatchingCurrentGroup() throws {
+        let rig = try SyncApplyTestRig()
+        try SyncScanTestSupport.installState(rig, groups: SyncScanTestSupport.groups())
+        try rig.files.write(SyncScanTestSupport.bytes(), at: "Groups/Team/a.md")
+        let ownership = try SyncLibraryBinding(root: rig.binding.root, owner: rig.binding.account,
+            managedFolders: [SyncTestValues.group: SyncManagedFolder(
+                owner: SyncTestValues.account(userID: SyncTestValues.otherUser), folder: "Team")])
+        let scan = try SyncScanTestSupport.scan(rig, ownership: ownership)
+        XCTAssertEqual(scan.orphanFiles.map(\.path), ["Groups/Team/a.md"])
+        XCTAssertNil(scan.preparation)
+        XCTAssertTrue(scan.changes.isEmpty)
     }
 
     func testIgnoredPathsAreFullListingOccupantsNeverBrowserDeletes() throws {

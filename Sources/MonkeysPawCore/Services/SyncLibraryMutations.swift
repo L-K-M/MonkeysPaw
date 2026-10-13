@@ -83,8 +83,16 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   copyID == nil, heldIssue == nil, copyOrigin == nil else { throw SyncError.invalidState }
             return
         }
-        guard let bytes, hash == SyncHash(bytes: bytes), let transition,
-              transition.source == (expected ?? adoptingSource)?.identityKey else { throw SyncError.invalidState }
+        guard let bytes, hash == SyncHash(bytes: bytes), let transition else { throw SyncError.invalidState }
+        // An external editor/git import may already have assigned the ID while
+        // this exact path's local key still owns its history/usage/values.
+        let localKey = try PromptIdentity(path: path, id: nil).storageKey
+        let assignedExternally = kind == .adopt && adoptingSource == nil && expected != nil
+            && expected?.identityKey == transition.destination
+            && transition.source == localKey
+        guard transition.source == (expected ?? adoptingSource)?.identityKey || assignedExternally else {
+            throw SyncError.invalidState
+        }
         let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
         let destination = try SyncIdentifiers.promptIdentity(transition.destination)
         guard destination == PromptIdentity(path: path, id: document.frontMatter.id) else { throw SyncError.invalidState }
@@ -256,7 +264,8 @@ final class SyncLibraryMutations {
         // A published identity rewrite must finish its migration. An edit
         // rejected before publication may replace its untouched preparation.
         let current = try read(at: RelativePath(step.edit.path))
-        guard current?.identityKey != step.edit.transition?.destination else { return false }
+        if current?.identityKey == step.edit.transition?.destination,
+           (step.edit.expected ?? step.edit.adoptingSource)?.identityKey != step.edit.transition?.destination { return false }
         let stores = try library.syncKeyedStores()
         for migration in step.migrations {
             guard let store = stores.first(where: { $0.syncKind == migration.store }),

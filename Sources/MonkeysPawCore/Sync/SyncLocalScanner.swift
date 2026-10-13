@@ -75,6 +75,13 @@ enum SyncLocalScanner {
                 held.insert(path)
                 continue
             }
+            if case .group(let id) = location.scope, let group = old.groups[id],
+               let folder = ownership?.managedFolders.first(where: { $0.value.folder.utf8.elementsEqual(group.folder.utf8) }),
+               folder.key != id || folder.value.owner != binding.account {
+                orphans.append(file)
+                held.insert(path)
+                continue
+            }
             if !LibraryPath.isPrompt(file.path) {
                 held.insert(path)
                 if old.prompts[identity] != nil || old.prompts.contains(where: {
@@ -128,9 +135,9 @@ enum SyncLocalScanner {
             var identity = originalIdentity
             var recorded = duplicate ? nil : old.prompts[identity]
             var stateSource = identity
-            if case .local = identity, recorded == nil {
+            if !duplicate, recorded == nil {
                 let candidates = try old.prompts.filter {
-                    !used.contains($0.key) && $0.value.scope == location.scope
+                    !used.contains($0.key) && (isLocal(identity) || isLocal($0.key)) && $0.value.scope == location.scope
                         && (try? SyncNaming.pathKey($0.value.path)) == wire.pathKey
                 }.sorted { try $0.key.storageKey < $1.key.storageKey }
                 guard candidates.count <= 1 else { throw SyncError.invalidState }
@@ -138,8 +145,14 @@ enum SyncLocalScanner {
                     stateSource = match.key
                     recorded = match.value
                     used.insert(match.key)
-                    if case .assigned = match.key { identity = match.key }
+                    if isLocal(identity), case .assigned = match.key { identity = match.key }
                 }
+            }
+            let externalAssignment = !isLocal(originalIdentity) && isLocal(stateSource) && stateSource != identity
+            if externalAssignment, stateSource != PromptIdentity(path: file.path, id: nil) {
+                issues[localPath] = .idMismatch
+                held.insert(localPath)
+                continue
             }
             let viewer = isViewer(location.scope, groups: old.groups)
                 || (recorded.map { isViewer($0.scope, groups: old.groups) } ?? false)
@@ -177,11 +190,12 @@ enum SyncLocalScanner {
             }
             // Until /move commits, the overlay still belongs to the old scope.
             // Keep extracted personal keys on disk for ingest after that ack.
-            if !transferring && (bytes != file.bytes || (location.scope.pathScope == .group && canonical.bytes != file.bytes)) {
+            if !transferring && (externalAssignment || bytes != file.bytes
+                || (location.scope.pathScope == .group && canonical.bytes != file.bytes)) {
                 edits.append(try mutations.publication(canonical.bytes, at: localPath, expecting: file,
-                    transition: SyncIdentityTransition(from: originalIdentity, to: identity),
+                    transition: SyncIdentityTransition(from: externalAssignment ? stateSource : originalIdentity, to: identity),
                     mode: isViewer(location.scope, groups: old.groups) ? .readOnly : .normal,
-                    kind: duplicate ? .repairDuplicate : .apply))
+                    kind: duplicate ? .repairDuplicate : identity != originalIdentity || externalAssignment ? .adopt : .apply))
             }
             let prompt = SyncLocalPrompt(file: file, identity: identity, scope: location.scope,
                 path: RelativePath(wire.path), canonical: canonical, origin: origin)
