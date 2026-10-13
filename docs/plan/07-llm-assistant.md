@@ -286,6 +286,37 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
 - **Phase machine** (Invoque's Maker):
   `idle → working → draft(issues) → ready → saved | failed`. Accept is
   enabled only when the draft has no validation errors.
+  Core's `AssistantModel` owns these values and explicit write, review, improve,
+  retry, diff, accept, reject, cancel, close and Escape intents. Review finishes
+  in draft with local issues and findings, without an acceptable candidate.
+  Artifact replies pass through draft before merge and diff preparation can
+  make them ready. Elapsed time uses a monotonic clock; native UI timers call
+  the model's elapsed-time intent through their own main loop.
+  Cancellation returns to idle and invalidates the request generation. Close,
+  Escape, profile changes and library graph retirement do the same; even
+  replies already queued on `MainThread` cannot revive an older request.
+  No action runs automatically. Retry with feedback retains the session-only
+  user/assistant transcript and appends escaped feedback; the original template
+  snapshot remains the quote-matching and merge baseline. Each explicit retry
+  starts a fresh action budget; format probes share that action's deadline.
+- **Editor snapshot and acceptance.** At an explicit action, Core captures the
+  current editor source bytes, buffer revision, editing session, relative path
+  and checked disk stamp, plus the profile, library graph and access state.
+  Only a validated, writable buffer without an unresolved disk conflict can
+  be used. Requests send that template source, never the rendered preview.
+  Later buffer or disk changes keep the generated artifact but withdraw its
+  acceptable candidate and diff. Returning to the same text does not restore
+  acceptance. An explicit Show diff revalidates and merges against a fresh
+  snapshot before enabling Accept. Profile, graph, session and access changes
+  discard the conversation and pending replies. Composition forwards those
+  changes to the model, including switches away and back. Credential edits
+  use `profileChanged()` even when the non-secret profile remains identical.
+  Final candidate bytes include a preflighted identity before the diff appears;
+  a new write or private copy gets a fresh ID, while improve retains an existing
+  ID and preflights an absent first-save ID. Accept rechecks the live context
+  and exposes the exact canonical candidate and a completion token. A11 owns
+  the checked file write and provenance, then reports saved or failed through
+  that token. A10 performs no prompt writes; Reject discards the draft.
 - **Diffs.** Line-level, computed in Core with a Myers diff. Lines that add,
   remove, or rename a placeholder carry a warning marker, because a rename
   silently drops remembered values. Front matter (including delimiters) and
@@ -312,10 +343,10 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   - Core returns a typed merge outcome; only a validated canonical candidate
     is ready for acceptance. Invalid input or merged content produces issues
     without an acceptable candidate. Write takes a caller-supplied fresh ID;
-    improve preserves the original ID, including its absence. First-save
-    identity preflight remains save-service work and must precede the final
-    preview ([§19 B28](19-m4-m5-decisions.md)). Artifact notes stay in the
-    draft UI and are never added to the file.
+    improve preserves the original ID, including its absence. The assistant
+    service preflights an absent first-save identity on the merged candidate
+    before the final preview ([§19 B28](19-m4-m5-decisions.md)). Artifact notes
+    stay in the draft UI and are never added to the file.
   - The diff is computed on the merged file, so Accept writes exactly what
     the user saw.
 - **Never auto-applied.** Closing the panel cancels the request.

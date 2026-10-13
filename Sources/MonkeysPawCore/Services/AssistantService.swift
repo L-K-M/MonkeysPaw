@@ -1,6 +1,7 @@
 import Foundation
 
-/// Shared assistant service. This slice owns only Test and model listing.
+/// Provider resolution, explicit actions and pure candidate preflight. Prompt
+/// writes and provenance belong to the acceptance service in A11.
 public final class AssistantService: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     private let providerSettings: ProviderSettingsService
     private let anthropic: AssistantClient
@@ -9,17 +10,24 @@ public final class AssistantService: CustomStringConvertible, CustomDebugStringC
     private let main: MainThread
     private let timeout: Duration
     private let now: @Sendable () -> ContinuousClock.Instant
+    private let actionBudget: Duration
+    private let clock: WallClock
+    private let entropy: EntropySource
 
     public convenience init(providerSettings: ProviderSettingsService, anthropic: AssistantClient,
-                            openAICompatible: AssistantClient, work: BackgroundWork, main: MainThread) {
+                            openAICompatible: AssistantClient, work: BackgroundWork, main: MainThread,
+                            clock: WallClock = SystemClock(), entropy: EntropySource = SystemEntropy()) {
         self.init(providerSettings: providerSettings, anthropic: anthropic, openAICompatible: openAICompatible,
-                  work: work, main: main, timeout: Limits.modelListTimeout, now: { ContinuousClock.now })
+                  work: work, main: main, timeout: Limits.modelListTimeout, now: { ContinuousClock.now },
+                  clock: clock, entropy: entropy)
     }
 
     // Short budgets and a monotonic test clock exercise races without a 15 s wait.
     init(providerSettings: ProviderSettingsService, anthropic: AssistantClient,
          openAICompatible: AssistantClient, work: BackgroundWork, main: MainThread,
-         timeout: Duration, now: @escaping @Sendable () -> ContinuousClock.Instant) {
+         timeout: Duration, now: @escaping @Sendable () -> ContinuousClock.Instant,
+         actionBudget: Duration = Limits.llmBudget, clock: WallClock = SystemClock(),
+         entropy: EntropySource = SystemEntropy()) {
         self.providerSettings = providerSettings
         self.anthropic = anthropic
         self.openAICompatible = openAICompatible
@@ -27,6 +35,138 @@ public final class AssistantService: CustomStringConvertible, CustomDebugStringC
         self.main = main
         self.timeout = timeout
         self.now = now
+        self.actionBudget = actionBudget
+        self.clock = clock
+        self.entropy = entropy
+    }
+
+    /// Non-secret footer/context data, available before sending an action.
+    public var selectedProfile: ProviderProfile? {
+        let settings = providerSettings.snapshot.settings
+        return settings.profiles.first { $0.id == settings.selectedProfileID }
+    }
+
+    func isCurrent(_ context: AssistantContext) -> Bool {
+        AssistantContext.sameProfile(context.profile, selectedProfile)
+    }
+
+    @discardableResult
+    public func perform(_ command: AssistantCommand, context: AssistantContext,
+                        effort: AssistantEffort? = nil, transcript: [AssistantMessage] = [],
+                        feedback: String? = nil,
+                        completion: @escaping (Result<AssistantResponse, AssistantFailure>) -> Void)
+        -> AssistantOperation<AssistantResponse> {
+        let deadline = now().advanced(by: actionBudget)
+        let operation = AssistantOperation(main: main, completion: completion)
+        operation.attach(Task.detached {
+            do {
+                try await ContinuousClock().sleep(until: deadline)
+                operation.finish(.failure(.assistant(.transport(.deadlineExceeded))))
+            } catch { /* Completed operations stop their deadline timer. */ }
+        })
+        work.run { [self] in
+            guard operation.isActive else { return }
+            do {
+                try checkDeadline(deadline)
+                try validate(context, command: command)
+                guard let profile = context.profile else { throw AssistantError.notConfigured }
+                let connection = try providerSettings.connection(for: profile.id)
+                // Resolution may have blocked while metadata/profile selection changed.
+                guard isCurrent(context), connection.kind == profile.kind, connection.baseURL == profile.baseURL,
+                      connection.modelID.utf8.elementsEqual(profile.modelID.utf8) else { throw AssistantFailure.staleContext }
+                try checkDeadline(deadline)
+                guard operation.isActive else { return }
+                let request = AssistantRequest(action: try command.action(in: context), effort: effort,
+                    transcript: transcript, feedback: feedback)
+                let client = connection.kind == .anthropic ? anthropic : openAICompatible
+                operation.attach(Task.detached {
+                    do {
+                        let response = try await client.perform(request, using: connection, deadline: deadline)
+                        guard operation.isActive else { return }
+                        operation.finish(.success(response))
+                    } catch { operation.finish(.failure(Self.actionFailure(error))) }
+                })
+            } catch { operation.finish(.failure(Self.actionFailure(error))) }
+        }
+        return operation
+    }
+
+    /// Final serialization/identity and diff happen before Accept is offered.
+    /// A retained ID keeps a new-document candidate stable across explicit retries.
+    @discardableResult
+    public func prepare(_ artifact: LlmArtifact, for command: AssistantCommand, context: AssistantContext,
+                        retainingID: ULID? = nil,
+                        completion: @escaping (Result<AssistantCandidate, AssistantFailure>) -> Void)
+        -> AssistantOperation<AssistantCandidate> {
+        let operation = AssistantOperation(main: main, completion: completion)
+        work.run { [self] in
+            guard operation.isActive else { return }
+            do {
+                try validate(context, command: command)
+                let original = context.editor?.document
+                let result: ArtifactMergeResult
+                if case .write = command { result = ArtifactMerge.write(artifact, id: try retainingID ?? freshID()) }
+                else {
+                    guard let original, !command.isReview else { throw AssistantError.invalidOutput }
+                    result = ArtifactMerge.improve(artifact, original: original)
+                }
+                let merged: ArtifactMergeCandidate
+                switch result {
+                case .ready(let candidate): merged = candidate
+                case .invalid(let issues): throw AssistantFailure.invalid(issues)
+                case .failed(let error): throw AssistantFailure.write(error)
+                }
+                var document = merged.document
+                if context.access.mutationAccess == .privateCopy, case .improve = command {
+                    document = try PromptCodec.removingIdentity(from: document)
+                }
+                if document.frontMatter.id == nil {
+                    document = try PromptCodec.assigningIdentity(try retainingID ?? freshID(), to: document)
+                }
+                let content = ArtifactMergeCandidate(document: document, canonicalBytes: Data(try PromptCodec.write(document).utf8))
+                let baseline: PromptDocument?
+                if case .write = command { baseline = nil } else { baseline = original }
+                let diff = try ArtifactDiff.compare(original: baseline, candidate: content)
+                guard operation.isActive else { return }
+                operation.finish(.success(AssistantCandidate(content: content, diff: diff, context: context,
+                    mutationAccess: context.access.mutationAccess)))
+            } catch { operation.finish(.failure(Self.actionFailure(error))) }
+        }
+        return operation
+    }
+
+    private func freshID() throws -> ULID {
+        try ULID.generate(at: clock.now(), entropy: entropy.bytes(count: Limits.ulidEntropyBytes))
+    }
+
+    private func validate(_ context: AssistantContext, command: AssistantCommand) throws {
+        if let editor = context.editor {
+            switch editor.availability {
+            case .available: break
+            case .busy: throw AssistantFailure.editorBusy
+            case .conflicted: throw AssistantFailure.editorConflict
+            }
+            let document = editor.document
+            if let reason = LoadedPrompt.readOnlyReason(for: document) { throw AssistantFailure.readOnly(reason) }
+            let issues = document.issues
+            guard !issues.contains(where: { $0.severity == .error }) else { throw AssistantFailure.invalid(issues) }
+            guard !document.frontMatter.isPrivate else { throw AssistantError.privatePrompt }
+        } else if case .write = command { /* A new prompt needs no open editor. */ }
+        else { throw AssistantFailure.noEditor }
+        guard context.access != .unavailable else { throw AssistantError.accessDenied }
+        guard context.profile != nil else { throw AssistantError.notConfigured }
+        guard isCurrent(context) else { throw AssistantFailure.staleContext }
+    }
+
+    private static func actionFailure(_ error: Error) -> AssistantFailure {
+        if let error = error as? AssistantFailure { return error }
+        if let error = error as? AssistantError { return .assistant(error) }
+        if let error = error as? ProviderSettingsError { return .settings(error) }
+        if let error = error as? PromptWriteError { return .write(error) }
+        if let error = error as? ULIDGenerationError { return .identity(error) }
+        if let error = error as? LineDiffError { return .diff(error) }
+        if error is CancellationError { return .assistant(.transport(.cancelled)) }
+        return .assistant(.transport(.networkFailure))
     }
 
     /// Resolves only this immutable draft. No settings, secrets or capability
