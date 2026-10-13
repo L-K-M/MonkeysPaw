@@ -49,7 +49,7 @@ public final class LibraryService: PromptFavoriteEditing {
     private let entropy: EntropySource
     private let lock = NSLock()
     // Held by a pending durable journal, not by an HTTP request or an await.
-    private var syncApplyID: UUID?
+    private let syncWriteGate = SyncLibraryWriteGate()
 
     public init(library: FileStore, data: FileStore, clock: WallClock, entropy: EntropySource,
                 keyedStores: [PromptKeyedStore] = []) {
@@ -59,6 +59,9 @@ public final class LibraryService: PromptFavoriteEditing {
         self.keyedStores = [history] + keyedStores
         self.clock = clock
         self.entropy = entropy
+        for store in self.keyedStores.compactMap({ $0 as? SyncKeyedStore }) {
+            store.bindSyncWriteGate(syncWriteGate)
+        }
     }
 
     /// Exact-case .md files, in relative POSIX path order. Invalid content stays
@@ -658,7 +661,7 @@ public final class LibraryService: PromptFavoriteEditing {
     private func locked<T>(_ work: () throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
-        guard syncApplyID == nil else { throw LibraryError.recoveryRequired }
+        try syncWriteGate.requireEditable()
         do { return try work() }
         catch let error as CommittedMaintenanceFailure {
             throw error.provenance ? LibraryError.provenanceMaintenanceFailed : LibraryError.historyMaintenanceFailed
@@ -676,21 +679,19 @@ public final class LibraryService: PromptFavoriteEditing {
     func beginSyncApply(_ id: UUID) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard syncApplyID == nil || syncApplyID == id else { throw LibraryError.recoveryRequired }
-        syncApplyID = id
+        try syncWriteGate.begin(id)
     }
 
     func endSyncApply(_ id: UUID) {
         lock.lock()
         defer { lock.unlock() }
-        if syncApplyID == id { syncApplyID = nil }
+        syncWriteGate.finish(id)
     }
 
     func replaceSyncApply(_ previous: UUID, with next: UUID) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard syncApplyID == previous else { throw LibraryError.recoveryRequired }
-        syncApplyID = next
+        try syncWriteGate.replace(previous, with: next)
     }
 
     /// No caller-supplied async/network closure enters this seam. Sync's only

@@ -20,6 +20,7 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
     // Populated by the index's validated reads and successful writes. Browsing
     // never scans app data or performs usage I/O on a presentation refresh.
     private var cachedEvents: [PromptIdentity: [Date]] = [:]
+    private var syncWriteGates = SyncKeyedWriteGates()
 
     public init(files: FileStore, clock: WallClock) {
         self.files = files
@@ -40,6 +41,7 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
     func recordUseDeferringNotification(identity: PromptIdentity, at date: Date?) throws
         -> (events: [Date], notify: () -> Void) {
         let (events, subscribers) = try locked {
+            try syncWriteGates.requireEditable()
             let timestamp = date ?? clock.now()
             guard timestamp.timeIntervalSince1970.isFinite else { throw LibraryError.invalidTimestamp }
             let path = try path(for: identity)
@@ -84,6 +86,7 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
     @discardableResult
     public func migrateKey(from source: PromptIdentity, to destination: PromptIdentity) throws -> PromptKeyMigration {
         try locked {
+            try syncWriteGates.requireEditable()
             let sourcePath = try path(for: source)
             let destinationPath = try path(for: destination)
             guard source != destination, try files.stamp(at: sourcePath) != nil else { return .unchanged }
@@ -100,6 +103,19 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
     }
 
     var syncKind: SyncKeyedStoreKind { .usage }
+
+    func bindSyncWriteGate(_ gate: SyncLibraryWriteGate) {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGates.bind(gate)
+    }
+
+    func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
+        try locked {
+            guard case .file(let move) = migration.change else { return false }
+            return try move.isUnstarted(files: files)
+        }
+    }
 
     func prepareSyncMigration(from source: PromptIdentity, to destination: PromptIdentity,
                               rebindingHeadTo: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration] {

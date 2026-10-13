@@ -101,6 +101,8 @@ enum SyncApplyOutcome: Equatable {
     case committed
     /// Retain the journal and bytes; the planner must account for prior steps.
     case replanAsConflict(operationID: UUID)
+    /// Incomplete identity migration needs recovery, not a new conflict plan.
+    case recoveryRequired(operationID: UUID)
 }
 
 /// One serial journal per app-data/library graph. All intents and raw losing
@@ -108,6 +110,7 @@ enum SyncApplyOutcome: Equatable {
 /// replay always checks actual files and reestablishes durability. Composition
 /// must create/recover this journal before enabling ordinary library writes.
 final class SyncApplyJournal {
+    private enum StateCommitFailure: Error { case changed }
     private let files: FileStore
     private let operations: SyncFileOperations
     private let mutations: SyncLibraryMutations
@@ -174,7 +177,7 @@ final class SyncApplyJournal {
         defer { lock.unlock() }
         guard let previous = try persistence.load(), previous.id != plan.id,
               previous.nextState.binding == plan.nextState.binding else { throw SyncError.invalidState }
-        guard previous.steps.allSatisfy({ $0.completed || $0.migrations.isEmpty }) else {
+        guard try previous.steps.allSatisfy({ try mutations.canReplan($0) }) else {
             throw LibraryError.recoveryRequired
         }
         guard try states.load(for: plan.nextState.binding) == plan.expectedState else {
@@ -218,18 +221,23 @@ final class SyncApplyJournal {
                 }
                 let result: SyncLibraryMutationResult
                 do { result = try mutations.apply(step.edit, attempt: step.started ? .replay : .first) }
-                catch let error as SyncFileOperationError {
+                catch let operationError as SyncFileOperationError {
                     // A native race can report additional displaced bytes after
                     // publication. Keep them even when durability failed.
-                    if let displaced = error.displacedBytes, displaced != step.edit.retainedBytes {
-                        try retain(displaced, path: retentionPrefix(step.edit) + "-displaced.bin")
+                    if let displaced = operationError.displacedBytes, displaced != step.edit.retainedBytes {
+                        do { try retain(displaced, path: retentionPrefix(step.edit) + "-displaced.bin") }
+                        catch { throw operationError }
                     }
-                    throw error
+                    throw operationError
                 }
                 if let displaced = result.displacedBytes, displaced != step.edit.retainedBytes {
-                    try retain(displaced, path: retentionPrefix(step.edit) + "-displaced.bin")
+                    do { try retain(displaced, path: retentionPrefix(step.edit) + "-displaced.bin") }
+                    catch { throw SyncFileOperationError(.ioFailure, effect: result.effect, displacedBytes: displaced) }
                 }
-                if case .replanAsConflict = result.outcome { return .replanAsConflict(operationID: step.edit.id) }
+                if case .replanAsConflict = result.outcome {
+                    return try mutations.canReplan(step) ? .replanAsConflict(operationID: step.edit.id)
+                        : .recoveryRequired(operationID: step.edit.id)
+                }
                 for migration in step.migrations {
                     try mutations.migrate(migration, operations: operations)
                 }
@@ -248,7 +256,7 @@ final class SyncApplyJournal {
             try states.update(for: binding) { state in
                 guard state == record.expectedState || state == record.nextState
                     || (record.expectedState == nil && state == empty) else {
-                    throw SyncError.invalidState
+                    throw StateCommitFailure.changed
                 }
                 state = record.nextState
             }
@@ -258,6 +266,8 @@ final class SyncApplyJournal {
             mutations.finish(record.id)
             return .committed
         } catch LibraryError.keyedStateConflict {
+            return .recoveryRequired(operationID: record.id)
+        } catch StateCommitFailure.changed {
             return .replanAsConflict(operationID: record.id)
         } catch {
             if stateCommitted { states.blockForRecovery(retaining: state) }

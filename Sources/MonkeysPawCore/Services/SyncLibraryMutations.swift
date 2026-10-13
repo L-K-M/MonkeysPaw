@@ -102,6 +102,7 @@ enum SyncLibraryMutationOutcome { case applied, replanAsConflict }
 struct SyncLibraryMutationResult: CustomStringConvertible, CustomReflectable {
     let outcome: SyncLibraryMutationOutcome
     let displacedBytes: Data?
+    var effect: SyncFileMutationEffect = .unchanged
     var description: String { "<sync library mutation result>" }
     var customMirror: Mirror { Mirror(self, children: ["result": description]) }
 }
@@ -188,6 +189,20 @@ final class SyncLibraryMutations {
         try store.applySyncMigration(migration, operations: operations)
     }
 
+    func canReplan(_ step: SyncApplyStep) throws -> Bool {
+        if step.completed || step.migrations.isEmpty { return true }
+        // A published identity rewrite must finish its migration. An edit
+        // rejected before publication may replace its untouched preparation.
+        let current = try read(at: RelativePath(step.edit.path))
+        guard current?.identityKey != step.edit.transition?.destination else { return false }
+        let stores = try library.syncKeyedStores()
+        for migration in step.migrations {
+            guard let store = stores.first(where: { $0.syncKind == migration.store }),
+                  try store.isSyncMigrationUnstarted(migration) else { return false }
+        }
+        return true
+    }
+
     func apply(_ edit: SyncLibraryEdit, attempt: Attempt) throws -> SyncLibraryMutationResult {
         try library.withSyncLock { files in
             let current: SyncLibraryFile?
@@ -202,7 +217,7 @@ final class SyncLibraryMutations {
                     try operations.setMode(edit.mode, at: RelativePath(edit.path))
                     try SyncDurability.flushFileAndParents(edit.path, operations: operations)
                 }
-                return try SyncLibraryMutationResult(outcome: verify(edit, files: files), displacedBytes: nil)
+                return try SyncLibraryMutationResult(outcome: verify(edit, files: files), displacedBytes: nil, effect: .applied)
             }
             guard Self.matches(edit.expected, current: current) else {
                 return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: nil)
@@ -220,11 +235,12 @@ final class SyncLibraryMutations {
                 }
             } catch let error as SyncFileOperationError {
                 if error.code == .changed || (error.effect == .unchanged && error.code == .occupied) {
-                    return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: error.displacedBytes)
+                    return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: error.displacedBytes,
+                                                     effect: error.effect)
                 }
                 throw error
             }
-            return try SyncLibraryMutationResult(outcome: verify(edit, files: files), displacedBytes: displaced)
+            return try SyncLibraryMutationResult(outcome: verify(edit, files: files), displacedBytes: displaced, effect: .applied)
         }
     }
 

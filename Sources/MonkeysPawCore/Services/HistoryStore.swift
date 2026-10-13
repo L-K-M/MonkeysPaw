@@ -184,6 +184,14 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
 
     var syncKind: SyncKeyedStoreKind { .history }
 
+    // All ordinary history mutations already enter through LibraryService.
+    func bindSyncWriteGate(_ gate: SyncLibraryWriteGate) {}
+
+    func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
+        guard case .file(let move) = migration.change else { return false }
+        return try move.isUnstarted(files: files)
+    }
+
     func prepareSyncMigration(from source: PromptIdentity, to destination: PromptIdentity,
                               rebindingHeadTo bytes: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration] {
         let prefix = try directory(for: source) + "/"
@@ -191,7 +199,10 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
         let all = try files.listFiles()
         let originals = all.filter { $0.relativePath.utf8.starts(with: prefix.utf8) }
         guard !originals.isEmpty else { return [] }
-        guard !all.contains(where: { $0.relativePath.utf8.starts(with: target.utf8) }) else {
+        guard !all.contains(where: {
+            RelativePath($0.relativePath) == RelativePath(String(target.dropLast()))
+                || $0.relativePath.utf8.starts(with: target.utf8)
+        }) else {
             throw LibraryError.keyedStateConflict
         }
         return try originals.sorted { RelativePath($0.relativePath) < RelativePath($1.relativePath) }.map { file in

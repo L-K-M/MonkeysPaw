@@ -211,16 +211,28 @@ final class SyncApplyJournalTests: XCTestCase {
         }
     }
 
-    func testChangedKeyedStateDuringMigrationIsRetainedAndReplans() throws {
+    func testCooperatingKeyedWritesCannotChangeAnApplyBaseline() throws {
         let fixture = try preparedAdoption()
         let old = PromptIdentity(path: "a.md", id: nil)
         fixture.rig.libraryOperations.beforePublish = { _ in
-            try fixture.rig.values.record(identity: old, values: ["field": "new delivery"])
+            let mutations: [() throws -> Void] = [
+                { try fixture.rig.values.record(identity: old, values: ["field": "new delivery"]) },
+                { try fixture.rig.values.remove(identity: old) },
+                { try fixture.rig.values.removeAll() },
+                { _ = try fixture.rig.values.migrateKey(from: old, to: .assigned(SyncTestValues.device)) },
+                { _ = try fixture.rig.usage.recordUse(identity: old) },
+                { _ = try fixture.rig.usage.migrateKey(from: old, to: .assigned(SyncTestValues.device)) }
+            ]
+            for mutation in mutations {
+                XCTAssertThrowsError(try mutation()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+            }
         }
-        XCTAssertEqual(try fixture.rig.journal.apply(fixture.plan), .replanAsConflict(operationID: fixture.plan.id))
-        XCTAssertEqual(try fixture.rig.values.rememberedValues(for: old), ["field": "new delivery"])
-        XCTAssertNil(fixture.rig.states.snapshot.value)
-        XCTAssertNotNil(fixture.rig.journal.pending)
+        XCTAssertEqual(try fixture.rig.journal.apply(fixture.plan), .committed)
+        let new = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        XCTAssertEqual(try fixture.rig.values.rememberedValues(for: new), ["field": "remembered"])
+        XCTAssertEqual(try fixture.rig.usage.useEvents(for: new).count, 1)
+        XCTAssertNoThrow(try fixture.rig.values.record(identity: new, values: ["field": "later delivery"]))
+        XCTAssertNoThrow(try fixture.rig.usage.recordUse(identity: new))
     }
 
     func testJournalAndKeyedStoreIOCanAcquireLibraryLock() throws {
@@ -331,6 +343,91 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertEqual(fixture.rig.journal.pending?.id, previousID)
         let restarted = try SyncApplyTestRig(files: fixture.rig.files, data: fixture.rig.data)
         XCTAssertEqual(try restarted.journal.replay(), .committed)
+    }
+
+    func testChangedFileBeforeAdoptionPublicationCanReplanUntouchedMigrations() throws {
+        let fixture = try preparedAdoption()
+        try fixture.rig.files.put("New local edit", at: "a.md")
+        XCTAssertEqual(try fixture.rig.journal.apply(fixture.plan), .replanAsConflict(operationID: fixture.plan.edits[0].id))
+        let next = try fixture.rig.plan([fixture.rig.replacement(body: "New local edit")])
+        XCTAssertEqual(try fixture.rig.journal.replan(next), .committed)
+        XCTAssertEqual(try fixture.rig.values.rememberedValues(for: .assigned(SyncTestValues.personalPrompt)),
+                       ["field": "remembered"])
+    }
+
+    func testRacingStateUpdateReturnsTypedConflict() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        var changed = false
+        rig.dataOperations.onOperation = { operation in
+            guard !changed, operation == "file:sync/apply.json", rig.libraryOperations.modes["a.md"] != nil else { return }
+            changed = true
+            try! rig.states.update(for: rig.binding) { $0.cursors[.user(SyncTestValues.user)] = "another writer" }
+        }
+        XCTAssertEqual(try rig.journal.apply(plan), .replanAsConflict(operationID: plan.id))
+        XCTAssertEqual(rig.states.snapshot.value?.cursors[.user(SyncTestValues.user)], "another writer")
+        XCTAssertNotNil(rig.journal.pending)
+    }
+
+    func testFileOccupyingHistoryDestinationRejectsBeforeIdentityRewrite() throws {
+        let fixture = try preparedAdoption()
+        try fixture.rig.data.put("Occupied", at: "history/" + SyncTestValues.personalPrompt.rawValue)
+        XCTAssertThrowsError(try fixture.rig.journal.apply(fixture.plan))
+        XCTAssertEqual(try fixture.rig.files.text(at: "a.md"), "Local\r\n")
+        XCTAssertNil(try fixture.rig.data.stamp(at: "sync/apply.json"))
+        XCTAssertNoThrow(try fixture.rig.library.load(at: "a.md"))
+    }
+
+    func testAdditionalDisplacedRetentionFailurePreservesAppliedEffectAndBytes() throws {
+        for flushFails in [false, true] {
+            let rig = try SyncApplyTestRig()
+            try rig.files.write(SyncApplyTestRig.bytes("Old"), at: "a.md")
+            let edit = try rig.replacement()
+            let displaced = SyncApplyTestRig.bytes("Noncooperating writer")
+            rig.libraryOperations.racingBytesAfterCheck = displaced
+            if flushFails { rig.libraryOperations.failFlushNumber = 1 }
+            rig.libraryOperations.beforePublish = { _ in rig.data.failNextWrite = true }
+            XCTAssertThrowsError(try rig.journal.apply(rig.plan([edit]))) {
+                XCTAssertEqual(($0 as? SyncFileOperationError)?.effect, .applied)
+                XCTAssertEqual(($0 as? SyncFileOperationError)?.displacedBytes, displaced)
+            }
+            XCTAssertEqual(try rig.files.read(at: "a.md"), edit.bytes)
+            XCTAssertNil(rig.states.snapshot.value)
+            XCTAssertNotNil(rig.journal.pending)
+        }
+    }
+
+    func testExternalKeyedChangeReportsRecoveryInsteadOfImpossibleConflictReplan() throws {
+        let fixture = try preparedAdoption()
+        let old = PromptIdentity(path: "a.md", id: nil)
+        fixture.rig.libraryOperations.beforePublish = { _ in
+            // Bypass ValuesStore deliberately: an external app-data edit is
+            // outside the cooperating keyed-write gate and must fail closed.
+            try SyncTestValues.write(["version": 1, "values": [try old.storageKey: ["field": "external"]]],
+                                     to: fixture.rig.data, path: "values.json")
+        }
+        XCTAssertEqual(try fixture.rig.journal.apply(fixture.plan), .recoveryRequired(operationID: fixture.plan.id))
+        XCTAssertEqual(try fixture.rig.journal.replay(), .recoveryRequired(operationID: fixture.plan.id))
+        XCTAssertEqual(try fixture.rig.values.rememberedValues(for: old), ["field": "external"])
+        XCTAssertNotNil(fixture.rig.journal.pending)
+    }
+
+    func testSharedKeyedStoresKeepEveryLiveLibraryGate() throws {
+        let fixture = try preparedAdoption()
+        fixture.rig.libraryOperations.failFlushNumber = 1
+        XCTAssertThrowsError(try fixture.rig.journal.apply(fixture.plan))
+        let other = LibraryService(library: MemoryFileStore(), data: fixture.rig.data, clock: LibraryClock(),
+            entropy: LibraryEntropy(), keyedStores: [fixture.rig.usage, fixture.rig.values])
+        XCTAssertThrowsError(try fixture.rig.values.record(identity: .assigned(SyncTestValues.device), values: ["field": "value"])) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        XCTAssertThrowsError(try fixture.rig.usage.recordUse(identity: .assigned(SyncTestValues.device))) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        fixture.rig.libraryOperations.failFlushNumber = nil
+        XCTAssertEqual(try fixture.rig.journal.replay(), .committed)
+        XCTAssertNoThrow(try fixture.rig.values.record(identity: .assigned(SyncTestValues.device), values: ["field": "value"]))
+        XCTAssertNoThrow(try other.entries())
     }
 
     private func preparedRescue() throws -> (rig: SyncApplyTestRig, plan: SyncApplyPlan) {

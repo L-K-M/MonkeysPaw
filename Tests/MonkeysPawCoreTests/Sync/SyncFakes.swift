@@ -9,6 +9,9 @@ final class MemorySyncFileOperations: SyncFileOperations {
     var failOperationNumber: Int?
     var failMode = false
     var beforePublish: ((RelativePath) throws -> Void)?
+    /// Simulate the documented noncooperating-writer window after the last
+    /// expectation check; the driver still retains the actual losing bytes.
+    var racingBytesAfterCheck: Data?
     var onOperation: ((String) -> Void)?
     private(set) var operationCount = 0
     private(set) var flushCount = 0
@@ -27,7 +30,11 @@ final class MemorySyncFileOperations: SyncFileOperations {
         try checkParents(of: path)
         let known = try allDirectories()
         guard !known.contains(path) else { throw SyncFileOperationError(.occupied) }
-        let displaced = try check(path, expecting: expecting)
+        var displaced = try check(path, expecting: expecting)
+        if let racingBytesAfterCheck, displaced != nil {
+            try fileStoreOperation { try files.write(racingBytesAfterCheck, at: path.string) }
+            displaced = racingBytesAfterCheck
+        }
         guard !failMode else { throw SyncFileOperationError(.ioFailure) }
         try fileStoreOperation { try files.write(bytes, at: path.string) }
         modes[path] = mode

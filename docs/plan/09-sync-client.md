@@ -79,8 +79,11 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   Version-1 `<data>/sync/apply.json` records the account/root, old and intended
   state, stable operation/copy IDs, exact intended and losing bytes/hashes,
   incarnation baselines and resumable identity migrations before any mutation.
-  Recovery blocks ordinary library edits until replay completes or a planner
-  resolves a typed conflict. Checked library read/hash/mutation uses the existing
+  Recovery blocks ordinary library reads and edits while identity/data may be
+  partly migrated, until replay completes or a planner resolves a typed conflict.
+  Direct usage/value writes, removals and ordinary key migrations check the same
+  recovery gate under their own store locks; in-flight writes finish before
+  preparation snapshots their store. Checked library read/hash/mutation uses the existing
   LibraryService lock; journal, state and keyed-store I/O never hold that lock.
   Publish exact server bytes, verify the result, flush files and affected
   directories, durably commit state, then durably remove the journal. Replay
@@ -92,6 +95,11 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   history, usage, values and content-bound provenance without changing ordinary
   editor identity rules. Cooperating writers are serialized; §4.6's documented
   noncooperating-writer/check-then-act limitation remains.
+  Untouched migration preparations can replan a rejected publication. A changed
+  external keyed record or partially applied identity migration instead reports
+  typed recovery-required and retains its journal; it never promises a conflict
+  replan that would discard migration. A secondary raw-retention failure preserves
+  the original applied effect and displaced bytes in its returned fixed error.
 - **Connection metadata.** `<data>/sync/account.json` is a version-1 optional
   connection: normalized server URL, user ID, username, device ID/name and a
   local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;

@@ -4,9 +4,65 @@ enum SyncKeyedStoreKind: String, Codable, Hashable { case history, usage, values
 
 protocol SyncKeyedStore {
     var syncKind: SyncKeyedStoreKind { get }
+    func bindSyncWriteGate(_ gate: SyncLibraryWriteGate)
     func prepareSyncMigration(from: PromptIdentity, to: PromptIdentity,
                               rebindingHeadTo: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration]
     func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws
+    func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool
+}
+
+/// Separate from the library lock: keyed writers check this flag under their
+/// own store lock. Writes already in progress finish before preparation can
+/// snapshot that store; new writes are refused until the journal is settled.
+final class SyncLibraryWriteGate {
+    private let lock = NSLock()
+    private var owner: UUID?
+
+    func requireEditable() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard owner == nil else { throw LibraryError.recoveryRequired }
+    }
+
+    func begin(_ id: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard owner == nil || owner == id else { throw LibraryError.recoveryRequired }
+        owner = id
+    }
+
+    func finish(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        if owner == id { owner = nil }
+    }
+
+    func replace(_ previous: UUID, with next: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard owner == previous else { throw LibraryError.recoveryRequired }
+        owner = next
+    }
+}
+
+/// Shared app-data stores may outlive several library graphs. Do not replace
+/// an older graph's active gate or retain a retired graph through its gate.
+struct SyncKeyedWriteGates {
+    private final class Reference {
+        weak var gate: SyncLibraryWriteGate?
+        init(_ gate: SyncLibraryWriteGate) { self.gate = gate }
+    }
+    private var references: [Reference] = []
+
+    mutating func bind(_ gate: SyncLibraryWriteGate) {
+        references.removeAll { $0.gate == nil }
+        if !references.contains(where: { $0.gate === gate }) { references.append(Reference(gate)) }
+    }
+
+    mutating func requireEditable() throws {
+        references.removeAll { $0.gate == nil }
+        for reference in references { try reference.gate?.requireEditable() }
+    }
 }
 
 struct SyncKeyedMigration: Codable, CustomStringConvertible, CustomReflectable {
@@ -78,6 +134,11 @@ struct SyncKeyedFileMove: Codable {
             try files.delete(at: source)
         }
         try SyncDurability.flushParents(of: source, operations: operations)
+    }
+
+    func isUnstarted(files: FileStore) throws -> Bool {
+        try SyncDurability.readIfPresent(source, files: files) == bytes
+            && SyncDurability.readIfPresent(destination, files: files) == nil
     }
 }
 
