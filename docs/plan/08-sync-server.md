@@ -110,12 +110,12 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 | Rename group | | ✗ | ✗ | ✓ | ✓ |
 | Delete group (prompts are deleted; members lose the scope) | | ✗ | ✗ | ✓ | ✓ |
 | Create groups | any user (becomes owner) | | | | ✓ |
-| Create or disable users, reset passwords | | | | | ✓ |
+| Create, disable or enable users, reset passwords, change account metadata or kind | | | | | ✓ |
 
 - **No read endpoint for admins.** Admins have no endpoint that reads a
   prompt directly, and cannot grant themselves membership (403).
-  - Every admin or owner action on accounts and memberships is written to
-    `audit_events`.
+  - Every successful admin or owner change to accounts and memberships is
+    written to `audit_events`.
   - The plan is honest about the limit. An admin who can reset passwords,
     and the operator who owns the database, can ultimately read everything.
     SECURITY.md says so: the permission model protects members from each
@@ -124,8 +124,28 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 - **Viewers writing get 403.**
 - **A group always keeps at least one owner.** Removing or demoting the last
   owner is refused.
+- **At least one active admin remains.** Disabling or demoting the last
+  enabled admin returns `403 forbidden`. Disabled admins do not count. The
+  service checks for another enabled admin inside the same write transaction
+  as the update, so concurrent removals cannot leave HTTP administration
+  without an admin.
 - **Disabled users.** All of their tokens fail with 401. Their prompts and
-  memberships are kept.
+  memberships are kept. Disable and admin password reset revoke all target
+  devices, including the caller's device on a self-reset. Enabling requires a
+  fresh login; it does not reactivate revoked devices. Ordinary members receive
+  403 for account administration, regardless of their group role. Services
+  recheck the enabled admin and calling device inside the write transaction.
+- **Account audit.** Stable actions are `user.create`, `user.update`,
+  `user.disable`, `user.enable` and `user.reset_password`. Each committed account
+  change records only an event id, actor and target ids, and UTC time. A combined
+  patch records its metadata, password and enable/disable actions in the same
+  transaction as the account and device changes. Unchanged display name,
+  account kind or enabled state produces no audit row or success log. Repeated
+  disable keeps its original time. A password reset changes the salted hash
+  and is audited even when the plaintext password is unchanged. Rejected
+  requests write no audit rows; their safe diagnostic uses §12 logging.
+  Audit failure rolls back every mutation. A nullable actor represents the
+  explicit CLI operator (§19 B12); HTTP always records the authenticated user.
 
 ### 8.3 API (v1, JSON, `Authorization: Bearer <device token>`)
 
@@ -161,16 +181,18 @@ Write responses:
 | Invalid content or path | `422 {issues}` | Core validator errors only. Warnings (e.g. declared-but-unused fields) are returned with a `200` and never block a push. |
 | Malformed request/cursor | `400 {code: "malformed_request"}` | Invalid JSON shape or server cursor grammar (B3). |
 | Missing/invalid/revoked auth | `401 {code: "unauthorized"}` | Disabled users also receive 401. |
-| Denied visible write | `403 {code: "forbidden"}` | Includes viewer writes. |
+| Denied visible write | `403 {code: "forbidden"}` | Includes viewer writes and disabling or demoting the last active admin. |
 | Missing or invisible resource | `404 {code: "not_found"}` | No inaccessible identity or prompt data is returned. |
 | Request envelope overflow | `413 {code: "envelope_too_large"}` | HTTP JSON bytes exceed 2 MiB (B3). |
 | Login locked | `429 {code: "rate_limited"}` | Required `Retry-After` header: integer seconds, 1–900 (B3/B8). |
 | Internal failure | `500 {code: "internal_error"}` | Sanitized; no underlying error text (B3). |
 | Expired/restarted frozen snapshot | `409 {code: "snapshot_expired", scopes: [scope_key]}` | The client discards the entire incomplete collected pull and restarts affected scopes without their cursors (B17). |
 
-Unexpected API failures log one fixed server-side message with only the error
-type as diagnostic metadata. Error descriptions and request data are never
-logged; the client keeps the generic `internal_error` envelope.
+Each failed API request logs one fixed server-side message. Unexpected failures
+use error level and include only the error's type name in `fields.error_type`
+as diagnostic metadata; expected failures use debug level. Error descriptions
+and request data are never logged; the client keeps the generic `internal_error`
+envelope for unexpected failures.
 
 Request and response types live in `MonkeysPawCore/SyncAPI` and are shared by
 both sides. Their complete, data-only field descriptions and strict Codable
@@ -199,7 +221,10 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   defaults to member, and returns user metadata. Admin patch takes a nonempty
   subset of `{display_name, password, disabled, account_kind}`. Omitted values
   are unchanged; `display_name: null` clears it; password resets and disable
-  revoke devices per B9. Other optional fields reject explicit null.
+  revoke every target device per B9. Patch returns the updated user metadata;
+  enable preserves prompts and memberships and requires a fresh login.
+  Other optional fields reject explicit null. Duplicate canonical usernames
+  return the existing `400 malformed_request` envelope; no identity is exposed.
 - Group create/rename take `{name}` and return
   `{id, name, created_by, created_at}`; delete returns `{}`. Membership PUT
   takes `{role}` and explicitly adds or changes an existing user. It returns

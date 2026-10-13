@@ -12,8 +12,10 @@ public func buildApplication(configuration: ServerConfiguration, database: Serve
 }
 
 func makeApplication(
-    configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil
+    configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil,
+    admin: AdminUserService? = nil, logger suppliedLogger: Logger? = nil
 ) -> some ApplicationProtocol {
+    let logger = suppliedLogger ?? ServerLogging.logger(level: configuration.logLevel)
     let router = Router(context: ServerRequestContext.self)
     router.add(middleware: APIErrorMiddleware())
 
@@ -24,12 +26,13 @@ func makeApplication(
     if let accounts, let sessions {
         LoginRoutes(login: .init(accounts: accounts, sessions: sessions), trustedProxies: configuration.trustedProxies).add(to: router)
         AccountRoutes(accounts: accounts, sessions: sessions).add(to: router)
+        AdminUserRoutes(admin: admin ?? .init(accounts: accounts, logger: logger), sessions: sessions).add(to: router)
     }
 
     return Application(
         router: router,
         configuration: .init(address: .hostname(configuration.httpHost, port: configuration.httpPort)),
-        logger: Logger(label: "monkeyspaw-server")
+        logger: logger
     )
 }
 

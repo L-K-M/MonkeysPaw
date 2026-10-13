@@ -164,6 +164,20 @@ struct ServerDatabaseLifecycleTests {
         }
     }
 
+    @Test(arguments: ["MONKEYSPAW_HTTP_PORT", "MONKEYSPAW_TRUSTED_PROXIES"])
+    func healthcheckConfigurationFailureHasSafeActionableJSON(key: String) async throws {
+        let secret = "s8-fix1-healthcheck-secret /private/path password=secret"
+        let result = try await Self.runCLI("healthcheck", dataDirectory: FileManager.default.temporaryDirectory,
+            overrides: ["MONKEYSPAW_HTTP_PORT": key == "MONKEYSPAW_HTTP_PORT" ? secret : "8080",
+                        "MONKEYSPAW_TRUSTED_PROXIES": key == "MONKEYSPAW_TRUSTED_PROXIES" ? secret : "",
+                        "MONKEYSPAW_LOG_LEVEL": "trace"])
+        #expect(result.exitedNormally && result.status == 1)
+        #expect(!result.error.contains(secret) && !result.error.contains("/private/path"))
+        let event = try JSONDecoder().decode(CapturedServerLog.self, from: Data(result.error.utf8))
+        #expect(event.level == "error" && event.fields == ["error_type": "ConfigurationError"])
+        #expect(event.message == "Healthcheck configuration invalid; check MONKEYSPAW_HTTP_PORT and MONKEYSPAW_TRUSTED_PROXIES")
+    }
+
     struct CLIResult: Sendable {
         let status: Int32
         let exitedNormally: Bool
@@ -196,8 +210,9 @@ struct ServerDatabaseLifecycleTests {
                 }
                 environment.merge(overrides) { _, supplied in supplied }
                 process.environment = environment
-                process.standardOutput = FileHandle.nullDevice
                 let errors = Pipe()
+                // One drained pipe captures both JSON stdout and command diagnostics.
+                process.standardOutput = errors
                 process.standardError = errors
                 do {
                     try process.run()

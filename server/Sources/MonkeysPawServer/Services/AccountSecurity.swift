@@ -6,6 +6,7 @@ import NIOPosix
 
 enum AccountError: Error, Equatable {
     case unauthorized
+    case forbidden
     case notFound
     case malformedRequest
 }

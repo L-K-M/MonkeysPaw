@@ -27,11 +27,40 @@ struct ServerAPIErrorMiddlewareTests {
         #expect(errors.count == 1)
         let entry = try #require(errors.first)
         #expect(entry.error == nil)
-        #expect(entry.message.description == "Unexpected API error")
-        #expect(entry.metadata?["error_type"] == .string(String(reflecting: SecretBearingError.self)))
+        #expect(entry.message.description == "API request failed")
+        #expect(entry.metadata?["code"] == .string("internal_error"))
+        #expect(entry.metadata?["error_type"] == .string(String(describing: SecretBearingError.self)))
         let logged = entry.message.description + String(describing: entry.metadata)
         for secret in ["private request data", "/secret/path", "token", "SELECT", "password_hash"] {
             #expect(!logged.contains(secret))
+        }
+    }
+
+    @Test func unexpectedErrorsReachJSONSinkWithOnlyTheTypeName() async throws {
+        let capture = CapturedServerLogs()
+        let logger = ServerLogging.makeLogger(level: .trace, sink: capture.write)
+        let router = Router(context: ServerRequestContext.self)
+        router.add(middleware: APIErrorMiddleware())
+        let secret = "s8-fix1-private-error /secret/path token SELECT password_hash FROM users"
+        router.get("/unexpected") { _, _ async throws -> Response in
+            throw SecretBearingError(details: secret)
+        }
+        try await Application(router: router, logger: logger).test(.router) { client in
+            try await client.execute(uri: "/unexpected", method: .get) { response in
+                #expect(response.status == .internalServerError)
+                let envelope = try JSONDecoder().decode(SyncAPI.ErrorResponse.self, from: Data(response.body.readableBytesView))
+                #expect(envelope == .failure(.internalError))
+            }
+        }
+        let failures = try capture.events().filter { $0.message == "API request failed" }
+        #expect(failures.count == 1)
+        let failure = try #require(failures.first)
+        #expect(failure.level == "error")
+        #expect(failure.fields == ["code": "internal_error", "status": "500", "method": "GET",
+                                   "error_type": "SecretBearingError"])
+        let text = String(decoding: capture.snapshot(), as: UTF8.self)
+        for value in [secret, "/secret/path", "token", "SELECT", "password_hash", "unknown context"] {
+            #expect(!text.contains(value))
         }
     }
 
