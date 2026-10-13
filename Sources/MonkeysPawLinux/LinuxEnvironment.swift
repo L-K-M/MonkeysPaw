@@ -430,7 +430,7 @@ final class LinuxEnvironment {
             case .setup: self.showSetup()
             case .libraryFolder, .seedOffer, .tour: self.showOnboarding()
             case .complete:
-                self.panel.prepareToShow()
+                self.panel.cancelPendingBlur()
                 self.pickerModel.open()
             }
         }
@@ -592,7 +592,8 @@ final class LinuxEnvironment {
         if panel.isActiveAndVisible {
             pickerModel.dismiss()
         } else {
-            panel.prepareToShow(activationToken: origin == .shortcut ? hotkey.consumeActivationToken() : nil)
+            panel.cancelPendingBlur()
+            panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken() : nil)
             pickerModel.open()
         }
     }

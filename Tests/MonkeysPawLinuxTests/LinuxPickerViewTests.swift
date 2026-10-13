@@ -271,12 +271,15 @@ final class LinuxPickerViewTests: XCTestCase {
         var delayedPresentation = false
         picker.onChange = { [weak picker] in
             render?()
-            guard !delayedPresentation, picker?.state == .picker else { return }
+            guard !delayedPresentation else { return }
+            XCTAssertEqual(picker?.state, .picker, "Blur fired before the new show was queued.")
+            guard picker?.state == .picker else { return }
             delayedPresentation = true
             // The show is a GLib idle. Let the older blur timeout become ready
             // before the next iteration, as when the app loses CPU time.
             Thread.sleep(forTimeInterval: Limits.blurHideDelay.timeInterval + 0.1)
         }
+        XCTAssertEqual(picker.state, .picker, "Blur expired before the presentation request.")
         request()
         XCTAssertTrue(GTKTestSupport.spin { delayedPresentation })
         var drained = false
