@@ -122,6 +122,67 @@ final class LinuxLibraryEditorTests: XCTestCase {
         }
     }
 
+    func testFileCommandsFollowSelectionAndDeleteExplicitlyClearsIt() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let editor = environment.editorModel
+        let original = try XCTUnwrap(editor.state.prompt)
+        editor.rename(to: "renamed.md")
+        XCTAssertTrue(GTKTestSupport.spin {
+            editor.state.prompt?.relativePath.string == "renamed.md"
+                && self.environment.libraryBrowserModel.selection == editor.state.prompt
+                && editor.state.status != .commandRunning
+        })
+        XCTAssertNotEqual(editor.state.prompt?.identity, original.identity, "An unassigned path hash follows the committed rename")
+        XCTAssertNil(try files.stamp(at: "a.md"))
+        editor.move(to: "nested/folder")
+        let path = "nested/folder/renamed.md"
+        XCTAssertTrue(GTKTestSupport.spin {
+            editor.state.prompt?.relativePath.string == path
+                && self.environment.libraryBrowserModel.selection == editor.state.prompt
+                && editor.state.status != .commandRunning
+        })
+        let bytes = try files.read(at: path)
+        XCTAssertEqual(bytes, Data("Original".utf8))
+        editor.delete()
+        XCTAssertTrue(GTKTestSupport.spin {
+            editor.state.prompt == nil && self.environment.libraryBrowserModel.selection == nil
+                && self.environment.libraryBrowserModel.rows.isEmpty
+        })
+        drain()
+        XCTAssertEqual(contents(try widget("library-source", in: window)), "")
+        XCTAssertNil(try files.stamp(at: path))
+        try files.write(bytes, at: path)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.rows.count == 1 })
+        drain()
+        XCTAssertNil(environment.libraryBrowserModel.selection, "Restoration must not undo the editor's explicit Delete signal")
+        XCTAssertNil(editor.state.prompt)
+    }
+
+    func testDirtyFileCommandDecisionsExplainAndCancelWithoutWriting() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        let editor = environment.editorModel
+        let commands: [(EditorDiscardAction, (EditorModel) -> Void)] = [
+            (.rename, { $0.rename(to: "renamed.md") }),
+            (.move, { $0.move(to: "folder") }),
+            (.delete, { $0.delete() })]
+        for (action, command) in commands {
+            command(editor)
+            XCTAssertTrue(GTKTestSupport.spin { editor.state.pendingDecision?.action == action && self.dialog != nil })
+            let alert = try XCTUnwrap(dialog)
+            XCTAssertEqual(label(try widget("library-dialog-message", in: alert)),
+                "Save or discard your edits before continuing. Cancel keeps your draft.")
+            try respond(.decision(.cancel))
+            XCTAssertNil(editor.state.pendingDecision)
+            XCTAssertEqual(editor.state.source, "Draft")
+            XCTAssertEqual(environment.libraryBrowserModel.selection, editor.state.prompt)
+            XCTAssertEqual(try files.read(at: "a.md"), Data("Original".utf8))
+            XCTAssertEqual(try files.listFiles().map(\.relativePath), ["a.md"])
+        }
+    }
+
     func testModifiedConflictOffersEveryChoiceAndPreservesOriginalOnCopy() throws {
         for (index, choice) in [EditorConflictChoice.keepMine, .takeTheirs, .saveAsCopy].enumerated() {
             let path = "modified-\(index).md"
@@ -179,6 +240,12 @@ final class LinuxLibraryEditorTests: XCTestCase {
                 } else {
                     XCTAssertNil(try files.stamp(at: path))
                     XCTAssertNil(environment.editorModel.state.prompt)
+                    try files.write(Data("Original".utf8), at: path)
+                    XCTAssertTrue(GTKTestSupport.spin {
+                        self.environment.libraryBrowserModel.selection == original
+                            && self.environment.editorModel.state.prompt == original
+                            && self.environment.editorModel.state.source == "Original"
+                    }, "External deletion and discard retain the selection key for restoration (§11.7)")
                 }
             }
         }
@@ -259,9 +326,13 @@ final class LinuxLibraryEditorTests: XCTestCase {
 
     func testNativeCloseCancelDiscardAndSamePathReopenRetireUndo() throws {
         try files.write(Data("Original".utf8), at: "a.md")
+        try files.write(Data("Other".utf8), at: "folder/b.md")
         let window = try open("a.md")
+        let selected = environment.libraryBrowserModel.selection
         let source = try widget("library-source", in: window)
         replace(source, with: "Draft")
+        environment.libraryBrowserModel.selectSection(.folder(RelativePath("folder")))
+        environment.libraryBrowserModel.setFilter("no matching row")
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
@@ -273,7 +344,17 @@ final class LinuxLibraryEditorTests: XCTestCase {
         try respond(.decision(.discard))
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
         XCTAssertNil(environment.editorModel.state.prompt)
-        XCTAssertEqual(try open("a.md"), window)
+        XCTAssertEqual(environment.libraryBrowserModel.selection, selected)
+        XCTAssertEqual(environment.libraryBrowserModel.selectedSection, .folder(RelativePath("folder")))
+        XCTAssertEqual(environment.libraryBrowserModel.filter, "no matching row")
+        environment.showLibrary()
+        XCTAssertTrue(GTKTestSupport.spin {
+            gtk_widget_get_visible(window) != 0 && self.environment.editorModel.state.prompt == selected
+                && self.environment.editorModel.state.source == "Original"
+        })
+        drain()
+        XCTAssertEqual(environment.libraryBrowserModel.selectedSection, .folder(RelativePath("folder")))
+        XCTAssertEqual(environment.libraryBrowserModel.filter, "no matching row")
         XCTAssertEqual(contents(source), "Original")
         XCTAssertEqual(gtk_text_buffer_get_can_undo(buffer(source)), 0)
     }
@@ -604,17 +685,97 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(PromptCodec.parseFile(try files.read(at: "a.md"), filename: "a.md").body, "Repaired")
     }
 
-    func testUnwritableLibraryKeepsCloseAndDraftPendingUntilSaveRetry() throws {
-        guard geteuid() != 0 else { throw XCTSkip("Root bypasses filesystem permissions; CI runs this unprivileged.") }
+    func testCommandRunningDisablesRevertAndQueuesQuitUntilCompletion() throws {
+        holdWork()
         try files.write(Data("Original".utf8), at: "a.md")
         let window = try open("a.md")
-        replace(try widget("library-source", in: window), with: "Retry draft")
-        let root = LinuxPaths(environment: tools.environment).documentsDirectory.appendingPathComponent("MonkeysPaw")
-        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
-        defer {
-            do { try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path) }
-            catch { XCTFail("Could not restore library permissions for cleanup: \(error)") }
+        let editor = environment.editorModel
+        editor.rename(to: "renamed.md")
+        XCTAssertTrue(GTKTestSupport.spin { editor.state.status == .commandRunning })
+        drain()
+        XCTAssertEqual(label(try widget("library-editor-status", in: window)), "Updating the file…")
+        XCTAssertEqual(gtk_text_view_get_editable(mp_text_view(try widget("library-source", in: window))), 0)
+        for name in ["library-save", "library-save-copy", "library-revert"] {
+            XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0)
         }
+        quit()
+        quit()
+        drain()
+        XCTAssertEqual(quitCount, 0)
+        XCTAssertEqual(editor.state.queuedActions, [.quit])
+        XCTAssertNil(dialog)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.quitCount == 1 })
+        XCTAssertEqual(editor.state.prompt?.relativePath.string, "renamed.md")
+        drain()
+        XCTAssertNotEqual(gtk_widget_get_sensitive(try widget("library-revert", in: window)), 0)
+    }
+
+    func testSettingsRefusesCommandRunningUntilCompletion() throws {
+        holdWork()
+        try files.write(Data("Original".utf8), at: "a.md")
+        _ = try open("a.md")
+        let editor = environment.editorModel
+        let replacement = tools.directory.appendingPathComponent("Second")
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        editor.move(to: "folder")
+        XCTAssertTrue(GTKTestSupport.spin { editor.state.status == .commandRunning })
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .editorBusy)
+        XCTAssertTrue(environment.editorModel === editor)
+        guard environment.editorModel === editor else { return }
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.window(titled: LinuxStrings.settings) != nil })
+        let settings = try XCTUnwrap(self.window(titled: LinuxStrings.settings))
+        environment.generalSettingsModel.chooseFolder(replacement.path)
+        XCTAssertTrue(GTKTestSupport.spin {
+            (try? self.widget("settings-library-message", in: settings)).map(self.label) == LinuxEditorStrings.librarySwitchRefused
+        })
+        XCTAssertTrue(environment.editorModel === editor)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { editor.state.status == .saved })
+        environment.showSettings()
+        drain()
+        XCTAssertEqual(gtk_widget_get_visible(try widget("settings-library-message", in: settings)), 0)
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .switched)
+    }
+
+    func testCommandRunningHoldsConflictDialogUntilCompletion() throws {
+        holdWork()
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let editor = environment.editorModel
+        let source = try widget("library-source", in: window)
+        replace(source, with: "Mine")
+        try files.write(Data("Theirs".utf8), at: "a.md")
+        XCTAssertTrue(GTKTestSupport.spin { editor.state.conflict?.isLoading == true })
+        heldWork?.runAll()
+        try waitForConflict(.modified)
+        try respond(.dismissConflict)
+        replace(source, with: "Original")
+        XCTAssertFalse(editor.state.isDirty)
+        try click("library-save", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        editor.rename(to: "renamed.md")
+        XCTAssertTrue(GTKTestSupport.spin { editor.state.status == .commandRunning })
+        drain()
+        XCTAssertNil(dialog, "Conflict choices must wait for the stamped command reply")
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { editor.state.status != .commandRunning && editor.state.conflict?.isLoading == true })
+        XCTAssertNil(dialog)
+        heldWork?.runAll()
+        try waitForConflict(.modified)
+        XCTAssertEqual(editor.state.conflict?.theirsSource, "Theirs")
+        XCTAssertNil(try files.stamp(at: "renamed.md"))
+    }
+
+    func testBlockedHistoryKeepsCloseAndDraftPendingUntilSaveRetry() throws {
+        let original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal"
+        try files.write(Data(original.utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Retry draft")
+        // A file blocks history's parent directory even when CI runs as root.
+        let data = try RootedFileStore(root: LinuxPaths(environment: tools.environment).dataDirectory)
+        try data.write(Data("Blocked".utf8), at: "history")
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
         try respond(.decision(.save))
@@ -626,8 +787,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertTrue(environment.editorModel.state.isDirty)
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
         XCTAssertEqual(environment.editorModel.state.source, "Retry draft")
-        XCTAssertEqual(try files.read(at: "a.md"), Data("Original".utf8))
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        XCTAssertEqual(try files.read(at: "a.md"), Data(original.utf8))
+        try data.delete(at: "history")
         try respond(.decision(.save))
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
         XCTAssertEqual(PromptCodec.parseFile(try files.read(at: "a.md"), filename: "a.md").body, "Retry draft")

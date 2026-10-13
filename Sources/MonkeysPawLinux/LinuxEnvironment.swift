@@ -490,7 +490,8 @@ final class LinuxEnvironment {
 
     private func editorHasUnsavedWork(_ state: EditorState) -> Bool {
         // Match Core's discard guard: a clean conflict has no unsaved draft.
-        state.isDirty || state.status == .saving || state.pendingDecision != nil || !state.queuedActions.isEmpty
+        state.isDirty || state.status == .saving || state.status == .commandRunning
+            || state.pendingDecision != nil || !state.queuedActions.isEmpty
     }
 
     private var librarySwitchMessage: String? {

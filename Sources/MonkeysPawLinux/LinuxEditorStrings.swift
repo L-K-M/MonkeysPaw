@@ -36,6 +36,7 @@ enum LinuxEditorStrings {
             } else { message = state.isDirty ? "Unsaved edits" : "" }
         case .loading: message = "Loading…"
         case .saving: message = "Saving…"
+        case .commandRunning: message = "Updating the file…"
         case .saved: message = state.isDirty ? "Saved; newer edits are unsaved." : "Saved"
         case .failed(let error): message = failure(error)
         }

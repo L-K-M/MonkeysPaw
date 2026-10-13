@@ -187,9 +187,11 @@ for later M3 slices; the editor checks follow below.
 
 Run these on X11 and GNOME/KDE Wayland with GTK 4.8 or newer. Record the
 commit, date, desktop/compositor, GTK, Orca and input-method versions.
-Private-bus/Xvfb tests exercise saves, guards and native controls; these
-real desktop checks remain owner-run. History and rename/move/delete
-controls belong to a later slice.
+Private-bus/Xvfb tests exercise saves, guards and native controls, including
+Core file-command busy states and selection following; these real desktop
+checks remain owner-run. History and rename/move/delete controls belong to
+a later slice. While a Core command runs, the editor shows "Updating the
+file…", disables Revert and holds conflict/discard dialogs until completion.
 
 | Check | Expected result | Status |
 |---|---|---|
@@ -198,9 +200,9 @@ controls belong to a later slice.
 | Save, Ctrl+S, Revert and Save as Copy | Save writes disk bytes and shows saving/saved or a typed failure while retaining failed drafts. Revert asks before discarding edits. Copy creates a distinct file/id and selects it without replacing the original. History-maintenance failures report a committed save with a warning. | NOT RUN |
 | Read-only prompts | Future format, non-UTF-8 and oversized files show the specific reason and disable Edit, Save and Save as Copy. | NOT RUN |
 | Modified conflict and Cancel | Edit, then save the file externally. The modal dialog offers Keep Mine, Take Theirs and Save Mine as Copy. Check each choice on separate files. Native close/Escape/Cancel keeps the conflict and draft; repair invalid text and Save reopens the choices. | NOT RUN |
-| Deleted conflict and Cancel | Delete a dirty file externally. The draft remains visible after its browser row disappears. Keep Mine recreates it; Save Mine as Copy creates a distinct file; Discard closes the draft. Cancel retains the conflict and draft. | NOT RUN |
-| Selection, window close and app quit | Dirty selection changes, native close, Ctrl+W and the tray/GApplication quit action wait for Save/Discard/Cancel. Cancel preserves the current selection/window/draft; a failed save keeps the decision pending. Close/quit during a save wait for completion and any newer draft. | NOT RUN |
-| Settings folder switch | While dirty, saving or awaiting a decision, choosing another folder or Use Default is refused with the Library editor message and preserves the graph. Save/discard first, then switch; no old editor publication or draft leaks into the replacement. | NOT RUN |
+| Deleted conflict and Cancel | Delete a dirty file externally. The draft remains visible after its browser row disappears. Keep Mine recreates it; Save Mine as Copy creates a distinct file; Discard closes the draft. Cancel retains the conflict and draft. External deletion retains the selection key, including after Discard; restoring the file recovers its selection. | NOT RUN |
+| Selection, window close and app quit | Dirty selection changes, native close, Ctrl+W and the tray/GApplication quit action wait for Save/Discard/Cancel. Cancel preserves the current selection/window/draft; a failed save keeps the decision pending. Closing retains the selection, filter and section for reopening. Close/quit during a save or file command wait for completion and any newer draft. | NOT RUN |
+| Settings folder switch | While dirty, saving, running a file command or awaiting a decision, choosing another folder or Use Default is refused with the Library editor message and preserves the graph. Save/discard or wait for completion, then switch; no old editor publication or draft leaks into the replacement. | NOT RUN |
 | Picker Edit and no-match creation | Ctrl+Return/Edit and no-match Create dismiss the picker and open the prompt in Library's Edit tab. A target hidden by the Library filter/section is revealed only after the discard guard allows it. Open Folder still reveals the active folder. | NOT RUN |
 | Real IBus/Fcitx editor composition | Compose with a real conversion engine. Return commits and Escape cancels through the input method without saving or closing. Model refreshes preserve active preedit; committed characters appear once and update validation/preview. Switch/reopen the session and confirm no old composition survives. | NOT RUN |
 | Orca and visible focus | Tab/Shift+Tab reach source, tabs, actions, validation, Fields and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |

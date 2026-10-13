@@ -21,7 +21,8 @@ enum LinuxEditorDialogState: Equatable {
             switch decision.action {
             case .quit: text = "Save or discard your edits before quitting. Cancel keeps Library open."
             case .revert: text = "Save or discard your edits before reloading the prompt from disk."
-            default: text = "Save or discard your edits before continuing. Cancel keeps your draft."
+            case .open, .close, .rename, .move, .delete, .librarySwitch:
+                text = "Save or discard your edits before continuing. Cancel keeps your draft."
             }
             return text + failureMessage(status)
         case .conflict(let conflict, let status):

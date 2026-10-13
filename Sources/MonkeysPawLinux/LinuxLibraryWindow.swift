@@ -393,7 +393,8 @@ final class LinuxLibraryWindow {
         }
         gtk_widget_set_sensitive(save, available && state.canSave ? 1 : 0)
         gtk_widget_set_sensitive(saveCopy, available && state.canSave ? 1 : 0)
-        gtk_widget_set_sensitive(revert, available && state.prompt != nil && state.status != .loading && state.status != .saving ? 1 : 0)
+        gtk_widget_set_sensitive(revert, available && state.prompt != nil && state.status != .loading
+            && state.status != .saving && state.status != .commandRunning ? 1 : 0)
         gtk_label_set_text(mp_label(editorStatus), LinuxEditorStrings.status(state))
     }
 
@@ -408,14 +409,17 @@ final class LinuxLibraryWindow {
     }
 
     private func updateDialog() {
-        guard isVisible, let editor else { return }
+        guard let editor else { return }
         let state = editor.state
-        if state.conflict == nil || state.status == .saving { dismissedConflict = nil }
         let awaitingConflict = state.conflict.map {
             $0.kind == .modified && $0.theirsSource == nil && $0.readOnlyReason == nil && $0.failure == nil
         } ?? false
+        let awaitingReply = state.status == .saving || state.status == .loading || state.status == .commandRunning
+            || state.conflict?.isLoading == true || awaitingConflict
+        if state.conflict == nil || awaitingReply { dismissedConflict = nil }
+        guard isVisible else { return }
         let desired: LinuxEditorDialogState?
-        if state.status == .saving || state.status == .loading || state.conflict?.isLoading == true || awaitingConflict { desired = nil }
+        if awaitingReply { desired = nil }
         else if let conflict = state.conflict, conflict != dismissedConflict { desired = .conflict(conflict, status: state.status) }
         else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status) }
         else { desired = nil }
