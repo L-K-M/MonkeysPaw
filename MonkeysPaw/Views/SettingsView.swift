@@ -9,6 +9,7 @@ final class SettingsViewState: ObservableObject {
     @Published private(set) var shortcutInstructions: String?
     @Published private(set) var captureError: ShortcutRebindError?
     @Published private(set) var rememberedValues: RememberedValuesSettingsModel.State
+    @Published private(set) var assistant: AssistantSettingsViewState? = nil
     @Published var isChoosingFolder = false
     let repeatLast: ShortcutsSettingsModel.ActionState
     let generalModel: GeneralSettingsModel
@@ -95,6 +96,15 @@ final class SettingsViewState: ObservableObject {
         shortcutsModel.refresh()
     }
 
+    func openAssistant(_ model: AssistantSettingsModel, mainThread: MainThread) {
+        assistant = AssistantSettingsViewState(model: model, mainThread: mainThread)
+    }
+
+    func retireAssistant() {
+        assistant?.retire()
+        assistant = nil
+    }
+
     func chooseFolder() { onChooseFolder?() }
     func useDefaultFolder() { generalModel.useDefaultFolder() }
     func revealFolder() { generalModel.revealFolder() }
@@ -120,6 +130,9 @@ struct SettingsView: View {
         TabView {
             general.tabItem { Text(Strings.generalTab) }
             shortcuts.tabItem { Text(Strings.shortcutsTab) }
+            if let assistant = presentation.assistant {
+                SettingsAssistantView(presentation: assistant).tabItem { Text(SettingsAssistantStrings.tab) }
+            }
         }
     }
 

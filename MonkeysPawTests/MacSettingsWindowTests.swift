@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import MonkeysPawCore
+import SwiftUI
 import XCTest
 @testable import MonkeysPaw
 
@@ -51,11 +52,14 @@ final class MacSettingsWindowTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func start() throws {
+    private func start(backgroundWork: BackgroundWork = DispatchBackgroundWork(),
+                       httpTransport: HTTPTransporting = URLSessionHTTPTransport(),
+                       secrets: SecretStore? = nil) throws {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data,
             recordLegacySetup: { [weak self] in self?.legacySetupWrites += 1 }, launchURI: { _ in
                 XCTFail("Settings must use its folder reveal seam")
-            }, revealLibrary: { [weak self] in self?.revealed.append($0) }, folderChooser: { [weak self] _, done in
+            }, backgroundWork: backgroundWork, httpTransport: httpTransport, secrets: secrets,
+            revealLibrary: { [weak self] in self?.revealed.append($0) }, folderChooser: { [weak self] _, done in
                 self?.chooserCompletions.append(done)
                 return { [weak self] in self?.chooserCancellations += 1 }
             }, setActivationPolicy: { [weak self] policy in
@@ -117,6 +121,150 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertTrue(panel.isVisible)
         picker.dismiss()
         XCTAssertFalse(panel.isVisible)
+    }
+
+    func testProductionSettingsCompositionCreatesAssistantTabWithoutNetwork() throws {
+        let files = try RootedFileStore(root: data)
+        let id = ProviderProfileID()
+        let profile = try ProviderProfile(id: id, displayName: "Local Ollama", kind: .openaiCompatible,
+            baseURL: "http://localhost:11434/v1", modelID: "manual-model")
+        let object: [String: Any] = ["version": ProviderSettings.currentVersion, "selectedProfileID": id.rawValue,
+            "profiles": [["id": id.rawValue, "displayName": profile.displayName, "kind": profile.kind.rawValue,
+                          "baseURL": profile.baseURL.absoluteString, "modelID": profile.modelID,
+                          "secretReference": NSNull()]]]
+        let bytes = try JSONSerialization.data(withJSONObject: object)
+        try files.write(bytes, at: "provider-settings.json")
+        let work = SettingsAssistantWork()
+        try start(backgroundWork: work, httpTransport: SettingsUnexpectedHTTPTransport())
+        let controller = try settings()
+        XCTAssertNotNil(delegate.providerSettingsService)
+        XCTAssertNil(controller.presentation.assistant, "The Assistant model is created only when Settings opens")
+
+        delegate.showSettings()
+        let hosting = try XCTUnwrap(controller.window?.contentView as? NSHostingView<SettingsView>)
+        XCTAssertTrue(hosting.rootView.presentation === controller.presentation)
+        let assistant = try XCTUnwrap(hosting.rootView.presentation.assistant,
+            "Production Settings must supply the model that renders its Assistant tab")
+        work.drain()
+        XCTAssertEqual(assistant.state.profiles, [profile])
+        XCTAssertEqual(assistant.state.draft?.id, id)
+        XCTAssertEqual(assistant.state.keyStorage, .none)
+        XCTAssertNil(assistant.state.operation)
+        XCTAssertFalse(assistant.state.isTesting)
+        XCTAssertNil(assistant.state.testResult)
+        XCTAssertEqual(try files.read(at: "provider-settings.json"), bytes)
+
+        assistant.renameProfile("Unsaved edit")
+        delegate.showSettings()
+        work.drain()
+        XCTAssertTrue(controller.presentation.assistant === assistant)
+        XCTAssertEqual(assistant.state.draft?.displayName, "Unsaved edit")
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        XCTAssertNil(controller.presentation.assistant)
+        XCTAssertFalse(assistant.canChangeProfiles)
+    }
+
+    func testHostedCompositionReadsSavedTierOnlyThroughInjectedSecrets() throws {
+        let secrets = SettingsAssistantSecrets()
+        let profile = try installSavedSecretProfile(secrets: secrets)
+        let reads = secrets.reads
+        let work = SettingsAssistantWork()
+        try start(backgroundWork: work, httpTransport: SettingsUnexpectedHTTPTransport(), secrets: secrets)
+        delegate.showSettings()
+        let assistant = try XCTUnwrap(settings().presentation.assistant)
+        work.drain()
+        XCTAssertEqual(assistant.state.draft?.id, profile.id)
+        XCTAssertEqual(assistant.state.keyStorage, .saved(.keychain))
+        XCTAssertGreaterThan(secrets.reads, reads, "Saved-tier reads must use the injected store")
+        XCTAssertFalse(assistant.state.isTesting)
+        XCTAssertNil(assistant.state.testResult)
+    }
+
+    func testHostedCompositionWithoutInjectedSecretsReportsUnavailable() throws {
+        let secrets = SettingsAssistantSecrets()
+        let profile = try installSavedSecretProfile(secrets: secrets)
+        let reads = secrets.reads
+        let work = SettingsAssistantWork()
+        try start(backgroundWork: work, httpTransport: SettingsUnexpectedHTTPTransport())
+        delegate.showSettings()
+        let assistant = try XCTUnwrap(settings().presentation.assistant)
+        work.drain()
+        XCTAssertEqual(assistant.state.draft?.id, profile.id)
+        XCTAssertEqual(assistant.state.keyStorage, .failed(.secret(.unavailable)))
+        XCTAssertEqual(secrets.reads, reads)
+        XCTAssertFalse(assistant.errorMessages.isEmpty)
+    }
+
+    private func installSavedSecretProfile(secrets: SecretStore) throws -> ProviderDraft {
+        let files = try RootedFileStore(root: data)
+        let settings = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: secrets)
+        let profile = ProviderDraft(displayName: "Isolated", key: .replace(SecretValue("test-only-key")))
+        try settings.save(profile)
+        return profile
+    }
+
+    func testAssistantFactoryIsLazyAndReopenPreservesModelUntilWindowTeardown() throws {
+        try start()
+        let existing = try settings().presentation
+        let main = DispatchMainThread()
+        let work = SettingsAssistantWork()
+        var creations = 0
+        weak var liveModel: AssistantSettingsModel?
+        var controller: SettingsWindowController? = SettingsWindowController(general: existing.generalModel,
+            shortcuts: existing.shortcutsModel, rememberedValues: existing.rememberedValuesModel,
+            forgetAllConfirmation: { _, _ in {} }, mainThread: main,
+            activation: WindowActivationCoordinator(mainThread: main, setPolicy: { _ in }, activate: {}),
+            folderChooser: { _, _ in {} }, openSetup: {}, makeAssistant: {
+                creations += 1
+                let model = MacAssistantSettingsTests.makeModel(work: work)
+                liveModel = model
+                return model
+            })
+        XCTAssertEqual(creations, 0)
+        let presentation = try XCTUnwrap(controller?.presentation)
+        XCTAssertNil(presentation.assistant)
+        weak var liveController = controller
+        // AppKit autoreleases the window delegate while showing and closing.
+        // Drain that pool so releasing `controller` drops the last reference.
+        let wrapper = try autoreleasepool { () throws -> AssistantSettingsViewState in
+            controller?.show()
+            let window = try XCTUnwrap(controller?.window)
+            defer { window.close() }
+            work.drain()
+            let assistant = try XCTUnwrap(presentation.assistant)
+            XCTAssertNotNil(liveModel, "The factory's Core model must be alive before checking retirement")
+            assistant.addProfile()
+            assistant.renameProfile("Staged")
+            controller?.show()
+            XCTAssertEqual(creations, 1)
+            XCTAssertTrue(presentation.assistant === assistant)
+            XCTAssertEqual(assistant.state.draft?.displayName, "Staged")
+            assistant.testConnection()
+            XCTAssertTrue(assistant.state.isTesting)
+            window.close()
+            XCTAssertTrue(presentation.assistant === assistant)
+            XCTAssertNotNil(liveModel, "A retained Settings window owns one model across reopenings")
+            XCTAssertFalse(assistant.state.isTesting, "Closing cancels its queued Test")
+            work.drain()
+            controller?.show()
+            work.drain()
+            XCTAssertEqual(creations, 1)
+            XCTAssertTrue(controller?.window === window)
+            XCTAssertTrue(presentation.assistant === assistant)
+            XCTAssertEqual(assistant.state.draft?.displayName, "Staged")
+            XCTAssertFalse(assistant.state.isTesting)
+
+            window.close()
+            assistant.testConnection()
+            XCTAssertTrue(assistant.state.isTesting)
+            return assistant
+        }
+        // The view wrapper deliberately outlives its released Core model.
+        controller = nil
+        XCTAssertNil(liveController, "Nothing outside the test may retain the Settings controller")
+        XCTAssertNil(liveModel, "Window teardown releases the model and cancels queued Test work")
+        work.drain()
+        XCTAssertFalse(wrapper.canChangeProfiles)
     }
 
     func testSetupFromSettingsReusesSetupAndClosingSettingsWithSetupVisibleReturnsToAccessory() throws {
@@ -404,6 +552,45 @@ private final class SettingsWindowScheduler: MonkeysPawCore.Scheduler {
     private var pending: [() -> Void] = []
     func after(_ delay: Duration, _ work: @escaping () -> Void) { pending.append(work) }
     func drain() { while !pending.isEmpty { pending.removeFirst()() } }
+}
+
+private final class SettingsAssistantWork: BackgroundWork {
+    private var pending: [() -> Void] = []
+    func run(_ work: @escaping () -> Void) { pending.append(work) }
+    func drain(file: StaticString = #filePath, line: UInt = #line) {
+        var processed = 0
+        while !pending.isEmpty {
+            guard processed < 10_000 else {
+                pending.removeAll()
+                XCTFail("Settings Assistant work did not settle after 10,000 items", file: file, line: line)
+                return
+            }
+            processed += 1
+            pending.removeFirst()()
+        }
+    }
+}
+
+private final class SettingsAssistantSecrets: SecretStore {
+    private var values: [SecretAccount: SecretValue] = [:]
+    private(set) var reads = 0
+
+    func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
+        reads += 1
+        return values[account].map { StoredSecret(value: $0, tier: .keychain) }
+    }
+    func write(_ value: SecretValue, account: SecretAccount) throws -> SecretTier {
+        values[account] = value
+        return .keychain
+    }
+    func delete(account: SecretAccount) throws { values[account] = nil }
+}
+
+private struct SettingsUnexpectedHTTPTransport: HTTPTransporting {
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        XCTFail("Opening Settings and editing a draft must not send HTTP requests")
+        throw HTTPTransportError.networkFailure
+    }
 }
 
 private final class SettingsWindowWatcher: FileStoreWatcher {
