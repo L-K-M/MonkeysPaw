@@ -143,6 +143,8 @@ internal object PromptWriter {
         for (index in value.indices) {
             val character = value[index]
             if (index > 0 && isBreak(value[index - 1]) && !isBreak(character)) output.indent(indent)
+            // libyaml doubles the first LF in a break run so flow folding preserves it.
+            if (character == '\n' && (index == 0 || !isBreak(value[index - 1]))) output.append('\n')
             if (character == '\'') output.append('\'')
             output.append(character)
         }

@@ -48,6 +48,24 @@ class CanonicalFormTest {
         assertContentEquals(bytes("---\ndescription: \"\"\nformat: 1\nx:\n  private: false\n  favorite: true\n  z:\n  - null\n  - true\n  - \"010\"\n  a: 2.5\n---\nBody"), group(input).bytes)
     }
 
+    @Test fun unicodeHeaderValuesMatchSwiftBytesAndSurviveGroupIngest() {
+        for ((escaped, value, presentation) in listOf(
+            Triple("a\\nb", "a\nb", "\"a\\nb\""),
+            Triple("a\\rb", "a\rb", "\"a\\rb\""),
+            Triple("a\\Nb", "a\u0085b", "\"a\\Nb\""),
+            Triple("a\\Lb", "a\u2028b", "'a\u2028  b'"),
+            Triple("a\\Pb", "a\u2029b", "'a\u2029  b'"),
+            Triple("\\L", "\u2028", "\"\\L\""),
+            Triple("\\P", "\u2029", "\"\\P\""),
+        )) {
+            val result = group("---\nfavorite: false\nprivate: true\ndescription: \"$escaped\"\n---\nBody\r\n")
+            assertContentEquals(bytes("---\ndescription: $presentation\n---\nBody\r\n"), result.bytes, escaped)
+            val reread = PromptCodec.parseFile(result.bytes, "source.md")
+            assertContentEquals(bytes(value), bytes(reread.frontMatter.description!!), escaped)
+            assertContentEquals(result.bytes, CanonicalForm.group(result.bytes, "source.md").bytes, escaped)
+        }
+    }
+
     @Test fun bodyBytesRemainExactAcrossCrLfBomsNullsAndFrontMatterLikeText() {
         for (body in listOf("", "No final newline", "\r\n\n  indent\t \r\n\n", "é / e\u0301 / 界 / 🐾\n", "\uFEFFBody\n", "\u0000body\r\n", "---\nBody\n", "{{not valid}}\n")) {
             val result = group("---\r\nfavorite: true\r\nprivate: false\r\n---\r\n$body")
@@ -115,9 +133,14 @@ class CanonicalFormTest {
             val expected = PromptWriteError.UnsupportedFormat(PromptCodec.parseFile(input, "source.md").frontMatter.format)
             assertEquals(expected, assertFailsWith<PromptWriteError> { CanonicalForm.group(input, "source.md") })
             assertEquals(expected, assertFailsWith<PromptWriteError> { CanonicalForm.user(input, "source.md") })
-            for (scope in CanonicalForm.Scope.entries) assertEquals(expected, assertFailsWith<PromptWriteError> {
-                CanonicalForm.equivalentForAdoption(bytes("Body"), input, scope, "source.md")
-            })
+            for (scope in CanonicalForm.Scope.entries) {
+                assertEquals(expected, assertFailsWith<PromptWriteError> {
+                    CanonicalForm.equivalentForAdoption(input, bytes("Body"), scope, "source.md")
+                })
+                assertEquals(expected, assertFailsWith<PromptWriteError> {
+                    CanonicalForm.equivalentForAdoption(bytes("Body"), input, scope, "source.md")
+                })
+            }
         }
     }
 
@@ -128,6 +151,14 @@ class CanonicalFormTest {
         val oversized = exact + byteArrayOf(97)
         assertEquals(PromptWriteError.InvalidPrompt, assertFailsWith<PromptWriteError> { CanonicalForm.group(oversized, "source.md") })
         assertEquals(PromptWriteError.InvalidPrompt, assertFailsWith<PromptWriteError> { CanonicalForm.user(oversized, "source.md") })
+        for (scope in CanonicalForm.Scope.entries) {
+            assertEquals(PromptWriteError.InvalidPrompt, assertFailsWith<PromptWriteError> {
+                CanonicalForm.equivalentForAdoption(oversized, bytes("Body"), scope, "source.md")
+            })
+            assertEquals(PromptWriteError.InvalidPrompt, assertFailsWith<PromptWriteError> {
+                CanonicalForm.equivalentForAdoption(bytes("Body"), oversized, scope, "source.md")
+            })
+        }
         val header = "---\nx: [a, b, c]\n---\n"
         val expanded = bytes(header + "a".repeat(Limits.maxPromptBytes - bytes(header).size))
         assertContentEquals(expanded, CanonicalForm.user(expanded, "source.md").bytes)
@@ -135,7 +166,9 @@ class CanonicalFormTest {
         val personal = "---\nfavorite: true\nprivate: true\nx: [a, b, c]\n---\n"
         val shrinks = bytes(personal + "a".repeat(Limits.maxPromptBytes - bytes(personal).size))
         assertEquals(PromptWriteError.SourceTooLarge, assertFailsWith<PromptWriteError> { PromptCodec.write(PromptCodec.parseFile(shrinks, "source.md")) })
-        assertTrue(CanonicalForm.group(shrinks, "source.md").bytes.size < Limits.maxPromptBytes)
+        val canonical = CanonicalForm.group(shrinks, "source.md")
+        assertTrue(canonical.bytes.size < Limits.maxPromptBytes)
+        assertContentEquals(bytes("---\nx:\n- a\n- b\n- c\n---\n" + "a".repeat(Limits.maxPromptBytes - bytes(personal).size)), canonical.bytes)
     }
 
     @Test fun adoptionIgnoresIdentityWhileStoredHashesIncludeItAndPersonalKeysRespectScope() {

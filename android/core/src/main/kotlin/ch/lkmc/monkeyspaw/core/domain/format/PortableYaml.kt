@@ -30,20 +30,20 @@ internal object PortableYaml {
         .setVersionFunction { it }.build()
     private val legacyBooleans = setOf("y", "yes", "n", "no", "on", "off")
     private val coreRules = listOf(
-        YamlTag.NULL to Regex("(?:null|Null|NULL|~|)"),
-        YamlTag.BOOL to Regex("(?:true|True|TRUE|false|False|FALSE)"),
-        YamlTag.INT to Regex("(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)"),
-        YamlTag.FLOAT to Regex("(?:[-+]?(?:\\.[0-9]+|[0-9]+(?:\\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))"),
+        YamlTag.NULL to Regex("^(?:null|Null|NULL|~|)$"),
+        YamlTag.BOOL to Regex("^(?:true|True|TRUE|false|False|FALSE)$"),
+        YamlTag.INT to Regex("^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$"),
+        YamlTag.FLOAT to Regex("^(?:[-+]?(?:\\.[0-9]+|[0-9]+(?:\\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$"),
     )
     // The reviewed Yams resolver, rather than a broader approximation of YAML 1.1.
     private val legacyRules = listOf(
-        YamlTag.BOOL to Regex("(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)"),
-        YamlTag.INT to Regex("(?:[-+]?0b[0-1_]+|[-+]?0o?[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+)"),
-        YamlTag.FLOAT to Regex("(?:[-+]?(?:[0-9][0-9_]*)(?:\\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?|\\.[0-9_]+(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))"),
-        YamlTag.MERGE to Regex("<<"),
-        YamlTag.NULL to Regex("(?:~|null|Null|NULL|)"),
-        YamlTag.TIMESTAMP to Regex("(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:[Tt]|[ \\t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]*)?(?:[ \\t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?)"),
-        YamlTag.VALUE to Regex("="),
+        YamlTag.BOOL to Regex("^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$"),
+        YamlTag.INT to Regex("^(?:[-+]?0b[0-1_]+|[-+]?0o?[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+)$"),
+        YamlTag.FLOAT to Regex("^(?:[-+]?(?:[0-9][0-9_]*)(?:\\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?|\\.[0-9_]+(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$"),
+        YamlTag.MERGE to Regex("^<<$"),
+        YamlTag.NULL to Regex("^(?:~|null|Null|NULL|)$"),
+        YamlTag.TIMESTAMP to Regex("^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:[Tt]|[ \\t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]*)?(?:[ \\t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?)$"),
+        YamlTag.VALUE to Regex("^=$"),
     )
 
     fun parse(source: YamlSource): YamlNode? {
@@ -212,8 +212,9 @@ internal object PortableYaml {
         return node.copy(tag = tag)
     }
 
+    // Yams searches anchored regexes: $ may match before a final Unicode line break.
     private fun resolve(value: String, rules: List<Pair<String, Regex>>): String =
-        rules.firstOrNull { it.second.matches(value) }?.first ?: YamlTag.STR
+        rules.firstOrNull { it.second.containsMatchIn(value) }?.first ?: YamlTag.STR
 
     private fun leadingZero(value: String): Boolean {
         val unsigned = if (value.startsWith('-') || value.startsWith('+')) value.substring(1) else value
