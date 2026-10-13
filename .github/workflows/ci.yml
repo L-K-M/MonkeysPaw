@@ -400,7 +400,9 @@ jobs:
           assert metadata['Application']['name'] == app_id
           assert metadata['Application']['command'] == 'monkeyspaw'
           assert set(metadata['Context']['shared'].strip(';').split(';')) == {'ipc', 'network'}
-          assert set(metadata['Context']['sockets'].strip(';').split(';')) == {'wayland', 'fallback-x11'}
+          # Flatpak records --socket=fallback-x11 as x11 plus fallback-x11; the
+          # runtime uses X11 only when no Wayland socket is available.
+          assert set(metadata['Context']['sockets'].strip(';').split(';')) == {'wayland', 'x11', 'fallback-x11'}
           assert metadata['Context']['filesystems'] == 'home;'
           assert not metadata['Context'].get('devices')
           assert dict(metadata['Session Bus Policy']) == {'org.freedesktop.secrets': 'talk'}
