@@ -6,6 +6,11 @@ import MonkeysPawCore
 /// GTK owns this reusable window. Model subscriptions and borrowed widget
 /// pointers are retired before a graph replacement or native destruction.
 final class LinuxLibraryWindow {
+    struct ImportBinding {
+        let state: LinuxLibraryImportState
+        let chooser: LinuxImportChoosing
+    }
+
     private let window: GTK.Widget
     private let openFolder: () -> Void
     private weak var browser: LibraryBrowserModel?
@@ -55,10 +60,12 @@ final class LinuxLibraryWindow {
     private var historyPrompt: LibraryPromptSelection?
     private var renderedFields: [PromptField]?
     private var renderedPreview: String?
+    private var importView: LinuxLibraryImportView?
 
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
     init(application: UnsafeMutablePointer<GtkApplication>, browser: LibraryBrowserModel, editor: EditorModel,
+         imports: ImportBinding? = nil,
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
@@ -116,6 +123,11 @@ final class LinuxLibraryWindow {
         gtk_widget_set_name(reveal, "library-open-folder")
         for widget in [filter, favorite, reveal] { gtk_box_append(mp_box(toolbar), widget) }
         gtk_box_append(mp_box(content), toolbar)
+        if let imports {
+            let view = LinuxLibraryImportView(parent: window, list: list, chooser: imports.chooser)
+            importView = view
+            gtk_box_append(mp_box(content), view.actions)
+        }
 
         let panes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12)!
         gtk_widget_set_vexpand(panes, 1)
@@ -145,22 +157,26 @@ final class LinuxLibraryWindow {
         configureEditor(in: detail)
         gtk_box_append(mp_box(panes), detail)
         gtk_box_append(mp_box(content), panes)
+        if let importView { gtk_box_append(mp_box(content), importView.report) }
         gtk_widget_set_name(status, "library-status")
         gtk_box_append(mp_box(content), status)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.libraryHint))
         gtk_window_set_child(mp_window(window), content)
-        rebind(browser: browser, editor: editor)
+        rebind(browser: browser, editor: editor, imports: imports?.state)
     }
 
     deinit { unbind() }
 
-    func rebind(browser: LibraryBrowserModel, editor: EditorModel) {
+    func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState?) {
         guard !isDestroyed else { return }
+        precondition((importView == nil) == (imports == nil),
+                     "Import-enabled windows require the current graph's import state")
         unbind()
         self.browser = browser
         self.editor = editor
         commands.bind(editor: editor, browser: browser)
         historyPrompt = nil
+        if let imports { importView?.bind(imports) }
         previousPrompt = nil
         copySelection = nil
         revealAfterOpen = []
@@ -176,6 +192,7 @@ final class LinuxLibraryWindow {
             if self.isVisible, !self.closeRequested, self.editor?.state.prompt == nil,
                let selection = browser.selection { self.selectPrompt(selection) }
             self.render()
+            imports?.updateDestinations(browser.sections)
         }
         editorObserver = editor.addObserver { [weak self, weak editor] state in
             guard let self, let editor, self.editor === editor else { return }
@@ -200,6 +217,7 @@ final class LinuxLibraryWindow {
             self.render()
         }
         render()
+        imports?.updateDestinations(browser.sections)
     }
 
     func show() {
@@ -222,6 +240,7 @@ final class LinuxLibraryWindow {
     private func unbind() {
         endDialog()
         commands.unbind()
+        importView?.unbind()
         bindingRevision &+= 1
         sourceRevision &+= 1
         if let observer { browser?.removeObserver(observer) }
@@ -280,6 +299,7 @@ final class LinuxLibraryWindow {
             self.closeRequested = false
             if result == .allowed {
                 self.endDialog()
+                self.importView?.cancelChoosing()
                 self.sourceRevision &+= 1
                 self.render()
                 gtk_widget_set_visible(self.window, 0)

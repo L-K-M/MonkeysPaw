@@ -273,7 +273,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         let window = try XCTUnwrap(libraryWindows.first)
         gtk_window_destroy(mp_window(window))
         browser.setFilter("Queued after destroy")
-        view.rebind(browser: browser, editor: environment.editorModel)
+        view.rebind(browser: browser, editor: environment.editorModel, imports: nil)
         view.show()
         view.hide()
         drain()

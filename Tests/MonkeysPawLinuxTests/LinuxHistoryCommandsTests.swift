@@ -419,7 +419,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertNil(dialog("library-file-command-dialog"))
         controller.setLibraryAvailable(true)
         try click("library-move", in: window)
-        controller.rebind(browser: browser, editor: editor)
+        controller.rebind(browser: browser, editor: editor, imports: nil)
         XCTAssertNil(dialog("library-file-command-dialog"))
         drain()
         try click("library-delete", in: window)
