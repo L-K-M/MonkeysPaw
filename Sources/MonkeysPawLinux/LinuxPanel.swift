@@ -525,6 +525,12 @@ final class LinuxPanel: PanelWindow {
         }
     }
 
+    func cancelPendingBlur() {
+        // Retire blur at the open intent: the queued GLib show can run after
+        // the old timeout, which would otherwise dismiss the new picker.
+        blurRevision += 1
+    }
+
     func useActivationToken(_ token: String?) { activationToken = token }
 
     func show() {

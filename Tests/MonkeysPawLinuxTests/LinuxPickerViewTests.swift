@@ -231,6 +231,71 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
     }
 
+    func testToggleRequestSurvivesBlurWhilePresentationIsQueued() throws {
+        try assertPresentationSurvivesQueuedBlur { self.environment.activateToggle() }
+    }
+
+    func testLauncherRequestSurvivesBlurWhilePresentationIsQueued() throws {
+        environment.settingsModel.markSetupPresented()
+        environment.settingsModel.completeLibraryFolderStep()
+        environment.settingsModel.markSeedsOffered()
+        environment.settingsModel.completeTour()
+        XCTAssertNil(environment.settingsModel.error)
+        try assertPresentationSurvivesQueuedBlur { self.environment.presentFromLauncher() }
+    }
+
+    func testBlurWithoutAnotherPresentationStillDismissesPicker() throws {
+        try open()
+        let other = try XCTUnwrap(gtk_application_window_new(application))
+        defer { gtk_window_destroy(mp_window(other)) }
+        gtk_window_present(mp_window(other))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.pickerModel.state == .closed && !self.environment.panel.isVisible
+        })
+    }
+
+    private func assertPresentationSurvivesQueuedBlur(_ request: () -> Void) throws {
+        try open()
+        XCTAssertTrue(GTKTestSupport.spin { g_main_context_pending(nil) == 0 })
+        let other = try XCTUnwrap(gtk_application_window_new(application))
+        defer { gtk_window_destroy(mp_window(other)) }
+        gtk_window_present(mp_window(other))
+        let picker = environment.pickerModel
+        XCTAssertTrue(GTKTestSupport.spin {
+            picker.state != .picker || (self.environment.panel.isVisible
+                && !self.environment.panel.isActiveAndVisible && gtk_window_is_active(mp_window(other)) != 0)
+        })
+        // A focus handoff slower than the blur delay closes the picker during
+        // setup; the race cannot be staged then, which is not a regression.
+        guard picker.state == .picker else {
+            throw XCTSkip("Focus handoff outlasted the blur delay; the stale-blur race was not staged.")
+        }
+
+        let render = picker.onChange
+        defer { picker.onChange = render }
+        var delayedPresentation = false
+        picker.onChange = { [weak picker] in
+            render?()
+            guard !delayedPresentation else { return }
+            XCTAssertEqual(picker?.state, .picker, "Blur fired before the new show was queued.")
+            guard picker?.state == .picker else { return }
+            delayedPresentation = true
+            // The show is a GLib idle. Let the older blur timeout become ready
+            // before the next iteration, as when the app loses CPU time.
+            Thread.sleep(forTimeInterval: Limits.blurHideDelay.timeInterval + 0.1)
+        }
+        guard picker.state == .picker else {
+            throw XCTSkip("Blur expired before the presentation request; the race was not staged.")
+        }
+        request()
+        XCTAssertTrue(GTKTestSupport.spin { delayedPresentation })
+        var drained = false
+        environment.mainThread.run { self.environment.mainThread.run { drained = true } }
+        XCTAssertTrue(GTKTestSupport.spin { drained })
+        XCTAssertEqual(picker.state, .picker)
+        XCTAssertTrue(environment.panel.isVisible)
+    }
+
     func testFieldDescriptionsAppearBelowControlsOnlyWhenNonempty() throws {
         let source = """
         ---

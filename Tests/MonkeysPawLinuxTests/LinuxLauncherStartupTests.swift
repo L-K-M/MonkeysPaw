@@ -199,7 +199,8 @@ final class LinuxLauncherStartupTests: XCTestCase {
         return output.text.split(separator: "\n").first.map(String.init)
     }
 
-    private func waitForWindow(titled title: String, in child: Process) throws -> String {
+    private func waitForWindow(titled title: String, in child: Process,
+                               file: StaticString = #filePath, line: UInt = #line) throws -> String {
         var window: String?
         // A cold child launch on a loaded CI runner can take several seconds,
         // and each probe is a bounded xdotool process.
@@ -209,7 +210,7 @@ final class LinuxLauncherStartupTests: XCTestCase {
         }, timeout: Self.launchedWindowTimeout)
         if let window { return window }
 
-        return try XCTUnwrap(window, windowFailureDetails(titled: title, in: child))
+        return try XCTUnwrap(window, windowFailureDetails(titled: title, in: child), file: file, line: line)
     }
 
     private func windowFailureDetails(titled title: String, in child: Process) -> String {
