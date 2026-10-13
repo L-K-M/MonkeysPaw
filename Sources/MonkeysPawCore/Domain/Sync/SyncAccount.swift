@@ -12,7 +12,7 @@ struct SyncAccountIdentity: Hashable, Sendable, Codable {
               var url = URLComponents(string: serverURL),
               let scheme = url.scheme, ["https", "http"].contains(scheme),
               let host = url.host, !host.isEmpty, host == host.lowercased(), !host.hasSuffix("."),
-              !host.contains("%"), host.unicodeScalars.allSatisfy({ $0.isASCII }),
+              !host.contains("%"), url.url?.host?.unicodeScalars.allSatisfy({ $0.isASCII }) == true,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.port.map({ (1...65_535).contains($0) }) ?? true,
               url.port != (scheme == "https" ? 443 : 80) else { throw SyncError.invalidAccount }

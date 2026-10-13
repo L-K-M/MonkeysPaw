@@ -257,6 +257,52 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         XCTAssertEqual(server.connectionCount, 0)
     }
 
+    func testSyncLANPolicyDoesNotChangeAssistantDefault() async throws {
+        for host in ["10.0.0.1", "172.16.0.1", "192.168.1.1", "[fc00::1]"] {
+            let server = try SyncServerURL("http://" + host)
+            let url = server.apiURL.appendingPathComponent("me")
+            let defaultRequest = try HTTPRequest(url: url, method: .get, deadline: .now.advanced(by: .seconds(-1)))
+            XCTAssertEqual(defaultRequest.urlPolicy, .assistant)
+            await assertError(.insecureURL, request: defaultRequest)
+            // Validation precedes deadline handling; allowed addresses never connect.
+            await assertError(.deadlineExceeded, request: try HTTPRequest(url: url, method: .get,
+                deadline: .now.advanced(by: .seconds(-1)), urlPolicy: .sync(server: server)))
+        }
+        for scheme in ["http", "https"] {
+            let url = URL(string: scheme + "://localhost/v1/models?version=1")!
+            await assertError(.deadlineExceeded, request: try HTTPRequest(url: url, method: .get,
+                deadline: .now.advanced(by: .seconds(-1))))
+        }
+    }
+
+    func testSyncPolicyRejectsOtherServersBeforeSendingBearer() async throws {
+        let peer = try LoopbackHTTPServer { connection, _, _ in connection.respond() }
+        defer { peer.stop() }
+        let server = try SyncServerURL(peer.url("/paw").absoluteString)
+        for url in [peer.url("/api/v1/me"), peer.url("/paw/api/v10/me"), peer.url("/other/api/v1/me")] {
+            await assertError(.serverMismatch, request: try HTTPRequest(url: url, method: .get,
+                headers: ["Authorization": "Bearer private-token"], deadline: .now.advanced(by: .seconds(3)),
+                urlPolicy: .sync(server: server)))
+        }
+        XCTAssertEqual(peer.connectionCount, 0)
+    }
+
+    func testSyncPolicyRefusesRedirectsWithBearerAndBody() async throws {
+        let target = try LoopbackHTTPServer { connection, _, _ in connection.respond() }
+        defer { target.stop() }
+        for status in [301, 302, 303, 307, 308] {
+            let peer = try LoopbackHTTPServer { connection, _, _ in
+                connection.respond(status: status, headers: "Location: \(target.url("/api/v1/me"))\r\n")
+            }
+            defer { peer.stop() }
+            let server = try SyncServerURL(peer.url().absoluteString)
+            await assertError(.redirectRefused, request: try HTTPRequest(url: server.apiURL.appendingPathComponent("sync/pull"),
+                method: .post, headers: ["Authorization": "Bearer private-token"], body: Data("private-body".utf8),
+                deadline: .now.advanced(by: .seconds(3)), urlPolicy: .sync(server: server)))
+        }
+        XCTAssertEqual(target.connectionCount, 0)
+    }
+
     func testUserinfoAndInvalidSchemesAreRejectedBeforeConnection() async throws {
         let server = try LoopbackHTTPServer { connection, _, _ in connection.respond() }
         defer { server.stop() }

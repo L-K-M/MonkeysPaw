@@ -23,6 +23,11 @@ public struct URLSessionHTTPTransport: HTTPTransporting {
     }
 
     private static func validatedURL(_ request: HTTPRequest) throws -> URL {
+        if case .sync(let server) = request.urlPolicy {
+            guard request.method != .get || request.body == nil else { throw HTTPTransportError.invalidRequest }
+            return try server.validatedRequestURL(request.url)
+        }
+
         guard var components = URLComponents(url: request.url, resolvingAgainstBaseURL: true),
               let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let rawHost = components.host, !rawHost.isEmpty,

@@ -733,6 +733,11 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   `Limits.watchDebounce` (500 ms) of prompt-path quiet. Every prompt-path
   raw event restarts this window; events for non-prompt paths are dropped
   before scheduling. Stale one-shot scheduler callbacks do nothing.
+  Linux directory monitors disable GIO's change-event rate limit. Their
+  one-shot snapshot reconciliation runs at GLib high-idle priority, after
+  queued default-priority monitor events but before GTK resize/redraw work,
+  so rendering cannot starve the scan and consume the one-second picker
+  budget. The shared 500 ms quiet window is unchanged.
   Repeated events on one prompt path deduplicate. A delete followed by a
   create within the window counts as one modification (editors save that
   way); a create followed by its own

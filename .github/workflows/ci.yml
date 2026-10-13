@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      full-ci:
+        description: Run every job for reusable callers, including release PR dry runs
+        type: boolean
+        default: true
 
 # Least privilege: builds and tests only need to read repository contents.
 permissions:
@@ -18,8 +23,42 @@ concurrency:
 
 # Every job has a timeout so a wedged build cannot consume the default six hours.
 jobs:
+  changes:
+    name: Select affected jobs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      core-linux: ${{ steps.select.outputs.core-linux }}
+      linux-app: ${{ steps.select.outputs.linux-app }}
+      deb: ${{ steps.select.outputs.deb }}
+      android: ${{ steps.select.outputs.android }}
+      core-macos: ${{ steps.select.outputs.core-macos }}
+      macos-app: ${{ steps.select.outputs.macos-app }}
+      macos-artifacts: ${{ steps.select.outputs.macos-artifacts }}
+      server: ${{ steps.select.outputs.server }}
+      server-image: ${{ steps.select.outputs.server-image }}
+      compose-smoke: ${{ steps.select.outputs.compose-smoke }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Both PR SHAs and their merge base must be available, including forks.
+          fetch-depth: 0
+      - name: Select jobs from changed paths
+        id: select
+        env:
+          # Reusable workflows retain the caller's event, which can be a PR.
+          CI_EVENT_NAME: ${{ inputs.full-ci && 'workflow_call' || github.event_name }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci-changes.py
+
   core-linux:
     name: Core on Linux
+    needs: changes
+    if: needs.changes.outputs.core-linux == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container: swift:6.4-noble
@@ -50,6 +89,8 @@ jobs:
 
   linux-app:
     name: Linux GTK app
+    needs: changes
+    if: needs.changes.outputs.linux-app == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container: swift:6.4-noble
@@ -139,6 +180,8 @@ jobs:
 
   deb:
     name: Ubuntu 24.04 Debian package
+    needs: changes
+    if: needs.changes.outputs.deb == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container: swift:6.4-noble
@@ -223,6 +266,8 @@ jobs:
 
   android:
     name: Android JVM tests, lint and APKs
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -272,6 +317,8 @@ jobs:
 
   core-macos:
     name: Core on macOS
+    needs: changes
+    if: needs.changes.outputs.core-macos == 'true'
     runs-on: macos-26
     timeout-minutes: 20
     steps:
@@ -287,6 +334,8 @@ jobs:
 
   macos-app:
     name: macOS app
+    needs: changes
+    if: needs.changes.outputs.macos-app == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -316,6 +365,8 @@ jobs:
 
   macos-artifacts:
     name: Universal macOS artifacts
+    needs: changes
+    if: needs.changes.outputs.macos-artifacts == 'true'
     runs-on: macos-26
     timeout-minutes: 40
     defaults:
@@ -451,6 +502,8 @@ jobs:
 
   server:
     name: Server build and tests
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container: swift:6.4-noble
@@ -472,6 +525,8 @@ jobs:
 
   server-image:
     name: Server image and health
+    needs: changes
+    if: needs.changes.outputs.server-image == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -527,6 +582,8 @@ jobs:
 
   compose-smoke:
     name: Compose smoke
+    needs: changes
+    if: needs.changes.outputs.compose-smoke == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

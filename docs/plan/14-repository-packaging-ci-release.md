@@ -54,6 +54,29 @@ Rollout by milestone:
   embedded path and byte with the eligible files; no packaging resource step
   is needed on macOS or Linux (§4.4).
 - **ci.yml.**
+  - A first `changes` job selects affected jobs on pull requests using
+    `scripts/ci-changes.py` and a full-history checkout. The diff compares
+    base and head through their merge base, with rename detection disabled
+    so both the old and new paths contribute. Each build job requires
+    `changes` and its own true output; its name and steps stay unchanged.
+    Android-only PRs run `android`; pure documentation PRs run no build jobs.
+    `README.md` remains an input to the Linux version checks. Xcode project
+    changes also run `core-linux` and `deb`. Linux source changes keep Core
+    portability and server jobs enabled because the parent Swift manifest
+    validates target paths and Docker copies the full source tree.
+  - Core/package changes run all Swift consumers; `spec/` and `seed/` also
+    run Android. Android also runs for Core's `SyncPathCaseFold.swift` table,
+    which its JVM conformance tests read directly. Platform, server and
+    script paths select their consumers.
+    Unknown paths, `.github/workflows/`, `.github/actions/`, and the selector
+    or its test enable every job. Script failures fail `changes`, never
+    silently skip the gates. Pushes, manual runs and reusable calls run all
+    jobs; the reusable `full-ci` input defaults to true so release PR dry
+    runs also keep all gates despite retaining the caller's PR event.
+    Skipped jobs retain their check identities and count as passing for
+    GitHub and the supervisor's merge script. GLM review stays independent.
+    Standard-library unittest coverage under `scripts/tests/` checks the
+    mapping, merge-base/rename behavior, output format and workflow wiring.
   - Also callable with `workflow_call`: release runs use the same test gates
     from the tagged commit. Concurrency includes the caller workflow name,
     so a release's test run cannot cancel ordinary PR CI.

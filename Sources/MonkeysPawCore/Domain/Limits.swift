@@ -160,6 +160,9 @@ public enum Limits {
     /// §7.1: allow sync batches up to 16 MiB on the same bounded transport.
     public static let syncResponseCap: Int = 16 * mebibyte
 
+    /// M6 E6: one sync request has a 60-second monotonic deadline.
+    static let syncRequestTimeout: Duration = .seconds(60)
+
     /// §8.3: cap prompt bodies at 256 KiB on both clients and the server.
     public static let maxPromptBytes: Int = 256 * kibibyte
 
