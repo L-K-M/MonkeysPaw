@@ -487,7 +487,7 @@ final class LinuxEnvironment {
         if currentLibraryWindow == nil {
             currentLibraryWindow = LinuxLibraryWindow(application: application,
                 browser: libraryBrowserModel, editor: editorModel,
-                imports: libraryImportState, importChooser: importChooser, openFolder: { [weak self] in
+                imports: .init(state: libraryImportState, chooser: importChooser), openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })

@@ -20,6 +20,7 @@ final class LinuxLibraryImportView {
     private weak var state: LinuxLibraryImportState?
     private var renderedDestinations: [RelativePath] = []
     private var renderedReports: [ImportReport] = []
+    private var openButtons: [GTK.Widget] = []
     private var isRendering = false
 
     init(parent: GTK.Widget, list: GTK.Widget, chooser: LinuxImportChoosing) {
@@ -98,9 +99,11 @@ final class LinuxLibraryImportView {
         gtk_label_set_text(mp_label(message), state.message ?? "")
         gtk_widget_set_visible(message, state.message == nil ? 0 : 1)
         gtk_widget_set_visible(report, state.hasReport ? 1 : 0)
+        for button in openButtons { gtk_widget_set_sensitive(button, state.libraryAvailable ? 1 : 0) }
         let reports = state.reports.map(\.report)
         guard reports != renderedReports else { return }
         renderedReports = reports
+        openButtons = []
         while let child = gtk_widget_get_first_child(reportFiles) { gtk_box_remove(mp_box(reportFiles), child) }
         gtk_label_set_text(mp_label(summary), LinuxImportStrings.summary(created: state.createdCount, skipped: state.skippedCount))
         for completed in state.reports {
@@ -118,6 +121,8 @@ final class LinuxLibraryImportView {
             case .created(let path):
                 let open = GTK.button(LinuxImportStrings.created(path)) { [weak self] in self?.state?.open(path) }
                 gtk_widget_set_name(open, "library-import-open")
+                gtk_widget_set_sensitive(open, state.libraryAvailable ? 1 : 0)
+                openButtons.append(open)
                 gtk_box_append(mp_box(reportFiles), open)
             case .skipped(let reason): append(LinuxImportStrings.skipped(reason))
             }

@@ -6,6 +6,11 @@ import MonkeysPawCore
 /// GTK owns this reusable window. Model subscriptions and borrowed widget
 /// pointers are retired before a graph replacement or native destruction.
 final class LinuxLibraryWindow {
+    struct ImportBinding {
+        let state: LinuxLibraryImportState
+        let chooser: LinuxImportChoosing
+    }
+
     private let window: GTK.Widget
     private let openFolder: () -> Void
     private weak var browser: LibraryBrowserModel?
@@ -60,7 +65,7 @@ final class LinuxLibraryWindow {
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
     init(application: UnsafeMutablePointer<GtkApplication>, browser: LibraryBrowserModel, editor: EditorModel,
-         imports: LinuxLibraryImportState? = nil, importChooser: LinuxImportChoosing? = nil,
+         imports: ImportBinding? = nil,
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
@@ -118,8 +123,8 @@ final class LinuxLibraryWindow {
         gtk_widget_set_name(reveal, "library-open-folder")
         for widget in [filter, favorite, reveal] { gtk_box_append(mp_box(toolbar), widget) }
         gtk_box_append(mp_box(content), toolbar)
-        if imports != nil, let importChooser {
-            let view = LinuxLibraryImportView(parent: window, list: list, chooser: importChooser)
+        if let imports {
+            let view = LinuxLibraryImportView(parent: window, list: list, chooser: imports.chooser)
             importView = view
             gtk_box_append(mp_box(content), view.actions)
         }
@@ -157,13 +162,15 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(content), status)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.libraryHint))
         gtk_window_set_child(mp_window(window), content)
-        rebind(browser: browser, editor: editor, imports: imports)
+        rebind(browser: browser, editor: editor, imports: imports?.state)
     }
 
     deinit { unbind() }
 
-    func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState? = nil) {
+    func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState?) {
         guard !isDestroyed else { return }
+        precondition((importView == nil) == (imports == nil),
+                     "Import-enabled windows require the current graph's import state")
         unbind()
         self.browser = browser
         self.editor = editor

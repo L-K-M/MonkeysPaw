@@ -15,6 +15,7 @@ enum LinuxImportStrings {
     static let selectedFiles = "Selected files"
     static let fileURLsOnly = "Drop local files or folders to import them."
     static let waitingForRefresh = "The imported prompt is waiting for the library to refresh. Try opening it again."
+    static let missingReport = "The import finished without a report. Check the destination before trying again."
 
     static func progress(_ progress: ImportProgress?, selection: Int, total: Int) -> String {
         let message: String

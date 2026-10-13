@@ -5,6 +5,8 @@ import MonkeysPawCore
 /// Retained by the library graph, so closing or destroying a window cannot
 /// lose an in-flight import or its report. Core owns all file outcomes.
 final class LinuxLibraryImportState {
+    /// A live preparation completes once, including empty selections. Graph
+    /// deactivation retires outstanding work and releases the busy state.
     typealias SelectionPreparer = ([URL], @escaping ([ImportRequest]) -> Void) -> Void
     typealias Chooser = (LinuxImportSelectionMode, @escaping ([URL]) -> Void) -> (() -> Void)
 
@@ -189,8 +191,10 @@ final class LinuxLibraryImportState {
     private func receive(_ state: ImportModel.State) {
         guard active, isBusy else { return }
         progress = state.progress
-        if !state.isImporting, let report = state.report, let current {
-            reports.append(CompletedRequest(request: current, report: report))
+        if !state.isImporting, let current {
+            if let report = state.report {
+                reports.append(CompletedRequest(request: current, report: report))
+            } else { message = LinuxImportStrings.missingReport }
             self.current = nil
             startNext()
         }

@@ -103,27 +103,37 @@ final class LinuxImportSourceReaderTests: XCTestCase {
         assertError(.notRegularFile) { _ = try reader.readFile(at: "/", maximumBytes: 1) }
     }
 
-    func testTraversalBoundsDepthAndAggregateListingWithCoreLimits() throws {
+    func testTraversalBoundsDepthWithCorePathLimit() throws {
         let tools = try FakeLinuxTools()
         let deep = tools.directory.appendingPathComponent("Deep")
         var directory = deep
         while directory.path.utf8.count - deep.path.utf8.count <= Limits.maxPathBytes {
             directory.appendPathComponent(String(repeating: "a", count: 128))
         }
+        try XCTSkipIf(directory.path.utf8.count >= Int(PATH_MAX),
+                      "The overlong Core path fixture exceeds this host's absolute path limit")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data("Sibling".utf8).write(to: deep.appendingPathComponent("valid.md"))
         let reader = LinuxImportSourceReader()
         let entries = try reader.listFiles(in: deep.path)
         XCTAssertTrue(entries.contains(ImportSourceEntry(relativePath: "valid.md")))
         XCTAssertTrue(entries.contains { $0.relativePath.utf8.count > Limits.maxPathBytes })
+    }
+
+    func testAggregateListingCountsRelativeNamesWithCoreByteLimit() throws {
+        let tools = try FakeLinuxTools()
         let wide = tools.directory.appendingPathComponent("Wide")
-        try FileManager.default.createDirectory(at: wide, withIntermediateDirectories: true)
-        // Long names reach the byte budget with a small number of empty files.
-        for index in 0...(Limits.importFileCapBytes / 250) {
+        let prefix = Array(repeating: String(repeating: "d", count: 240), count: 3).joined(separator: "/")
+        let directory = wide.appendingPathComponent(prefix, isDirectory: true)
+        let relativeBytes = prefix.utf8.count + 1 + 250
+        XCTAssertLessThanOrEqual(relativeBytes, Limits.maxPathBytes)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Directory prefixes count for each file; 270 empty files exceed the current budget.
+        for index in 0...(Limits.importFileCapBytes / relativeBytes) {
             let name = String(repeating: "x", count: 246) + String(format: "%04d", index)
-            try Data().write(to: wide.appendingPathComponent(name))
+            try Data().write(to: directory.appendingPathComponent(name))
         }
-        assertError(.fileTooLarge) { _ = try reader.listFiles(in: wide.path) }
+        assertError(.fileTooLarge) { _ = try LinuxImportSourceReader().listFiles(in: wide.path) }
     }
 
     private func assertError(_ expected: ImportSourceError, _ work: () throws -> Void,

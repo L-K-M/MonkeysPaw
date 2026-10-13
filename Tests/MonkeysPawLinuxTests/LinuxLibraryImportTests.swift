@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -30,9 +31,10 @@ final class LinuxLibraryImportTests: XCTestCase {
     }
 
     override func tearDown() {
+        work?.runAll()
+        drain()
         environment?.shutdown()
         environment = nil
-        work?.runAll()
         drain()
         if let application { GTKTestSupport.destroy(application) }
         application = nil
@@ -40,6 +42,117 @@ final class LinuxLibraryImportTests: XCTestCase {
         chooser = nil
         work = nil
         tools = nil
+    }
+
+    func testReportlessTerminalStepsReleaseBatchAndAcceptAnotherImport() throws {
+        let file = try source("a.md", "First")
+        let folderFile = try source("Folder/b.md", "Second")
+        let state = environment.libraryImportState
+        let model = environment.importModel
+        let idle = model.state
+        let observed = try XCTUnwrap(model.onChange)
+        model.onChange = { value in observed(value.isImporting ? value : idle) }
+        XCTAssertTrue(state.importURLs([file, folderFile.deletingLastPathComponent()]))
+        drainWork()
+        XCTAssertFalse(state.isBusy)
+        XCTAssertNil(state.progress)
+        XCTAssertTrue(state.canImport)
+        XCTAssertEqual(state.requestNumber, 2)
+        XCTAssertTrue(state.reports.isEmpty)
+        XCTAssertEqual(state.message, LinuxImportStrings.missingReport)
+        XCTAssertEqual(try files.read(at: "Imported/a.md"), Data("First".utf8))
+        XCTAssertEqual(try files.read(at: "Imported/b.md"), Data("Second".utf8))
+        model.onChange = observed
+        XCTAssertTrue(state.importURLs([file]))
+        drainWork()
+        XCTAssertFalse(state.isBusy)
+        XCTAssertEqual(state.createdCount, 1)
+    }
+
+    func testEmptyPreparationClearsBusyWithoutStartingCoreImport() throws {
+        let state = LinuxLibraryImportState(model: environment.importModel, available: true,
+            main: environment.mainThread, prepare: { _, done in done([]) }, openImported: { _ in false })
+        defer { state.deactivate() }
+        XCTAssertTrue(state.importURLs([try source("empty.md", "Unused")]))
+        drainWork()
+        XCTAssertFalse(state.isBusy)
+        XCTAssertNil(state.progress)
+        XCTAssertTrue(state.canImport)
+        XCTAssertFalse(environment.importModel.state.isImporting)
+        XCTAssertNil(try files.stamp(at: "Imported/empty.md"))
+    }
+
+    func testShutdownRetiresPreparationAndClearsBusyAndObservers() throws {
+        let state = environment.libraryImportState
+        let model = environment.importModel
+        XCTAssertTrue(state.importURLs([try source("queued.md", "Unused")]))
+        environment.shutdown()
+        drainWork()
+        XCTAssertFalse(state.isBusy)
+        XCTAssertNil(state.progress)
+        XCTAssertNil(state.onChange)
+        XCTAssertNil(state.onChoose)
+        XCTAssertNil(model.onChange)
+        XCTAssertFalse(state.canImport)
+        XCTAssertNil(try files.stamp(at: "Imported/queued.md"))
+    }
+
+    func testImportBindingAttachesActionsAndReport() throws {
+        let view = LinuxLibraryWindow(application: application,
+            browser: environment.libraryBrowserModel, editor: environment.editorModel,
+            imports: .init(state: environment.libraryImportState, chooser: chooser), openFolder: {})
+        defer { view.tearDown() }
+        let window = try XCTUnwrap(libraryWindow)
+        _ = try settingsWidget("library-import", in: window)
+        _ = try settingsWidget("library-import-folder", in: window)
+        _ = try settingsWidget("library-import-report", in: window)
+    }
+
+    func testRebindImportsAndDestinationsBelongToReplacementGraph() throws {
+        let old = environment.libraryImportState
+        let view = LinuxLibraryWindow(application: application,
+            browser: environment.libraryBrowserModel, editor: environment.editorModel,
+            imports: .init(state: old, chooser: chooser), openFolder: {})
+        defer { view.tearDown() }
+        view.show()
+        let window = try XCTUnwrap(libraryWindow)
+        let second = tools.directory.appendingPathComponent("Second")
+        let replacement = try RootedFileStore(root: second)
+        try replacement.write(Data("Seed".utf8), at: "Chosen/seed.md")
+        XCTAssertEqual(environment.switchLibrary(to: second), .switched)
+        view.rebind(browser: environment.libraryBrowserModel, editor: environment.editorModel,
+                    imports: environment.libraryImportState)
+        drainWork()
+        let state = environment.libraryImportState
+        XCTAssertNil(old.onChange)
+        XCTAssertNil(old.onChoose)
+        XCTAssertNotNil(state.onChange)
+        XCTAssertNotNil(state.onChoose)
+        XCTAssertTrue(state.destinations.contains(RelativePath("Chosen")))
+        let destination = try settingsWidget("library-import-destination", in: window)
+        let position = try XCTUnwrap(state.destinations.firstIndex(of: RelativePath("Chosen")))
+        gtk_combo_box_set_active(mp_combo_box(destination), Int32(position))
+        XCTAssertEqual(state.destination, RelativePath("Chosen"))
+        try click("library-import", in: window)
+        chooser.requests.last?.done([try source("new.md", "New graph")])
+        finishImport()
+        XCTAssertEqual(try replacement.read(at: "Chosen/new.md"), Data("New graph".utf8))
+        XCTAssertNil(try files.stamp(at: "Chosen/new.md"))
+    }
+
+    func testReportOpenButtonsTrackLibraryAvailabilityWithoutRebuildingReport() throws {
+        let window = try openLibrary()
+        let state = environment.libraryImportState
+        XCTAssertTrue(state.importURLs([try source("available.md", "Imported")]))
+        finishImport()
+        let open = try settingsWidget("library-import-open", in: window)
+        XCTAssertNotEqual(gtk_widget_get_sensitive(open), 0)
+        state.setLibraryAvailable(false)
+        XCTAssertTrue(state.hasReport)
+        XCTAssertEqual(gtk_widget_get_sensitive(open), 0)
+        state.setLibraryAvailable(true)
+        XCTAssertNotEqual(gtk_widget_get_sensitive(open), 0)
+        XCTAssertEqual(try settingsWidget("library-import-open", in: window), open)
     }
 
     func testChooserImportsMixedSourcesAndRendersTypedSkipsMetadataAndWarningsWithoutOverwrite() throws {
@@ -267,6 +380,8 @@ final class LinuxLibraryImportTests: XCTestCase {
         while deep.path.utf8.count - folder.path.utf8.count <= Limits.maxPathBytes {
             deep.appendPathComponent(String(repeating: "x", count: 128))
         }
+        try XCTSkipIf(deep.appendingPathComponent("deep.md").path.utf8.count >= Int(PATH_MAX),
+                      "The overlong Core path fixture exceeds this host's absolute path limit")
         try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
         try Data("Unimportable path".utf8).write(to: deep.appendingPathComponent("deep.md"))
         _ = try openLibrary()
@@ -402,6 +517,13 @@ private final class ImportTestChooser: LinuxImportChoosing {
 private final class ImportTestWork: BackgroundWork {
     private var work: [() -> Void] = []
     func run(_ work: @escaping () -> Void) { self.work.append(work) }
-    func runAll() { while !work.isEmpty { work.removeFirst()() } }
+    func runAll(file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<10_000 {
+            guard !work.isEmpty else { return }
+            work.removeFirst()()
+        }
+        XCTAssertTrue(work.isEmpty, "Import work exceeded 10,000 tasks; check for a re-enqueue loop", file: file, line: line)
+        work.removeAll()
+    }
 }
 #endif
