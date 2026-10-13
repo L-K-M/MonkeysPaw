@@ -1,11 +1,18 @@
 package ch.lkmc.monkeyspaw.core.domain.ranking
 
+import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathCaseFold
 import com.ibm.icu.lang.UCharacter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class SearchNormalizerTest {
+    @Test
+    fun `ASCII fast path matches the frozen full fold data`() {
+        val ascii = (0..<128).map { it.toChar() }.joinToString("")
+        assertEquals(SyncPathCaseFold.fold(ascii), SearchNormalizer.normalize(ascii))
+    }
+
     @Test
     fun `search uses Unicode 17 full C F folding followed by NFC`() {
         assertEquals(17, UCharacter.getUnicodeVersion().major)

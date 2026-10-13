@@ -8,6 +8,11 @@ import com.ibm.icu.text.Normalizer2
 /** §5.4: search owns its transform; only Unicode 17 C/F mapping data is shared with sync. */
 internal object SearchNormalizer {
     fun normalize(text: String): String {
+        // ASCII has only the A–Z fold and is already NFC.
+        if (text.all { it.code < 0x80 }) return buildString(text.length) {
+            for (scalar in text) append(if (scalar in 'A'..'Z') (scalar.code + 0x20).toChar() else scalar)
+        }
+
         val scalars = text.codePoints().toArray()
         require(scalars.none { it in 0xD800..0xDFFF }) { "Use Unicode scalar text." }
         val folded = buildString {

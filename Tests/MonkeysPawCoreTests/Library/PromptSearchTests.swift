@@ -91,6 +91,11 @@ final class PromptSearchTests: XCTestCase {
         XCTAssertEqual(Array(FuzzyText.normalize(input).unicodeScalars), Array(expected.unicodeScalars))
     }
 
+    func testASCIIFastPathMatchesTheFrozenFullFoldData() {
+        let ascii = String(String.UnicodeScalarView((0..<128).map { Unicode.Scalar($0)! }))
+        XCTAssertTrue(FuzzyText.normalize(ascii).utf8.elementsEqual(SyncPathCaseFold.fold(ascii).utf8))
+    }
+
     func testNFCOrdersAllDecomposedMarksWithoutTruncation() {
         let cases = [
             ("q\u{F73}\u{F73}", "q\u{F71}\u{F71}\u{F72}\u{F72}"),

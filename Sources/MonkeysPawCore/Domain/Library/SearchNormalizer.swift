@@ -2,6 +2,12 @@
 /// shared with sync. Never consult Foundation's platform-specific tables.
 enum SearchNormalizer {
     static func normalize(_ text: String) -> String {
+        // ASCII has only the A–Z fold and is already NFC.
+        if text.utf8.allSatisfy({ $0 < 0x80 }) {
+            let folded = text.utf8.map { (0x41...0x5A).contains($0) ? $0 + 0x20 : $0 }
+            return String(decoding: folded, as: UTF8.self)
+        }
+
         var folded = String.UnicodeScalarView()
         for scalar in text.unicodeScalars {
             if let replacement = SyncPathCaseFold.exceptions[scalar.value] {
@@ -19,13 +25,15 @@ enum SearchNormalizer {
     }
 
     static func isWordScalar(_ scalar: Unicode.Scalar) -> Bool {
-        // Apple assigns extra categories to some private-use scalars.
-        if (0xE000...0xF8FF).contains(scalar.value)
-            || (0xF0000...0xFFFFD).contains(scalar.value)
-            || (0x100000...0x10FFFD).contains(scalar.value) { return false }
-        if SearchUnicodeData.wordAdditions.contains(where: { $0.contains(scalar.value) }) { return true }
-        guard let age = scalar.properties.age,
-              age.major < 17 || (age.major == 17 && age.minor == 0) else { return false }
+        if !scalar.isASCII {
+            // Apple assigns extra categories to some private-use scalars.
+            if (0xE000...0xF8FF).contains(scalar.value)
+                || (0xF0000...0xFFFFD).contains(scalar.value)
+                || (0x100000...0x10FFFD).contains(scalar.value) { return false }
+            if SearchUnicodeData.wordAdditions.contains(where: { $0.contains(scalar.value) }) { return true }
+            guard let age = scalar.properties.age,
+                  age.major < 17 || (age.major == 17 && age.minor == 0) else { return false }
+        }
         switch scalar.properties.generalCategory {
         case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
              .nonspacingMark, .spacingMark, .enclosingMark,
