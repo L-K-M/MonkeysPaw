@@ -26,6 +26,8 @@ base_url = sys.argv[1].rstrip("/")
 password_file = Path(sys.argv[2])
 username = sys.argv[3] if len(sys.argv) == 4 else "admin"
 phase = "setup"
+# Exit codes, HTTP statuses and exception types carry no secrets.
+detail = ""
 
 try:
     url = urlsplit(base_url)
@@ -62,7 +64,11 @@ try:
                             "--data-binary", "@" + str(request_file)]
             command.append(base_url + endpoint)
             result = subprocess.run(command, capture_output=True, timeout=20)
-            assert result.returncode == 0 and result.stdout.strip() == b"200"
+            global detail
+            status = result.stdout.strip().decode("ascii", "replace")
+            detail = "curl exit " + str(result.returncode) + ", HTTP " + (status or "none")
+            assert result.returncode == 0 and status == "200"
+            detail = ""
             return json.loads(response_file.read_text(encoding="utf-8"))
 
         phase = "unauthenticated health"
@@ -125,9 +131,9 @@ try:
         })
         check_pull(delta, "delta", second, second_prompt)
         assert delta["database_id"] == snapshot["database_id"]
-except (AssertionError, OSError, ValueError, KeyError, IndexError, TypeError, subprocess.TimeoutExpired):
+except (AssertionError, OSError, ValueError, KeyError, IndexError, TypeError, subprocess.TimeoutExpired) as error:
     # Response bodies and curl stderr may contain credentials or prompt content.
-    sys.exit("Compose smoke failed during " + phase + ".")
+    sys.exit("Compose smoke failed during " + phase + " (" + (detail or type(error).__name__) + ").")
 
 print("Compose smoke passed: health, login, writes, snapshot and delta.")
 PY

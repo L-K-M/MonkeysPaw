@@ -133,7 +133,7 @@ sys.stdout.write("201" if case == "wrong_http_status" and step == 0 else "200")
 
 
 class ComposeSmokeTests(unittest.TestCase):
-    def run_smoke(self, case):
+    def run_smoke(self, case, password_mode=0o600):
         with tempfile.TemporaryDirectory(prefix="test-compose-smoke-") as directory:
             work = Path(directory)
             fake_bin = work / "bin"
@@ -143,7 +143,7 @@ class ComposeSmokeTests(unittest.TestCase):
             curl.chmod(0o700)
             password = work / "admin-password"
             password.write_bytes((PASSWORD + "\r\n").encode("utf-8"))
-            password.chmod(0o600)
+            password.chmod(password_mode)
             temporary = work / "temporary"
             temporary.mkdir()
             state = work / "state.json"
@@ -153,10 +153,15 @@ class ComposeSmokeTests(unittest.TestCase):
                    "http_proxy": "http://proxy.invalid:9999", "https_proxy": "http://proxy.invalid:9999",
                    "all_proxy": "http://proxy.invalid:9999", "no_proxy": "", "NO_PROXY": ""}
             result = subprocess.run(["bash", "-x", str(SMOKE), "http://127.0.0.1:8790", str(password)],
-                                    env=env, capture_output=True, text=True, timeout=30)
+                                    env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertNotIn(PASSWORD, result.stdout + result.stderr)
             self.assertNotIn(TOKEN, result.stdout + result.stderr)
             self.assertEqual(list(temporary.iterdir()), [], "Private request/response files must be removed")
+            if case == "readable_password":
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Compose smoke failed during setup", result.stderr)
+                self.assertFalse(state.exists(), "No request may run with a group- or world-readable password file")
+                return
             if case == "success":
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("Compose smoke passed", result.stdout)
@@ -165,6 +170,8 @@ class ComposeSmokeTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("Compose smoke passed", result.stdout)
                 self.assertIn("Compose smoke failed during", result.stderr)
+                # The failure names its cause without bodies: curl status or an exception type.
+                self.assertRegex(result.stderr, r"failed during [^(]+\((curl exit \d+, HTTP \S+|[A-Za-z]+Error|TimeoutExpired)\)")
                 failure_steps = {
                     "transport_failure": 1, "wrong_http_status": 1, "bad_login": 2,
                     "bad_write": 3, "bad_read": 4, "bad_snapshot_database": 5,
@@ -176,6 +183,9 @@ class ComposeSmokeTests(unittest.TestCase):
 
     def test_round_trip_and_private_files(self):
         self.run_smoke("success")
+
+    def test_rejects_a_readable_password_file(self):
+        self.run_smoke("readable_password", password_mode=0o640)
 
     def test_rejects_failed_transport_status_and_contracts(self):
         for case in ("transport_failure", "wrong_http_status", "bad_login", "bad_write", "bad_read",
