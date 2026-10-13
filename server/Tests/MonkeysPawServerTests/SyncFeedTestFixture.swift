@@ -18,7 +18,7 @@ func feedTestID(_ index: Int) -> String {
 }
 
 extension GroupTestFixture {
-    var feed: SyncFeedService { .init(database: persistence.database) }
+    var feed: SyncFeedService { .init(database: persistence.database, clock: account.clock.now) }
     var feedRepository: SyncFeedRepository { .init(database: persistence.database) }
 
     /// Seed immutable changes with rev values but no prompts or prompt_revisions rows.

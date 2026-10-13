@@ -23,7 +23,7 @@ struct ServerGroupMigrationTests {
             try await repository.database.migrate()
             try await repository.database.migrate()
             #expect(try await MetaRepository(database: repository.database).databaseID() == identity)
-            #expect(try await repository.count("schema_migrations") == 3)
+            #expect(try await repository.count("schema_migrations") == 4)
             let original = try #require(await repository.auditEvents().first)
             #expect(original.id == "original" && original.actorID == nil && original.groupID == nil)
             #expect(original.action == "user.create" && original.targetID == PersistenceTestRepository.user)
@@ -57,7 +57,7 @@ struct ServerGroupMigrationTests {
             }
             #expect(!hasGroupColumn)
             try await repository.database.migrate()
-            #expect(try await repository.count("schema_migrations") == 3)
+            #expect(try await repository.count("schema_migrations") == 4)
         }
     }
 }

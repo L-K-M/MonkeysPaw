@@ -110,25 +110,30 @@ struct ServerSyncFeedRouteTests {
         }
     }
 
-    @Test func snapshotTODOHasASanitizedHTTPFailureWithoutScopeOrRequestDetails() async throws {
+    @Test func expiredSnapshotUsesTheS1ContractAndRedactsLogs() async throws {
         try await withGroupFixture { fixture in
             let user = try await fixture.user("reader")
             let session = try await fixture.account.session(user)
+            _ = try await fixture.seedSnapshot(identity: .user(ownerID: user.id), author: user, count: 201)
+            let first = try await fixture.feed.pull(request: .init(databaseID: nil, cursors: [:]), session: session.identity)
+            let request = first.continuation
+            try await fixture.persistence.execute("DELETE FROM snapshots")
             let capture = CapturedServerLogs()
             let logger = ServerLogging.makeLogger(level: .trace, sink: capture.write)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts,
                                       sessions: fixture.account.sessions, logger: logger)
-            let request = SyncAPI.PullRequest(databaseID: nil, cursors: ["user:\(user.id)": "snap:private-cursor-data"])
             try await app.test(.router) { client in
                 try await client.execute(uri: "/api/v1/sync/pull", method: .post, headers: PromptHTTPTest.headers(session),
-                                         body: .init(bytes: JSONEncoder().encode(request))) { try PromptHTTPTest.error($0, .failure(.internalError)) }
+                                         body: .init(bytes: JSONEncoder().encode(request))) {
+                    try PromptHTTPTest.error($0, .snapshotExpired(scopes: ["user:\(user.id)"]))
+                }
             }
             let failures = try capture.events().filter { $0.message == "API request failed" }
-            #expect(failures.count == 1 && failures.first?.level == "error")
-            #expect(failures.first?.fields["error_type"] == "SyncFeedError")
+            #expect(failures.count == 1 && failures.first?.level == "debug")
+            #expect(failures.first?.fields["error_type"] == nil)
             let logged = String(decoding: capture.snapshot(), as: UTF8.self)
-            for secret in [user.id, session.token.value, "private-cursor-data", "snapshotRequired"] { #expect(!logged.contains(secret)) }
-            #expect(String(describing: SyncFeedError.snapshotRequired(scopes: ["user:\(user.id)"])) == "SyncFeedError(<redacted>)")
+            for secret in [user.id, session.token.value, first.scopes[0].cursor, "snapshotExpired"] { #expect(!logged.contains(secret)) }
+            #expect(String(describing: SyncFeedError.snapshotTooLarge) == "SyncFeedError(<redacted>)")
         }
     }
 }

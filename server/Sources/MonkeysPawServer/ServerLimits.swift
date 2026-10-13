@@ -47,6 +47,7 @@ public enum ServerLimits {
     /// Bound transaction work even when a long run collapses to one emitted item.
     static let syncPageMaxChanges = 1_000
     static let snapshotLifetimeSeconds = 15 * 60
+    static let snapshotSigningKeyBytes = 32
     static let snapshotMaxBytes = 64 * 1_024 * 1_024
     static let snapshotTotalMaxBytes = 256 * 1_024 * 1_024
 }
