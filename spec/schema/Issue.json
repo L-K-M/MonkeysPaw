@@ -29,6 +29,7 @@
             "path.reserved_groups_prefix",
             "path.segment_dot",
             "path.segment_empty",
+            "path.segment_hidden",
             "path.segment_too_long",
             "path.too_long",
             "path.trailing_dot_or_space",
