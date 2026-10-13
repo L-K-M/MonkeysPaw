@@ -45,7 +45,8 @@ final class KeychainSecretScanTests: XCTestCase {
         let roots = [repository, root, config, data, data.appendingPathComponent("logs"), temporary]
         func checkpoint(_ step: String) throws {
             log.write(.debug, "Secret scan checkpoint: \(step).")
-            XCTAssertTrue(try scan.matches(in: roots).isEmpty, "Unexpected secret copy after \(step)")
+            let matches = try scan.matches(in: roots)
+            XCTAssertTrue(matches.isEmpty, "Unexpected secret copy after \(step): \(matches.map(\.path).sorted())")
         }
 
         try assertStorage(graph)
@@ -143,6 +144,7 @@ final class KeychainSecretScanTests: XCTestCase {
         while (model.state.operation != nil || model.state.keyStorage != .saved(.keychain)), Date() < deadline {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.005))
         }
+        XCTAssertNil(model.state.operation)
         XCTAssertEqual(model.state.keyStorage, .saved(.keychain))
     }
 

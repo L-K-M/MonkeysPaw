@@ -104,6 +104,9 @@ OS account: app config/data are in
 the system Keychain belongs to that account. Include its library and actual
 temporary directory. Record every root, including the repository checkout
 and app log locations. Include any stderr capture and rotated logs.
+Run the scan from a terminal that can read every root: macOS folders such as
+Documents need Full Disk Access, and the script stops at the first
+unreadable location.
 
 Save the sentinel through Settings → Assistant, then run the scan below after
 each of: Save, successful/failed Test connection, quit/relaunch, profile rename,
@@ -112,6 +115,8 @@ profile. A synthetic Ollama key may not cause a failed Test; use a local stub
 that returns HTTP 401 for that step. Keep stub secrets and responses in memory.
 Pass existing directory paths in place of the example arguments. The script
 asks for the sentinel without echoing it and prints matching paths only.
+It lists symlinks without following them; scan any listed target outside
+the roots.
 
 ```sh
 python3 - /path/to/checkout /path/to/config /path/to/data /path/to/logs /path/to/temp <<'PY'
@@ -144,7 +149,10 @@ for argument in sys.argv[1:]:
     root = Path(argument).resolve()
     if not root.is_dir():
         raise SystemExit("SCAN ERROR: a root is missing")
-    for directory, _, names in os.walk(root, onerror=failed, followlinks=False):
+    for directory, dirs, names in os.walk(root, onerror=failed, followlinks=False):
+        for entry in dirs + names:
+            if (Path(directory) / entry).is_symlink():
+                print("SKIPPED symlink:", Path(directory) / entry)
         for name in names:
             path = Path(directory) / name
             if path.is_symlink() or not path.is_file() or path in seen:
