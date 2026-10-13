@@ -34,6 +34,20 @@ class PathFixturesTest {
     }
 
     @Test
+    fun `unpaired surrogate goldens cannot be repaired into matching UTF-8 bytes`() {
+        val fixture = Corpus.load().cases(Category.PATHS).single { it.name == "basic" }
+        val source = withSource(fixture, "?.md")
+        for (escape in listOf("\\uD800", "\\uDC00")) {
+            for (member in listOf("path", "path_key")) {
+                val json = """{"path":"?.md","path_key":"?.md"}"""
+                    .replace("\"$member\":\"?.md\"", "\"$member\":\"$escape.md\"")
+                val expected = parseFixtureJson(json.toByteArray()).objectValue()
+                assertFails { PathFixtures.check(withExpected(source, expected)) }
+            }
+        }
+    }
+
+    @Test
     fun `wrong first failure or nullable segment cannot pass`() {
         val fixture = Corpus.load().cases(Category.PATHS).single { it.name == "nul" }
         val issue = fixture.expected["issue"].objectValue()

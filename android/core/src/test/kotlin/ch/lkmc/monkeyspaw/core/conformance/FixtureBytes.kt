@@ -26,7 +26,8 @@ internal fun assertBytesEqual(expected: ByteArray, actual: ByteArray, message: S
 }
 
 internal fun assertUtf8Equal(expected: String, actual: String, message: String? = null) {
-    assertBytesEqual(expected.toByteArray(Charsets.UTF_8), actual.toByteArray(Charsets.UTF_8), message)
+    assertBytesEqual(expected.encodeToByteArray(throwOnInvalidSequence = true),
+        actual.encodeToByteArray(throwOnInvalidSequence = true), message)
 }
 
 private val jsonNumber = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
