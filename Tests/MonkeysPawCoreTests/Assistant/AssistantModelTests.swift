@@ -3,6 +3,67 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class AssistantModelTests: XCTestCase {
+    func testFailedStartClearsPriorCandidateAndResultState() async throws {
+        for queued in [false, true] {
+            let h = try AssistantActionHarness(queued: queued)
+            h.ui { h.model.editInstruction("Keep this instruction"); h.model.write(brief: "Brief") }
+            try await h.sent()
+            try await h.artifact(body: "Use {{topic}} and {{bad name}}")
+            try await h.phase(.ready)
+            XCTAssertNotNil(h.model.state.artifact)
+            XCTAssertNotNil(h.model.state.candidate)
+            XCTAssertFalse(h.model.state.issues.isEmpty)
+            XCTAssertNotNil(h.model.state.usage)
+            XCTAssertFalse(h.model.state.transcript.isEmpty)
+            h.ui { h.model.review() }
+            h.settle()
+            XCTAssertEqual(h.model.state.phase, .failed)
+            XCTAssertEqual(h.model.state.failure, .noEditor)
+            XCTAssertNil(h.model.state.artifact)
+            XCTAssertNil(h.model.state.review)
+            XCTAssertNil(h.model.state.candidate)
+            XCTAssertTrue(h.model.state.selectedFindings.isEmpty)
+            XCTAssertTrue(h.model.state.issues.isEmpty)
+            XCTAssertNil(h.model.state.usage)
+            XCTAssertTrue(h.model.state.transcript.isEmpty)
+            XCTAssertFalse(h.model.state.isStale)
+            XCTAssertEqual(h.model.state.elapsed, 0)
+            XCTAssertFalse(h.model.canAccept)
+            XCTAssertEqual(h.model.state.instruction, "Keep this instruction")
+            XCTAssertEqual(h.model.state.providerHost, "api.openai.com")
+            h.ui { h.model.showDiff(); h.model.retryWithFeedback("Retry") }
+            h.settle()
+            let sent = await h.transport.snapshot()
+            XCTAssertEqual(sent.count, 1)
+        }
+    }
+
+    func testFailedStartStopsSupersededRequestTimerAndDropsItsLateReply() async throws {
+        for queued in [false, true] {
+            let h = try AssistantActionHarness(queued: queued)
+            h.ui { h.model.write(brief: "Brief") }
+            try await h.sent()
+            h.time.advance(by: .seconds(3))
+            h.ui { h.model.updateElapsed() }
+            XCTAssertEqual(h.model.state.elapsed, 3)
+            h.ui { h.model.improve() }
+            h.settle()
+            XCTAssertEqual(h.model.state.phase, .failed)
+            XCTAssertEqual(h.model.state.failure, .noEditor)
+            XCTAssertEqual(h.model.state.elapsed, 0)
+            XCTAssertTrue(h.model.state.transcript.isEmpty)
+            h.time.advance(by: .seconds(7))
+            h.ui { h.model.updateElapsed() }
+            XCTAssertEqual(h.model.state.elapsed, 0)
+            try await h.artifact()
+            try await h.clientReturned()
+            h.settle()
+            XCTAssertEqual(h.model.state.phase, .failed)
+            XCTAssertNil(h.model.state.artifact)
+            XCTAssertNil(h.model.state.candidate)
+        }
+    }
+
     func testWritePhasesUsageElapsedAndAcceptIntentUnderInlineAndQueuedMain() async throws {
         for queued in [false, true] {
             let h = try AssistantActionHarness(queued: queued)
@@ -38,7 +99,8 @@ final class AssistantModelTests: XCTestCase {
             XCTAssertEqual(accepted.candidate.content.canonicalBytes, candidate.content.canonicalBytes)
             h.ui { h.model.completeAcceptance(accepted.id, result: .success(())) }
             h.settle()
-            XCTAssertEqual(phases, [.idle, .working, .draft, .ready, .saved])
+            // The main port serializes callback writes and this final read.
+            h.ui { XCTAssertEqual(phases, [.idle, .working, .draft, .ready, .saved]) }
             XCTAssertTrue(try h.editor.h.files.listFiles().isEmpty)
         }
     }

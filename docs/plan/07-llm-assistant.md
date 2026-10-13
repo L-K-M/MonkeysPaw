@@ -223,6 +223,8 @@ Parsing and validation:
   ([§19 B25](19-m4-m5-decisions.md)). Empty `options` means no options for
   non-choice fields; an empty `default` means no prefill. Content issues use
   the existing placeholder grammar and validator and remain visible on drafts.
+  Artifact and review wire properties are nonoptional strings, booleans and
+  arrays; empty values remain valid JSON when reconstructed for the transcript.
 - **Tolerant parsing** for endpoints without schema support: strip code
   fences and `<think>` blocks, then fall back to a brace-balanced scan
   (Vervellum `decodeJSONObject`). Before selecting the first `{`, prose
@@ -298,13 +300,20 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   No action runs automatically. Retry with feedback retains the session-only
   user/assistant transcript unchanged. Its newest user turn contains the current
   template snapshot and instruction plus escaped feedback; quote matching and
-  merge use this fresh snapshot. Each explicit retry
+  merge use this fresh snapshot. Both clients merge adjacent turns with the same
+  role using two newlines in the outgoing request only, including user turns
+  retained after failed calls. Each explicit retry
   starts a fresh action budget; format probes share that action's deadline.
+  A failed start clears prior results, selections, issues, usage and transcript,
+  and stops and resets elapsed time before publishing failure.
 - **Editor snapshot and acceptance.** At an explicit action, Core captures the
   current editor source bytes, buffer revision, editing session, relative path
   and checked disk stamp, plus the profile, library graph and access state.
-  Only a validated, writable buffer without an unresolved disk conflict can
-  be used. Requests send that template source, never the rendered preview.
+  Review and improve require a validated, writable, nonprivate buffer. Write
+  creates a new prompt from the brief alone and does not check an open document's
+  health or privacy. All actions wait for editor I/O, queued or pending guard
+  decisions and unresolved disk conflicts. Requests send template source for
+  review and improve, never the rendered preview.
   Later buffer or disk changes keep the generated artifact but withdraw its
   acceptable candidate and diff. Returning to the same text does not restore
   acceptance. An explicit Show diff revalidates and merges against a fresh
@@ -432,7 +441,8 @@ prompt-engineering guide. `placeholders` is checked locally, without an LLM.
   ([§19 B23](19-m4-m5-decisions.md)).
 - **What is sent.** Calls happen only on an explicit button. They send the
   template text, never remembered field values. `private: true` prompts
-  disable the assistant buttons.
+  disable review and improve. Write sends only the supplied brief and remains
+  available while a private document is open, subject to editor availability.
 - **Cost.** The Assistant footer shows the provider host and model before
   sending, and token usage after.
 - **Offline.** Everything except the assistant and sync works offline.

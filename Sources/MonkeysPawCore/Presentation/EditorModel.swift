@@ -155,13 +155,15 @@ public final class EditorModel: @unchecked Sendable {
     deinit { deactivate() }
 
     /// Capture at the assistant action, before any later edit can change its
-    /// baseline. Conflicts and in-flight editor I/O must first be resolved.
+    /// baseline. Conflicts, guard decisions and editor I/O must first be resolved.
     public var assistantSnapshot: AssistantEditorSnapshot? {
         guard isActive, let source = state.source, let prompt = state.prompt,
               let session, let stamp = state.stamp else { return nil }
         let availability: AssistantEditorAvailability
         if state.conflict != nil { availability = .conflicted }
-        else if state.status == .loading || state.status == .saving { availability = .busy }
+        else if pendingRequest != nil || !requests.isEmpty || state.status == .loading || state.status == .saving {
+            availability = .busy
+        }
         else { availability = .available }
         return AssistantEditorSnapshot(source: source, relativePath: prompt.relativePath,
             revision: assistantRevision, session: session, stamp: stamp, availability: availability)

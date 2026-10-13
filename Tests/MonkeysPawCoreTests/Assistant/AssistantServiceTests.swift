@@ -3,15 +3,47 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class AssistantServiceTests: XCTestCase {
-    func testPrivatePromptRefusesEveryActionBeforeCredentialReadOrHTTP() async throws {
+    func testWriteIgnoresOpenDocumentHealthAndUsesOnlyTheBrief() async throws {
         for kind in [ProviderKind.anthropic, .openaiCompatible] {
-            for action in 0..<3 {
+            for source in ["---\nformat: 2\n---\nFuture document", "Broken {{field",
+                           "---\nprivate: true\n---\nSensitive document"] {
+                let h = try AssistantActionHarness(source: source, kind: kind)
+                h.ui { h.model.write(brief: "Independent new prompt") }
+                try await h.sent()
+                let messages = try await h.messages()
+                XCTAssertTrue(try XCTUnwrap(messages.last?["content"]).contains("Independent new prompt"), "for \(kind)")
+                XCTAssertFalse(try XCTUnwrap(messages.last?["content"]).contains(source), "for \(kind)")
+                try await h.artifact()
+                try await h.phase(.ready)
+                XCTAssertTrue(h.model.canAccept, "for \(kind)")
+                XCTAssertEqual(try h.editor.h.files.read(at: "a.md"), Data(source.utf8), "for \(kind)")
+            }
+        }
+    }
+
+    func testWriteStillRefusesBusyAndConflictedEditorsBeforeCredentialRead() async throws {
+        for conflicted in [false, true] {
+            let h = try AssistantActionHarness(source: "Original")
+            h.editor.ui { h.editor.model.edit("Unsaved"); h.editor.model.request(.quit) }
+            if conflicted { try h.editor.change("External"); h.editor.settle() }
+            let reads = h.provider.secrets.reads.count
+            h.ui { h.model.write(brief: "Independent brief") }
+            try await h.phase(.failed)
+            XCTAssertEqual(h.model.state.failure, conflicted ? .editorConflict : .editorBusy)
+            XCTAssertEqual(h.provider.secrets.reads.count, reads)
+            let sent = await h.transport.snapshot()
+            XCTAssertTrue(sent.isEmpty)
+        }
+    }
+
+    func testPrivatePromptRefusesReviewAndImproveBeforeCredentialReadOrHTTP() async throws {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for action in 0..<2 {
                 let h = try AssistantActionHarness(source: "---\nprivate: true\n---\nSensitive template", kind: kind)
                 let reads = h.provider.secrets.reads.count
                 let writes = h.provider.files.attemptedWrites.count
                 h.ui {
-                    if action == 0 { h.model.write(brief: "Brief") }
-                    else if action == 1 { h.model.review() }
+                    if action == 0 { h.model.review() }
                     else { h.model.improve() }
                 }
                 try await h.phase(.failed)
@@ -28,13 +60,16 @@ final class AssistantServiceTests: XCTestCase {
     func testInvalidReadOnlyConflictedAndMissingBuffersRefuseBeforeHTTP() async throws {
         let cases: [(String?, AssistantFailure)] = [
             (nil, .noEditor), ("Broken {{field", .invalid([PromptIssue(.unbalancedOpener)])),
-            ("---\nformat: 2\n---\nFuture", .readOnly(.unsupportedFormat(PromptFormatVersion(2)!)))]
+            ("---\nformat: 2\n---\nFuture", .readOnly(.unsupportedFormat(try XCTUnwrap(PromptFormatVersion(2)))))]
         for (source, expected) in cases {
             let h = try AssistantActionHarness(source: source)
             h.ui { h.model.improve() }
             try await h.phase(.failed)
             if case .invalid = expected {
-                guard case .invalid(let issues) = h.model.state.failure else { return XCTFail("Expected local validation failure") }
+                guard case .invalid(let issues) = h.model.state.failure else {
+                    XCTFail("Expected local validation failure, got \(String(describing: h.model.state.failure))")
+                    continue
+                }
                 XCTAssertTrue(issues.contains { $0.code == .unbalancedOpener })
             } else { XCTAssertEqual(h.model.state.failure, expected) }
             let sent = await h.transport.snapshot()
@@ -95,8 +130,8 @@ final class AssistantServiceTests: XCTestCase {
         h.time.advance(by: .seconds(8))
         try await h.sent()
         let sent = await h.transport.snapshot()
-        XCTAssertEqual(sent[0].deadline, start.advanced(by: Limits.llmBudget))
-        h.model.cancel()
+        XCTAssertEqual(try XCTUnwrap(sent.first).deadline, start.advanced(by: Limits.llmBudget))
+        h.ui { h.model.cancel() }
         try await h.artifact()
 
         let expired = try AssistantActionHarness()
@@ -163,6 +198,7 @@ final class AssistantServiceTests: XCTestCase {
         let returned = expectation(description: "blocked worker returned")
         let completed = expectation(description: "MainThread callback")
         let secrets = ConnectionBlockingSecrets { started.fulfill() }
+        defer { secrets.allowReturn.signal() }
         let settings = ProviderSettingsService(store: ProviderSettingsStore(files: provider.files), secrets: secrets)
         let main = AssistantActionMain(queued: false)
         let transport = ConnectionTransport([])
@@ -179,10 +215,13 @@ final class AssistantServiceTests: XCTestCase {
         await fulfillment(of: [started], timeout: 3)
         operation.cancel()
         await fulfillment(of: [completed], timeout: 3)
-        XCTAssertEqual(try XCTUnwrap(results.first).failure, .assistant(.transport(.cancelled)))
+        // Callback writes and test reads share the injected main port's lock.
+        main.ui {
+            XCTAssertEqual(results.first?.failure, .assistant(.transport(.cancelled)))
+        }
         secrets.allowReturn.signal()
         await fulfillment(of: [returned], timeout: 3)
-        XCTAssertEqual(results.count, 1)
+        main.ui { XCTAssertEqual(results.count, 1) }
         let requests = await transport.snapshot()
         XCTAssertTrue(requests.isEmpty)
     }
@@ -194,8 +233,12 @@ final class AssistantServiceTests: XCTestCase {
         try await h.sent()
         try await h.artifact(body: sentinel, notes: sentinel)
         try await h.phase(.ready)
-        let values: [Any] = [h.model, h.model.state, h.context, try XCTUnwrap(h.context.editor),
-            try XCTUnwrap(h.model.state.candidate), try XCTUnwrap(h.model.accept()),
+        let stateAtReady = h.model.state
+        let candidate = try XCTUnwrap(stateAtReady.candidate)
+        var acceptance: AssistantAcceptance?
+        h.ui { acceptance = h.model.accept() }
+        let values: [Any] = [h.model, stateAtReady, h.context, try XCTUnwrap(h.context.editor),
+            candidate, try XCTUnwrap(acceptance),
             AssistantCommand.write(brief: sentinel), AssistantFailure.assistant(.unexpectedStop(sentinel))]
         for value in values {
             XCTAssertFalse(String(describing: value).contains(sentinel))

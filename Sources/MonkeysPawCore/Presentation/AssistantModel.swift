@@ -74,9 +74,11 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     deinit { cancelWork?() }
 
     public var canAccept: Bool {
-        isActive && state.phase == .ready && !state.isStale && !state.isAccepting
-            && !state.issues.contains(where: { $0.severity == .error })
-            && state.candidate?.context == currentContext() && service.isCurrent(context)
+        guard isActive, state.phase == .ready, !state.isStale, !state.isAccepting,
+              !state.issues.contains(where: { $0.severity == .error }),
+              let candidate = state.candidate else { return false }
+        let latest = currentContext()
+        return candidate.context == latest && service.isCurrent(latest)
     }
 
     /// Also rechecked at every intent and callback. Notifications are necessary
@@ -233,6 +235,18 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         invalidateWork()
         if feedback == nil { retainedID = nil }
         attempt = nil
+        started = nil
+        state.artifact = nil
+        state.review = nil
+        reviewContext = nil
+        state.selectedFindings = []
+        state.candidate = nil
+        state.issues = []
+        state.failure = nil
+        state.usage = nil
+        state.isStale = false
+        state.transcript = []
+        state.elapsed = 0
         let id = UUID()
         requestID = id
         let context = self.context
@@ -240,17 +254,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
             let request = AssistantRequest(action: try command.action(in: context), effort: effort,
                 transcript: transcript, feedback: feedback)
             attempt = Attempt(command: command, context: context, request: request)
-            state.artifact = nil
-            state.review = nil
-            reviewContext = nil
-            state.selectedFindings = []
-            state.candidate = nil
-            state.issues = []
-            state.failure = nil
-            state.usage = nil
-            state.isStale = false
             state.transcript = request.messages
-            state.elapsed = 0
             started = now()
             state.phase = .working
             changed()
@@ -262,6 +266,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
             if requestID == id { cancelWork = { operation.cancel() } }
             else { operation.cancel() }
         } catch {
+            requestID = nil
             state.phase = .failed
             state.failure = error as? AssistantFailure ?? .assistant(.invalidOutput)
             changed()

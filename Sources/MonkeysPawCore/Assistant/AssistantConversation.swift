@@ -32,6 +32,19 @@ extension AssistantRequest {
     }
 
     var messages: [AssistantMessage] { transcript + [userMessage] }
+
+    /// Some compatible chat templates require alternating roles. Keep the
+    /// session transcript intact and combine adjacent turns only for transport.
+    var wireMessages: [AssistantMessage] {
+        var turns: [AssistantMessage] = []
+        for message in messages {
+            if let last = turns.last, last.role == message.role {
+                turns[turns.count - 1] = AssistantMessage(role: message.role,
+                    content: last.content + "\n\n" + message.content)
+            } else { turns.append(message) }
+        }
+        return turns
+    }
 }
 
 extension AssistantResponse {

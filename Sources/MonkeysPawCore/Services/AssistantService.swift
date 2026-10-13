@@ -146,11 +146,15 @@ public final class AssistantService: CustomStringConvertible, CustomDebugStringC
             case .busy: throw AssistantFailure.editorBusy
             case .conflicted: throw AssistantFailure.editorConflict
             }
-            let document = editor.document
-            if let reason = LoadedPrompt.readOnlyReason(for: document) { throw AssistantFailure.readOnly(reason) }
-            let issues = document.issues
-            guard !issues.contains(where: { $0.severity == .error }) else { throw AssistantFailure.invalid(issues) }
-            guard !document.frontMatter.isPrivate else { throw AssistantError.privatePrompt }
+            switch command {
+            case .write: break // A new prompt sends only the brief, never the open document.
+            case .review, .improve:
+                let document = editor.document
+                if let reason = LoadedPrompt.readOnlyReason(for: document) { throw AssistantFailure.readOnly(reason) }
+                let issues = document.issues
+                guard !issues.contains(where: { $0.severity == .error }) else { throw AssistantFailure.invalid(issues) }
+                guard !document.frontMatter.isPrivate else { throw AssistantError.privatePrompt }
+            }
         } else if case .write = command { /* A new prompt needs no open editor. */ }
         else { throw AssistantFailure.noEditor }
         guard context.access != .unavailable else { throw AssistantError.accessDenied }

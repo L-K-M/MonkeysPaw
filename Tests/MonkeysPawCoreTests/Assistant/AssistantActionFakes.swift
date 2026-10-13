@@ -161,7 +161,8 @@ final class AssistantActionHarness {
 
     func messages(at index: Int = 0) async throws -> [[String: String]] {
         let requests = await transport.snapshot()
-        let body = try XCTUnwrap(requests[index].body)
+        let request = try XCTUnwrap(requests.indices.contains(index) ? requests[index] : nil)
+        let body = try XCTUnwrap(request.body)
         let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         let messages = try XCTUnwrap(object["messages"] as? [[String: String]])
         return kind == .anthropic ? messages : Array(messages.dropFirst())

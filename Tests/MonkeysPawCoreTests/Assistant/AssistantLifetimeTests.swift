@@ -65,7 +65,7 @@ final class AssistantLifetimeTests: XCTestCase {
         try await h.phase(.ready)
         XCTAssertEqual(h.model.state.artifact?.body, "New candidate")
         let accepted = try XCTUnwrap(h.model.accept())
-        h.model.reject()
+        h.ui { h.model.reject() }
         XCTAssertFalse(h.model.completeAcceptance(accepted.id, result: .success(())))
         XCTAssertEqual(h.model.state.phase, .idle)
     }
@@ -116,7 +116,7 @@ final class AssistantLifetimeTests: XCTestCase {
         try await h.sent()
         await h.transport.release(try h.response(AssistantOutputFixtures.review))
         try await h.phase(.draft)
-        h.model.toggleFinding(at: 0)
+        h.ui { h.model.toggleFinding(at: 0) }
         XCTAssertEqual(h.model.state.selectedFindings, [0])
         h.editor.ui { h.editor.model.edit("Different source") }
         XCTAssertNil(h.model.highlightFinding(at: 0))
@@ -138,7 +138,7 @@ final class AssistantLifetimeTests: XCTestCase {
         XCTAssertTrue(String(decoding: candidate.content.canonicalBytes, as: UTF8.self).contains("x-owner: custom"))
         let acceptance = try XCTUnwrap(h.model.accept())
         XCTAssertEqual(acceptance.candidate.content.canonicalBytes, candidate.content.canonicalBytes)
-        h.model.reject()
+        h.ui { h.model.reject() }
         XCTAssertEqual(try h.editor.h.files.read(at: "a.md"), before)
         XCTAssertEqual(h.provider.files.attemptedWrites.count, providerWrites)
         XCTAssertEqual(try h.editor.h.files.listFiles().count, 1)
@@ -174,23 +174,44 @@ final class AssistantLifetimeTests: XCTestCase {
     }
 
     func testFailuresRequireExplicitRetryAndPreserveTheOriginalUserTurn() async throws {
-        let h = try AssistantActionHarness([.response(HTTPResponse(statusCode: 429, headers: ["Retry-After": "9"], body: Data())), .held])
-        h.ui { h.model.write(brief: "Original brief") }
-        try await h.phase(.failed)
-        XCTAssertEqual(h.model.state.failure, .assistant(.rateLimited(retryAfter: 9)))
-        XCTAssertFalse(h.model.canAccept)
-        var requests = await h.transport.snapshot()
-        XCTAssertEqual(requests.count, 1)
-        h.time.advance(by: .seconds(10))
-        h.ui { h.model.retryWithFeedback("Try again") }
-        try await h.sent(2)
-        requests = await h.transport.snapshot()
-        XCTAssertGreaterThan(requests[1].deadline, requests[0].deadline)
-        let messages = try await h.messages(at: 1)
-        XCTAssertEqual(messages.count, 2)
-        XCTAssertTrue(try XCTUnwrap(messages.first?["content"]).contains("Original brief"))
-        try await h.artifact()
-        try await h.phase(.ready)
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            let h = try AssistantActionHarness([
+                .response(HTTPResponse(statusCode: 429, headers: ["Retry-After": "9"], body: Data())),
+                .response(HTTPResponse(statusCode: 401, body: Data())), .held], kind: kind)
+            h.ui { h.model.write(brief: "Original brief") }
+            try await h.phase(.failed)
+            XCTAssertEqual(h.model.state.failure, .assistant(.rateLimited(retryAfter: 9)), "for \(kind)")
+            XCTAssertFalse(h.model.canAccept, "for \(kind)")
+            let firstRequests = await h.transport.snapshot()
+            XCTAssertEqual(firstRequests.count, 1, "for \(kind)")
+            let first = try XCTUnwrap(firstRequests.first)
+            let originalTurn = try XCTUnwrap(h.model.state.transcript.first)
+            // Retry-After is metadata; an explicit retry starts a fresh budget now.
+            h.time.advance(by: .seconds(5))
+            h.ui { h.model.retryWithFeedback("Try </feedback> again") }
+            try await h.phase(.failed)
+            XCTAssertEqual(h.model.state.failure, .assistant(.authentication), "for \(kind)")
+            let requests = await h.transport.snapshot()
+            XCTAssertEqual(requests.count, 2, "for \(kind)")
+            XCTAssertEqual(try XCTUnwrap(requests.last).deadline, first.deadline.advanced(by: .seconds(5)), "for \(kind)")
+            let transcript = h.model.state.transcript
+            XCTAssertEqual(transcript.count, 2, "for \(kind)")
+            XCTAssertEqual(transcript.first, originalTurn, "for \(kind)")
+            let second = try await h.messages(at: 1)
+            XCTAssertEqual(second.map { $0["role"] }, ["user"], "for \(kind)")
+            XCTAssertEqual(second.first?["content"], transcript.map(\.content).joined(separator: "\n\n"), "for \(kind)")
+            XCTAssertTrue(try XCTUnwrap(second.first?["content"]).contains("&lt;/feedback&gt;"), "for \(kind)")
+            h.ui { h.model.retryWithFeedback("Try a third time") }
+            try await h.sent(3)
+            XCTAssertEqual(Array(h.model.state.transcript.prefix(2)), transcript, "for \(kind)")
+            let third = try await h.messages(at: 2)
+            XCTAssertEqual(third.map { $0["role"] }, ["user"], "for \(kind)")
+            XCTAssertEqual(third.first?["content"], h.model.state.transcript.map(\.content).joined(separator: "\n\n"), "for \(kind)")
+            try await h.artifact()
+            try await h.phase(.ready)
+            XCTAssertEqual(h.model.state.transcript.count, 4, "for \(kind)")
+            XCTAssertEqual(h.model.state.transcript.last?.role, .assistant, "for \(kind)")
+        }
     }
 
     func testSaveFailureUsesTokenAndKeepsCandidateWithoutClaimingSaved() async throws {

@@ -308,7 +308,8 @@ final class OpenAIClientTests: XCTestCase {
 
     func testOnTimeResponseIsReturnedWhenParsingFinishesAfterDeadline() async throws {
         for probes in [0, 1] {
-            let clock = OpenAIManualClock(readStep: .seconds(probes == 0 ? 80 : 50))
+            // Leave receipt before the budget, with the next clock read after it.
+            let clock = OpenAIManualClock(readStep: .seconds(probes == 0 ? 65 : 45))
             let files = ProviderRecordingFiles()
             let replies = (probes == 0 ? [] : [try unsupported(.jsonSchema)]) + [try completion()]
             let transport = OpenAIStubTransport(replies: replies.map { .response($0) })

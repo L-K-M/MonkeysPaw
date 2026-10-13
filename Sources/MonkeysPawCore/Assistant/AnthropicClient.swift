@@ -38,7 +38,7 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
         var outputConfig: [String: Any] = ["format": ["type": "json_schema", "schema": schemaObject]]
         if let effort = request.effort { outputConfig["effort"] = effort.rawValue }
         var body: [String: Any] = ["model": connection.modelID, "max_tokens": 16_000,
-            "system": prompt, "messages": request.messages.map(\.wireValue), "output_config": outputConfig]
+            "system": prompt, "messages": request.wireMessages.map(\.wireValue), "output_config": outputConfig]
         if isOfficial(connection) { body["fallbacks"] = "default" }
         guard let encoded = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else {
             throw AssistantError.invalidOutput

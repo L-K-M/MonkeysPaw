@@ -26,6 +26,7 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
 
     public func perform(_ request: AssistantRequest, using connection: ProviderConnection,
                         deadline: ContinuousClock.Instant) async throws -> AssistantResponse {
+        try checkActive(until: deadline)
         guard !connection.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !connection.modelID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw AssistantError.notConfigured
@@ -59,7 +60,7 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
 
         guard let schemaObject = try? JSONSerialization.jsonObject(with: schema) else { throw AssistantError.invalidOutput }
         var body: [String: Any] = ["model": connection.modelID,
-            "messages": [["role": "system", "content": prompt]] + request.messages.map(\.wireValue)]
+            "messages": [["role": "system", "content": prompt]] + request.wireMessages.map(\.wireValue)]
         if let effort = request.effort { body["reasoning_effort"] = effort.rawValue }
         var format = initialFormat
         while true {
