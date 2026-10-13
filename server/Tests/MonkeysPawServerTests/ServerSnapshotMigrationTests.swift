@@ -22,7 +22,9 @@ struct ServerSnapshotMigrationTests {
                 let row = try #require(await sql.raw("SELECT secret FROM snapshot_cursor_key").first())
                 return try row.decode(column: "secret", as: Data.self)
             }
-            #expect(before == after && before.count == ServerLimits.snapshotSigningKeyBytes)
+            let preserved = before == after
+            #expect(preserved)
+            #expect(before.count == ServerLimits.snapshotSigningKeyBytes)
             #expect(try await MetaRepository(database: repository.database).databaseID() == identity)
             #expect(try await repository.count("prompts") == 1)
             #expect(try await repository.count("schema_migrations") == 4)

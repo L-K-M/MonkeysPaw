@@ -42,7 +42,7 @@ extension GroupTestFixture {
     func seedSnapshot(identity: PromptOwnership, author: AccountRecord, count: Int, startingID: Int = 1,
                       content: String? = nil) async throws -> [SyncAPI.FeedPrompt] {
         let prompts = (startingID..<(startingID + count)).map {
-            SyncAPI.FeedPrompt(id: feedTestID($0), rev: 1, path: "\($0).md", content: content ?? promptContent(id: feedTestID($0)))
+            SyncAPI.FeedPrompt(id: feedTestID($0), rev: 1, path: "\($0).md", content: content ?? snapshotContent(id: feedTestID($0)))
         }
         try await promptRepository.write { repository, _, _, _ in
             for prompt in prompts.reversed() {
@@ -56,4 +56,9 @@ extension GroupTestFixture {
         }
         return prompts
     }
+}
+
+// All-digit ULIDs must be quoted to remain strings in YAML front matter.
+func snapshotContent(id: String, metadata: String = "title: Example\n", body: String = "Original body\n") -> String {
+    promptContent(id: "\"\(id)\"", metadata: metadata, body: body)
 }
