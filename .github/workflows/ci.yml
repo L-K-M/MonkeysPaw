@@ -164,6 +164,10 @@ jobs:
           shellcheck --shell=sh update.sh scripts/tests/test-update.sh
           bash scripts/tests/test-update.sh
           UPDATE_TEST_SHELL=dash dash scripts/tests/test-update.sh
+      - name: Test server backup wrapper
+        run: |
+          shellcheck scripts/backup.sh scripts/tests/test-backup.sh
+          bash scripts/tests/test-backup.sh
       - name: Build a prerelease package
         # A fixed version exercises the tilde mapping without bumping the repo.
         run: packaging/build-deb.sh v0.1.0-beta.1
