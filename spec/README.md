@@ -16,6 +16,17 @@ enumerated `paths` case checks normalized path/key bytes or the exact first
 issue and nullable segment. The structural inventory still covers all nine
 categories. Run the same `:core:test` command above for both gates.
 
+K3 adds `ParsingConformanceTest`: all 16 format and 113 validation cases
+(258 files) check the reading behavior now. Format metadata/body/source bytes
+and parsing issues are checked, as are validation private/read-only recovery
+and reachable declared-field properties. Of the 129 issue expectations,
+123 are complete; six also need K4 template/validator diagnostics and check
+their parsing portion now. Every expectation is registered as completed or
+explicitly pending: effective fields and final rendering eligibility in K4,
+canonical writing and write eligibility in K5. The test reports these counts
+and rejects unregistered expectations; pending work is not claimed as full
+category conformance. K2's all-category structural gate remains mandatory.
+
 This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
 their slice.
