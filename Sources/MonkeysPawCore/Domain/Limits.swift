@@ -11,6 +11,15 @@ public enum Limits {
     /// §6.3: 140 ms for Linux compositors to refocus after the panel hides.
     public static let settleDelayLinux: Duration = .milliseconds(140)
 
+    /// §6.3: opt-in previous-text capture must not delay delivery beyond 250 ms.
+    public static let clipboardSnapshotBudget: Duration = .milliseconds(250)
+
+    /// §6.3: previous clipboard text is capped at 1 MiB of UTF-8 bytes.
+    public static let clipboardSnapshotMaxBytes: Int = mebibyte
+
+    /// §6.3: restore only 750 ms after a backend reports the chord sent.
+    public static let clipboardRestoreDelay: Duration = .milliseconds(750)
+
     /// §6.3: wait up to 500 ms for Accessibility to confirm the paste target.
     public static let accessibilityFocusWait: Duration = .milliseconds(500)
 
