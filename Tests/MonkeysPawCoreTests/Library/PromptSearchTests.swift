@@ -125,6 +125,14 @@ final class PromptSearchTests: XCTestCase {
         XCTAssertTrue(PromptSearchQuery("\u{A0}\u{1ACF}\t\r\n").isEmpty)
         XCTAssertEqual(PromptSearchQuery("ab\n\u{301}cd").terms.count, 2,
                        "A control separator never swallows a following mark.")
+        let olderRuntime = PromptSearchQuery("ab\u{A0}\u{113B9}cd #\u{113B9}ab")
+        XCTAssertEqual(olderRuntime.terms.map { String(String.UnicodeScalarView($0)) },
+                       ["ab", "cd", "#\u{113B9}ab"])
+        XCTAssertTrue(olderRuntime.tags.isEmpty)
+        let prepend = "\u{113D1}\u{A0}cd"
+        XCTAssertEqual(PromptSearchQuery(prepend).terms.map { String(String.UnicodeScalarView($0)) }, [prepend])
+        XCTAssertEqual(PromptSearchQuery("\u{11A3A}\u{A0}cd").terms.map { String(String.UnicodeScalarView($0)) },
+                       ["\u{11A3A}", "cd"], "Unicode 17 removed this scalar's Prepend class.")
     }
 
     func testNFCCanonicalCompositionAndBlocking() {

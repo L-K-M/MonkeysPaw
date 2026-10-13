@@ -64,8 +64,8 @@ enum SearchNormalizer {
     }
 
     private static func boundaryText(_ text: String) -> String {
-        // Swift 6.2 has Unicode 16 graphemes. The 17 additions affecting space/#
-        // boundaries are Extend/SpacingMark; project only the segmentation probe,
+        // Supported macOS Swift runtimes have Unicode 15/16 graphemes. Project
+        // the changed space/# boundary classes only in the segmentation probe,
         // retaining one scalar per input scalar and all original token bytes.
         var probe = String.UnicodeScalarView()
         for scalar in text.unicodeScalars {

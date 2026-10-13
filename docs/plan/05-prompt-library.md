@@ -475,9 +475,10 @@ relative path; assigned ULIDs keep their own keys.
   Unicode `White_Space`; discard the entire separator cluster. A filter
   starts with a standalone `#` grapheme; `#` with an attached mark is ordinary
   text. Swift reads `Unicode.Scalar.Properties` and segments `Character`s;
-  frozen Unicode 17 additions bridge the macOS Swift 6.2 Unicode 16 tables.
-  For separator/hash boundaries, new Extend/SpacingMark scalars are projected
-  to existing scalars of the same grapheme class without altering input text.
+  frozen Unicode 17 additions bridge Unicode 15/16 runtime tables (including
+  the macOS 14 minimum). For separator/hash boundaries, changed Extend,
+  SpacingMark, Prepend and Other scalars are projected to existing scalars
+  of the same grapheme class without altering input text.
   Word scalars are exactly Unicode 17 general categories L/M/N. Swift uses
   stdlib categories plus the frozen additions; private-use scalars remain
   non-word even on Apple tables. No locale-dependent API is used.

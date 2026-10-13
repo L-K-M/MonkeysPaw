@@ -35,6 +35,12 @@ class SearchNormalizerTest {
         assertEquals(listOf("code"), newMarks.tags)
         assertEquals(true, SearchQuery("\u00a0\u1ACF\t\r\n").isEmpty)
         assertEquals(2, SearchQuery("ab\n\u0301cd").terms.size)
+        val olderRuntime = SearchQuery("ab\u00a0\uD804\uDFB9cd #\uD804\uDFB9ab")
+        assertEquals(listOf("ab", "cd", "#\uD804\uDFB9ab"), olderRuntime.terms.map { String(it, 0, it.size) })
+        assertEquals(emptyList(), olderRuntime.tags)
+        val prepend = "\uD804\uDFD1\u00a0cd"
+        assertEquals(listOf(prepend), SearchQuery(prepend).terms.map { String(it, 0, it.size) })
+        assertEquals(listOf("\uD806\uDE3A", "cd"), SearchQuery("\uD806\uDE3A\u00a0cd").terms.map { String(it, 0, it.size) })
     }
 
     @Test

@@ -142,8 +142,8 @@ Unicode `White_Space` property, including NBSP. Swift reads stdlib
 Word-start boundaries follow scalars outside Unicode general categories
 `L*`, `M*`, `N*`, read from stdlib `Unicode.Scalar.Properties.generalCategory`,
 including marks and all number categories. These properties are pinned to
-Unicode 17: generated additions bridge Swift 6.2's Unicode 16 data, and
-private-use scalars are non-word on every platform. The new Extend/SpacingMark
+Unicode 17: generated additions bridge supported Swift runtimes' Unicode 15/16 data, and
+private-use scalars are non-word on every platform. Changed Extend/SpacingMark/Prepend/Other
 scalars are projected to known representatives only while finding separator
 and standalone-`#` boundaries; the tokens retain their original scalars.
 Kotlin uses the pinned ICU4J 78.3 Unicode 17 properties and grapheme iterator.
@@ -165,8 +165,8 @@ Regenerate Swift's attributed NFC/property data with
 `python3 scripts/generate-search-unicode.py --ucd-dir <directory>`; `--check`
 compares without writing. The generator verifies SHA-256 values for Unicode
 17 `UnicodeData.txt`, `DerivedNormalizationProps.txt`,
-`auxiliary/GraphemeBreakProperty.txt`, and Unicode 16's `UnicodeData.txt` and
-`auxiliary/GraphemeBreakProperty.txt` (save the latter two with `16` before
+`auxiliary/GraphemeBreakProperty.txt`, and Unicode 15's `UnicodeData.txt` and
+`auxiliary/GraphemeBreakProperty.txt` (save the latter two with `15` before
 `.txt`). No runtime download is used. The 16 added Unicode cases below are
 specification expectations; the historical `unicode-foundation-*` names now
 pin corrections to those platform quirks. All 20 baseline cases are unchanged.
