@@ -5,16 +5,68 @@ import MonkeysPawCore
 
 /// Native tokens, calls and teardown are confined to the owning GTK thread.
 final class GTKClipboard: ClipboardRestoring {
+    private final class MainLoop {
+        private final class WorkBox {
+            let work: () -> Void
+            init(_ work: @escaping () -> Void) { self.work = work }
+        }
+
+        let context = g_main_context_ref_thread_default()!
+        private let thread = Thread.current
+
+        deinit { g_main_context_unref(context) }
+
+        func requireThread() {
+            // Context ownership is transient; GTK calls also occur between iterations.
+            precondition(Thread.current === thread, "GTKClipboard requires its owning GTK thread")
+        }
+
+        func run(_ work: @escaping () -> Void) {
+            if Thread.current === thread {
+                work()
+                return
+            }
+
+            // invoke_full may acquire an idle context and execute on the caller.
+            // A source keeps teardown and its context alive without retaining a dead driver.
+            let box = Unmanaged.passRetained(WorkBox {
+                self.requireThread()
+                work()
+            }).toOpaque()
+            let source = g_idle_source_new()!
+            // Cancel before an already-ready native read can complete successfully.
+            g_source_set_priority(source, G_PRIORITY_HIGH)
+            g_source_set_callback(source, { data in
+                guard let data else { return 0 }
+                Unmanaged<WorkBox>.fromOpaque(data).takeUnretainedValue().work()
+                return 0
+            }, box, { data in
+                guard let data else { return }
+                Unmanaged<WorkBox>.fromOpaque(data).release()
+            })
+            _ = g_source_attach(source, context)
+            g_source_unref(source)
+        }
+    }
+
     private final class ReadBox {
+        let mainLoop: MainLoop
         let completion: @Sendable (String?) -> Void
-        init(_ completion: @escaping @Sendable (String?) -> Void) { self.completion = completion }
+        init(mainLoop: MainLoop, completion: @escaping @Sendable (String?) -> Void) {
+            self.mainLoop = mainLoop
+            self.completion = completion
+        }
     }
 
     private final class RevisionCounter {
+        let mainLoop: MainLoop
         var generation: UInt64 = 0
         weak var ownership: Ownership?
 
+        init(mainLoop: MainLoop) { self.mainLoop = mainLoop }
+
         func changed() {
+            mainLoop.requireThread()
             generation &+= 1
             ownership?.releaseProvider()
         }
@@ -42,25 +94,31 @@ final class GTKClipboard: ClipboardRestoring {
         }
 
         func releaseProvider() {
+            revision.counter.mainLoop.requireThread()
             guard let provider else { return }
             self.provider = nil
             g_object_unref(provider)
         }
 
-        deinit { releaseProvider() }
+        deinit {
+            guard let provider else { return }
+            revision.counter.mainLoop.run { g_object_unref(provider) }
+        }
     }
 
     private let clipboard: OpaquePointer
-    private let context: OpaquePointer
-    private let counter = RevisionCounter()
+    private let mainLoop: MainLoop
+    private let counter: RevisionCounter
     private var changedHandler: gulong = 0
     private var reads: [ObjectIdentifier: SnapshotRead] = [:]
     private var isShutDown = false
 
     init(owner: GTK.Widget) {
+        precondition(Thread.isMainThread, "Create GTKClipboard on the GTK main thread")
         clipboard = gtk_widget_get_clipboard(owner)!
         _ = g_object_ref(UnsafeMutableRawPointer(clipboard))
-        context = g_main_context_ref_thread_default()!
+        mainLoop = MainLoop()
+        counter = RevisionCounter(mainLoop: mainLoop)
         let data = Unmanaged.passRetained(counter).toOpaque()
         let changed: @convention(c) (OpaquePointer?, UnsafeMutableRawPointer?) -> Void = { _, data in
             guard let data else { return }
@@ -74,12 +132,23 @@ final class GTKClipboard: ClipboardRestoring {
     }
 
     deinit {
-        shutdown()
-        g_object_unref(UnsafeMutableRawPointer(clipboard))
-        g_main_context_unref(context)
+        // Transfer the live resources, never self: ARC may release us on a worker.
+        mainLoop.run { [clipboard, counter, changedHandler, isShutDown, pending = Array(reads.values)] in
+            if !isShutDown {
+                counter.changed()
+                g_signal_handler_disconnect(UnsafeMutableRawPointer(clipboard), changedHandler)
+                for read in pending { read.cancel() }
+            }
+            g_object_unref(UnsafeMutableRawPointer(clipboard))
+        }
     }
 
     func shutdown() {
+        mainLoop.run { self.shutdownOnThread() }
+    }
+
+    private func shutdownOnThread() {
+        mainLoop.requireThread()
         guard !isShutDown else { return }
         isShutDown = true
         counter.changed()
@@ -90,23 +159,27 @@ final class GTKClipboard: ClipboardRestoring {
     }
 
     private func onContext(_ work: () -> Void) {
-        g_main_context_push_thread_default(context)
-        defer { g_main_context_pop_thread_default(context) }
+        mainLoop.requireThread()
+        g_main_context_push_thread_default(mainLoop.context)
+        defer { g_main_context_pop_thread_default(mainLoop.context) }
         work()
     }
 
     private func isCurrent(_ revision: Revision) -> Bool {
-        !isShutDown && revision.counter === counter && revision.generation == counter.generation
+        mainLoop.requireThread()
+        return !isShutDown && revision.counter === counter && revision.generation == counter.generation
     }
 
     /// The shim returns on this GTK thread's owning context, without dispatch.
     func readText(_ completion: @escaping @Sendable (String?) -> Void) {
-        let box = Unmanaged.passRetained(ReadBox(completion)).toOpaque()
+        mainLoop.requireThread()
+        let box = Unmanaged.passRetained(ReadBox(mainLoop: mainLoop, completion: completion)).toOpaque()
         onContext {
             mp_clipboard_read_text_from_clipboard(clipboard, { text, data in
                 guard let data else { return }
-                let value = text.map { String(cString: $0) }
-                Unmanaged<ReadBox>.fromOpaque(data).takeUnretainedValue().completion(value)
+                let box = Unmanaged<ReadBox>.fromOpaque(data).takeUnretainedValue()
+                box.mainLoop.requireThread()
+                box.completion(text.map { String(cString: $0) })
             }, box, { data in
                 guard let data else { return }
                 Unmanaged<ReadBox>.fromOpaque(data).release()
@@ -115,15 +188,18 @@ final class GTKClipboard: ClipboardRestoring {
     }
 
     func writeText(_ text: String) {
+        mainLoop.requireThread()
         // The resident application retains ownership after its picker hides.
         counter.changed()
         gdk_clipboard_set_text(clipboard, text)
     }
 
+    /// Invalid limits, elapsed budgets and shutdown may complete inline.
     func snapshotText(
         budget: Duration, byteLimit: Int,
         completion: @escaping (ClipboardTextSnapshot?) -> Void
     ) -> ClipboardSnapshotRead {
+        mainLoop.requireThread()
         let read = SnapshotRead(driver: self, budget: budget, byteLimit: byteLimit, completion: completion)
         reads[ObjectIdentifier(read)] = read
         onContext { read.start() }
@@ -131,6 +207,7 @@ final class GTKClipboard: ClipboardRestoring {
     }
 
     func writeTextOwning(_ text: String, after revision: ClipboardRevision) -> ClipboardWriteOwnership? {
+        mainLoop.requireThread()
         guard let provider = mp_clipboard_text_provider(text) else {
             writeText(text)
             return nil
@@ -154,6 +231,7 @@ final class GTKClipboard: ClipboardRestoring {
     }
 
     func restore(_ snapshot: ClipboardTextSnapshot, ifOwnedBy ownership: ClipboardWriteOwnership) {
+        mainLoop.requireThread()
         guard let ownership = ownership as? Ownership, ownership.revision.counter === counter else { return }
         defer { ownership.releaseProvider() }
         guard !isShutDown, ownership.revision === snapshot.revision,
@@ -171,7 +249,7 @@ final class GTKClipboard: ClipboardRestoring {
     private final class SnapshotRead: ClipboardSnapshotRead {
         private weak var driver: GTKClipboard?
         private let revision: Revision
-        private let context: OpaquePointer
+        private let mainLoop: MainLoop
         private let cancellable: UnsafeMutablePointer<GCancellable>
         private let deadline: ContinuousClock.Instant
         private let byteLimit: Int
@@ -182,7 +260,7 @@ final class GTKClipboard: ClipboardRestoring {
              completion: @escaping (ClipboardTextSnapshot?) -> Void) {
             self.driver = driver
             revision = Revision(driver.counter)
-            context = g_main_context_ref(driver.context)!
+            mainLoop = driver.mainLoop
             cancellable = g_cancellable_new()!
             deadline = ContinuousClock.now.advanced(by: budget)
             self.byteLimit = min(byteLimit, Limits.clipboardSnapshotMaxBytes)
@@ -190,11 +268,11 @@ final class GTKClipboard: ClipboardRestoring {
         }
 
         deinit {
-            g_object_unref(cancellable)
-            g_main_context_unref(context)
+            mainLoop.run { [cancellable] in g_object_unref(cancellable) }
         }
 
         func start() {
+            mainLoop.requireThread()
             guard let driver, driver.isCurrent(revision), byteLimit >= 0,
                   ContinuousClock.now < deadline else {
                 finish(nil)
@@ -212,7 +290,7 @@ final class GTKClipboard: ClipboardRestoring {
                 guard let data else { return }
                 Unmanaged<SnapshotRead>.fromOpaque(data).release()
             })
-            _ = g_source_attach(source, context)
+            _ = g_source_attach(source, mainLoop.context)
             mp_clipboard_snapshot_text(driver.clipboard, gsize(byteLimit), cancellable, { text, data in
                 guard let data else { return }
                 Unmanaged<SnapshotRead>.fromOpaque(data).takeUnretainedValue().received(text)
@@ -222,9 +300,10 @@ final class GTKClipboard: ClipboardRestoring {
             })
         }
 
-        func cancel() { finish(nil) }
+        func cancel() { mainLoop.run { self.finish(nil) } }
 
         private func received(_ text: UnsafePointer<CChar>?) {
+            mainLoop.requireThread()
             guard completion != nil else { return }
             guard let text, ContinuousClock.now < deadline, let driver, driver.isCurrent(revision) else {
                 finish(nil)
@@ -234,6 +313,7 @@ final class GTKClipboard: ClipboardRestoring {
         }
 
         private func finish(_ snapshot: ClipboardTextSnapshot?) {
+            mainLoop.requireThread()
             guard let completion else { return }
             self.completion = nil
             g_cancellable_cancel(cancellable)

@@ -77,7 +77,8 @@ final class GTKClipboardRestoreTests: XCTestCase {
 
     func testInvalidUTF8AndEmbeddedNULNeverBecomePartialSnapshots() throws {
         let fixture = try ClipboardFixture()
-        for bytes: [UInt8] in [[0xff], [0xe2, 0x98], [65, 0, 66]] {
+        for bytes: [UInt8] in [[0xff], [0xe2, 0x98], [65, 0, 66], [0], [0, 65], [65, 0],
+                              Array("abc\0def".utf8)] {
             try publish(bytes, on: fixture.native)
             XCTAssertNil(try capture(fixture.driver))
         }
@@ -303,9 +304,163 @@ final class GTKClipboardRestoreTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { pending == nil })
         fixture.driver.restore(snapshot, ifOwnedBy: token)
         XCTAssertEqual(try text(fixture.driver), "Delivered")
+        XCTAssertNil(try capture(fixture.driver))
+        XCTAssertEqual(release.count, 0)
         _ = gdk_clipboard_set_content(fixture.native, nil)
         XCTAssertTrue(GTKTestSupport.spin { release.count == 1 })
-        XCTAssertNil(try capture(fixture.driver))
+    }
+
+    func testBackgroundShutdownAndCancellationCompleteOnceOnGTKThread() throws {
+        let fixture = try ClipboardFixture()
+        fixture.driver.writeText("Previous")
+        let thread = Thread.current
+        var results: [ClipboardTextSnapshot?] = []
+        let read = fixture.driver.snapshotText(budget: .seconds(3), byteLimit: 100) {
+            XCTAssertTrue(Thread.current === thread)
+            results.append($0)
+        }
+        let driver = fixture.driver
+        runOnWorker {
+            driver.shutdown()
+            driver.shutdown()
+            read.cancel()
+        }
+        XCTAssertTrue(results.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin { results.count == 1 })
+        XCTAssertNil(results.first ?? nil)
+        read.cancel()
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(try text(driver), "Previous")
+        XCTAssertNil(try capture(driver))
+    }
+
+    func testBackgroundCancellationCompletesOnceOnGTKThread() throws {
+        let fixture = try ClipboardFixture()
+        fixture.driver.writeText("Previous")
+        let thread = Thread.current
+        var results: [ClipboardTextSnapshot?] = []
+        var read: ClipboardSnapshotRead? = fixture.driver.snapshotText(budget: .seconds(3), byteLimit: 100) {
+            XCTAssertTrue(Thread.current === thread)
+            results.append($0)
+        }
+        weak var pending = read
+        let transfer = WorkerTransfer(try XCTUnwrap(read))
+        read = nil
+        runOnWorker {
+            (transfer.object as? ClipboardSnapshotRead)?.cancel()
+            (transfer.object as? ClipboardSnapshotRead)?.cancel()
+            transfer.object = nil
+        }
+        XCTAssertTrue(results.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin { pending == nil })
+        XCTAssertEqual(results.count, 1)
+        XCTAssertNil(results.first ?? nil)
+        XCTAssertEqual(try text(fixture.driver), "Previous")
+    }
+
+    func testBackgroundOwnershipReleaseWaitsForCapturedGTKContext() throws {
+        try GTKTestSupport.requireDisplay()
+        let context = try XCTUnwrap(g_main_context_new())
+        defer { g_main_context_unref(context) }
+        g_main_context_push_thread_default(context)
+        let fixture = try ClipboardFixture()
+        g_main_context_pop_thread_default(context)
+        fixture.driver.writeText("Previous")
+        var snapshots: [ClipboardTextSnapshot?] = []
+        let read = fixture.driver.snapshotText(budget: .seconds(3), byteLimit: 100) { snapshots.append($0) }
+        XCTAssertTrue(spin(context) { snapshots.count == 1 })
+        let snapshot = try XCTUnwrap(snapshots.first ?? nil)
+        var token = fixture.driver.writeTextOwning("Delivered", after: snapshot.revision)
+        let release = try ProviderRelease.observe(on: fixture.native)
+        weak var weakToken = token
+        let transfer = WorkerTransfer(try XCTUnwrap(token))
+        token = nil
+        runOnWorker { transfer.object = nil }
+        XCTAssertNil(weakToken)
+        _ = gdk_clipboard_set_content(fixture.native, nil)
+        XCTAssertEqual(release.count, 0)
+        _ = g_main_context_iteration(nil, 0)
+        XCTAssertEqual(release.count, 0)
+        XCTAssertTrue(spin(context) { release.count == 1 })
+        read.cancel()
+    }
+
+    func testBackgroundDriverDeinitTransfersTeardownWithoutRetainingDriver() throws {
+        try GTKTestSupport.requireDisplay()
+        let owner = try XCTUnwrap(gtk_window_new())
+        let native = try XCTUnwrap(gtk_widget_get_clipboard(owner))
+        defer { gtk_window_destroy(mp_window(owner)) }
+        let context = try XCTUnwrap(g_main_context_new())
+        defer { g_main_context_unref(context) }
+        g_main_context_push_thread_default(context)
+        var driver: GTKClipboard? = GTKClipboard(owner: owner)
+        g_main_context_pop_thread_default(context)
+        driver?.writeText("Previous")
+        var snapshots: [ClipboardTextSnapshot?] = []
+        let capture = driver?.snapshotText(budget: .seconds(3), byteLimit: 100) { snapshots.append($0) }
+        XCTAssertTrue(spin(context) { snapshots.count == 1 })
+        let snapshot = try XCTUnwrap(snapshots.first ?? nil)
+        let token = try XCTUnwrap(driver?.writeTextOwning("Delivered", after: snapshot.revision))
+        let release = try ProviderRelease.observe(on: native)
+        let thread = Thread.current
+        var results: [ClipboardTextSnapshot?] = []
+        var read = driver?.snapshotText(budget: .seconds(3), byteLimit: 100) {
+            XCTAssertTrue(Thread.current === thread)
+            XCTAssertNotEqual(g_main_context_is_owner(context), 0)
+            results.append($0)
+        }
+        weak var pending = read
+        weak var weakDriver = driver
+        let transfer = WorkerTransfer(try XCTUnwrap(driver))
+        driver = nil
+        runOnWorker { transfer.object = nil }
+        XCTAssertNil(weakDriver)
+        XCTAssertTrue(results.isEmpty)
+        _ = g_main_context_iteration(nil, 0)
+        XCTAssertTrue(results.isEmpty)
+        read = nil
+        XCTAssertTrue(spin(context) { pending == nil })
+        XCTAssertEqual(results.count, 1)
+        XCTAssertNil(results.first ?? nil)
+        _ = gdk_clipboard_set_content(native, nil)
+        XCTAssertTrue(GTKTestSupport.spin { release.count == 1 })
+        withExtendedLifetime((capture, token)) {}
+    }
+
+    func testCoreDeliveryWorkerCallbacksReturnToGTKMainLoop() throws {
+        let fixture = try ClipboardFixture()
+        fixture.driver.writeText("Previous")
+        let ports = WorkerDeliveryPorts()
+        let service = DeliveryService(panel: ports, focus: ports, clipboard: fixture.driver,
+            injectors: [ports], notifier: ports, session: ports, scheduler: ports,
+            mainThread: GLibMainThread(), failureCache: SessionPasteFailureCache(),
+            clipboardRestore: .previousText)
+        service.arm()
+        XCTAssertTrue(GTKTestSupport.spin { ports.captures == 1 })
+        var outcomes: [DeliveryOutcome] = []
+        runOnWorker {
+            service.deliver("Delivered", mode: .paste(.standard)) {
+                XCTAssertTrue(Thread.isMainThread)
+                outcomes.append($0)
+            }
+        }
+        XCTAssertTrue(GTKTestSupport.spin { ports.hides == 1 })
+        XCTAssertEqual(try text(fixture.driver), "Delivered")
+        let release = try ProviderRelease.observe(on: fixture.native)
+        ports.fireFromWorker(Limits.settleDelayLinux)
+        XCTAssertTrue(GTKTestSupport.spin { outcomes.count == 1 })
+        XCTAssertEqual(outcomes, [.pasted(.xdotool)])
+        XCTAssertEqual(ports.focusRestores, 1)
+        XCTAssertEqual(ports.pastes, 1)
+        ports.fireFromWorker(Limits.clipboardRestoreDelay)
+        XCTAssertEqual(release.count, 0)
+        XCTAssertTrue(GTKTestSupport.spin { release.count == 1 })
+        XCTAssertEqual(try text(fixture.driver), "Previous")
+
+        runOnWorker { service.shutdown() }
+        var drained = false
+        GLibMainThread().run { drained = true }
+        XCTAssertTrue(GTKTestSupport.spin { drained })
     }
 
     func testDriverDeinitCancelsPendingReadAndReleasesProvider() throws {
@@ -514,20 +669,24 @@ private final class RestoreTextReads: @unchecked Sendable {
 }
 
 private final class ClipboardFixture {
+    private let thread = Thread.current
     let owner: GTK.Widget
     let native: OpaquePointer
     let driver: GTKClipboard
 
     init() throws {
+        precondition(Thread.isMainThread)
         try GTKTestSupport.requireDisplay()
         owner = try XCTUnwrap(gtk_window_new())
         native = try XCTUnwrap(gtk_widget_get_clipboard(owner))
         driver = GTKClipboard(owner: owner)
+        // This clears the display's real clipboard; use Xvfb or a throwaway session.
         _ = gdk_clipboard_set_content(native, nil)
         settleClipboard()
     }
 
     deinit {
+        precondition(Thread.current === thread)
         driver.shutdown()
         _ = gdk_clipboard_set_content(native, nil)
         settleClipboard()
@@ -551,7 +710,11 @@ private final class ProviderRelease {
     private(set) var count = 0
 
     static func observe(on clipboard: OpaquePointer) throws -> ProviderRelease {
+        precondition(Thread.isMainThread)
         let provider = try XCTUnwrap(gdk_clipboard_get_content(clipboard))
+        // Keep the borrowed provider alive through weak-notify registration.
+        _ = g_object_ref(provider)
+        defer { g_object_unref(provider) }
         let probe = ProviderRelease()
         g_object_weak_ref(UnsafeMutableRawPointer(provider).assumingMemoryBound(to: GObject.self), { data, _ in
             guard let data else { return }
@@ -589,5 +752,75 @@ private final class NativeReadProbe {
         probe.checkContext()
         probe.destroys += 1
     }
+}
+
+// The semaphore transfers exclusive access; no test mutates the object concurrently.
+private final class WorkerTransfer: @unchecked Sendable {
+    var object: AnyObject?
+    init(_ object: AnyObject) { self.object = object }
+}
+
+private final class WorkerAction: @unchecked Sendable {
+    let work: () -> Void
+    init(_ work: @escaping () -> Void) { self.work = work }
+}
+
+private final class WorkerDeliveryPorts: PanelWindow, FocusTracker, PasteInjector, Notifier, SessionProbe, Scheduler {
+    let backend = PasteBackend.xdotool
+    private(set) var captures = 0
+    private(set) var hides = 0
+    private(set) var focusRestores = 0
+    private(set) var pastes = 0
+    private var scheduled: [(Duration, () -> Void)] = []
+
+    func show() { XCTAssertTrue(Thread.isMainThread) }
+    func hide() { XCTAssertTrue(Thread.isMainThread) }
+    func hideForDelivery() { XCTAssertTrue(Thread.isMainThread); hides += 1 }
+    func currentSession() -> DesktopSession { XCTAssertTrue(Thread.isMainThread); return .otherX11 }
+    func copied() { XCTFail("Unexpected copy-only delivery") }
+    func pressPaste(chord: PasteChord, reason: CopyReason) { XCTFail("Unexpected paste fallback") }
+
+    func captureTarget() -> DeliveryTarget? {
+        XCTAssertTrue(Thread.isMainThread)
+        captures += 1
+        return .linux(session: .otherX11, x11WindowClass: nil)
+    }
+
+    func restore(_ target: DeliveryTarget, completion: @escaping (FocusConfirmation) -> Void) {
+        XCTAssertTrue(Thread.isMainThread)
+        focusRestores += 1
+        runOnWorker { completion(.confirmed) }
+    }
+
+    func paste(chord: PasteChord, completion: @escaping (PasteAttemptResult) -> Void) {
+        XCTAssertTrue(Thread.isMainThread)
+        pastes += 1
+        runOnWorker { completion(.sent) }
+    }
+
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        XCTAssertTrue(Thread.isMainThread)
+        scheduled.append((delay, work))
+    }
+
+    func fireFromWorker(_ delay: Duration) {
+        XCTAssertTrue(Thread.isMainThread)
+        guard let index = scheduled.firstIndex(where: { $0.0 == delay }) else {
+            XCTFail("Expected delivery timer")
+            return
+        }
+        runOnWorker(scheduled.remove(at: index).1)
+    }
+}
+
+private func runOnWorker(_ work: @escaping () -> Void) {
+    let action = WorkerAction(work)
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        XCTAssertFalse(Thread.isMainThread)
+        action.work()
+        done.signal()
+    }
+    XCTAssertEqual(done.wait(timeout: .now() + 3), .success)
 }
 #endif
