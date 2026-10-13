@@ -117,8 +117,9 @@ struct BackupTestServer {
         let server = Self(process: process)
         do {
             var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/api/health")!)
-            request.timeoutInterval = 0.2
-            for _ in 0..<100 {
+            request.timeoutInterval = ServerLimits.healthcheckTimeout
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while ContinuousClock.now < deadline {
                 if let (_, response) = try? await URLSession.shared.data(for: request),
                    (response as? HTTPURLResponse)?.statusCode == 200 { return server }
                 guard process.isRunning else { throw BackupRestoreError.failed }
