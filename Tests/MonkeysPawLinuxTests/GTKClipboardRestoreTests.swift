@@ -6,7 +6,7 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class GTKClipboardRestoreTests: XCTestCase {
-    func testOwnWriteRestoresPreviousText() throws {
+    func testOwnWriteRestoresPreviousTextAfterDelayAndMainLoopDispatch() throws {
         try GTKTestSupport.requireDisplay()
         let owner = try XCTUnwrap(gtk_window_new())
         defer { gtk_window_destroy(mp_window(owner)) }
@@ -22,7 +22,12 @@ final class GTKClipboardRestoreTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { snapshots.count == 1 })
         let snapshot = try XCTUnwrap(snapshots.first ?? nil)
         let ownership = try XCTUnwrap(restoring.writeTextOwning("Delivered", after: snapshot.revision))
-        restoring.restore(snapshot, ifOwnedBy: ownership)
+        var didRestore = false
+        GTK.after(Limits.clipboardRestoreDelay.timeInterval) {
+            restoring.restore(snapshot, ifOwnedBy: ownership)
+            didRestore = true
+        }
+        XCTAssertTrue(GTKTestSupport.spin { didRestore })
 
         let result = RestoreTextReads()
         clipboard.readText { result.append($0) }
