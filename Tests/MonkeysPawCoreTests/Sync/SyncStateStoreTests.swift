@@ -39,7 +39,7 @@ final class SyncStateStoreTests: XCTestCase {
         let user = SyncTestValues.user.rawValue
         let personalID = SyncTestValues.personalPrompt.rawValue
         let groupID = SyncTestValues.group.rawValue
-        let changes: [(inout [String: Any]) -> Void] = [
+        let changes: [(inout [String: Any]) throws -> Void] = [
             { $0["user_id"] = "invalid" },
             { $0["database_id"] = SyncTestValues.uuid.uuidString },
             { $0["library_root"] = "/library/../other" },
@@ -53,16 +53,16 @@ final class SyncStateStoreTests: XCTestCase {
                 prompts["not-a-ulid"] = prompts.removeValue(forKey: personalID)
                 value["prompts"] = prompts
             },
-            { value in Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = String(repeating: "A", count: 64) } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = "short" } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = NSNull() } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["scope_key"] = "group:\(SyncTestValues.device.rawValue)" } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["path"] = "../escape.md" } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["path"] = "Cafe\u{301}.md" } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["rev"] = -1 } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["rev"] = 0 } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["origin"] = ["kind": "conflict_of", "prompt_id": "secret"] } },
-            { value in Self.editPrompt(&value, id: personalID) {
+            { value in try Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = String(repeating: "A", count: 64) } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = "short" } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = NSNull() } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["scope_key"] = "group:\(SyncTestValues.device.rawValue)" } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["path"] = "../escape.md" } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["path"] = "Cafe\u{301}.md" } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["rev"] = -1 } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["rev"] = 0 } },
+            { value in try Self.editPrompt(&value, id: personalID) { $0["origin"] = ["kind": "conflict_of", "prompt_id": "secret"] } },
+            { value in try Self.editPrompt(&value, id: personalID) {
                 var error = $0["last_error"] as! [String: Any]
                 error["code"] = "arbitrary server body"
                 $0["last_error"] = error
@@ -74,7 +74,7 @@ final class SyncStateStoreTests: XCTestCase {
             let files = MemoryFileStore()
             let operations = MemorySyncFileOperations(files: files)
             var changed = object
-            change(&changed)
+            try change(&changed)
             try SyncTestValues.write(changed, to: files, path: path)
             let original = try files.read(at: path)
             let store = SyncStateStore(files: files, operations: operations)
@@ -95,6 +95,7 @@ final class SyncStateStoreTests: XCTestCase {
             let files = MemoryFileStore()
             let library = MemoryFileStore()
             try library.put("local edits", at: "Keep.md")
+            try files.put("app-data canary", at: "Keep.md")
             try files.put(source, at: path)
             let operations = MemorySyncFileOperations(files: files)
             let store = SyncStateStore(files: files, operations: operations)
@@ -106,6 +107,7 @@ final class SyncStateStoreTests: XCTestCase {
             XCTAssertEqual(try store.load(for: binding), try SyncState(binding: binding))
             XCTAssertEqual(try library.text(at: "Keep.md"), "local edits")
             XCTAssertEqual(library.listCount, 0)
+            XCTAssertEqual(try files.text(at: "Keep.md"), "app-data canary")
         }
     }
 
@@ -118,7 +120,7 @@ final class SyncStateStoreTests: XCTestCase {
         var groups = object["groups"] as! [String: [String: Any]]
         groups[SyncTestValues.group.rawValue]!["future_group"] = true
         object["groups"] = groups
-        Self.editPrompt(&object, id: SyncTestValues.personalPrompt.rawValue) {
+        try Self.editPrompt(&object, id: SyncTestValues.personalPrompt.rawValue) {
             $0["future_prompt"] = ["extra": 123]
             var origin = $0["origin"] as! [String: Any]
             origin["future_origin"] = "kept"
@@ -211,8 +213,12 @@ final class SyncStateStoreTests: XCTestCase {
             }
             XCTAssertEqual(store.snapshot.value, state)
             XCTAssertEqual(store.snapshot.error, .durabilityUncertain)
-            XCTAssertThrowsError(try store.load(for: state.binding))
-            XCTAssertThrowsError(try store.update(for: state.binding) { $0.databaseID = nil })
+            XCTAssertThrowsError(try store.load(for: state.binding)) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
+            XCTAssertThrowsError(try store.update(for: state.binding) { $0.databaseID = nil }) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
         }
     }
 
@@ -268,10 +274,18 @@ final class SyncStateStoreTests: XCTestCase {
             try store.update(for: state.binding) { $0 = state }
             if remove { try files.delete(at: path) }
             else { try files.put("{\"version\":99}", at: path) }
-            XCTAssertThrowsError(try store.update(for: state.binding) { $0.databaseID = nil })
+            let error: SyncError = remove ? .readFailed(.notFound) : .futureVersion(99)
+            XCTAssertThrowsError(try store.update(for: state.binding) { $0.databaseID = nil }) {
+                XCTAssertEqual($0 as? SyncError, error)
+            }
             XCTAssertNil(store.snapshot.value)
-            XCTAssertEqual(store.snapshot.error, remove ? .readFailed(.notFound) : .futureVersion(99))
-            XCTAssertThrowsError(try store.update(for: state.binding) { $0.databaseID = nil })
+            XCTAssertEqual(store.snapshot.error, error)
+            XCTAssertThrowsError(try store.update(for: state.binding) { $0.databaseID = nil }) {
+                XCTAssertEqual($0 as? SyncError, error)
+            }
+            try store.reset(for: state.binding)
+            XCTAssertNil(store.snapshot.error)
+            XCTAssertEqual(try store.load(for: state.binding), try SyncState(binding: state.binding))
         }
     }
 
@@ -458,6 +472,7 @@ final class SyncStateStoreTests: XCTestCase {
         XCTAssertThrowsError(try operations.publish(new, at: "File.md",
             expecting: .matching(stamp: stamp, bytes: old), mode: .readOnly)) {
             let error = $0 as? SyncFileOperationError
+            XCTAssertEqual(error?.code, .durabilityFailed)
             XCTAssertEqual(error?.effect, .applied)
             XCTAssertEqual(error?.displacedBytes, old)
             XCTAssertFalse(String(reflecting: $0).contains("old bytes"))
@@ -471,22 +486,34 @@ final class SyncStateStoreTests: XCTestCase {
         try operations.createDirectory(at: "Groups")
         try operations.createDirectory(at: "Groups/Empty")
         XCTAssertEqual(try operations.directories(at: "Groups"), [RelativePath("Groups/Empty")])
-        XCTAssertThrowsError(try operations.createDirectory(at: "Groups/Empty"))
+        XCTAssertThrowsError(try operations.createDirectory(at: "Groups/Empty")) {
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .occupied)
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.effect, .unchanged)
+        }
         try operations.renameDirectory(from: "Groups/Empty", to: "Groups/Renamed")
         XCTAssertEqual(try operations.directories(at: "Groups"), [RelativePath("Groups/Renamed")])
         try files.put("unowned", at: "Groups/Occupied/File.md")
-        XCTAssertThrowsError(try operations.createDirectory(at: "Groups/Occupied"))
-        XCTAssertThrowsError(try operations.renameDirectory(from: "Groups/Renamed", to: "Groups/Occupied"))
+        XCTAssertEqual(try operations.directories(at: "Groups"), [RelativePath("Groups/Occupied"), "Groups/Renamed"])
+        XCTAssertThrowsError(try operations.createDirectory(at: "Groups/Occupied")) {
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .occupied)
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.effect, .unchanged)
+        }
+        XCTAssertThrowsError(try operations.renameDirectory(from: "Groups/Renamed", to: "Groups/Occupied")) {
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .occupied)
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.effect, .unchanged)
+        }
+        XCTAssertEqual(try operations.directories(at: "Groups"), [RelativePath("Groups/Occupied"), "Groups/Renamed"])
         XCTAssertEqual(try files.text(at: "Groups/Occupied/File.md"), "unowned")
         try operations.renameDirectory(from: "Groups/Occupied", to: "Groups/Moved")
         XCTAssertEqual(try files.text(at: "Groups/Moved/File.md"), "unowned")
+        XCTAssertEqual(try operations.directories(at: "Groups"), [RelativePath("Groups/Moved"), "Groups/Renamed"])
     }
 
     private static func editPrompt(_ object: inout [String: Any], id: String,
-                                   _ change: (inout [String: Any]) -> Void) {
-        var prompts = object["prompts"] as! [String: [String: Any]]
-        var prompt = prompts[id]!
-        change(&prompt)
+                                   _ change: (inout [String: Any]) throws -> Void) throws {
+        var prompts = try XCTUnwrap(object["prompts"] as? [String: [String: Any]])
+        var prompt = try XCTUnwrap(prompts[id])
+        try change(&prompt)
         prompts[id] = prompt
         object["prompts"] = prompts
     }

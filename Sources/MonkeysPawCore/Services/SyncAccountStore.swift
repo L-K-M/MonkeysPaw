@@ -61,6 +61,8 @@ public final class SyncAccountStore: @unchecked Sendable {
                                     path: "sync/binding.json", version: Limits.syncBindingVersion)
     }
 
+    /// Cached diagnostics may be stale until load; readOnlyError blocks use for
+    /// sync decisions. Each snapshot is locked, not a cross-document transaction.
     var cachedAccount: SyncAccount? { connection.snapshot.value?.account }
     var cachedBindings: [SyncLibraryBinding] { ownership.snapshot.value?.libraries ?? [] }
     var readOnlyError: SyncError? { connection.snapshot.error ?? ownership.snapshot.error }

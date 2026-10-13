@@ -58,8 +58,9 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   cover the full canonical bytes. A corrupt, unsupported or future-version
   document blocks ordinary edits and sync, preserving library files. Reset
   is an explicit intent. Unknown fields of a supported version survive edits,
-  including nested records. Each record is capped at 16 MiB; exceeding the cap
-  fails rather than truncates it. Failed writes retain the previous memory cache.
+  including nested records. Each stored document (`state.json`, `account.json`,
+  `binding.json`) is capped at 16 MiB; an oversized write fails before I/O and
+  leaves the previous file intact. Failed writes retain the previous memory cache.
 - **Atomic and durable.** Private records use the app-data `FileStore`'s
   atomic 0600 writes, followed by checked file and directory flushes through
   `SyncFileOperations`. Its library capability also covers checked durable
@@ -198,7 +199,10 @@ This covers enabling sync, a second device, and an account change. A first-ever
 sign-in adopts/creates the chosen library; a copied library on a second device
 still converges. On a previously bound root, the §9.2 account-change hold set
 excludes old-account files from creates/adoption until explicit inclusion or
-import. New-account snapshot content may be installed safely. A fresh library
+import. New-account snapshot installation must preserve held bytes at an
+occupied target and resolve the collision under §9.3 overwrite safety before
+publication. Relocating/rescuing a held file migrates its hold; it never
+authorizes upload. A fresh library
 also authorizes its chosen content for that account.
 
 Y11 must assign ULIDs to idless held files during the account transition using

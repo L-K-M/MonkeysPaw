@@ -25,7 +25,7 @@ final class SyncAccountStoreTests: XCTestCase {
     func testInvalidConnectionIdentifiersNamesAndURLsFailClosed() throws {
         let account = try connection()
         let original = try accountDocument(account)
-        let changes: [(inout [String: Any]) -> Void] = [
+        let changes: [(inout [String: Any]) throws -> Void] = [
             { $0["user_id"] = "bad" },
             { $0["device_id"] = "bad" },
             { $0["connection_id"] = SyncTestValues.uuid.uuidString },
@@ -47,8 +47,8 @@ final class SyncAccountStoreTests: XCTestCase {
             let files = MemoryFileStore()
             let operations = MemorySyncFileOperations(files: files)
             var document = original
-            var value = document["account"] as! [String: Any]
-            change(&value)
+            var value = try XCTUnwrap(document["account"] as? [String: Any])
+            try change(&value)
             document["account"] = value
             try SyncTestValues.write(document, to: files, path: accountPath)
             let bytes = try files.read(at: accountPath)
@@ -96,7 +96,7 @@ final class SyncAccountStoreTests: XCTestCase {
         XCTAssertEqual(try files.read(at: accountPath), originalAccount)
         files.failNextWrite = true
         XCTAssertThrowsError(try store.updateBinding(for: binding.root) { previous in
-            var next = previous!
+            var next = try XCTUnwrap(previous)
             next.holds = []
             return next
         }) { XCTAssertEqual($0 as? SyncError, .writeFailed(.ioFailure)) }
@@ -114,10 +114,11 @@ final class SyncAccountStoreTests: XCTestCase {
             let binding = try ownership()
             try store.setAccount(account)
             try store.updateBinding(for: binding.root) { _ in binding }
+            // Fail the sync-directory flush after the next file flush.
             operations.failFlushNumber = operations.flushCount + 2
             if bindingWrite {
                 XCTAssertThrowsError(try store.updateBinding(for: binding.root) { previous in
-                    var next = previous!
+                    var next = try XCTUnwrap(previous)
                     next.holds = []
                     return next
                 }) { XCTAssertEqual($0 as? SyncError, .durabilityUncertain) }
@@ -127,8 +128,12 @@ final class SyncAccountStoreTests: XCTestCase {
             XCTAssertEqual(store.cachedAccount, account)
             XCTAssertEqual(store.cachedBindings, [binding])
             XCTAssertEqual(store.readOnlyError, .durabilityUncertain)
-            XCTAssertThrowsError(try store.loadAccount())
-            XCTAssertThrowsError(try store.setAccount(connection(userID: SyncTestValues.otherUser)))
+            XCTAssertThrowsError(try store.loadAccount()) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
+            XCTAssertThrowsError(try store.setAccount(connection(userID: SyncTestValues.otherUser))) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
         }
     }
 
@@ -159,7 +164,7 @@ final class SyncAccountStoreTests: XCTestCase {
         }
         // Explicit inclusion can release a held record; a login cannot.
         try signedOut.updateBinding(for: binding.root) { previous in
-            var next = previous!
+            var next = try XCTUnwrap(previous)
             next.owner = other.identity
             next.holds.removeFirst()
             return next
@@ -236,17 +241,19 @@ final class SyncAccountStoreTests: XCTestCase {
         let second = try ownership(root: "/other", userID: SyncTestValues.otherUser)
         var accountJSON = try accountDocument(account)
         accountJSON["future"] = ["v": 1.25]
-        var record = accountJSON["account"] as! [String: Any]
+        var record = try XCTUnwrap(accountJSON["account"] as? [String: Any])
         record["future_connection"] = "kept"
         accountJSON["account"] = record
         try SyncTestValues.write(accountJSON, to: files, path: accountPath)
         var firstJSON = try SyncTestValues.object(first)
         firstJSON["future_root"] = 1
-        var holds = firstJSON["holds"] as! [[String: Any]]
+        var holds = try XCTUnwrap(firstJSON["holds"] as? [[String: Any]])
         holds[0]["future_hold"] = "kept"
         firstJSON["holds"] = holds
-        var folders = firstJSON["managed_folders"] as! [String: [String: Any]]
-        folders[SyncTestValues.group.rawValue]!["future_folder"] = true
+        var folders = try XCTUnwrap(firstJSON["managed_folders"] as? [String: [String: Any]])
+        var folder = try XCTUnwrap(folders[SyncTestValues.group.rawValue])
+        folder["future_folder"] = true
+        folders[SyncTestValues.group.rawValue] = folder
         firstJSON["managed_folders"] = folders
         let document: [String: Any] = ["version": 1, "future_binding": true,
                                        "libraries": [try SyncTestValues.object(second), firstJSON]]
@@ -254,48 +261,48 @@ final class SyncAccountStoreTests: XCTestCase {
         let store = SyncAccountStore(files: files, operations: operations)
         try store.setAccount(account)
         try store.updateBinding(for: first.root) { previous in
-            var next = previous!
+            var next = try XCTUnwrap(previous)
             next.holds.reverse()
             return next
         }
-        let savedAccount = try JSONSerialization.jsonObject(with: files.read(at: accountPath)) as! [String: Any]
-        XCTAssertEqual((savedAccount["account"] as! [String: Any])["future_connection"] as? String, "kept")
-        XCTAssertEqual((savedAccount["future"] as! [String: Double])["v"], 1.25)
-        let saved = try JSONSerialization.jsonObject(with: files.read(at: bindingPath)) as! [String: Any]
+        let savedAccount = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: accountPath)) as? [String: Any])
+        XCTAssertEqual((try XCTUnwrap(savedAccount["account"] as? [String: Any]))["future_connection"] as? String, "kept")
+        XCTAssertEqual((try XCTUnwrap(savedAccount["future"] as? [String: Double]))["v"], 1.25)
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: bindingPath)) as? [String: Any])
         XCTAssertEqual(saved["future_binding"] as? Bool, true)
-        let libraries = saved["libraries"] as! [[String: Any]]
-        let root = libraries.first { $0["library_root"] as? String == first.root.path }!
+        let libraries = try XCTUnwrap(saved["libraries"] as? [[String: Any]])
+        let root = try XCTUnwrap(libraries.first { $0["library_root"] as? String == first.root.path })
         XCTAssertEqual(root["future_root"] as? Int, 1)
-        let savedHolds = root["holds"] as! [[String: Any]]
+        let savedHolds = try XCTUnwrap(root["holds"] as? [[String: Any]])
         XCTAssertEqual(savedHolds[1]["future_hold"] as? String, "kept")
-        let savedFolders = root["managed_folders"] as! [String: [String: Any]]
-        XCTAssertEqual(savedFolders[SyncTestValues.group.rawValue]!["future_folder"] as? Bool, true)
+        let savedFolders = try XCTUnwrap(root["managed_folders"] as? [String: [String: Any]])
+        XCTAssertEqual(try XCTUnwrap(savedFolders[SyncTestValues.group.rawValue])["future_folder"] as? Bool, true)
         XCTAssertEqual(try store.binding(for: second.root), second)
     }
 
     func testMalformedBindingIDsFoldersHoldsAndDuplicateRootsAreRejected() throws {
         let valid = try SyncTestValues.object(ownership())
-        let changes: [(inout [String: Any]) -> Void] = [
+        let changes: [(inout [String: Any]) throws -> Void] = [
             { $0["library_root"] = "relative/root" },
-            { $0["managed_folders"] = ["invalid": ["owner": $0["owner"]!, "folder": "Team"]] },
-            { $0["managed_folders"] = [SyncTestValues.group.rawValue: ["owner": $0["owner"]!, "folder": "../Team"]] },
+            { $0["managed_folders"] = ["invalid": ["owner": try XCTUnwrap($0["owner"]), "folder": "Team"]] },
+            { $0["managed_folders"] = [SyncTestValues.group.rawValue: ["owner": try XCTUnwrap($0["owner"]), "folder": "../Team"]] },
             { value in
-                var holds = value["holds"] as! [[String: Any]]
+                var holds = try XCTUnwrap(value["holds"] as? [[String: Any]])
                 holds[0]["identity"] = "not-an-id"
                 value["holds"] = holds
             },
             { value in
-                var holds = value["holds"] as! [[String: Any]]
+                var holds = try XCTUnwrap(value["holds"] as? [[String: Any]])
                 holds[0]["content_hash"] = "invalid"
                 value["holds"] = holds
             },
             { value in
-                var holds = value["holds"] as! [[String: Any]]
+                var holds = try XCTUnwrap(value["holds"] as? [[String: Any]])
                 holds[0]["path"] = "../elsewhere.md"
                 value["holds"] = holds
             },
             { value in
-                var holds = value["holds"] as! [[String: Any]]
+                var holds = try XCTUnwrap(value["holds"] as? [[String: Any]])
                 holds.append(holds[0])
                 value["holds"] = holds
             }
@@ -304,12 +311,16 @@ final class SyncAccountStoreTests: XCTestCase {
             let files = MemoryFileStore()
             let operations = MemorySyncFileOperations(files: files)
             var invalid = valid
-            change(&invalid)
+            try change(&invalid)
             try SyncTestValues.write(["version": 1, "libraries": [invalid]], to: files, path: bindingPath)
             let store = SyncAccountStore(files: files, operations: operations)
             XCTAssertEqual(store.readOnlyError, .corruptFile)
-            XCTAssertThrowsError(try store.binding(for: SyncLibraryRoot("/library")))
-            XCTAssertThrowsError(try store.setAccount(connection()))
+            XCTAssertThrowsError(try store.binding(for: SyncLibraryRoot("/library"))) {
+                XCTAssertEqual($0 as? SyncError, .corruptFile)
+            }
+            XCTAssertThrowsError(try store.setAccount(connection())) {
+                XCTAssertEqual($0 as? SyncError, .corruptFile)
+            }
         }
         let files = MemoryFileStore()
         let operations = MemorySyncFileOperations(files: files)
@@ -324,7 +335,8 @@ final class SyncAccountStoreTests: XCTestCase {
         let secret = SecretValue(UUID().uuidString + "-device-token-sentinel")
         let password = SecretValue(UUID().uuidString + "-password-sentinel")
         let invite = SecretValue(UUID().uuidString + "-invite-sentinel")
-        // These are deliberately not accepted by either store's typed API.
+        // Sentinels are not inputs; the byte scan illustrates the typed API boundary.
+        // Active storage checks cover secret key names and private modes below.
         try store.setAccount(connection())
         let binding = try ownership()
         try store.updateBinding(for: binding.root) { _ in binding }
