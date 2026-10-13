@@ -185,13 +185,34 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   enabled only when the draft has no validation errors.
 - **Diffs.** Line-level, computed in Core with a Myers diff. Lines that add,
   remove, or rename a placeholder carry a warning marker, because a rename
-  silently drops remembered values.
+  silently drops remembered values. Front matter (including delimiters) and
+  body compare separately, using exact canonical UTF-8 bytes and retaining
+  line endings and final-newline presence. Ties prefer deletion. Each source
+  is bounded by `Limits.maxPromptBytes`; the same limit bounds frontier
+  storage and search steps, with typed failures for oversize or excessively
+  complex comparisons. A name disappearing and a new name appearing alone
+  in the same replacement hunk is marked as a possible rename only when the
+  pairing is unambiguous across all hunks. Other substitutions remain
+  added/removed warnings, ordered by first use; escaped and invalid literal
+  constructs are excluded by the existing grammar.
 - **"Update" means improve with an instruction**, for example "make it
   shorter". It needs no review first.
 - **Merge rule.**
   - The artifact replaces only `title`, `description`, `tags`, `fields`, and
-    `body`. Everything else in the front matter carries over verbatim.
-  - Options whose label equals their value collapse back to bare strings.
+    `body`. Everything else in the front matter carries over verbatim:
+    typed values, key presence and unknown nested data are unchanged under
+    §5.2's canonical serialization. YAML comments and original scalar
+    spellings are not preserved ([§19 B26](19-m4-m5-decisions.md)).
+  - Options whose label and value have identical UTF-8 bytes collapse back
+    to bare strings.
+    An empty artifact choice default means no prefill, so the file omits it.
+  - Core returns a typed merge outcome; only a validated canonical candidate
+    is ready for acceptance. Invalid input or merged content produces issues
+    without an acceptable candidate. Write takes a caller-supplied fresh ID;
+    improve preserves the original ID, including its absence. First-save
+    identity preflight remains save-service work and must precede the final
+    preview ([§19 B28](19-m4-m5-decisions.md)). Artifact notes stay in the
+    draft UI and are never added to the file.
   - The diff is computed on the merged file, so Accept writes exactly what
     the user saw.
 - **Never auto-applied.** Closing the panel cancels the request.
