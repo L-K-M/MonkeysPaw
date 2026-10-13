@@ -69,6 +69,12 @@ Rules:
   `GeneralSettingsModel` calls the `LibraryLocationControl` port that each
   composition root implements; composition alone validates, restarts and
   persists the folder choice.
+- **Portable networking exception** ([§19 B1](19-m4-m5-decisions.md)).
+  `URLSessionHTTPTransport` is a shared driver in Core's `Platform/`,
+  constructed by the composition roots and injected as `HTTPTransporting`.
+  It uses data-task delegate callbacks. Conditional `FoundationNetworking`
+  on Linux counts as Foundation; Core otherwise imports Foundation + Yams
+  only. OS secrets remain in platform drivers.
 - **Portability rule** (Vervellum). Nothing in `MonkeysPawCore` imports
   AppKit, SwiftUI, Combine, `os`, `Security`, or `CGtk`. Two Linux traps
   that must never appear in Core:

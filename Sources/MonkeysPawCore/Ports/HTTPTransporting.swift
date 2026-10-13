@@ -25,7 +25,7 @@ public struct HTTPRequest: Sendable, CustomStringConvertible, CustomDebugStringC
         guard requestByteCap > 0, responseByteCap > 0 else { throw HTTPTransportError.invalidRequest }
         guard (body?.count ?? 0) <= requestByteCap else { throw HTTPTransportError.requestTooLarge }
 
-        // Match the adapter's rules before any transport can consume headers.
+        // Validate before any transport can consume headers.
         let token = Set("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".utf8)
         var names = Set<String>()
         for (name, value) in headers {

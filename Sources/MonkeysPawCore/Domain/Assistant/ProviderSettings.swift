@@ -74,7 +74,8 @@ public struct ProviderSettings: Equatable, Sendable {
         return url
     }
 
-    private static func isLoopback(_ host: String) -> Bool {
+    // Shared with the transport after lowercasing and trimming a trailing dot.
+    static func isLoopback(_ host: String) -> Bool {
         if host == "localhost" { return true }
         let literal = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
         if literal.contains(":") {

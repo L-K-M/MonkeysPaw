@@ -69,11 +69,41 @@ re-entry or Clear before it can be used.
   - Redirects refused, so `Authorization` cannot leak to another host.
   - Request construction rejects empty or non-token header names, duplicate
     names ignoring case, and control characters in values (including CR/LF/NUL)
-    with `HTTPTransportError.invalidRequest`; adapters enforce the same rules.
+    with `HTTPTransportError.invalidRequest` before any adapter consumes headers.
   - `RESPONSE_CAP = 2 MiB` for LLM calls. Sync uses
     `SYNC_RESPONSE_CAP = 16 MiB` on the same transport.
+    The request selects the cap; delegate callbacks cancel receipt as soon
+    as the body exceeds it, including chunked bodies without Content-Length.
+    An advertised length above the cap is refused with `.cancel` in the
+    response-header callback. Each data callback checks cumulative bytes
+    before appending; an observed cap failure survives later cancellation
+    and deadline callbacks. Foundation may buffer bytes before invoking
+    delegates; callback boundaries need not match the peer's writes.
+    Darwin may wait for initial body bytes before delivering the response
+    callback; advertised oversize is refused before the complete body arrives.
+  - Each request uses an ephemeral URLSession with cookies, URL cache and
+    credential storage explicitly set to nil. Server-trust challenges keep
+    default handling for standard TLS validation. On Darwin, default HTTP
+    authentication handling can resend a request even without credentials.
+    The task delegate cancels Basic, Digest, NTLM and Negotiate challenges,
+    preserving the 401/407 status and headers from
+    [failureResponse](https://developer.apple.com/documentation/foundation/urlauthenticationchallenge/failureresponse)
+    with an empty body before
+    [cancelling the challenge](https://developer.apple.com/documentation/foundation/urlsession/authchallengedisposition/cancelauthenticationchallenge).
+    Corelibs retains default handling with no credential store and bounded
+    HTTP error bodies. Neither path supplies credentials or retries.
+    Every terminal result cancels the task and invalidates its session;
+    Foundation controls when the peer observes TCP closure, which is not part
+    of the early response-cap refusal contract. A separate monotonic deadline
+    cancels the task even while bytes keep arriving; caller cancellation does
+    the same.
+    Every 3xx response is refused with a typed error, including responses
+    without a usable Location header. No automatic retry is performed.
   - Provider error bodies are never shown or logged; the user sees a typed
     error instead.
+    Non-3xx HTTP error statuses return bounded data to the protocol layer for
+    its own error parsing. Transport failures contain no underlying error
+    text, provider body, headers or URL. Response header names are lowercase.
   - `HTTPTransporting` carries Foundation-only request/response data, byte
     caps and an absolute monotonic deadline. The portable URLSession adapter
     is the narrow networking exception in Core; its conditional Linux
