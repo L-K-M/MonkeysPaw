@@ -279,8 +279,23 @@ DeliveryService.deliver(text, mode)
   deferred past v1.
 - **Clipboard restore.** Off by default: the result stays on the clipboard,
   which is predictable and doubles as the fallback. When enabled, the
-  previous text clipboard is restored `CLIPBOARD_RESTORE_MS = 750` after the
-  chord. Version-1 settings uses `delivery.clipboardRestore`: `off` (the
+  optional `ClipboardRestoring` capability captures previous text before the
+  write/hide, while the panel still has focus. `CLIPBOARD_SNAPSHOT_BUDGET =
+  250 ms` bounds capture; `CLIPBOARD_SNAPSHOT_MAX_BYTES = 1 MiB` bounds UTF-8
+  text. Timeout, read failure, nil, oversize data or a changed capture revision
+  skips restore. After the final backend reports sent, including a later backend
+  in the same delivery's ladder, `CLIPBOARD_RESTORE_MS = 750` elapses without
+  holding the delivery queue. Failed, cached or missing earlier backends do not
+  discard the pending snapshot. The driver rechecks opaque
+  revision/write ownership immediately before replacing text on its UI thread,
+  with no asynchronous read/check/write gap. Any newer copy, even identical
+  bytes, invalidates ownership. Copy, exhausted copy-only fallback, self-test,
+  a later delivery, disabling the preference, graph invalidation and shutdown skip
+  restore. Prior text stays only in memory until restore/cancel, then is
+  released; it is never logged or persisted. OS APIs cannot atomically exclude
+  a simultaneous external copy; the guard covers observed revision/owner
+  changes, and restore stays unavailable where that limitation is unacceptable.
+  Version-1 settings uses `delivery.clipboardRestore`: `off` (the
   missing-field default) or `previousText`. Settings says "previous text
   only; 750 ms delay may be too short for some apps". This preference does
   not authorize reads merely to display Settings or change the preference.
