@@ -64,9 +64,9 @@ jobs:
             libglib2.0-bin xdotool xterm openbox x11-utils python3
       - name: Build Linux app
         run: swift build --product monkeyspaw
-      - name: Test Core on Linux
-        run: swift test --filter MonkeysPawCoreTests
-      - name: Test Linux app with a required display and portal bus
+      # One unfiltered run: --filter expands to every matching test name in a
+      # single runner argument, which exceeds Linux's 128 KiB per-argument limit.
+      - name: Test Core and Linux app with a required display and portal bus
         env:
           MONKEYSPAW_REQUIRE_DISPLAY: '1'
           # Enable fake portal ownership only on this private D-Bus session.
@@ -78,7 +78,7 @@ jobs:
           # Use software rendering so Xvfb needs no GL or GPU support.
           GSK_RENDERER: cairo
           G_DEBUG: fatal-warnings
-        run: dbus-run-session -- xvfb-run -a swift test --filter MonkeysPawLinuxTests
+        run: dbus-run-session -- xvfb-run -a swift test
       - name: Test filesystem permissions as an unprivileged user
         shell: bash
         env:
