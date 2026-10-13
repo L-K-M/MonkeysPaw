@@ -113,8 +113,9 @@ struct LinuxToolRunner {
                         // pipe. Poll and drain stdout between chunks so neither
                         // a full stdin nor a closed reader can bypass the budget.
                         let end = min(inputOffset + Int(PIPE_BUF), input.count)
+                        let range = (input.startIndex + inputOffset)..<(input.startIndex + end)
                         guard (try? inputPipe.fileHandleForWriting.write(
-                            contentsOf: input.subdata(in: inputOffset..<end))) != nil else {
+                            contentsOf: input.subdata(in: range))) != nil else {
                             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
                             return .failure(.unknown)
                         }

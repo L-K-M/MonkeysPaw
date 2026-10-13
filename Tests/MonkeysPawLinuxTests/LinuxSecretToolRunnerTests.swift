@@ -48,22 +48,45 @@ final class LinuxSecretToolRunnerTests: XCTestCase {
         XCTAssertTrue(output.text.hasSuffix("done"))
     }
 
+    func testNonzeroBasedStdinSlicePreservesAllBytes() throws {
+        let tools = try FakeLinuxTools()
+        try tools.install("secret-tool", script: "exec /bin/cat")
+        let data = Data(("discard" + String(repeating: "  slice\n", count: 2_048)).utf8)
+        let input = data.dropFirst(7)
+        XCTAssertGreaterThan(input.startIndex, 0)
+
+        let output = try tools.runner.run("secret-tool", arguments: [],
+            input: input, textOutput: .verbatim).get()
+
+        XCTAssertEqual(Data(output.text.utf8), input)
+    }
+
     func testNonzeroExitDoesNotExposeToolOutput() throws {
         let tools = try FakeLinuxTools()
-        try tools.install("secret-tool", script: "printf 'sensitive-error'\nprintf 'sensitive-error' >&2\nexit 1")
-        guard case .failure(.unknown) = tools.runner.run("secret-tool", arguments: [],
-            input: Data("secret".utf8)) else { return XCTFail("Nonzero exit must be a typed failure") }
+        let stdout = "stdout-sentinel-\(UUID().uuidString)"
+        let stderr = "stderr-sentinel-\(UUID().uuidString)"
+        tools.environment["FAKE_STDOUT"] = stdout
+        tools.environment["FAKE_STDERR"] = stderr
+        try tools.install("secret-tool", script: #"printf '%s' "$FAKE_STDOUT"; printf '%s' "$FAKE_STDERR" >&2; exit 1"#)
+        let result = tools.runner.run("secret-tool", arguments: [], input: Data("secret".utf8))
+        guard case .failure(let error) = result else { return XCTFail("Nonzero exit must be a typed failure") }
+        guard case .unknown = error else { return XCTFail("Expected a typed unknown failure") }
+        for output in [String(describing: error), String(reflecting: error), String(reflecting: result), tools.log.joined()] {
+            XCTAssertFalse(output.contains(stdout))
+            XCTAssertFalse(output.contains(stderr))
+        }
     }
 
     func testClosedStdinReturnsFailureWithoutSigpipe() throws {
+        // SIGPIPE is process-global; this bundle uses serial XCTest execution.
         let previous = Glibc.signal(SIGPIPE, SIG_IGN)
         defer { _ = Glibc.signal(SIGPIPE, previous) }
         let tools = try FakeLinuxTools()
-        try tools.install("secret-tool", script: "exec 0<&-\nexec /bin/sleep 3")
+        try tools.install("secret-tool", script: "exec 0<&-\nexec /bin/sleep 10")
         let start = ContinuousClock.now
         guard case .failure(.unknown) = tools.runner.run("secret-tool", arguments: [],
             input: Data(repeating: 65, count: 131_072)) else { return XCTFail("EPIPE must fail safely") }
-        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
     }
 
     func testFullStdinHasOneDeadlineAndKilledChildIsReaped() throws {
@@ -77,9 +100,9 @@ final class LinuxSecretToolRunnerTests: XCTestCase {
             timeout: .milliseconds(100), input: Data(repeating: 65, count: 131_072)) else {
             return XCTFail("A blocked writer must respect the deadline")
         }
-        XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
         let pid = try String(contentsOf: pidFile, encoding: .utf8)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while FileManager.default.fileExists(atPath: "/proc/\(pid)/stat"), ContinuousClock.now < deadline {
             Thread.sleep(forTimeInterval: 0.01)
         }

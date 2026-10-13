@@ -28,14 +28,15 @@ struct LinuxSecretFile {
     }
 
     func write(_ value: SecretValue?, account: SecretAccount) throws {
-        var record = try load()
+        // Hold the same directory lock across load, edit and publication.
+        guard let parent = try openDirectory(.create) else { throw SecretStoreError.writeFailed }
+        defer { _ = Glibc.close(parent) }
+        var record = try load(parent: parent)
         if value == nil, record.secrets[account.rawValue] == nil { return }
         record.secrets[account.rawValue] = value?.withValue { $0 }
         let data = try JSONEncoder().encode(record)
         // Reuse the existing private JSON-state cap; never truncate a map.
-        guard data.count <= Limits.valuesFileCapBytes,
-              let parent = try openDirectory(.create) else { throw SecretStoreError.writeFailed }
-        defer { _ = Glibc.close(parent) }
+        guard data.count <= Limits.valuesFileCapBytes else { throw SecretStoreError.writeFailed }
         try checkLeaf(parent: parent)
 
         let temporary = temporaryPrefix + UUID().uuidString
@@ -66,6 +67,10 @@ struct LinuxSecretFile {
     private func load() throws -> Record {
         guard let parent = try openDirectory(.existing) else { return Record() }
         defer { _ = Glibc.close(parent) }
+        return try load(parent: parent)
+    }
+
+    private func load(parent: Int32) throws -> Record {
         let descriptor = openat(parent, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else {
             if errno == ENOENT { return Record() }

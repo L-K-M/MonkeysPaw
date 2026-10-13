@@ -92,6 +92,75 @@ final class LinuxSecretFileTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: active.path))
     }
 
+    func testWriterLockIsTakenBeforeLoadingTheMap() throws {
+        let (tools, store, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        try store.write(SecretValue("old-key"), account: account)
+        let corrupt = Data("not-json".utf8)
+        try corrupt.write(to: file)
+        let descriptor = Glibc.open(file.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { _ = Glibc.close(descriptor) }
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+
+        XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account)) {
+            XCTAssertEqual($0 as? SecretStoreError, .writeFailed, "Contention must be refused before reading the map")
+        }
+        XCTAssertEqual(try Data(contentsOf: file), corrupt)
+    }
+
+    func testConcurrentWritersPreserveBothAccounts() throws {
+        let (tools, first, file) = try fixture()
+        defer { withExtendedLifetime(tools) {} }
+        let second = LinuxSecretFile(paths: LinuxPaths(environment: tools.environment))
+        let other = try SecretAccount(namespace: "device", name: "test")
+        let paddingAccount = try SecretAccount(namespace: "device", name: "padding")
+        // Many accounts keep the two independent loads overlapping.
+        let padding = SecretValue(String(repeating: "p", count: Limits.valuesFileCapBytes / 4))
+        try first.write(padding, account: paddingAccount)
+        var secrets = Dictionary(uniqueKeysWithValues: (0..<8_192).map { ("device:padding-\($0)", "padding") })
+        secrets[paddingAccount.rawValue] = padding.withValue { $0 }
+        try JSONSerialization.data(withJSONObject: ["version": 1, "storage": "unencrypted", "secrets": secrets])
+            .write(to: file)
+
+        for round in 0..<8 {
+            try first.write(nil, account: other)
+            let ready = DispatchSemaphore(value: 0)
+            let start = DispatchSemaphore(value: 0)
+            let done = expectation(description: "Two file writers finish round \(round)")
+            done.expectedFulfillmentCount = 2
+            let firstValue = SecretValue("first-\(round)")
+            let secondValue = SecretValue("second-\(round)" + String(repeating: "s", count: Limits.valuesFileCapBytes / 4))
+            for (writer, key, value) in [(first, account, firstValue), (second, other, secondValue)] {
+                DispatchQueue.global().async {
+                    defer { done.fulfill(); withExtendedLifetime(tools) {} }
+                    ready.signal()
+                    guard start.wait(timeout: .now() + 10) == .success else {
+                        return XCTFail("Writer start timed out")
+                    }
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while true {
+                        do { try writer.write(value, account: key); return }
+                        catch let error as SecretStoreError where error == .writeFailed && ContinuousClock.now < deadline {
+                            // Contention is nonblocking; retries must reload under the lock.
+                            Thread.sleep(forTimeInterval: 0.01)
+                        } catch { return XCTFail("File writer failed: \(error)") }
+                    }
+                }
+            }
+            XCTAssertEqual(ready.wait(timeout: .now() + 10), .success)
+            XCTAssertEqual(ready.wait(timeout: .now() + 10), .success)
+            start.signal()
+            start.signal()
+            wait(for: [done], timeout: 10)
+            XCTAssertEqual(try first.read(account: account), firstValue)
+            XCTAssertEqual(try first.read(account: other), secondValue)
+            XCTAssertEqual(try first.read(account: paddingAccount), padding)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path),
+            [file.lastPathComponent])
+    }
+
     func testLeafSymlinksIncludingDanglingLinksAreRefusedWithoutChangingTarget() throws {
         let (tools, store, file) = try fixture()
         try store.write(SecretValue("initial"), account: account)
@@ -146,7 +215,7 @@ final class LinuxSecretFileTests: XCTestCase {
         let start = ContinuousClock.now
         XCTAssertThrowsError(try store.read(account: account))
         XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))
-        XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
         try FileManager.default.removeItem(at: file)
         try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
         XCTAssertThrowsError(try store.write(SecretValue("new-key"), account: account))

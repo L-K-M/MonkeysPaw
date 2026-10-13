@@ -116,6 +116,7 @@ final class LinuxSecretStore: SecretStore {
 
     private func lookup(_ account: SecretAccount) throws -> Lookup {
         let deadline = ContinuousClock.now.advanced(by: timeout)
+        // libsecret tool/secret-tool.c:write_password_stdout adds a newline only for isatty(1), never this pipe.
         switch runner.run("secret-tool", arguments: ["lookup"] + attributes(account),
             timeout: timeout, textOutput: .verbatim) {
         case .success(let output): return .found(SecretValue(output.text))

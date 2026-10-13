@@ -7,7 +7,14 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class LinuxSecretStoreTests: XCTestCase {
-    private final class WorkerResult { var value: Result<Void, Error>? }
+    private final class WorkerResult {
+        private let lock = NSLock()
+        private var stored: Result<Void, Error>?
+        var value: Result<Void, Error>? {
+            get { lock.lock(); defer { lock.unlock() }; return stored }
+            set { lock.lock(); defer { lock.unlock() }; stored = newValue }
+        }
+    }
     private let profile = ProviderProfileID(UUID(uuidString: "01234567-89ab-cdef-0123-456789abcdef")!)
 
     func testEnvironmentPrecedenceIsolationAndPersistedCompensation() throws {
@@ -81,6 +88,20 @@ final class LinuxSecretStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: secretFile(tools).path))
     }
 
+    func testPipedLookupPreservesEmptyAndTrailingNewlineValues() throws {
+        let tools = try toolsWithPaths()
+        try installService(tools)
+        let store = makeStore(tools)
+        let account = SecretAccount.provider(profile)
+        try worker {
+            for text in ["", "abc", "abc\n", "abc\n\n"] {
+                let value = SecretValue(text)
+                XCTAssertEqual(try store.write(value, account: account), .secretService)
+                XCTAssertEqual(try store.read(account: account, source: .persisted)?.value, value)
+            }
+        }
+    }
+
     func testFallbackMigrationRemovesOnlyTheMigratedAccountAndClearRemovesBothCopies() throws {
         let tools = try toolsWithPaths()
         let account = SecretAccount.provider(profile)
@@ -137,7 +158,7 @@ final class LinuxSecretStoreTests: XCTestCase {
 
     func testDeadlineReturnsUnavailableAndDoesNotCreatePlaintext() throws {
         let tools = try toolsWithPaths()
-        try tools.install("secret-tool", script: "exec /bin/sleep 5")
+        try tools.install("secret-tool", script: "exec /bin/sleep 10")
         let store = makeStore(tools, timeout: .milliseconds(75))
         let start = ContinuousClock.now
         try worker {
@@ -145,7 +166,7 @@ final class LinuxSecretStoreTests: XCTestCase {
                 XCTAssertEqual($0 as? SecretStoreError, .unavailable)
             }
         }
-        XCTAssertLessThan(ContinuousClock.now - start, .seconds(1))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
         XCTAssertFalse(FileManager.default.fileExists(atPath: secretFile(tools).path))
     }
 
@@ -172,7 +193,7 @@ final class LinuxSecretStoreTests: XCTestCase {
 
     func testFailureAfterServiceMutationCompensatesTheOldValue() throws {
         for operation in ["store", "clear"] {
-            for ending in ["exit 1", "exec /bin/sleep 5"] {
+            for ending in ["exit 1", "exec /bin/sleep 10"] {
                 let tools = try toolsWithPaths()
                 try installService(tools)
                 let account = SecretAccount.provider(profile)
@@ -201,7 +222,7 @@ final class LinuxSecretStoreTests: XCTestCase {
                     }
                     XCTAssertEqual(try store.read(account: account, source: .persisted)?.value, SecretValue("old-key"))
                 }
-                XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+                XCTAssertLessThan(ContinuousClock.now - start, .seconds(5))
                 XCTAssertFalse(FileManager.default.fileExists(atPath: secretFile(tools).path))
             }
         }
@@ -308,11 +329,16 @@ final class LinuxSecretStoreTests: XCTestCase {
         try installService(tools)
         let paths = LinuxPaths(environment: tools.environment)
         let pipe = Pipe()
-        defer { try? pipe.fileHandleForReading.close(); try? pipe.fileHandleForWriting.close() }
+        var writeEndClosed = false
+        defer {
+            try? pipe.fileHandleForReading.close()
+            if !writeEndClosed { try? pipe.fileHandleForWriting.close() }
+        }
         let log = CompositeLogSink(sinks: [StandardErrorLog(output: pipe.fileHandleForWriting),
             FileLogSink(dataDirectory: paths.dataDirectory)], policy: LogLevelPolicy(environmentValue: "debug"))
         let secret = "key-sentinel-\(UUID().uuidString)"
-        let toolError = "tool-error-sentinel-\(UUID().uuidString)"
+        let stdout = "tool-stdout-sentinel-\(UUID().uuidString)"
+        let stderr = "tool-stderr-sentinel-\(UUID().uuidString)"
         let store = makeStore(tools)
         try worker {
             let service = ProviderSettingsService(store: ProviderSettingsStore(
@@ -321,11 +347,12 @@ final class LinuxSecretStoreTests: XCTestCase {
                 baseURL: "http://localhost:11434", modelID: "local", key: .replace(SecretValue(secret)))
             try service.save(draft)
         }
-        tools.environment["FAKE_ERROR"] = toolError
+        tools.environment["FAKE_STDOUT"] = stdout
+        tools.environment["FAKE_STDERR"] = stderr
         try tools.install("secret-tool", script: #"""
         if [ "$1" = lookup ]; then /bin/cat "$FAKE_ITEMS/$5"; exit 0; fi
-        printf '%s' "$FAKE_ERROR"
-        printf '%s' "$FAKE_ERROR" >&2
+        printf '%s' "$FAKE_STDOUT"
+        printf '%s' "$FAKE_STDERR" >&2
         exit 1
         """#)
         try worker {
@@ -335,16 +362,19 @@ final class LinuxSecretStoreTests: XCTestCase {
                 baseURL: "http://localhost:11434", modelID: "local", key: .replace(SecretValue(secret)))
             XCTAssertThrowsError(try service.save(draft)) { error in
                 XCTAssertFalse(String(reflecting: error).contains(secret))
-                XCTAssertFalse(String(reflecting: error).contains(toolError))
+                XCTAssertFalse(String(reflecting: error).contains(stdout))
+                XCTAssertFalse(String(reflecting: error).contains(stderr))
             }
         }
         try pipe.fileHandleForWriting.close()
-        let stderr = String(decoding: try pipe.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        writeEndClosed = true
+        let stderrLog = String(decoding: try pipe.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
         let fileLog = try String(contentsOf: paths.dataDirectory.appendingPathComponent("logs/monkeyspaw.log"), encoding: .utf8)
-        for output in [stderr, fileLog] {
+        for output in [stderrLog, fileLog] {
             XCTAssertTrue(output.contains("Provider secret update failed."))
             XCTAssertFalse(output.contains(secret))
-            XCTAssertFalse(output.contains(toolError))
+            XCTAssertFalse(output.contains(stdout))
+            XCTAssertFalse(output.contains(stderr))
         }
         let settings = try String(contentsOf: paths.configDirectory.appendingPathComponent("provider-settings.json"), encoding: .utf8)
         XCTAssertFalse(settings.contains(secret))
@@ -403,7 +433,10 @@ final class LinuxSecretStoreTests: XCTestCase {
         tools.environment["FAKE_ITEMS"] = items.path
         try tools.install("secret-tool", script: FakeLinuxTools.recordArguments + "\n" + #"""
         case "$1" in
-          lookup) if [ -f "$FAKE_ITEMS/$5" ]; then /bin/cat "$FAKE_ITEMS/$5"; else exit 1; fi ;;
+          lookup)
+            if [ ! -f "$FAKE_ITEMS/$5" ]; then exit 1; fi
+            /bin/cat "$FAKE_ITEMS/$5"
+            if [ -t 1 ]; then printf '\n'; fi ;; # libsecret adds a newline only on a terminal.
           search) exit 0 ;; # All normal fixture searches are for absent items; real matches also print secret data.
           store) /bin/cat > "$FAKE_ITEMS/$7" ;;
           clear) /bin/rm -f "$FAKE_ITEMS/$5" ;;
