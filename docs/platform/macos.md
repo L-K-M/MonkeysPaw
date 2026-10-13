@@ -500,6 +500,7 @@ Record outcomes without recording prompt content.
 | Delete confirmation names the exact relative file path; Cancel/Escape/non-button dismissal preserves it, and an explicit Delete closes the editor, clears the selection and keeps history | NOT RUN | |
 | Rename, Move and Delete each use Save/Discard/Cancel for dirty edits; Save finishes before the command, Discard drops only the draft, and Cancel keeps everything | NOT RUN | |
 | Stale Rename/Move/Delete open conflict choices; a missing file keeps the loaded draft with a deletion conflict and a typed missing-file message | NOT RUN | |
+| After cancelling a command, an external edit and dismissal of its conflict shows conflict guidance instead of the old Cancelled status; cancelling a guard Save conflict also keeps that guidance and draft | NOT RUN | |
 | Commands and Restore disable while loading, saving, updating a file, awaiting a guard/conflict, without a prompt, for read-only prompts or after library loss; File menu commands affect only the focused Library window | NOT RUN | |
 | Closing or switching the library retires pending form callbacks; tab changes and command forms make no clipboard reads or writes | NOT RUN | |
 | Tab/Shift+Tab, Return in rename/move forms, Escape, resize and repeated use remain usable; Return never confirms Delete or a conflict overwrite; VoiceOver identifies revisions, preview, commands and all typed messages | NOT RUN | |

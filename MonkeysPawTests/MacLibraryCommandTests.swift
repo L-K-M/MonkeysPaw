@@ -17,6 +17,7 @@ final class MacLibraryCommandTests: XCTestCase {
     private var originalMenu: NSMenu?
     private let work = CommandTestWork()
     private let clipboard = CommandTestClipboard()
+    private let watcher = CommandTestWatcher()
     private var dialogs: [CommandTestDialog] = []
 
     override func setUpWithError() throws {
@@ -52,7 +53,7 @@ final class MacLibraryCommandTests: XCTestCase {
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in false }),
                     mainThread: main, scheduler: scheduler, isTrusted: { false }, deactivateIfUnused: {})
-            }, scheduler: CommandTestScheduler(), makeFileWatcher: { _, _ in CommandTestWatcher() })
+            }, scheduler: CommandTestScheduler(), makeFileWatcher: { [watcher = self.watcher] _, _ in watcher })
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         delegate.showLibrary()
         let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
@@ -446,6 +447,40 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(try files.read(at: "one.md"), Data(original.utf8))
     }
 
+    func testCancelledCommandFeedbackDoesNotMaskLaterOrRetainedConflict() throws {
+        let presentation = try open()
+        presentation.edit(original + " draft")
+        try command(.rename, response: .rename("renamed.md"), in: presentation)
+        try respond(.decision(.cancel))
+        XCTAssertEqual(presentation.commandMessage, LibraryCommandStrings.cancelled)
+        try files.write(Data((original + " external").utf8), at: "one.md")
+        watcher.emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+        work.drain()
+        try respond(.dismissConflict)
+        XCTAssertNil(presentation.commandMessage)
+        XCTAssertNotNil(presentation.editorState.conflict)
+        XCTAssertEqual(presentation.editorState.source, original + " draft")
+        XCTAssertTrue(presentation.canShowConflict)
+
+        // A command whose guard Save discovers a conflict is cancelled by
+        // dismissing that conflict, but the conflict guidance must remain.
+        presentation.save()
+        try respond(.conflict(.takeTheirs))
+        work.drain()
+        presentation.edit(original + " draft")
+        try command(.rename, response: .rename("renamed.md"), in: presentation)
+        try files.write(Data((original + " raced").utf8), at: "one.md")
+        try respond(.decision(.save))
+        work.drain()
+        try respond(.dismissConflict)
+        XCTAssertNil(presentation.commandMessage)
+        XCTAssertNotNil(presentation.editorState.conflict)
+        XCTAssertEqual(presentation.editorState.source, original + " draft")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(try body(), "Original raced")
+        XCTAssertNil(try files.stamp(at: "renamed.md"))
+    }
+
     func testReadOnlyAndUnavailablePromptsDisableCommands() throws {
         try files.write(Data([0xff]), at: "encoding.md")
         try files.write(Data(repeating: 65, count: Limits.maxPromptBytes + 1), at: "large.md")
@@ -587,8 +622,10 @@ private struct CommandTestScheduler: MonkeysPawCore.Scheduler {
 }
 
 private final class CommandTestWatcher: FileStoreWatcher {
-    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws {}
-    func stop() {}
+    private var onEvent: (@Sendable (FileStoreWatchEvent) -> Void)?
+    func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws { self.onEvent = onEvent }
+    func stop() { onEvent = nil }
+    func emit(_ event: FileStoreWatchEvent) { onEvent?(event) }
 }
 
 private final class CommandTestClipboard: Clipboard {

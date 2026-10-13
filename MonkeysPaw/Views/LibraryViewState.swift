@@ -272,6 +272,11 @@ final class LibraryViewState: ObservableObject {
         // Core owns the unsaved guard, ordering and exactly-once completion.
         return { [weak self] outcome in
             guard let self, self.isActive, self.bindingRevision == revision else { return }
+            // Cancelling a guard can leave an unresolved save conflict.
+            if case .cancelled = outcome, self.editorState.conflict != nil {
+                self.commandMessage = nil
+                return
+            }
             self.commandMessage = LibraryCommandStrings.message(outcome, success: success)
         }
     }
@@ -347,8 +352,11 @@ final class LibraryViewState: ObservableObject {
                 guard let self, let editor, self.isActive,
                       self.bindingRevision == revision, self.editor === editor else { return }
                 let previousPrompt = self.editorState.prompt
+                // Conflict rereads must preserve the command's typed outcome.
+                let newConflict = self.editorState.conflict == nil && state.conflict != nil
                 if previousPrompt != state.prompt || state.status == .loading
-                    || state.status == .saving || state.status == .commandRunning {
+                    || state.status == .saving || state.status == .commandRunning
+                    || newConflict || state.pendingDecision != nil {
                     self.commandMessage = nil
                 }
                 if previousPrompt?.relativePath != state.prompt?.relativePath { self.sourceRevision &+= 1 }
