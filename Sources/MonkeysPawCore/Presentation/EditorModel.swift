@@ -138,6 +138,7 @@ public final class EditorModel: @unchecked Sendable {
     private var document: PromptDocument?
     private var assistantRevision: UInt64 = 0
     private var assistantPermit: AssistantSavePermit?
+    private var assistantDecisionID: UUID?
     private var requests: [GuardRequest] = []
     private var pendingRequest: GuardRequest?
     private var savesDecision = false
@@ -223,8 +224,9 @@ public final class EditorModel: @unchecked Sendable {
 
     @discardableResult
     private func enqueue(_ action: EditorDiscardAction, operation: ((EditorModel) -> Void)?,
+                         decisionID: UUID = UUID(),
                          completion: @escaping (EditorGuardResult) -> Void) -> UUID {
-        let decision = EditorPendingDecision(id: UUID(), action: action)
+        let decision = EditorPendingDecision(id: decisionID, action: action)
         guard isActive else {
             main.run { completion(.inactive) }
             return decision.id
@@ -893,6 +895,7 @@ extension EditorModel {
         assistantPermit = permit
         let generation = self.generation
         let start: (EditorModel) -> Void = { model in
+            model.assistantDecisionID = nil
             guard model.generation == generation else {
                 model.assistantPermit = nil
                 return completion(.failed(.staleContext))
@@ -917,13 +920,44 @@ extension EditorModel {
             let path = PromptCreation.relativePath(title: content.frontMatter.title, now: clock.now())
             let selection = LibraryPromptSelection(identity: PromptIdentity(path: path, id: content.frontMatter.id),
                                                     relativePath: RelativePath(path))
-            enqueue(.open(selection), operation: start) { [weak self] result in
+            let decisionID = UUID()
+            assistantDecisionID = decisionID
+            enqueue(.open(selection), operation: start, decisionID: decisionID) { [weak self] result in
                 guard result != .allowed else { return }
                 let failure: AssistantAcceptanceFailure = result == .cancelled ? .cancelled : .inactive
+                let outcome: AssistantAcceptanceOutcome
+                do { try permit.check(); outcome = .failed(failure) }
+                catch let refusal as AssistantSaveRefusal { outcome = refusal.outcome }
+                catch { outcome = .failed(.inactive) }
                 permit.invalidate(.failed(failure))
-                if self?.assistantPermit === permit { self?.assistantPermit = nil }
-                completion(.failed(failure))
+                if self?.assistantPermit === permit {
+                    self?.assistantPermit = nil
+                    self?.assistantDecisionID = nil
+                }
+                completion(outcome)
             }
+        }
+    }
+
+    /// Retiring an Assistant draft removes only its own queued discard guard.
+    /// An already executing save still completes through the worker barrier.
+    func cancelAssistantGuard(permit: AssistantSavePermit) {
+        main.run { [weak self] in
+            guard let self, self.assistantPermit === permit, let id = self.assistantDecisionID else { return }
+            let request: GuardRequest
+            if let pending = self.pendingRequest, pending.decision.id == id {
+                request = pending
+                self.pendingRequest = nil
+                self.state.pendingDecision = nil
+                self.savesDecision = false
+            } else if let index = self.requests.firstIndex(where: { $0.decision.id == id }) {
+                request = self.requests.remove(at: index)
+            } else { return }
+            self.assistantDecisionID = nil
+            self.updateQueuedActions()
+            request.completion(.cancelled)
+            self.changed()
+            self.processRequests()
         }
     }
 

@@ -304,6 +304,86 @@ final class AssistantAcceptanceModelTests: XCTestCase {
         }
     }
 
+    func testCancellationWhileWriteDecisionIsPendingCompletesAndReleasesItsGuard() async throws {
+        for queued in [false, true] {
+            for changedProfile in [false, true] {
+                let h = try AssistantAcceptanceHarness(source: "Original", queued: queued)
+                h.e.ui { h.e.model.edit("Unsaved") }
+                try await h.ready()
+                var result: AssistantAcceptanceOutcome?
+                var replies = 0
+                h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1; XCTAssertTrue(h.e.h.marker.isUI) } }
+                h.e.h.main.releaseAll()
+                XCTAssertNotNil(h.e.model.state.pendingDecision)
+                h.e.ui {
+                    if changedProfile { h.model.profileChanged() }
+                    else { h.model.close() }
+                }
+                h.e.settle()
+                XCTAssertEqual(replies, 1)
+                guard case .failed(let failure) = result else { return XCTFail("Pending acceptance must complete on retirement.") }
+                XCTAssertEqual(failure, changedProfile ? .staleContext : .cancelled)
+                XCTAssertNil(h.e.model.state.pendingDecision)
+                XCTAssertEqual(h.e.model.state.source, "Unsaved")
+                XCTAssertEqual(try h.e.h.files.text(at: "a.md"), "Original")
+                XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
+                XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+                h.e.ui { h.e.model.revert() }
+                h.e.h.main.releaseAll()
+                XCTAssertEqual(h.e.model.state.pendingDecision?.action, .revert)
+                try h.e.decide(.cancel)
+                h.e.settle()
+            }
+        }
+    }
+
+    func testInlineObserverCanCancelAPublishedAssistantDecision() async throws {
+        for queued in [false, true] {
+            let h = try AssistantAcceptanceHarness(source: "Original", queued: queued)
+            h.e.ui { h.e.model.edit("Unsaved") }
+            try await h.ready()
+            var cancelled = false
+            h.e.model.onChange = {
+                h.model.contextChanged()
+                if !cancelled, h.e.model.state.pendingDecision != nil {
+                    cancelled = true
+                    h.model.close()
+                }
+            }
+            var result: AssistantAcceptanceOutcome?
+            var replies = 0
+            h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1 } }
+            h.e.settle()
+            guard case .failed(.cancelled) = result else { return XCTFail("An inline close must cancel the guard.") }
+            XCTAssertEqual(replies, 1)
+            XCTAssertNil(h.e.model.state.pendingDecision)
+            XCTAssertEqual(h.e.model.state.source, "Unsaved")
+            XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+            XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
+        }
+    }
+
+    func testCancellingQueuedAcceptancePreservesAnEarlierEditorDecision() async throws {
+        let h = try AssistantAcceptanceHarness(source: "Original")
+        h.e.ui { h.e.model.edit("Unsaved") }
+        try await h.ready()
+        h.e.ui { h.e.model.revert() }
+        h.e.h.main.releaseAll()
+        let earlier = try XCTUnwrap(h.e.model.state.pendingDecision)
+        var result: AssistantAcceptanceOutcome?
+        h.e.ui { h.model.accept(using: h.e.model) { result = $0 } }
+        h.e.h.main.releaseAll()
+        h.e.ui { h.model.close() }
+        h.e.settle()
+        guard case .failed(.cancelled) = result else { return XCTFail("Queued acceptance must complete on close.") }
+        XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
+        XCTAssertTrue(h.e.model.state.queuedActions.isEmpty)
+        XCTAssertEqual(h.e.model.state.source, "Unsaved")
+        XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
+        try h.e.decide(.cancel)
+        h.e.settle()
+    }
+
     func testSentinelScanFindsNoKeyBriefNotesInstructionOrTranscriptAfterAcceptAndReject() async throws {
         for (reject, improve) in [(false, false), (true, false), (false, true), (true, true)] {
             let sentinels = (0..<4).map { _ in "sentinel-" + UUID().uuidString }

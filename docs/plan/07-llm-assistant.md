@@ -354,6 +354,8 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   the editor draft. A buffer change requires a fresh Show diff. Write/private
   copy first uses §11.7's Save / Discard / Cancel guard for unsaved edits;
   Save or Discard changing that snapshot also requires a fresh preview.
+  Retiring acceptance cancels its pending discard dialog and completes its
+  caller without blocking later editor navigation.
   Publication already started may finish; newer buffer edits stay dirty and
   an obsolete Assistant token cannot hide the authoritative editor result.
   The typed outcome is `saved`, `conflict`, `failed`, or

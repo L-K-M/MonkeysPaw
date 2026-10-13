@@ -132,6 +132,23 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertEqual(try h.files.text(at: "a.md"), first.document.source)
     }
 
+    func testExternalReplacementAfterPublicationKeepsArchivedProvenance() throws {
+        let h = PromptEditingHarness()
+        let first = try XCTUnwrap(save(h, "Before", provenance: metadata).committedEntry)
+        h.files.onWrite = { path in
+            guard path == "a.md" else { return }
+            h.files.onWrite = nil
+            do { try h.files.put(first.document.source + "External", at: path) }
+            catch { XCTFail("Could not publish the test's external replacement.") }
+        }
+        guard case .conflict = try save(h, "Committed", stamp: first.stamp, provenance: metadata) else {
+            return XCTFail("Expected post-publication replacement conflict.")
+        }
+        let revision = try XCTUnwrap(h.library.history(for: first.identity).first)
+        XCTAssertEqual(try h.library.provenance(for: revision), metadata)
+        XCTAssertNil(try h.library.provenance(at: "a.md"))
+    }
+
     func testUnknownVersionAndInvalidMetadataFailExplicitly() throws {
         let h = PromptEditingHarness()
         let first = try XCTUnwrap(save(h, "Before", provenance: metadata).committedEntry)

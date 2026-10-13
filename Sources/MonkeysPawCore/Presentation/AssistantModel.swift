@@ -50,6 +50,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     private var requestID: UUID?
     private var acceptanceID: UUID?
     private var savingPermit: AssistantSavePermit?
+    private var cancelAcceptanceGuard: (() -> Void)?
     private var retainedID: ULID?
     private var cancelWork: (() -> Void)?
     private var started: ContinuousClock.Instant?
@@ -73,7 +74,11 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         updateFooter()
     }
 
-    deinit { cancelWork?(); savingPermit?.invalidate(.failed(.cancelled)) }
+    deinit {
+        cancelWork?()
+        savingPermit?.invalidate(.failed(.cancelled))
+        cancelAcceptanceGuard?()
+    }
 
     public var canAccept: Bool {
         guard isActive, state.phase == .ready, !state.isStale, !state.isAccepting,
@@ -89,6 +94,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         guard isActive else { return }
         let latest = currentContext()
         guard latest != context else { return }
+        var cancelledGuard: (() -> Void)?
         if savingPermit != nil, acceptanceID != nil, context.sameSession(as: latest),
            let editor = latest.editor, editor.availability == .busy,
            context.editor == AssistantEditorSnapshot(source: editor.source, relativePath: editor.relativePath,
@@ -100,6 +106,8 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
             savingPermit?.invalidate(.failed(.staleContext))
             reset()
         } else {
+            cancelledGuard = cancelAcceptanceGuard
+            cancelAcceptanceGuard = nil
             if savingPermit != nil {
                 savingPermit?.invalidate(.conflict(.changedBuffer))
                 savingPermit = nil
@@ -114,6 +122,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         }
         context = latest
         updateFooter()
+        cancelledGuard?()
         changed()
     }
 
@@ -236,6 +245,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         else { destination = .improve }
         let permit = AssistantSavePermit()
         savingPermit = permit
+        cancelAcceptanceGuard = { [weak editor] in editor?.cancelAssistantGuard(permit: permit) }
         editor.acceptAssistant(acceptance, destination: destination, permit: permit, validate: { [weak self] in
             do { try permit.check() }
             catch let refusal as AssistantSaveRefusal { return refusal }
@@ -264,6 +274,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         }
         acceptanceID = nil
         savingPermit = nil
+        cancelAcceptanceGuard = nil
         state.isAccepting = false
         state.acceptanceOutcome = outcome
         state.failure = nil
@@ -434,6 +445,8 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     private func reset() {
         savingPermit?.invalidate(.failed(.cancelled))
         savingPermit = nil
+        let cancelledGuard = cancelAcceptanceGuard
+        cancelAcceptanceGuard = nil
         invalidateWork()
         attempt = nil
         reviewContext = nil
@@ -441,6 +454,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         retainedID = nil
         started = nil
         state = AssistantState()
+        cancelledGuard?()
     }
 
     private func measureElapsed() {

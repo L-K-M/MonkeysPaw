@@ -685,7 +685,9 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   Identity migration moves all these records with history. Rename and move
   preserve them; delete retains them with recoverable history. Retention
   removes a revision's sidecar with its bytes, under the same 50-revision cap.
-  Provenance writes occur after the prompt commits. A failure reports
+  Archived provenance is staged with its history bytes and removed on a failed
+  save; it survives an external replacement detected after publication. Head
+  provenance is published after the prompt commits. A maintenance failure reports
   `savedButProvenanceFailed`, retaining the entry, stamp and any concurrent
   history-maintenance warning. Callers adopt that commit without retrying
   the file write. Assistant notes, briefs, transcripts and credentials are

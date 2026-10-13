@@ -534,6 +534,10 @@ public final class LibraryService: PromptFavoriteEditing {
                 do { previousProvenance = try historyStore.headProvenance(for: targetIdentity, bytes: current.bytes) }
                 catch { provenanceFailed = true }
                 snapshot = try historyStore.snapshot(current.bytes, for: targetIdentity, at: date)
+                if let snapshot {
+                    do { try historyStore.archiveProvenance(previousProvenance, for: snapshot, bytes: current.bytes) }
+                    catch { provenanceFailed = true }
+                }
             }
             switch mode {
             case .replace:
@@ -569,12 +573,8 @@ public final class LibraryService: PromptFavoriteEditing {
         guard committed.bytes == bytes else {
             throw CommittedExternalReplacement(currentStamp: committed.entry.stamp)
         }
-        // Each maintenance step is attempted after publication. Failure cannot
-        // turn a committed file into a retryable save failure.
-        if let snapshot, let current {
-            do { try historyStore.archiveProvenance(previousProvenance, for: snapshot, bytes: current.bytes) }
-            catch { provenanceFailed = true }
-        }
+        // Head publication and retention failures cannot turn a committed file
+        // into a retryable save failure.
         do { try historyStore.setHeadProvenance(provenance, for: targetIdentity, bytes: bytes) }
         catch { provenanceFailed = true }
         var historyFailed = false
