@@ -19,3 +19,11 @@ xcuserdata/
 /data/
 # Written only while build-deb.sh compiles the packaged Linux executable.
 /Sources/MonkeysPawLinux/PackagedBuildVersion.generated.swift
+# Android local SDK paths, build state and private signing keys.
+/android/local.properties
+/android/.gradle/
+/android/**/build/
+/android/.kotlin/
+*.keystore
+*.jks
+!/android/app/debug.keystore

@@ -221,6 +221,55 @@ jobs:
           printf '%s\n' "$version"
           test "$version" = 'monkeyspaw 0.1.0-beta.1'
 
+  android:
+    name: Android JVM tests, lint and APKs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install the pinned Android SDK packages
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Test, lint and assemble both APKs
+        run: ./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+      - name: Upload debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MonkeysPaw-android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload Android reports on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MonkeysPaw-android-reports
+          path: |
+            android/core/build/reports/tests/test/
+            android/core/build/test-results/test/*.xml
+            android/app/build/reports/tests/testDebugUnitTest/
+            android/app/build/test-results/testDebugUnitTest/*.xml
+            android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 3
+
   core-macos:
     name: Core on macOS
     runs-on: macos-26

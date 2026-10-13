@@ -1,0 +1,28 @@
+# Goo editorconfig — Kotlin/Gradle sources, markdown docs, and shell scripts.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{md,markdown}]
+# Trailing whitespace can be significant in Markdown (hard line breaks), so
+# leave it alone inside prose files.
+trim_trailing_whitespace = false
+max_line_length = off
+
+[*.{kt,kts}]
+indent_size = 4
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.{sh,py}]
+indent_size = 4
+
+[Makefile]
+indent_style = tab
