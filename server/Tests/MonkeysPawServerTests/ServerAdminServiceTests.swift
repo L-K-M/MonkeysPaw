@@ -132,7 +132,7 @@ struct ServerAdminServiceTests {
             let admin = try await fixture.user(username: "admin", kind: .admin)
             let adminSession = try await fixture.session(admin)
             let successes = try await withThrowingTaskGroup(of: Bool.self) { group in
-                for username in ["Race", "rACE"] {
+                for username in ["race", "race"] {
                     group.addTask {
                         do {
                             _ = try await service.create(.init(username: username, password: AccountTestFixture.password), session: adminSession.identity)

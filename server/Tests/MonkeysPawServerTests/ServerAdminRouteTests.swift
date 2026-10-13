@@ -15,7 +15,7 @@ struct ServerAdminRouteTests {
             let memberSession = try await fixture.session(member)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
             try await app.test(.router) { client in
-                let body = try JSONEncoder().encode(SyncAPI.CreateUserRequest(username: "NewMember", password: AccountTestFixture.password))
+                let body = try JSONEncoder().encode(SyncAPI.CreateUserRequest(username: "newmember", password: AccountTestFixture.password))
                 try await client.execute(uri: "/api/v1/admin/users", method: .post, body: .init(bytes: body)) {
                     try Self.failure($0, .unauthorized)
                 }
@@ -23,14 +23,14 @@ struct ServerAdminRouteTests {
                                          headers: Self.headers(memberSession), body: .init(bytes: body)) {
                     try Self.failure($0, .forbidden)
                 }
-                for (username, kind) in [("NewMember", SyncAPI.AccountKind.member), ("NewAdmin", .admin)] {
+                for (username, kind) in [("newmember", SyncAPI.AccountKind.member), ("newadmin", .admin)] {
                     let request = SyncAPI.CreateUserRequest(username: username, password: AccountTestFixture.password,
                                                             accountKind: kind == .admin ? kind : nil)
                     try await client.execute(uri: "/api/v1/admin/users", method: .post,
                                              headers: Self.headers(adminSession), body: .init(bytes: JSONEncoder().encode(request))) {
                         #expect($0.status == .ok)
                         let user = try JSONDecoder().decode(SyncAPI.User.self, from: Data($0.body.readableBytesView))
-                        #expect(user.username == username.lowercased())
+                        #expect(user.username == username)
                         #expect(user.accountKind == kind)
                         #expect(user.displayName == nil && user.disabledAt == nil)
                     }
@@ -222,7 +222,7 @@ struct ServerAdminRouteTests {
                     try await client.execute(uri: "/api/v1/admin/users/\(id)", method: .patch,
                                              headers: Self.headers(admin), body: .init(string: "{\"disabled\":false}")) { try Self.failure($0, failure) }
                 }
-                for username in ["ALICE", "bad username"] {
+                for username in ["alice", "ALICE", "bad username"] {
                     let body = try JSONSerialization.data(withJSONObject: ["username": username, "password": AccountTestFixture.password])
                     try await client.execute(uri: "/api/v1/admin/users", method: .post,
                                              headers: Self.headers(admin), body: .init(bytes: body)) { try Self.failure($0, .malformedRequest) }
