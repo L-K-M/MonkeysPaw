@@ -681,5 +681,6 @@ templates or field values. No request starts when you merely open the panel.
 
 Group roles arrive in M6. Hosted tests exercise the existing viewer seam: the
 control offers **Improve a private copy**, and acceptance preserves the source
-while creating a fresh private prompt. Record an owner check when authoritative
-group roles are wired into macOS composition.
+while creating a fresh prompt in personal scope. Its LLM privacy flag is
+preserved; ownership is defined by §9's scope. Record an owner check when
+authoritative group roles are wired into macOS composition.

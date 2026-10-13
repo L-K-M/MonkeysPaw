@@ -10,7 +10,7 @@ enum LibraryAssistantStrings {
     static let noEditor = "Open a prompt to review or improve it. Write creates a new prompt from your brief."
     static let privatePrompt = "This template is private. Review and Improve are disabled. Write sends only your brief."
     static let invalid = "Fix the editor's validation errors before reviewing or improving it."
-    static let viewer = "Viewer access: acceptance creates a new private copy."
+    static let viewer = "Viewer access: acceptance saves a new copy in your personal library."
     static let stale = "The source changed. Show a new diff before accepting."
     static let unmatched = "Quote does not match the reviewed source; it cannot be highlighted."
     static let staleReview = "These findings refer to an older source. Review again before selecting or highlighting them."

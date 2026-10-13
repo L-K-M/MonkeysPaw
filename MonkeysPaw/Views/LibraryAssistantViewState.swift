@@ -94,11 +94,15 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     }
 
     var resultMessage: String {
-        if state.isStale, state.acceptanceOutcome?.committed != nil { return LibraryAssistantStrings.stale }
-        if let outcome = state.acceptanceOutcome { return LibraryAssistantStrings.acceptance(outcome) }
-        if let failure = state.failure { return LibraryAssistantStrings.failure(failure) }
-        if state.isStale { return state.review != nil ? LibraryAssistantStrings.staleReview : LibraryAssistantStrings.stale }
         if state.isAccepting { return "Saving the accepted candidate…" }
+        if let failure = state.failure { return LibraryAssistantStrings.failure(failure) }
+        if let outcome = state.acceptanceOutcome, case .conflict = outcome, editorState.conflict != nil {
+            return LibraryAssistantStrings.acceptance(outcome)
+        }
+        if state.isStale { return state.review != nil ? LibraryAssistantStrings.staleReview : LibraryAssistantStrings.stale }
+        if state.phase == .saved || state.phase == .failed, let outcome = state.acceptanceOutcome {
+            return LibraryAssistantStrings.acceptance(outcome)
+        }
         return LibraryAssistantStrings.phase(state.phase)
     }
 

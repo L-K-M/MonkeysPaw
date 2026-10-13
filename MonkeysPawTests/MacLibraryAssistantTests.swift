@@ -71,7 +71,7 @@ final class MacLibraryAssistantTests: XCTestCase {
     }
 
     func testWriteAcceptsExactPreviewBytesAndUsageForBothProviders() throws {
-        for kind in [ProviderKind.anthropic, .openAICompatible] {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
             let h = try MacLibraryAssistantHarness(source: nil, kind: kind)
             defer { h.close() }
             let view = try h.assistant()
@@ -195,6 +195,14 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertTrue(view.state.isStale)
         XCTAssertEqual(view.resultMessage, LibraryAssistantStrings.stale)
         XCTAssertFalse(view.canAccept)
+        view.showDiff()
+        h.work.drain()
+        XCTAssertTrue(view.canAccept)
+        XCTAssertEqual(view.resultMessage, LibraryAssistantStrings.phase(.ready))
+        view.accept()
+        XCTAssertEqual(view.resultMessage, "Saving the accepted candidate…")
+        h.work.drain()
+        XCTAssertEqual(view.resultMessage, "Prompt saved.")
     }
 
     func testDraftValidationErrorsDisableAcceptanceAndFeedbackRetryKeepsTranscript() throws {
@@ -277,7 +285,9 @@ final class MacLibraryAssistantTests: XCTestCase {
     }
 
     func testViewerOffersPrivateCopyAndPreservesOriginal() throws {
-        let h = try MacLibraryAssistantHarness()
+        let original = "---\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\n---\nOriginal"
+        let sourcePath = "Groups/Team/one.md"
+        let h = try MacLibraryAssistantHarness(source: original, sourcePath: sourcePath)
         defer { h.close() }
         let service = try XCTUnwrap(h.delegate.assistantService)
         let browser = try XCTUnwrap(h.delegate.libraryBrowserModel)
@@ -300,10 +310,13 @@ final class MacLibraryAssistantTests: XCTestCase {
         view.accept()
         h.work.drain()
         let path = try XCTUnwrap(h.presentation.editorState.prompt?.relativePath.string)
-        XCTAssertNotEqual(path, "one.md")
-        XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        XCTAssertFalse(path.contains("/"), "The copy belongs to the personal library root")
+        XCTAssertEqual(try h.files.read(at: sourcePath), Data(original.utf8))
         let copy = PromptCodec.parseFile(try h.files.read(at: path), filename: path)
-        XCTAssertTrue(copy.frontMatter.isPrivate)
+        XCTAssertNotNil(copy.frontMatter.id)
+        XCTAssertNotEqual(copy.frontMatter.id, ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PD"))
+        // Personal ownership is separate from the flag that blocks LLM calls.
+        XCTAssertFalse(copy.frontMatter.isPrivate)
         XCTAssertEqual(copy.body, "Private improvement")
     }
 
@@ -467,6 +480,13 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertTrue(controller.handleKeyEvent(key))
         XCTAssertTrue(h.presentation.isAssistantVisible)
         XCTAssertGreaterThan(window.contentMinSize.width, CGFloat(Limits.setupWindowSize.width))
+        let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { other.close() }
+        let unrelated = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
+            timestamp: 0, windowNumber: other.windowNumber, context: nil, characters: "A",
+            charactersIgnoringModifiers: "a", isARepeat: false, keyCode: UInt16(kVK_ANSI_A)))
+        XCTAssertFalse(controller.handleKeyEvent(unrelated))
         XCTAssertEqual(LibrarySourceEditor.Coordinator.utf16Range(for: 1..<5, in: "a😀b"), NSRange(location: 1, length: 2))
         XCTAssertNil(LibrarySourceEditor.Coordinator.utf16Range(for: 2..<5, in: "a😀b"))
         XCTAssertNil(LibrarySourceEditor.Coordinator.utf16Range(for: 0..<99, in: "short"))
@@ -495,14 +515,14 @@ private final class MacLibraryAssistantHarness {
     private var isClosed = false
     var presentation: LibraryViewState { delegate.libraryWindow!.presentation }
 
-    init(source: String? = "Original", configured: Bool = true, kind: ProviderKind = .openAICompatible,
-         secondSource: String? = nil) throws {
+    init(source: String? = "Original", sourcePath: String = "one.md", configured: Bool = true,
+         kind: ProviderKind = .openaiCompatible, secondSource: String? = nil) throws {
         self.kind = kind
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let root = directory.appendingPathComponent("library", isDirectory: true)
         files = try RootedFileStore(root: root)
         try files.createRoot()
-        if let source { try files.write(Data(source.utf8), at: "one.md") }
+        if let source { try files.write(Data(source.utf8), at: sourcePath) }
         if let secondSource { try files.write(Data(secondSource.utf8), at: "two.md") }
         delegate = AppDelegate(libraryRoot: root, dataRoot: directory.appendingPathComponent("data"),
             backgroundWork: work, httpTransport: transport, secrets: MacLibraryAssistantSecrets(),
@@ -518,7 +538,7 @@ private final class MacLibraryAssistantHarness {
                 modelID: "test-model", key: kind == .anthropic ? .replace(SecretValue("stub-anthropic-key")) : .clear))
         }
         delegate.showLibrary()
-        if source != nil { presentation.selectPath("one.md") }
+        if source != nil { presentation.selectPath(RelativePath(sourcePath)) }
         work.drain()
         presentation.showAssistant()
     }
@@ -560,7 +580,7 @@ private final class MacLibraryAssistantHarness {
         case .anthropic:
             json = ["content": [["type": "text", "text": text]], "stop_reason": "end_turn",
                 "usage": ["input_tokens": 12, "output_tokens": 5]]
-        case .openAICompatible:
+        case .openaiCompatible:
             json = ["choices": [["message": ["role": "assistant", "content": text], "finish_reason": "stop"]],
                 "usage": ["prompt_tokens": 12, "completion_tokens": 5]]
         }
