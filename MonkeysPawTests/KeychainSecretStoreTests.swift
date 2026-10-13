@@ -63,16 +63,38 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertEqual(keychain.mutations, [.delete])
     }
 
+    func testForeignAccountsSupportKnownAccountEditsAndRemainVerbatim() throws {
+        let foreign = ["one": "opaque κλειδί\n\"\\\u{0000}", "provider:": "empty name",
+                       "provider:bad:name": "extra separator", "provider:bad/name": "future format"]
+        let keychain = MemoryKeychain()
+        var original = foreign
+        original[first.rawValue] = "first"
+        keychain.data = try payload(original)
+        let store = KeychainSecretStore(keychain: keychain)
+
+        XCTAssertEqual(try store.read(account: first, source: .effective)?.value, SecretValue("first"))
+        XCTAssertNil(try store.read(account: second, source: .persisted))
+        XCTAssertEqual(try store.write(SecretValue("updated"), account: first), .keychain)
+        try store.write(SecretValue("second"), account: second)
+        XCTAssertEqual(try store.read(account: first, source: .persisted)?.value, SecretValue("updated"))
+        try store.delete(account: first)
+        XCTAssertNil(try store.read(account: first, source: .persisted))
+        XCTAssertEqual(try store.read(account: second, source: .effective)?.value, SecretValue("second"))
+        try store.delete(account: second)
+
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(keychain.data)) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertEqual(object["entries"] as? [String: String], foreign)
+        XCTAssertEqual(keychain.mutations, [.update, .update, .update, .update])
+    }
+
     func testCorruptAndUnsupportedPayloadsFailClosedForEveryOperation() throws {
         let payloads = [
             "invalid", #"{"entries":{}}"#, #"{"version":1}"#,
             #"{"version":true,"entries":{}}"#, #"{"version":1,"entries":[]}"#,
             #"{"version":0,"entries":{}}"#, #"{"version":2,"entries":{}}"#,
-            #"{"version":1,"entries":{"provider:one":42}}"#,
-            #"{"version":1,"entries":{"one":"value"}}"#,
-            #"{"version":1,"entries":{"provider:":"value"}}"#,
-            #"{"version":1,"entries":{"provider:bad:name":"value"}}"#,
-            #"{"version":1,"entries":{"provider:bad/name":"value"}}"#
+            #"{"version":2,"entries":{"provider:one":"value","foreign/key":"opaque"}}"#,
+            #"{"version":1,"entries":{"provider:one":42}}"#
         ].map { Data($0.utf8) } + [Data([0xff])]
         for original in payloads {
             let keychain = MemoryKeychain()
@@ -173,19 +195,75 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertTrue(keychain.data == original)
     }
 
-    func testDisappearingItemFailsUpdateAndMakesDeleteIdempotent() throws {
+    func testDisappearingItemRetriesWriteOnceAndMakesDeleteIdempotent() throws {
         let keychain = MemoryKeychain()
         let store = KeychainSecretStore(keychain: keychain)
         try store.write(SecretValue("first"), account: first)
         keychain.beforeUpdate = { [weak keychain] in keychain?.data = nil }
-        assertFailure(.writeFailed) { try store.write(SecretValue("changed"), account: first) }
-        XCTAssertNil(keychain.data)
-        XCTAssertEqual(keychain.mutations, [.add, .update])
+        XCTAssertEqual(try store.write(SecretValue("changed"), account: first), .keychain)
+        XCTAssertEqual(try store.read(account: first, source: .persisted)?.value, SecretValue("changed"))
+        XCTAssertEqual(keychain.mutations, [.add, .update, .add])
 
         keychain.data = try payload([first.rawValue: "first"])
         keychain.beforeDelete = { [weak keychain] in keychain?.data = nil }
         try store.delete(account: first)
         XCTAssertNil(keychain.data)
+
+        keychain.data = try payload([first.rawValue: "first", second.rawValue: "second"])
+        let before = keychain.mutations
+        assertFailure(.deleteFailed) { try store.delete(account: first) }
+        XCTAssertNil(keychain.data)
+        XCTAssertEqual(keychain.mutations, before + [.update])
+    }
+
+    func testDuplicateAddThenDisappearingItemRetriesMergedMapOnce() throws {
+        let keychain = MemoryKeychain()
+        let foreign = "foreign/key"
+        let original = try payload([second.rawValue: "other writer", foreign: "opaque"])
+        keychain.beforeAdd = { [weak keychain] in
+            keychain?.data = original
+            keychain?.beforeAdd = nil
+        }
+        keychain.beforeUpdate = { [weak keychain] in keychain?.data = nil }
+        let store = KeychainSecretStore(keychain: keychain)
+
+        XCTAssertEqual(try store.write(SecretValue("first"), account: first), .keychain)
+        XCTAssertEqual(try store.read(account: first, source: .persisted)?.value, SecretValue("first"))
+        XCTAssertEqual(try store.read(account: second, source: .persisted)?.value, SecretValue("other writer"))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(keychain.data)) as? [String: Any])
+        XCTAssertEqual((object["entries"] as? [String: String])?[foreign], "opaque")
+        XCTAssertEqual(keychain.mutations, [.add, .update, .add])
+    }
+
+    func testDisappearingItemRetryFailureIsSanitizedAndDoesNotLoop() throws {
+        let cases: [(KeychainAccessError, SecretStoreError)] = [
+            (.failure, .writeFailed), (.duplicateItem, .writeFailed),
+            (.locked, .locked), (.unavailable, .unavailable)
+        ]
+        for (failure, expected) in cases {
+            let keychain = MemoryKeychain()
+            let store = KeychainSecretStore(keychain: keychain)
+            try store.write(SecretValue("first"), account: first)
+            keychain.beforeUpdate = { [weak keychain] in keychain?.data = nil }
+            keychain.failures[.add] = failure
+
+            assertFailure(expected) { try store.write(SecretValue("changed"), account: first) }
+            XCTAssertNil(keychain.data)
+            XCTAssertEqual(keychain.mutations, [.add, .update, .add])
+        }
+    }
+
+    func testRetryAddNeverOverwritesAReappearedNewerPayload() throws {
+        let keychain = MemoryKeychain()
+        let store = KeychainSecretStore(keychain: keychain)
+        try store.write(SecretValue("first"), account: first)
+        let newer = Data(#"{"version":2,"entries":{"foreign/key":"opaque"}}"#.utf8)
+        keychain.beforeUpdate = { [weak keychain] in keychain?.data = nil }
+        keychain.beforeAdd = { [weak keychain] in keychain?.data = newer }
+
+        assertFailure(.writeFailed) { try store.write(SecretValue("changed"), account: first) }
+        XCTAssertTrue(keychain.data == newer)
+        XCTAssertEqual(keychain.mutations, [.add, .update, .add])
     }
 
     func testConcurrentInstancesCannotLoseAccountsDuringReadModifyWrite() throws {
@@ -194,7 +272,7 @@ final class KeychainSecretStoreTests: XCTestCase {
         let accounts = (0..<40).map { _ in SecretAccount.provider(ProviderProfileID()) }
         DispatchQueue.concurrentPerform(iterations: accounts.count) { index in
             do { try stores[index % stores.count].write(SecretValue("value"), account: accounts[index]) }
-            catch { XCTFail("Concurrent write failed") }
+            catch { XCTFail("Concurrent write failed for \(accounts[index].rawValue): \(error)") }
         }
         for account in accounts {
             XCTAssertEqual(try stores[0].read(account: account, source: .persisted)?.value, SecretValue("value"))
@@ -211,6 +289,31 @@ final class KeychainSecretStoreTests: XCTestCase {
                 XCTAssertEqual($0 as? KeychainAccessError, .locked)
             }
         }
+    }
+
+    func testInteractionScopeSerializesOtherStoreCallers() throws {
+        let store = KeychainSecretStore(keychain: MemoryKeychain())
+        let account = first
+        let started = DispatchSemaphore(value: 0)
+        let completed = DispatchSemaphore(value: 0)
+        do {
+            try SystemKeychainAccess.withoutUserInteraction {
+                // The scope's thread can reenter the store while others wait.
+                XCTAssertNil(try store.read(account: account, source: .persisted))
+                DispatchQueue.global().async {
+                    started.signal()
+                    defer { completed.signal() }
+                    do { try store.write(SecretValue("value"), account: account) }
+                    catch { XCTFail("Write after interaction scope failed: \(error)") }
+                }
+                XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
+                XCTAssertEqual(completed.wait(timeout: .now() + 0.1), .timedOut)
+            }
+        } catch KeychainAccessError.unavailable {
+            throw XCTSkip("Cannot disable login-keychain interaction for the serialization test")
+        }
+        XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(try store.read(account: account, source: .persisted)?.value, SecretValue("value"))
     }
 
     func testRealLoginKeychainRoundTripWithoutPrompts() throws {

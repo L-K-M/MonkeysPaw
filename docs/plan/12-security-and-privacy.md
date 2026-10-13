@@ -30,10 +30,15 @@ On macOS, one generic-password Keychain item uses service
 `ch.lkmc.monkeyspaw` and fixed account `secret-map`. Its version-1 JSON
 payload maps namespaced accounts to opaque secrets under `entries`; provider
 and device-token namespaces remain separate. A process-wide lock serializes
-reads and edits. Missing items return no secret; locked or denied access
+reads and edits, including the hosted-test scope that suppresses legacy
+Keychain interaction. Missing items return no secret; locked or denied access
 reports `locked`. A corrupt or unsupported payload reports `readFailed`
-and blocks all edits without overwriting the item. Deleting the last entry
-removes the item. There is no plaintext fallback on macOS, and no secret or
+and blocks all edits without overwriting the item. Unrecognized account keys
+are ignored by lookups and preserved with their opaque values during edits;
+they do not invalidate an otherwise supported payload. Deleting the last entry
+removes the item. If a write's update finds that the item disappeared, it retries
+one add and reports any failure without further retries. Delete never recreates
+a disappeared item. There is no plaintext fallback on macOS, and no secret or
 Security error text is logged. Real ACL and signed-build behavior require
 the [macOS owner checks](../platform/macos.md).
 

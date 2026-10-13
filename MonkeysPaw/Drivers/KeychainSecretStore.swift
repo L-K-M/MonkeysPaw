@@ -11,8 +11,9 @@ final class KeychainSecretStore: SecretStore {
         let entries: [String: String]
     }
 
-    // The item is shared across instances, so its read/modify/write lock is too.
-    private static let lock = NSLock()
+    // Shared across instances and the test-only interaction scope, whose body
+    // reenters the lock when calling the store.
+    fileprivate static let lock = NSRecursiveLock()
     private static let itemAccount = "secret-map"
     private let keychain: KeychainAccess
     private let service: String
@@ -81,11 +82,7 @@ final class KeychainSecretStore: SecretStore {
         do {
             let payload = try JSONDecoder().decode(Payload.self, from: data)
             guard payload.version == Payload.currentVersion else { throw SecretStoreError.readFailed }
-            for rawAccount in payload.entries.keys {
-                let parts = rawAccount.split(separator: ":", omittingEmptySubsequences: false)
-                guard parts.count == 2 else { throw SecretStoreError.readFailed }
-                _ = try SecretAccount(namespace: String(parts[0]), name: String(parts[1]))
-            }
+            // Lookups use validated accounts; preserve foreign entries on edits.
             return payload.entries
         } catch { throw SecretStoreError.readFailed }
     }
@@ -98,7 +95,13 @@ final class KeychainSecretStore: SecretStore {
 
     private func update(_ entries: [String: String], failure: SecretStoreError) throws {
         do {
-            try keychain.update(try encode(entries), service: service, account: Self.itemAccount)
+            let data = try encode(entries)
+            do { try keychain.update(data, service: service, account: Self.itemAccount) }
+            catch KeychainAccessError.notFound where failure == .writeFailed {
+                // The write target disappeared after the read. Retry one add;
+                // a duplicate or other failure must not start another update.
+                try keychain.add(data, service: service, account: Self.itemAccount)
+            }
         } catch { throw sanitized(error, fallback: failure) }
     }
 
@@ -128,8 +131,6 @@ enum KeychainAccessError: Error, Equatable {
 }
 
 struct SystemKeychainAccess: KeychainAccess {
-    private static let interactionLock = NSLock()
-
     func copyMatching(service: String, account: String) throws -> Data {
         var query = item(service: service, account: account)
         query[kSecReturnData as String] = true
@@ -178,11 +179,12 @@ struct SystemKeychainAccess: KeychainAccess {
         }
     }
 
-    /// Hosted tests must also suppress legacy login-keychain ACL/unlock dialogs;
-    /// per-query authentication-UI flags only cover the Data Protection keychain.
+    /// Test-only: suppress legacy login-keychain ACL/unlock dialogs under the
+    /// store's lock. Unrelated Security callers must be quiescent: this flag is
+    /// process-global. The body must call the store on this thread.
     static func withoutUserInteraction<T>(_ work: () throws -> T) throws -> T {
-        interactionLock.lock()
-        defer { interactionLock.unlock() }
+        KeychainSecretStore.lock.lock()
+        defer { KeychainSecretStore.lock.unlock() }
         var allowed = DarwinBoolean(false)
         guard SecKeychainGetUserInteractionAllowed(&allowed) == errSecSuccess,
               SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else {
