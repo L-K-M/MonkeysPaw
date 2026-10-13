@@ -32,4 +32,6 @@ public final class SyncStateStore: @unchecked Sendable {
     func reset(for binding: SyncLibraryIdentity) throws { try persistence.reset(SyncState(binding: binding)) }
     /// Sign-out clears active state only; it never changes library ownership.
     func clear() throws { try persistence.reset(nil) }
+
+    func blockForRecovery(retaining state: SyncState?) { persistence.blockForRecovery(retaining: state) }
 }

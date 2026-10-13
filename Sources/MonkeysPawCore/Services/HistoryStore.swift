@@ -1,7 +1,7 @@
 import Foundation
 
 /// All I/O goes through the app-data FileStore. LibraryService serializes calls.
-final class HistoryStore: PromptKeyedStore {
+final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
     private let files: FileStore
     private let formatter: DateFormatter
 
@@ -180,6 +180,43 @@ final class HistoryStore: PromptKeyedStore {
 
     private func directory(for identity: PromptIdentity) throws -> String {
         "history/" + (try identity.storageKey)
+    }
+
+    var syncKind: SyncKeyedStoreKind { .history }
+
+    func prepareSyncMigration(from source: PromptIdentity, to destination: PromptIdentity,
+                              rebindingHeadTo bytes: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration] {
+        let prefix = try directory(for: source) + "/"
+        let target = try directory(for: destination) + "/"
+        let all = try files.listFiles()
+        let originals = all.filter { $0.relativePath.utf8.starts(with: prefix.utf8) }
+        guard !originals.isEmpty else { return [] }
+        guard !all.contains(where: { $0.relativePath.utf8.starts(with: target.utf8) }) else {
+            throw LibraryError.keyedStateConflict
+        }
+        return try originals.sorted { RelativePath($0.relativePath) < RelativePath($1.relativePath) }.map { file in
+            let original = try files.read(at: file.relativePath)
+            guard try files.stamp(at: file.relativePath) == file.stamp else { throw LibraryError.conflict }
+            let suffix = String(decoding: file.relativePath.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
+            var replacement = original
+            if suffix == "head.json", let bytes, let originalBytes,
+               try provenance(at: file.relativePath, bytes: originalBytes) != nil {
+                // Adoption changes the ID/representation of the same prompt.
+                // Rebind only attribution still bound to the original bytes;
+                // external edits never inherit it and revision hashes stay exact.
+                let record = try JSONDecoder().decode(ProvenanceRecord.self, from: original)
+                replacement = try JSONEncoder().encode(ProvenanceRecord(version: record.version,
+                    contentSHA256: SHA256.hexDigest(bytes), origin: record.origin, timestamp: record.timestamp,
+                    providerHost: record.providerHost, model: record.model, usage: record.usage))
+            }
+            return SyncKeyedMigration(store: .history, change: .file(SyncKeyedFileMove(
+                source: file.relativePath, destination: target + suffix, bytes: original, destinationBytes: replacement)))
+        }
+    }
+
+    func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
+        guard case .file(let move) = migration.change else { throw SyncError.invalidState }
+        try move.apply(files: files, operations: operations)
     }
 
     private func path(for revision: HistoryRevision) throws -> String {

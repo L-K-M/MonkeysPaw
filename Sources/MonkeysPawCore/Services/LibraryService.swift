@@ -48,6 +48,8 @@ public final class LibraryService: PromptFavoriteEditing {
     private let clock: WallClock
     private let entropy: EntropySource
     private let lock = NSLock()
+    // Held by a pending durable journal, not by an HTTP request or an await.
+    private var syncApplyID: UUID?
 
     public init(library: FileStore, data: FileStore, clock: WallClock, entropy: EntropySource,
                 keyedStores: [PromptKeyedStore] = []) {
@@ -656,6 +658,7 @@ public final class LibraryService: PromptFavoriteEditing {
     private func locked<T>(_ work: () throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
+        guard syncApplyID == nil else { throw LibraryError.recoveryRequired }
         do { return try work() }
         catch let error as CommittedMaintenanceFailure {
             throw error.provenance ? LibraryError.provenanceMaintenanceFailed : LibraryError.historyMaintenanceFailed
@@ -668,5 +671,41 @@ public final class LibraryService: PromptFavoriteEditing {
         catch let error as ImportSkipReason { throw error }
         catch let error as AssistantSaveRefusal { throw error }
         catch { throw LibraryError.operationFailed }
+    }
+
+    func beginSyncApply(_ id: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard syncApplyID == nil || syncApplyID == id else { throw LibraryError.recoveryRequired }
+        syncApplyID = id
+    }
+
+    func endSyncApply(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        if syncApplyID == id { syncApplyID = nil }
+    }
+
+    func replaceSyncApply(_ previous: UUID, with next: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard syncApplyID == previous else { throw LibraryError.recoveryRequired }
+        syncApplyID = next
+    }
+
+    /// No caller-supplied async/network closure enters this seam. Sync's only
+    /// users perform a checked read, hash, publication or verification.
+    func withSyncLock<T>(_ work: (FileStore) throws -> T) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try work(files)
+    }
+
+    func syncKeyedStores() throws -> [SyncKeyedStore] {
+        let stores = keyedStores.compactMap { $0 as? SyncKeyedStore }
+        guard stores.count == keyedStores.count, Set(stores.map(\.syncKind)).count == stores.count else {
+            throw LibraryError.recoveryRequired
+        }
+        return stores
     }
 }

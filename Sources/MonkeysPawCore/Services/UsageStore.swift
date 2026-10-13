@@ -7,7 +7,7 @@ import Foundation
 /// Corrupt/unsupported state is an error, never silently reset or merged.
 /// One lock serializes every operation, including each read/append/write
 /// cycle, so the store is safe to share across threads as @unchecked Sendable.
-public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
+public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Sendable {
     private struct Payload: Codable {
         let events: [Double]
         let version: Int
@@ -97,6 +97,32 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
 
     private func path(for identity: PromptIdentity) throws -> String {
         "usage/" + (try identity.storageKey)
+    }
+
+    var syncKind: SyncKeyedStoreKind { .usage }
+
+    func prepareSyncMigration(from source: PromptIdentity, to destination: PromptIdentity,
+                              rebindingHeadTo: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration] {
+        try locked {
+            let from = try path(for: source)
+            let to = try path(for: destination)
+            guard let bytes = try SyncDurability.readIfPresent(from, files: files) else { return [] }
+            _ = try readEvents(at: from)
+            guard try files.stamp(at: to) == nil else { throw LibraryError.keyedStateConflict }
+            return [SyncKeyedMigration(store: .usage,
+                change: .file(SyncKeyedFileMove(source: from, destination: to, bytes: bytes)))]
+        }
+    }
+
+    func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
+        try locked {
+            guard case .file(let move) = migration.change else { throw SyncError.invalidState }
+            try move.apply(files: files, operations: operations)
+            let source = try SyncIdentifiers.promptIdentity(String(move.source.dropFirst("usage/".count)))
+            let destination = try SyncIdentifiers.promptIdentity(String(move.destination.dropFirst("usage/".count)))
+            cachedEvents[source] = nil
+            cachedEvents[destination] = try readEvents(at: move.destination)
+        }
     }
 
     private func readEvents(at path: String) throws -> [Date] {

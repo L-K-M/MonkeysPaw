@@ -37,6 +37,14 @@ final class SyncPersistence<Document: Codable> {
         return cached
     }
 
+    /// A surrounding transaction failed after this document became durable.
+    /// Keep its pre-transaction cache and block acknowledgement until recovery.
+    func blockForRecovery(retaining value: Document?) {
+        lock.lock()
+        defer { lock.unlock() }
+        cached = SyncStoreSnapshot(value: value, error: .durabilityUncertain)
+    }
+
     func load() throws -> Document? {
         lock.lock()
         defer { lock.unlock() }

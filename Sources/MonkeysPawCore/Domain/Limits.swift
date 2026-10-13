@@ -182,6 +182,7 @@ public enum Limits {
     static let syncStateVersion: Int = 1
     static let syncAccountVersion: Int = 1
     static let syncBindingVersion: Int = 1
+    static let syncApplyJournalVersion: Int = 1
 
     /// §9.2: fail closed rather than truncate oversized state/ownership records.
     static let syncRecordMaxBytes: Int = 16 * mebibyte

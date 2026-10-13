@@ -76,6 +76,22 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   Best-effort directory fsync is not a successful sync commit. Scope cursors
   commit only after the journaled pull's files and affected directories are
   on disk (§9.3).
+  Version-1 `<data>/sync/apply.json` records the account/root, old and intended
+  state, stable operation/copy IDs, exact intended and losing bytes/hashes,
+  incarnation baselines and resumable identity migrations before any mutation.
+  Recovery blocks ordinary library edits until replay completes or a planner
+  resolves a typed conflict. Checked library read/hash/mutation uses the existing
+  LibraryService lock; journal, state and keyed-store I/O never hold that lock.
+  Publish exact server bytes, verify the result, flush files and affected
+  directories, durably commit state, then durably remove the journal. Replay
+  rechecks installed bytes and modes even for completed steps; an uncertain
+  post-rename flush cannot acknowledge a cursor. Private raw retention plus
+  source/copy/hold metadata survives journal removal under `sync/retained/`.
+  Unsupported/forensic rescues retain exact bytes and a typed hold issue;
+  valid copies receive the journaled fresh ID before upload. Adoption migrates
+  history, usage, values and content-bound provenance without changing ordinary
+  editor identity rules. Cooperating writers are serialized; §4.6's documented
+  noncooperating-writer/check-then-act limitation remains.
 - **Connection metadata.** `<data>/sync/account.json` is a version-1 optional
   connection: normalized server URL, user ID, username, device ID/name and a
   local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;

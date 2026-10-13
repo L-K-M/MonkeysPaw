@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SyncFileMode: Equatable, Sendable {
+public enum SyncFileMode: Equatable, Sendable, Codable {
     case readOnly
     /// Ordinary writable permissions, 0666 & ~umask, without changing umask.
     case normal

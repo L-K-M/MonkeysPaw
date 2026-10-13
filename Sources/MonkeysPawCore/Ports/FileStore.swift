@@ -36,7 +36,7 @@ public protocol FileStore {
 
 /// Only equality is meaningful outside a driver. Include file incarnation in
 /// the token, so delete/recreate with the same size and mtime is a change.
-public struct FileStamp: Equatable, Sendable, CustomStringConvertible {
+public struct FileStamp: Equatable, Sendable, Codable, CustomStringConvertible {
     private let token: String
 
     public init(_ token: String) { self.token = token }
