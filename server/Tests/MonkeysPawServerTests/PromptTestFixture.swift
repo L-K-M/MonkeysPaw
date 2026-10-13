@@ -120,3 +120,49 @@ extension PersistenceTestRepository {
         }
     }
 }
+
+enum PromptTransferDirection: Sendable, CaseIterable {
+    case userToGroup, groupToUser, groupToGroup
+
+    var sourceScope: SyncAPI.PromptScope {
+        self == .userToGroup ? .user : .group(groupID: PersistenceTestRepository.group)
+    }
+    var destinationScope: SyncAPI.PromptScope {
+        self == .groupToUser ? .user : .group(groupID: PersistenceTestRepository.otherGroup)
+    }
+}
+
+struct StoredPromptEvent: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
+    let seq: Int64
+    let identity: PromptOwnership
+    let promptID: String
+    let kind: String
+    let path: String
+    let rev: Int64
+    let content: String?
+    let at: String
+    var description: String { "StoredPromptEvent(<redacted>)" }
+    var debugDescription: String { description }
+}
+
+extension PersistenceTestRepository {
+    func promptEvents() async throws -> [StoredPromptEvent] {
+        try await database.read { sql in
+            try await sql.raw("""
+                SELECT seq, scope, owner_id, group_id, prompt_id, kind, path, rev, content, at FROM changes ORDER BY seq
+                """).all().map { row in
+                let identity: PromptOwnership
+                if try row.decode(column: "scope", as: String.self) == "user" {
+                    identity = .user(ownerID: try row.decode(column: "owner_id", as: String.self))
+                } else {
+                    identity = .group(groupID: try row.decode(column: "group_id", as: String.self))
+                }
+                return try .init(seq: row.decode(column: "seq", as: Int64.self), identity: identity,
+                                 promptID: row.decode(column: "prompt_id", as: String.self),
+                                 kind: row.decode(column: "kind", as: String.self), path: row.decode(column: "path", as: String.self),
+                                 rev: row.decode(column: "rev", as: Int64.self), content: row.decode(column: "content", as: String?.self),
+                                 at: row.decode(column: "at", as: String.self))
+            }
+        }
+    }
+}

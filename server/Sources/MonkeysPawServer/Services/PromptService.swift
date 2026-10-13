@@ -76,6 +76,63 @@ struct PromptService: Sendable {
         }
     }
 
+    func delete(id: String, query: SyncAPI.DeletePromptQuery, session: SessionIdentity) async throws -> SyncAPI.WriteResponse {
+        try AccountValidation.dto(SyncAPI.IDPath(id: id))
+        try AccountValidation.dto(query)
+        return try await repository.write { prompts, accounts, devices, groups in
+            let actor = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+            let current = try await Self.writableHead(id: id, actor: actor, prompts: prompts, groups: groups).head
+            guard current.rev == query.baseRev else { throw PromptError(.conflict(head: current.conflictHead)) }
+            guard current.rev < Int64.max else { throw PromptPersistenceError.revisionExhausted }
+
+            let at = ServerTimestamp.string(clock())
+            let head = PromptRecord(id: id, identity: current.identity, path: current.path, pathKey: current.pathKey,
+                                    content: current.content, title: current.title, rev: current.rev + 1,
+                                    createdBy: current.createdBy, createdAt: current.createdAt,
+                                    updatedBy: actor.id, updatedAt: at, deletedAt: at)
+            try await prompts.update(head, baseRev: query.baseRev)
+            try await prompts.appendRevision(head, origin: .delete)
+            let seq = try await prompts.appendRemoval(head, kind: .delete, rev: head.rev, at: at)
+            try await prompts.retire(head)
+            return .init(rev: head.rev, seq: seq)
+        }
+    }
+
+    func move(id: String, request: SyncAPI.MovePromptRequest, session: SessionIdentity) async throws -> SyncAPI.WriteResponse {
+        try AccountValidation.dto(SyncAPI.IDPath(id: id))
+        try AccountValidation.dto(request)
+        return try await repository.write { prompts, accounts, devices, groups in
+            let actor = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+            let source = try await Self.writableHead(id: id, actor: actor, prompts: prompts, groups: groups)
+            let current = source.head
+            if source.role == .editor && current.createdBy != actor.id { throw AccountError.forbidden }
+            guard current.rev == request.baseRev else { throw PromptError(.conflict(head: current.conflictHead)) }
+            guard current.rev < Int64.max else { throw PromptPersistenceError.revisionExhausted }
+
+            let destination = PromptOwnership(scope: request.scope, userID: actor.id)
+            guard destination != current.identity else { throw PromptError(.conflict(head: current.conflictHead)) }
+            try await Self.requireAccess(destination, actor: actor, groups: groups, access: .write)
+            let validated = try Self.validate(id: id, request: .init(baseRev: request.baseRev, scope: request.scope,
+                                                                   path: request.path, content: current.content))
+            if let existing = try await prompts.livePrompt(identity: destination, pathKey: validated.path.pathKey, excludingID: id) {
+                try await Self.requireAccess(existing.identity, actor: actor, groups: groups, access: .read)
+                throw PromptError(.pathTaken(existing: existing.existing))
+            }
+
+            let at = ServerTimestamp.string(clock())
+            let head = PromptRecord(id: id, identity: destination, path: validated.path.path, pathKey: validated.path.pathKey,
+                                    content: validated.content, title: validated.title, rev: current.rev + 1,
+                                    createdBy: current.createdBy, createdAt: current.createdAt,
+                                    updatedBy: actor.id, updatedAt: at, deletedAt: nil)
+            try await prompts.update(head, baseRev: request.baseRev)
+            // Destination ownership on this revision defines the new visible history era.
+            try await prompts.appendRevision(head, origin: .move)
+            _ = try await prompts.appendRemoval(current, kind: .moveOut, rev: head.rev, at: at)
+            let seq = try await prompts.appendUpsert(head)
+            return .init(rev: head.rev, seq: seq, warnings: validated.warnings.isEmpty ? nil : validated.warnings)
+        }
+    }
+
     func revisions(id: String, session: SessionIdentity) async throws -> SyncAPI.RevisionsResponse {
         try AccountValidation.dto(SyncAPI.IDPath(id: id))
         return try await repository.read { prompts, accounts, devices, groups in
@@ -101,16 +158,34 @@ struct PromptService: Sendable {
 
     private enum Access { case read, write }
 
+    private static func writableHead(
+        id: String, actor: AccountRecord, prompts: PromptRepository.Transaction, groups: GroupRepository.Transaction
+    ) async throws -> (head: PromptRecord, role: SyncAPI.Role?) {
+        if let head = try await prompts.head(id: id) {
+            let role = try await requireAccess(head.identity, actor: actor, groups: groups, access: .write)
+            guard head.deletedAt == nil else { throw PromptError(.deleted) }
+            return (head, role)
+        }
+        if let retired = try await prompts.retiredIdentity(id: id) {
+            try await requireAccess(retired, actor: actor, groups: groups, access: .write)
+            throw PromptError(.deleted)
+        }
+        throw AccountError.notFound
+    }
+
+    @discardableResult
     private static func requireAccess(
         _ identity: PromptOwnership, actor: AccountRecord, groups: GroupRepository.Transaction, access: Access
-    ) async throws {
+    ) async throws -> SyncAPI.Role? {
         switch identity {
         case .user(let ownerID):
             guard actor.id == ownerID else { throw AccountError.notFound }
+            return nil
         case .group(let groupID):
             guard try await groups.group(id: groupID) != nil,
                   let member = try await groups.member(groupID: groupID, userID: actor.id) else { throw AccountError.notFound }
             if access == .write && member.role == .viewer { throw AccountError.forbidden }
+            return member.role
         }
     }
 
