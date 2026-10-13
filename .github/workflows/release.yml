@@ -111,7 +111,10 @@ jobs:
             echo '::error::Image tag self-test accepted an invalid tag'
             exit 1
           fi
-          tags=$(image_tags "$RELEASE_TAG")
+          tags=$(image_tags "$RELEASE_TAG") || {
+            echo "::error::Release tag $RELEASE_TAG cannot be published as an image tag"
+            exit 1
+          }
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
   linux:
@@ -358,9 +361,13 @@ jobs:
             fi
             health=$(docker inspect --format '{{.State.Health.Status}}' monkeyspaw-server-release)
             if [[ "$health" == healthy ]]; then
-              status=$(curl --fail --silent --show-error --max-time 5 --output /dev/null \
-                --write-out '%{http_code}' http://127.0.0.1:8080/api/health)
-              test "$status" = 200
+              status=$(curl --silent --show-error --max-time 5 --output /dev/null \
+                --write-out '%{http_code}' http://127.0.0.1:8080/api/health || true)
+              if [[ "$status" != 200 ]]; then
+                echo "::error::/api/health returned ${status:-no response}"
+                docker logs monkeyspaw-server-release
+                exit 1
+              fi
               exit 0
             fi
             if [[ "$health" == unhealthy ]]; then

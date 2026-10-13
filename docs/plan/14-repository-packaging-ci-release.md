@@ -90,9 +90,8 @@ Rollout by milestone:
   - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
     true. PRs touching packaging, `server/Dockerfile` or the release
     workflow run the dry-run path too. Every path first calls `ci.yml`, then
-    checks
-    committed versions. A real tag's numeric
-    core must equal the committed `MARKETING_VERSION` and README marker;
+    checks committed versions. A real tag's numeric core must equal the
+    committed `MARKETING_VERSION` and README marker;
     `python3 scripts/check-version.py --check-tag v0.1.0` enforces this.
     Release tags use `vX.Y.Z[-prerelease]`; build metadata (`+...`) is
     rejected before packaging because the macOS packager does not accept it.
@@ -121,7 +120,7 @@ Rollout by milestone:
     `ubuntu-24.04-arm` (arm64), without QEMU/binfmt. Each passes `VERSION`,
     `REVISION` (commit SHA) and `CREATED` (commit timestamp), checks OCI
     labels, then smoke-tests container health and `/api/health` 200 with a
-    throwaway admin password file mounted as a secret. OCI archives and
+    throwaway admin password file bind-mounted read-only. OCI archives and
     digests use separate workflow artifacts outside `MonkeysPaw-release-*`.
   - Image publishing requires tests, verify, Linux, macOS, artifacts and
     both native image builds. It pushes untagged digests, creates a
