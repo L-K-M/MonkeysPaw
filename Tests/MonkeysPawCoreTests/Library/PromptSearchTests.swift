@@ -85,6 +85,59 @@ final class PromptSearchTests: XCTestCase {
         XCTAssertEqual(FuzzyText("Straße").scalars.count, 7)
     }
 
+    func testUnicode17FullDefaultFoldUsesTheSameDataOnEveryPlatform() {
+        let input = "Iİẞı Σς ꭰᎠ ᲀᲉ \u{A7CB}\u{A7CC} \u{10D50}\u{16EA0}"
+        let expected = "ii\u{307}ssı σσ ᎠᎠ вᲊ \u{264}\u{A7CD} \u{10D70}\u{16EBB}"
+        XCTAssertEqual(Array(FuzzyText.normalize(input).unicodeScalars), Array(expected.unicodeScalars))
+    }
+
+    func testNFCOrdersAllDecomposedMarksWithoutTruncation() {
+        let cases = [
+            ("q\u{F73}\u{F73}", "q\u{F71}\u{F71}\u{F72}\u{F72}"),
+            ("q" + String(repeating: "\u{344}", count: 33),
+             "q" + String(repeating: "\u{308}\u{301}", count: 33)),
+            ("q\u{300}\u{316}", "q\u{316}\u{300}"),
+            ("\u{1100}\u{1161}\u{11A8}", "각"),
+            ("\u{1113}\u{1175}", "\u{1113}\u{1175}"),
+            ("\u{105D2}\u{307}", "\u{105C9}")
+        ]
+        for (input, expected) in cases {
+            XCTAssertEqual(Array(FuzzyText.normalize(input).unicodeScalars), Array(expected.unicodeScalars))
+        }
+    }
+
+    func testUnicodeWordClassesIncludeNewLettersAndMarksButExcludePrivateUse() {
+        for prefix in ["Ᲊ", "\u{10D50}", "\u{17000}", "\u{1ACF}", "\u{16EA0}", "\u{323B0}"] {
+            XCTAssertEqual(FuzzyText(prefix + "b").wordStarts, [true, false])
+        }
+        XCTAssertEqual(FuzzyText("\u{F870}b").wordStarts, [true, true])
+    }
+
+    func testWhitespaceAndHashClustersKeepUnicode17AttachedMarks() {
+        let query = PromptSearchQuery("ab\u{A0}\u{1ACF}cd #CODE #\u{1ACF}ab")
+        XCTAssertEqual(query.terms.map { String(String.UnicodeScalarView($0)) }, ["ab", "cd", "#\u{1ACF}ab"])
+        XCTAssertEqual(query.tags, ["code"])
+        XCTAssertTrue(PromptSearchQuery("\u{A0}\u{1ACF}\t\r\n").isEmpty)
+        XCTAssertEqual(PromptSearchQuery("ab\n\u{301}cd").terms.count, 2,
+                       "A control separator never swallows a following mark.")
+    }
+
+    func testNFCCanonicalCompositionAndBlocking() {
+        let cases = [
+            ("\u{300}\u{316}", "\u{316}\u{300}"),
+            ("e\u{30B}\u{301}", "e\u{30B}\u{301}"),
+            ("e\u{316}\u{301}", "é\u{316}"),
+            ("\u{1E69}", "\u{1E69}"),
+            ("\u{212B}", "Å"),
+            ("\u{1100}\u{1161}\u{11A7}", "가\u{11A7}"),
+            ("\u{D7A3}", "\u{D7A3}"),
+            ("\u{FB01}", "\u{FB01}")
+        ]
+        for (input, expected) in cases {
+            XCTAssertEqual(Array(SearchNFC.normalize(input).unicodeScalars), Array(expected.unicodeScalars))
+        }
+    }
+
     func testFieldWeightOrderingAndMatchedFieldInfo() throws {
         let entries = [entry(title: "n"), entry(tags: ["n"]), entry(path: "n/a.md"),
                        entry(description: "n"), entry(body: "n")]

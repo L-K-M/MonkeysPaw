@@ -137,23 +137,39 @@ fields; filters alone use base match 1. Empty queries have no matched fields.
 Unicode case folding followed by NFC preserves accents (§5.4).
 
 Query separators are extended grapheme clusters whose first scalar has the
-Unicode `White_Space` property, including NBSP, as in Swift's
-[`Character.isWhitespace`](https://github.com/swiftlang/swift/blob/main/stdlib/public/core/CharacterProperties.swift).
+Unicode `White_Space` property, including NBSP. Swift reads stdlib
+`Unicode.Scalar.Properties.isWhitespace` and discards the whole cluster.
 Word-start boundaries follow scalars outside Unicode general categories
-`L*`, `M*`, `N*`, matching Foundation's
-[`CharacterSet.alphanumerics`](https://developer.apple.com/documentation/foundation/characterset/alphanumerics).
-The Kotlin consumer must preserve these classes, including marks and all
-number categories.
+`L*`, `M*`, `N*`, read from stdlib `Unicode.Scalar.Properties.generalCategory`,
+including marks and all number categories. These properties are pinned to
+Unicode 17: generated additions bridge Swift 6.2's Unicode 16 data, and
+private-use scalars are non-word on every platform. The new Extend/SpacingMark
+scalars are projected to known representatives only while finding separator
+and standalone-`#` boundaries; the tokens retain their original scalars.
+Kotlin uses the pinned ICU4J 78.3 Unicode 17 properties and grapheme iterator.
 
-Search preserves the Swift reference's Foundation comparison behavior (F6),
-independently of Unicode 17 sync folding. Its legacy case/word tables and
-`CFStringNormalize` have differences from ICU 78.3: Cherokee folds toward
-lowercase, some newer letters do not fold, its word bitmap excludes some
-ICU L/M/N scalars, and expanding combining sequences have original-class
-boundaries and a 64-scalar decomposition buffer. The compatibility fixtures
-pin these differences without changing Swift. Exact tag sets also preserve
-Swift `String` canonical equality after comparison normalization; fuzzy
-matching continues to compare the resulting scalars.
+Search uses explicit full default Unicode 17 C/F folding followed by NFC
+(F6). Search and sync reuse the frozen mapping data but retain separate
+functions. NFC follows [Unicode 17 UAX #15](https://www.unicode.org/reports/tr15/tr15-57.html):
+recursive canonical decomposition, stable ordering by canonical combining
+class, then unblocked canonical composition with algorithmic Hangul. Swift's
+generated NFC tables and Kotlin's pinned ICU implementation agree on that
+definition. Foundation's fold/word tables vary between Darwin and corelibs;
+its NFC path can misorder Tibetan marks, drop expanding marks and overrun
+valid Hangul composition endpoints. None defines the search contract.
+Normalized tag keys compare exact scalars, avoiding implicit host-version
+normalization in Swift `String` equality. Original title/path tie-breaks
+continue to compare exact UTF-8 bytes.
+
+Regenerate Swift's attributed NFC/property data with
+`python3 scripts/generate-search-unicode.py --ucd-dir <directory>`; `--check`
+compares without writing. The generator verifies SHA-256 values for Unicode
+17 `UnicodeData.txt`, `DerivedNormalizationProps.txt`,
+`auxiliary/GraphemeBreakProperty.txt`, and Unicode 16's `UnicodeData.txt` and
+`auxiliary/GraphemeBreakProperty.txt` (save the latter two with `16` before
+`.txt`). No runtime download is used. The 16 added Unicode cases below are
+specification expectations; the historical `unicode-foundation-*` names now
+pin corrections to those platform quirks. All 20 baseline cases are unchanged.
 
 Ranking expectations are handwritten from §5.4, with no implementation
 output used to generate them. The cases pin the arithmetic as follows:
@@ -171,15 +187,22 @@ output used to generate them. The cases pin the arithmetic as follows:
 | `usage-recording-tail` | The first recent use is discarded, leaving 1,024 events aged 140 days, each `1/1024`: score 8. The control scores 10; retaining that first use would reverse the order with score 12. |
 | `unicode-canonical`, `unicode-case-expansion`, `accent-significant` | NFC-equivalent accents match; plain `e` does not match `é`. `Straße` folds to seven scalars: raw 15 over denominator 27 gives title score `20/9`. |
 | `no-match` | An unmatched ordinary query returns an empty list. |
-| `unicode-nbsp-terms`, `unicode-whitespace-grapheme` | NBSP, including its attached combining mark, separates `ab` and `cd`. Title plus tag still averages to `15/7`. |
-| `unicode-word-classes` | L/M/N predecessors give no word-start bonus; punctuation does. Length-two titles score 1 or 3 for a single final `b`. |
-| `unicode-supplementary-scores`, `unicode-supplementary-byte-ties` | Deseret folds and scalar lengths give scores 4, 3, 1; BMP private-use bytes precede supplementary bytes even when UTF-16 order disagrees. |
-| `unicode-hash-grapheme` | A marked `#` is ordinary text. Exact four-scalar title has `W = 2`, `C = 3`, so its score is `44/15`. |
-| `unicode-fold-cyrillic`, `unicode-fold-latin`, `unicode-fold-supplementary`, `unicode-fold-cherokee`, `unicode-dotted-i` | Pin Foundation's comparison fold independently of the broader sync table, including non-Turkic dotted I and Cherokee equivalence. Filter matches score 1. |
-| `unicode-fold-mark-order` | Case expansion preserves the order of following marks: `Α` + ypogegrammeni + grave compares as `αὶ`, not `ὰι`. |
-| `unicode-foundation-word-boundaries` | New marks/letters and Tangut absent from Foundation's word bitmap give score 3 before `b`; known letters give 1. |
-| `unicode-foundation-tibetan-normalization`, `unicode-foundation-canonical-tags` | Repeated Tibetan decompositions retain Foundation's scalar order: exact five-scalar title scores `44/19`; tag equality still recognizes canonical equivalents. |
-| `unicode-foundation-expanding-marks` | After `q`, 33 expanding U+0344 marks retain 31 decompositions within Foundation's 64-scalar buffer. The fully expanded tag does not match. |
+| `unicode-nbsp-terms` | Tokens and folds are `ab`, `cd`. Each exact two-scalar match has `W = C = 1`, raw 5, denominator 7. Title `20/7` and tag `10/7` average to `15/7`; missing `cd` rejects. |
+| `unicode-whitespace-grapheme` | NBSP + U+0301 is one discarded separator. Tokens/folds `ab`, `cd` give the same `15/7` title/tag average; no stray acute term remains. |
+| `unicode-word-classes` | Token/fold `b`: L/M/N predecessors (`q`, U+0301, U+0903, U+20DD, `1`, U+2173 after folding U+2163, U+00B2) give `m = 1, n = 2, W = C = 0`, title score `4 × (1/3) × (3/4) = 1`; `-` gives W = 1 and score 3. |
+| `unicode-supplementary-scores` | Token U+10428; U+10400 folds to U+10428. Exact one-scalar titles score 4; emoji + letter has `n = 2, W = 1`, score 3; `x` + letter has W = 0, score 1. |
+| `unicode-supplementary-byte-ties` | Filter token `#x` folds to tag `x`. All four matches score 1; original title bytes put `Same` first (paths U+E000 before U+10000), then title U+E000 before U+10000. |
+| `unicode-hash-grapheme` | The sole ordinary token/fold is `#` U+0301 `ab`, since marked `#` is not a filter. Exact four-scalar title has `W = 2, C = 3`, raw 11, denominator 15 and score `44/15`; the tag-only entry fails. |
+| `unicode-dotted-i` | Filter `#` U+0130 folds to `i` U+0307; it matches only the dotted tag, score 1. Plain `i` and U+0131 are distinct. |
+| `unicode-fold-cherokee` | Two filters U+13A0/U+13F5 fold to those uppercase scalars; U+AB70/U+13FD fold to the same values. Both entries score 1, `Lower` before `Upper` by original title bytes. |
+| `unicode-fold-cyrillic` | Ten filters U+1C80…U+1C89 fold to U+0432, 0434, 043E, 0441, 0442, 0442, 044A, 0463, A64B, 1C8A. Both entries satisfy every tag, score 1; `Full fold` precedes `Original`. |
+| `unicode-fold-latin` | Seven filters U+A7CB, A7CC, A7CE, A7D2, A7D4, A7DA, A7DC fold to U+0264, A7CD, A7CF, A7D3, A7D5, A7DB, 019B. Both entries score 1, `Full fold` before `Original`. |
+| `unicode-fold-supplementary` | Filters U+10D50/U+16EA0 fold to U+10D70/U+16EBB. Both entries score 1, `Full fold` before `Original`; each supplementary character counts as one scalar. |
+| `unicode-fold-mark-order` | Filter U+0391 0345 0300 folds to U+03B1 03B9 0300, then NFC U+03B1 1F76 (`αὶ`). Only `Ordered` matches, score 1; U+1F70 03B9 (`ὰι`) differs. Folding precedes NFC. |
+| `unicode-foundation-word-boundaries` | Token/fold `b`; predecessors U+1ACF (M), U+1C89→1C8A (L), U+10D50→10D70 (L), U+17000 (L), `q` (L), U+10400→10428 (L) all give W = 0, title score 1. Original title bytes order `letter`, `mark`, `cyrillic`, `deseret`, `garay`, `tangut`. |
+| `unicode-foundation-tibetan-normalization` | Ordinary token `q` U+0F73 twice decomposes and orders to `q` U+0F71 twice + U+0F72 twice (CCC 129 before 130). Both titles normalize identically: `m = n = 5, W = 1, C = 4`, raw 11, score `44/19`; original bytes put `ordered` first. |
+| `unicode-foundation-canonical-tags` | The single filter normalizes to `q` U+0F71 twice + U+0F72 twice. Both tags match the same scalar sequence, score 1; title `Ordered` precedes `Original`. |
+| `unicode-foundation-expanding-marks` | The single filter `q` + 33 U+0344 becomes `q` + 33 pairs U+0308/U+0301, all CCC 230, retaining stable pair order (67 scalars). `Full` and `Original` match, score 1 in that byte order; the 31-pair `Retained` tag fails. No buffer truncation occurs. |
 
 Metadata includes nullable `id`/`description`, `title`, `tags`, `favorite`,
 `private`, `format` and ordered field `declarations`. Format integers are

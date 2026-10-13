@@ -23,14 +23,14 @@
   "expected": {
     "results": [
       {
-        "path": "original.md",
+        "path": "full.md",
         "score": 1,
         "matchedFields": [
           "tags"
         ]
       },
       {
-        "path": "retained.md",
+        "path": "original.md",
         "score": 1,
         "matchedFields": [
           "tags"

@@ -76,7 +76,7 @@ internal class PromptSearchContent(relativePath: String, document: PromptDocumen
             listOf(PromptSearchField.FOLDER to FuzzyText(folder),
                 PromptSearchField.DESCRIPTION to FuzzyText(front.description ?: ""),
                 PromptSearchField.BODY to FuzzyText(document.body))
-        tags = front.tags.map(SearchNormalizer::tagKey).toSet()
+        tags = front.tags.map(SearchNormalizer::normalize).toSet()
     }
 
     fun match(query: SearchQuery): PromptMatch? {

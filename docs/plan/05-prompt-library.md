@@ -461,11 +461,30 @@ relative path; assigned ULIDs keep their own keys.
   slice, outside M2e's Core presentation models.
 - **Fuzzy matching.** All whitespace-separated ordinary terms must be
   subsequences, possibly in different fields. Fields and terms use Unicode
-  case folding with the fixed `en_US_POSIX` locale, then NFC; accents remain
-  significant. Lengths and positions count normalized Unicode scalars.
+  17.0.0 full default case folding (`CaseFolding.txt` C + F, excluding S/T),
+  then Unicode 17 NFC (canonical decomposition, stable combining-class
+  ordering, and unblocked canonical composition, including Hangul). Accents
+  remain significant; compatibility decomposition is never applied.
+  Search and sync have separate functions but reuse the attributed frozen
+  C/F mapping data (§20 F6). Swift uses generated Unicode NFC data; Android
+  uses the pinned ICU4J 78.3 implementation of the same definition.
+  Foundation folding, character sets and normalization are not search oracles:
+  Darwin/corelibs folding and word sets differ, and corelibs NFC retains
+  Tibetan mark order and drops expanding marks at its buffer limit.
+  Query separators are extended grapheme clusters whose first scalar has
+  Unicode `White_Space`; discard the entire separator cluster. A filter
+  starts with a standalone `#` grapheme; `#` with an attached mark is ordinary
+  text. Swift reads `Unicode.Scalar.Properties` and segments `Character`s;
+  frozen Unicode 17 additions bridge the macOS Swift 6.2 Unicode 16 tables.
+  For separator/hash boundaries, new Extend/SpacingMark scalars are projected
+  to existing scalars of the same grapheme class without altering input text.
+  Word scalars are exactly Unicode 17 general categories L/M/N. Swift uses
+  stdlib categories plus the frozen additions; private-use scalars remain
+  non-word even on Apple tables. No locale-dependent API is used.
+  Lengths and positions count normalized Unicode scalars.
   For a term of length `m` in a field of length `n`, maximize
   `raw = m + 2W + C` over alignments. `W` counts matched word starts (position
-  zero or following a non-alphanumeric scalar); `C` counts consecutive
+  zero or following a scalar outside L/M/N); `C` counts consecutive
   matched pairs. The normalized score is
   `raw / (4m - 1) × (1 + m/n) / 2`, in `(0, 1]`. `4m − 1` is a loose upper
   bound: for alphanumeric terms with `m ≥ 2`, the attainable maximum is

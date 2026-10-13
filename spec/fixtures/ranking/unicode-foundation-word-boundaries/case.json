@@ -38,34 +38,6 @@
   "expected": {
     "results": [
       {
-        "path": "mark.md",
-        "score": 3,
-        "matchedFields": [
-          "title"
-        ]
-      },
-      {
-        "path": "cyrillic.md",
-        "score": 3,
-        "matchedFields": [
-          "title"
-        ]
-      },
-      {
-        "path": "garay.md",
-        "score": 3,
-        "matchedFields": [
-          "title"
-        ]
-      },
-      {
-        "path": "tangut.md",
-        "score": 3,
-        "matchedFields": [
-          "title"
-        ]
-      },
-      {
         "path": "letter.md",
         "score": 1,
         "matchedFields": [
@@ -73,7 +45,35 @@
         ]
       },
       {
+        "path": "mark.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "cyrillic.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
         "path": "deseret.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "garay.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "tangut.md",
         "score": 1,
         "matchedFields": [
           "title"

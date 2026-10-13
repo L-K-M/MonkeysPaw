@@ -18,6 +18,13 @@
   "expected": {
     "results": [
       {
+        "path": "ordered.md",
+        "score": 2.3157894736842106,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
         "path": "original.md",
         "score": 2.3157894736842106,
         "matchedFields": [

@@ -18,7 +18,7 @@ internal class SearchQuery(query: String) {
         var start = graphemes.first()
         var end = graphemes.next()
         while (end != BreakIterator.DONE) {
-            // Swift Character.isWhitespace tests the first scalar of the entire grapheme.
+            // §5.4: discard the entire grapheme whose first scalar is White_Space.
             if (UCharacter.hasBinaryProperty(query.codePointAt(start), UProperty.WHITE_SPACE)) {
                 if (start > tokenStart) tokens.add(query.substring(tokenStart, start))
                 tokenStart = end
@@ -32,9 +32,9 @@ internal class SearchQuery(query: String) {
         val filters = mutableListOf<String>()
         for (token in tokens) {
             graphemes.setText(token)
-            // Swift hasPrefix("#") requires a whole Character; an attached mark is ordinary text.
+            // A filter begins with a standalone # grapheme; a marked # is ordinary text.
             if (token.startsWith("#") && graphemes.following(0) == 1) {
-                filters.add(SearchNormalizer.tagKey(token.substring(1)))
+                filters.add(SearchNormalizer.normalize(token.substring(1)))
             } else {
                 ordinary.add(SearchNormalizer.normalize(token).codePoints().toArray())
             }
