@@ -12,7 +12,7 @@ struct ServerPersistenceTests {
             let identity = try await MetaRepository(database: repository.database).databaseID()
             try await repository.database.migrate()
             #expect(try await MetaRepository(database: repository.database).databaseID() == identity)
-            #expect(try await repository.count("schema_migrations") == 2)
+            #expect(try await repository.count("schema_migrations") == 3)
             for table in ["users", "groups", "memberships", "prompts", "prompt_revisions", "changes",
                           "scope_heads", "scope_floors", "devices", "invites", "audit_events",
                           "login_account_buckets", "login_ip_buckets", "retired_prompt_ids", "snapshots"] {
@@ -29,7 +29,7 @@ struct ServerPersistenceTests {
                 try await sql.raw("INSERT INTO no_such_table VALUES (1)").run()
             }
             await #expect(throws: (any Error).self) { try await repository.database.migrate([failing]) }
-            #expect(try await repository.count("schema_migrations") == 2)
+            #expect(try await repository.count("schema_migrations") == 3)
             let retry = ServerMigration(name: failing.name) { sql in
                 try await sql.raw("CREATE TABLE rollback_probe (value TEXT)").run()
                 try await sql.raw("INSERT INTO rollback_probe VALUES ('committed')").run()
@@ -37,7 +37,7 @@ struct ServerPersistenceTests {
             try await repository.database.migrate([retry])
             try await repository.database.migrate([retry])
             #expect(try await repository.count("rollback_probe") == 1)
-            #expect(try await repository.count("schema_migrations") == 3)
+            #expect(try await repository.count("schema_migrations") == 4)
         }
     }
 
@@ -128,7 +128,7 @@ struct ServerPersistenceTests {
             await repository.reject("UPDATE invites SET role = 'admin'")
             await repository.reject("UPDATE invites SET group_id = 'missing'")
             await repository.reject("UPDATE invites SET created_by = 'missing'")
-            try await repository.execute("INSERT INTO audit_events VALUES ('audit', \(bind: Fixtures.user), 'user.disable', 'target', \(bind: Fixtures.time))")
+            try await repository.execute("INSERT INTO audit_events (id, actor_id, action, target, at) VALUES ('audit', \(bind: Fixtures.user), 'user.disable', 'target', \(bind: Fixtures.time))")
             await repository.reject("INSERT INTO audit_events SELECT * FROM audit_events")
             await repository.reject("UPDATE audit_events SET actor_id = 'missing'")
             try await repository.execute("UPDATE audit_events SET actor_id = NULL")

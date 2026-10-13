@@ -296,7 +296,10 @@ struct ServerAdminServiceTests {
     }
 
     @Test func auditHasStableActionsUTCAndAnExplicitOperatorActor() async throws {
-        #expect(AuditAction.allCases.map(\.rawValue) == ["user.create", "user.update", "user.disable", "user.enable", "user.reset_password"])
+        #expect(AuditAction.allCases.map(\.rawValue) == [
+            "user.create", "user.update", "user.disable", "user.enable", "user.reset_password",
+            "group.create", "group.rename", "group.delete", "membership.upsert", "membership.remove"
+        ])
         try await withAccountFixture { fixture in
             let target = try await fixture.user()
             let event = try AuditEvent(actor: .cliOperator, action: .userCreate, targetID: target.id, at: fixture.clock.now())
