@@ -172,6 +172,7 @@ private struct StartupError: Error, CustomStringConvertible {
 }
 
 enum PersistenceError: Error {
+    case invalidLoginBucket
     case invalidAccountRecord
     case unsupportedDriver
     case invalidPragma

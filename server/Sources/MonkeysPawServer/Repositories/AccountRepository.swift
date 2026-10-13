@@ -53,6 +53,8 @@ struct AccountRepository: Sendable {
     struct Transaction: Sendable {
         fileprivate let sql: any SQLDatabase
 
+        init(sql: any SQLDatabase) { self.sql = sql }
+
         func hasUsers() async throws -> Bool {
             try await sql.raw("SELECT 1 FROM users LIMIT 1").first() != nil
         }

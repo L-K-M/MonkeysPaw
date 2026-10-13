@@ -22,6 +22,7 @@ func makeApplication(
     }
 
     if let accounts, let sessions {
+        LoginRoutes(login: .init(accounts: accounts, sessions: sessions), trustedProxies: configuration.trustedProxies).add(to: router)
         AccountRoutes(accounts: accounts, sessions: sessions).add(to: router)
     }
 
