@@ -120,8 +120,26 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
 
 - LLM calls and model listing.
 - Sync to the server the user configured.
-- The update check (from M7): GitHub releases, once a day. It can be
-  turned off in Settings → General; Q11.
+- The update check (from M7): an unauthenticated HTTPS GET to
+  `https://api.github.com/repos/L-K-M/MonkeysPaw/releases/latest`. GitHub sees
+  the source IP and `MonkeysPaw/<full-app-version>` User-Agent, plus fixed
+  Accept/API-version headers. No machine/user/account identifier, token,
+  prompt, field value, cookie or request body is sent. The shared transport's
+  default Assistant URL policy refuses redirects, cookies and credentials;
+  one request has a 15-second total deadline and a 1 MiB response cap.
+  Automatic checks default on (Q11), disclosed in README/PRIVACY before
+  first launch; Settings → General can turn them off. A private atomic
+  `<data>/update-state.json` stores the last automatic attempt separately
+  from the last successful check, and rate-limit expiry/status. Recording
+  the attempt before HTTP enforces at most one automatic attempt per 24
+  hours across failures/restarts. Corrupt, unreadable or future state and
+  read-only settings block automatic traffic. Check Now is explicit, works
+  while automatic checks are off, and respects in-flight/rate limits; it
+  may report a result from corrupt state without overwriting that state.
+  Disabling retires automatic timers and cancels/ignores automatic work.
+  Unversioned development/tests send no update traffic. Only explicit
+  View release opens a constructed repository release page in the browser.
+  D15 supplies Core; D17/D18 wire native runtimes and D19 owns disclosures.
 - Nothing else. No telemetry.
 
 **Logging.**

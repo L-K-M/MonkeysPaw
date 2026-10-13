@@ -40,6 +40,27 @@ Rollout by milestone:
   into a temporary Swift source file for `monkeyspaw --version`; it removes
   the file on exit. `AppIdentity.fallbackVersion` is the development-build
   value only. The deb's tilde does not change the binary's hyphenated version.
+- **Desktop update checks (M7, §21 G16/G17).** All desktop installs,
+  including betas, check only the stable GitHub `releases/latest` endpoint
+  through the shared `HTTPTransporting` default Assistant policy (§12).
+  Compare strict `vX.Y.Z[-prerelease]` tags with the full installed version:
+  numeric prerelease identifiers sort numerically, and a stable release
+  sorts above its same-core beta. Ignore drafts/prereleases and all response
+  URLs/assets/notes. Missing/invalid versions are typed unavailable results,
+  never a guessed `0.0.0`; unversioned development/tests skip traffic.
+  The Linux composition root injects its packaged hyphenated app version.
+  D17 adds/reads `MonkeysPawReleaseVersion` in every packaged plist before
+  signing, retaining numeric `CFBundleShortVersionString`; source builds
+  may supply a declared version, without guessing a discarded suffix.
+  General passively shows last successful check/result and Update available.
+  HTTP 404 means no stable release; malformed responses, offline, other
+  transport/status errors and 403/429 rate limits remain distinct from
+  up to date. Check Now bypasses automatic cadence/off, never single-flight
+  or rate-limit backoff. View release alone opens a constructed URL beneath
+  `https://github.com/L-K-M/MonkeysPaw/releases/tag/` through the native
+  opening port. No downloader, installer, package-manager command, sudo
+  or restart is part of this service. D15 is the Core contract; D17/D18
+  own platform wiring/controls, and D19 owns installation/privacy text.
 - **Toolchains.** Linux CI uses `swift:6.4-noble`, the same image as the
   server builder. macOS uses Xcode 26.x, pinned in workflows. Swift tools
   version 5.9 manifests keep Swift 5 language mode for desktop targets
