@@ -146,7 +146,8 @@ final class FakeClipboard: ClipboardRestoring, @unchecked Sendable {
 
     private final class SnapshotRead: ClipboardSnapshotRead {
         weak var clipboard: FakeClipboard?
-        var snapshot: ClipboardTextSnapshot?
+        private var snapshot: ClipboardTextSnapshot?
+        private let lock = NSLock()
         private let completion: (ClipboardTextSnapshot?) -> Void
         private var didCancel = false
 
@@ -158,15 +159,23 @@ final class FakeClipboard: ClipboardRestoring, @unchecked Sendable {
         }
 
         func cancel() {
-            guard !didCancel else { return }
-            didCancel = true
-            snapshot = nil
-            clipboard?.snapshotCancellations += 1
+            let cancelled = lock.withLock {
+                guard !didCancel else { return false }
+                didCancel = true
+                snapshot = nil
+                return true
+            }
+            guard cancelled, let clipboard else { return }
+            clipboard.locked { clipboard.numberOfSnapshotCancellations += 1 }
         }
 
         func complete(repeating count: Int) {
-            let value = snapshot
-            snapshot = nil
+            // Deliberately send late nil/duplicate callbacks to exercise Core's guards.
+            let value = lock.withLock {
+                let value = snapshot
+                snapshot = nil
+                return value
+            }
             for _ in 0..<count { completion(value) }
         }
     }
@@ -179,18 +188,46 @@ final class FakeClipboard: ClipboardRestoring, @unchecked Sendable {
     private var reads: [@Sendable (String?) -> Void] = []
     private let recorder: DeliveryRecorder
     private var snapshots: [SnapshotRead] = []
-    var snapshotMode: FakeCompletionMode = .immediate
-    var snapshotUnavailable = false
-    var canOwnWrite = true
-    var onSnapshot: (() -> Void)?
-    var onClipboardRestore: (() -> Void)?
-    private(set) var snapshotBudgets: [Duration] = []
-    private(set) var snapshotByteLimits: [Int] = []
-    private(set) var snapshotCancellations = 0
-    private(set) var ownershipWrites = 0
-    private(set) var restoreCalls = 0
-    private(set) var restorationWrites = 0
-    private(set) weak var lastSnapshot: ClipboardTextSnapshot?
+    private var snapshotCompletionMode: FakeCompletionMode = .immediate
+    private var snapshotIsUnavailable = false
+    private var canOwnClipboardWrite = true
+    private var snapshotHook: (() -> Void)?
+    private var clipboardRestoreHook: (() -> Void)?
+    private var recordedSnapshotBudgets: [Duration] = []
+    private var recordedSnapshotByteLimits: [Int] = []
+    private var numberOfSnapshotCancellations = 0
+    private var numberOfOwnershipWrites = 0
+    private var numberOfRestoreCalls = 0
+    private var numberOfRestorationWrites = 0
+    private weak var previousSnapshot: ClipboardTextSnapshot?
+
+    var snapshotMode: FakeCompletionMode {
+        get { locked { snapshotCompletionMode } }
+        set { locked { snapshotCompletionMode = newValue } }
+    }
+    var snapshotUnavailable: Bool {
+        get { locked { snapshotIsUnavailable } }
+        set { locked { snapshotIsUnavailable = newValue } }
+    }
+    var canOwnWrite: Bool {
+        get { locked { canOwnClipboardWrite } }
+        set { locked { canOwnClipboardWrite = newValue } }
+    }
+    var onSnapshot: (() -> Void)? {
+        get { locked { snapshotHook } }
+        set { locked { snapshotHook = newValue } }
+    }
+    var onClipboardRestore: (() -> Void)? {
+        get { locked { clipboardRestoreHook } }
+        set { locked { clipboardRestoreHook = newValue } }
+    }
+    var snapshotBudgets: [Duration] { locked { recordedSnapshotBudgets } }
+    var snapshotByteLimits: [Int] { locked { recordedSnapshotByteLimits } }
+    var snapshotCancellations: Int { locked { numberOfSnapshotCancellations } }
+    var ownershipWrites: Int { locked { numberOfOwnershipWrites } }
+    var restoreCalls: Int { locked { numberOfRestoreCalls } }
+    var restorationWrites: Int { locked { numberOfRestorationWrites } }
+    var lastSnapshot: ClipboardTextSnapshot? { locked { previousSnapshot } }
 
     var text: String? { locked { storedText } }
     var readCount: Int { locked { numberOfReads } }
@@ -243,53 +280,62 @@ final class FakeClipboard: ClipboardRestoring, @unchecked Sendable {
 
     func snapshotText(budget: Duration, byteLimit: Int,
                       completion: @escaping (ClipboardTextSnapshot?) -> Void) -> ClipboardSnapshotRead {
-        snapshotBudgets.append(budget)
-        snapshotByteLimits.append(byteLimit)
+        locked {
+            recordedSnapshotBudgets.append(budget)
+            recordedSnapshotByteLimits.append(byteLimit)
+        }
         recorder.events.append(.snapshotClipboard)
         let snapshot: ClipboardTextSnapshot? = locked {
             numberOfReads += 1
-            guard !snapshotUnavailable, let storedText else { return nil }
+            guard !snapshotIsUnavailable, let storedText else { return nil }
             return ClipboardTextSnapshot(text: storedText, revision: Revision(self, value: revision))
         }
-        lastSnapshot = snapshot
+        locked { previousSnapshot = snapshot }
         let read = SnapshotRead(self, snapshot: snapshot, completion: completion)
-        onSnapshot?()
         switch snapshotMode {
-        case .immediate: read.complete(repeating: 1)
-        case .deferred: snapshots.append(read)
+        case .immediate:
+            onSnapshot?()
+            read.complete(repeating: 1)
+        case .deferred:
+            locked { snapshots.append(read) }
+            onSnapshot?()
         }
         return read
     }
 
     func completeSnapshot(repeating count: Int = 1) {
-        snapshots.removeFirst().complete(repeating: count)
+        let read = locked {
+            precondition(!snapshots.isEmpty, "No pending clipboard snapshot read to complete.")
+            return snapshots.removeFirst()
+        }
+        read.complete(repeating: count)
     }
 
     func writeTextOwning(_ text: String, after snapshotRevision: ClipboardRevision) -> ClipboardWriteOwnership? {
-        ownershipWrites += 1
         let ownership: ClipboardWriteOwnership? = locked {
+            numberOfOwnershipWrites += 1
             let token = snapshotRevision as? Revision
             let unchanged = token?.clipboard === self && token?.value == revision
             revision += 1
             storedText = text
-            return unchanged && canOwnWrite ? Ownership(self, value: revision) : nil
+            return unchanged && canOwnClipboardWrite ? Ownership(self, value: revision) : nil
         }
         recorder.events.append(.write(text))
         return ownership
     }
 
     func restore(_ snapshot: ClipboardTextSnapshot, ifOwnedBy ownership: ClipboardWriteOwnership) {
-        restoreCalls += 1
+        locked { numberOfRestoreCalls += 1 }
         onClipboardRestore?()
         let restored: Bool = locked {
             guard let token = ownership as? Ownership,
                   token.clipboard === self, token.value == revision else { return false }
             storedText = snapshot.withText { $0 }
             revision += 1
+            numberOfRestorationWrites += 1
             return true
         }
         if restored {
-            restorationWrites += 1
             recorder.events.append(.restoreClipboard)
         }
     }
