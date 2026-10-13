@@ -1,7 +1,8 @@
 import Foundation
 
-/// Construct, retire and release on the UI thread. Every intent and publication
-/// uses MainThread; retired/released models drop queued work and late reports.
+/// Construct, retire and release on the UI thread. Intents/publications use
+/// MainThread. Accepted preference edits survive release; retirement revokes
+/// queued work, and late reads/reports never retain a discarded model.
 public final class DeliverySettingsModel {
     public enum TestState: Equatable, Sendable {
         case idle
@@ -102,8 +103,9 @@ public final class DeliverySettingsModel {
     }
 
     private func perform(_ intent: @escaping (SettingsModel) -> Void) {
-        mainThread.run { [weak self] in
-            guard let self, self.isActive else { return }
+        // Match General: closing a view must not lose an accepted settings edit.
+        mainThread.run {
+            guard self.isActive else { return }
             intent(self.settings)
             self.publish()
         }

@@ -147,7 +147,21 @@ final class DeliverySettingsModelTests: XCTestCase {
         released = nil
     }
 
-    func testReleasedAndRetiredModelsDropQueuedIntentsAndPublications() {
+    func testAcceptedPreferenceWriteSurvivesViewRelease() {
+        let h = Harness(mode: .deferred)
+        var model: DeliverySettingsModel? = h.makeModel()
+        h.delivery.main.drain()
+        weak var released = model
+        model?.setClipboardRestore(.previousText)
+        model = nil
+        h.delivery.main.drain()
+        XCTAssertEqual(h.settings.deliveryPreferences.clipboardRestore, .previousText)
+        XCTAssertNil(released)
+        XCTAssertEqual(h.delivery.clipboard.readCount, 0)
+        released = nil
+    }
+
+    func testReleasedAndRetiredModelsDropQueuedNavigationTestAndLatePublications() {
         for retire in [false, true] {
             let h = Harness(mode: .deferred)
             var model: DeliverySettingsModel? = h.makeModel()
@@ -157,7 +171,7 @@ final class DeliverySettingsModelTests: XCTestCase {
             var openings = 0
             model?.onChange = { changes += 1 }
             model?.onOpenSetup = { openings += 1 }
-            model?.setClipboardRestore(.previousText)
+            if retire { model?.setClipboardRestore(.previousText) }
             model?.runSelfTest()
             model?.openSetup()
             if retire { model?.retire() } else { model = nil }
