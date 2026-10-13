@@ -23,6 +23,7 @@ final class AppDelegateTests: XCTestCase {
         delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
 
         XCTAssertNotNil(delegate.pickerModel)
+        XCTAssertNil(delegate.providerSettingsService)
         let model = try XCTUnwrap(delegate.setupModel)
         XCTAssertEqual(model.session, .macOS)
         XCTAssertEqual(model.rows.first(where: { $0.kind == .hotkey })?.registration?.status, .unbound)
