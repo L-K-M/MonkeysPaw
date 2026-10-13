@@ -8,6 +8,13 @@ public enum HTTPMethod: String, Sendable {
     case patch = "PATCH"
 }
 
+/// Assistant retains its existing HTTPS/loopback rule. Sync additionally
+/// permits literal LAN addresses and binds requests to one deployment.
+public enum HTTPURLPolicy: Equatable, Sendable {
+    case assistant
+    case sync(server: SyncServerURL)
+}
+
 /// Foundation-only data: no URLRequest/HTTPURLResponse or networking imports.
 /// An absolute monotonic deadline lets format probes share one action budget.
 public struct HTTPRequest: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
@@ -18,10 +25,11 @@ public struct HTTPRequest: Sendable, CustomStringConvertible, CustomDebugStringC
     public let requestByteCap: Int
     public let responseByteCap: Int
     public let deadline: ContinuousClock.Instant
+    public let urlPolicy: HTTPURLPolicy
 
     public init(url: URL, method: HTTPMethod, headers: [String: String] = [:], body: Data? = nil,
                 requestByteCap: Int = Limits.httpRequestCap, responseByteCap: Int = Limits.responseCap,
-                deadline: ContinuousClock.Instant) throws {
+                deadline: ContinuousClock.Instant, urlPolicy: HTTPURLPolicy = .assistant) throws {
         guard requestByteCap > 0, responseByteCap > 0 else { throw HTTPTransportError.invalidRequest }
         guard (body?.count ?? 0) <= requestByteCap else { throw HTTPTransportError.requestTooLarge }
 
@@ -43,6 +51,7 @@ public struct HTTPRequest: Sendable, CustomStringConvertible, CustomDebugStringC
         self.requestByteCap = requestByteCap
         self.responseByteCap = responseByteCap
         self.deadline = deadline
+        self.urlPolicy = urlPolicy
     }
 
     public var description: String { "<HTTP request redacted>" }
@@ -71,6 +80,7 @@ public enum HTTPTransportError: String, Error, Equatable, Sendable {
     case invalidURL
     case insecureURL
     case credentialsInURL
+    case serverMismatch
     case redirectRefused
     case requestTooLarge
     case responseTooLarge
@@ -81,7 +91,7 @@ public enum HTTPTransportError: String, Error, Equatable, Sendable {
 }
 
 /// One non-streaming request, no redirects or retries. The adapter validates
-/// HTTPS except loopback and no userinfo; enforces caps during receipt and the
+/// the request's URL policy and no userinfo; enforces caps during receipt and the
 /// deadline across the entire operation; and propagates Task cancellation to
 /// the HTTP task. It throws typed errors without provider bodies. Responses,
 /// including errors, remain capped data for the protocol layer to interpret.
