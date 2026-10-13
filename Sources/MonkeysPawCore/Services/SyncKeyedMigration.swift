@@ -15,8 +15,9 @@ protocol SyncKeyedStore {
 /// own store lock. Writes already in progress finish before preparation can
 /// snapshot that store; new writes are refused until the journal is settled.
 final class SyncLibraryWriteGate {
+    private enum Owner: Equatable { case apply(UUID), unreadableJournal }
     private let lock = NSLock()
-    private var owner: UUID?
+    private var owner: Owner?
 
     func requireEditable() throws {
         lock.lock()
@@ -27,21 +28,47 @@ final class SyncLibraryWriteGate {
     func begin(_ id: UUID) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard owner == nil || owner == id else { throw LibraryError.recoveryRequired }
-        owner = id
+        guard owner == nil || owner == .apply(id) || owner == .unreadableJournal else { throw LibraryError.recoveryRequired }
+        owner = .apply(id)
     }
 
     func finish(_ id: UUID) {
         lock.lock()
         defer { lock.unlock() }
-        if owner == id { owner = nil }
+        if owner == .apply(id) { owner = nil }
     }
 
     func replace(_ previous: UUID, with next: UUID) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard owner == previous else { throw LibraryError.recoveryRequired }
-        owner = next
+        guard owner == .apply(previous) else { throw LibraryError.recoveryRequired }
+        owner = .apply(next)
+    }
+
+    /// Serialized recovery adopts the validated on-disk journal even after
+    /// its former journal instance was abandoned before a permit swap.
+    func resume(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        owner = .apply(id)
+    }
+
+    var hasUnreadableJournal: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return owner == .unreadableJournal
+    }
+
+    func blockForRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+        if owner == nil { owner = .unreadableJournal }
+    }
+
+    func finishEmptyRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+        if owner == .unreadableJournal { owner = nil }
     }
 }
 
@@ -82,6 +109,18 @@ struct SyncKeyedMigration: Codable, CustomStringConvertible, CustomReflectable {
             try move.validate()
             let prefix = store.rawValue + "/"
             guard move.source.hasPrefix(prefix), move.destination.hasPrefix(prefix) else { throw SyncError.invalidState }
+            if store == .history {
+                // Preserve unknown nested history files while validating the
+                // identity directory and exact suffix retained by preparation.
+                let source = move.source.dropFirst(prefix.count).split(separator: "/", maxSplits: 1)
+                let destination = move.destination.dropFirst(prefix.count).split(separator: "/", maxSplits: 1)
+                guard source.count == 2, destination.count == 2 else { throw SyncError.invalidState }
+                guard (try? SyncIdentifiers.promptIdentity(String(source[0]))) != nil,
+                      (try? SyncIdentifiers.promptIdentity(String(destination[0]))) != nil,
+                      source[0] != destination[0], source[1].utf8.elementsEqual(destination[1].utf8) else {
+                    throw SyncError.invalidState
+                }
+            }
             if store == .usage {
                 do {
                     _ = try SyncIdentifiers.promptIdentity(String(move.source.dropFirst(prefix.count)))

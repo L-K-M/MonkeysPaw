@@ -61,7 +61,7 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
     func validate() throws {
         try FileStorePath.validate(path)
         try expected?.validate()
-        guard expected == nil || RelativePath(expected!.path) == RelativePath(path) else { throw SyncError.invalidState }
+        if let expected, RelativePath(expected.path) != RelativePath(path) { throw SyncError.invalidState }
         if let retainedSourcePath { try FileStorePath.validate(retainedSourcePath) }
         if kind == .trash {
             guard expected != nil, bytes == nil, hash == nil, transition == nil,
@@ -77,16 +77,16 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         guard destination == PromptIdentity(path: path, id: document.frontMatter.id) else { throw SyncError.invalidState }
         if kind == .rescue {
             guard path.utf8.starts(with: "Conflicts/".utf8), expected == nil,
-                  retainedBytes != nil, retainedSourcePath != nil,
+                  let retainedBytes, let retainedSourcePath,
                   let wire = try? SyncPathValidator.validate(path, scope: .user),
                   wire.path.utf8.elementsEqual(path.utf8) else { throw SyncError.invalidState }
             if heldIssue != nil {
-                let nonPrompt = !LibraryPath.isPrompt(retainedSourcePath!)
+                let nonPrompt = !LibraryPath.isPrompt(retainedSourcePath)
                 guard bytes == retainedBytes, copyID == nil,
                       !document.canRender || (nonPrompt && heldIssue == .localVisibility) else { throw SyncError.invalidState }
                 return
             }
-            let original = PromptCodec.parseFile(retainedBytes!, filename: LibraryPath.filename(retainedSourcePath!))
+            let original = PromptCodec.parseFile(retainedBytes, filename: LibraryPath.filename(retainedSourcePath))
             guard let copyID, document.frontMatter.id?.rawValue == copyID,
                   original.frontMatter.id?.rawValue != copyID else { throw SyncError.invalidState }
         } else {
@@ -175,6 +175,10 @@ final class SyncLibraryMutations {
     func begin(_ id: UUID) throws { try library.beginSyncApply(id) }
     func finish(_ id: UUID) { library.endSyncApply(id) }
     func replacePermit(_ previous: UUID, with next: UUID) throws { try library.replaceSyncApply(previous, with: next) }
+    func blockForRecovery() { library.blockSyncApplyForRecovery() }
+    func finishEmptyRecovery() { library.finishEmptySyncRecovery() }
+    func resume(_ id: UUID) { library.resumeSyncApply(id) }
+    var hasUnreadableJournal: Bool { library.hasUnreadableSyncJournal }
 
     func prepareMigrations(for edit: SyncLibraryEdit) throws -> [SyncKeyedMigration] {
         guard let transition = edit.transition, let source = transition.source,

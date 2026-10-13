@@ -117,6 +117,7 @@ final class SyncApplyJournal {
     private let states: SyncStateStore
     private let persistence: SyncPersistence<SyncApplyRecord>
     private let lock = NSLock()
+    private var permit: (id: UUID, nextState: SyncState)?
 
     init(files: FileStore, operations: SyncFileOperations,
          mutations: SyncLibraryMutations, states: SyncStateStore) throws {
@@ -127,10 +128,16 @@ final class SyncApplyJournal {
         persistence = SyncPersistence(files: files, operations: operations,
             path: "sync/apply.json", version: Limits.syncApplyJournalVersion)
         do {
-            if let record = try persistence.load() { try mutations.begin(record.id) }
+            if let record = try persistence.load() {
+                mutations.resume(record.id)
+                permit = (record.id, record.nextState)
+            } else if mutations.hasUnreadableJournal {
+                try SyncDurability.flushParents(of: "sync/apply.json", operations: operations)
+                mutations.finishEmptyRecovery()
+            }
         } catch {
             // Corrupt/future journals cannot authorize editing around recovery.
-            try? mutations.begin(UUID())
+            mutations.blockForRecovery()
             throw error
         }
     }
@@ -145,6 +152,7 @@ final class SyncApplyJournal {
             return .replanAsConflict(operationID: plan.id)
         }
         try mutations.begin(plan.id)
+        permit = (plan.id, plan.nextState)
         do {
             let steps = try plan.edits.map { edit in
                 try edit.validate()
@@ -156,7 +164,7 @@ final class SyncApplyJournal {
                 return record
             }
         } catch {
-            if persistence.snapshot.error == nil, persistence.snapshot.value == nil { mutations.finish(plan.id) }
+            if persistence.snapshot.error == nil, persistence.snapshot.value == nil { finishPermit() }
             throw Self.safe(error)
         }
         return try run()
@@ -166,6 +174,23 @@ final class SyncApplyJournal {
     func replay() throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
+        if let record = try persistence.recover() {
+            if let permit, permit.id != record.id {
+                // A failed replacement flush may leave the new ID on disk
+                // while this graph still owns the previous plan's permit.
+                try mutations.replacePermit(permit.id, with: record.id)
+            } else { try mutations.begin(record.id) }
+            permit = (record.id, record.nextState)
+            _ = try states.recover(for: record.nextState.binding)
+        } else {
+            if let permit {
+                guard try states.recover(for: permit.nextState.binding) == permit.nextState else {
+                    throw LibraryError.recoveryRequired
+                }
+                finishPermit()
+            }
+            return .committed
+        }
         return try run()
     }
 
@@ -197,6 +222,7 @@ final class SyncApplyJournal {
                 return replacement
             }
             try mutations.replacePermit(previous.id, with: replacement.id)
+            permit = (replacement.id, replacement.nextState)
         } catch { throw Self.safe(error) }
         return try run()
     }
@@ -204,6 +230,7 @@ final class SyncApplyJournal {
     private func run() throws -> SyncApplyOutcome {
         guard var record = try persistence.load() else { return .committed }
         try mutations.begin(record.id)
+        permit = (record.id, record.nextState)
         let binding = record.nextState.binding
         let state = try states.load(for: binding)
         guard state == record.expectedState || state == record.nextState else {
@@ -263,7 +290,7 @@ final class SyncApplyJournal {
             stateCommitted = true
             // StateStore's private write and checked flush must finish first.
             try persistence.reset(nil)
-            mutations.finish(record.id)
+            finishPermit()
             return .committed
         } catch LibraryError.keyedStateConflict {
             return .recoveryRequired(operationID: record.id)
@@ -273,6 +300,12 @@ final class SyncApplyJournal {
             if stateCommitted { states.blockForRecovery(retaining: state) }
             throw Self.safe(error)
         }
+    }
+
+    private func finishPermit() {
+        guard let permit else { return }
+        mutations.finish(permit.id)
+        self.permit = nil
     }
 
     private func save(_ record: SyncApplyRecord) throws {
@@ -314,6 +347,7 @@ final class SyncApplyJournal {
 
     private static func safe(_ error: Error) -> Error {
         if let error = error as? SyncError { return error }
+        if let error = error as? LibraryError { return error }
         if let error = error as? SyncFileOperationError { return error }
         if let error = error as? FileStoreError { return SyncError.writeFailed(error) }
         return SyncError.invalidState

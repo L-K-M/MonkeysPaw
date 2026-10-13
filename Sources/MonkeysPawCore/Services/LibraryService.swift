@@ -694,8 +694,33 @@ public final class LibraryService: PromptFavoriteEditing {
         try syncWriteGate.replace(previous, with: next)
     }
 
+    func blockSyncApplyForRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.blockForRecovery()
+    }
+
+    func resumeSyncApply(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.resume(id)
+    }
+
+    var hasUnreadableSyncJournal: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return syncWriteGate.hasUnreadableJournal
+    }
+
+    func finishEmptySyncRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.finishEmptyRecovery()
+    }
+
     /// No caller-supplied async/network closure enters this seam. Sync's only
     /// users perform a checked read, hash, publication or verification.
+    /// The closure must not re-enter LibraryService's non-reentrant lock.
     func withSyncLock<T>(_ work: (FileStore) throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }

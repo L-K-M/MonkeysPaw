@@ -2,6 +2,82 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncKeyedMigrationTests: XCTestCase {
+    func testHistoryMigrationRejectsInvalidIdentityRoutesBeforeAnyIO() throws {
+        let source = "history/" + SyncTestValues.personalPrompt.rawValue + "/head.json"
+        let destination = "history/" + SyncTestValues.groupPrompt.rawValue + "/head.json"
+        let invalid = ["history/x", "history//head.json", "history/not-an-identity/head.json",
+                       "history/" + SyncTestValues.device.rawValue + "/other.json"]
+        for path in invalid {
+            for corruptSource in [false, true] {
+                let files = MemoryFileStore()
+                let store = HistoryStore(files: files)
+                let operations = MemorySyncFileOperations(files: files)
+                let migration = SyncKeyedMigration(store: .history, change: .file(SyncKeyedFileMove(
+                    source: corruptSource ? path : source, destination: corruptSource ? destination : path,
+                    bytes: Data("retained history".utf8))))
+                XCTAssertThrowsError(try store.isSyncMigrationUnstarted(migration), path) {
+                    XCTAssertEqual($0 as? SyncError, .invalidState)
+                }
+                XCTAssertThrowsError(try store.applySyncMigration(migration, operations: operations), path) {
+                    XCTAssertEqual($0 as? SyncError, .invalidState)
+                }
+                XCTAssertEqual(files.accessCount, 0, path)
+                XCTAssertEqual(operations.operationCount, 0, path)
+            }
+        }
+    }
+
+    func testHistoryMigrationPreservesNestedUnknownFilesAndReplays() throws {
+        let files = MemoryFileStore()
+        let store = HistoryStore(files: files)
+        let source = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        let destination = PromptIdentity.assigned(SyncTestValues.groupPrompt)
+        let from = "history/" + (try source.storageKey) + "/sub/unknown.bin"
+        let to = "history/" + (try destination.storageKey) + "/sub/unknown.bin"
+        let bytes = Data("opaque preserved bytes".utf8)
+        try files.writePrivate(bytes, at: from)
+        let migrations = try store.prepareSyncMigration(from: source, to: destination,
+                                                        rebindingHeadTo: nil, originalBytes: nil)
+        let migration = try XCTUnwrap(migrations.first)
+        XCTAssertEqual(migrations.count, 1)
+        XCTAssertNoThrow(try migration.validate())
+        let operations = MemorySyncFileOperations(files: files)
+        XCTAssertTrue(try store.isSyncMigrationUnstarted(migration))
+        try store.applySyncMigration(migration, operations: operations)
+        try store.applySyncMigration(migration, operations: operations)
+        XCTAssertNil(try files.stamp(at: from))
+        XCTAssertEqual(try files.read(at: to), bytes)
+    }
+
+    func testUsageMigrationRejectsAChangedDestinationAndKeepsCache() throws {
+        let files = MemoryFileStore()
+        let store = UsageStore(files: files, clock: LibraryClock())
+        let source = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        let destination = PromptIdentity.assigned(SyncTestValues.groupPrompt)
+        try store.recordUse(identity: source, at: Date(timeIntervalSince1970: 12))
+        let migration = try XCTUnwrap(store.prepareSyncMigration(from: source, to: destination,
+            rebindingHeadTo: nil, originalBytes: nil).first)
+        let destinationPath = "usage/" + (try destination.storageKey)
+        let occupied = Data("{\"events\":[99],\"version\":1}".utf8)
+        try files.writePrivate(occupied, at: destinationPath)
+        let writes = files.writeCount
+        let operations = MemorySyncFileOperations(files: files)
+        XCTAssertThrowsError(try store.applySyncMigration(migration, operations: operations)) {
+            XCTAssertEqual($0 as? LibraryError, .keyedStateConflict)
+        }
+        XCTAssertEqual(files.writeCount, writes)
+        XCTAssertEqual(operations.operationCount, 0)
+        XCTAssertEqual(try files.read(at: destinationPath), occupied)
+        XCTAssertEqual(store.cachedUseEvents()[source], [Date(timeIntervalSince1970: 12)])
+        XCTAssertNil(store.cachedUseEvents()[destination])
+        try files.delete(at: destinationPath)
+        try store.applySyncMigration(migration, operations: operations)
+        try store.applySyncMigration(migration, operations: operations)
+        XCTAssertNil(try files.stamp(at: "usage/" + (try source.storageKey)))
+        XCTAssertEqual(store.cachedUseEvents()[destination], [Date(timeIntervalSince1970: 12)])
+        XCTAssertNil(store.cachedUseEvents()[source])
+    }
+
     func testDecodedKeyedMovesRejectCorruptionBeforeAnyIO() throws {
         let original = SyncKeyedFileMove(source: "history/old/head.json", destination: "history/new/head.json",
                                         bytes: Data("retained".utf8))
@@ -129,7 +205,9 @@ final class SyncKeyedMigrationTests: XCTestCase {
             source: sourcePath, destination: destinationPath, bytes: bytes, destinationBytes: Data("broken".utf8))))
         let operations = MemorySyncFileOperations(files: files)
         let accesses = files.accessCount
-        XCTAssertThrowsError(try store.applySyncMigration(migration, operations: operations))
+        XCTAssertThrowsError(try store.applySyncMigration(migration, operations: operations)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
         XCTAssertEqual(files.accessCount, accesses)
         XCTAssertEqual(operations.operationCount, 0)
         XCTAssertEqual(store.cachedUseEvents()[source], [Date(timeIntervalSince1970: 12)])

@@ -34,4 +34,10 @@ public final class SyncStateStore: @unchecked Sendable {
     func clear() throws { try persistence.reset(nil) }
 
     func blockForRecovery(retaining state: SyncState?) { persistence.blockForRecovery(retaining: state) }
+
+    func recover(for binding: SyncLibraryIdentity) throws -> SyncState? {
+        try persistence.recover { state in
+            guard state == nil || state?.binding == binding else { throw SyncError.bindingMismatch }
+        }
+    }
 }
