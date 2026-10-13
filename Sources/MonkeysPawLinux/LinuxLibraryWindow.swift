@@ -15,6 +15,10 @@ final class LinuxLibraryWindow {
     private let openFolder: () -> Void
     private weak var browser: LibraryBrowserModel?
     private weak var editor: EditorModel?
+    private var assistantProvider: () -> AssistantModel? = { nil }
+    private let assistantPanel = LinuxAssistantPanel()
+    private var assistantMessage: String?
+    private var assistantMessagePrompt: LibraryPromptSelection?
     private var observer: UUID?
     private var editorObserver: UUID?
     private var bindingRevision: UInt64 = 0
@@ -68,6 +72,7 @@ final class LinuxLibraryWindow {
 
     init(application: UnsafeMutablePointer<GtkApplication>, browser: LibraryBrowserModel, editor: EditorModel,
          imports: ImportBinding? = nil,
+         assistant: @escaping () -> AssistantModel? = { nil },
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
@@ -95,7 +100,7 @@ final class LinuxLibraryWindow {
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed else { return }
             if self.isVisible { self.updateDialog() }
-            else { self.commands.cancelDialog() }
+            else { self.commands.cancelDialog(); self.assistantPanel.close() }
         }
         GTK.observeKeys(window) { [weak self] key, modifiers in
             self?.keyPressed(key, modifiers: modifiers) ?? false
@@ -164,18 +169,29 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(content), status)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.libraryHint))
         gtk_window_set_child(mp_window(window), content)
-        rebind(browser: browser, editor: editor, imports: imports?.state)
+        rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant)
     }
 
     deinit { unbind() }
 
-    func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState?) {
+    func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState? = nil,
+                assistant: @escaping () -> AssistantModel? = { nil }) {
         guard !isDestroyed else { return }
         precondition((importView == nil) == (imports == nil),
                      "Import-enabled windows require the current graph's import state")
         unbind()
         self.browser = browser
         self.editor = editor
+        assistantProvider = assistant
+        assistantMessage = nil
+        let binding = bindingRevision
+        assistantPanel.onOutcome = { [weak self, weak editor] outcome in
+            guard let self, let editor, !self.isDestroyed, self.bindingRevision == binding,
+                  self.editor === editor else { return }
+            self.assistantMessage = LinuxAssistantStrings.outcome(outcome)
+            self.assistantMessagePrompt = editor.state.prompt
+            self.render()
+        }
         commands.bind(editor: editor, browser: browser)
         historyPrompt = nil
         historyReloadPending = false
@@ -243,6 +259,8 @@ final class LinuxLibraryWindow {
     }
 
     private func unbind() {
+        assistantPanel.retire(destroyed: isDestroyed)
+        assistantProvider = { nil }
         endDialog()
         commands.unbind()
         importView?.unbind()
@@ -299,6 +317,7 @@ final class LinuxLibraryWindow {
     @discardableResult
     private func requestClose() -> Bool {
         guard !isDestroyed, !closeRequested, let editor else { return false }
+        assistantPanel.close()
         closeRequested = true
         let revision = bindingRevision
         editor.request(.close) { [weak self] result in
@@ -356,6 +375,13 @@ final class LinuxLibraryWindow {
             self.editor?.revert()
         }
         gtk_box_append(mp_box(actions), commands.widget)
+        let assistant = GTK.button(LinuxAssistantStrings.title) { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.assistantPanel.show()
+        }
+        gtk_widget_set_name(assistant, "library-assistant")
+        mp_accessible_label(assistant, "Assistant: Write, Review or Improve")
+        gtk_box_append(mp_box(actions), assistant)
         gtk_box_append(mp_box(detail), actions)
         let editPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
         gtk_box_append(mp_box(editPage), scrolled(source.widget, width: Limits.panelSize.width / 2))
@@ -390,9 +416,19 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(detail), tabs)
         gtk_widget_set_name(editorStatus, "library-editor-status")
         gtk_box_append(mp_box(detail), editorStatus)
+        assistantPanel.onHighlight = { [weak self] range in
+            guard let self, !self.isDestroyed else { return }
+            if range != nil { gtk_notebook_set_current_page(mp_notebook(self.tabs), 0) }
+            self.source.highlight(range)
+        }
+        gtk_box_append(mp_box(detail), assistantPanel.widget)
         source.onEdit = { [weak self] text in
             guard let self, !self.isDestroyed, self.available else { return }
+            self.assistantMessage = nil
             self.editor?.edit(text)
+            // Editor publications may coalesce edits away and back. Revoke
+            // acceptance at each native edit, before another event can run.
+            self.assistantProvider()?.contextChanged()
         }
         source.onCompositionEnded = { [weak self] in self?.render() }
     }
@@ -404,6 +440,7 @@ final class LinuxLibraryWindow {
     private func renderEditor() {
         guard let editor else { return }
         let state = editor.state
+        assistantPanel.bind(model: assistantProvider(), editor: editor, available: available)
         gtk_label_set_text(mp_label(previewTitle), state.prompt?.relativePath.string ?? LinuxStrings.selectLibraryPrompt)
         source.update(state, revision: sourceRevision, available: available)
         gtk_label_set_text(mp_label(readOnly), state.readOnlyReason.map(LinuxEditorStrings.readOnly) ?? "")
@@ -442,7 +479,10 @@ final class LinuxLibraryWindow {
             && state.status != .saving && state.status != .commandRunning ? 1 : 0)
         commands.update(state, available: available)
         history.update(state, available: available, canRestore: commands.canRun && !commands.hasDialog)
-        gtk_label_set_text(mp_label(editorStatus), commands.message ?? LinuxEditorStrings.status(state))
+        if assistantMessagePrompt != state.prompt { assistantMessage = nil }
+        let outcomeMessage = assistantMessage ?? (state.provenanceMaintenanceFailed
+            ? (state.historyMaintenanceFailed ? LinuxEditorStrings.historyAndProvenanceWarning : LinuxEditorStrings.provenanceWarning) : nil)
+        gtk_label_set_text(mp_label(editorStatus), outcomeMessage ?? commands.message ?? LinuxEditorStrings.status(state))
         if state.prompt == nil { historyPrompt = nil }
         if isHistorySelected, state.prompt != historyPrompt { loadHistory() }
     }
@@ -588,7 +628,15 @@ final class LinuxLibraryWindow {
         let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
             | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
         let modifiers = modifiers & relevant
+        if key == UInt32(GDK_KEY_Escape), modifiers == 0, assistantPanel.isVisible {
+            assistantPanel.close()
+            return true
+        }
         guard activeDialog == nil, !commands.hasDialog else { return false }
+        if modifiers == GDK_CONTROL_MASK.rawValue {
+            if [UInt32(GDK_KEY_r), UInt32(GDK_KEY_R)].contains(key) { assistantPanel.start(.review); return true }
+            if [UInt32(GDK_KEY_i), UInt32(GDK_KEY_I)].contains(key) { assistantPanel.start(.improve); return true }
+        }
         if key == UInt32(GDK_KEY_Escape), modifiers == 0 {
             if !browser.filter.isEmpty { browser.setFilter(""); render(); return true }
             return requestClose()

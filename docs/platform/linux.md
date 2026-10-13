@@ -59,6 +59,33 @@ these checks require a real desktop and, for Anthropic, owner-supplied access.
 | Ollama Test and manual model | Use OpenAI-compatible with http://localhost:11434/v1 and no key. Test lists installed models, or shows a typed listing failure while manual IDs remain editable. Save/reopen retains the ID; cancelling or closing during Test rejects late results. | NOT RUN |
 | Orca and keyboard | Navigate the Assistant tab with Tab/Shift+Tab and select profiles/models with the keyboard. Orca announces control labels, masked key input, active profile, key edit mode, storage tier, unencrypted warning, progress and typed results. Focus remains visible, and no saved key is spoken. | NOT RUN |
 
+## Library Assistant flows (M4 A16, NOT RUN)
+
+Record the commit, date, desktop, GTK version, provider host and model ID.
+Run every row with an owner-supplied Anthropic profile and with a local Ollama
+profile (`http://localhost:11434/v1`, an installed model, no key). Use disposable
+templates. Record outcomes without prompt text, keys, field values or provider
+error bodies. Automated private-bus/X11 tests use a stub transport; they do not
+prove live provider compatibility or desktop accessibility.
+
+Open Library from the picker or tray, select a prompt, and choose **Assistant**
+in the editor toolbar. **Ctrl+R** starts Review and **Ctrl+I** starts Improve.
+Escape closes the Assistant first; closing Library cancels it before the
+editor's existing unsaved-edit decision.
+
+| Check | Expected result | Anthropic | Ollama |
+|---|---|---|---|
+| Write | Enter a brief and explicitly Write. Host and model appear before sending; elapsed time advances while working and usage appears afterward when supplied. The generated draft, fields, notes, issues and final front matter/body comparison are readable. Accept creates exactly the displayed candidate; the original is kept. | NOT RUN | NOT RUN |
+| Review | Ctrl+R shows severity, criterion, problem, suggestion and quote for each finding. Highlight a quote containing Unicode and confirm only its exact editor text is tagged. An unmatched quote is labelled and cannot highlight unrelated text. Select findings for Improve. | NOT RUN | NOT RUN |
+| Improve | Ctrl+I works with an instruction without a prior review, and selected findings can also drive Improve. The merged side-by-side diff preserves identity and other metadata, marks changed lines, and shows placeholder-change warnings. Accept saves the displayed bytes as a new revision; Reject changes no file. | NOT RUN | NOT RUN |
+| Validation and Retry | A draft with errors cannot be accepted. Retry with feedback requires an explicit action and keeps the conversation for this editor session. Provider failures show an actionable, typed message without their error bodies. No network/auth/rate-limit failure retries automatically. | NOT RUN | NOT RUN |
+| Privacy and availability | Private buffers disable Review and Improve while Write sends only its brief. Read-only buffers explain their refusal. No profile links the refusal to Settings; editor I/O, conflicts and pending decisions block new requests. A group viewer is offered a private copy when M6 supplies that access state. Clipboard and remembered fill values never appear in a request. | NOT RUN | NOT RUN |
+| Stale candidate | Edit the buffer, including away and back, or change the source on disk after a reply. Accept stays disabled until an explicit Show diff produces a fresh candidate. A disk conflict uses the existing editor choices. Change the profile or credentials and confirm the old conversation is discarded. | NOT RUN | NOT RUN |
+| Cancellation and replacement | Cancel, Escape, close the panel, close Library, change selection, or switch to a different clean library during a request. Late replies do not revive the old session or write anything; elapsed updates stop. Unsaved Library edits still refuse a folder switch. | NOT RUN | NOT RUN |
+| Acceptance and warnings | Save / Discard / Cancel protects dirty buffers before a Write/private-copy acceptance. A changed snapshot needs a new preview. A committed provenance/history warning explicitly says the prompt was updated, and never invites a duplicate save. Closing during a save leaves its actual outcome in the editor. | NOT RUN | NOT RUN |
+| Keyboard and Orca | Navigate the panel, findings, instructions, retry controls and both diff columns with the keyboard. Orca announces labels, severity, disabled explanations, progress, footer and acceptance outcome. Escape respects active input-method composition before cancelling the panel. | NOT RUN | NOT RUN |
+| Settings lifetime | Hide and reopen Settings repeatedly, including during Test. Tests cancel once, staged keys clear, no late Test result returns, and the model picker reflects the current draft's model after a listing or unrelated update. | NOT RUN | NOT RUN |
+
 ## Release deb installation (M2, NOT RUN)
 
 Use an amd64 Ubuntu 24.04+ desktop for the release's amd64 package. Candidate

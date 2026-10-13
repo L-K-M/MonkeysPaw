@@ -131,6 +131,9 @@ public final class AssistantSettingsModel: CustomStringConvertible,
     }
 
     public var onChange: (() -> Void)?
+    /// Composition invalidates live Assistant sessions even for credential-only
+    /// edits and accepted mutations that finish after Settings closes.
+    public var onProfilesChanged: (() -> Void)?
     public private(set) var state: State
 
     private let settings: AssistantSettingsProviding
@@ -337,6 +340,7 @@ public final class AssistantSettingsModel: CustomStringConvertible,
         self.operation = operation
         error = nil
         stopTest()
+        if operation != .loading { onProfilesChanged?() }
         publish()
         // Retain accepted mutations until their completion, even if Settings closes.
         work.run { [settings, mainThread] in
@@ -349,6 +353,7 @@ public final class AssistantSettingsModel: CustomStringConvertible,
                 self.snapshot = snapshot
                 self.operation = nil
                 self.error = failure
+                if operation != .loading { self.onProfilesChanged?() }
                 finish(failure == nil)
                 self.reloadStorage()
             }

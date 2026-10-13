@@ -21,6 +21,7 @@ final class LinuxLibrarySourceEditor {
         gtk_text_view_set_monospace(mp_text_view(widget), 1)
         gtk_text_view_set_wrap_mode(mp_text_view(widget), GTK_WRAP_WORD_CHAR)
         gtk_text_buffer_set_enable_undo(buffer, 1)
+        _ = mp_text_buffer_background_tag(buffer, "assistant-quote", "#f8e5a0")
         GTK.onSignal(UnsafeMutableRawPointer(buffer), "changed") { [weak self] in
             guard let self, !self.isUpdating, gtk_text_view_get_editable(mp_text_view(self.widget)) != 0 else { return }
             self.onEdit?(self.text)
@@ -34,6 +35,25 @@ final class LinuxLibrarySourceEditor {
                 GTK.onMainLoop { [weak self] in self?.onCompositionEnded?() }
             }
         }
+    }
+
+    /// Core ranges are UTF-8 bytes; GtkTextIter offsets count Unicode scalars.
+    /// Reject partial scalars rather than highlighting a neighbouring quote.
+    func highlight(_ byteRange: Range<Int>?) {
+        var start = GtkTextIter(), end = GtkTextIter()
+        gtk_text_buffer_get_bounds(buffer, &start, &end)
+        let tag = gtk_text_tag_table_lookup(gtk_text_buffer_get_tag_table(buffer), "assistant-quote")
+        gtk_text_buffer_remove_tag(buffer, tag, &start, &end)
+        guard let byteRange else { return }
+        let bytes = Array(text.utf8)
+        guard byteRange.lowerBound >= 0, byteRange.upperBound <= bytes.count,
+              let prefix = String(bytes: bytes.prefix(byteRange.lowerBound), encoding: .utf8),
+              let quote = String(bytes: bytes[byteRange], encoding: .utf8) else { return }
+        let offset = prefix.unicodeScalars.count
+        gtk_text_buffer_get_iter_at_offset(buffer, &start, Int32(offset))
+        gtk_text_buffer_get_iter_at_offset(buffer, &end, Int32(offset + quote.unicodeScalars.count))
+        gtk_text_buffer_apply_tag(buffer, tag, &start, &end)
+        gtk_text_view_scroll_to_iter(mp_text_view(widget), &start, 0.1, 0, 0, 0)
     }
 
     func update(_ state: EditorState, revision: UInt64, available: Bool) {
