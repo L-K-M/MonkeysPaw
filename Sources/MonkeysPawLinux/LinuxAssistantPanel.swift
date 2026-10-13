@@ -22,6 +22,7 @@ final class LinuxAssistantPanel {
     private var quoteButtons: [GTK.Widget] = []
     private var highlightedFinding: Int?
     private var renderedArtifact: LlmArtifact?
+    private var preeditEntries = Set<GTK.Widget>()
 
     private let brief = gtk_entry_new()!
     private let instruction = gtk_entry_new()!
@@ -46,6 +47,11 @@ final class LinuxAssistantPanel {
 
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(widget) != 0 }
 
+    var hasPreedit: Bool {
+        guard isVisible, let root = gtk_widget_get_root(widget), let focus = gtk_root_get_focus(root) else { return false }
+        return preeditEntries.contains { focus == $0 || gtk_widget_is_ancestor(focus, $0) != 0 }
+    }
+
     init() {
         gtk_widget_set_name(widget, "library-assistant-panel")
         let heading = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
@@ -67,6 +73,13 @@ final class LinuxAssistantPanel {
             gtk_widget_set_name(entry, "assistant-" + name)
             gtk_entry_set_placeholder_text(mp_entry(entry), title)
             mp_accessible_label(entry, title)
+            if let delegate = mp_entry_text_delegate(entry) {
+                GTK.onPreeditChanged(delegate) { [weak self] active in
+                    guard let self else { return }
+                    if active { self.preeditEntries.insert(entry) }
+                    else { self.preeditEntries.remove(entry) }
+                }
+            }
         }
         gtk_box_append(mp_box(page), brief)
         let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
@@ -123,6 +136,7 @@ final class LinuxAssistantPanel {
             self.model = model
             flow = nil
             highlightedFinding = nil
+            preeditEntries.removeAll()
             onHighlight?(nil)
             mp_entry_set_text(brief, "")
             mp_entry_set_text(feedback, "")
@@ -149,6 +163,7 @@ final class LinuxAssistantPanel {
         stopTimer()
         flow = nil
         highlightedFinding = nil
+        preeditEntries.removeAll()
         onHighlight?(nil)
         mp_entry_set_text(brief, "")
         mp_entry_set_text(instruction, "")
@@ -230,7 +245,7 @@ final class LinuxAssistantPanel {
         gtk_widget_set_sensitive(write, common == nil ? 1 : 0)
         for control in [review!, improve!] { gtk_widget_set_sensitive(control, common == nil && template == nil ? 1 : 0) }
         let editorIO = editorState.status == .loading || editorState.status == .saving || editorState.status == .commandRunning
-        gtk_widget_set_sensitive(accept, available && !editorIO && model.canAccept ? 1 : 0)
+        gtk_widget_set_sensitive(accept, available && !editorIO && state.phase != .working && model.canAccept ? 1 : 0)
         gtk_widget_set_sensitive(showDiff, common == nil && state.artifact != nil && (flow == .write || template == nil) ? 1 : 0)
         gtk_widget_set_sensitive(retry, common == nil && flow != nil && state.phase != .idle && (flow == .write || template == nil) ? 1 : 0)
         gtk_widget_set_sensitive(reject, state.artifact != nil || state.review != nil ? 1 : 0)
@@ -240,7 +255,7 @@ final class LinuxAssistantPanel {
         diff.update(state.diff)
         let warnings = state.diff?.placeholderWarnings.map(LinuxAssistantStrings.placeholder) ?? []
         setLabel(issues, (state.issues.map(LinuxEditorStrings.issue) + warnings).joined(separator: "\n"))
-        if let highlightedFinding, model.highlightFinding(at: highlightedFinding) == nil {
+        if let highlightedFinding, state.phase == .working || model.highlightFinding(at: highlightedFinding) == nil {
             self.highlightedFinding = nil
             onHighlight?(nil)
         }
@@ -299,7 +314,7 @@ final class LinuxAssistantPanel {
         for (index, check) in checks.enumerated() {
             gtk_check_button_set_active(mp_check_button(check), state.selectedFindings.contains(index) ? 1 : 0)
             gtk_widget_set_sensitive(check, state.phase != .working && !state.isStale ? 1 : 0)
-            gtk_widget_set_sensitive(quoteButtons[index], model.highlightFinding(at: index) == nil ? 0 : 1)
+            gtk_widget_set_sensitive(quoteButtons[index], state.phase != .working && model.highlightFinding(at: index) != nil ? 1 : 0)
         }
     }
 

@@ -477,8 +477,13 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         try input("model-id", "manual-composed")
         try input("key", sentinel)
         drainUI()
+        var saveClicked = false
+        GTK.onSignal(try control("save"), "clicked") { saveClicked = true }
         try click("save")
-        XCTAssertTrue(GTKTestSupport.spin { (try? self.labelText("storage")) == LinuxAssistantSettingsStrings.storage(.saved(.file)) })
+        XCTAssertTrue(GTKTestSupport.spin { saveClicked }, "GTK did not dispatch Save")
+        let stored = GTKTestSupport.spin { (try? self.labelText("storage")) == LinuxAssistantSettingsStrings.storage(.saved(.file)) }
+        let saveStatus = "\(try labelText("progress")); \(try labelText("error"))"
+        XCTAssertTrue(stored, saveStatus)
         XCTAssertTrue(try visible("storage-warning"))
         try assertStoredKeyAbsent()
         XCTAssertTrue(transport.requests.isEmpty)

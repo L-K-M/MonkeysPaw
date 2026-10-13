@@ -631,9 +631,10 @@ final class LinuxLibraryWindow {
 
     private func keyPressed(_ key: UInt32, modifiers: UInt32) -> Bool {
         guard isVisible, let browser else { return false }
-        // Native IME cancellation belongs to the focused filter's input method.
+        // Native IME cancellation belongs to the focused input's method.
         if filterPreedit, containsFocus(filter) { return false }
         if source.hasPreedit, containsFocus(source.widget) { return false }
+        if assistantPanel.hasPreedit { return false }
         let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
             | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
         let modifiers = modifiers & relevant

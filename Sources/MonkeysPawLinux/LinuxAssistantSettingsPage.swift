@@ -111,9 +111,11 @@ final class LinuxAssistantSettingsPage {
         delete = button("settings-assistant-delete", title: LinuxAssistantSettingsStrings.delete, in: profileButtons) {
             if let id = $0.state.draft?.id { $0.deleteProfile(id) }
         }
-        disable = button("settings-assistant-disable", title: LinuxAssistantSettingsStrings.disable, in: profileButtons) { $0.selectProfile(nil) }
+        disable = button("settings-assistant-disable", title: LinuxAssistantSettingsStrings.disable, in: profileButtons) {
+            Self.selectProfile(nil, in: $0)
+        }
         activate = button("settings-assistant-activate", title: LinuxAssistantSettingsStrings.makeActive, in: profileButtons) {
-            $0.selectProfile($0.state.draft?.id)
+            Self.selectProfile($0.state.draft?.id, in: $0)
         }
         keepKey = button("settings-assistant-keep-key", title: LinuxAssistantSettingsStrings.keepKey, in: keyButtons) { $0.keepKey() }
         clearKey = button("settings-assistant-clear-key", title: LinuxAssistantSettingsStrings.clearKey, in: keyButtons) { $0.clearKey() }
@@ -125,7 +127,7 @@ final class LinuxAssistantSettingsPage {
         GTK.onRow(profiles, "row-selected") { [weak self] index in
             guard let self, !self.isRendering, self.canChangeProfiles, let index,
                   self.renderedProfiles.indices.contains(index) else { return }
-            self.model?.selectProfile(self.renderedProfiles[index].id)
+            if let model = self.model { Self.selectProfile(self.renderedProfiles[index].id, in: model) }
         }
         onInput(name) { $0.renameProfile($1) }
         onInput(baseURL) { $0.setBaseURL($1) }
@@ -193,6 +195,12 @@ final class LinuxAssistantSettingsPage {
     private var canEditDraft: Bool {
         guard isShown, let state = model?.state else { return false }
         return state.draft != nil && !state.isReadOnly && (state.operation == nil || state.operation == .saving)
+    }
+
+    private static func selectProfile(_ id: ProviderProfileID?, in model: AssistantSettingsModel) {
+        // Refresh still discards staged edits without reporting a provider mutation.
+        if id == model.state.selectedProfileID { model.refresh() }
+        else { model.selectProfile(id) }
     }
 
     private func render() {

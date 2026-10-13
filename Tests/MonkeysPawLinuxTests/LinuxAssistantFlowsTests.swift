@@ -158,6 +158,83 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertEqual(transport.requests.count, 3)
     }
 
+    func testAssistantEntryPreeditKeepsEscapeInInputMethod() throws {
+        try open()
+        transport.enqueue(try artifact())
+        try click("improve")
+        try ready()
+        let model = try XCTUnwrap(environment.assistantModel)
+        let candidate = try XCTUnwrap(model.state.candidate?.content.canonicalBytes)
+        let transcript = model.state.transcript
+
+        for suffix in ["brief", "instruction", "feedback"] {
+            let entry = try widget("assistant-" + suffix)
+            XCTAssertNotEqual(gtk_widget_grab_focus(entry), 0)
+            let delegate = try XCTUnwrap(mp_entry_text_delegate(entry))
+            mp_test_emit_preedit_changed(delegate, "かな")
+            XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0, suffix)
+            XCTAssertTrue(try visible("library-assistant-panel"), suffix)
+            XCTAssertEqual(model.state.candidate?.content.canonicalBytes, candidate, suffix)
+            XCTAssertEqual(model.state.transcript, transcript, suffix)
+            mp_test_emit_preedit_changed(delegate, "")
+            guard try visible("library-assistant-panel") else { return }
+        }
+
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+        XCTAssertFalse(try visible("library-assistant-panel"))
+        XCTAssertEqual(model.state.phase, .idle)
+        XCTAssertNil(model.state.candidate)
+    }
+
+    func testWorkingRenderSkipsSnapshotChecksUntilReply() throws {
+        try open()
+        let main = GLibMainThread()
+        let config = try RootedFileStore(root: LinuxPaths(environment: tools.environment).configDirectory)
+        let service = AssistantService(providerSettings: environment.providerSettingsService,
+            anthropic: AnthropicClient(transport: transport),
+            openAICompatible: OpenAIClient(transport: transport, providerState: ProviderStateStore(files: config)),
+            work: work, main: main)
+        let graphID = UUID()
+        var contextReads = 0
+        let model = AssistantModel(service: service, main: main, context: {
+            contextReads += 1
+            return AssistantContext(libraryID: graphID, profile: service.selectedProfile,
+                editor: self.environment.editorModel.assistantSnapshot, access: .privatePrompt)
+        })
+        let parent = gtk_application_window_new(application)!
+        let panel = LinuxAssistantPanel()
+        var highlighted: Range<Int>?
+        panel.onHighlight = { highlighted = $0 }
+        gtk_window_set_child(mp_window(parent), panel.widget)
+        panel.bind(model: model, editor: environment.editorModel, available: true)
+        gtk_window_present(mp_window(parent))
+        defer { panel.retire(destroyed: false); model.deactivate(); gtk_window_destroy(mp_window(parent)) }
+
+        transport.enqueue(try review())
+        panel.start(.review)
+        XCTAssertTrue(GTKTestSupport.spin { model.state.review != nil })
+        try clickWidget("assistant-quote-0", in: parent)
+        XCTAssertNotNil(highlighted)
+
+        transport.hold(try review())
+        model.retryWithFeedback("Check the sources again")
+        let readsBeforeRendering = contextReads
+        drain()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.heldCount == 1 })
+        XCTAssertEqual(contextReads, readsBeforeRendering)
+        XCTAssertNil(highlighted)
+        XCTAssertFalse(try sensitiveWidget("assistant-accept", in: parent))
+        XCTAssertTrue(GTKTestSupport.spin(until: { model.state.elapsed >= 1 }, timeout: .seconds(3)))
+        drain()
+        XCTAssertEqual(contextReads, readsBeforeRendering)
+
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { model.state.phase == .draft && model.state.review != nil })
+        drain()
+        XCTAssertGreaterThan(contextReads, readsBeforeRendering)
+        XCTAssertTrue(try sensitiveWidget("assistant-quote-0", in: parent))
+    }
+
     func testClosingLibraryMidCallCancelsAndReopensWithFreshEditorModel() throws {
         try open()
         try holdImprove()
@@ -357,6 +434,52 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertEqual(environment.assistantModel?.state.phase, .idle)
         XCTAssertNil(environment.assistantModel?.state.artifact)
         XCTAssertEqual(try files.read(at: "a.md"), Data(original.utf8))
+    }
+
+    func testReselectingActiveProfileKeepsConversationAndHeldRequest() throws {
+        let other = ProviderDraft(displayName: "Other", kind: .openaiCompatible,
+            baseURL: "http://localhost:11434/v1", modelID: "other-model", key: .clear)
+        try worker { try self.environment.providerSettingsService.save(other) }
+        try open()
+        try holdImprove()
+        let model = try XCTUnwrap(environment.assistantModel)
+        let transcript = model.state.transcript
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.settings) != nil })
+        let settings = try XCTUnwrap(nativeWindow(LinuxStrings.settings))
+        gtk_notebook_set_current_page(mp_notebook(try widget("settings-tabs", in: settings)), 2)
+        XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitiveWidget("settings-assistant-save", in: settings)) == true })
+        let profiles = try widget("settings-assistant-profiles", in: settings)
+        let name = try widget("settings-assistant-name", in: settings)
+        mp_entry_set_text(name, "Staged name")
+        drain()
+        gtk_list_box_unselect_all(mp_list_box(profiles))
+        gtk_list_box_select_row(mp_list_box(profiles), gtk_list_box_get_row_at_index(mp_list_box(profiles), 0))
+        drain()
+        try worker {}
+        XCTAssertTrue(GTKTestSupport.spin { String(cString: mp_entry_text(name)) == "Local" })
+        XCTAssertEqual(model.state.phase, .working)
+        XCTAssertEqual(model.state.transcript, transcript)
+        XCTAssertEqual(transport.cancellations, 0)
+
+        transport.releaseHeld()
+        try ready()
+        let candidate = try XCTUnwrap(model.state.candidate?.content.canonicalBytes)
+        let completedTranscript = model.state.transcript
+        gtk_list_box_unselect_all(mp_list_box(profiles))
+        gtk_list_box_select_row(mp_list_box(profiles), gtk_list_box_get_row_at_index(mp_list_box(profiles), 0))
+        drain()
+        try worker {}
+        XCTAssertEqual(model.state.phase, .ready)
+        XCTAssertEqual(model.state.candidate?.content.canonicalBytes, candidate)
+        XCTAssertEqual(model.state.transcript, completedTranscript)
+
+        gtk_list_box_select_row(mp_list_box(profiles), gtk_list_box_get_row_at_index(mp_list_box(profiles), 1))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.providerSettingsService.snapshot.settings.selectedProfileID == other.id
+            && model.state.phase == .idle })
+        XCTAssertNil(model.state.candidate)
+        XCTAssertTrue(model.state.transcript.isEmpty)
+        XCTAssertEqual(transport.requests.count, 1)
     }
 
     func testCommittedProvenanceWarningIsVisibleAndDoesNotInviteAnotherSave() throws {
