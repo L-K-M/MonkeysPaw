@@ -336,7 +336,8 @@ lock.
 
 Prompt PUT and move use the same streamed envelope cap. DELETE requires exactly
 one `base_rev` query parameter, a positive Int64 in decimal without a sign or
-leading zeroes. S1 wire bounds reject decoded
+leading zeroes. GET revision paths use the same positive-decimal grammar.
+S1 wire bounds reject decoded
 content over 256 KiB, empty paths and paths over 1,024 UTF-8 bytes as malformed
 requests (400). Within those bounds, Core content/path errors and a missing
 or mismatched front-matter id return 422. Group canonicalization that expands

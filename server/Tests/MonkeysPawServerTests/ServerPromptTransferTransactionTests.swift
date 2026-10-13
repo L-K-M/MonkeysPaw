@@ -10,6 +10,7 @@ enum PromptMutation: Sendable { case edit, delete, move }
 private enum PromptMutationResult: Sendable {
     case accepted(PromptMutation, SyncAPI.WriteResponse)
     case rejected(SyncAPI.ErrorResponse)
+    case unexpected
 }
 enum DeleteOrMove: Sendable, CaseIterable { case delete, move }
 private enum TransferFailureStage: Sendable, CaseIterable {
@@ -32,7 +33,7 @@ struct ServerPromptTransferTransactionTests {
                 _ = try await fixture.writePrompt(id: id, scope: direction.sourceScope, path: "Original\(iteration).md", session: session.identity)
                 let before = try await fixture.persistence.promptEvents().count
                 let start = LoginTestLatch()
-                let results = try await withThrowingTaskGroup(of: PromptMutationResult.self) { tasks in
+                let results = await withTaskGroup(of: PromptMutationResult.self) { tasks in
                     for operation in operations {
                         tasks.addTask {
                             await start.wait()
@@ -51,11 +52,15 @@ struct ServerPromptTransferTransactionTests {
                                 }
                                 return .accepted(operation, write)
                             } catch let error as PromptError { return .rejected(error.response) }
+                            catch {
+                                Issue.record("Unexpected \(operation) error: \(String(reflecting: type(of: error)))")
+                                return .unexpected
+                            }
                         }
                     }
                     await start.open()
                     var results: [PromptMutationResult] = []
-                    for try await result in tasks { results.append(result) }
+                    for await result in tasks { results.append(result) }
                     return results
                 }
                 let accepted = results.compactMap { result -> (PromptMutation, SyncAPI.WriteResponse)? in
@@ -96,7 +101,7 @@ struct ServerPromptTransferTransactionTests {
                 }
                 let before = try await fixture.persistence.promptEvents().count
                 let start = LoginTestLatch()
-                let results = try await withThrowingTaskGroup(of: PromptMutationResult.self) { tasks in
+                let results = await withTaskGroup(of: PromptMutationResult.self) { tasks in
                     for (index, id) in ids.enumerated() {
                         tasks.addTask {
                             await start.wait()
@@ -106,11 +111,15 @@ struct ServerPromptTransferTransactionTests {
                                                                                                path: path), session: session.identity)
                                 return .accepted(.move, write)
                             } catch let error as PromptError { return .rejected(error.response) }
+                            catch {
+                                Issue.record("Unexpected move error: \(String(reflecting: type(of: error)))")
+                                return .unexpected
+                            }
                         }
                     }
                     await start.open()
                     var results: [PromptMutationResult] = []
-                    for try await result in tasks { results.append(result) }
+                    for await result in tasks { results.append(result) }
                     return results
                 }
                 let heads = try await fixture.promptRepository.read { prompts, _, _, _ in
@@ -143,7 +152,8 @@ struct ServerPromptTransferTransactionTests {
                                                                             path: "Moved/Cafe\u{301}.md"), session: session.identity)
             let moved = try await fixture.prompts.get(id: id, session: session.identity)
             let events = try await fixture.persistence.promptEvents()
-            #expect(events.count == 3 && events.first == firstEvents.first && write.seq == 3)
+            try #require(events.count == 3)
+            #expect(events.first == firstEvents.first && write.seq == 3)
             let old = events[1], new = events[2]
             #expect(old.seq == 2 && new.seq == write.seq && old.rev == 2 && new.rev == 2 && write.rev == 2)
             #expect(old.promptID == id && new.promptID == id && old.at == at && new.at == at)

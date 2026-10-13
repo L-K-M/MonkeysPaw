@@ -21,7 +21,7 @@ struct PromptRoutes {
         protected.delete("/{id}") { request, context in
             let query = request.uri.queryParameters
             guard let id = context.parameters.get("id"), query.count == 1, let value = query["base_rev"],
-                  let rev = Int64(value), String(rev) == String(value) else { throw AccountError.malformedRequest }
+                  let rev = Self.positiveRevision(String(value)) else { throw AccountError.malformedRequest }
             let write = try await prompts.delete(id: id, query: .init(baseRev: rev), session: context.authenticatedSession())
             return try context.responseEncoder.encode(write, from: request, context: context)
         }
@@ -38,9 +38,14 @@ struct PromptRoutes {
         }
         protected.get("/{id}/revisions/{rev}") { request, context in
             guard let id = context.parameters.get("id"), let value = context.parameters.get("rev"),
-                  let rev = Int64(value), rev > 0, String(rev) == value else { throw AccountError.malformedRequest }
+                  let rev = Self.positiveRevision(value) else { throw AccountError.malformedRequest }
             let revision = try await prompts.revision(id: id, rev: rev, session: context.authenticatedSession())
             return try context.responseEncoder.encode(revision, from: request, context: context)
         }
+    }
+
+    static func positiveRevision(_ value: String) -> Int64? {
+        guard let rev = Int64(value), rev > 0, String(rev) == value else { return nil }
+        return rev
     }
 }

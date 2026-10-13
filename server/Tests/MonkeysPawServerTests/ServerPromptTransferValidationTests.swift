@@ -7,6 +7,15 @@ import Testing
 
 @Suite(.serialized)
 struct ServerPromptTransferValidationTests {
+    @Test(arguments: [
+        ("0", Int64?.none), ("-1", nil), ("+1", nil), ("01", nil), ("1", 1),
+        ("9223372036854775807", Int64.max), ("9223372036854775808", nil)
+    ])
+    func revisionParserEnforcesPositiveCanonicalInt64Grammar(combination: (String, Int64?)) {
+        let (value, expected) = combination
+        #expect(PromptRoutes.positiveRevision(value) == expected)
+    }
+
     @Test func deleteQueryMoveBodyAndBothRoutesEnforceWireAndSessionRules() async throws {
         try await withGroupFixture { fixture in
             let owner = try await fixture.user("owner")
@@ -48,6 +57,14 @@ struct ServerPromptTransferValidationTests {
                         try PromptHTTPTest.error($0, .failure(.malformedRequest))
                     }
                 }
+                for rev in ["0", "-1", "+1", "01", "9223372036854775808"] {
+                    try await client.execute(uri: "/api/v1/prompts/\(id)/revisions/\(rev)", method: .get, headers: PromptHTTPTest.headers(session)) {
+                        try PromptHTTPTest.error($0, .failure(.malformedRequest))
+                    }
+                }
+                try await client.execute(uri: "/api/v1/prompts/\(id)/revisions/9223372036854775807", method: .get, headers: PromptHTTPTest.headers(session)) {
+                    try PromptHTTPTest.error($0, .failure(.notFound))
+                }
                 let bodies = [
                     "[]", "{}", "{\"base_rev\":0,\"scope\":\"user\",\"path\":\"Shared.md\"}",
                     "{\"base_rev\":1,\"scope\":\"group\",\"path\":\"Shared.md\"}",
@@ -67,7 +84,9 @@ struct ServerPromptTransferValidationTests {
                 }
                 let head = SyncAPI.ConflictHead(rev: 1, scope: .user, path: "Example.md", content: promptContent())
                 var exact = try JSONEncoder().encode(SyncAPI.MovePromptRequest(baseRev: 99, scope: move.scope, path: move.path))
-                exact.append(Data(repeating: 0x20, count: SyncAPI.requestEnvelopeMaxBytes - exact.count))
+                let padding = SyncAPI.requestEnvelopeMaxBytes - exact.count
+                try #require(padding >= 0, "Encoded move request exceeds the envelope limit")
+                exact.append(Data(repeating: 0x20, count: padding))
                 try await client.execute(uri: "/api/v1/prompts/\(id)/move", method: .post, headers: PromptHTTPTest.headers(session),
                                          body: .init(bytes: exact)) { try PromptHTTPTest.error($0, .conflict(head: head)) }
                 try await client.execute(uri: "/api/v1/prompts/\(id)?base_rev=9223372036854775807", method: .delete, headers: PromptHTTPTest.headers(session)) {
@@ -90,7 +109,9 @@ struct ServerPromptTransferValidationTests {
             let group = try await fixture.group(owner: owner)
             let session = try await fixture.account.session(owner)
             let header = promptContent(metadata: "x: [a, b, c]\n", body: "")
-            let source = header + String(repeating: "a", count: Limits.maxPromptBytes - header.utf8.count)
+            let bodyBytes = Limits.maxPromptBytes - header.utf8.count
+            try #require(bodyBytes >= 0, "Metadata header exceeds the prompt limit")
+            let source = header + String(repeating: "a", count: bodyBytes)
             _ = try await fixture.writePrompt(content: source, session: session.identity)
             let before = try await fixture.persistence.promptStorageState()
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts, sessions: fixture.account.sessions)

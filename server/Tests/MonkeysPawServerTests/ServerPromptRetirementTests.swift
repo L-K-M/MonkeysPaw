@@ -78,6 +78,7 @@ struct ServerPromptRetirementTests {
             #expect(deletion.rev == 4 && deletion.content == nil && deletion.at == at)
             try await fixture.persistence.execute("DELETE FROM prompts WHERE id = \(bind: id)")
             #expect(try await fixture.persistence.count("prompt_revisions") == 0)
+            #expect(try await fixture.persistence.count("retired_prompt_ids") == 1)
             #expect(try await fixture.persistence.promptEvents() == events)
             for actor in [creatorSession, session] {
                 let put = SyncAPI.PutPromptRequest(baseRev: 0, scope: .group(groupID: group.id), path: "Revived.md", content: promptContent())

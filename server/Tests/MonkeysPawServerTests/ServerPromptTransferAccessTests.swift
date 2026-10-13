@@ -104,12 +104,14 @@ struct ServerPromptTransferAccessTests {
             let sourceScope: SyncAPI.PromptScope = source == nil ? .user : .group(groupID: first.id)
             let targetScope: SyncAPI.PromptScope = target == nil ? .user : .group(groupID: second.id)
             if source != nil && creator { try await fixture.member(groupID: first.id, user: actor, role: .editor) }
+            let createdAt = ServerTimestamp.string(fixture.account.clock.now())
             _ = try await fixture.writePrompt(scope: sourceScope, session: creator ? session.identity : ownerSession.identity)
             if let source {
                 if let role = source.role { try await fixture.member(groupID: first.id, user: actor, role: role) }
                 else { try await fixture.persistence.execute("DELETE FROM memberships WHERE group_id = \(bind: first.id) AND user_id = \(bind: actor.id)") }
             }
             if let role = target?.role { try await fixture.member(groupID: second.id, user: actor, role: role) }
+            // Editors may delete any group prompt, but may move only prompts they created (§8.2).
             let denied: SyncAPI.FailureCode?
             if source == nil && !creator || source == .nonMember { denied = .notFound }
             else if source == .viewer || source == .editor && !creator { denied = .forbidden }
@@ -134,7 +136,7 @@ struct ServerPromptTransferAccessTests {
                     let head = try #require(await fixture.promptRepository.read { prompts, _, _, _ in
                         try await prompts.head(id: GroupTestFixture.livePrompt)
                     })
-                    #expect(head.createdBy == (creator ? actor.id : owner.id) && head.createdAt == owner.createdAt)
+                    #expect(head.createdBy == (creator ? actor.id : owner.id) && head.createdAt == createdAt)
                     #expect(head.updatedBy == actor.id && head.updatedAt == at && head.rev == 2 && head.deletedAt == nil)
                     #expect(head.identity == PromptOwnership(scope: targetScope, userID: actor.id))
                     let revision = try await fixture.prompts.revision(id: head.id, rev: 2, session: session.identity)

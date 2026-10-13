@@ -4,13 +4,34 @@ import SQLKit
 import Testing
 @testable import MonkeysPawServer
 
+enum PromptSessionChange: Sendable {
+    case sourceDemote, sourceRemove, sourceDelete, disable, revoke
+    case destinationDemote, destinationRemove, destinationDelete, sourceOwnerToEditor
+}
+
 @Suite(.serialized)
 struct ServerPromptTransferSessionTests {
+    private enum BlockerFailure: Error { case injected }
+
+    @Test func failedBlockerStillOpensTheEntryLatch() async throws {
+        try await withGroupFixture { fixture in
+            let entered = LoginTestLatch(), release = LoginTestLatch()
+            defer { Task { await release.open() } }
+            let blocker = Task {
+                try await Self.holdWrite(database: fixture.persistence.database, entered: entered, release: release) { _ in
+                    throw BlockerFailure.injected
+                }
+            }
+            try await entered.wait(timeout: .seconds(10))
+            await #expect(throws: BlockerFailure.injected) { try await blocker.value }
+        }
+    }
+
     @Test(arguments: DeleteOrMove.allCases.flatMap { operation in
-        ["source_demote", "source_remove", "source_delete", "disable", "revoke"].map { (operation, $0) }
-        + (operation == .move ? ["destination_demote", "destination_remove", "destination_delete", "source_owner_to_editor"].map { (operation, $0) } : [])
+        [PromptSessionChange.sourceDemote, .sourceRemove, .sourceDelete, .disable, .revoke].map { (operation, $0) }
+        + (operation == .move ? [PromptSessionChange.destinationDemote, .destinationRemove, .destinationDelete, .sourceOwnerToEditor].map { (operation, $0) } : [])
     })
-    func queuedDeleteAndMoveRecheckSourceDestinationAndSession(combination: (DeleteOrMove, String)) async throws {
+    func queuedDeleteAndMoveRecheckSourceDestinationAndSession(combination: (DeleteOrMove, PromptSessionChange)) async throws {
         let (operation, change) = combination
         try await withGroupFixture { fixture in
             let owner = try await fixture.user("owner")
@@ -24,26 +45,25 @@ struct ServerPromptTransferSessionTests {
             _ = try await fixture.writePrompt(scope: .group(groupID: source.id), session: ownerSession.identity)
             let before = try await fixture.persistence.promptStorageState()
             let entered = LoginTestLatch(), release = LoginTestLatch()
+            defer { Task { await release.open() } }
             let blocker = Task {
-                try await fixture.persistence.database.write { sql in
+                try await Self.holdWrite(database: fixture.persistence.database, entered: entered, release: release) { sql in
                     switch change {
-                    case "source_demote", "destination_demote", "source_owner_to_editor":
-                        let groupID = change == "destination_demote" ? destination.id : source.id
-                        let role = change == "source_owner_to_editor" ? "editor" : "viewer"
+                    case .sourceDemote, .destinationDemote, .sourceOwnerToEditor:
+                        let groupID = change == .destinationDemote ? destination.id : source.id
+                        let role = change == .sourceOwnerToEditor ? "editor" : "viewer"
                         try await sql.raw("UPDATE memberships SET role = \(bind: role) WHERE group_id = \(bind: groupID) AND user_id = \(bind: actor.id)").run()
-                    case "source_remove", "destination_remove":
-                        let groupID = change == "destination_remove" ? destination.id : source.id
+                    case .sourceRemove, .destinationRemove:
+                        let groupID = change == .destinationRemove ? destination.id : source.id
                         try await sql.raw("DELETE FROM memberships WHERE group_id = \(bind: groupID) AND user_id = \(bind: actor.id)").run()
-                    case "source_delete", "destination_delete":
-                        let groupID = change == "destination_delete" ? destination.id : source.id
+                    case .sourceDelete, .destinationDelete:
+                        let groupID = change == .destinationDelete ? destination.id : source.id
                         try await sql.raw("UPDATE groups SET deleted_at = created_at WHERE id = \(bind: groupID)").run()
-                    case "disable":
+                    case .disable:
                         try await sql.raw("UPDATE users SET disabled_at = created_at WHERE id = \(bind: actor.id)").run()
-                    default:
+                    case .revoke:
                         try await sql.raw("UPDATE devices SET revoked_at = created_at WHERE id = \(bind: session.identity.deviceID)").run()
                     }
-                    await entered.open()
-                    await release.wait()
                 }
             }
             await entered.wait()
@@ -54,12 +74,26 @@ struct ServerPromptTransferSessionTests {
             }
             await release.open()
             try await blocker.value
-            let expected: AccountError
-            if change == "disable" || change == "revoke" { expected = .unauthorized }
-            else if change == "source_demote" || change == "destination_demote" || change == "source_owner_to_editor" { expected = .forbidden }
-            else { expected = .notFound }
+            let expected: AccountError = switch change {
+            case .disable, .revoke: .unauthorized
+            case .sourceDemote, .destinationDemote, .sourceOwnerToEditor: .forbidden
+            case .sourceRemove, .destinationRemove, .sourceDelete, .destinationDelete: .notFound
+            }
             await #expect(throws: expected) { _ = try await pending.value }
             #expect(try await fixture.persistence.promptStorageState() == before)
+        }
+    }
+
+    private static func holdWrite(
+        database: ServerDatabase, entered: LoginTestLatch, release: LoginTestLatch,
+        change: @escaping @Sendable (any SQLDatabase) async throws -> Void
+    ) async throws {
+        // A failed transaction must still wake the caller waiting for entry.
+        defer { Task { await entered.open() } }
+        try await database.write { sql in
+            try await change(sql)
+            await entered.open()
+            await release.wait()
         }
     }
 }
