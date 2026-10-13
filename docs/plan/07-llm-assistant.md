@@ -68,6 +68,20 @@ re-entry or Clear before it can be used.
   after switching away and back; cancellation also
   invalidates that generation. Retesting an unchanged draft preserves its last
   successful suggestions if the new test fails.
+- **Settings model.** `AssistantSettingsModel` stages profile metadata and
+  keep/replace/clear key edits. Add and rename do not persist until Save;
+  selecting a saved profile changes the active profile, and selecting none
+  disables it. A new draft does not replace an existing active profile. Save
+  uses the provider service's validation and typed errors, including key
+  re-entry after a kind or origin change. Blank key input means Keep.
+  Published state contains no key value, only its edit mode and saved tier;
+  the file tier is explicitly labelled "unencrypted". Secret-tier reads and
+  persistence run on serial background work, with state and callbacks on
+  `MainThread`. Draft edits remain usable during Save and are not overwritten
+  by its older completion. Persistence intents cannot overlap. Refresh
+  discards staged edits and reloads the active saved profile. Test is the
+  only settings intent that sends a request; edits, selection, refresh,
+  Save, Clear and deletion cancel and invalidate pending Test replies.
 - **Anthropic defaults.**
   - Model `claude-opus-5-5`, `ANTHROPIC_MAX_TOKENS = 16000`.
   - The system prompt goes in the top-level `system` field. OpenAI-compatible

@@ -30,6 +30,20 @@ graph replacement and folder reveal to the platform composition root.
 General also offers **Forget all values** with confirmation through
 `RememberedValuesSettingsModel`, including while the picker panel is closed.
 
+Settings → Assistant renders `AssistantSettingsModel`: saved profiles and
+the active profile, a staged name/kind/base URL/model draft, key edit mode,
+saved-key tier, typed save errors, and Test results/model suggestions. You
+can add, select, rename and delete profiles, keep/replace/clear a key, Save,
+or explicitly Test the draft. A stored key is never read back into a field;
+the Linux file tier says "unencrypted" and the environment tier says
+"read-only". The native secure field owns typed text and forwards it to the
+model; it clears when the draft changes profile or a key edit is committed
+or discarded. Model IDs remain editable after any listing failure. Views
+disable overlapping persistence commands while a save/select/delete is
+pending; metadata and key edits during Save remain staged. Closing the
+settings model cancels its Test. Native controls and composition follow in
+A13/A14; Core owns the behavior independently of either front end.
+
 Per OS:
 
 - **macOS.** SwiftUI for windows and forms. AppKit for the NSPanel and native
