@@ -17,6 +17,8 @@ final class MemorySyncFileOperations: SyncFileOperations {
 
     func publish(_ bytes: Data, at path: RelativePath, expecting: SyncFileExpectation,
                  mode: SyncFileMode) throws -> SyncFilePublication {
+        try checkParents(of: path)
+        guard try !allDirectories().contains(path) else { throw SyncFileOperationError(.occupied) }
         let displaced = try check(path, expecting: expecting)
         try files.write(bytes, at: path.string)
         modes[path] = mode
@@ -64,10 +66,16 @@ final class MemorySyncFileOperations: SyncFileOperations {
 
     func createDirectory(at path: RelativePath) throws {
         try FileStorePath.validate(path.string)
-        guard !folders.contains(path), try files.stamp(at: path.string) == nil else {
+        try checkParents(of: path)
+        guard try !allDirectories().contains(path), try files.stamp(at: path.string) == nil else {
             throw SyncFileOperationError(.occupied)
         }
         folders.insert(path)
+        var ancestor = parent(of: path)
+        while let directory = ancestor {
+            folders.insert(directory)
+            ancestor = parent(of: directory)
+        }
         do { try flushDirectory(at: parent(of: path)) }
         catch { throw SyncFileOperationError(.durabilityFailed, effect: .applied) }
     }
@@ -75,16 +83,23 @@ final class MemorySyncFileOperations: SyncFileOperations {
     func renameDirectory(from source: RelativePath, to destination: RelativePath) throws {
         try FileStorePath.validate(source.string)
         try FileStorePath.validate(destination.string)
-        guard folders.contains(source) else { throw SyncFileOperationError(.notFound) }
-        guard !folders.contains(destination), try files.stamp(at: destination.string) == nil else {
+        try checkParents(of: destination)
+        let known = try allDirectories()
+        guard known.contains(source) else { throw SyncFileOperationError(.notFound) }
+        guard !known.contains(destination), try files.stamp(at: destination.string) == nil else {
             throw SyncFileOperationError(.occupied)
         }
         let descendants = try files.listFiles().filter { $0.relativePath.utf8.starts(with: (source.string + "/").utf8) }
         for file in descendants {
             let suffix = file.relativePath.utf8.dropFirst(source.string.utf8.count)
-            try files.move(from: file.relativePath, to: destination.string + String(decoding: suffix, as: UTF8.self))
+            let newPath = destination.string + String(decoding: suffix, as: UTF8.self)
+            try files.move(from: file.relativePath, to: newPath)
+            if let mode = modes.removeValue(forKey: RelativePath(file.relativePath)) {
+                modes[RelativePath(newPath)] = mode
+            }
         }
-        let moved = folders.filter { $0 == source || $0.string.utf8.starts(with: (source.string + "/").utf8) }
+        folders.formUnion(known)
+        let moved = known.filter { $0 == source || $0.string.utf8.starts(with: (source.string + "/").utf8) }
         for folder in moved {
             folders.remove(folder)
             let suffix = folder.string.utf8.dropFirst(source.string.utf8.count)
@@ -124,6 +139,14 @@ final class MemorySyncFileOperations: SyncFileOperations {
                 throw SyncFileOperationError(.changed)
             }
             return bytes
+        }
+    }
+
+    private func checkParents(of path: RelativePath) throws {
+        var ancestor = parent(of: path)
+        while let directory = ancestor {
+            guard try files.stamp(at: directory.string) == nil else { throw SyncFileOperationError(.invalidPath) }
+            ancestor = parent(of: directory)
         }
     }
 

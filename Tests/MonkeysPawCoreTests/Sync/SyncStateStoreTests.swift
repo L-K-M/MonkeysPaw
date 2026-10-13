@@ -369,6 +369,12 @@ final class SyncStateStoreTests: XCTestCase {
         XCTAssertThrowsError(try operations.createDirectory(at: "Groups/Empty"))
         try operations.renameDirectory(from: "Groups/Empty", to: "Groups/Renamed")
         XCTAssertEqual(try operations.directories(at: "Groups"), [RelativePath("Groups/Renamed")])
+        try files.put("unowned", at: "Groups/Occupied/File.md")
+        XCTAssertThrowsError(try operations.createDirectory(at: "Groups/Occupied"))
+        XCTAssertThrowsError(try operations.renameDirectory(from: "Groups/Renamed", to: "Groups/Occupied"))
+        XCTAssertEqual(try files.text(at: "Groups/Occupied/File.md"), "unowned")
+        try operations.renameDirectory(from: "Groups/Occupied", to: "Groups/Moved")
+        XCTAssertEqual(try files.text(at: "Groups/Moved/File.md"), "unowned")
     }
 
     private static func editPrompt(_ object: inout [String: Any], id: String,

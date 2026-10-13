@@ -8,6 +8,7 @@ struct SyncStoreSnapshot<Value> {
 /// One instance per app-data document. Its lock owns I/O, cache and the fail-closed
 /// latch. Edit closures must not re-enter. FileStore has no filesystem-wide CAS.
 final class SyncPersistence<Document: Codable> {
+    private enum FlushMode { case publication, deletion }
     private struct Version: Decodable { let version: Int }
     private struct Loaded {
         let document: Document?
@@ -67,7 +68,7 @@ final class SyncPersistence<Document: Codable> {
             catch FileStoreError.notFound { deleted = false }
             catch let error as FileStoreError { throw SyncError.writeFailed(error) }
             catch { throw SyncError.writeFailed(.ioFailure) }
-            if deleted { try flush(file: false) }
+            if deleted { try flush(.deletion) }
         }
         cached = SyncStoreSnapshot(value: next, error: nil)
         hasDocument = next != nil
@@ -122,12 +123,12 @@ final class SyncPersistence<Document: Codable> {
         do { try files.writePrivate(bytes, at: path) }
         catch let error as FileStoreError { throw SyncError.writeFailed(error) }
         catch { throw SyncError.writeFailed(.ioFailure) }
-        try flush(file: true)
+        try flush(.publication)
     }
 
-    private func flush(file: Bool) throws {
+    private func flush(_ mode: FlushMode) throws {
         do {
-            if file { try operations.flushFile(at: RelativePath(path)) }
+            if case .publication = mode { try operations.flushFile(at: RelativePath(path)) }
             try operations.flushDirectory(at: RelativePath("sync"))
             try operations.flushDirectory(at: nil)
         } catch {
