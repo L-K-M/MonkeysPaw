@@ -95,6 +95,8 @@ final class LinuxEnvironment {
         let browser: LibraryBrowserModel
         let editing: PromptEditingService
         let editor: EditorModel
+        let importModel: ImportModel
+        let imports: LinuxLibraryImportState
         let callbacks: LibraryCallbacks
         let initializationError: FileStoreError?
         var started = false
@@ -103,6 +105,7 @@ final class LinuxEnvironment {
         init(directory: URL, files: FileStore, library: LibraryService,
              index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel, browser: LibraryBrowserModel,
              editing: PromptEditingService, editor: EditorModel,
+             importModel: ImportModel, imports: LinuxLibraryImportState,
              callbacks: LibraryCallbacks, initializationError: FileStoreError?) {
             self.directory = directory
             self.files = files
@@ -113,11 +116,14 @@ final class LinuxEnvironment {
             self.browser = browser
             self.editing = editing
             self.editor = editor
+            self.importModel = importModel
+            self.imports = imports
             self.callbacks = callbacks
             self.initializationError = initializationError
         }
 
         func stop() {
+            imports.deactivate()
             callbacks.deactivate()
             browser.deactivate()
             editor.deactivate()
@@ -146,6 +152,8 @@ final class LinuxEnvironment {
     private let launchURI: (URL) -> Void
     private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
     private let folderChooser: LinuxFolderChoosing
+    private let importChooser: LinuxImportChoosing
+    private let importSourceFactory: () -> LinuxImportSourceReader
     private let backgroundWork: BackgroundWork
     private let suppliedAssistantTransport: HTTPTransporting?
     private let suppliedClipboard: Clipboard?
@@ -160,6 +168,8 @@ final class LinuxEnvironment {
     var pickerModel: PickerModel { libraryGraph.picker }
     var libraryBrowserModel: LibraryBrowserModel { libraryGraph.browser }
     var editorModel: EditorModel { libraryGraph.editor }
+    var importModel: ImportModel { libraryGraph.importModel }
+    var libraryImportState: LinuxLibraryImportState { libraryGraph.imports }
 
     private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
@@ -268,6 +278,8 @@ final class LinuxEnvironment {
          focusTracker: FocusTracker? = nil,
          libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
          folderChooser: LinuxFolderChoosing? = nil,
+         importChooser: LinuxImportChoosing? = nil,
+         importSourceFactory: @escaping () -> LinuxImportSourceReader = { LinuxImportSourceReader() },
          backgroundWork: BackgroundWork? = nil,
          assistantTransport: HTTPTransporting? = nil,
          clipboard: Clipboard? = nil,
@@ -280,6 +292,8 @@ final class LinuxEnvironment {
         self.launchURI = launchURI
         self.libraryWatcherFactory = libraryWatcherFactory
         self.folderChooser = folderChooser ?? GTKFolderChooser()
+        self.importChooser = importChooser ?? GTKImportChooser()
+        self.importSourceFactory = importSourceFactory
         self.backgroundWork = backgroundWork ?? LinuxBackgroundWork()
         suppliedAssistantTransport = assistantTransport
         suppliedClipboard = clipboard
@@ -472,12 +486,14 @@ final class LinuxEnvironment {
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
             currentLibraryWindow = LinuxLibraryWindow(application: application,
-                browser: libraryBrowserModel, editor: editorModel, openFolder: { [weak self] in
+                browser: libraryBrowserModel, editor: editorModel,
+                imports: libraryImportState, importChooser: importChooser, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
         }
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
+        libraryImportState.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         currentLibraryWindow?.show()
     }
 
@@ -623,6 +639,21 @@ final class LinuxEnvironment {
         // completions must still reach callers after the graph stops.
         let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: mainThread)
         let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: callbacks, editor: editor)
+        let sources = importSourceFactory()
+        let importModel = ImportModel(service: ImportService(library: library, sources: sources,
+            work: backgroundWork, main: callbacks))
+        let imports = LinuxLibraryImportState(model: importModel, available: initializationError == nil,
+            main: callbacks, prepare: { [weak callbacks, weak self] urls, done in
+                self?.backgroundWork.run {
+                    let requests = sources.requests(for: urls)
+                    callbacks?.run { done(requests) }
+                }
+            }, openImported: { [weak self, weak index, weak callbacks] path in
+                guard let self, callbacks?.isActive == true,
+                      let entry = index?.search("").first(where: { $0.relativePath.utf8.elementsEqual(path.utf8) }) else { return false }
+                self.currentLibraryWindow?.openPrompt(LibraryPromptSelection(identity: entry.identity, relativePath: RelativePath(path)))
+                return true
+            })
         picker.libraryAvailable = initializationError == nil
         let watcher: LibraryWatcher?
         do {
@@ -630,7 +661,8 @@ final class LinuxEnvironment {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
         } catch { watcher = nil }
         let graph = LibraryGraph(directory: directory, files: files, library: library,
-            index: index, watcher: watcher, picker: picker, browser: browser, editing: editing, editor: editor, callbacks: callbacks,
+            index: index, watcher: watcher, picker: picker, browser: browser, editing: editing, editor: editor,
+            importModel: importModel, imports: imports, callbacks: callbacks,
             initializationError: initializationError)
         panel.rebind(picker: picker, session: session.currentSession(),
             openSetup: { [weak self, weak callbacks] in
@@ -671,7 +703,7 @@ final class LinuxEnvironment {
         quitPending = false
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
-        currentLibraryWindow?.rebind(browser: libraryGraph.browser, editor: libraryGraph.editor)
+        currentLibraryWindow?.rebind(browser: libraryGraph.browser, editor: libraryGraph.editor, imports: libraryGraph.imports)
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
@@ -761,6 +793,7 @@ final class LinuxEnvironment {
     private func degradeLibrary(_ graph: LibraryGraph, _ error: FileStoreError? = nil) {
         graph.watcher?.stop()
         graph.picker.libraryAvailable = false
+        graph.imports.setLibraryAvailable(false)
         currentLibraryWindow?.setLibraryAvailable(false)
         currentLibraryStatusModel?.update(.lostWhileRunning)
         warnAboutLibrary(graph, error)
