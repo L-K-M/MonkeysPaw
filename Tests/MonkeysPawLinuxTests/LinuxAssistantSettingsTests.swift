@@ -597,13 +597,19 @@ final class LinuxAssistantSettingsTests: XCTestCase {
 
     private func waitLoaded() {
         drainUI() // A retained model can still be idle before show()'s queued refresh starts.
-        XCTAssertTrue(GTKTestSupport.spin { self.model != nil && self.model?.state.operation == nil && self.model?.state.keyStorage != .loading })
+        XCTAssertTrue(settled { self.model != nil && self.model?.state.operation == nil && self.model?.state.keyStorage != .loading })
+    }
+
+    /// Loads and saves reach the secret store on a worker; a loaded host can
+    /// exceed the default three-second spin (observed at load average 10).
+    private func settled(_ predicate: () -> Bool) -> Bool {
+        GTKTestSupport.spin(until: predicate, timeout: .seconds(10))
     }
 
     private func save() throws {
         let reset = model?.state.keyInputReset
         try click("save")
-        XCTAssertTrue(GTKTestSupport.spin { self.model?.state.operation == nil && self.model?.state.keyInputReset != reset })
+        XCTAssertTrue(settled { self.model?.state.operation == nil && self.model?.state.keyInputReset != reset })
         waitLoaded()
         XCTAssertNil(model?.state.error)
     }
