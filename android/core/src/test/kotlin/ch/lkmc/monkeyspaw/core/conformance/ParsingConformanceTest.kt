@@ -100,7 +100,7 @@ internal class ParsingConformanceTest {
     }
 
     private fun metadataJson(metadata: FrontMatter): JsonObject = buildJsonObject {
-        put("id", metadata.id?.let(::JsonPrimitive) ?: JsonNull)
+        put("id", metadata.id?.rawValue?.let(::JsonPrimitive) ?: JsonNull)
         put("title", metadata.title)
         put("description", metadata.description?.let(::JsonPrimitive) ?: JsonNull)
         put("tags", JsonArray(metadata.tags.map(::JsonPrimitive)))

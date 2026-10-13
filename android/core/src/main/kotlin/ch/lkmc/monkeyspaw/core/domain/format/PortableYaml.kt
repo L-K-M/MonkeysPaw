@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.core.domain.format
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import java.math.BigInteger
 import java.text.Normalizer
 import java.util.Locale
@@ -25,7 +26,7 @@ import org.snakeyaml.engine.v2.tokens.Token
 
 /** Syntax events only: never Load, Compose, a bean constructor, or a library scalar resolver. */
 internal object PortableYaml {
-    private val settings = LoadSettings.builder().setCodePointLimit(PromptCodec.maxSourceBytes)
+    private val settings = LoadSettings.builder().setCodePointLimit(Limits.maxPromptBytes)
         .setVersionFunction { it }.build()
     private val legacyBooleans = setOf("y", "yes", "n", "no", "on", "off")
     private val coreRules = listOf(
