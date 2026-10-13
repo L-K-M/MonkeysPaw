@@ -6,12 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build and verify artifacts without publishing a release
+        description: Build and verify artifacts and images without publishing
         type: boolean
         default: true
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - server/**
       - packaging/**
       - scripts/package-macos.sh
       - scripts/build.sh
@@ -21,7 +22,7 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-# Each build/verification job drops write permission; only publishing needs it.
+# Builds drop write permission; registry write access is scoped to image-publish.
 permissions:
   contents: write
 
@@ -50,6 +51,9 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       publish: ${{ steps.version.outputs.publish }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      revision: ${{ steps.version.outputs.revision }}
+      created: ${{ steps.version.outputs.created }}
+      image_tags: ${{ steps.image-tags.outputs.tags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,7 +85,34 @@ jobs:
             echo "tag=$tag"
             echo "publish=$PUBLISH_REQUESTED"
             echo "prerelease=$prerelease"
+            echo "revision=$(git rev-parse HEAD)"
+            echo "created=$(git show -s --format=%cI HEAD)"
           } >> "$GITHUB_OUTPUT"
+      - name: Derive and self-test image tags
+        id: image-tags
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          image_tags() {
+            local version="${1#v}"
+            [[ "$1" == v* && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ && ${#version} -le 128 ]] || return 1
+            case "$version" in
+              *-*) printf '%s\n' "$version" ;;
+              *) printf '%s %s latest\n' "$version" "${version%.*}" ;;
+            esac
+          }
+
+          test "$(image_tags v1.2.3)" = '1.2.3 1.2 latest'
+          test "$(image_tags v0.1.0-beta.1)" = '0.1.0-beta.1'
+          test "$(image_tags v0.2.0-rc-1)" = '0.2.0-rc-1'
+          if image_tags v1.2.3+build >/dev/null || image_tags main >/dev/null; then
+            echo '::error::Image tag self-test accepted an invalid tag'
+            exit 1
+          fi
+          tags=$(image_tags "$RELEASE_TAG")
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Build release deb
@@ -234,9 +265,209 @@ jobs:
           test "${#files[@]}" -eq 5
           (cd dist && sha256sum -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256")
 
+  server-images:
+    name: Build and smoke server image (${{ matrix.arch }})
+    needs: [tests, verify, linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      REVISION: ${{ needs.verify.outputs.revision }}
+      CREATED: ${{ needs.verify.outputs.created }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OCI archive tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+      - name: Build native OCI archive and load it for smoke testing
+        run: |
+          set -euo pipefail
+          case "$ARCH:$(uname -m)" in
+            amd64:x86_64|arm64:aarch64) ;;
+            *) echo '::error::Image build requires a native runner'; exit 1 ;;
+          esac
+
+          mkdir -p "$RUNNER_TEMP/server-image"
+          archive="$RUNNER_TEMP/server-image/server-$ARCH.tar"
+          # The container driver supports OCI export without changing the daemon.
+          docker buildx create --name monkeyspaw-server-release --driver docker-container --use
+          docker buildx build --platform "linux/$ARCH" --provenance=false --sbom=false \
+            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$REVISION" \
+            --build-arg "CREATED=$CREATED" --output "type=oci,dest=$archive" \
+            -f server/Dockerfile .
+          skopeo inspect --raw "oci-archive:$archive" > "$RUNNER_TEMP/server-manifest.json"
+          skopeo inspect --config "oci-archive:$archive" > "$RUNNER_TEMP/server-config.json"
+          python3 - "$RUNNER_TEMP/server-manifest.json" "$RUNNER_TEMP/server-config.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1]) as file:
+              manifest = json.load(file)
+          with open(sys.argv[2]) as file:
+              config = json.load(file)
+          assert manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+          assert config["os"] == "linux" and config["architecture"] == os.environ["ARCH"]
+          labels = config["config"]["Labels"]
+          expected = {
+              "source": "https://github.com/L-K-M/MonkeysPaw",
+              "version": os.environ["VERSION"],
+              "revision": os.environ["REVISION"],
+              "created": os.environ["CREATED"],
+              "licenses": "Unlicense",
+          }
+          for key, value in expected.items():
+              assert labels["org.opencontainers.image." + key] == value, key
+          PY
+          skopeo manifest-digest "$RUNNER_TEMP/server-manifest.json" \
+            > "$RUNNER_TEMP/server-image/server-$ARCH.digest"
+          skopeo copy "oci-archive:$archive" docker-daemon:monkeyspaw-server:release
+      - name: Wait for container health and require API status 200
+        run: |
+          set -euo pipefail
+          bootstrap_dir=$(mktemp -d)
+          trap 'docker rm --force monkeyspaw-server-release >/dev/null 2>&1 || true; rm -rf "$bootstrap_dir"' EXIT
+          head -c 32 /dev/urandom | base64 > "$bootstrap_dir/admin-password"
+          chmod 0444 "$bootstrap_dir/admin-password"
+          docker run --detach --name monkeyspaw-server-release \
+            --publish 127.0.0.1:8080:8080 \
+            --volume "$bootstrap_dir/admin-password:/run/secrets/admin-password:ro" \
+            --env MONKEYSPAW_ADMIN_PASSWORD_FILE=/run/secrets/admin-password \
+            monkeyspaw-server:release
+
+          health_wait_attempts=30
+          health_poll_seconds=2
+          for _attempt in $(seq 1 "$health_wait_attempts"); do
+            if [[ "$(docker inspect --format '{{.State.Running}}' monkeyspaw-server-release)" != true ]]; then
+              docker logs monkeyspaw-server-release
+              exit 1
+            fi
+            health=$(docker inspect --format '{{.State.Health.Status}}' monkeyspaw-server-release)
+            if [[ "$health" == healthy ]]; then
+              status=$(curl --fail --silent --show-error --max-time 5 --output /dev/null \
+                --write-out '%{http_code}' http://127.0.0.1:8080/api/health)
+              test "$status" = 200
+              exit 0
+            fi
+            if [[ "$health" == unhealthy ]]; then
+              docker logs monkeyspaw-server-release
+              exit 1
+            fi
+            sleep "$health_poll_seconds"
+          done
+
+          docker logs monkeyspaw-server-release
+          exit 1
+      - name: Upload smoke-tested OCI archive and digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # Keep images outside the MonkeysPaw-release-* five-file assembly.
+          name: MonkeysPaw-server-image-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/server-image/server-${{ matrix.arch }}.tar
+            ${{ runner.temp }}/server-image/server-${{ matrix.arch }}.digest
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - name: Remove test container and builder
+        if: always()
+        run: |
+          docker rm --force monkeyspaw-server-release || true
+          docker buildx rm monkeyspaw-server-release || true
+
+  image-publish:
+    name: Promote verified multiarch image
+    needs: [tests, verify, linux, macos, artifacts, server-images]
+    if: github.event_name != 'pull_request' && needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/l-k-m/monkeyspaw-server
+      IMAGE_TAGS: ${{ needs.verify.outputs.image_tags }}
+    # No checkout or repository scripts execute with the registry write token.
+    steps:
+      - name: Fetch both smoke-tested OCI archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: MonkeysPaw-server-image-*
+          merge-multiple: true
+          path: images
+      - name: Install OCI archive tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+      - name: Log in to ghcr after all gates pass
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Push untagged digests and verify promoted manifests
+        run: |
+          set -euo pipefail
+          image="${IMAGE_NAME,,}"
+          sources=()
+          for arch in amd64 arm64; do
+            test -s "images/server-$arch.tar"
+            digest=$(cat "images/server-$arch.digest")
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            skopeo --override-os linux --override-arch "$arch" copy --preserve-digests \
+              --authfile "$HOME/.docker/config.json" --digestfile "$RUNNER_TEMP/pushed-$arch.digest" \
+              "oci-archive:images/server-$arch.tar" "docker://$image@$digest"
+            test "$(cat "$RUNNER_TEMP/pushed-$arch.digest")" = "$digest"
+            sources+=("$image@$digest")
+          done
+
+          read -r -a tags <<< "$IMAGE_TAGS"
+          test "${#tags[@]}" -gt 0
+          tag_args=()
+          for tag in "${tags[@]}"; do tag_args+=(--tag "$image:$tag"); done
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools inspect --raw "$image:$tag" > "$RUNNER_TEMP/published-manifest.json"
+            python3 - "$RUNNER_TEMP/published-manifest.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          with open(sys.argv[1]) as file:
+              manifest = json.load(file)
+          entries = manifest["manifests"]
+          assert len(entries) == 2, "Expected exactly two platform manifests"
+          expected = {
+              ("linux", arch): Path(f"images/server-{arch}.digest").read_text().strip()
+              for arch in ("amd64", "arm64")
+          }
+          actual = {
+              (entry["platform"]["os"], entry["platform"]["architecture"]): entry["digest"]
+              for entry in entries
+          }
+          assert actual == expected, f"Unexpected platforms/digests: {actual}"
+          PY
+          done
+      - name: Log out of ghcr
+        if: always()
+        run: docker logout ghcr.io
+
   publish:
     name: Publish verified draft
-    needs: [tests, verify, linux, macos, artifacts]
+    # Registry promotion precedes undrafting; a failed image keeps the release hidden.
+    needs: [tests, verify, linux, macos, artifacts, server-images, image-publish]
     if: github.event_name != 'pull_request' && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
