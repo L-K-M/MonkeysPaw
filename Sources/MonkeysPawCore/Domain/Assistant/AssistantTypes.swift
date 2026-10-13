@@ -36,7 +36,10 @@ public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible,
     case privatePrompt
     case transport(HTTPTransportError)
     case authentication
-    case rateLimited
+    case modelNotFound
+    /// Parsed seconds only, never a raw provider header or body.
+    case rateLimited(retryAfter: TimeInterval?)
+    case overloaded
     case providerFailure(statusCode: Int)
     case truncated
     case declined
@@ -51,7 +54,9 @@ public enum AssistantError: Error, Equatable, Sendable, CustomStringConvertible,
         case .privatePrompt: return "privatePrompt"
         case .transport: return "transportFailure"
         case .authentication: return "authentication"
+        case .modelNotFound: return "modelNotFound"
         case .rateLimited: return "rateLimited"
+        case .overloaded: return "overloaded"
         case .providerFailure: return "providerFailure"
         case .truncated: return "truncated"
         case .declined: return "declined"

@@ -34,7 +34,8 @@ re-entry or Clear before it can be used.
     ([§19 B23](19-m4-m5-decisions.md)).
 - **Models.** "Test connection" lists models with
   `MODEL_LIST_TIMEOUT = 15 s` and fills the model picker. Typing a model id
-  by hand always works.
+  by hand always works. Protocol clients decode one page, retaining model IDs,
+  display names and pagination metadata for the connection-testing service.
 - **Anthropic defaults.**
   - Model `claude-opus-5-5`, `ANTHROPIC_MAX_TOKENS = 16000`.
   - The system prompt goes in the top-level `system` field. OpenAI-compatible
@@ -118,7 +119,9 @@ How each provider is asked for the schema:
 - **Anthropic.** `output_config: {format: {type: "json_schema", schema}}`.
   Every object carries `additionalProperties: false` and a `required` array
   listing every property, the same convention as the OpenAI side. `fields`
-  is an array because the schema cannot have dynamic keys.
+  is an array because the schema cannot have dynamic keys. Anthropic calls
+  never probe lower formats or retry an HTTP 400; the format probes below
+  apply only to OpenAI-compatible providers ([§19 B24](19-m4-m5-decisions.md)).
 - **OpenAI-compatible.** `response_format: {type: "json_schema",
   json_schema: {name, schema, strict: true}}`. Strict mode requires every
   property to be listed in `required` on every object, and the emitted
@@ -161,6 +164,18 @@ Parsing and validation:
     completions. Missing reasons on nonempty output are unexpected too
     ([§19 B31](19-m4-m5-decisions.md)).
   - A 200 is not success until the output parses and validates.
+
+`AssistantClient` is the shared Core seam: it accepts a write brief, a review
+snapshot, or an improvement snapshot/instruction/selected findings, plus optional
+effort, and returns a typed artifact or review with optional token counts.
+Stop outcomes precede artifact decoding, so valid-looking truncated or declined
+JSON cannot become a draft. Protocol failures use typed errors without provider bodies:
+401/403 → authentication, 404 → modelNotFound, 429 → rateLimited with optional
+parsed Retry-After seconds (delta seconds or an IMF-fixdate), 529 → overloaded,
+and other non-200 statuses → providerFailure with the status code only.
+Missing or malformed Retry-After values supply no delay; past dates supply zero.
+The client does not schedule retries from that metadata. Transport failures and
+cancellation remain typed, without underlying diagnostic strings.
 
 ### 7.3 Flows
 
