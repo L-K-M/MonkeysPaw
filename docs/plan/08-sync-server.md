@@ -169,10 +169,13 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   omit both union fields; group invites require both. HTTP invite roles are
   editor/viewer; owner invites remain CLI-only. Tokens use 32 random bytes
   as unpadded base64url, and clients construct the §8.5 join link.
-- Username input is 1–64 ASCII letters, digits, dots, underscores or hyphens,
-  beginning with a letter/digit; services lowercase it for uniqueness (B7).
-  Names are 1–255 Unicode scalars, display names 0–255, and new passwords at
-  least 12 scalars. Login/current-password strings are nonempty.
+- Usernames in every request and response, including login, are 1–64 lowercase
+  ASCII letters, digits, dots, underscores or hyphens, beginning with a letter
+  or digit. DTOs reject uppercase rather than normalize it; stored usernames
+  use the same rule for uniqueness (B7). Names are 1–255 Unicode scalars and
+  display names 0–255. All password fields are at most 72 decoded UTF-8 bytes
+  to avoid bcrypt truncation; new passwords require at least 12 scalars, while
+  login/current-password strings are nonempty.
 - PUT additionally accepts optional `origin: edit|llm|restore`, default edit.
   Revision metadata is `{rev, author_id, created_at, origin, scope, group_id?,
   path}`; lists use `{revisions}`. Reading a revision adds `id` and `content`.
@@ -188,8 +191,11 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
 `MAX_PROMPT_BYTES = 256 KiB` bounds decoded prompt UTF-8, separately from the
 2 MiB HTTP request envelope and 16 MiB serialized pull response cap (B3).
 DTOs validate wire shape; shared content/path validators still produce the
-semantic 422 issues. Transport header/body limits are enforced by later server
-slices, not by an unbounded Foundation JSON encoder.
+semantic 422 issues. Every prompt `path`, including move, revision, conflict
+head and feed payloads, is nonempty and at most `Limits.maxPathBytes` (1,024
+decoded UTF-8 bytes) at the DTO boundary. Full path rules and normalization
+remain with `SyncPathValidator` (§8.4). Transport header/body limits are
+enforced by later server slices, not by an unbounded Foundation JSON encoder.
 
 ### 8.4 Server behaviour
 

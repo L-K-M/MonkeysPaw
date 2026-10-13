@@ -213,7 +213,7 @@ extension SyncAPI {
 
         public static let schema: SyncAPISchema = .object(fields: [
             .init("id", .ulid),
-            .init("username", .storedUsername),
+            .init("username", .username),
             .init("display_name", .nullable(.displayName)),
             .init("account_kind", .reference("AccountKind")),
             .init("created_at", .timestamp),

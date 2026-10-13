@@ -534,7 +534,7 @@ alongside standard JSON Schema; a generic JSON Schema engine alone cannot
 enforce them. Spelling formats expand to the ULID/UUID patterns and UTC
 date-time checks below; timestamp calendar validity must also be checked.
 
-Wire rules are pinned by §19 B2/B3/B9/B10/B13/B17–B19 and the §8.3 body
+Wire rules are pinned by §19 B2/B3/B7/B9/B10/B13/B17–B19 and the §8.3 body
 definitions, with these corpus boundaries:
 
 - IDs are uppercase Crockford ULIDs with first character 0–7; database UUIDs
@@ -563,6 +563,14 @@ definitions, with these corpus boundaries:
   issue locations are omitted when absent, never replaced with null. Admin
   display-name patches distinguish omitted/unchanged, null/clear and
   string/set via `SyncAPI.OptionalValue`; an empty admin patch is invalid.
+- Every username, including login input and user/member metadata, is 1–64
+  lowercase ASCII letters, digits, dots, underscores or hyphens, starting
+  with a letter or digit. DTOs reject uppercase and do not normalize it.
+  All password fields are capped at `Limits.maxPasswordBytes` (72 decoded
+  UTF-8 bytes), preventing bcrypt truncation. New passwords require at least
+  12 Unicode scalars; login/current-password inputs remain nonempty.
+  Password descriptions carry `maxLength: 72` and `x-max-utf8-bytes: 72`;
+  the byte annotation also rejects multi-byte inputs below the scalar cap.
 - Group roles are owner/editor/viewer. HTTP invite roles are editor/viewer;
   account-only invites omit group id and role together. TTLs use seconds,
   1–604,800, with an absent TTL selecting the seven-day server default.
@@ -575,12 +583,16 @@ definitions, with these corpus boundaries:
   password/token hashes, credentials and underlying error text.
 - Content strings are bounded to 262,144 decoded UTF-8 bytes, independent
   of JSON escaping. Request-envelope 2 MiB and serialized-response 16 MiB
-  limits are transport responsibilities in later server slices. Path and
-  content *semantic* validation stays in Core's validators and produces 422;
+  limits are transport responsibilities in later server slices. Every prompt
+  path, including move, revision, conflict head and feed payloads, is nonempty
+  and bounded to `Limits.maxPathBytes` (1,024 decoded UTF-8 bytes). Descriptions
+  carry `minLength: 1`, `maxLength: 1024` and `x-max-utf8-bytes: 1024`.
+  Full path rules and normalization stay with `SyncPathValidator`; content
+  semantic validation stays with Core's content validator and produces 422.
   DTOs do not canonicalize file bytes or normalize paths.
 
-Typed Core tests additionally prove issue mapping, UTF-8 content boundaries,
-shared 200-item budget, opaque cursor acceptance, HTTP seconds parsing,
+Typed Core tests additionally prove issue mapping, UTF-8 content/path/password
+boundaries, shared 200-item budget, opaque cursor acceptance, HTTP seconds parsing,
 public Codable/Sendable use, and that malformed constructed values fail
 encoding. The fixtures cover every union/error branch, missing/extra fields,
 types/enums, numeric boundaries, malformed identifiers/timestamps, explicit

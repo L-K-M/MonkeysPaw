@@ -36,6 +36,7 @@ final class SyncAPITests: XCTestCase {
 
     func testConstructedInvalidValuesCannotBeEncoded() throws {
         let encoder = JSONEncoder()
+        XCTAssertThrowsError(try encoder.encode(SyncAPI.LoginRequest(username: "Alice", password: "x", deviceName: "Desktop")))
         XCTAssertThrowsError(try encoder.encode(SyncAPI.Prompt(id: id.lowercased(), rev: 1, scope: .user, path: "a.md", content: "")))
         XCTAssertThrowsError(try encoder.encode(SyncAPI.WriteResponse(rev: 0, seq: 1)))
         XCTAssertThrowsError(try encoder.encode(SyncAPI.GroupInviteRequest(role: .viewer, expiresIn: 604_801)))
@@ -52,8 +53,35 @@ final class SyncAPITests: XCTestCase {
         XCTAssertThrowsError(try encoder.encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "a.md", content: maximum + "é")))
         // DTOs accept content/path strings before the shared semantic validators
         // produce 422 issues, rather than turning their errors into malformed JSON.
-        let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "", content: "invalid YAML")
+        let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "../invalid.MD", content: "invalid YAML")
         XCTAssertNoThrow(try encoder.encode(request))
+    }
+
+    func testPasswordByteLimitAppliesToEveryCredentialField() throws {
+        let encoder = JSONEncoder()
+        for password in [String(repeating: "a", count: 72), String(repeating: "é", count: 36)] {
+            XCTAssertEqual(password.utf8.count, 72)
+            for dto in credentialDTOs(password: password) {
+                XCTAssertNoThrow(try encoder.encode(dto), type(of: dto).schemaName)
+            }
+            let oversized = password + "a"
+            XCTAssertEqual(oversized.utf8.count, 73)
+            for dto in credentialDTOs(password: oversized) {
+                XCTAssertThrowsError(try encoder.encode(dto), type(of: dto).schemaName)
+            }
+        }
+    }
+
+    func testPathBoundsUseUTF8BytesWithoutApplyingSemanticRules() throws {
+        let encoder = JSONEncoder()
+        for path in [String(repeating: "a", count: Limits.maxPathBytes),
+                     String(repeating: "é", count: Limits.maxPathBytes / 2)] {
+            let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: path, content: "")
+            XCTAssertNoThrow(try encoder.encode(request))
+            let oversized = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: path + "a", content: "")
+            XCTAssertThrowsError(try encoder.encode(oversized))
+        }
+        XCTAssertThrowsError(try encoder.encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "", content: "")))
     }
 
     func testPullBudgetIsSharedAcrossScopes() throws {
@@ -111,6 +139,17 @@ final class SyncAPITests: XCTestCase {
         XCTAssertEqual(SyncAPI.schemaDialect, "https://json-schema.org/draft/2020-12/schema")
         XCTAssertEqual(SyncAPI.requestEnvelopeMaxBytes, 2_097_152)
         XCTAssertEqual(SyncAPI.responseEnvelopeMaxBytes, 16_777_216)
+    }
+
+    private func credentialDTOs(password: String) -> [any SyncAPIDTO] {
+        [
+            SyncAPI.LoginRequest(username: "alice", password: password, deviceName: "Desktop"),
+            SyncAPI.RegisterRequest(inviteToken: String(repeating: "A", count: 43), username: "alice", password: password, deviceName: "Desktop"),
+            SyncAPI.CreateUserRequest(username: "alice", password: password),
+            SyncAPI.UpdateUserRequest(password: password),
+            SyncAPI.PasswordChangeRequest(currentPassword: password, newPassword: "long-enough-password"),
+            SyncAPI.PasswordChangeRequest(currentPassword: "x", newPassword: password)
+        ]
     }
 
     private func requireSendable<T: Sendable>(_ value: T) {}

@@ -118,7 +118,7 @@ extension SyncAPI {
 
         public static let schema: SyncAPISchema = .object(fields: [
             .init("user_id", .ulid),
-            .init("username", .storedUsername),
+            .init("username", .username),
             .init("display_name", .nullable(.displayName)),
             .init("role", .reference("Role")),
             .init("joined_at", .timestamp)

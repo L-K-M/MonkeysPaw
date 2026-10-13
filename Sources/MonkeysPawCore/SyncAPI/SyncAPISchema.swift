@@ -90,13 +90,17 @@ extension SyncAPISchema {
     static let token: Self = .string(.init(pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"))
     static let name: Self = .string(.init(minimumLength: 1, maximumLength: 255))
     static let displayName: Self = .string(.init(maximumLength: 255))
-    static let username: Self = .string(.init(pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"))
-    static let storedUsername: Self = .string(.init(pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"))
-    static let password: Self = .string(.init(minimumLength: 12))
-    static let suppliedPassword: Self = .string(.init(minimumLength: 1))
+    // §19 B7: requests (including login) and metadata require lowercase ASCII.
+    static let username: Self = .string(.init(minimumLength: 1, maximumLength: 64,
+                                            pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"))
+    static let password: Self = .string(.init(minimumLength: 12, maximumLength: Limits.maxPasswordBytes,
+                                            maximumUTF8Bytes: Limits.maxPasswordBytes))
+    static let suppliedPassword: Self = .string(.init(minimumLength: 1, maximumLength: Limits.maxPasswordBytes,
+                                                    maximumUTF8Bytes: Limits.maxPasswordBytes))
     static let content: Self = .string(.init(maximumUTF8Bytes: Limits.maxPromptBytes))
-    // Semantic path/content errors remain the services' 422 responsibility.
-    static let path: Self = .string()
+    // Wire bounds only; SyncPathValidator owns full path rules and normalization (§8.4).
+    static let path: Self = .string(.init(minimumLength: 1, maximumLength: Limits.maxPathBytes,
+                                        maximumUTF8Bytes: Limits.maxPathBytes))
     static let rev: Self = .integer(minimum: 1)
     static let baseRev: Self = .integer(minimum: 0)
     static let seq: Self = .integer(minimum: 0)
