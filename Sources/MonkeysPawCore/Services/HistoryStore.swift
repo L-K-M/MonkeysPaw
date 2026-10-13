@@ -188,7 +188,8 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
     func bindSyncWriteGate(_ gate: SyncLibraryWriteGate) {}
 
     func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
-        guard case .file(let move) = migration.change else { return false }
+        try migration.validate()
+        guard migration.store == syncKind, case .file(let move) = migration.change else { throw SyncError.invalidState }
         return try move.isUnstarted(files: files)
     }
 
@@ -208,6 +209,7 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
         return try originals.sorted { RelativePath($0.relativePath) < RelativePath($1.relativePath) }.map { file in
             let original = try files.read(at: file.relativePath)
             guard try files.stamp(at: file.relativePath) == file.stamp else { throw LibraryError.conflict }
+            guard original.count <= Limits.syncRecordMaxBytes else { throw SyncError.invalidState }
             let suffix = String(decoding: file.relativePath.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
             var replacement = original
             if suffix == "head.json", let bytes, let originalBytes,
@@ -226,7 +228,8 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
     }
 
     func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
-        guard case .file(let move) = migration.change else { throw SyncError.invalidState }
+        try migration.validate()
+        guard migration.store == syncKind, case .file(let move) = migration.change else { throw SyncError.invalidState }
         try move.apply(files: files, operations: operations)
     }
 

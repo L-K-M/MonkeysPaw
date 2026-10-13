@@ -65,7 +65,9 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         if let retainedSourcePath { try FileStorePath.validate(retainedSourcePath) }
         if kind == .trash {
             guard expected != nil, bytes == nil, hash == nil, transition == nil,
-                  retainedBytes == expected?.bytes, copyID == nil, heldIssue == nil else { throw SyncError.invalidState }
+                  retainedBytes == expected?.bytes,
+                  retainedSourcePath.map({ RelativePath($0) }) == expected.map({ RelativePath($0.path) }),
+                  copyID == nil, heldIssue == nil else { throw SyncError.invalidState }
             return
         }
         guard let bytes, hash == SyncHash(bytes: bytes), let transition,
@@ -89,7 +91,10 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   original.frontMatter.id?.rawValue != copyID else { throw SyncError.invalidState }
         } else {
             try LibraryPath.validate(path)
-            guard heldIssue == nil, copyID == nil, retainedBytes == expected?.bytes else { throw SyncError.invalidState }
+            guard heldIssue == nil, copyID == nil, retainedBytes == expected?.bytes,
+                  retainedSourcePath.map({ RelativePath($0) }) == expected.map({ RelativePath($0.path) }) else {
+                throw SyncError.invalidState
+            }
         }
         guard !document.isReadOnly, !document.issues.contains(where: { $0.severity == .error }) else {
             throw SyncError.invalidState
@@ -204,7 +209,8 @@ final class SyncLibraryMutations {
     }
 
     func apply(_ edit: SyncLibraryEdit, attempt: Attempt) throws -> SyncLibraryMutationResult {
-        try library.withSyncLock { files in
+        try edit.validate()
+        return try library.withSyncLock { files in
             let current: SyncLibraryFile?
             do { current = try Self.read(files, at: edit.path) }
             catch LibraryError.conflict { return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: nil) }

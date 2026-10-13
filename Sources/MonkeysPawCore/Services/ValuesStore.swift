@@ -99,8 +99,11 @@ public final class ValuesStore: PromptKeyedStore, SyncKeyedStore, @unchecked Sen
     }
 
     func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
-        try locked {
-            guard case .values(let source, let destination, let fields) = migration.change else { return false }
+        try migration.validate()
+        guard migration.store == syncKind, case .values(let source, let destination, let fields) = migration.change else {
+            throw SyncError.invalidState
+        }
+        return try locked {
             let payload = try read()
             return payload.values[source] == fields && payload.values[destination] == nil
         }
@@ -119,10 +122,11 @@ public final class ValuesStore: PromptKeyedStore, SyncKeyedStore, @unchecked Sen
     }
 
     func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
+        try migration.validate()
+        guard migration.store == syncKind, case .values(let source, let destination, let fields) = migration.change else {
+            throw SyncError.invalidState
+        }
         try locked {
-            guard case .values(let source, let destination, let fields) = migration.change else {
-                throw SyncError.invalidState
-            }
             var payload = try read()
             if payload.values[source] == nil, payload.values[destination] == fields {
                 try SyncDurability.flushFileAndParents(path, operations: operations)

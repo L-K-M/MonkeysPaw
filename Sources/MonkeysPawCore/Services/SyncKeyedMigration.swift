@@ -82,6 +82,14 @@ struct SyncKeyedMigration: Codable, CustomStringConvertible, CustomReflectable {
             try move.validate()
             let prefix = store.rawValue + "/"
             guard move.source.hasPrefix(prefix), move.destination.hasPrefix(prefix) else { throw SyncError.invalidState }
+            if store == .usage {
+                do {
+                    _ = try SyncIdentifiers.promptIdentity(String(move.source.dropFirst(prefix.count)))
+                    _ = try SyncIdentifiers.promptIdentity(String(move.destination.dropFirst(prefix.count)))
+                    _ = try UsageStore.decodeEvents(move.bytes)
+                    _ = try UsageStore.decodeEvents(move.destinationBytes)
+                } catch { throw SyncError.invalidState }
+            }
         case .values(let source, let destination, _):
             guard store == .values, source != destination else { throw SyncError.invalidState }
             _ = try SyncIdentifiers.promptIdentity(source)
@@ -110,13 +118,13 @@ struct SyncKeyedFileMove: Codable {
     }
 
     func validate() throws {
-        try FileStorePath.validate(source)
-        try FileStorePath.validate(destination)
-        guard RelativePath(source) != RelativePath(destination), hash == SyncHash(bytes: bytes),
+        guard FileStorePath.isValid(source, mode: .relative), FileStorePath.isValid(destination, mode: .relative),
+              RelativePath(source) != RelativePath(destination), hash == SyncHash(bytes: bytes),
               destinationHash == SyncHash(bytes: destinationBytes) else { throw SyncError.invalidState }
     }
 
     func apply(files: FileStore, operations: SyncFileOperations) throws {
+        try validate()
         let old = try SyncDurability.readIfPresent(source, files: files)
         let new = try SyncDurability.readIfPresent(destination, files: files)
         guard old == nil || old == bytes, new == nil || new == destinationBytes,
@@ -137,7 +145,8 @@ struct SyncKeyedFileMove: Codable {
     }
 
     func isUnstarted(files: FileStore) throws -> Bool {
-        try SyncDurability.readIfPresent(source, files: files) == bytes
+        try validate()
+        return try SyncDurability.readIfPresent(source, files: files) == bytes
             && SyncDurability.readIfPresent(destination, files: files) == nil
     }
 }

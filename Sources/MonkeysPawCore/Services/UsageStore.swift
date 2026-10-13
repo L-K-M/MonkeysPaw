@@ -111,8 +111,9 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
     }
 
     func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
-        try locked {
-            guard case .file(let move) = migration.change else { return false }
+        try migration.validate()
+        guard migration.store == syncKind, case .file(let move) = migration.change else { throw SyncError.invalidState }
+        return try locked {
             return try move.isUnstarted(files: files)
         }
     }
@@ -122,8 +123,9 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
         try locked {
             let from = try path(for: source)
             let to = try path(for: destination)
+            guard from != to else { return [] }
             guard let bytes = try SyncDurability.readIfPresent(from, files: files) else { return [] }
-            _ = try readEvents(at: from)
+            _ = try Self.decodeEvents(bytes)
             guard try files.stamp(at: to) == nil else { throw LibraryError.keyedStateConflict }
             return [SyncKeyedMigration(store: .usage,
                 change: .file(SyncKeyedFileMove(source: from, destination: to, bytes: bytes)))]
@@ -131,13 +133,15 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
     }
 
     func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
+        try migration.validate()
+        guard migration.store == syncKind, case .file(let move) = migration.change else { throw SyncError.invalidState }
+        let source = try SyncIdentifiers.promptIdentity(String(move.source.dropFirst("usage/".count)))
+        let destination = try SyncIdentifiers.promptIdentity(String(move.destination.dropFirst("usage/".count)))
         try locked {
-            guard case .file(let move) = migration.change else { throw SyncError.invalidState }
+            let events = try Self.decodeEvents(move.destinationBytes)
             try move.apply(files: files, operations: operations)
-            let source = try SyncIdentifiers.promptIdentity(String(move.source.dropFirst("usage/".count)))
-            let destination = try SyncIdentifiers.promptIdentity(String(move.destination.dropFirst("usage/".count)))
             cachedEvents[source] = nil
-            cachedEvents[destination] = try readEvents(at: move.destination)
+            cachedEvents[destination] = events
         }
     }
 
@@ -145,6 +149,12 @@ public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Send
         let bytes: Data
         do { bytes = try files.read(at: path) }
         catch FileStoreError.notFound { return [] }
+        return try Self.decodeEvents(bytes)
+    }
+
+    // Journal validation shares the decoder to reject invalid usage bytes
+    // before publishing the library edit that carries their migration.
+    static func decodeEvents(_ bytes: Data) throws -> [Date] {
         let payload = try JSONDecoder().decode(Payload.self, from: bytes)
         guard payload.version == 1, payload.events.count <= Limits.usageEventCap,
               payload.events.allSatisfy(\.isFinite) else { throw LibraryError.operationFailed }

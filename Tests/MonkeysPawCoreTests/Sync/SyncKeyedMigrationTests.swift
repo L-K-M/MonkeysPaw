@@ -1,0 +1,178 @@
+import XCTest
+@testable import MonkeysPawCore
+
+final class SyncKeyedMigrationTests: XCTestCase {
+    func testDecodedKeyedMovesRejectCorruptionBeforeAnyIO() throws {
+        let original = SyncKeyedFileMove(source: "history/old/head.json", destination: "history/new/head.json",
+                                        bytes: Data("retained".utf8))
+        let corruptions = [
+            ("hash", String(repeating: "0", count: 64)),
+            ("destinationHash", String(repeating: "0", count: 64)),
+            ("source", "../escape.md"),
+            ("destination", "../escape.md"),
+            ("destination", original.source)
+        ]
+        for (field, value) in corruptions {
+            var object = try SyncTestValues.object(original)
+            object[field] = value
+            let move = try JSONDecoder().decode(SyncKeyedFileMove.self,
+                from: JSONSerialization.data(withJSONObject: object))
+            for apply in [false, true] {
+                let files = MemoryFileStore()
+                try files.writePrivate(original.bytes, at: original.source)
+                let operations = MemorySyncFileOperations(files: files)
+                let accesses = files.accessCount
+                if apply {
+                    XCTAssertThrowsError(try move.apply(files: files, operations: operations), field) {
+                        XCTAssertEqual($0 as? SyncError, .invalidState)
+                    }
+                } else {
+                    XCTAssertThrowsError(try move.isUnstarted(files: files), field) {
+                        XCTAssertEqual($0 as? SyncError, .invalidState)
+                    }
+                }
+                XCTAssertEqual(files.accessCount, accesses, field)
+                XCTAssertEqual(operations.operationCount, 0, field)
+                XCTAssertEqual(try files.read(at: original.source), original.bytes)
+            }
+        }
+    }
+
+    func testKeyedStoresRejectForeignMigrationsBeforeAnyIO() throws {
+        let source = SyncTestValues.personalPrompt.rawValue
+        let destination = SyncTestValues.groupPrompt.rawValue
+        let payload = Data("{\"events\":[12],\"version\":1}".utf8)
+        for kind in [SyncKeyedStoreKind.history, .usage, .values] {
+            let files = MemoryFileStore()
+            try files.writePrivate(payload, at: "history/" + source + "/head.json")
+            try files.writePrivate(payload, at: "usage/" + source)
+            let values = ValuesStore(files: files)
+            try values.record(identity: .assigned(SyncTestValues.personalPrompt), values: ["field": "keep"])
+            let store: SyncKeyedStore
+            let migrations: [SyncKeyedMigration]
+            switch kind {
+            case .history:
+                store = HistoryStore(files: files)
+                migrations = [SyncKeyedMigration(store: .usage, change: .file(SyncKeyedFileMove(
+                    source: "history/" + source + "/head.json", destination: "history/" + destination + "/head.json",
+                    bytes: payload)))]
+            case .usage:
+                store = UsageStore(files: files, clock: LibraryClock())
+                migrations = [
+                    SyncKeyedMigration(store: .history, change: .file(SyncKeyedFileMove(
+                        source: "history/" + source + "/head.json", destination: "history/" + destination + "/head.json",
+                        bytes: payload))),
+                    SyncKeyedMigration(store: .usage, change: .file(SyncKeyedFileMove(
+                        source: "history/" + source + "/head.json", destination: "history/" + destination + "/head.json",
+                        bytes: payload))),
+                    SyncKeyedMigration(store: .usage, change: .file(SyncKeyedFileMove(
+                        source: "usage/" + source, destination: "usage/not-an-identity", bytes: payload)))
+                ]
+            case .values:
+                store = values
+                migrations = [
+                    SyncKeyedMigration(store: .usage, change: .values(source: source, destination: destination,
+                                                                    fields: ["field": "keep"])),
+                    SyncKeyedMigration(store: .values, change: .file(SyncKeyedFileMove(
+                        source: "history/" + source + "/head.json", destination: "history/" + destination + "/head.json",
+                        bytes: payload)))
+                ]
+            }
+            let operations = MemorySyncFileOperations(files: files)
+            for migration in migrations {
+                let accesses = files.accessCount
+                XCTAssertThrowsError(try store.isSyncMigrationUnstarted(migration)) {
+                    XCTAssertEqual($0 as? SyncError, .invalidState)
+                }
+                XCTAssertEqual(files.accessCount, accesses)
+                XCTAssertThrowsError(try store.applySyncMigration(migration, operations: operations)) {
+                    XCTAssertEqual($0 as? SyncError, .invalidState)
+                }
+                XCTAssertEqual(files.accessCount, accesses)
+                XCTAssertEqual(operations.operationCount, 0)
+            }
+        }
+    }
+
+    func testUsageMigrationValidatesCapturedBytesInsteadOfASecondRead() throws {
+        let files = MemoryFileStore()
+        let store = UsageStore(files: files, clock: LibraryClock())
+        let source = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        let path = "usage/" + (try source.storageKey)
+        let corrupt = Data("not JSON".utf8)
+        try files.writePrivate(corrupt, at: path)
+        var reads = 0
+        files.onRead = { current in
+            guard current == path else { return }
+            reads += 1
+            if reads == 2 { try files.put("{\"events\":[12],\"version\":1}", at: path) }
+        }
+        XCTAssertThrowsError(try store.prepareSyncMigration(from: source, to: .assigned(SyncTestValues.groupPrompt),
+                                                           rebindingHeadTo: nil, originalBytes: nil)) {
+            XCTAssertEqual($0 as? LibraryError, .operationFailed)
+        }
+        files.onRead = nil
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(try files.read(at: path), corrupt)
+    }
+
+    func testUsageMigrationRejectsInvalidEventBytesBeforeMovingOrChangingCache() throws {
+        let files = MemoryFileStore()
+        let store = UsageStore(files: files, clock: LibraryClock())
+        let source = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        let destination = PromptIdentity.assigned(SyncTestValues.groupPrompt)
+        try store.recordUse(identity: source, at: Date(timeIntervalSince1970: 12))
+        let sourcePath = "usage/" + (try source.storageKey)
+        let destinationPath = "usage/" + (try destination.storageKey)
+        let bytes = try files.read(at: sourcePath)
+        let migration = SyncKeyedMigration(store: .usage, change: .file(SyncKeyedFileMove(
+            source: sourcePath, destination: destinationPath, bytes: bytes, destinationBytes: Data("broken".utf8))))
+        let operations = MemorySyncFileOperations(files: files)
+        let accesses = files.accessCount
+        XCTAssertThrowsError(try store.applySyncMigration(migration, operations: operations))
+        XCTAssertEqual(files.accessCount, accesses)
+        XCTAssertEqual(operations.operationCount, 0)
+        XCTAssertEqual(store.cachedUseEvents()[source], [Date(timeIntervalSince1970: 12)])
+        XCTAssertNil(store.cachedUseEvents()[destination])
+        XCTAssertEqual(try files.read(at: sourcePath), bytes)
+        XCTAssertNil(try files.stamp(at: destinationPath))
+    }
+
+    func testUsageSameKeySyncMigrationIsANoop() throws {
+        let files = MemoryFileStore()
+        let store = UsageStore(files: files, clock: LibraryClock())
+        let identity = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        try store.recordUse(identity: identity)
+        let accesses = files.accessCount
+        XCTAssertTrue(try store.prepareSyncMigration(from: identity, to: identity,
+                                                    rebindingHeadTo: nil, originalBytes: nil).isEmpty)
+        XCTAssertEqual(files.accessCount, accesses)
+    }
+
+    func testEmptyHistorySourceKeepsOccupiedDestinationUntouched() throws {
+        let files = MemoryFileStore()
+        let store = HistoryStore(files: files)
+        let path = "history/" + SyncTestValues.groupPrompt.rawValue + "/head.json"
+        try files.put("existing history", at: path)
+        let writes = files.writeCount
+        XCTAssertTrue(try store.prepareSyncMigration(from: .assigned(SyncTestValues.personalPrompt),
+            to: .assigned(SyncTestValues.groupPrompt), rebindingHeadTo: nil, originalBytes: nil).isEmpty)
+        XCTAssertEqual(files.writeCount, writes)
+        XCTAssertEqual(try files.text(at: path), "existing history")
+    }
+
+    func testOversizedHistoryFileFailsDuringPreparation() throws {
+        let files = MemoryFileStore()
+        let store = HistoryStore(files: files)
+        let path = "history/" + SyncTestValues.personalPrompt.rawValue + "/revision.md"
+        let bytes = Data(repeating: 65, count: Limits.syncRecordMaxBytes + 1)
+        try files.writePrivate(bytes, at: path)
+        let writes = files.writeCount
+        XCTAssertThrowsError(try store.prepareSyncMigration(from: .assigned(SyncTestValues.personalPrompt),
+            to: .assigned(SyncTestValues.groupPrompt), rebindingHeadTo: nil, originalBytes: nil)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        XCTAssertEqual(files.writeCount, writes)
+        XCTAssertEqual(try files.read(at: path), bytes)
+    }
+}

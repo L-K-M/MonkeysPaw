@@ -2,6 +2,98 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncLibraryMutationTests: XCTestCase {
+    func testDecodedEditRejectsTamperedHashBeforeAnyIO() throws {
+        for attempt in [SyncLibraryMutations.Attempt.first, .replay] {
+            let rig = try SyncApplyTestRig()
+            let edit = try rig.replacement()
+            var object = try SyncTestValues.object(edit)
+            object["hash"] = String(repeating: "0", count: 64)
+            let decoded = try JSONDecoder().decode(SyncLibraryEdit.self,
+                from: JSONSerialization.data(withJSONObject: object))
+            let accesses = rig.files.accessCount
+            XCTAssertThrowsError(try rig.mutations.apply(decoded, attempt: attempt)) {
+                XCTAssertEqual($0 as? SyncError, .invalidState)
+            }
+            XCTAssertEqual(rig.files.accessCount, accesses)
+            XCTAssertEqual(rig.libraryOperations.operationCount, 0)
+            XCTAssertNil(try rig.files.stamp(at: "a.md"))
+        }
+    }
+
+    func testDecodedPublicationWithoutBytesThrowsBeforeAnyIO() throws {
+        let rig = try SyncApplyTestRig()
+        var object = try SyncTestValues.object(rig.replacement())
+        object.removeValue(forKey: "bytes")
+        let edit = try JSONDecoder().decode(SyncLibraryEdit.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        let accesses = rig.files.accessCount
+        XCTAssertThrowsError(try rig.mutations.apply(edit, attempt: .replay)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        XCTAssertEqual(rig.files.accessCount, accesses)
+        XCTAssertEqual(rig.libraryOperations.operationCount, 0)
+    }
+
+    func testDecodedEditsRejectIncorrectRetainedSourceMetadata() throws {
+        let rig = try SyncApplyTestRig()
+        // Retention paths must match exact bytes, including Unicode spelling.
+        let path: RelativePath = "cafe\u{301}.md"
+        try rig.files.write(SyncApplyTestRig.bytes("Local"), at: path.string)
+        let file = try XCTUnwrap(rig.mutations.read(at: path))
+        let publication = try rig.replacement(at: path)
+        let adoption = try rig.mutations.publication(SyncApplyTestRig.bytes("Adopted", id: SyncTestValues.groupPrompt),
+            at: path, expecting: file, transition: SyncIdentityTransition(from: file.identity,
+                to: .assigned(SyncTestValues.groupPrompt)), kind: .adopt)
+        for edit in [try rig.mutations.trash(file), publication, adoption, try rig.replacement(at: "new.md")] {
+            for source in ["unrelated.md", "caf\u{e9}.md", nil] as [String?] {
+                if edit.expected == nil && source == nil { continue }
+                var object = try SyncTestValues.object(edit)
+                object["retainedSourcePath"] = source
+                let decoded = try JSONDecoder().decode(SyncLibraryEdit.self,
+                    from: JSONSerialization.data(withJSONObject: object))
+                XCTAssertThrowsError(try decoded.validate()) { XCTAssertEqual($0 as? SyncError, .invalidState) }
+                let plan = SyncApplyPlan(expectedState: nil, nextState: try SyncState(binding: rig.binding), edits: [edit])
+                XCTAssertThrowsError(try SyncApplyRecord(plan: plan, steps: [SyncApplyStep(edit: decoded, migrations: [])]))
+            }
+        }
+    }
+
+    func testPublicationChecksTheCompleteJoinedPathBeforeAnyIO() throws {
+        let rig = try SyncApplyTestRig()
+        let relative = String(repeating: "a/", count: 580) + "a.md"
+        XCTAssertNoThrow(try FileStorePath.validate(relative))
+        let joined = "Groups/" + String(repeating: "g", count: 255) + "/" + relative
+        XCTAssertGreaterThan(joined.utf8.count, Limits.maxRootedPathBytes)
+        XCTAssertThrowsError(try rig.mutations.publication(SyncApplyTestRig.bytes("Server"), at: RelativePath(joined),
+            expecting: nil, transition: SyncIdentityTransition(from: nil, to: .assigned(SyncTestValues.personalPrompt)))) {
+            XCTAssertEqual($0 as? FileStoreError, .invalidPath)
+        }
+        XCTAssertEqual(rig.files.accessCount, 0)
+        XCTAssertEqual(rig.libraryOperations.operationCount, 0)
+    }
+
+    func testExistingWriteHookReachesAppliedReadBackChange() throws {
+        let rig = try SyncApplyTestRig()
+        let old = SyncApplyTestRig.bytes("Old")
+        let newer = SyncApplyTestRig.bytes("External", id: SyncTestValues.groupPrompt)
+        try rig.files.write(old, at: "a.md")
+        let stamp = try XCTUnwrap(rig.files.stamp(at: "a.md"))
+        rig.files.onWrite = { path in
+            guard path == "a.md" else { return }
+            rig.files.onWrite = nil
+            do { try rig.files.write(newer, at: path) }
+            catch { XCTFail("External write failed: \(error)") }
+        }
+        XCTAssertThrowsError(try rig.libraryOperations.publish(SyncApplyTestRig.bytes("Server"), at: "a.md",
+                                                              expecting: .matching(stamp: stamp, bytes: old), mode: .normal)) {
+            let error = $0 as? SyncFileOperationError
+            XCTAssertEqual(error?.code, .changed)
+            XCTAssertEqual(error?.effect, .applied)
+            XCTAssertEqual(error?.displacedBytes, old)
+        }
+        XCTAssertEqual(try rig.files.read(at: "a.md"), newer)
+    }
+
     func testServerBytesRemainExactAndDisplacedBytesStayPrivate() throws {
         let rig = try SyncApplyTestRig()
         let original = SyncApplyTestRig.bytes("Local\n")
