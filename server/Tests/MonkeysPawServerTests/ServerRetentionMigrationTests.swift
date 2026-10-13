@@ -31,12 +31,17 @@ struct ServerRetentionMigrationTests {
             #expect(try await repository.string("SELECT hex(manifest) AS bytes FROM snapshots", column: "bytes") == "01")
             #expect(try await repository.string("SELECT floor_seq FROM scope_floors", column: "floor_seq") == "1")
             let plans: [SQLQueryString] = [
-                "EXPLAIN QUERY PLAN SELECT seq FROM changes WHERE at < '2027-01-12T00:00:00.000Z' ORDER BY at, seq LIMIT 100",
-                "EXPLAIN QUERY PLAN SELECT id FROM prompts WHERE deleted_at < '2027-01-12T00:00:00.000Z' ORDER BY deleted_at, id LIMIT 1",
-                "EXPLAIN QUERY PLAN SELECT id FROM prompts WHERE rev > 200 AND id > '' ORDER BY id LIMIT 100"
+                "EXPLAIN QUERY PLAN SELECT seq FROM changes WHERE at < \(bind: PersistenceTestRepository.purgeCutoff) ORDER BY at, seq LIMIT \(literal: ServerLimits.retentionBatchSize)",
+                "EXPLAIN QUERY PLAN SELECT id FROM prompts WHERE deleted_at < \(bind: PersistenceTestRepository.purgeCutoff) ORDER BY deleted_at, id LIMIT 1",
+                "EXPLAIN QUERY PLAN SELECT id FROM prompts WHERE rev > \(literal: ServerLimits.revisionsPerPrompt) AND id > '' ORDER BY id LIMIT \(literal: ServerLimits.retentionBatchSize)"
             ]
             for (query, index) in zip(plans, Self.indexes) {
-                let plan = try await repository.string(query, column: "detail")
+                let plan = try await repository.database.read { sql in
+                    // EXPLAIN alone can retain this pooled reader's pre-migration schema.
+                    _ = try await sql.raw("SELECT COUNT(*) FROM prompts").all()
+                    let row = try #require(await sql.raw(query).first())
+                    return try row.decode(column: "detail", as: String.self)
+                }
                 #expect(plan.contains(index))
             }
         }
