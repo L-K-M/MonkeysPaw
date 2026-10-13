@@ -96,8 +96,9 @@ final class SettingsViewState: ObservableObject {
         shortcutsModel.refresh()
     }
 
-    func openAssistant(_ model: AssistantSettingsModel, mainThread: MainThread) {
-        assistant = AssistantSettingsViewState(model: model, mainThread: mainThread)
+    func openAssistant(_ model: AssistantSettingsModel, mainThread: MainThread,
+                       onProviderChange: @escaping () -> Void = {}) {
+        assistant = AssistantSettingsViewState(model: model, mainThread: mainThread, onProviderChange: onProviderChange)
     }
 
     func retireAssistant() {

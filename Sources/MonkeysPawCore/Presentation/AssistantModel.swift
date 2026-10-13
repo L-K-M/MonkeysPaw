@@ -88,6 +88,15 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         return candidate.context.matchesForAcceptance(latest) && service.isCurrent(latest)
     }
 
+    public var canRetry: Bool {
+        isActive && attempt != nil && state.phase != .working && !state.isAccepting
+    }
+
+    public var canShowDiff: Bool {
+        isActive && state.artifact != nil && attempt != nil && attempt?.command.isReview == false
+            && state.phase != .working && !state.isAccepting
+    }
+
     /// Also rechecked at every intent and callback. Notifications are necessary
     /// to invalidate a switch away and back before an already queued reply runs.
     public func contextChanged() {
@@ -296,6 +305,10 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     public func reject() { cancel() }
     public func close() { cancel() }
     public func escape() { cancel() }
+
+    /// Remove only this assistant's queued or pending editor guard. Preserve the
+    /// conversation, and let an already executing save report its actual result.
+    public func cancelPendingAcceptance() { cancelAcceptanceGuard?() }
 
     public func cancel() {
         guard isActive else { return }

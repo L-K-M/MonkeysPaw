@@ -651,3 +651,36 @@ this checklist, screenshots or logs.
 | Record Keychain prompt timing/count; allow, deny, cancel and locked-keychain cases leave Settings responsive and show typed status/errors without exposing credentials | NOT RUN | |
 | Close Settings during Test and reopen the same window; Test is cancelled and late replies do not update the retained pane. Edit metadata/key input during Save; the older Save commits and newer edits stay staged. Close during Save; the accepted Save completes and reopen preserves that state | NOT RUN | |
 | VoiceOver identifies Assistant, profile list/active provider, kind, base URL, model ID/picker, secure key input, key mode/tier, Save/Test/Cancel and progress/errors; Tab/Shift+Tab keep visible focus and all controls operable | NOT RUN | |
+
+## M4 Library Assistant flows (§7.3, §7.6, §11.7)
+
+These checks require macOS and live providers. None ran on the Linux host.
+Run the three flows with a saved Anthropic profile and again with a local,
+keyless Ollama OpenAI-compatible profile. Record the host/model before each
+request and usage afterwards. Use a disposable library with no sensitive
+templates or field values. No request starts when you merely open the panel.
+
+- Commit / `macos-app` CI run / hosted-test result:
+- macOS / hardware / provider host / model ID:
+- Date / tester:
+
+| Check | Anthropic | Local Ollama | Notes |
+|---|---|---|---|
+| Library toolbar and File → Assistant open the embedded panel; Cmd+Shift+A works from the editor and leaves Settings text editing alone. The window expands to fit, and Tab/Shift+Tab and VoiceOver reach every control | NOT RUN | NOT RUN | |
+| Write: enter a brief, explicitly Write, inspect title/body/fields, notes and issues, then the final front-matter/body diff. No file appears until Accept; the saved file matches the candidate, has a fresh identity and excludes draft notes | NOT RUN | NOT RUN | |
+| Review: send the current unsaved validated template, inspect severity/criterion/problem/suggestion, select findings, and Show quote in editor. An exact Unicode quote selects the right text without changing the file or undo history; unmatched quotes show an explanation and never highlight other text | NOT RUN | NOT RUN | |
+| Improve: apply selected findings, an instruction, and then an instruction without reviewing first. Inspect both sides of the merged diff, preserved personal/unknown metadata, placeholder add/remove/rename warnings and newline markers. Accept creates an ordinary revision; Reject leaves the editor and file unchanged | NOT RUN | NOT RUN | |
+| Invalid draft stays unaccepted with validation issues. Retry with feedback sends only on that explicit action, retains prior turns, and uses the current template. Authentication, missing-model, timeout and invalid-output failures show fixed actionable messages without provider error bodies | NOT RUN | NOT RUN | |
+| Before calling, the footer shows host and model. While working, elapsed seconds tick; after completion, usage appears when supplied. Cancel, Close Assistant, Escape, editor navigation and Library close stop the timer and request. Late replies do not revive the panel, and reopening gives a fresh session | NOT RUN | NOT RUN | |
+| No profile disables requests with Settings guidance. Private/read-only/invalid templates disable Review and Improve; Write remains independent of the open source. Busy editor operations, discard decisions and disk conflicts disable new calls with an explanation | NOT RUN | NOT RUN | |
+| Change the buffer, including changing away and back, after preview or during a call. Acceptance stays disabled until an explicit fresh Show diff; no late reply applies old bytes. Change the file on disk and exercise the existing conflict choices while retaining your draft | NOT RUN | NOT RUN | |
+| Write Accept with dirty editor invokes Save / Discard / Cancel. Save/Discard changes the snapshot and requires a fresh diff; Cancel preserves edits and creates no file. Cancel a pending acceptance without dismissing an earlier editor decision | NOT RUN | NOT RUN | |
+| Save a changed model/profile or replacement key in Settings, including a credential-only save. The old preview is revoked and the Library footer follows the shared saved profile. Switch libraries during a request; the retired graph cannot publish into the new editor | NOT RUN | NOT RUN | |
+| Observe saved, changed-buffer/disk conflict and failed acceptance messages. With disposable app-data permissions or a provenance-write failure fixture, a committed provenance/history warning explicitly says the file was saved and must not be saved again; the message remains visible after closing Assistant | NOT RUN | NOT RUN | |
+| Confirm requests contain template source rather than rendered preview or remembered/fill/clipboard values. Inspect diagnostics using test sentinels: no keys, prompt content, feedback, field values, transcript or provider error bodies are logged | NOT RUN | NOT RUN | |
+
+Group roles arrive in M6. Hosted tests exercise the existing viewer seam: the
+control offers **Improve a private copy**, and acceptance preserves the source
+while creating a fresh prompt in personal scope. Its LLM privacy flag is
+preserved; ownership is defined by §9's scope. Record an owner check when
+authoritative group roles are wired into macOS composition.

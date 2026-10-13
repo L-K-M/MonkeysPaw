@@ -24,6 +24,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
          mainThread: MainThread, activation: WindowActivationCoordinator,
          presentDialog: @escaping DialogPresenter = LibraryWindowController.presentEditorDialog,
          imports: LibraryImportViewState? = nil,
+         makeAssistant: LibraryViewState.AssistantFactory? = nil,
+         scheduler: MonkeysPawCore.Scheduler? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
@@ -31,10 +33,12 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         self.presentDialog = presentDialog
         self.importChooser = importChooser
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
-            mainThread: mainThread, imports: imports, revealLibrary: revealLibrary)
+            mainThread: mainThread, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
+            revealLibrary: revealLibrary)
         super.init()
         connectImportChooser()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
+        presentation.onAssistantVisibilityChange = { [weak self] in self?.updateAssistantWindowSize() }
         presentation.onConflictRequested = { [weak self] in
             self?.dismissedConflict = nil
             self?.updateDialog()
@@ -44,12 +48,13 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     deinit { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) } }
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
-                imports: LibraryImportViewState? = nil) {
+                imports: LibraryImportViewState? = nil, makeAssistant: LibraryViewState.AssistantFactory? = nil) {
         guard !isTornDown else { return }
         endDialog()
         dismissedConflict = nil
         closeRequested = false
-        presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available, imports: imports)
+        presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available,
+            imports: imports, makeAssistant: makeAssistant)
         connectImportChooser()
     }
 
@@ -68,6 +73,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
             self.window = window
+            self.updateAssistantWindowSize()
             if window.isMiniaturized { window.deminiaturize(nil) }
             self.observeKeys()
             self.activation.show(window)
@@ -90,6 +96,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        presentation.retireAssistant()
         presentation.imports?.cancelChoosing()
         endDialog()
         removeKeyMonitor()
@@ -106,6 +113,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         // The reusable window retains running imports and reports for reopening.
         presentation.imports?.cancelChoosing()
         closeRequested = true
+        // Release only the assistant's guard so the close can reach its own decision.
+        presentation.assistant?.cancelPendingAcceptance()
         presentation.requestClose { [weak self] result in
             guard let self, !self.isTornDown else { return }
             self.closeRequested = false
@@ -174,6 +183,15 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         cancel?()
     }
 
+    private func updateAssistantWindowSize() {
+        guard let window else { return }
+        let size = Limits.setupWindowSize
+        let width = CGFloat(size.width) + (presentation.isAssistantVisible ? 320 : 0)
+        window.contentMinSize = NSSize(width: width, height: CGFloat(size.height))
+        let current = window.contentRect(forFrameRect: window.frame).size
+        if current.width < width { window.setContentSize(NSSize(width: width, height: current.height)) }
+    }
+
     /// Explicit routing seam: hosted tests call this directly because sendEvent
     /// does not pass through local monitors or guarantee a regular key window.
     @discardableResult
@@ -198,6 +216,13 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             return true
         }
         if flags == [.command, .shift],
+           event.keyCode == UInt16(kVK_ANSI_A) || event.charactersIgnoringModifiers?.lowercased() == "a" {
+            guard activeDialog == nil,
+                  presentation.isAssistantVisible || presentation.canShowAssistant else { return false }
+            presentation.toggleAssistant()
+            return true
+        }
+        if flags == [.command, .shift],
            event.keyCode == UInt16(kVK_ANSI_F) || event.charactersIgnoringModifiers?.lowercased() == "f" {
             presentation.toggleFavorite()
             return true
@@ -206,6 +231,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     private func escape() {
+        if presentation.isAssistantVisible { presentation.closeAssistant(); return }
         guard !isTornDown, !presentation.clearFilterForEscape() else { return }
         requestClose()
     }

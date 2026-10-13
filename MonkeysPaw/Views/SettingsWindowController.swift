@@ -15,6 +15,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let folderChooser: FolderChooser
     private let forgetAllConfirmation: ForgetAllConfirmation
     private let makeAssistant: () -> AssistantSettingsModel
+    private let onProviderChange: () -> Void
     private var chooserRequest: UUID?
     private var cancelChooser: (() -> Void)?
     private var confirmationRequest: UUID?
@@ -25,7 +26,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          forgetAllConfirmation: @escaping ForgetAllConfirmation,
          mainThread: MainThread, activation: WindowActivationCoordinator,
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
-         makeAssistant: @escaping () -> AssistantSettingsModel) {
+         makeAssistant: @escaping () -> AssistantSettingsModel,
+         onProviderChange: @escaping () -> Void = {}) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          mainThread: mainThread, openSetup: openSetup)
@@ -34,6 +36,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.folderChooser = folderChooser
         self.forgetAllConfirmation = forgetAllConfirmation
         self.makeAssistant = makeAssistant
+        self.onProviderChange = onProviderChange
         super.init()
         presentation.onChooseFolder = { [weak self] in self?.chooseFolder() }
         presentation.onRememberedValuesChange = { [weak self] in self?.updateForgetAllConfirmation() }
@@ -54,7 +57,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         mainThread.run { [weak self] in
             guard let self else { return }
             if self.presentation.assistant == nil {
-                self.presentation.openAssistant(self.makeAssistant(), mainThread: self.mainThread)
+                self.presentation.openAssistant(self.makeAssistant(), mainThread: self.mainThread,
+                    onProviderChange: self.onProviderChange)
             }
             self.presentation.refresh()
             let window = self.window ?? self.makeWindow()

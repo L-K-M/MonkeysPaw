@@ -3,6 +3,20 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class EditorModelTests: XCTestCase {
+    func testPrivacyStateFollowsBufferAndSessionRetirement() throws {
+        let e = EditorHarness()
+        try e.open("---\nprivate: true\n---\nPrivate template")
+        XCTAssertTrue(e.model.state.isPrivate)
+        e.ui { e.model.edit("Public template") }
+        XCTAssertFalse(e.model.state.isPrivate)
+        e.ui { e.model.edit("---\nprivate: true\n---\nPrivate again") }
+        XCTAssertTrue(e.model.state.isPrivate)
+        e.ui { e.model.request(.close) }
+        try e.decide(.discard)
+        e.settle()
+        XCTAssertFalse(e.model.state.isPrivate)
+    }
+
     func testMatchingAssistantOpenDecisionCompletesOnceAndReleasesItsPermit() throws {
         for held in [false, true] {
             for queued in [false, true] {

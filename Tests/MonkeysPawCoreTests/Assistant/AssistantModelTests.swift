@@ -3,6 +3,27 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class AssistantModelTests: XCTestCase {
+    func testNativeRetryAndDiffAvailabilityFollowRequestLifetime() async throws {
+        let h = try AssistantActionHarness()
+        XCTAssertFalse(h.model.canRetry)
+        XCTAssertFalse(h.model.canShowDiff)
+        h.ui { h.model.write(brief: "Brief") }
+        XCTAssertFalse(h.model.canRetry)
+        XCTAssertFalse(h.model.canShowDiff)
+        try await h.sent()
+        try await h.artifact()
+        try await h.phase(.ready)
+        XCTAssertTrue(h.model.canRetry)
+        XCTAssertTrue(h.model.canShowDiff)
+        h.ui { h.model.reject() }
+        h.settle()
+        XCTAssertFalse(h.model.canRetry)
+        XCTAssertFalse(h.model.canShowDiff)
+        h.ui { h.model.deactivate() }
+        XCTAssertFalse(h.model.canRetry)
+        XCTAssertFalse(h.model.canShowDiff)
+    }
+
     func testGuardPreservingAReadyPreviewStillBlocksEveryNewAction() async throws {
         let intents: [(String, (AssistantModel) -> Void)] = [
             ("write", { $0.write(brief: "New brief") }), ("review", { $0.review() }),
