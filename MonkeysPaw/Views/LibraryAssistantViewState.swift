@@ -3,7 +3,7 @@ import MonkeysPawCore
 import SwiftUI
 
 /// A native binding for one editor session. Core owns requests, merging and saves.
-final class LibraryAssistantViewState: ObservableObject {
+final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     enum Flow: Hashable { case write, review, improve }
 
     @Published private(set) var state: AssistantState
@@ -166,4 +166,8 @@ final class LibraryAssistantViewState: ObservableObject {
             }
         }
     }
+
+    var description: String { "<library assistant view state redacted>" }
+    var debugDescription: String { description }
+    var customMirror: Mirror { Mirror(self, children: ["state": description]) }
 }
