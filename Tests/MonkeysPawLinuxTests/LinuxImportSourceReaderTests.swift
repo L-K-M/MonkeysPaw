@@ -111,8 +111,11 @@ final class LinuxImportSourceReaderTests: XCTestCase {
             directory.appendPathComponent(String(repeating: "a", count: 128))
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("Sibling".utf8).write(to: deep.appendingPathComponent("valid.md"))
         let reader = LinuxImportSourceReader()
-        assertError(.invalidPath) { _ = try reader.listFiles(in: deep.path) }
+        let entries = try reader.listFiles(in: deep.path)
+        XCTAssertTrue(entries.contains(ImportSourceEntry(relativePath: "valid.md")))
+        XCTAssertTrue(entries.contains { $0.relativePath.utf8.count > Limits.maxPathBytes })
         let wide = tools.directory.appendingPathComponent("Wide")
         try FileManager.default.createDirectory(at: wide, withIntermediateDirectories: true)
         // Long names reach the byte budget with a small number of empty files.

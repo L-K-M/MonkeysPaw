@@ -20,6 +20,7 @@ final class LinuxImportSourceReader: ImportSourceReading {
         var files: [String] = []
         var requests: [ImportRequest] = []
         for url in urls where url.isFileURL {
+            guard url.host == nil || url.host == "" || url.host?.lowercased() == "localhost" else { continue }
             var info = stat()
             if lstat(url.path, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR) {
                 requests.append(.folder(url.path))
@@ -194,9 +195,14 @@ final class LinuxImportSourceReader: ImportSourceReading {
             let path = prefix + name
             // The relative-path cap bounds recursion; the source-byte cap also
             // budgets all enumerated names, including empty directories.
-            guard path.utf8.count <= Limits.maxPathBytes else { throw ImportSourceError.invalidPath }
             pathBytes += path.utf8.count
             guard pathBytes <= Limits.importFileCapBytes else { throw ImportSourceError.fileTooLarge }
+            guard path.utf8.count <= Limits.maxPathBytes else {
+                // Descendants cannot fit either. Keep a candidate for Core's
+                // invalidPath skip, without discarding valid sibling sources.
+                entries.append(ImportSourceEntry(relativePath: path))
+                continue
+            }
             inspectEntry(path)
             var info = stat()
             guard fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {

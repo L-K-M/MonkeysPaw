@@ -111,7 +111,9 @@ final class LinuxLibraryImportState {
     @discardableResult
     func importURLs(_ urls: [URL]) -> Bool {
         guard canImport, !urls.isEmpty else { return false }
-        let local = urls.filter(\.isFileURL)
+        let local = urls.filter {
+            $0.isFileURL && ($0.host == nil || $0.host == "" || $0.host?.lowercased() == "localhost")
+        }
         guard !local.isEmpty else { message = LinuxImportStrings.fileURLsOnly; onChange?(); return false }
         revision = UUID()
         let token = revision

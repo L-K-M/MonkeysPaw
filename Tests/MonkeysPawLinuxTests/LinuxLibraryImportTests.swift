@@ -241,7 +241,7 @@ final class LinuxLibraryImportTests: XCTestCase {
         XCTAssertTrue(labels(try settingsWidget("library-import-report", in: window)).contains { $0.contains("Import failed:") })
     }
 
-    func testCloseCancelsChooserAndRemoteDropCannotCreateFiles() throws {
+    func testCloseCancelsChooserAndRemoteSelectionsCannotCreateFiles() throws {
         let window = try openLibrary()
         try click("library-import", in: window)
         let reply = try XCTUnwrap(chooser.requests.last?.done)
@@ -254,7 +254,30 @@ final class LinuxLibraryImportTests: XCTestCase {
         XCTAssertEqual(try openLibrary(), window)
         XCTAssertFalse(try drop([try XCTUnwrap(URL(string: "https://example.invalid/prompt.md"))], onto: window))
         XCTAssertEqual(environment.libraryImportState.message, LinuxImportStrings.fileURLsOnly)
+        // GIO canonicalizes file URIs before a GdkFileList reaches GTK. Check
+        // an uncanonicalized chooser/seam URL at the common selection intent.
+        XCTAssertFalse(environment.libraryImportState.importURLs([try XCTUnwrap(URL(string: "file://remote.invalid/etc/remote.md"))]))
         XCTAssertNil(try files.stamp(at: "Imported/late.md"))
+    }
+
+    func testOverlongSubtreeIsTypedSkipWhileValidSiblingImports() throws {
+        let sibling = try source("Folder/valid.md", "Sibling")
+        let folder = sibling.deletingLastPathComponent()
+        var deep = folder
+        while deep.path.utf8.count - folder.path.utf8.count <= Limits.maxPathBytes {
+            deep.appendPathComponent(String(repeating: "x", count: 128))
+        }
+        try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+        try Data("Unimportable path".utf8).write(to: deep.appendingPathComponent("deep.md"))
+        _ = try openLibrary()
+        XCTAssertTrue(environment.libraryImportState.importURLs([folder]))
+        finishImport()
+        let state = environment.libraryImportState
+        XCTAssertNil(state.reports.first?.report.failure)
+        XCTAssertEqual(state.createdCount, 1)
+        XCTAssertEqual(state.skippedCount, 1)
+        XCTAssertTrue(state.files.contains { $0.outcome == .skipped(.invalidPath) })
+        XCTAssertEqual(try files.read(at: "Imported/valid.md"), Data("Sibling".utf8))
     }
 
     private func compose(sourceFactory: @escaping () -> LinuxImportSourceReader = { LinuxImportSourceReader() }) {
