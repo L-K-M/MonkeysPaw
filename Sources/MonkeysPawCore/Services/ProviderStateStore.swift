@@ -27,36 +27,46 @@ public final class ProviderStateStore: @unchecked Sendable, CustomStringConverti
     }
 
     private struct Loaded {
-        let entries: [Entry]
+        // Nil entries mean readable corruption; keep parsed metadata for repair.
+        let entries: [Entry]?
         let object: [String: Any]
     }
 
     private static let currentVersion = 1
     private let files: FileStore
-    private let loader = SettingsLoader(currentVersion: currentVersion, migrations: [])
     private let lock = NSLock()
     private let path = "provider-state.json"
-    private var readOnlyError: SettingsError?
     private var observedKeys = [ProviderProfileID: ProviderCacheKey]()
+    private var pendingResets = [ProviderProfileID: ProviderCacheKey]()
 
     public init(files: FileStore) {
         self.files = files
-        do { _ = try read() }
-        catch { readOnlyError = sanitized(error) }
     }
 
     func format(for connection: ProviderConnection) throws -> OpenAIResponseFormat {
         lock.lock()
         defer { lock.unlock() }
-        let loaded = try loadCurrent()
         let key = try key(for: connection)
-        observedKeys[key.profileID] = key
-        guard let entry = loaded.entries.first(where: { $0.id == key.profileID }) else { return .jsonSchema }
-        if try entry.key() == key { return entry.format }
+        if let previous = observedKeys.updateValue(key, forKey: key.profileID), previous != key {
+            pendingResets[key.profileID] = previous
+        }
+        let loaded: Loaded
+        do { loaded = try read() }
+        catch {
+            StandardErrorLog().write(.warning, "Provider capability cache read failed.")
+            return .jsonSchema
+        }
+        guard let entry = loaded.entries?.first(where: { $0.id == key.profileID }) else { return .jsonSchema }
+        let cachedKey = try entry.key()
+        if cachedKey == key, pendingResets[key.profileID] == nil { return entry.format }
 
         // Invalidate on identity changes, including a later return to the old
         // model. Preserve future metadata associated with the stable profile ID.
-        try write(.jsonSchema, for: key, preserving: loaded.object)
+        pendingResets[key.profileID] = cachedKey
+        do {
+            try write(.jsonSchema, for: key, preserving: loaded)
+            pendingResets.removeValue(forKey: key.profileID)
+        } catch { StandardErrorLog().write(.warning, "Provider capability cache reset failed.") }
         return .jsonSchema
     }
 
@@ -64,16 +74,20 @@ public final class ProviderStateStore: @unchecked Sendable, CustomStringConverti
     func recordSuccess(_ format: OpenAIResponseFormat, for connection: ProviderConnection) throws {
         lock.lock()
         defer { lock.unlock() }
-        let loaded = try loadCurrent()
+        // An unreadable file cannot safely be replaced; retry on the next action.
+        let loaded = try read()
         let key = try key(for: connection)
         // An older in-flight action must not restore a different observed model.
         guard observedKeys[key.profileID] == key else { return }
-        if let entry = loaded.entries.first(where: { $0.id == key.profileID }) {
-            guard try entry.key() == key else { return }
+        if let entry = loaded.entries?.first(where: { $0.id == key.profileID }) {
+            let cachedKey = try entry.key()
+            let resetPending = cachedKey != key && pendingResets[key.profileID] == cachedKey
+            guard cachedKey == key || resetPending else { return }
             // Out-of-order successes must not forget an already learned rejection.
-            if entry.format == .none || entry.format == format { return }
+            if !resetPending, entry.format == .none || entry.format == format { return }
         }
-        try write(format, for: key, preserving: loaded.object)
+        try write(format, for: key, preserving: loaded)
+        pendingResets.removeValue(forKey: key.profileID)
     }
 
     private func key(for connection: ProviderConnection) throws -> ProviderCacheKey {
@@ -84,16 +98,6 @@ public final class ProviderStateStore: @unchecked Sendable, CustomStringConverti
         } catch { throw SettingsError.corruptFile }
     }
 
-    private func loadCurrent() throws -> Loaded {
-        if let readOnlyError { throw readOnlyError }
-        do { return try read() }
-        catch {
-            let error = sanitized(error)
-            readOnlyError = error
-            throw error
-        }
-    }
-
     private func read() throws -> Loaded {
         let bytes: Data
         do { bytes = try files.read(at: path) }
@@ -101,30 +105,31 @@ public final class ProviderStateStore: @unchecked Sendable, CustomStringConverti
         catch let error as FileStoreError { throw SettingsError.readFailed(error) }
         catch { throw SettingsError.readFailed(.ioFailure) }
 
-        let object = try loader.load(bytes).object
+        let object = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] ?? [:]
         do {
-            let payload = try JSONDecoder().decode(Payload.self, from: JSONSerialization.data(withJSONObject: object))
+            let payload = try JSONDecoder().decode(Payload.self, from: bytes)
             guard payload.version == Self.currentVersion,
                   Set(payload.profiles.map(\.id)).count == payload.profiles.count else { throw SettingsError.corruptFile }
             for entry in payload.profiles { _ = try entry.key() }
             return Loaded(entries: payload.profiles, object: object)
-        } catch { throw SettingsError.corruptFile }
+        } catch { return Loaded(entries: nil, object: object) }
     }
 
     private func write(_ format: OpenAIResponseFormat, for key: ProviderCacheKey,
-                       preserving original: [String: Any]) throws {
-        var object = original
-        var profiles = original["profiles"] as? [[String: Any]] ?? []
-        let index = profiles.firstIndex {
+                       preserving loaded: Loaded) throws {
+        var object = loaded.object
+        let originalProfiles = (object["profiles"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        var profiles = loaded.entries == nil ? [] : originalProfiles
+        let index = originalProfiles.firstIndex {
             ($0["id"] as? String).flatMap(UUID.init(uuidString:)).map(ProviderProfileID.init) == key.profileID
         }
-        var entry = index.map { profiles[$0] } ?? [:]
+        var entry = index.map { originalProfiles[$0] } ?? [:]
         entry["id"] = key.profileID.rawValue
         entry["kind"] = key.kind.rawValue
         entry["baseURL"] = key.baseURL.absoluteString
         entry["modelID"] = key.modelID
         entry["format"] = format.rawValue
-        if let index { profiles[index] = entry }
+        if let index, loaded.entries != nil { profiles[index] = entry }
         else { profiles.append(entry) }
         object["version"] = Self.currentVersion
         object["profiles"] = profiles
@@ -133,8 +138,6 @@ public final class ProviderStateStore: @unchecked Sendable, CustomStringConverti
         } catch let error as FileStoreError { throw SettingsError.writeFailed(error) }
         catch { throw SettingsError.writeFailed(.ioFailure) }
     }
-
-    private func sanitized(_ error: Error) -> SettingsError { error as? SettingsError ?? .readFailed(.ioFailure) }
 
     public var description: String { "<provider capability state>" }
     public var debugDescription: String { description }

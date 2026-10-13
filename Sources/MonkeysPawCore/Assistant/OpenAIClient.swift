@@ -30,7 +30,10 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
         try checkActive(until: deadline)
         let initialFormat: OpenAIResponseFormat
         do { initialFormat = try providerState.format(for: connection) }
-        catch { throw stateError(error) }
+        catch {
+            StandardErrorLog().write(.warning, "Provider capability cache lookup failed.")
+            initialFormat = .jsonSchema
+        }
 
         let prompt: String
         let data: String
@@ -94,10 +97,11 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
                 $0.inputTokens >= 0 && $0.outputTokens >= 0
                     ? AssistantTokenUsage(inputTokens: $0.inputTokens, outputTokens: $0.outputTokens) : nil
             }
-            try checkActive(until: deadline)
+            // Receipt owns the deadline; parsing must retain an on-time response.
+            guard !Task.isCancelled else { throw AssistantError.transport(.cancelled) }
             if format != initialFormat {
                 do { try providerState.recordSuccess(format, for: connection) }
-                catch { throw stateError(error) }
+                catch { StandardErrorLog().write(.warning, "Provider capability cache update failed.") }
             }
             return AssistantResponse(output: output, usage: tokenUsage)
         }
@@ -138,10 +142,6 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
     private func checkActive(until deadline: ContinuousClock.Instant) throws {
         guard !Task.isCancelled else { throw AssistantError.transport(.cancelled) }
         guard now() < deadline else { throw AssistantError.transport(.deadlineExceeded) }
-    }
-
-    private func stateError(_ error: Error) -> AssistantError {
-        .providerState(error as? SettingsError ?? .readFailed(.ioFailure))
     }
 
     private func httpRequest(url: URL, method: HTTPMethod, headers: [String: String], body: Data? = nil,

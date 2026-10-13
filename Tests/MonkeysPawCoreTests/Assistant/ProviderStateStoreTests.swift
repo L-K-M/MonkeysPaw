@@ -136,56 +136,139 @@ final class ProviderStateStoreTests: XCTestCase {
         XCTAssertEqual(files.attemptedWrites.count, 1)
     }
 
-    func testMalformedFutureUnsupportedAndInvalidEntriesFailClosedWithoutRewriting() throws {
+    func testReadOutageAndFailedResetCannotLetStaleSuccessUpgradeCurrentCapability() throws {
+        let files = ProviderRecordingFiles()
+        let store = ProviderStateStore(files: files)
+        let original = try connection()
+        let changed = try connection(id: original.profileID, model: "new-model")
+        _ = try store.format(for: original)
+        // Another schema-mode action is still in flight when none is learned.
+        try store.recordSuccess(.none, for: original)
+        let bytes = try files.read(at: "provider-state.json")
+        files.memory.onRead = { _ in throw FileStoreError.ioFailure }
+        XCTAssertEqual(try store.format(for: changed), .jsonSchema)
+        files.memory.onRead = nil
+        files.memory.failNextWrite = true
+        XCTAssertEqual(try store.format(for: original), .jsonSchema)
+        let writes = files.attemptedWrites.count
+        try store.recordSuccess(.jsonObject, for: original)
+        XCTAssertEqual(files.attemptedWrites.count, writes)
+        XCTAssertEqual(try files.read(at: "provider-state.json"), bytes)
+        XCTAssertEqual(try ProviderStateStore(files: files).format(for: original), .none)
+    }
+
+    func testMalformedFutureUnsupportedAndInvalidEntriesHealOnSuccessfulRecord() throws {
         let connection = try connection()
         let valid = entry(for: connection, format: .jsonObject)
         let invalidEntries: [[String: Any]] = [["id": "invalid"], ["kind": "unknown"], ["baseURL": "http://remote.example"],
             ["baseURL": "https://remote.example?key=value"], ["modelID": ""], ["modelID": "model\n"],
             ["format": "future-format"], ["format": true]]
-        var cases: [(String, SettingsError)] = [
-            (#"{"version":2,"profiles":"new shape"}"#, .futureVersion(2)),
-            (#"{"version":0}"#, .unsupportedVersion(0)), (#"{"version":-1}"#, .unsupportedVersion(-1)),
-            (#"{"version":true,"profiles":[]}"#, .corruptFile), (#"{"version":1}"#, .corruptFile),
-            (#"{"version":1,"profiles":null}"#, .corruptFile), ("{", .corruptFile)]
+        var cases = [#"{"version":2,"profiles":"new shape"}"#,
+            #"{"version":0}"#, #"{"version":-1}"#,
+            #"{"version":true,"profiles":[]}"#, #"{"version":1}"#,
+            #"{"version":1,"profiles":null}"#, "{"]
         for changes in invalidEntries {
             let bad = valid.merging(changes, uniquingKeysWith: { _, new in new })
-            cases.append((try AssistantOutputFixtures.json(["version": 1, "profiles": [bad]]), .corruptFile))
+            cases.append(try AssistantOutputFixtures.json(["version": 1, "profiles": [bad]]))
         }
-        cases.append((try AssistantOutputFixtures.json(["version": 1, "profiles": [valid, valid]]), .corruptFile))
-        for (original, expected) in cases {
+        cases.append(try AssistantOutputFixtures.json(["version": 1, "profiles": [valid, valid]]))
+        for original in cases {
             let files = ProviderRecordingFiles()
             try files.memory.put(original, at: "provider-state.json")
             let store = ProviderStateStore(files: files)
-            XCTAssertThrowsError(try store.format(for: connection)) { XCTAssertEqual($0 as? SettingsError, expected) }
-            XCTAssertThrowsError(try store.recordSuccess(.none, for: connection)) { XCTAssertEqual($0 as? SettingsError, expected) }
+            XCTAssertEqual(try store.format(for: connection), .jsonSchema)
             XCTAssertEqual(try files.memory.text(at: "provider-state.json"), original)
             XCTAssertTrue(files.attemptedWrites.isEmpty)
-            try files.memory.delete(at: "provider-state.json")
-            XCTAssertThrowsError(try store.format(for: connection)) { XCTAssertEqual($0 as? SettingsError, expected) }
-            XCTAssertEqual(try ProviderStateStore(files: files).format(for: connection), .jsonSchema)
+            try store.recordSuccess(.none, for: connection)
+            let healed = try json(files)
+            XCTAssertEqual(healed["version"] as? Int, 1)
+            let profiles = try XCTUnwrap(healed["profiles"] as? [[String: Any]])
+            XCTAssertEqual(profiles.count, 1)
+            XCTAssertEqual(profiles.first?["id"] as? String, connection.profileID.rawValue)
+            XCTAssertEqual(try store.format(for: connection), .none)
+            XCTAssertEqual(try ProviderStateStore(files: files).format(for: connection), .none)
         }
     }
 
-    func testReadErrorsAreSanitizedAndExternalReplacementBlocksPublication() throws {
+    func testParsedCorruptionPreservesUnknownMetadataWhileHealingDuplicateProfiles() throws {
+        let files = ProviderRecordingFiles()
+        let connection = try connection()
+        var profile = entry(for: connection, format: .none)
+        profile["id"] = connection.profileID.rawValue.uppercased()
+        profile["futureProfile"] = ["keep": [1, 2]]
+        let original: [String: Any] = ["version": 9, "profiles": [profile, profile], "futureRoot": ["keep": true]]
+        try files.memory.write(JSONSerialization.data(withJSONObject: original), at: "provider-state.json")
+        let store = ProviderStateStore(files: files)
+        XCTAssertEqual(try store.format(for: connection), .jsonSchema)
+        try store.recordSuccess(.jsonObject, for: connection)
+        let healed = try json(files)
+        XCTAssertEqual(healed["futureRoot"] as? NSDictionary, original["futureRoot"] as? NSDictionary)
+        let profiles = try XCTUnwrap(healed["profiles"] as? [[String: Any]])
+        XCTAssertEqual(profiles.count, 1)
+        XCTAssertEqual(profiles.first?["futureProfile"] as? NSDictionary, profile["futureProfile"] as? NSDictionary)
+        XCTAssertEqual(try ProviderStateStore(files: files).format(for: connection), .jsonObject)
+    }
+
+    func testReadErrorsUseSchemaWithoutOverwritingAndRetryOnLaterActions() throws {
         let files = ProviderRecordingFiles()
         let sentinel = UUID().uuidString
+        let connection = try connection()
+        let original = try AssistantOutputFixtures.json(["version": 1, "profiles": [entry(for: connection, format: .jsonObject)]])
+        try files.memory.put(original, at: "provider-state.json")
         files.memory.onRead = { _ in throw NSError(domain: sentinel, code: 1) }
         let store = ProviderStateStore(files: files)
+        for failure: Error in [NSError(domain: sentinel, code: 1), FileStoreError.ioFailure] {
+            files.memory.onRead = { _ in throw failure }
+            XCTAssertEqual(try store.format(for: connection), .jsonSchema)
+            XCTAssertThrowsError(try store.recordSuccess(.none, for: connection)) {
+                XCTAssertEqual($0 as? SettingsError, .readFailed(.ioFailure))
+                self.assertRedacted($0, sentinel: sentinel)
+            }
+            XCTAssertTrue(files.attemptedWrites.isEmpty)
+            files.memory.onRead = nil
+            XCTAssertEqual(try files.memory.text(at: "provider-state.json"), original)
+            XCTAssertEqual(try store.format(for: connection), .jsonObject)
+        }
+        try store.recordSuccess(.none, for: connection)
+        XCTAssertEqual(try store.format(for: connection), .none)
+        XCTAssertEqual(files.attemptedWrites.count, 1)
+    }
+
+    func testExternalCorruptReplacementHealsOnNextSuccessfulRecord() throws {
+        let files = ProviderRecordingFiles()
+        let store = ProviderStateStore(files: files)
         let connection = try connection()
-        XCTAssertThrowsError(try store.format(for: connection)) {
-            XCTAssertEqual($0 as? SettingsError, .readFailed(.ioFailure))
-            self.assertRedacted($0, sentinel: sentinel)
-        }
-        files.memory.onRead = nil
-        XCTAssertThrowsError(try store.format(for: connection))
-        let reopened = ProviderStateStore(files: files)
-        _ = try reopened.format(for: connection)
+        _ = try store.format(for: connection)
         try files.memory.put(#"{"version":9}"#, at: "provider-state.json")
-        XCTAssertThrowsError(try reopened.recordSuccess(.none, for: connection)) {
-            XCTAssertEqual($0 as? SettingsError, .futureVersion(9))
-        }
-        XCTAssertEqual(try files.memory.text(at: "provider-state.json"), #"{"version":9}"#)
-        XCTAssertTrue(files.attemptedWrites.isEmpty)
+        try store.recordSuccess(.none, for: connection)
+        XCTAssertEqual(try ProviderStateStore(files: files).format(for: connection), .none)
+    }
+
+    func testFailedIdentityResetDoesNotBlockLookupOrRestoreOldCapability() throws {
+        let files = ProviderRecordingFiles()
+        let store = ProviderStateStore(files: files)
+        let original = try connection()
+        let changed = try connection(id: original.profileID, model: "new-model")
+        _ = try store.format(for: original)
+        try store.recordSuccess(.none, for: original)
+        let bytes = try files.read(at: "provider-state.json")
+        files.memory.failNextWrite = true
+        XCTAssertEqual(try store.format(for: changed), .jsonSchema)
+        XCTAssertEqual(try files.read(at: "provider-state.json"), bytes)
+        XCTAssertEqual(try store.format(for: original), .jsonSchema)
+    }
+
+    func testSuccessfulRecordCanPublishNewIdentityAfterFailedReset() throws {
+        let files = ProviderRecordingFiles()
+        let store = ProviderStateStore(files: files)
+        let original = try connection()
+        let changed = try connection(id: original.profileID, model: "new-model")
+        _ = try store.format(for: original)
+        try store.recordSuccess(.none, for: original)
+        files.memory.failNextWrite = true
+        XCTAssertEqual(try store.format(for: changed), .jsonSchema)
+        try store.recordSuccess(.jsonObject, for: changed)
+        XCTAssertEqual(try ProviderStateStore(files: files).format(for: changed), .jsonObject)
     }
 
     func testFailedAtomicWritePreservesCapabilityAndCanBeRetried() throws {

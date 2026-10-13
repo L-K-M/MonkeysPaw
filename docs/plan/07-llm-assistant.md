@@ -61,7 +61,8 @@ re-entry or Clear before it can be used.
   elapsed time, and `Esc` cancels the HTTP task. Retries happen only on user
   action. The two HTTP-400 format probes in §7.2 are the sole automatic
   retry exception and share the same monotonic 300-second action deadline
-  ([§19 B24](19-m4-m5-decisions.md)).
+  ([§19 B24](19-m4-m5-decisions.md)). An OpenAI-compatible response received
+  within that deadline is retained if parsing and validation finish after it.
 - **Transport rules** (Vervellum `HTTPTransport`):
   - HTTPS required, except on loopback.
   - No userinfo in URLs.
@@ -134,13 +135,20 @@ How each provider is asked for the schema:
   - Persist the lower format only after its response passes stop checks,
     recovery and strict validation. A failed probe leaves the capability
     unchanged. `<config>/provider-state.json`, beside provider settings, is a
-    version-1 non-secret FileStore record. Unknown root/profile keys survive
-    rewrites. Entries are isolated by profile ID, kind, normalized base URL
-    (including its path) and model; a changed identity resets to schema mode.
-    Missing files start empty. Corrupt, unreadable or unsupported state stays
-    read-only for that store instance and blocks completion calls with a typed
-    `providerState` error. Atomic write failures also surface that error without
-    publishing capability changes. Model listing does not need this cache.
+    version-1 non-secret FileStore record. Unknown root/profile keys from parsed
+    files survive rewrites for retained profile IDs. Entries are isolated by
+    profile ID, kind, normalized base URL (including its path) and model; a
+    changed identity resets to schema mode.
+    Missing files start empty. Decode, version or validation failures also
+    start empty at `json_schema`; the next successful lower-format record
+    replaces corrupt capabilities with a valid version-1 file. A read I/O
+    failure means no cached capability for that action, and later actions
+    retry the read. Never overwrite a file that could not be read. Cache
+    failures never block an assistant action or discard a validated response:
+    failed atomic writes leave disk state intact and log only a static warning.
+    Failed identity-reset writes keep the observed profile at schema mode
+    until a reset or validated capability can be published. Model listing
+    does not need this cache.
   - A schema test pins the schema, so a 400 caused by our own schema is
     caught in CI rather than mistaken for a missing capability.
 

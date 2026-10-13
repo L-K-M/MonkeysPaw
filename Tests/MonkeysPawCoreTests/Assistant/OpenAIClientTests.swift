@@ -16,7 +16,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(request.url.absoluteString, "https://api.openai.com/v1/chat/completions")
         XCTAssertEqual(request.method, .post)
         XCTAssertEqual(Set(request.headers.keys), ["Authorization", "Content-Type"])
-        XCTAssertTrue(request.headers["Authorization"] == "Bearer " + key)
+        XCTAssertEqual(request.headers["Authorization"], "Bearer " + key)
         XCTAssertEqual(request.headers["Content-Type"], "application/json")
         XCTAssertEqual(request.requestByteCap, Limits.httpRequestCap)
         XCTAssertEqual(request.responseByteCap, Limits.responseCap)
@@ -159,9 +159,10 @@ final class OpenAIClientTests: XCTestCase {
             XCTAssertEqual(try requests.map(formatType), expected)
             XCTAssertEqual(files.attemptedWrites.count, 1)
             for request in requests.dropLast() { XCTAssertEqual(request.deadline, requests[0].deadline) }
+            let expectedMessages = try XCTUnwrap(requestBody(requests[0])["messages"] as? [[String: String]])
             for request in requests {
                 let body = try requestBody(request)
-                XCTAssertEqual(body["messages"] as? [[String: String]], try requestBody(requests[0])["messages"] as? [[String: String]])
+                XCTAssertEqual(body["messages"] as? [[String: String]], expectedMessages)
                 if try formatType(request) == "json_object" {
                     XCTAssertEqual(body["response_format"] as? [String: String], ["type": "json_object"])
                 }
@@ -289,7 +290,7 @@ final class OpenAIClientTests: XCTestCase {
         for request in requests { XCTAssertEqual(request.deadline, start.advanced(by: .seconds(300))) }
     }
 
-    func testBudgetExhaustionDuringProbesOrSuccessfulDecodeNeverPersists() async throws {
+    func testBudgetExhaustionBeforeResponseReceiptNeverPersists() async throws {
         for advance in [150, 300] {
             let clock = OpenAIManualClock()
             let files = ProviderRecordingFiles()
@@ -305,27 +306,80 @@ final class OpenAIClientTests: XCTestCase {
         }
     }
 
-    func testStateReadAndWriteFailuresAreTypedAndNeverReportedAsSuccess() async throws {
+    func testOnTimeResponseIsReturnedWhenParsingFinishesAfterDeadline() async throws {
+        for probes in [0, 1] {
+            let clock = OpenAIManualClock(readStep: .seconds(probes == 0 ? 80 : 50))
+            let files = ProviderRecordingFiles()
+            let replies = (probes == 0 ? [] : [try unsupported(.jsonSchema)]) + [try completion()]
+            let transport = OpenAIStubTransport(replies: replies.map { .response($0) })
+            let client = OpenAIClient(transport: transport, providerState: ProviderStateStore(files: files), now: { clock.now() })
+            let response = try await client.perform(writeRequest, using: connection())
+            guard case .artifact(let artifact) = response.output else { return XCTFail("Expected artifact") }
+            XCTAssertEqual(artifact.title, "Research")
+            let requests = await transport.snapshot()
+            XCTAssertEqual(requests.count, probes + 1)
+            XCTAssertGreaterThanOrEqual(clock.now(), requests[0].deadline)
+            XCTAssertEqual(files.attemptedWrites.count, probes)
+        }
+    }
+
+    func testStateReadAndWriteFailuresDoNotDiscardValidatedResponsesOrUsage() async throws {
         let files = ProviderRecordingFiles()
         try files.memory.put(#"{"version":8}"#, at: "provider-state.json")
-        let transport = OpenAIStubTransport(response: try completion())
+        let success = try jsonResponse(["choices": [["finish_reason": "stop", "message":
+            ["content": try AssistantOutputFixtures.json(AssistantOutputFixtures.artifact)]]],
+            "usage": ["prompt_tokens": 12, "completion_tokens": 34]])
+        let transport = OpenAIStubTransport(replies: [.response(try unsupported(.jsonSchema)), .response(success)])
         let connection = try connection()
-        await assertError(.providerState(.futureVersion(8))) {
-            _ = try await self.client(transport, files: files).perform(self.writeRequest, using: connection)
-        }
-        let unsent = await transport.snapshot()
-        XCTAssertTrue(unsent.isEmpty)
-        XCTAssertTrue(files.attemptedWrites.isEmpty)
+        let healed = try await client(transport, files: files).perform(writeRequest, using: connection)
+        guard case .artifact(let artifact) = healed.output else { return XCTFail("Expected artifact") }
+        XCTAssertEqual(artifact.title, "Research")
+        XCTAssertEqual(healed.usage, AssistantTokenUsage(inputTokens: 12, outputTokens: 34))
+        let requests = await transport.snapshot()
+        XCTAssertEqual(try requests.map(formatType), ["json_schema", "json_object"])
+        XCTAssertEqual(try ProviderStateStore(files: files).format(for: connection), .jsonObject)
         // Model listing uses no capability state, including for an unreadable cache.
+        files.memory.onRead = { _ in throw FileStoreError.ioFailure }
         let models = OpenAIStubTransport(response: try jsonResponse(["data": []]))
         _ = try await client(models, files: files).listModels(using: connection)
         let writable = ProviderRecordingFiles()
-        writable.memory.failNextWrite = true
-        let probe = OpenAIStubTransport(replies: [.response(try unsupported(.jsonSchema)), .response(try completion())])
-        await assertError(.providerState(.writeFailed(.ioFailure))) {
-            _ = try await self.client(probe, files: writable).perform(self.writeRequest, using: connection)
+        writable.memory.onRead = { _ in writable.memory.failNextWrite = true }
+        let probe = OpenAIStubTransport(replies: [.response(try unsupported(.jsonSchema)), .response(success),
+            .response(try unsupported(.jsonSchema)), .response(success)])
+        let client = client(probe, files: writable)
+        for _ in 0..<2 {
+            let response = try await client.perform(writeRequest, using: connection)
+            XCTAssertEqual(response.output, healed.output)
+            XCTAssertEqual(response.usage, healed.usage)
         }
+        XCTAssertEqual(writable.attemptedWrites.count, 2)
         XCTAssertNil(try writable.stamp(at: "provider-state.json"))
+    }
+
+    func testUnreadableCacheDoesNotBlockActionsOrOverwriteAndRecoversOnLaterAction() async throws {
+        let files = ProviderRecordingFiles()
+        let connection = try connection()
+        let state = ProviderStateStore(files: files)
+        _ = try state.format(for: connection)
+        try state.recordSuccess(.jsonObject, for: connection)
+        let original = try files.read(at: "provider-state.json")
+        let sentinel = UUID().uuidString
+        files.memory.onRead = { _ in throw NSError(domain: sentinel, code: 1) }
+        let transport = OpenAIStubTransport(replies: [.response(try unsupported(.jsonSchema)), .response(try completion()),
+            .response(try unsupported(.jsonSchema)), .response(try completion()), .response(try completion())])
+        let client = OpenAIClient(transport: transport, providerState: state)
+        for _ in 0..<2 {
+            let response = try await client.perform(writeRequest, using: connection)
+            guard case .artifact(let artifact) = response.output else { return XCTFail("Expected artifact") }
+            XCTAssertEqual(artifact.title, "Research")
+        }
+        XCTAssertEqual(files.attemptedWrites.count, 1)
+        files.memory.onRead = nil
+        XCTAssertEqual(try files.read(at: "provider-state.json"), original)
+        _ = try await client.perform(writeRequest, using: connection)
+        let requests = await transport.snapshot()
+        XCTAssertEqual(try requests.map(formatType), ["json_schema", "json_object", "json_schema", "json_object", "json_object"])
+        XCTAssertEqual(files.attemptedWrites.count, 1)
     }
 
     func testModelListUsesGETBearerAndFifteenSecondBudgetWithoutRequiringModel() async throws {
@@ -340,7 +394,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(request.method, .get)
         XCTAssertNil(request.body)
         XCTAssertEqual(Set(request.headers.keys), ["Authorization"])
-        XCTAssertTrue(request.headers["Authorization"] == "Bearer " + key)
+        XCTAssertEqual(request.headers["Authorization"], "Bearer " + key)
         XCTAssertEqual(request.requestByteCap, Limits.httpRequestCap)
         XCTAssertEqual(request.responseByteCap, Limits.responseCap)
         XCTAssertGreaterThanOrEqual(request.deadline, before.advanced(by: .seconds(15)))
@@ -750,10 +804,16 @@ private actor OpenAIStubTransport: HTTPTransporting {
 private final class OpenAIManualClock: @unchecked Sendable {
     private let lock = NSLock()
     private var instant = ContinuousClock.now
+    private let readStep: Duration
+
+    init(readStep: Duration = .zero) { self.readStep = readStep }
 
     func now() -> ContinuousClock.Instant {
         lock.lock()
-        defer { lock.unlock() }
+        defer {
+            instant = instant.advanced(by: readStep)
+            lock.unlock()
+        }
         return instant
     }
 
