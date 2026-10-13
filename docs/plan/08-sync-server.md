@@ -153,6 +153,12 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
   removal. All audit rows commit with their mutations; audit failure rolls
   back the entire operation. No name, role payload, prompt content or
   credentials are recorded.
+- **Invite audit.** `invite.create` targets the group for a group invite, or
+  the issuing admin for an account-only invite. `invite.consume` targets the
+  redeeming user. Group events include `group_id`; tokens and hashes never
+  enter audit rows. Registration also records `user.create`, and group
+  redemption records `membership.upsert`, attributed to the invite issuer.
+  Every audit row commits with the invite and account/membership mutation.
 - **Disabled users.** All of their tokens fail with 401. Their prompts and
   memberships are kept. Disable and admin password reset revoke all target
   devices, including the caller's device on a self-reset. Enabling requires a
@@ -450,6 +456,26 @@ lock.
     `MimeType=x-scheme-handler/monkeyspaw` in the `.desktop` file on Linux,
     which routes to the GApplication `open` handler.
   - There is no open registration.
+  - Owners and admins may issue editor/viewer group invites; only admins may
+    issue account-only invites. HTTP cannot issue owner invites. Issuance
+    rechecks the active session, account kind and group authority inside the
+    write transaction. Issued invites remain valid until consumed or expired,
+    even if their issuer later loses authority; deleted groups cannot be joined.
+  - Unknown, expired or consumed tokens return `400 malformed_request`.
+    Account-only tokens cannot be used with `/groups/join`. Registration
+    creates a member account, its device and any membership while consuming
+    the invite in one serialized write. A username collision, device failure
+    or audit failure rolls back consumption and every related mutation.
+  - Existing-account join retains an existing higher role and `joined_at`,
+    or grants the invite role when it is higher. Admins cannot self-add or
+    elevate even with an invite (`403 forbidden`); a denied attempt leaves
+    the token usable. A deleted group returns 404 without consuming the token.
+  - `MONKEYSPAW_PUBLIC_URL`, when set, must be an absolute HTTP(S) URL with a
+    host and no credentials or fragment. Server issuance provides a one-time
+    link for CLI output; the unchanged HTTP DTO exposes the token and clients
+    construct the link. Both query values use percent encoding of everything
+    except RFC 3986 unreserved characters, including nested `&`, `+` and `%`.
+    Without a public URL, issuance still provides the bare token.
 - **Brute force.**
   - Independent canonical-username and canonical-IP buckets live in
     `login_account_buckets` and `login_ip_buckets`, including unknown users.

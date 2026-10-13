@@ -13,6 +13,8 @@ enum AuditAction: String, Sendable, CaseIterable {
     case groupDelete = "group.delete"
     case membershipUpsert = "membership.upsert"
     case membershipRemove = "membership.remove"
+    case inviteCreate = "invite.create"
+    case inviteConsume = "invite.consume"
 }
 
 enum AuditActor: Sendable, Equatable {

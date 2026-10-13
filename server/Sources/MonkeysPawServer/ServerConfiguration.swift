@@ -9,6 +9,7 @@ public struct ServerConfiguration: Sendable {
     public let httpPort: Int
     let trustedProxies: TrustedProxies
     let logLevel: Logger.Level
+    let publicURL: String?
 
     /// Treats empty or whitespace-only environment values as unset before applying defaults.
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) throws {
@@ -19,6 +20,14 @@ public struct ServerConfiguration: Sendable {
         httpHost = environment["MONKEYSPAW_HTTP_HOST"] ?? ServerLimits.defaultHTTPHost
         version = environment["MONKEYSPAW_VERSION"] ?? AppIdentity.fallbackVersion
         logLevel = ServerLogging.logLevel(environment: environment)
+        publicURL = environment["MONKEYSPAW_PUBLIC_URL"]
+        if let publicURL {
+            guard let url = URLComponents(string: publicURL), ["http", "https"].contains(url.scheme?.lowercased()),
+                  let host = url.host, !host.isEmpty, url.url != nil, url.user == nil, url.password == nil,
+                  url.fragment == nil, !publicURL.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }) else {
+                throw ConfigurationError.invalidPublicURL
+            }
+        }
 
         do {
             trustedProxies = try TrustedProxies(configuration: environment["MONKEYSPAW_TRUSTED_PROXIES"] ?? "")
@@ -41,6 +50,7 @@ public struct ServerConfiguration: Sendable {
     private enum ConfigurationError: Error, CustomStringConvertible {
         case invalidHTTPPort
         case invalidTrustedProxies
+        case invalidPublicURL
 
         var description: String {
             switch self {
@@ -48,6 +58,8 @@ public struct ServerConfiguration: Sendable {
                 return "MONKEYSPAW_HTTP_PORT must be an integer in \(ServerLimits.httpPortRange)."
             case .invalidTrustedProxies:
                 return "MONKEYSPAW_TRUSTED_PROXIES must be a bounded comma-separated list of IP addresses or CIDRs."
+            case .invalidPublicURL:
+                return "MONKEYSPAW_PUBLIC_URL must be an absolute HTTP(S) URL without credentials or a fragment."
             }
         }
     }
