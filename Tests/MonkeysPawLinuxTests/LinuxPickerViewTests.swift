@@ -231,6 +231,61 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
     }
 
+    func testToggleRequestSurvivesBlurWhilePresentationIsQueued() throws {
+        try assertPresentationSurvivesQueuedBlur { self.environment.activateToggle() }
+    }
+
+    func testLauncherRequestSurvivesBlurWhilePresentationIsQueued() throws {
+        environment.settingsModel.markSetupPresented()
+        environment.settingsModel.completeLibraryFolderStep()
+        environment.settingsModel.markSeedsOffered()
+        environment.settingsModel.completeTour()
+        XCTAssertNil(environment.settingsModel.error)
+        try assertPresentationSurvivesQueuedBlur { self.environment.presentFromLauncher() }
+    }
+
+    func testBlurWithoutAnotherPresentationStillDismissesPicker() throws {
+        try open()
+        let other = try XCTUnwrap(gtk_application_window_new(application))
+        defer { gtk_window_destroy(mp_window(other)) }
+        gtk_window_present(mp_window(other))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.pickerModel.state == .closed && !self.environment.panel.isVisible
+        })
+    }
+
+    private func assertPresentationSurvivesQueuedBlur(_ request: () -> Void) throws {
+        try open()
+        XCTAssertTrue(GTKTestSupport.spin { g_main_context_pending(nil) == 0 })
+        let other = try XCTUnwrap(gtk_application_window_new(application))
+        defer { gtk_window_destroy(mp_window(other)) }
+        gtk_window_present(mp_window(other))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.panel.isVisible && !self.environment.panel.isActiveAndVisible
+                && gtk_window_is_active(mp_window(other)) != 0
+        })
+
+        let picker = environment.pickerModel
+        let render = picker.onChange
+        defer { picker.onChange = render }
+        var delayedPresentation = false
+        picker.onChange = { [weak picker] in
+            render?()
+            guard !delayedPresentation, picker?.state == .picker else { return }
+            delayedPresentation = true
+            // The show is a GLib idle. Let the older blur timeout become ready
+            // before the next iteration, as when the app loses CPU time.
+            Thread.sleep(forTimeInterval: Limits.blurHideDelay.timeInterval + 0.1)
+        }
+        request()
+        XCTAssertTrue(GTKTestSupport.spin { delayedPresentation })
+        var drained = false
+        environment.mainThread.run { self.environment.mainThread.run { drained = true } }
+        XCTAssertTrue(GTKTestSupport.spin { drained })
+        XCTAssertEqual(picker.state, .picker)
+        XCTAssertTrue(environment.panel.isVisible)
+    }
+
     func testFieldDescriptionsAppearBelowControlsOnlyWhenNonempty() throws {
         let source = """
         ---
