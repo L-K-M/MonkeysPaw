@@ -134,6 +134,7 @@ public final class ShortcutService {
             } else {
                 do { try self.settings?.setCarbonShortcut(action, accelerator: accelerator) }
                 catch let error as SettingsError { failure = .saveFailed(error) }
+                catch let error as ShortcutRebindError { failure = error }
                 catch { failure = .saveFailed(.writeFailed(.ioFailure)) }
             }
 

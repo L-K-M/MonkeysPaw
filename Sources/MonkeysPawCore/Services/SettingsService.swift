@@ -44,7 +44,7 @@ public final class SettingsService: Sendable {
     }
 
     /// ShortcutService calls this only after the native action is confirmed.
-    public func setCarbonShortcut(_ action: HotkeyAction, accelerator: Accelerator?) throws {
+    func setCarbonShortcut(_ action: HotkeyAction, accelerator: Accelerator?) throws {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
                 delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,

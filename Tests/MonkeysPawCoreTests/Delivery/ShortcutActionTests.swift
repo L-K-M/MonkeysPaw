@@ -1,5 +1,5 @@
-import MonkeysPawCore
 import XCTest
+@testable import MonkeysPawCore
 
 final class ShortcutActionTests: XCTestCase {
     private final class Harness {
@@ -145,6 +145,24 @@ final class ShortcutActionTests: XCTestCase {
         XCTAssertEqual(h.settings.snapshot, previous)
         _ = try h.set("Ctrl+Alt+P", for: .togglePicker)?.get()
         XCTAssertEqual(h.shortcuts.registrations[.togglePicker]?.status, .registered)
+    }
+
+    func testSavedCollisionRetainsItsTypedActionAndRollsBackTheNativeReplacement() throws {
+        let h = Harness()
+        h.configure()
+        _ = try h.set("Alt+R", for: .repeatLast)?.get()
+        let picker = h.settings.snapshot.document.carbonShortcuts.togglePicker
+        let repeatRegistration = h.shortcuts.registrations[.repeatLast]
+        let otherSettings = SettingsService(store: SettingsStore(files: h.files))
+        try otherSettings.setCarbonShortcut(.repeatLast, accelerator: Accelerator("Alt+F8"))
+
+        XCTAssertEqual(h.set("Alt+F8", for: .togglePicker), .failure(.collision(.repeatLast)))
+
+        XCTAssertEqual(h.shortcuts.registrations[.togglePicker]?.status, .registered)
+        XCTAssertEqual(h.backend.registered.last?.1, picker)
+        XCTAssertEqual(h.shortcuts.registrations[.repeatLast], repeatRegistration)
+        let reopened = SettingsService(store: SettingsStore(files: h.files))
+        XCTAssertEqual(reopened.snapshot.document.carbonShortcuts.repeatLast, try Accelerator("Alt+F8"))
     }
 
     func testReadOnlySettingsRejectReplacementBeforeNativeMutation() throws {

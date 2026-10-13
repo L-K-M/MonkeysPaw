@@ -25,8 +25,12 @@ public struct CarbonShortcutChoices: Equatable, Sendable, Decodable {
     }
 
     func replacing(_ action: HotkeyAction, with accelerator: Accelerator?) throws -> Self {
-        try Self(togglePicker: action == .togglePicker ? accelerator : togglePicker,
-                 repeatLast: action == .repeatLast ? accelerator : repeatLast)
+        do {
+            return try Self(togglePicker: action == .togglePicker ? accelerator : togglePicker,
+                            repeatLast: action == .repeatLast ? accelerator : repeatLast)
+        } catch ShortcutRebindError.collision(_) {
+            throw ShortcutRebindError.collision(action == .togglePicker ? .repeatLast : .togglePicker)
+        }
     }
 
     private enum CodingKeys: String, CodingKey { case togglePicker, repeatLast }
