@@ -287,8 +287,8 @@ final class MacAssistantSettingsTests: XCTestCase {
             (.authentication, .authentication), (.modelNotFound, .notFound),
             (.rateLimited(retryAfter: 3), .rateLimited(retryAfter: 3)),
             (.transport(.networkFailure), .network), (.transport(.deadlineExceeded), .timeout),
-            (.providerFailure(405), .unsupportedListing), (.invalidOutput, .invalidResponse),
-            (.providerFailure(503), .providerFailure(statusCode: 503))
+            (.providerFailure(statusCode: 405), .unsupportedListing), (.invalidOutput, .invalidResponse),
+            (.providerFailure(statusCode: 503), .providerFailure(statusCode: 503))
         ]
         for (error, result) in cases {
             let h = try MacAssistantSettingsHarness()
