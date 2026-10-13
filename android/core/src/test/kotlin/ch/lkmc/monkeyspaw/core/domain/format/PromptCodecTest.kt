@@ -247,4 +247,93 @@ class PromptCodecTest {
             assertFalse(issue.message.contains("private: on"))
         }
     }
+
+    @Test fun choiceDefaultsUseSwiftCanonicalEqualityWithoutChangingStoredText() {
+        val document = read("fields: {x: {type: choice, options: [é], default: \"e\\u0301\"}}", "{{x}}")
+        assertTrue(document.decodingIssues.isEmpty())
+        val field = document.frontMatter.fields.single()
+        assertEquals("e\u0301", field.defaultValue)
+        assertEquals("é", field.options.single().value)
+    }
+
+    @Test fun unicodeYamlBreaksSeparateMetadataWithoutChangingSourceOrBody() {
+        for (separator in listOf('\u0085', '\u2028', '\u2029')) {
+            val body = "Body${separator}exact"
+            val header = "title: Retained${separator}private: false"
+            val document = read(header, body)
+            assertTrue(document.decodingIssues.isEmpty(), separator.code.toString())
+            assertEquals("Retained", document.frontMatter.title)
+            assertFalse(document.frontMatter.isPrivate)
+            assertEquals(body, document.body)
+            assertEquals("---\n$header\n---\n$body", document.source)
+            assertEquals(listOf(PromptIssueCode.INVALID_YAML), codes(read("title: a${separator}b")))
+        }
+    }
+
+    @Test fun unicodeYamlBreaksKeepScalarMeaningAcrossEveryStyle() {
+        for (separator in listOf('\u0085', '\u2028', '\u2029')) {
+            val expected = if (separator == '\u0085') "first second" else "first${separator}second"
+            for (value in listOf("first${separator}  second", "'first${separator}  second'", "\"first${separator}  second\"")) {
+                assertEquals(expected, read("title: $value").frontMatter.title, value)
+            }
+            val literal = if (separator == '\u0085') "first\nsecond" else "first${separator}second"
+            assertEquals(literal, read("title: |-\n  first${separator}  second").frontMatter.title)
+            assertEquals(expected, read("title: >-\n  first${separator}  second").frontMatter.title)
+            val keep = if (separator == '\u0085') '\n' else separator
+            assertEquals("first${keep}second\n$keep\n", read("title: |+\n  first${separator}  second\n$separator").frontMatter.title)
+        }
+    }
+
+    @Test fun unicodeYamlMarksCountBreaksAndInteriorBomsAsSwiftDoes() {
+        for (separator in listOf('\u0085', '\u2028', '\u2029')) {
+            val document = read("title: Retained${separator}private: on")
+            assertEquals(listOf(PromptIssueCode.NON_PORTABLE_SCALAR, PromptIssueCode.INVALID_METADATA_TYPE), codes(document))
+            assertEquals(PromptIssueLocation.FrontMatter(3, 10), document.decodingIssues.first().location)
+        }
+        assertEquals(PromptIssueLocation.FrontMatter(2, 16), read("x: {a: '\uFEFF', b: on}").decodingIssues.single().location)
+    }
+
+    @Test fun adaptedQuotedEscapesAndRawBackslashesRemainDistinct() {
+        val document = read("title: \"a\\L\\P\\u2028\\U0001F412\\x41\\N\\\\L\"\n" +
+            "description: '\\L\\P'\ntags: [\\L, \\P]")
+        assertTrue(document.decodingIssues.isEmpty())
+        assertEquals("a\u2028\u2029\u2028🐒A\u0085\\L", document.frontMatter.title)
+        assertEquals("\\L\\P", document.frontMatter.description)
+        assertEquals(listOf("\\L", "\\P"), document.frontMatter.tags)
+        val block = read("title: |-\n  \\L\\P\n  literal\u2028  last\n")
+        assertEquals("\\L\\P\nliteral\u2028last", block.frontMatter.title)
+    }
+
+    @Test fun adaptedFoldingKeepsBlankLinesEscapedBreaksAndCompactIndentation() {
+        for (separator in listOf('\u2028', '\u2029')) {
+            assertEquals("a${separator}${separator}b", read("title: \"a${separator} ${separator}  b\"").frontMatter.title)
+            assertEquals("ab", read("title: \"a\\${separator}  b\"").frontMatter.title)
+            assertEquals("a${separator}  indented\nlast", read("title: >-\n  a${separator}    indented\n  last\n").frontMatter.title)
+            val nested = read("fields:\n  x:\n    description: |2-\n      a${separator}      b\n", "{{x}}")
+            assertEquals("a${separator}b", nested.frontMatter.fields.single().description)
+            val compact = read("fields:\n  x:\n    type: choice\n    options:\n    - label: |2-\n        a${separator}        b\n      value: ab\n", "{{x}}")
+            assertTrue(compact.decodingIssues.isEmpty())
+            assertEquals("a${separator}b", compact.frontMatter.fields.single().options.single().label)
+        }
+    }
+
+    @Test fun yamlEscapesCannotConstructInvalidUnicodeScalars() {
+        for (escape in listOf("\\uD800", "\\uDFFF", "\\U0000D800", "\\uD83D\\uDC12", "\\U00110000")) {
+            val document = read("title: Retained\nprivate: false\nx: \"$escape\"")
+            assertEquals(listOf(PromptIssueCode.INVALID_YAML), codes(document), escape)
+            assertEquals("Fallback", document.frontMatter.title)
+            assertTrue(document.frontMatter.isPrivate)
+            assertEquals("Body", document.body)
+        }
+        assertEquals("🐒", read("title: \"\\U0001F412\"").frontMatter.title)
+    }
+
+    @Test fun invalidAnchorNamesTakeSwiftSyntaxRecovery() {
+        for (declaration in listOf("seed: &é value", "seed: &bad#name value", "seed: &é {key: value}")) {
+            val document = read("title: Lost\nprivate: false\n$declaration")
+            assertEquals(listOf(PromptIssueCode.INVALID_YAML), codes(document), declaration)
+            assertEquals("Fallback", document.frontMatter.title)
+            assertTrue(document.frontMatter.isPrivate)
+        }
+    }
 }

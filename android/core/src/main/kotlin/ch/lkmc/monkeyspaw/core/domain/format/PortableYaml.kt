@@ -10,9 +10,18 @@ import org.snakeyaml.engine.v2.events.CollectionStartEvent
 import org.snakeyaml.engine.v2.events.DocumentStartEvent
 import org.snakeyaml.engine.v2.events.Event
 import org.snakeyaml.engine.v2.events.MappingEndEvent
+import org.snakeyaml.engine.v2.events.NodeEvent
 import org.snakeyaml.engine.v2.events.ScalarEvent
 import org.snakeyaml.engine.v2.events.SequenceEndEvent
 import org.snakeyaml.engine.v2.events.SequenceStartEvent
+import org.snakeyaml.engine.v2.common.CharConstants
+import org.snakeyaml.engine.v2.common.ScalarStyle as EngineScalarStyle
+import org.snakeyaml.engine.v2.parser.ParserImpl
+import org.snakeyaml.engine.v2.scanner.Scanner
+import org.snakeyaml.engine.v2.scanner.ScannerImpl
+import org.snakeyaml.engine.v2.scanner.StreamReader
+import org.snakeyaml.engine.v2.tokens.ScalarToken
+import org.snakeyaml.engine.v2.tokens.Token
 
 /** Syntax events only: never Load, Compose, a bean constructor, or a library scalar resolver. */
 internal object PortableYaml {
@@ -36,17 +45,33 @@ internal object PortableYaml {
         YamlTag.VALUE to Regex("="),
     )
 
-    fun parse(header: String): YamlNode? {
+    fun parse(source: YamlSource): YamlNode? {
         val frames = ArrayDeque<ParseFrame>()
         val anchors = mutableMapOf<String, PromptIssueLocation.FrontMatter?>()
         var root: YamlNode? = null
         var documents = 0
+        fun mark(event: Event) = event.startMark.orElse(null)?.let { source.location(it.index) }
 
         fun attach(node: YamlNode) {
             if (frames.isEmpty()) root = node else frames.last().children.add(node)
         }
 
-        for (event in Parse(settings).parseString(header)) {
+        val events = if (source.needsAdapter) Iterable { ParserImpl(settings,
+            PortableScanner(source, ScannerImpl(settings, StreamReader(settings, source.syntax)))) }
+            else Parse(settings).parseString(source.original)
+        for (event in events) {
+            val name = (event as? NodeEvent)?.anchor?.orElse(null)?.value
+            if (name != null) {
+                val invalid = name.indexOfFirst { it !in 'A'..'Z' && it !in 'a'..'z' &&
+                    it !in '0'..'9' && it != '_' && it != '-' }
+                if (invalid >= 0) {
+                    val start = event.startMark.get().index
+                    val raw = source.slice(start, event.endMark.get().index)
+                    val prefix = raw.indexOf(if (event is AliasEvent) "*$name" else "&$name").coerceAtLeast(0)
+                    throw YamlFailure(PromptIssue(PromptIssueCode.INVALID_YAML,
+                        source.location(start + raw.codePointCount(0, (prefix + 1 + invalid).coerceAtMost(raw.length)))))
+                }
+            }
             when (event) {
                 is DocumentStartEvent -> {
                     documents++
@@ -340,10 +365,6 @@ internal object PortableYaml {
     private fun collectionTag(event: CollectionStartEvent, default: String): String =
         event.tag.orElse(null)?.takeUnless { it == "!" } ?: default
 
-    private fun mark(event: Event): PromptIssueLocation.FrontMatter? = event.startMark.orElse(null)?.let {
-        PromptIssueLocation.FrontMatter(it.line + 2, it.column + 1)
-    }
-
     private class ParseFrame(val event: CollectionStartEvent, val children: MutableList<YamlNode> = mutableListOf())
     private sealed interface NormalizeStep
     private data class Visit(val node: YamlNode, val key: Boolean = false) : NormalizeStep
@@ -360,3 +381,189 @@ internal object PortableYaml {
 
 /** Carries only a safe diagnostic, never a parser exception or its embedded input. */
 internal class YamlFailure(val issue: PromptIssue) : RuntimeException()
+
+/** A syntax view only; all source spans and diagnostic coordinates refer to original text. */
+internal class YamlSource(val original: String) {
+    val needsAdapter = original.any { it == '\u0085' || it == '\u2028' || it == '\u2029' } ||
+        listOf("\\L", "\\P", "\\u", "\\U").any { original.contains(it) }
+    val syntax = original.replace('\u0085', '\n').replace('\u2028', '\n').replace('\u2029', '\n')
+        .replace("\\L", "\\N").replace("\\P", "\\N")
+    private val points = original.codePoints().toArray()
+    private val offsets = IntArray(points.size + 1)
+    private val lines = IntArray(points.size + 1)
+    private val columns = IntArray(points.size + 1)
+
+    init {
+        var line = 2
+        var column = 1
+        for (index in 0..points.size) {
+            lines[index] = line
+            columns[index] = column
+            if (index == points.size) break
+            offsets[index + 1] = offsets[index] + Character.charCount(points[index])
+            when (points[index]) {
+                13, 133, 0x2028, 0x2029 -> { line++; column = 1 }
+                10 -> if (index == 0 || points[index - 1] != 13) { line++; column = 1 }
+                0xfeff -> if (index != 0) column++
+                else -> column++
+            }
+        }
+    }
+
+    fun location(index: Int): PromptIssueLocation.FrontMatter = index.coerceIn(0, points.size).let {
+        PromptIssueLocation.FrontMatter(lines[it], columns[it])
+    }
+
+    fun slice(start: Int, end: Int): String = original.substring(offsets[start], offsets[end])
+}
+
+/** Engine 3.2 scans YAML 1.2 breaks; libyaml also scans NEL/LS/PS and retains LS/PS in values. */
+private class PortableScanner(private val source: YamlSource, private val scanner: Scanner) : Scanner {
+    private val indents = ArrayDeque<Int>()
+    private var cached: Token? = null
+    private var adapted: Token? = null
+
+    override fun checkToken(vararg choices: Token.ID): Boolean = scanner.checkToken(*choices)
+    override fun hasNext(): Boolean = scanner.hasNext()
+    override fun remove() { throw UnsupportedOperationException() }
+    override fun resetDocumentIndex() = scanner.resetDocumentIndex()
+    override fun peekToken(): Token = adapt(scanner.peekToken())
+
+    override fun next(): Token {
+        val token = adapt(scanner.next())
+        when (token.tokenId) {
+            Token.ID.BlockMappingStart, Token.ID.BlockSequenceStart -> indents.addLast(token.startMark.get().column)
+            Token.ID.BlockEnd -> if (indents.isNotEmpty()) indents.removeLast()
+            else -> Unit
+        }
+        return token
+    }
+
+    private fun adapt(token: Token): Token {
+        if (token === cached) return adapted!!
+        cached = token
+        adapted = token
+        if (token !is ScalarToken) return token
+        val start = token.startMark.get().index
+        val raw = source.slice(start, token.endMark.get().index)
+        val needsValue = raw.any { it == '\u0085' || it == '\u2028' || it == '\u2029' } ||
+            raw.contains("\\L") || raw.contains("\\P") ||
+            (token.style == EngineScalarStyle.DOUBLE_QUOTED && (raw.contains("\\u") || raw.contains("\\U")))
+        if (!needsValue) return token
+        val decoder = PortableScalar(raw) { index ->
+            throw YamlFailure(PromptIssue(PromptIssueCode.INVALID_YAML,
+                source.location(start + raw.codePointCount(0, index))))
+        }
+        val value = when (token.style) {
+            EngineScalarStyle.PLAIN -> decoder.flow()
+            EngineScalarStyle.SINGLE_QUOTED -> decoder.flow('\'')
+            EngineScalarStyle.DOUBLE_QUOTED, EngineScalarStyle.JSON_SCALAR_STYLE -> decoder.flow('"')
+            EngineScalarStyle.LITERAL, EngineScalarStyle.FOLDED -> decoder.block(token.style, indents.lastOrNull() ?: -1)
+        }
+        return ScalarToken(value, token.isPlain, token.style, token.startMark, token.endMark).also { adapted = it }
+    }
+}
+
+/** Decode only adapted scalar spans, after the engine has validated their YAML syntax. */
+private class PortableScalar(private val raw: String, private val invalid: (Int) -> Nothing) {
+    private var index = 0
+    private val output = StringBuilder()
+    private fun isBreak(char: Char) = char in "\r\n\u0085\u2028\u2029"
+    private fun peek(): Char = raw.getOrElse(index) { '\u0000' }
+    private fun breakValue(): String {
+        val char = raw[index++]
+        if (char == '\r' && peek() == '\n') index++
+        return if (char == '\u2028' || char == '\u2029') char.toString() else "\n"
+    }
+
+    fun flow(quote: Char? = null): String {
+        val end = if (quote == null) raw.length else raw.length - 1
+        if (quote != null) index++
+        while (index < end) {
+            val char = peek()
+            if (quote == '\'' && char == '\'' && raw.getOrNull(index + 1) == '\'') {
+                output.append('\''); index += 2
+            } else if (quote == '"' && char == '\\') {
+                index++
+                if (isBreak(peek())) {
+                    breakValue()
+                    output.append(followingBreaks(end))
+                } else {
+                    val escapeIndex = index
+                    val escape = raw[index++]
+                    val literal = when (escape) { 'L' -> "\u2028"; 'P' -> "\u2029"; else -> CharConstants.ESCAPE_REPLACEMENTS[escape] }
+                    if (literal != null) output.append(literal) else {
+                        val count = when (escape) { 'x' -> 2; 'u' -> 4; 'U' -> 8; else -> invalid(escapeIndex) }
+                        val value = raw.substring(index, index + count).toLong(16)
+                        if (value > 0x10ffff || value in 0xd800..0xdfff) invalid(escapeIndex)
+                        output.appendCodePoint(value.toInt())
+                        index += count
+                    }
+                }
+            } else if (char == ' ' || char == '\t' || isBreak(char)) {
+                val start = index
+                while (index < end && peek() in " \t") index++
+                if (index < end && isBreak(peek())) {
+                    val leading = breakValue()
+                    val following = followingBreaks(end)
+                    if (leading != "\n") output.append(leading)
+                    else if (following.isEmpty()) output.append(' ')
+                    output.append(following)
+                } else output.append(raw, start, index)
+            } else { output.append(char); index++ }
+        }
+        return output.toString()
+    }
+
+    private fun followingBreaks(end: Int): String = buildString {
+        while (index < end) {
+            while (index < end && peek() in " \t") index++
+            if (index >= end || !isBreak(peek())) break
+            append(breakValue())
+        }
+    }
+
+    fun block(style: EngineScalarStyle, parentIndent: Int): String {
+        val headerEnd = raw.indexOfFirst(::isBreak).let { if (it < 0) raw.length else it }
+        val indicators = raw.substring(1, headerEnd).takeWhile { it !in " \t#" }
+        val chomp = when { '-' in indicators -> -1; '+' in indicators -> 1; else -> 0 }
+        val increment = indicators.firstOrNull { it in '1'..'9' }?.digitToInt()
+        index = headerEnd
+        if (index < raw.length) breakValue()
+        val minimum = maxOf(1, parentIndent + 1)
+        var maxIndent = 0
+
+        fun breaks(indent: Int?): Pair<String, Int> {
+            var column = 0
+            val value = buildString {
+                while (true) {
+                    while (peek() == ' ' && (indent == null || column < indent)) { index++; column++ }
+                    maxIndent = maxOf(maxIndent, column)
+                    if (index >= raw.length || !isBreak(peek())) break
+                    append(breakValue())
+                    column = 0
+                }
+            }
+            return value to column
+        }
+
+        val indent = increment?.let { minimum + it - 1 }
+        var pending = breaks(indent)
+        val effectiveIndent = indent ?: maxOf(minimum, maxIndent)
+        var leading = ""
+        while (pending.second == effectiveIndent && index < raw.length) {
+            output.append(pending.first)
+            val leadingNonSpace = peek() !in " \t"
+            while (index < raw.length && !isBreak(peek())) output.append(raw[index++])
+            leading = if (index < raw.length) breakValue() else ""
+            pending = breaks(effectiveIndent)
+            if (pending.second != effectiveIndent || index >= raw.length) break
+            if (style == EngineScalarStyle.FOLDED && leading == "\n" && leadingNonSpace && peek() !in " \t") {
+                if (pending.first.isEmpty()) output.append(' ')
+            } else output.append(leading)
+        }
+        if (chomp != -1) output.append(leading)
+        if (chomp == 1) output.append(pending.first)
+        return output.toString()
+    }
+}

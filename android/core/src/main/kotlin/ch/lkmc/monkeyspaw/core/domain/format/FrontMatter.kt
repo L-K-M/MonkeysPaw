@@ -1,5 +1,7 @@
 package ch.lkmc.monkeyspaw.core.domain.format
 
+import java.text.Normalizer
+
 enum class FieldKind(val rawValue: String) { TEXT("text"), MULTILINE("multiline"), CHOICE("choice") }
 
 data class FieldOption(val label: String, val value: String)
@@ -93,7 +95,8 @@ internal class FrontMatterDecoder(private val mapping: YamlNode.Mapping, initial
             val defaultNode = value("default", declaration)
             val defaultString = PortableYaml.string(defaultNode)
             if (kind == FieldKind.CHOICE && defaultNode != null && defaultString != null &&
-                options.none { it.value == defaultString }) add(PromptIssueCode.INVALID_FIELD_DEFAULT, defaultNode)
+                options.none { Normalizer.normalize(it.value, Normalizer.Form.NFC) ==
+                    Normalizer.normalize(defaultString, Normalizer.Form.NFC) }) add(PromptIssueCode.INVALID_FIELD_DEFAULT, defaultNode)
             fields.add(PromptField(name, kind, label, description, default, options, optional, remember))
         }
         return fields

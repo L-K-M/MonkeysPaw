@@ -53,8 +53,9 @@ object PromptCodec {
             if (parts.unclosed) listOf(PromptIssue(PromptIssueCode.UNCLOSED_FRONT_MATTER,
                 PromptIssueLocation.FrontMatter(1, 1))) else emptyList())
 
+        val yamlSource = YamlSource(header)
         try {
-            val root = PortableYaml.parse(header)
+            val root = PortableYaml.parse(yamlSource)
             val issues = mutableListOf<PromptIssue>()
             val normalized = root?.let { PortableYaml.normalize(it, issues) }
             val mapping = when {
@@ -73,7 +74,7 @@ object PromptCodec {
         } catch (error: YamlEngineException) {
             // Do not retain or describe the exception: engine error messages include source.
             val mark = (error as? MarkedYamlEngineException)?.problemMark?.orElse(null)
-            val location = mark?.let { PromptIssueLocation.FrontMatter(it.line + 2, it.column + 1) }
+            val location = mark?.let { yamlSource.location(it.index) }
             return invalidHeader(source, parts.body, title, PromptIssue(PromptIssueCode.INVALID_YAML, location))
         }
     }
