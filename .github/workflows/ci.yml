@@ -266,7 +266,7 @@ jobs:
           test "$version" = 'monkeyspaw 0.1.0-beta.1'
           (cd dist && sha256sum -c 'monkeyspaw_0.1.0~beta.1_amd64.deb.sha256')
       - name: Upload the tested amd64 deb and checksum
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-tested-deb
           path: |
@@ -291,8 +291,6 @@ jobs:
       ARTIFACT_VERSION: '0.1.0-beta.1'
       DEB_FILE: 'monkeyspaw_0.1.0~beta.1_amd64.deb'
       BUNDLE_FILE: 'monkeyspaw_0.1.0-beta.1_x86_64.flatpak'
-      XDG_DATA_HOME: ${{ runner.temp }}/monkeyspaw-flatpak-data
-      XDG_RUNTIME_DIR: ${{ runner.temp }}/monkeyspaw-flatpak-runtime
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -304,6 +302,11 @@ jobs:
           path: ${{ runner.temp }}/monkeyspaw-tested-deb
       - name: Install Flatpak and sandbox verification tools
         run: |
+          # runner context is unavailable in job-level env. Set these from
+          # the runner's shell environment and persist them for later steps.
+          export XDG_DATA_HOME="$RUNNER_TEMP/monkeyspaw-flatpak-data"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/monkeyspaw-flatpak-runtime"
+          printf 'XDG_DATA_HOME=%s\nXDG_RUNTIME_DIR=%s\n' "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder \
             dbus xvfb xauth x11-utils xdotool desktop-file-utils shellcheck python3 python3-yaml
@@ -476,7 +479,7 @@ jobs:
           app_pid=
           SH
       - name: Upload the verified bundle and checksum
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-flatpak-artifacts
           path: |
@@ -488,6 +491,9 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          # Cleanup must also work if setup failed before writing GITHUB_ENV.
+          XDG_DATA_HOME="$RUNNER_TEMP/monkeyspaw-flatpak-data"
+          XDG_RUNTIME_DIR="$RUNNER_TEMP/monkeyspaw-flatpak-runtime"
           if [[ -f "$RUNNER_TEMP/monkeyspaw-flatpak-userns" ]]; then
             sudo sysctl -w "kernel.apparmor_restrict_unprivileged_userns=$(cat "$RUNNER_TEMP/monkeyspaw-flatpak-userns")"
           fi
