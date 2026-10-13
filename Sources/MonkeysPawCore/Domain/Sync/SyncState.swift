@@ -44,7 +44,7 @@ enum SyncScopeKey: Hashable, Sendable, Codable {
     }
 
     init(_ value: String) throws {
-        try SyncAPIString(format: .scopeKey).validate(value)
+        guard (try? SyncAPIString(format: .scopeKey).validate(value)) != nil else { throw SyncError.invalidState }
         let parts = value.split(separator: ":")
         let id = try SyncIdentifiers.ulid(String(parts[1]))
         self = parts[0] == "user" ? .user(id) : .group(id)
@@ -97,7 +97,9 @@ struct SyncGroupState: Equatable, Sendable, Codable {
     let role: SyncAPI.Role
 
     init(name: String, folder: String, role: SyncAPI.Role) throws {
-        try SyncAPIString(minimumLength: 1, maximumLength: 255).validate(name)
+        guard (try? SyncAPIString(minimumLength: 1, maximumLength: 255).validate(name)) != nil else {
+            throw SyncError.invalidState
+        }
         try SyncIdentifiers.folder(folder)
         self.name = name
         self.folder = folder
@@ -119,22 +121,22 @@ struct SyncPromptState: Equatable, Sendable, Codable {
     let path: RelativePath
     /// Zero means a local create has not been acknowledged by the server.
     let rev: Int64
-    /// The acknowledged full-byte baseline; pending invalid files have none.
+    /// The acknowledged full-byte baseline; every rev-zero create has none.
     let canonicalHash: SyncHash?
     let origin: SyncPromptOrigin?
     let lastError: SyncPromptError?
 
     init(scope: SyncScopeKey, path: RelativePath, rev: Int64, canonicalHash: SyncHash? = nil,
          origin: SyncPromptOrigin? = nil, lastError: SyncPromptError? = nil) throws {
-        guard rev >= 0, rev == 0 || canonicalHash != nil,
+        guard rev >= 0, rev == 0 ? canonicalHash == nil : canonicalHash != nil,
               origin == nil || scope.pathScope == .user else { throw SyncError.invalidState }
         if rev == 0 {
             // A local candidate may have a repairable wire-path issue; it is
             // never an acknowledged baseline or authorization to apply a pull.
-            try FileStorePath.validate(path.string)
+            guard FileStorePath.isValid(path.string, mode: .relative) else { throw SyncError.invalidState }
         } else {
-            let validated = try SyncPathValidator.validate(path.string, scope: scope.pathScope)
-            guard validated.path.utf8.elementsEqual(path.string.utf8) else { throw SyncError.invalidState }
+            guard let validated = try? SyncPathValidator.validate(path.string, scope: scope.pathScope),
+                  validated.path.utf8.elementsEqual(path.string.utf8) else { throw SyncError.invalidState }
         }
         self.scope = scope
         self.path = path
@@ -192,8 +194,8 @@ struct SyncState: Equatable, Sendable, Codable {
     }
 
     mutating func applyGroupFavorite(_ favorite: Bool?, for id: PromptIdentity) throws {
-        guard let prompt = prompts[id], case .group = prompt.scope else { throw SyncError.invalidState }
         guard let favorite else { return }
+        guard let prompt = prompts[id], case .group = prompt.scope else { throw SyncError.invalidState }
         favorites[id] = favorite ? true : nil
     }
 
@@ -213,7 +215,7 @@ struct SyncState: Equatable, Sendable, Codable {
             guard folders.insert(SyncPathCaseFold.fold(group.folder)).inserted else { throw SyncError.invalidState }
         }
         for (identity, prompt) in prompts {
-            _ = try identity.storageKey
+            guard (try? identity.storageKey) != nil else { throw SyncError.invalidState }
             if case .local = identity, prompt.rev != 0 { throw SyncError.invalidState }
             try check(prompt.scope)
             if let error = prompt.lastError {
@@ -309,7 +311,7 @@ enum SyncIdentifiers {
         guard !folder.utf8.contains(47), !folder.hasPrefix("."), !folder.hasPrefix("_") else {
             throw SyncError.invalidState
         }
-        let path = try SyncPathValidator.validate(folder + "/check.md", scope: .group)
-        guard path.path.utf8.elementsEqual((folder + "/check.md").utf8) else { throw SyncError.invalidState }
+        guard let path = try? SyncPathValidator.validate(folder + "/check.md", scope: .group),
+              path.path.utf8.elementsEqual((folder + "/check.md").utf8) else { throw SyncError.invalidState }
     }
 }

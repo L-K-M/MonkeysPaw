@@ -1,6 +1,7 @@
 import Foundation
 
 /// Fixed, input-free failures. Never persist a driver/transport error description.
+/// Domain validation maps lower-level failures to invalidState without input text.
 enum SyncError: Error, Equatable, Sendable {
     case corruptFile
     case futureVersion(Int)

@@ -76,6 +76,9 @@ public final class SyncAccountStore: @unchecked Sendable {
     }
 
     func binding(for root: SyncLibraryRoot) throws -> SyncLibraryBinding? {
+        // Ownership reads ignore connection health so recovery can still find
+        // holds after sign-out or corrupt metadata. Account reads/edits and
+        // ownership edits require both records to be healthy.
         try ownership.load()?.libraries.first { $0.root == root }
     }
 

@@ -60,6 +60,7 @@ final class SyncStateStoreTests: XCTestCase {
             { value in Self.editPrompt(&value, id: personalID) { $0["path"] = "../escape.md" } },
             { value in Self.editPrompt(&value, id: personalID) { $0["path"] = "Cafe\u{301}.md" } },
             { value in Self.editPrompt(&value, id: personalID) { $0["rev"] = -1 } },
+            { value in Self.editPrompt(&value, id: personalID) { $0["rev"] = 0 } },
             { value in Self.editPrompt(&value, id: personalID) { $0["origin"] = ["kind": "conflict_of", "prompt_id": "secret"] } },
             { value in Self.editPrompt(&value, id: personalID) {
                 var error = $0["last_error"] as! [String: Any]
@@ -301,6 +302,67 @@ final class SyncStateStoreTests: XCTestCase {
         XCTAssertNil(migrated.favorites[local])
         XCTAssertEqual(migrated.prompts[assigned], pending)
         XCTAssertEqual(migrated.favorites[assigned], true)
+    }
+
+    func testPendingCreateCannotClaimCanonicalBaseline() throws {
+        let scope = SyncScopeKey.user(SyncTestValues.user)
+        let hash = SyncHash(bytes: Data("sent bytes".utf8))
+        let pending = try SyncPromptState(scope: scope, path: "Pending.md", rev: 0)
+        XCTAssertNil(pending.canonicalHash)
+        XCTAssertEqual(try JSONDecoder().decode(SyncPromptState.self, from: JSONEncoder().encode(pending)), pending)
+        XCTAssertThrowsError(try SyncPromptState(scope: scope, path: pending.path, rev: 0, canonicalHash: hash)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        var invalid = try SyncTestValues.object(pending)
+        invalid["canonical_hash"] = hash.rawValue
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncPromptState.self,
+            from: JSONSerialization.data(withJSONObject: invalid))) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        XCTAssertThrowsError(try SyncPromptState(scope: scope, path: pending.path, rev: 1)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        XCTAssertEqual(try SyncPromptState(scope: scope, path: pending.path, rev: 1, canonicalHash: hash).canonicalHash, hash)
+    }
+
+    func testAbsentGroupFavoritePreservesAnyTarget() throws {
+        var state = try SyncTestValues.state()
+        let original = state
+        let targets = [PromptIdentity.assigned(SyncTestValues.groupPrompt),
+                       .assigned(SyncTestValues.personalPrompt), .assigned(SyncTestValues.device), .local("invalid")]
+        for target in targets {
+            XCTAssertNoThrow(try state.applyGroupFavorite(nil, for: target))
+            XCTAssertEqual(state, original)
+        }
+        for target in targets.dropFirst() {
+            for favorite in [false, true] {
+                XCTAssertThrowsError(try state.applyGroupFavorite(favorite, for: target)) {
+                    XCTAssertEqual($0 as? SyncError, .invalidState)
+                }
+                XCTAssertEqual(state, original)
+            }
+        }
+    }
+
+    func testStateDomainValidationUsesSyncError() throws {
+        let scope = SyncScopeKey.user(SyncTestValues.user)
+        let pending = try SyncPromptState(scope: scope, path: "Pending.md", rev: 0)
+        let binding = try SyncTestValues.binding()
+        let invalid: [(String, () throws -> Void)] = [
+            ("scope", { _ = try SyncScopeKey("private:" + SyncTestValues.user.rawValue) }),
+            ("group name", { _ = try SyncGroupState(name: "", folder: "Team", role: .viewer) }),
+            ("folder", { try SyncIdentifiers.folder(String(repeating: "a", count: 256)) }),
+            ("pending path", { _ = try SyncPromptState(scope: scope, path: "../validation-sentinel.md", rev: 0) }),
+            ("acknowledged path", { _ = try SyncPromptState(scope: scope, path: "validation-sentinel.txt", rev: 1,
+                canonicalHash: SyncHash(bytes: Data())) }),
+            ("identity", { _ = try SyncState(binding: binding, prompts: [.local("validation-sentinel"): pending]) })
+        ]
+        for (name, validate) in invalid {
+            XCTAssertThrowsError(try validate(), name) {
+                XCTAssertEqual($0 as? SyncError, .invalidState, name)
+                XCTAssertFalse(String(reflecting: $0).contains("validation-sentinel"), name)
+            }
+        }
     }
 
     func testLocalIdentityCannotClaimAnAcknowledgedServerRevision() throws {

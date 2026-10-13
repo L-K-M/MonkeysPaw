@@ -45,9 +45,11 @@ favorites: id → true                    (group prompts only, §9.5)
 Prompt/favourite keys use `PromptIdentity`: an uppercase ULID, or a lowercase
 device-local path SHA-256 before identity assignment (§9.3). Local keys never
 cross the wire and migrate with favourites when a ULID is assigned. Prompt
-`rev` is zero for an unacknowledged local create; only acknowledged revisions
-(≥1) require a non-null full canonical hash. This also lets invalid new files
-retain their sanitized error/fingerprint without claiming a server baseline.
+`rev` is zero for an unacknowledged local create and requires a null canonical
+hash; acknowledged revisions (≥1) require a non-null full canonical hash.
+Sent hashes belong to the pending-operation journal (§20 E9), not this baseline.
+This also lets invalid new files retain their sanitized error/fingerprint
+without claiming a server baseline.
 Pending local paths retain exact safe `FileStore` spellings so a repairable
 wire-path error can be recorded; acknowledged paths must be NFC sync paths.
 
@@ -197,6 +199,12 @@ still converges. On a previously bound root, the §9.2 account-change hold set
 excludes old-account files from creates/adoption until explicit inclusion or
 import. New-account snapshot content may be installed safely. A fresh library
 also authorizes its chosen content for that account.
+
+Y11 must assign ULIDs to idless held files during the account transition using
+ordinary identity assignment, migrating each hold with its file. Hold checks
+also match the recorded raw-content hash so an unedited rename stays held;
+the assigned identity keeps rename plus edit held. Y7 must evaluate holds
+before any upload decision, including first-sync creates/adoption.
 
 1. Pull snapshots for all scopes.
 2. Match local files to server prompts:

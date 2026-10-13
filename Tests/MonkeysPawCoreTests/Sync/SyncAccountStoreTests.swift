@@ -151,10 +151,11 @@ final class SyncAccountStoreTests: XCTestCase {
         let held = try XCTUnwrap(signedOut.binding(for: binding.root))
         XCTAssertEqual(held.owner, account.identity)
         XCTAssertEqual(held.managedFolders[SyncTestValues.group]?.owner, account.identity)
+        let editedHash = SyncHash(bytes: Data("edited bytes".utf8))
         for prompt in held.holds {
-            XCTAssertTrue(held.isHeld(identity: prompt.identity, path: prompt.path))
-            XCTAssertTrue(held.isHeld(identity: prompt.identity, path: "Renamed.md"))
-            XCTAssertTrue(held.isHeld(identity: .assigned(SyncTestValues.device), path: prompt.path))
+            XCTAssertTrue(held.isHeld(identity: prompt.identity, path: prompt.path, contentHash: editedHash))
+            XCTAssertTrue(held.isHeld(identity: prompt.identity, path: "Renamed.md", contentHash: editedHash))
+            XCTAssertTrue(held.isHeld(identity: .assigned(SyncTestValues.device), path: prompt.path, contentHash: editedHash))
         }
         // Explicit inclusion can release a held record; a login cannot.
         try signedOut.updateBinding(for: binding.root) { previous in
@@ -184,6 +185,47 @@ final class SyncAccountStoreTests: XCTestCase {
             XCTAssertEqual($0 as? SyncError, .bindingMismatch)
         }
         XCTAssertEqual(try reloaded.binding(for: first.root), first)
+    }
+
+    func testRenamedIdlessContentRemainsHeldAfterRestart() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncAccountStore(files: files, operations: operations)
+        let binding = try ownership()
+        try store.updateBinding(for: binding.root) { _ in binding }
+        let reloaded = try XCTUnwrap(SyncAccountStore(files: files, operations: operations).binding(for: binding.root))
+        let idless = try XCTUnwrap(reloaded.holds.first { if case .local = $0.identity { return true }; return false })
+        let renamed = RelativePath("Renamed.md")
+        let renamedIdentity = PromptIdentity(path: renamed.string, id: nil)
+        XCTAssertNotEqual(renamedIdentity, idless.identity)
+        XCTAssertNotEqual(renamed, idless.path)
+        XCTAssertTrue(reloaded.isHeld(identity: renamedIdentity, path: renamed, contentHash: idless.contentHash))
+        XCTAssertFalse(reloaded.isHeld(identity: renamedIdentity, path: renamed,
+            contentHash: SyncHash(bytes: Data("different bytes".utf8))))
+        var released = reloaded
+        released.holds = []
+        XCTAssertFalse(released.isHeld(identity: renamedIdentity, path: renamed, contentHash: idless.contentHash))
+    }
+
+    func testAccountDomainValidationUsesSyncError() throws {
+        let account = try SyncTestValues.account()
+        let invalid: [(String, () throws -> Void)] = [
+            ("username", { _ = try SyncAccount(identity: account, username: "UPPER", deviceID: SyncTestValues.device,
+                deviceName: "Linux", connectionID: SyncTestValues.uuid) }),
+            ("device name", { _ = try SyncAccount(identity: account, username: "user_1", deviceID: SyncTestValues.device,
+                deviceName: "", connectionID: SyncTestValues.uuid) }),
+            ("managed folder", { _ = try SyncManagedFolder(owner: account, folder: String(repeating: "a", count: 256)) }),
+            ("held identity", { _ = try SyncHeldPrompt(identity: .local("validation-sentinel"), path: "Held.md",
+                sourceAccount: account, contentHash: SyncHash(bytes: Data())) }),
+            ("held path", { _ = try SyncHeldPrompt(identity: .assigned(SyncTestValues.personalPrompt),
+                path: "../validation-sentinel.md", sourceAccount: account, contentHash: SyncHash(bytes: Data())) })
+        ]
+        for (name, validate) in invalid {
+            XCTAssertThrowsError(try validate(), name) {
+                XCTAssertEqual($0 as? SyncError, .invalidState, name)
+                XCTAssertFalse(String(reflecting: $0).contains("validation-sentinel"), name)
+            }
+        }
     }
 
     func testUnknownFieldsFollowAccountRootAndHoldRecordsAcrossReordering() throws {

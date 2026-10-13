@@ -89,9 +89,10 @@ struct SyncAccount: Equatable, Sendable, Codable {
 
     init(identity: SyncAccountIdentity, username: String, deviceID: ULID,
          deviceName: String, connectionID: UUID) throws {
-        try SyncAPIString(minimumLength: 1, maximumLength: 64,
-                          pattern: "^[a-z0-9][a-z0-9._-]*$").validate(username)
-        try SyncAPIString(minimumLength: 1, maximumLength: 255).validate(deviceName)
+        guard (try? SyncAPISchema.username.validate(.string(username))) != nil,
+              (try? SyncAPIString(minimumLength: 1, maximumLength: 255).validate(deviceName)) != nil else {
+            throw SyncError.invalidState
+        }
         self.identity = identity
         self.username = username
         self.deviceID = deviceID
@@ -152,8 +153,8 @@ struct SyncHeldPrompt: Equatable, Sendable, Codable {
 
     init(identity: PromptIdentity, path: RelativePath, sourceAccount: SyncAccountIdentity,
          contentHash: SyncHash) throws {
-        _ = try identity.storageKey
-        try FileStorePath.validate(path.string)
+        guard (try? identity.storageKey) != nil,
+              FileStorePath.isValid(path.string, mode: .relative) else { throw SyncError.invalidState }
         self.identity = identity
         self.path = path
         self.sourceAccount = sourceAccount
@@ -196,8 +197,12 @@ struct SyncLibraryBinding: Equatable, Sendable, Codable {
         try validate()
     }
 
-    func isHeld(identity: PromptIdentity, path: RelativePath) -> Bool {
-        holds.contains { $0.identity == identity || $0.path == path }
+    /// Y7 must evaluate holds before any upload decision, using the raw-byte hash.
+    /// Hash matching holds an unedited rename. Y11 must assign ULIDs to idless
+    /// held files during the account transition through ordinary identity
+    /// assignment and migrate their holds, so rename plus edit stays held by ID.
+    func isHeld(identity: PromptIdentity, path: RelativePath, contentHash: SyncHash) -> Bool {
+        holds.contains { $0.identity == identity || $0.path == path || $0.contentHash == contentHash }
     }
 
     func validate() throws {
