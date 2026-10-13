@@ -56,8 +56,87 @@ final class HistoryStore: PromptKeyedStore {
 
     func remove(_ revision: HistoryRevision) throws {
         guard parts(of: revision.filename) != nil else { throw LibraryError.revisionNotFound }
+        try removeProvenance(at: path(for: revision) + ".json")
         do { try files.delete(at: path(for: revision)) }
         catch FileStoreError.notFound { throw LibraryError.revisionNotFound }
+    }
+
+    func headProvenance(for identity: PromptIdentity, bytes: Data) throws -> PromptProvenance? {
+        try provenance(at: directory(for: identity) + "/head.json", bytes: bytes)
+    }
+
+    func provenance(for revision: HistoryRevision, bytes: Data) throws -> PromptProvenance? {
+        guard parts(of: revision.filename) != nil else { throw LibraryError.revisionNotFound }
+        return try provenance(at: path(for: revision) + ".json", bytes: bytes)
+    }
+
+    func setHeadProvenance(_ provenance: PromptProvenance?, for identity: PromptIdentity, bytes: Data) throws {
+        try setProvenance(provenance, at: directory(for: identity) + "/head.json", bytes: bytes)
+    }
+
+    func archiveProvenance(_ provenance: PromptProvenance?, for revision: HistoryRevision, bytes: Data) throws {
+        try setProvenance(provenance, at: path(for: revision) + ".json", bytes: bytes)
+    }
+
+    private struct ProvenanceRecord: Codable {
+        struct Usage: Codable { let inputTokens: Int; let outputTokens: Int }
+        let version: Int
+        let contentSHA256: String
+        let origin: String
+        let timestamp: String
+        let providerHost: String
+        let model: String
+        let usage: Usage?
+    }
+
+    private func provenance(at path: String, bytes: Data) throws -> PromptProvenance? {
+        guard try files.stamp(at: path) != nil else { return nil }
+        let record: ProvenanceRecord
+        do { record = try JSONDecoder().decode(ProvenanceRecord.self, from: files.read(at: path)) }
+        catch let error as FileStoreError { throw error }
+        catch { throw LibraryError.invalidProvenance }
+        let formatter = provenanceFormatter()
+        guard record.version == 1, record.origin == PromptProvenance.Origin.llm.rawValue,
+              let date = formatter.date(from: record.timestamp), formatter.string(from: date) == record.timestamp,
+              !record.providerHost.isEmpty, !record.model.isEmpty,
+              record.usage.map({ $0.inputTokens >= 0 && $0.outputTokens >= 0 }) ?? true else {
+            throw LibraryError.invalidProvenance
+        }
+        guard record.contentSHA256 == SHA256.hexDigest(bytes) else { return nil }
+        return PromptProvenance(timestamp: date, providerHost: record.providerHost, model: record.model,
+            usage: record.usage.map { AssistantTokenUsage(inputTokens: $0.inputTokens, outputTokens: $0.outputTokens) })
+    }
+
+    private func setProvenance(_ provenance: PromptProvenance?, at path: String, bytes: Data) throws {
+        guard let provenance else { return try removeProvenance(at: path) }
+        guard provenance.timestamp.timeIntervalSince1970.isFinite,
+              provenance.timestamp.timeIntervalSince1970 >= 0,
+              provenance.timestamp.timeIntervalSince1970 < Limits.historyMaxUnixSeconds,
+              !provenance.providerHost.isEmpty, !provenance.model.isEmpty,
+              provenance.usage.map({ $0.inputTokens >= 0 && $0.outputTokens >= 0 }) ?? true else {
+            throw LibraryError.invalidProvenance
+        }
+        let record = ProvenanceRecord(version: 1, contentSHA256: SHA256.hexDigest(bytes), origin: provenance.origin.rawValue,
+            timestamp: provenanceFormatter().string(from: provenance.timestamp), providerHost: provenance.providerHost,
+            model: provenance.model, usage: provenance.usage.map {
+                ProvenanceRecord.Usage(inputTokens: $0.inputTokens, outputTokens: $0.outputTokens)
+            })
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try files.writePrivate(encoder.encode(record), at: path)
+    }
+
+    private func removeProvenance(at path: String) throws {
+        guard try files.stamp(at: path) != nil else { return }
+        do { try files.delete(at: path) }
+        catch FileStoreError.notFound { /* Another cleanup already removed it. */ }
+    }
+
+    private func provenanceFormatter() -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
     }
 
     func prune(for identity: PromptIdentity) throws {

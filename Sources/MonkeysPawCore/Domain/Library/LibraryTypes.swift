@@ -54,4 +54,7 @@ public enum LibraryError: String, Error, Sendable {
     /// the caller must reload before retrying. No underlying error is exposed.
     case recoveryRequired
     case historyMaintenanceFailed
+    case provenanceMaintenanceFailed
+    case invalidProvenance
+    case previewMismatch
 }

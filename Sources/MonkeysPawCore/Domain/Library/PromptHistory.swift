@@ -7,10 +7,12 @@ public struct PromptHistorySnapshot: Equatable, Sendable {
     /// Undecodable or oversized revisions retain their size and typed refusal.
     public let source: String?
     public let restoreFailure: PromptWriteError?
+    public let provenance: PromptProvenance?
     public var isForensic: Bool { restoreFailure != nil }
 
-    init(revision: HistoryRevision, bytes: Data, filename: String) {
+    init(revision: HistoryRevision, bytes: Data, filename: String, provenance: PromptProvenance? = nil) {
         self.revision = revision
+        self.provenance = provenance
         byteCount = bytes.count
         source = bytes.count <= Limits.maxPromptBytes ? String(data: bytes, encoding: .utf8) : nil
         let document = PromptCodec.parseFile(bytes, filename: filename)
@@ -22,7 +24,7 @@ public struct PromptHistorySnapshot: Equatable, Sendable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.revision == rhs.revision && lhs.byteCount == rhs.byteCount
             && lhs.source.map { Data($0.utf8) } == rhs.source.map { Data($0.utf8) }
-            && lhs.restoreFailure == rhs.restoreFailure
+            && lhs.restoreFailure == rhs.restoreFailure && lhs.provenance == rhs.provenance
     }
 }
 
@@ -36,6 +38,7 @@ public enum PromptHistoryOutcome: Sendable {
 public enum PromptCommandOutcome: Sendable {
     case updated(LibraryEntry)
     case updatedButHistoryMaintenanceFailed(LibraryEntry)
+    case updatedButProvenanceFailed(LibraryEntry, historyMaintenanceFailed: Bool)
     /// The physical move committed. This last known source now belongs to the
     /// destination; its checked current state may differ or be unavailable.
     case relocated(LibraryEntry, current: PromptLoadOutcome)
@@ -50,7 +53,8 @@ public enum PromptCommandOutcome: Sendable {
 
     var committedEntry: LibraryEntry? {
         switch self {
-        case .updated(let entry), .updatedButHistoryMaintenanceFailed(let entry): return entry
+        case .updated(let entry), .updatedButHistoryMaintenanceFailed(let entry),
+             .updatedButProvenanceFailed(let entry, _): return entry
         default: return nil
         }
     }
@@ -59,6 +63,8 @@ public enum PromptCommandOutcome: Sendable {
         switch save {
         case .saved(let entry): self = .updated(entry)
         case .savedButHistoryMaintenanceFailed(let entry): self = .updatedButHistoryMaintenanceFailed(entry)
+        case .savedButProvenanceFailed(let entry, let history):
+            self = .updatedButProvenanceFailed(entry, historyMaintenanceFailed: history)
         case .conflict(let stamp): self = .conflict(currentStamp: stamp)
         case .deleted: self = .missing
         case .invalid: self = .forensic(.invalidPrompt)

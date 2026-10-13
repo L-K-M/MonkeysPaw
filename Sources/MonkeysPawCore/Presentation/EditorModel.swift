@@ -72,6 +72,7 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var pendingDecision: EditorPendingDecision?
     public fileprivate(set) var queuedActions: [EditorDiscardAction] = []
     public fileprivate(set) var historyMaintenanceFailed = false
+    public fileprivate(set) var provenanceMaintenanceFailed = false
     public fileprivate(set) var lastCopy: LibraryPromptSelection?
     public fileprivate(set) var history = EditorHistoryState()
     fileprivate(set) var committedSelectionChange: EditorCommittedSelectionChange?
@@ -88,7 +89,8 @@ public struct EditorState: Equatable, Sendable {
             && lhs.fields == rhs.fields && editorSourceEqual(lhs.preview, rhs.preview)
             && lhs.previewFailure == rhs.previewFailure && lhs.conflict == rhs.conflict
             && lhs.pendingDecision == rhs.pendingDecision && lhs.queuedActions == rhs.queuedActions
-            && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed && lhs.lastCopy == rhs.lastCopy
+            && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed
+            && lhs.provenanceMaintenanceFailed == rhs.provenanceMaintenanceFailed && lhs.lastCopy == rhs.lastCopy
             && lhs.history == rhs.history && lhs.committedSelectionChange == rhs.committedSelectionChange
     }
 }
@@ -432,6 +434,7 @@ public final class EditorModel: @unchecked Sendable {
         state.isDirty = false
         state.conflict = nil
         state.historyMaintenanceFailed = false
+        state.provenanceMaintenanceFailed = false
         updateDocument(loaded.document)
     }
 
@@ -506,6 +509,10 @@ public final class EditorModel: @unchecked Sendable {
             state.status = .saved
             if case .savedButHistoryMaintenanceFailed = outcome { state.historyMaintenanceFailed = true }
             else { state.historyMaintenanceFailed = false }
+            if case .savedButProvenanceFailed(_, let history) = outcome {
+                state.provenanceMaintenanceFailed = true
+                state.historyMaintenanceFailed = history
+            } else { state.provenanceMaintenanceFailed = false }
             if savesDecision, !state.isDirty { finishDecision(.allowed) }
             else { savesDecision = false }
         } else {
@@ -522,7 +529,7 @@ public final class EditorModel: @unchecked Sendable {
             case .invalid(let issues): state.status = .failed(.invalid(issues))
             case .readOnly(let reason): state.status = .failed(.readOnly(reason))
             case .failed(let failure): state.status = .failed(.editing(failure))
-            case .saved, .savedButHistoryMaintenanceFailed: break
+            case .saved, .savedButHistoryMaintenanceFailed, .savedButProvenanceFailed: break
             }
         }
         changed()
@@ -817,6 +824,10 @@ extension EditorModel {
             recordCommittedSelection(from: previousPrompt)
             state.status = .saved
             if case .updatedButHistoryMaintenanceFailed = outcome { state.historyMaintenanceFailed = true }
+            if case .updatedButProvenanceFailed(_, let history) = outcome {
+                state.provenanceMaintenanceFailed = true
+                state.historyMaintenanceFailed = history
+            }
             if case .restore = command { historyRequested = true }
             changed()
             // Check publications that preceded the queued command reply. Like
@@ -856,7 +867,8 @@ extension EditorModel {
         case .failed(let failure):
             state.status = .failed(.editing(failure))
             if needsReconciliation { load(.reconcileCopy) }
-        case .updated, .updatedButHistoryMaintenanceFailed, .cancelled, .inactive, .noSelection: break
+        case .updated, .updatedButHistoryMaintenanceFailed, .updatedButProvenanceFailed,
+             .cancelled, .inactive, .noSelection: break
         }
         changed()
     }

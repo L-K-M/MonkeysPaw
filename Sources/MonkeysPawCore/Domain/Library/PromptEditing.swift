@@ -69,6 +69,7 @@ public enum PromptLoadOutcome: Sendable {
 public enum PromptSaveOutcome: Sendable {
     case saved(LibraryEntry)
     case savedButHistoryMaintenanceFailed(LibraryEntry)
+    case savedButProvenanceFailed(LibraryEntry, historyMaintenanceFailed: Bool)
     case conflict(currentStamp: FileStamp)
     case deleted
     case invalid([PromptIssue])
@@ -77,7 +78,8 @@ public enum PromptSaveOutcome: Sendable {
 
     var committedEntry: LibraryEntry? {
         switch self {
-        case .saved(let entry), .savedButHistoryMaintenanceFailed(let entry): return entry
+        case .saved(let entry), .savedButHistoryMaintenanceFailed(let entry),
+             .savedButProvenanceFailed(let entry, _): return entry
         default: return nil
         }
     }

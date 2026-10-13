@@ -675,7 +675,21 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   source and the typed restore-refusal reason. `EditorModel` selects its
   read-only preview without editing the draft. M3 restore requires a live prompt
   and its editor stamp; restoring a deleted prompt through presentation is deferred.
-  LLM provenance belongs to M4 and is absent in M2b.
+  M4 stores version-1 LLM provenance beside history: `head.json` for the
+  current head and `<revision filename>.json` for archived revisions. Each
+  record binds to the exact content SHA-256 and contains only `origin: llm`,
+  a UTC ISO-8601 timestamp, provider host, model and optional input/output
+  token counts. External changes cannot inherit a mismatched head record.
+  A normal editor save archives the previous head's provenance and clears
+  the new head's LLM origin; restoring a revision restores its provenance.
+  Identity migration moves all these records with history. Rename and move
+  preserve them; delete retains them with recoverable history. Retention
+  removes a revision's sidecar with its bytes, under the same 50-revision cap.
+  Provenance writes occur after the prompt commits. A failure reports
+  `savedButProvenanceFailed`, retaining the entry, stamp and any concurrent
+  history-maintenance warning. Callers adopt that commit without retrying
+  the file write. Assistant notes, briefs, transcripts and credentials are
+  never added to provenance or prompt metadata.
 - **External edits.** M2c's `LibraryWatcher` emits labeled
   `LibraryChangeSet {created, modified, deleted}` after
   `Limits.watchDebounce` (500 ms) of prompt-path quiet. Every prompt-path
