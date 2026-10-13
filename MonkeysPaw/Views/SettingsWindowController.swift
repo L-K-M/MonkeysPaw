@@ -14,7 +14,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let activation: WindowActivationCoordinator
     private let folderChooser: FolderChooser
     private let forgetAllConfirmation: ForgetAllConfirmation
-    private let makeAssistant: () -> AssistantSettingsModel?
+    private let makeAssistant: () -> AssistantSettingsModel
     private var chooserRequest: UUID?
     private var cancelChooser: (() -> Void)?
     private var confirmationRequest: UUID?
@@ -25,7 +25,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          forgetAllConfirmation: @escaping ForgetAllConfirmation,
          mainThread: MainThread, activation: WindowActivationCoordinator,
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
-         makeAssistant: @escaping () -> AssistantSettingsModel? = { nil }) {
+         makeAssistant: @escaping () -> AssistantSettingsModel) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          mainThread: mainThread, openSetup: openSetup)
@@ -48,8 +48,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show() {
         mainThread.run { [weak self] in
             guard let self else { return }
-            if self.presentation.assistant == nil, let model = self.makeAssistant() {
-                self.presentation.openAssistant(model, mainThread: self.mainThread)
+            if self.presentation.assistant == nil {
+                self.presentation.openAssistant(self.makeAssistant(), mainThread: self.mainThread)
             }
             self.presentation.refresh()
             let window = self.window ?? self.makeWindow()

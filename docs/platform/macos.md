@@ -565,9 +565,18 @@ destination bytes for comparison, without recording prompt content here.
 
 The Linux host can check Swift syntax and Xcode project structure, but cannot
 compile SwiftUI/AppKit or run these hosted tests. Record the `macos-app` CI
-build and `MacAssistantSettingsTests` results before performing the checks
-below. Hosted tests use memory-only secrets and stub clients; they do not
-establish real provider, Keychain prompt or VoiceOver behavior.
+build and `MacAssistantSettingsTests`, `MacSettingsWindowTests` and
+`AppDelegateTests` results before performing the checks below. The production
+composition test opens the real Settings factory with a saved keyless profile
+and rejects every HTTP send; view-state tests use memory-only secrets and stub
+clients. They do not establish real provider, Keychain prompt or VoiceOver
+behavior.
+
+AppDelegate shares the provider settings service, bounded URLSession transport,
+provider clients and background worker with the lazy Assistant settings model.
+Opening Settings may read a saved key's storage tier on that worker; only
+explicit Test or assistant actions send network requests. Saved values never
+enter the pane's state or secure field.
 
 - Commit / `macos-app` CI run / hosted test result:
 - macOS / hardware / signing identity / login-keychain state:
@@ -580,7 +589,7 @@ this checklist, screenshots or logs.
 
 | Check | Result | Details |
 |---|---|---|
-| Open Settings → Assistant; loading/progress finishes without freezing the window; repeated opening preserves the current draft, and close/reopen discards unsaved edits | NOT RUN | |
+| Open Settings → Assistant in the production app; the tab exists and loading/progress finishes without freezing the window or sending network requests; saved-tier reads may prompt Keychain on a worker, repeated opening preserves the current draft, and close/reopen discards unsaved edits | NOT RUN | |
 | Add, select, rename and delete profiles; selecting a saved profile makes it active, Disable Assistant clears the active selection, and saving a new profile preserves an existing active provider | NOT RUN | |
 | With one active profile, add a draft; no saved row is highlighted and clicking the active row returns to it. Add and Save another profile; its edited row is highlighted while the old provider stays active, and Make active selects the new provider | NOT RUN | |
 | Real Anthropic: enter the base URL and a test key, explicitly Test connection, observe typed success and listed models; select a listed ID, Save, then restart and verify saved metadata and Keychain tier | NOT RUN | |

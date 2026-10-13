@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recordLegacySetup: () -> Void
     private let launchURI: (URL) -> Void
     private let backgroundWork: BackgroundWork
+    private let httpTransport: HTTPTransporting
     private let clipboard: Clipboard
     private let editorDialog: LibraryWindowController.DialogPresenter
     private let importChooser: LibraryWindowController.ImportChooser
@@ -102,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          legacyFirstRun: LegacyFirstRun? = nil, recordLegacySetup: (() -> Void)? = nil,
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
          backgroundWork: BackgroundWork = DispatchBackgroundWork(),
+         httpTransport: HTTPTransporting = URLSessionHTTPTransport(),
          clipboard: Clipboard = PasteboardClipboard(),
          editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
          importChooser: @escaping LibraryWindowController.ImportChooser = MacImportChooser.choose,
@@ -137,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "Library/Application Support/" + AppIdentity.macOSBundleID, isDirectory: true)
         self.launchURI = launchURI
         self.backgroundWork = backgroundWork
+        self.httpTransport = httpTransport
         self.clipboard = clipboard
         self.editorDialog = editorDialog
         self.importChooser = importChooser
@@ -177,12 +180,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Graph construction is safe under hosted XCTest. Native registrations,
         // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
-
-        if let dataFiles {
-            providerSettingsService = ProviderSettingsService(
-                store: ProviderSettingsStore(files: dataFiles, log: log),
-                secrets: KeychainSecretStore(), log: log)
-        }
 
         focusTracker?.startTrackingActivations()
         if let accelerator = Accelerator.defaultBinding(for: .togglePicker) {
@@ -287,6 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func compose(log: LogSink) {
         let mainThread = self.mainThread
         let scheduler = self.scheduler
+        let backgroundWork = self.backgroundWork
         let focus = makeFocusTracker(mainThread, scheduler)
         let panel = makePanelController(mainThread, scheduler, log)
         let hotkeys = CarbonHotkeyBackend()
@@ -326,6 +324,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = SettingsService(store: SettingsStore(files: data, legacyFirstRun: legacyFirstRun))
         let settingsModel = SettingsModel(settings: settings)
         self.settingsModel = settingsModel
+        let providers = ProviderSettingsService(store: ProviderSettingsStore(files: data, log: log),
+            secrets: KeychainSecretStore(), log: log)
+        providerSettingsService = providers
+        // Clients inherit Limits caps/deadlines; construction sends no requests.
+        let assistant = AssistantService(providerSettings: providers,
+            anthropic: AnthropicClient(transport: httpTransport),
+            openAICompatible: OpenAIClient(transport: httpTransport, providerState: ProviderStateStore(files: data)),
+            work: backgroundWork, main: mainThread)
         dataFiles = data
         self.values = values
         self.usage = usage
@@ -369,7 +375,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = SettingsWindowController(general: general, shortcuts: shortcutSettings,
             rememberedValues: rememberedValues, forgetAllConfirmation: forgetAllConfirmation,
             mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
-            openSetup: { [weak self] in self?.showSetup() })
+            openSetup: { [weak self] in self?.showSetup() },
+            makeAssistant: {
+                AssistantSettingsModel(settings: providers, assistant: assistant,
+                    work: backgroundWork, mainThread: mainThread)
+            })
         settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
             guard let self else { return nil }
             if self.editorSwitchRefused {
