@@ -2,13 +2,14 @@
 import CGtk
 import MonkeysPawCore
 
-/// A reusable view over General and Shortcuts presentation state.
+/// A reusable view over Settings presentation state.
 /// GTK owns the window and children; Swift keeps guarded borrowed pointers.
 final class LinuxSettingsWindow {
     private let window: GTK.Widget
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
     private let rememberedValues: RememberedValuesSettingsModel
+    private let assistant: LinuxAssistantSettingsPage
     private let chooser: LinuxFolderChoosing
     private let openSetup: () -> Void
     private let librarySwitchMessage: () -> String?
@@ -39,11 +40,13 @@ final class LinuxSettingsWindow {
 
     init(application: UnsafeMutablePointer<GtkApplication>, general: GeneralSettingsModel,
          shortcuts: ShortcutsSettingsModel, rememberedValues: RememberedValuesSettingsModel,
+         makeAssistant: @escaping () -> AssistantSettingsModel?,
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
          librarySwitchMessage: @escaping () -> String? = { nil }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
+        assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
@@ -59,17 +62,20 @@ final class LinuxSettingsWindow {
             self.general.onChange = nil
             self.shortcuts.onChange = nil
             self.rememberedValues.onChange = nil
+            self.assistant.retire(.destroyed)
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
-            guard let self, !self.isVisible else { return }
+            guard let self, !self.isDestroyed, !self.isVisible else { return }
             self.cancelFolderChoice()
             self.rememberedValues.cancelForgetAll()
+            self.assistant.retire(.hidden)
         }
 
         let notebook = gtk_notebook_new()!
         gtk_widget_set_name(notebook, "settings-tabs")
         gtk_notebook_append_page(mp_notebook(notebook), generalPage(), GTK.label(LinuxStrings.generalTab))
         gtk_notebook_append_page(mp_notebook(notebook), shortcutsPage(), GTK.label(LinuxStrings.shortcutsTab))
+        gtk_notebook_append_page(mp_notebook(notebook), assistant.widget, GTK.label(LinuxAssistantSettingsStrings.tab))
         gtk_window_set_child(mp_window(window), notebook)
         general.onChange = { [weak self] in self?.renderGeneral() }
         shortcuts.onChange = { [weak self] in self?.renderShortcuts() }
@@ -85,6 +91,7 @@ final class LinuxSettingsWindow {
         shortcuts.onChange = nil
         rememberedValues.onChange = nil
         rememberedValues.cancelForgetAll()
+        assistant.retire(isDestroyed ? .destroyed : .hidden)
     }
 
     func show() {
@@ -92,6 +99,7 @@ final class LinuxSettingsWindow {
         general.refresh()
         renderGeneral()
         shortcuts.refresh()
+        assistant.show()
         gtk_window_present(mp_window(window))
     }
 
@@ -100,6 +108,7 @@ final class LinuxSettingsWindow {
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
         rememberedValues.cancelForgetAll()
+        assistant.retire(.hidden)
     }
 
     private func generalPage() -> GTK.Widget {

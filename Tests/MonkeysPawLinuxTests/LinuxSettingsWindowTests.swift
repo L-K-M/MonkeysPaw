@@ -39,14 +39,14 @@ final class LinuxSettingsWindowTests: XCTestCase {
         tools = nil
     }
 
-    func testSettingsActionReusesTwoTabWindowAcrossCloseAndLeavesPickerWorking() throws {
+    func testSettingsActionReusesThreeTabWindowAcrossCloseAndLeavesPickerWorking() throws {
         let window = try openSettingsAction()
         let general = environment.generalSettingsModel
         let shortcuts = environment.shortcutsSettingsModel
         let rememberedValues = environment.rememberedValuesSettingsModel
         let tabs = try settingsWidget("settings-tabs", in: window)
-        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 2)
-        for (index, title) in [LinuxStrings.generalTab, LinuxStrings.shortcutsTab].enumerated() {
+        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 3)
+        for (index, title) in [LinuxStrings.generalTab, LinuxStrings.shortcutsTab, LinuxAssistantSettingsStrings.tab].enumerated() {
             let page = try XCTUnwrap(gtk_notebook_get_nth_page(mp_notebook(tabs), Int32(index)))
             XCTAssertEqual(String(cString: gtk_notebook_get_tab_label_text(mp_notebook(tabs), page)), title)
         }
