@@ -221,7 +221,9 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         acceptanceID = nil
         state.isAccepting = false
         switch result {
-        case .success: state.phase = .saved
+        case .success:
+            retainedID = nil
+            state.phase = .saved
         case .failure(let failure): state.phase = .failed; state.failure = failure
         }
         changed()
@@ -280,7 +282,10 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         state.failure = nil
         state.candidate = nil
         switch outcome {
-        case .saved, .committedWithProvenanceWarning: state.phase = .saved; state.isStale = false
+        case .saved, .committedWithProvenanceWarning:
+            retainedID = nil
+            state.phase = .saved
+            state.isStale = false
         case .conflict: state.phase = .draft; state.isStale = true
         case .failed: state.phase = .failed
         }

@@ -566,6 +566,7 @@ public final class EditorModel: @unchecked Sendable {
             let request = requests.removeFirst()
             updateQueuedActions()
             if case .open(let selection) = request.decision.action, selection == state.prompt {
+                request.operation?(self)
                 request.completion(.allowed)
                 continue
             }

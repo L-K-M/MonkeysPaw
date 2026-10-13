@@ -361,12 +361,17 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   Save or Discard changing that snapshot also requires a fresh preview.
   Retiring acceptance cancels its pending discard dialog and completes its
   caller without blocking later editor navigation.
+  A guard matching the already-open prompt still runs its attached operation
+  and completes exactly once.
   Publication already started may finish; newer buffer edits stay dirty and
   an obsolete Assistant token cannot hide the authoritative editor result.
   The typed outcome is `saved`, `conflict`, `failed`, or
   `committedWithProvenanceWarning`; both committed outcomes carry the saved
   entry, stamp and history-maintenance warning. `AssistantState.acceptanceOutcome`
-  exposes it for native rendering. Provenance follows §5.5. Reject discards
+  exposes it for native rendering. A committed accept, including a provenance
+  warning, releases the candidate's retained ID. A later Write retry or Show
+  diff preflights a fresh ID; improve continues to retain the saved prompt's
+  identity. Provenance follows §5.5. Reject discards
   the draft and writes no prompt, history or provenance.
   A retired token returns false from `completeAcceptance`; A11 must still
   surface any committed-file or provenance outcome through the editor's save

@@ -64,6 +64,23 @@ final class AssistantModelTests: XCTestCase {
         }
     }
 
+    func testLegacySuccessfulAcceptanceReleasesPreflightedIdentityForFreshDiff() async throws {
+        let h = try AssistantActionHarness()
+        h.ui { h.model.write(brief: "First") }
+        try await h.sent()
+        try await h.artifact()
+        try await h.phase(.ready)
+        let first = try XCTUnwrap(h.model.state.candidate?.content.document.frontMatter.id)
+        var acceptance: AssistantAcceptance?
+        h.ui { acceptance = h.model.accept() }
+        let token = try XCTUnwrap(acceptance).id
+        h.ui { XCTAssertTrue(h.model.completeAcceptance(token, result: .success(()))) }
+        try await h.phase(.saved)
+        h.ui { h.model.showDiff() }
+        try await h.phase(.ready)
+        XCTAssertNotEqual(first, h.model.state.candidate?.content.document.frontMatter.id)
+    }
+
     func testWritePhasesUsageElapsedAndAcceptIntentUnderInlineAndQueuedMain() async throws {
         for queued in [false, true] {
             let h = try AssistantActionHarness(queued: queued)

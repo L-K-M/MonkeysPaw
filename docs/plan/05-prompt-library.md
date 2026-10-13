@@ -680,6 +680,10 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   record binds to the exact content SHA-256 and contains only `origin: llm`,
   a UTC ISO-8601 timestamp, provider host, model and optional input/output
   token counts. External changes cannot inherit a mismatched head record.
+  History listings omit a revision's corrupt or unsupported provenance while
+  retaining its bytes and the other revisions. Explicit provenance reads and
+  restore still fail with `invalidProvenance`; file-read errors still fail
+  the listing.
   A normal editor save archives the previous head's provenance and clears
   the new head's LLM origin; restoring a revision restores its provenance.
   Identity migration moves all these records with history. Rename and move

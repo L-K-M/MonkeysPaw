@@ -399,8 +399,11 @@ public final class LibraryService: PromptFavoriteEditing {
         try locked {
             try historyStore.revisions(for: identity).map { revision in
                 let bytes = try historyStore.read(revision)
+                let provenance: PromptProvenance?
+                do { provenance = try historyStore.provenance(for: revision, bytes: bytes) }
+                catch LibraryError.invalidProvenance { provenance = nil }
                 return PromptHistorySnapshot(revision: revision, bytes: bytes, filename: filename,
-                    provenance: try historyStore.provenance(for: revision, bytes: bytes))
+                    provenance: provenance)
             }
         }
     }

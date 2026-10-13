@@ -60,6 +60,55 @@ final class AssistantAcceptanceHarness {
 }
 
 final class AssistantAcceptanceModelTests: XCTestCase {
+    func testRetryAndShowDiffAfterCommittedWriteUseFreshIdentityWithoutChangingFirstFile() async throws {
+        for queued in [false, true] {
+            for provenanceWarning in [false, true] {
+                for retry in [true, false] {
+                    let h = try AssistantActionHarness([.held, .held], queued: queued)
+                    h.ui { h.model.write(brief: "First") }
+                    try await h.sent()
+                    try await h.artifact(body: "First body")
+                    try await h.phase(.ready)
+                    let firstCandidate = try XCTUnwrap(h.model.state.candidate)
+                    if provenanceWarning {
+                        h.editor.h.dataFiles.beforeWrite = { path in
+                            if path.hasSuffix("/head.json") { throw FileStoreError.ioFailure }
+                        }
+                    }
+                    var firstOutcome: AssistantAcceptanceOutcome?
+                    h.ui { h.model.accept(using: h.editor.model) { firstOutcome = $0 } }
+                    try await h.phase(.saved)
+                    let first = try XCTUnwrap(firstOutcome?.committed?.entry)
+                    if provenanceWarning {
+                        guard case .committedWithProvenanceWarning = firstOutcome else {
+                            return XCTFail("Expected a committed provenance warning.")
+                        }
+                    }
+                    h.editor.h.dataFiles.beforeWrite = nil
+                    let transcript = h.model.state.transcript
+                    if retry {
+                        h.ui { h.model.retryWithFeedback("Use a second body") }
+                        try await h.sent(2)
+                        XCTAssertEqual(Array(h.model.state.transcript.dropLast()), transcript)
+                        try await h.artifact(body: "Second body")
+                    } else { h.ui { h.model.showDiff() } }
+                    try await h.phase(.ready)
+                    let secondCandidate = try XCTUnwrap(h.model.state.candidate)
+                    XCTAssertNotEqual(secondCandidate.content.document.frontMatter.id, first.document.frontMatter.id)
+                    XCTAssertTrue(h.model.canAccept)
+                    var secondOutcome: AssistantAcceptanceOutcome?
+                    h.ui { h.model.accept(using: h.editor.model) { secondOutcome = $0 } }
+                    try await h.phase(.saved)
+                    let second = try XCTUnwrap(secondOutcome?.committed?.entry)
+                    XCTAssertNotEqual(second.relativePath, first.relativePath)
+                    XCTAssertNotEqual(second.identity, first.identity)
+                    XCTAssertEqual(try h.editor.h.files.read(at: first.relativePath), firstCandidate.content.canonicalBytes)
+                    XCTAssertEqual(try h.editor.h.files.read(at: second.relativePath), secondCandidate.content.canonicalBytes)
+                }
+            }
+        }
+    }
+
     func testWriteOpensExactPreviewWithPreflightedIdentityAndModelOutcomeInEveryQueueMode() async throws {
         for held in [false, true] {
             for queued in [false, true] {

@@ -44,6 +44,42 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertNil(try h.library.provenance(for: XCTUnwrap(h.library.history(for: manual.identity).first)))
     }
 
+    func testHistoryListingOmitsOneCorruptSidecarButExplicitReadsAndRestoreStayStrict() throws {
+        let h = PromptEditingHarness()
+        var entry = try XCTUnwrap(save(h, "First", provenance: metadata).committedEntry)
+        for source in ["Second", "Third", "Current"] {
+            entry = try XCTUnwrap(save(h, source, stamp: entry.stamp, provenance: metadata).committedEntry)
+        }
+        let revisions = try h.library.history(for: entry.identity)
+        XCTAssertEqual(revisions.count, 3)
+        let corrupt = try XCTUnwrap(revisions.dropFirst().first)
+        let revisionPath = "history/" + (try entry.identity.storageKey) + "/" + corrupt.filename
+        let sidecarPath = revisionPath + ".json"
+        try h.data.put("Corrupt JSON", at: sidecarPath)
+        let before = try h.data.listFiles()
+        let snapshots = try h.library.historyForEditing(entry.identity, filename: "a.md")
+        XCTAssertEqual(snapshots.map(\.revision), revisions)
+        XCTAssertEqual(snapshots.compactMap(\.source).map { PromptCodec.parse($0, filename: "a.md").body },
+                       ["Third", "Second", "First"])
+        XCTAssertEqual(snapshots.map(\.provenance), [metadata, nil, metadata])
+        XCTAssertThrowsError(try h.library.provenance(for: corrupt)) {
+            XCTAssertEqual($0 as? LibraryError, .invalidProvenance)
+        }
+        XCTAssertThrowsError(try h.library.restore(corrupt, at: "a.md", expectedStamp: entry.stamp)) {
+            XCTAssertEqual($0 as? LibraryError, .invalidProvenance)
+        }
+        XCTAssertEqual(try h.files.read(at: "a.md"), Data(entry.document.source.utf8))
+        XCTAssertEqual(try h.data.listFiles(), before)
+        XCTAssertEqual(try h.data.text(at: sidecarPath), "Corrupt JSON")
+
+        for unreadablePath in [sidecarPath, revisionPath] {
+            h.data.onRead = { path in if path == unreadablePath { throw FileStoreError.ioFailure } }
+            XCTAssertThrowsError(try h.library.historyForEditing(entry.identity, filename: "a.md")) {
+                XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+            }
+        }
+    }
+
     func testUnassignedRenameMoveAndFirstSaveMigrateAllRecordsAndDeleteRetainsThem() throws {
         let h = PromptEditingHarness()
         try h.files.put("Original", at: "a.md")
