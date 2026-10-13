@@ -23,7 +23,7 @@ extension AssistantPrompts {
             + data(instruction, tag: "instruction")
     }
 
-    private static func data(_ value: String, tag: String) -> String {
+    static func data(_ value: String, tag: String) -> String {
         let escaped = value.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
