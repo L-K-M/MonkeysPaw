@@ -191,6 +191,10 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.work.drain()
         XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
         XCTAssertFalse(h.presentation.editorState.isDirty)
+        h.presentation.edit("A newer buffer after the commit")
+        XCTAssertTrue(view.state.isStale)
+        XCTAssertEqual(view.resultMessage, LibraryAssistantStrings.stale)
+        XCTAssertFalse(view.canAccept)
     }
 
     func testDraftValidationErrorsDisableAcceptanceAndFeedbackRetryKeepsTranscript() throws {
@@ -255,6 +259,21 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(h.presentation.assistantSaveMessage, "Acceptance cancelled.")
         XCTAssertEqual(try h.files.listFiles().count, 1)
         XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+    }
+
+    func testAcceptanceDetectsChangedDiskWithoutOverwritingIt() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Improve")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        try h.files.write(Data("External replacement".utf8), at: "one.md")
+        view.accept()
+        h.work.drain()
+        XCTAssertFalse(view.canAccept)
+        XCTAssertTrue(try XCTUnwrap(h.presentation.assistantSaveMessage).contains("changed on disk"))
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data("External replacement".utf8))
     }
 
     func testViewerOffersPrivateCopyAndPreservesOriginal() throws {
@@ -451,6 +470,16 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(LibrarySourceEditor.Coordinator.utf16Range(for: 1..<5, in: "a😀b"), NSRange(location: 1, length: 2))
         XCTAssertNil(LibrarySourceEditor.Coordinator.utf16Range(for: 2..<5, in: "a😀b"))
         XCTAssertNil(LibrarySourceEditor.Coordinator.utf16Range(for: 0..<99, in: "short"))
+        let coordinator = LibrarySourceEditor.Coordinator(onEdit: { _ in })
+        let scroll = LibrarySourceEditor.makeScrollView(coordinator: coordinator)
+        let text = try XCTUnwrap(scroll.documentView as? LibrarySourceTextView)
+        coordinator.update(text, source: "a😀b", path: "one.md", isEditable: true, onEdit: { _ in },
+            highlight: LibrarySourceHighlight(byteRange: 1..<5, sourceBytes: Data("a😀b".utf8)))
+        text.setMarkedText("x", selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 1, length: 2))
+        XCTAssertTrue(text.hasMarkedText())
+        XCTAssertNil(text.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 1, effectiveRange: nil))
+        coordinator.deactivate()
     }
 }
 

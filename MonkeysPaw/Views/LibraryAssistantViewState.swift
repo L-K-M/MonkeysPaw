@@ -94,6 +94,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     }
 
     var resultMessage: String {
+        if state.isStale, state.acceptanceOutcome?.committed != nil { return LibraryAssistantStrings.stale }
         if let outcome = state.acceptanceOutcome { return LibraryAssistantStrings.acceptance(outcome) }
         if let failure = state.failure { return LibraryAssistantStrings.failure(failure) }
         if state.isStale { return state.review != nil ? LibraryAssistantStrings.staleReview : LibraryAssistantStrings.stale }

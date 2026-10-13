@@ -42,7 +42,7 @@ final class LibraryViewState: ObservableObject {
     private let mainThread: MainThread
     private let revealLibrary: () -> Void
     private var makeAssistant: AssistantFactory?
-    private let scheduler: MonkeysPawCore.Scheduler
+    private let scheduler: MonkeysPawCore.Scheduler?
     private var assistantSession: PromptEditingSession?
     private var assistantPrompt: LibraryPromptSelection?
     private var observer: UUID?
@@ -57,7 +57,7 @@ final class LibraryViewState: ObservableObject {
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, imports: LibraryImportViewState? = nil,
-         makeAssistant: AssistantFactory? = nil, scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
+         makeAssistant: AssistantFactory? = nil, scheduler: MonkeysPawCore.Scheduler? = nil,
          revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
@@ -77,10 +77,10 @@ final class LibraryViewState: ObservableObject {
 
     deinit { assistant?.retire(); detachObservers() }
 
-    var canShowAssistant: Bool { isActive && libraryAvailable && makeAssistant != nil }
+    var canShowAssistant: Bool { isActive && libraryAvailable && makeAssistant != nil && scheduler != nil }
 
     func showAssistant() {
-        guard canShowAssistant, let makeAssistant else { return }
+        guard canShowAssistant, let makeAssistant, let scheduler else { return }
         if assistant == nil {
             let revision = bindingRevision
             let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,

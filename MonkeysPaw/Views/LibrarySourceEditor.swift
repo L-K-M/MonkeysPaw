@@ -217,10 +217,12 @@ struct LibrarySourceEditor: NSViewRepresentable {
             // Track marked text as a draft too, so a mouse close or app quit
             // cannot bypass the discard guard. update never overwrites it.
             guard isActive, !isUpdating, text.isEditable else { return }
+            updateHighlight(text, highlight: nil)
             onEdit(text.string)
         }
 
         func deactivate() {
+            if let textView { updateHighlight(textView, highlight: nil) }
             isActive = false
             onEdit = { _ in }
             NotificationCenter.default.removeObserver(self)

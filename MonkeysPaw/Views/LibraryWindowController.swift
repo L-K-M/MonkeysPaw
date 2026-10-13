@@ -25,7 +25,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
          presentDialog: @escaping DialogPresenter = LibraryWindowController.presentEditorDialog,
          imports: LibraryImportViewState? = nil,
          makeAssistant: LibraryViewState.AssistantFactory? = nil,
-         scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
+         scheduler: MonkeysPawCore.Scheduler? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
