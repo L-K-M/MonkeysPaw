@@ -12,6 +12,12 @@ final class MacImportSourceReader: ImportSourceReading {
 
     private var folders: [Folder] = []
     private static let directoryFlags = O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+    private let willInspectEntry: (String) -> Void
+
+    /// Tests can remove an entry between readdir and its no-follow inspection.
+    init(willInspectEntry: @escaping (String) -> Void = { _ in }) {
+        self.willInspectEntry = willInspectEntry
+    }
 
     deinit { closeFolders() }
 
@@ -44,7 +50,7 @@ final class MacImportSourceReader: ImportSourceReading {
         }
         defer { _ = Darwin.close(descriptor) }
         var entries: [ImportSourceEntry] = []
-        try collect(in: descriptor, prefix: "", into: &entries)
+        try collect(in: descriptor, into: &entries)
         let retained = Darwin.fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
         guard retained >= 0 else { throw ImportSourceError.ioFailure }
         folders.append(Folder(path: folderPath, descriptor: retained))
@@ -64,8 +70,9 @@ final class MacImportSourceReader: ImportSourceReading {
             let prefixCount = folder.path.utf8.count + (folder.path == "/" ? 0 : 1)
             let relative = String(decoding: path.utf8.dropFirst(prefixCount), as: UTF8.self)
             let parts = relative.split(separator: "/").map(String.init)
+            guard let last = parts.last else { throw ImportSourceError.invalidPath }
             parent = try walk(parts.dropLast(), from: folder.descriptor)
-            name = parts.last!
+            name = last
         } else {
             (parent, name) = try openParent(of: path)
         }
@@ -166,39 +173,82 @@ final class MacImportSourceReader: ImportSourceReading {
         }
     }
 
-    private func collect(in descriptor: Int32, prefix: String, into entries: inout [ImportSourceEntry]) throws {
-        let duplicate = Darwin.fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
-        guard duplicate >= 0 else { throw ImportSourceError.ioFailure }
-        guard let stream = Darwin.fdopendir(duplicate) else {
-            _ = Darwin.close(duplicate)
-            throw ImportSourceError.ioFailure
-        }
-        defer { _ = Darwin.closedir(stream) }
-        while true {
-            errno = 0
-            guard let entry = Darwin.readdir(stream) else {
-                guard errno == 0 else { throw ImportSourceError.ioFailure }
-                return
+    private func collect(in root: Int32, into entries: inout [ImportSourceEntry]) throws {
+        var pendingFolders = [""]
+        var remainingPathBytes = Limits.importFileCapBytes
+        // Queue paths, not descriptors or recursive calls. Reopen each folder
+        // from the pinned root without following links in any component.
+        while let folderPath = pendingFolders.popLast() {
+            let descriptor: Int32
+            if folderPath.isEmpty {
+                descriptor = Darwin.fcntl(root, F_DUPFD_CLOEXEC, 0)
+                guard descriptor >= 0 else { throw ImportSourceError.ioFailure }
+            } else {
+                let parts = folderPath.split(separator: "/").map(String.init)
+                guard let name = parts.last else { throw ImportSourceError.invalidPath }
+                let parent: Int32
+                do { parent = try walk(parts.dropLast(), from: root) }
+                catch {
+                    guard let source = error as? ImportSourceError,
+                          [ImportSourceError.notFound, .symbolicLink, .notRegularFile].contains(source) else { throw error }
+                    entries.append(ImportSourceEntry(relativePath: folderPath,
+                        kind: source == .symbolicLink ? .symbolicLink : .other))
+                    continue
+                }
+                defer { _ = Darwin.close(parent) }
+                descriptor = Darwin.openat(parent, name, O_RDONLY | Self.directoryFlags)
+                if descriptor < 0 {
+                    let code = errno
+                    guard [ENOENT, EACCES, EPERM, ELOOP, ENOTDIR].contains(code) else {
+                        throw ImportSourceError.ioFailure
+                    }
+                    let kind: ImportSourceKind = failure(name, relativeTo: parent, code: code) == .symbolicLink
+                        ? .symbolicLink : .other
+                    entries.append(ImportSourceEntry(relativePath: folderPath, kind: kind))
+                    continue
+                }
             }
-            let length = Int(entry.pointee.d_namlen) + 1
-            let name = withUnsafePointer(to: &entry.pointee.d_name) {
-                $0.withMemoryRebound(to: CChar.self, capacity: length) { String(validatingUTF8: $0) }
-            }
-            guard let name else { throw ImportSourceError.invalidPath }
-            if name == "." || name == ".." { continue }
-            let path = prefix + name
-            var info = Darwin.stat()
-            guard Darwin.fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
+            defer { _ = Darwin.close(descriptor) }
+            let duplicate = Darwin.fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+            guard duplicate >= 0 else { throw ImportSourceError.ioFailure }
+            guard let stream = Darwin.fdopendir(duplicate) else {
+                _ = Darwin.close(duplicate)
                 throw ImportSourceError.ioFailure
             }
-            switch info.st_mode & mode_t(S_IFMT) {
-            case mode_t(S_IFDIR):
-                let child = try openDirectory(name, relativeTo: descriptor, access: O_RDONLY)
-                defer { _ = Darwin.close(child) }
-                try collect(in: child, prefix: path + "/", into: &entries)
-            case mode_t(S_IFREG): entries.append(ImportSourceEntry(relativePath: path))
-            case mode_t(S_IFLNK): entries.append(ImportSourceEntry(relativePath: path, kind: .symbolicLink))
-            default: entries.append(ImportSourceEntry(relativePath: path, kind: .other))
+            defer { _ = Darwin.closedir(stream) }
+            let prefix = folderPath.isEmpty ? "" : folderPath + "/"
+            while true {
+                errno = 0
+                guard let entry = Darwin.readdir(stream) else {
+                    guard errno == 0 else { throw ImportSourceError.ioFailure }
+                    break
+                }
+                let length = Int(entry.pointee.d_namlen) + 1
+                let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                    $0.withMemoryRebound(to: CChar.self, capacity: length) { String(validatingUTF8: $0) }
+                }
+                guard let name else { throw ImportSourceError.invalidPath }
+                if name == "." || name == ".." { continue }
+                let path = prefix + name
+                // Count directories too, so empty trees cannot bypass the budget.
+                guard path.utf8.count <= Limits.maxPathBytes else { throw ImportSourceError.invalidPath }
+                let pathBytes = path.utf8.count + 1
+                guard pathBytes <= remainingPathBytes else { throw ImportSourceError.ioFailure }
+                remainingPathBytes -= pathBytes
+                willInspectEntry(path)
+                var info = Darwin.stat()
+                guard Darwin.fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
+                    guard errno == ENOENT else { throw ImportSourceError.ioFailure }
+                    // Keep the candidate so Core reports a typed source skip on read.
+                    entries.append(ImportSourceEntry(relativePath: path))
+                    continue
+                }
+                switch info.st_mode & mode_t(S_IFMT) {
+                case mode_t(S_IFDIR): pendingFolders.append(path)
+                case mode_t(S_IFREG): entries.append(ImportSourceEntry(relativePath: path))
+                case mode_t(S_IFLNK): entries.append(ImportSourceEntry(relativePath: path, kind: .symbolicLink))
+                default: entries.append(ImportSourceEntry(relativePath: path, kind: .other))
+                }
             }
         }
     }

@@ -92,6 +92,108 @@ final class MacImportSourceReaderTests: XCTestCase {
         XCTAssertThrowsError(try reader.readFile(at: directory.appendingPathComponent("missing.md").path, maximumBytes: 20)) {
             XCTAssertEqual($0 as? ImportSourceError, .notFound)
         }
+        XCTAssertThrowsError(try reader.readFile(at: directory.path, maximumBytes: 20)) {
+            XCTAssertEqual($0 as? ImportSourceError, .notRegularFile)
+        }
+    }
+
+    func testVanishedEntryIsReportedWithoutLosingReadableFiles() throws {
+        let gone = try put("selected/gone.md")
+        _ = try put("selected/kept.md")
+        let reader = MacImportSourceReader(willInspectEntry: { path in
+            if path == "gone.md" { try? FileManager.default.removeItem(at: gone) }
+        })
+        let report = try importFolder(directory.appendingPathComponent("selected"), reader: reader)
+        XCTAssertNil(report.failure)
+        XCTAssertEqual(report.createdCount, 1)
+        XCTAssertEqual(report.skippedCount, 1)
+        XCTAssertEqual(report.files.first { $0.sourcePath.hasSuffix("gone.md") }?.outcome, .skipped(.source(.notFound)))
+        XCTAssertEqual(report.files.first { $0.sourcePath.hasSuffix("kept.md") }?.outcome, .created(path: "Imported/kept.md"))
+    }
+
+    func testUnreadableSubdirectoryIsReportedWithoutLosingReadableFiles() throws {
+        guard Darwin.geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions") }
+        _ = try put("selected/kept.md")
+        _ = try put("selected/blocked/hidden.md")
+        let blocked = directory.appendingPathComponent("selected/blocked")
+        XCTAssertEqual(Darwin.chmod(blocked.path, 0), 0)
+        defer { _ = Darwin.chmod(blocked.path, 0o700) }
+        let report = try importFolder(directory.appendingPathComponent("selected"), reader: MacImportSourceReader())
+        XCTAssertNil(report.failure)
+        XCTAssertEqual(report.createdCount, 1)
+        XCTAssertEqual(report.skippedCount, 1)
+        XCTAssertEqual(report.files.first { $0.sourcePath.hasSuffix("blocked") }?.outcome, .skipped(.notRegularFile))
+    }
+
+    func testEnumerationHasABoundedPathByteBudget() throws {
+        let selected = directory.appendingPathComponent("selected")
+        let stem = String(repeating: "a", count: Limits.promptFilenameMaxBytes - 8)
+        var pathBytes = 0
+        var index = 0
+        while pathBytes <= Limits.importFileCapBytes {
+            let name = stem + String(index) + ".md"
+            _ = try put("selected/" + name, bytes: Data())
+            pathBytes += name.utf8.count + 1
+            index += 1
+        }
+        let report = try importFolder(selected, reader: MacImportSourceReader())
+        XCTAssertEqual(report.failure, .source(.ioFailure))
+        XCTAssertTrue(report.files.isEmpty)
+        XCTAssertEqual(report.createdCount, 0)
+    }
+
+    func testDeepTreeBelowCoreBoundsStillImports() throws {
+        let relative = Array(repeating: "d", count: 128).joined(separator: "/") + "/inside.md"
+        _ = try put("selected/" + relative)
+        let report = try importFolder(directory.appendingPathComponent("selected"), reader: MacImportSourceReader())
+        XCTAssertNil(report.failure)
+        XCTAssertEqual(report.files.first?.outcome, .created(path: "Imported/" + relative))
+        XCTAssertEqual(report.createdCount, 1)
+        XCTAssertEqual(report.skippedCount, 0)
+    }
+
+    func testEnumerationBoundsNestedRelativePaths() throws {
+        let selected = directory.appendingPathComponent("selected")
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        let root = Darwin.open(selected.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard root >= 0 else { XCTFail("Could not open fixture root"); return }
+        var descriptors = [root]
+        let name = String(repeating: "d", count: Limits.promptFilenameMaxBytes)
+        defer {
+            for index in (1..<descriptors.count).reversed() {
+                _ = Darwin.close(descriptors[index])
+                _ = Darwin.unlinkat(descriptors[index - 1], name, AT_REMOVEDIR)
+            }
+            _ = Darwin.close(root)
+        }
+        // openat creates a tree whose relative path exceeds the Core cap
+        // without relying on the host's absolute-path length limit.
+        for _ in 0...Limits.maxPathBytes / Limits.promptFilenameMaxBytes {
+            let parent = try XCTUnwrap(descriptors.last)
+            XCTAssertEqual(Darwin.mkdirat(parent, name, 0o700), 0)
+            let child = Darwin.openat(parent, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+            guard child >= 0 else {
+                _ = Darwin.unlinkat(parent, name, AT_REMOVEDIR)
+                XCTFail("Could not open fixture child")
+                return
+            }
+            descriptors.append(child)
+        }
+        XCTAssertThrowsError(try MacImportSourceReader().listFiles(in: selected.path)) {
+            XCTAssertEqual($0 as? ImportSourceError, .invalidPath)
+        }
+    }
+
+    private func importFolder(_ folder: URL, reader: MacImportSourceReader) throws -> ImportReport {
+        let files = try RootedFileStore(root: directory.appendingPathComponent("library"))
+        let data = try RootedFileStore(root: directory.appendingPathComponent("data"))
+        try files.createRoot()
+        try data.createRoot()
+        let library = LibraryService(library: files, data: data, clock: SystemClock(), entropy: SystemEntropy())
+        let model = ImportModel(service: ImportService(library: library, sources: reader,
+            work: MacSourceInlineWork(), main: MacSourceInlineMain()))
+        model.importFolder(at: folder.path)
+        return try XCTUnwrap(model.state.report)
     }
 
     func testMixedSelectionsClassifyDirectoriesWithoutFollowingLinkedSelections() throws {
@@ -114,4 +216,12 @@ final class MacImportSourceReaderTests: XCTestCase {
             }
         }
     }
+}
+
+private struct MacSourceInlineWork: BackgroundWork {
+    func run(_ work: @escaping () -> Void) { work() }
+}
+
+private struct MacSourceInlineMain: MainThread {
+    func run(_ work: @escaping () -> Void) { work() }
 }

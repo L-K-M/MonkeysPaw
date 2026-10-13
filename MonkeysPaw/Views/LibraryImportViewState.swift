@@ -69,7 +69,10 @@ final class LibraryImportViewState: ObservableObject {
     func setLibraryAvailable(_ available: Bool) {
         guard active else { return }
         libraryAvailable = available
-        if !available { cancelChoosing() }
+        if !available {
+            if isBusy { selectionMessage = ImportStrings.libraryLost }
+            retireWork()
+        }
         onAvailabilityChange?()
     }
 
@@ -80,7 +83,8 @@ final class LibraryImportViewState: ObservableObject {
                   path != RelativePath(ImportStrings.defaultDestination) else { return nil }
             return path
         }
-        destinations = [RelativePath(ImportStrings.defaultDestination)] + folders
+        let updated = [RelativePath(ImportStrings.defaultDestination)] + folders
+        if destinations != updated { destinations = updated }
         if !isBusy, !destinations.contains(destination) { destination = RelativePath(ImportStrings.defaultDestination) }
     }
 
@@ -160,7 +164,7 @@ final class LibraryImportViewState: ObservableObject {
     }
 
     func dismissReport() {
-        guard active, !isBusy else { return }
+        guard !isBusy else { return }
         reports = []
         selectionMessage = nil
     }
@@ -174,6 +178,16 @@ final class LibraryImportViewState: ObservableObject {
     }
 
     func deactivate() {
+        retireWork()
+        reports = []
+        libraryAvailable = false
+        onChoose = nil
+        onAvailabilityChange = nil
+    }
+
+    /// Library loss retires the model while retaining completed selections.
+    /// Only a replacement graph can import again after this retirement.
+    private func retireWork() {
         guard active else { return }
         active = false
         revision = UUID()
@@ -185,10 +199,6 @@ final class LibraryImportViewState: ObservableObject {
         model.deactivate()
         isBusy = false
         progress = nil
-        reports = []
-        libraryAvailable = false
-        onChoose = nil
-        onAvailabilityChange = nil
     }
 
     private func beginBatch() {

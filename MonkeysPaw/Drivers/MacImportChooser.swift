@@ -12,7 +12,7 @@ enum MacImportChooser {
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
         panel.resolvesAliases = false
-        panel.allowedContentTypes = ["md", "prompt", "prompty"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = [UTType.folder] + ["md", "prompt", "prompty"].compactMap { UTType(filenameExtension: $0) }
         panel.allowsOtherFileTypes = false
         return panel
     }

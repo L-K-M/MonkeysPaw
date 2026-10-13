@@ -503,8 +503,39 @@ macOS tests. Run `MacLibraryImportTests` and `MacImportSourceReaderTests` in
 decode item-provider file URLs, release worker jobs and drive presentation
 state. They cover mixed files/folders, destination choice, progress, typed
 reports, exclusive creation, symlink refusal, bounded reads, report opening
-through the watcher/editor guard and retirement on a library switch. They
+through the watcher/editor guard, retirement during/after imports on a library
+switch or library loss, and reports retained across closing during a batch. They
 do not prove native chooser appearance, real Finder drops or VoiceOver.
+
+The chooser includes `UTType.folder` alongside the three prompt file types,
+with `allowsOtherFileTypes = false`. Apple documents
+[`canChooseDirectories`](https://developer.apple.com/documentation/appkit/nsopenpanel/canchoosedirectories)
+as enabling directory selection, and
+[`UTType.folder`](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/folder)
+as a user-browsable directory type. Including it in
+[`allowedContentTypes`](https://developer.apple.com/documentation/appkit/nssavepanel/allowedcontenttypes)
+makes the advertised folder choice explicit while retaining file filtering.
+Native folder selection still requires the owner check below.
+
+Closing the reusable Library window cancels its chooser but lets a running
+batch finish in the background. Reopening the same window shows its report.
+Losing the library retires import preparation, drop replies and queued model
+work, keeps completed reports visible, and requires a replacement library
+graph before importing again. Core may finish a publication already executing
+when retired; later files do not start. Switching graphs clears the old report
+and binds a fresh import model and state.
+
+Folder enumeration walks iteratively, reopening one directory at a time from
+the pinned root without following links. It uses Core's 1,024-byte path cap
+and budgets the total bytes in visited paths with Core's 256 KiB import cap,
+charging each file or directory's relative path plus one byte. Exceeding
+either bound fails
+that folder before writes, rather than returning an incomplete listing.
+Vanished prompt files remain candidates for a typed `source(notFound)` skip;
+unopenable subdirectories produce a visible `notRegularFile` container skip,
+or a symbolic-link skip when replaced by a link. Unexpected directory-stream
+or resource errors fail enumeration. Hosted fixtures cover races, denied
+subdirectories, overlong relative paths and the total path budget.
 
 - Commit / `macos-app` CI run / hosted-test results:
 - macOS / hardware / keyboard navigation setting / VoiceOver:
@@ -525,6 +556,7 @@ destination bytes for comparison, without recording prompt content here.
 | Progress shows enumeration and processed-file counts; completion lists every created library path, each typed skip, mapped fields, preserved metadata keys, header-formatting loss and warnings; partial success remains available | NOT RUN | |
 | Existing destination bytes and all sources stay unchanged; occupied names use alternates and duplicate ids receive fresh identities; symlinked sources and nested symlinks never import their targets | NOT RUN | |
 | Imported rows appear through the watcher; opening a report path reveals it even with a filter or another sidebar section, and an unsaved editor draft still requires Save/Discard/Cancel | NOT RUN | |
-| Dismiss report clears its contents; close/reopen keeps a completed import usable; switching libraries retires queued imports, drop loads and chooser replies and resets destination/report for the new graph | NOT RUN | |
-| Runtime library loss disables Import and report opening; native chooser dismissal, minimized windows and simultaneous editor sheets never leave Import stuck or revive a closed chooser | NOT RUN | |
+| Dismiss report clears its contents; closing during a mixed batch lets it finish and reopening shows every completed result; switching libraries during and after imports retires old work and resets destination/report while the new graph can import | NOT RUN | |
+| Runtime library loss retires queued imports and disables Import/report opening while preserving completed reports; native chooser dismissal, minimized windows and simultaneous editor sheets never leave Import stuck or revive a closed chooser | NOT RUN | |
+| A source deleted during enumeration is a typed skip while readable prompts still import; inaccessible subdirectories appear as container skips; exceeding the path or enumeration budget fails the folder before writes | NOT RUN | |
 | Tab/Shift+Tab reach Import, destination, report paths and Dismiss with visible focus; VoiceOver identifies each control, progress, created path and skip/warning text; resize and Reduce Motion keep the Library usable | NOT RUN | |

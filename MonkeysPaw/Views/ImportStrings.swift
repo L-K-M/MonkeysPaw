@@ -14,6 +14,7 @@ enum ImportStrings {
     static let fileURLsOnly = "Drop local files or folders to import them."
     static let dropReadFailed = "Some dropped items could not be read as local file URLs. Drop those files again."
     static let waitingForRefresh = "The imported prompt is waiting for the library to refresh. Try opening it again."
+    static let libraryLost = "Import stopped because the library is unavailable. Completed results remain in the report."
 
     static func progress(_ progress: ImportProgress?, selection: Int, total: Int) -> String {
         let message: String

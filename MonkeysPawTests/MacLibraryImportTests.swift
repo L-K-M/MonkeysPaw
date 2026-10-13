@@ -16,8 +16,10 @@ final class MacLibraryImportTests: XCTestCase {
     private let work = MacImportTestWork()
     private var watchers: [MacImportTestWatcher] = []
     private var choices: [MacImportTestChoice] = []
+    private var originalMainMenu: NSMenu?
 
     override func setUpWithError() throws {
+        originalMainMenu = NSApp.mainMenu
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         root = directory.appendingPathComponent("library")
         data = directory.appendingPathComponent("data")
@@ -30,6 +32,8 @@ final class MacLibraryImportTests: XCTestCase {
         work.onEnqueue = nil
         work.drain()
         delegate = nil
+        NSApp.mainMenu = originalMainMenu
+        originalMainMenu = nil
         choices = []
         watchers = []
         try? FileManager.default.removeItem(at: directory)
@@ -81,6 +85,7 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertTrue(panel.allowsMultipleSelection)
         XCTAssertFalse(panel.resolvesAliases)
         XCTAssertFalse(panel.allowsOtherFileTypes)
+        XCTAssertTrue(panel.allowedContentTypes.contains(.folder))
         for ext in ["md", "prompt", "prompty"] {
             XCTAssertTrue(panel.allowedContentTypes.contains { $0 == UTType(filenameExtension: ext) })
         }
@@ -190,24 +195,43 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertEqual(presentation.snapshot.selectedSection, .all)
     }
 
+    func testUnchangedBrowserDestinationsDoNotRepublish() throws {
+        try files.write(Data("Existing".utf8), at: "work/existing.md")
+        start()
+        let imports = try imports()
+        let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
+        var changes = 0
+        let observation = imports.objectWillChange.sink { changes += 1 }
+        imports.updateDestinations(presentation.snapshot.sections)
+        presentation.setFilter("Does not match")
+        presentation.selectSection(.favourites)
+        XCTAssertEqual(changes, 0)
+        withExtendedLifetime(observation) {}
+    }
+
     func testDropLoadsFileURLsAndKeepsPartialFailuresVisible() throws {
         let flat = try source("space name.md")
         start()
         let imports = try imports()
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { done in
-            done(flat.dataRepresentation, nil)
+            DispatchQueue.global().async { done(flat.dataRepresentation, nil) }
             return nil
         }
         let broken = NSItemProvider()
         broken.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { done in
-            done(nil, CocoaError(.fileReadUnknown))
+            DispatchQueue.global().async { done(nil, CocoaError(.fileReadUnknown)) }
             return nil
         }
         let decoded = expectation(description: "Drop decoding enqueues preparation")
-        work.onEnqueue = { decoded.fulfill() }
+        work.onEnqueue = {
+            XCTAssertTrue(Thread.isMainThread)
+            decoded.fulfill()
+        }
         XCTAssertTrue(imports.acceptDrop([provider, broken]))
         XCTAssertFalse(imports.acceptDrop([provider]))
+        // Preparation is enqueued only after every provider completion has
+        // reached MainThread, including the failed representation.
         wait(for: [decoded], timeout: 5)
         work.onEnqueue = nil
         work.drain()
@@ -238,6 +262,7 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertFalse(imports.canImport)
         XCTAssertFalse(item.isEnabled)
         XCTAssertFalse(imports.importURLs([flat]))
+        XCTAssertTrue(imports.hasReport)
     }
 
     func testLibrarySwitchRetiresQueuedWorkAndLateChooserReplies() throws {
@@ -260,6 +285,14 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertThrowsError(try files.read(at: "Imported/flat.md"))
         XCTAssertThrowsError(try otherFiles.read(at: "Imported/flat.md"))
         let current = try imports()
+        XCTAssertFalse(current === old)
+        XCTAssertFalse(delegate.importModel === model)
+        XCTAssertTrue(current.importURLs([flat]))
+        work.drain()
+        XCTAssertEqual(current.createdCount, 1)
+        XCTAssertTrue(current.hasReport)
+        XCTAssertTrue(current.canImport)
+        XCTAssertEqual(try otherFiles.read(at: "Imported/flat.md"), Data("Body".utf8))
         current.choose()
         let late = try XCTUnwrap(choices.last)
         XCTAssertEqual(delegate.switchLibrary(to: nil), .switched)
@@ -272,6 +305,92 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertTrue(replacement.importURLs([flat]))
         work.drain()
         XCTAssertEqual(replacement.createdCount, 1)
+    }
+
+    func testLibrarySwitchAfterCompletedImportKeepsReplacementCallbacks() throws {
+        try files.write(Data("Existing".utf8), at: "work/existing.md")
+        let flat = try source("flat.md")
+        let second = try source("second.md")
+        let other = directory.appendingPathComponent("other-library")
+        let otherFiles = try RootedFileStore(root: other)
+        try otherFiles.createRoot()
+        start()
+        let old = try imports()
+        let oldModel = try XCTUnwrap(delegate.importModel)
+        old.selectDestination("work")
+        XCTAssertTrue(old.importURLs([flat]))
+        work.drain()
+        XCTAssertEqual(old.createdCount, 1)
+        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        let current = try imports()
+        XCTAssertFalse(current === old)
+        XCTAssertFalse(delegate.importModel === oldModel)
+        XCTAssertFalse(old.hasReport)
+        XCTAssertFalse(old.canImport)
+        XCTAssertEqual(current.destination, "Imported")
+        XCTAssertTrue(current.files.isEmpty)
+        oldModel.importFiles(at: [second.path])
+        XCTAssertTrue(current.importURLs([second]))
+        work.drain()
+        XCTAssertEqual(current.createdCount, 1)
+        XCTAssertTrue(current.hasReport)
+        XCTAssertTrue(current.canImport)
+        XCTAssertEqual(try files.read(at: "work/flat.md"), Data("Body".utf8))
+        XCTAssertThrowsError(try files.read(at: "Imported/second.md"))
+        XCTAssertEqual(try otherFiles.read(at: "Imported/second.md"), Data("Body".utf8))
+    }
+
+    func testLibraryLossRetiresPendingImportAndPreservesCompletedReport() throws {
+        let flat = try source("flat.md")
+        _ = try source("folder/nested.md")
+        let folder = directory.appendingPathComponent("sources/folder")
+        start()
+        let imports = try imports()
+        XCTAssertTrue(imports.importURLs([flat, folder]))
+        work.runNext() // Prepare the mixed selection.
+        work.runNext() // Complete the file; the folder job is still queued.
+        XCTAssertTrue(imports.isBusy)
+        XCTAssertEqual(imports.createdCount, 1)
+        try XCTUnwrap(watchers.last).emit(.rootUnavailable(.notFound))
+        work.drain()
+        XCTAssertFalse(imports.isBusy)
+        XCTAssertFalse(imports.canImport)
+        XCTAssertTrue(imports.hasReport)
+        XCTAssertEqual(imports.createdCount, 1)
+        XCTAssertEqual(imports.selectionMessage, ImportStrings.libraryLost)
+        XCTAssertEqual(try files.read(at: "Imported/flat.md"), Data("Body".utf8))
+        XCTAssertThrowsError(try files.read(at: "Imported/nested.md"))
+        imports.dismissReport()
+        XCTAssertFalse(imports.hasReport)
+        XCTAssertNil(imports.selectionMessage)
+    }
+
+    func testCloseDuringImportKeepsBatchAndReportForReopen() throws {
+        let flat = try source("flat.md")
+        _ = try source("folder/nested.md")
+        let folder = directory.appendingPathComponent("sources/folder")
+        start()
+        let imports = try imports()
+        let controller = try XCTUnwrap(delegate.libraryWindow)
+        XCTAssertTrue(imports.importURLs([flat, folder]))
+        work.runNext()
+        work.runNext()
+        XCTAssertTrue(imports.isBusy)
+        XCTAssertEqual(imports.createdCount, 1)
+        controller.requestClose()
+        XCTAssertFalse(controller.window?.isVisible == true)
+        XCTAssertTrue(imports.isBusy)
+        work.drain()
+        XCTAssertTrue(imports.hasReport)
+        XCTAssertEqual(imports.createdCount, 2)
+        XCTAssertEqual(imports.reports.count, 2)
+        delegate.showLibrary()
+        XCTAssertTrue(controller.window?.isVisible == true)
+        XCTAssertTrue(try self.imports() === imports)
+        XCTAssertTrue(imports.hasReport)
+        XCTAssertEqual(imports.createdCount, 2)
+        XCTAssertEqual(try files.read(at: "Imported/flat.md"), Data("Body".utf8))
+        XCTAssertEqual(try files.read(at: "Imported/nested.md"), Data("Body".utf8))
     }
 
     func testCloseCancelsChooserAndRejectsItsLateReply() throws {
@@ -298,9 +417,17 @@ private final class MacImportTestChoice {
 private final class MacImportTestWork: BackgroundWork {
     private var pending: [() -> Void] = []
     var onEnqueue: (() -> Void)?
-    func run(_ work: @escaping () -> Void) { pending.append(work); onEnqueue?() }
-    func runNext() { if !pending.isEmpty { pending.removeFirst()() } }
+    func run(_ work: @escaping () -> Void) {
+        guard Thread.isMainThread else { XCTFail("Import work must be enqueued on main"); return }
+        pending.append(work)
+        onEnqueue?()
+    }
+    func runNext() {
+        guard Thread.isMainThread else { XCTFail("Import test work must run on main"); return }
+        if !pending.isEmpty { pending.removeFirst()() }
+    }
     func drain() {
+        guard Thread.isMainThread else { XCTFail("Import test work must drain on main"); return }
         for _ in 0..<100 {
             guard !pending.isEmpty else { return }
             runNext()

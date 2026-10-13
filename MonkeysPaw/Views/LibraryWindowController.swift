@@ -103,6 +103,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
 
     func requestClose() {
         guard !isTornDown, !closeRequested else { return }
+        // The reusable window retains running imports and reports for reopening.
         presentation.imports?.cancelChoosing()
         closeRequested = true
         presentation.requestClose { [weak self] result in
