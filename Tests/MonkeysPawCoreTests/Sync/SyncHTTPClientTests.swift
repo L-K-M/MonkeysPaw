@@ -140,9 +140,14 @@ final class SyncHTTPClientTests: XCTestCase {
     func testAllErrorEnvelopesRetainOnlyTypedContractData() async throws {
         for (envelope, expected) in try errorCases() {
             let transport = SyncClientFakeTransport(response: try http(envelope, status: envelope.httpStatus, headers: ["rEtRy-AfTeR": "30"]))
+            XCTAssertThrowsError(try JSONDecoder().decode(SyncAPI.EmptyResponse.self, from: http(envelope).body))
             let client = try client(transport)
             await assertError(expected) { _ = try await client.me() }
-            XCTAssertEqual(transport.requests.count, 1)
+            await assertError(expected) { try await client.logout() }
+            await assertError(expected) { try await client.revokeDevice(id: self.otherID) }
+            await assertError(expected) { try await client.deleteGroup(id: self.otherID) }
+            await assertError(expected) { try await client.removeMember(groupID: self.otherID, userID: self.id) }
+            XCTAssertEqual(transport.requests.count, 5)
         }
     }
 
@@ -152,12 +157,24 @@ final class SyncHTTPClientTests: XCTestCase {
                 let transport = SyncClientFakeTransport(response: try http(envelope, status: status, headers: ["Retry-After": "30"]))
                 let client = try client(transport)
                 await assertError(.statusEnvelopeMismatch(statusCode: status)) { _ = try await client.me() }
+                await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.logout() }
+                await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.revokeDevice(id: self.otherID) }
+                await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.deleteGroup(id: self.otherID) }
+                await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.removeMember(groupID: self.otherID, userID: self.id) }
             }
         }
         for status in [201, 401, 500] {
             let transport = SyncClientFakeTransport(response: try http(me, status: status))
             let client = try client(transport)
             await assertError(.statusEnvelopeMismatch(statusCode: status)) { _ = try await client.me() }
+        }
+        for status in [201, 401, 500] {
+            let transport = SyncClientFakeTransport(response: try http(SyncAPI.EmptyResponse(), status: status))
+            let client = try client(transport)
+            await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.logout() }
+            await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.revokeDevice(id: self.otherID) }
+            await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.deleteGroup(id: self.otherID) }
+            await assertError(.statusEnvelopeMismatch(statusCode: status)) { try await client.removeMember(groupID: self.otherID, userID: self.id) }
         }
     }
 

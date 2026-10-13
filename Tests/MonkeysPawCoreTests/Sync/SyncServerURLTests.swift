@@ -35,6 +35,22 @@ final class SyncServerURLTests: XCTestCase {
         }
     }
 
+    func testPercentEncodedHostsCannotBecomeCanonicalAccountsOrServerURLs() {
+        let userID = ULID("01ARZ3NDEKTSV4RRFFQ69G5FAV")!
+        for input in ["https://ex%C3%A9mple.com", "https://ex%61mple.com", "https://%78n--bcher-kva.example"] {
+            XCTAssertThrowsError(try SyncAccountIdentity(serverURL: input, userID: userID)) {
+                XCTAssertEqual($0 as? SyncError, .invalidAccount, input)
+            }
+            XCTAssertThrowsError(try SyncServerURL(input)) {
+                XCTAssertEqual($0 as? SyncServerURLError, .invalidURL, input)
+            }
+        }
+        for input in ["https://example.com", "http://192.168.1.10", "http://[::1]:8080", "https://xn--bcher-kva.example"] {
+            XCTAssertNoThrow(try SyncAccountIdentity(serverURL: input, userID: userID), input)
+            XCTAssertNoThrow(try SyncServerURL(input), input)
+        }
+    }
+
     func testPublicPrivateHostnameAndLiteralLookalikesRequireHTTPS() throws {
         for host in ["example.com", "server.local", "lan", "localhost.evil.test", "localhost.localdomain",
                      "9.255.255.255", "11.0.0.0", "172.15.255.255", "172.32.0.0",
@@ -93,10 +109,14 @@ final class SyncServerURLTests: XCTestCase {
                       "https://example.com:8443/other/api/v1/me", "https://example.com:8443/paw/api/v10/me",
                       "https://example.com:8443/paw-evil/api/v1/me", "https://example.com:8443/api/v1/me"] {
             XCTAssertThrowsError(try server.validatedRequestURL(URL(string: input)!)) {
-                XCTAssertEqual($0 as? HTTPTransportError, .serverMismatch)
+                XCTAssertEqual($0 as? HTTPTransportError, .serverMismatch, input)
             }
         }
-        XCTAssertThrowsError(try server.validatedRequestURL(URL(string: "https://example.com:8443/paw/api/v1/../me")!))
+        let dotSegments = try XCTUnwrap(URL(string: "https://example.com:8443/paw/api/v1/../me"))
+        XCTAssertEqual(URLComponents(url: dotSegments, resolvingAgainstBaseURL: false)?.path, "/paw/api/v1/../me")
+        XCTAssertThrowsError(try server.validatedRequestURL(dotSegments)) {
+            XCTAssertEqual($0 as? HTTPTransportError, .invalidURL)
+        }
         XCTAssertThrowsError(try server.validatedRequestURL(URL(string: "https://example.com:8443/paw/api/v1/me#secret")!))
         XCTAssertThrowsError(try server.validatedRequestURL(URL(string: "https://user:secret@example.com:8443/paw/api/v1/me")!))
         let encoded = try SyncServerURL("https://example.com/café")
@@ -110,8 +130,8 @@ final class SyncServerURLTests: XCTestCase {
 
     func testErrorsDoNotRetainInput() {
         let secret = UUID().uuidString
-        do { _ = try SyncServerURL("https://" + secret + "@example.com") }
-        catch {
+        XCTAssertThrowsError(try SyncServerURL("https://" + secret + "@example.com")) { error in
+            XCTAssertEqual(error as? SyncServerURLError, .credentialsInURL)
             XCTAssertFalse(String(describing: error).contains(secret))
             XCTAssertFalse(String(reflecting: error).contains(secret))
             XCTAssertFalse((error as NSError).description.contains(secret))
