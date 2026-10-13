@@ -152,9 +152,38 @@ logging of credentials, tokens, prompt bodies or field values.
 Use a consistent online snapshot through the planned `monkeyspaw-server
 backup` command, and the stopped-server `restore` command, which rotates
 the database identity so clients resnapshot ([deployment plan §8.6](docs/plan/08-sync-server.md#86-deployment-compose--updatesh)).
-These backup/restore commands and `update.sh` are separate M5 slices; check
-that they have landed before using them. Never copy a live SQLite database.
+These backup/restore commands are a separate M5 slice; check that they have
+landed before using them. Never copy a live SQLite database.
 Keep a verified, private backup before upgrades; migrations are forward-only.
+
+After preparing `.env` and the host directories above, use the root updater
+for a fresh deployment or an upgrade. Install Git and optionally the GitHub
+CLI (`gh`); the updater searches PATH, `../gh`, `../bin/gh`, then
+`../gh*/bin/gh`. Run from the checkout or invoke its path from any directory:
+
+```sh
+./update.sh main
+curl --fail http://127.0.0.1:8790/api/health
+```
+
+The branch argument defaults to `main`. The updater refuses tracked or
+untracked local changes and commits ahead of or diverged from the fetched
+`origin` branch; resolve them manually before retrying. It checks out the
+named branch and uses `gh repo sync --branch`, falling back to
+`git pull --ff-only origin <branch>` if `gh` is unavailable or sync fails.
+It pulls only external images, builds the server with fresh base images,
+waits up to 120 seconds for startup health, prunes dangling Docker images,
+and shows Compose status. A failure stops later steps and exits nonzero;
+completed steps are not rolled back automatically.
+
+For the owner TLS check, configure HTTPS and provision Caddy as above,
+then run `./update.sh main` twice and check your HTTPS `/api/health` after
+each run. Confirm unprofiled `docker compose ps --services --status running`
+still lists `caddy`. Check both persisted `COMPOSE_PROFILES=tls` and Caddy
+started only with `--profile tls` (with `COMPOSE_PROFILES` unset in `.env`
+and the environment); the updater preserves either by inspecting services.
+CI's fake-command tests verify the updater without operating a deployment;
+the fresh-host and TLS re-run checks require an owner Docker host.
 
 Deployment validation needs a Docker host: run both Compose configurations,
 check default and overridden ownership, confirm UID 0 fails, and exercise
