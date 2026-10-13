@@ -2,7 +2,7 @@ import MonkeysPawCore
 
 enum LibraryAssistantStrings {
     static let title = "Assistant"
-    static let shortcutHint = "Cmd+Shift+A opens Assistant. Escape closes Assistant and cancels its request."
+    static let shortcutHint = "Cmd+Shift+A toggles Assistant. Escape closes Assistant and cancels its request."
     static let noProfile = "Set up a provider in Settings → Assistant."
     static let unavailable = "The library is unavailable. Choose an accessible library in Settings."
     static let busy = "Wait for the editor operation or Save / Discard / Cancel decision to finish."

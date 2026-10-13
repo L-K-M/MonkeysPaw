@@ -112,8 +112,9 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         guard !isTornDown, !closeRequested else { return }
         // The reusable window retains running imports and reports for reopening.
         presentation.imports?.cancelChoosing()
-        presentation.closeAssistant()
         closeRequested = true
+        // Release only the assistant's guard so the close can reach its own decision.
+        presentation.assistant?.cancelPendingAcceptance()
         presentation.requestClose { [weak self] result in
             guard let self, !self.isTornDown else { return }
             self.closeRequested = false
@@ -216,8 +217,9 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         }
         if flags == [.command, .shift],
            event.keyCode == UInt16(kVK_ANSI_A) || event.charactersIgnoringModifiers?.lowercased() == "a" {
-            guard activeDialog == nil else { return false }
-            presentation.showAssistant()
+            guard activeDialog == nil,
+                  presentation.isAssistantVisible || presentation.canShowAssistant else { return false }
+            presentation.toggleAssistant()
             return true
         }
         if flags == [.command, .shift],

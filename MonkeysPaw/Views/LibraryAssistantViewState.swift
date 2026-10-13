@@ -13,6 +13,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     @Published var brief = ""
     @Published var feedback = ""
     var onHighlight: ((Range<Int>?) -> Void)?
+    var onRequest: (() -> Void)?
     private var model: AssistantModel?
     private let editor: EditorModel
     private let main: MainThread
@@ -106,20 +107,21 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         return LibraryAssistantStrings.phase(state.phase)
     }
 
-    func write() { if canWrite { requestUsesSource = false; onHighlight?(nil); model?.write(brief: brief) } }
-    func review() { if canReview { requestUsesSource = true; onHighlight?(nil); model?.review() } }
+    func write() { if canWrite { requestUsesSource = false; onRequest?(); onHighlight?(nil); model?.write(brief: brief) } }
+    func review() { if canReview { requestUsesSource = true; onRequest?(); onHighlight?(nil); model?.review() } }
     func editInstruction(_ value: String) { model?.editInstruction(value) }
-    func improve() { if canImprove { requestUsesSource = true; onHighlight?(nil); model?.improve() } }
+    func improve() { if canImprove { requestUsesSource = true; onRequest?(); onHighlight?(nil); model?.improve() } }
     func toggleFinding(_ index: Int) { if canSelectFindings { model?.toggleFinding(at: index) } }
     func highlightFinding(_ index: Int) {
         guard canSelectFindings else { onHighlight?(nil); return }
         onHighlight?(model?.highlightFinding(at: index))
     }
-    func retry() { if canRetry { onHighlight?(nil); model?.retryWithFeedback(feedback) } }
+    func retry() { if canRetry { onRequest?(); onHighlight?(nil); model?.retryWithFeedback(feedback) } }
     func showDiff() { if canShowDiff { model?.showDiff() } }
     func reject() { model?.reject(); onHighlight?(nil) }
     func cancel() { model?.cancel(); onHighlight?(nil) }
     func close() { model?.close(); onHighlight?(nil) }
+    func cancelPendingAcceptance() { model?.cancelPendingAcceptance() }
 
     func accept() {
         guard canAccept, let model else { return }
@@ -134,7 +136,10 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         libraryAvailable = available
         editorState = editor.state
         let latest = editor.assistantSnapshot
-        if latest != snapshot { onHighlight?(nil) }
+        if latest?.sourceBytes != snapshot?.sourceBytes || latest?.revision != snapshot?.revision
+            || latest?.session != snapshot?.session || latest?.relativePath != snapshot?.relativePath {
+            onHighlight?(nil)
+        }
         snapshot = latest
         model.contextChanged()
     }
@@ -152,6 +157,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         brief = ""
         feedback = ""
         onHighlight = nil
+        onRequest = nil
     }
 
     private func updateTimer() {

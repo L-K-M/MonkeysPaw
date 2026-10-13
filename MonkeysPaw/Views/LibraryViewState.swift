@@ -83,11 +83,16 @@ final class LibraryViewState: ObservableObject {
         guard canShowAssistant, let makeAssistant, let scheduler else { return }
         if assistant == nil {
             let revision = bindingRevision
+            let session = editor.assistantSnapshot?.session
+            let path = editor.state.prompt?.relativePath
             let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,
                 available: libraryAvailable, main: mainThread, scheduler: scheduler) { [weak self] outcome in
-                    guard let self, self.isActive, self.bindingRevision == revision else { return }
+                    guard let self, self.isActive, self.bindingRevision == revision,
+                          self.editor.assistantSnapshot?.session == session,
+                          self.editor.state.prompt?.relativePath == path else { return }
                     self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
                 }
+            view.onRequest = { [weak self] in self?.assistantSaveMessage = nil }
             view.onHighlight = { [weak self] range in
                 guard let self, self.isActive, self.bindingRevision == revision else { return }
                 self.quoteHighlight = range.flatMap { range in
@@ -95,12 +100,19 @@ final class LibraryViewState: ObservableObject {
                 }
                 if range != nil { self.editorTab = .edit }
             }
-            assistantSession = editor.assistantSnapshot?.session
+            assistantSession = session
             assistantPrompt = editor.state.prompt
             assistant = view
         }
-        isAssistantVisible = true
-        onAssistantVisibilityChange?()
+        if !isAssistantVisible {
+            isAssistantVisible = true
+            onAssistantVisibilityChange?()
+        }
+    }
+
+    func toggleAssistant() {
+        if isAssistantVisible { closeAssistant() }
+        else { showAssistant() }
     }
 
     func closeAssistant() {
@@ -111,24 +123,37 @@ final class LibraryViewState: ObservableObject {
     }
 
     func retireAssistant() {
+        let wasVisible = isAssistantVisible
         isAssistantVisible = false
+        retireAssistantBinding()
+        if wasVisible { onAssistantVisibilityChange?() }
+    }
+
+    private func retireAssistantBinding() {
         let old = assistant
         assistant = nil
         old?.retire()
         assistantSession = nil
         assistantPrompt = nil
+        assistantSaveMessage = nil
         quoteHighlight = nil
-        onAssistantVisibilityChange?()
     }
 
-    func assistantProfileChanged() { assistant?.profileChanged() }
+    func assistantProfileChanged() {
+        assistantSaveMessage = nil
+        assistant?.profileChanged()
+    }
 
     private func updateAssistantSession() {
         guard let assistant else { return }
         if assistantSession != editor.assistantSnapshot?.session || assistantPrompt?.relativePath != editor.state.prompt?.relativePath {
             let visible = isAssistantVisible
-            retireAssistant()
-            if visible { showAssistant() }
+            retireAssistantBinding()
+            if visible, canShowAssistant { showAssistant() }
+            else if visible {
+                isAssistantVisible = false
+                onAssistantVisibilityChange?()
+            }
             return
         }
         assistant.editorChanged(available: libraryAvailable)

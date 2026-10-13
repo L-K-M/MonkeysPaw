@@ -306,6 +306,10 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     public func close() { cancel() }
     public func escape() { cancel() }
 
+    /// Remove only this assistant's queued or pending editor guard. Preserve the
+    /// conversation, and let an already executing save report its actual result.
+    public func cancelPendingAcceptance() { cancelAcceptanceGuard?() }
+
     public func cancel() {
         guard isActive else { return }
         reset()

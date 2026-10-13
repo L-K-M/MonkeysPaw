@@ -29,7 +29,8 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(renameLibraryPrompt), #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt):
             return libraryCommandTarget(in: window)?.canRunFileCommand == true
         case #selector(showLibraryAssistant):
-            return libraryCommandTarget(in: window)?.canShowAssistant == true
+            guard let presentation = libraryCommandTarget(in: window) else { return false }
+            return presentation.isAssistantVisible || presentation.canShowAssistant
         default: return false
         }
     }
@@ -38,7 +39,7 @@ extension AppDelegate: NSMenuItemValidation {
     @objc func renameLibraryPrompt() { libraryCommandTarget(in: NSApp.keyWindow)?.requestFileCommand(.rename) }
     @objc func moveLibraryPrompt() { libraryCommandTarget(in: NSApp.keyWindow)?.requestFileCommand(.move) }
     @objc func deleteLibraryPrompt() { libraryCommandTarget(in: NSApp.keyWindow)?.requestFileCommand(.delete) }
-    @objc func showLibraryAssistant() { libraryCommandTarget(in: NSApp.keyWindow)?.showAssistant() }
+    @objc func showLibraryAssistant() { libraryCommandTarget(in: NSApp.keyWindow)?.toggleAssistant() }
 
     private func libraryCommandTarget(in candidate: NSWindow?) -> LibraryViewState? {
         guard let window = libraryWindow?.window, candidate === window, window.isVisible,

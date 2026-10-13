@@ -90,7 +90,7 @@ final class MacLibraryAssistantTests: XCTestCase {
             h.work.drain()
             let path = try XCTUnwrap(h.presentation.editorState.prompt?.relativePath.string)
             XCTAssertEqual(try h.files.read(at: path), bytes)
-            XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
+            XCTAssertNil(h.presentation.assistantSaveMessage, "The adopted prompt starts a new assistant session")
             XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains("session-only notes"))
             XCTAssertFalse(h.presentation.editorState.isDirty)
             XCTAssertEqual(h.clipboard.reads, 0)
@@ -269,6 +269,101 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
     }
 
+    func testSameSessionEditKeepsAcceptancePendingUntilWorkerReply() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Improve")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        view.accept()
+        h.presentation.edit("Newer buffer")
+        XCTAssertTrue(view.state.isAccepting)
+        XCTAssertNil(view.state.acceptanceOutcome)
+        XCTAssertEqual(view.resultMessage, "Saving the accepted candidate…")
+        XCTAssertFalse(view.canAccept)
+        XCTAssertFalse(view.canRetry)
+        XCTAssertFalse(view.canShowDiff)
+        h.work.drain()
+        XCTAssertFalse(view.state.isAccepting)
+        guard case .conflict(.changedBuffer) = view.state.acceptanceOutcome else {
+            return XCTFail("The worker must report the refused save")
+        }
+        XCTAssertEqual(h.presentation.editorState.source, "Newer buffer")
+        XCTAssertTrue(h.presentation.editorState.isDirty)
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+    }
+
+    func testNewAssistantRequestsClearThePreviousSaveMessage() throws {
+        enum Request: CaseIterable { case write, review, improve, retry }
+        for flow in Request.allCases {
+            let h = try MacLibraryAssistantHarness()
+            defer { h.close() }
+            let view = try h.assistant()
+            view.editInstruction("Improve")
+            try h.request { view.improve() }
+            try h.respond(MacLibraryAssistantHarness.artifact())
+            view.accept()
+            h.work.drain()
+            XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
+            view.brief = "Another prompt"
+            view.feedback = "Refine it"
+            try h.request {
+                switch flow {
+                case .write: view.write()
+                case .review: view.review()
+                case .improve: view.improve()
+                case .retry: view.retry()
+                }
+            }
+            XCTAssertNil(h.presentation.assistantSaveMessage, "\(flow)")
+        }
+    }
+
+    func testSessionRetirementClearsSaveMessageWithoutVisibilityCallbacks() throws {
+        let h = try MacLibraryAssistantHarness(secondSource: "Second")
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Improve")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        view.accept()
+        h.work.drain()
+        XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
+        var visibilityChanges = 0
+        h.presentation.onAssistantVisibilityChange = { visibilityChanges += 1 }
+        h.presentation.selectPath("two.md")
+        h.work.drain()
+        XCTAssertNil(h.presentation.assistantSaveMessage)
+        XCTAssertFalse(try h.assistant() === view)
+        XCTAssertTrue(h.presentation.isAssistantVisible)
+        XCTAssertEqual(visibilityChanges, 0, "Replacing a visible binding keeps the pane visible")
+        h.presentation.closeAssistant()
+        XCTAssertEqual(visibilityChanges, 1)
+    }
+
+    func testQuoteHighlightSurvivesAvailabilityChangesUntilSourceChanges() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        h.presentation.edit("Unsaved quoted source")
+        let view = try h.assistant()
+        try h.request { view.review() }
+        try h.respond(["summary": "One finding", "findings": [
+            ["criterion": "clarity", "severity": "high", "quote": "quoted", "problem": "Unclear", "suggestion": "Clarify"]
+        ]], phase: .draft)
+        view.highlightFinding(0)
+        let highlight = try XCTUnwrap(h.presentation.quoteHighlight)
+        h.presentation.editor.request(.revert)
+        XCTAssertEqual(h.presentation.editor.assistantSnapshot?.availability, .busy)
+        XCTAssertEqual(h.presentation.quoteHighlight?.id, highlight.id)
+        let decision = try XCTUnwrap(h.presentation.editorState.pendingDecision)
+        h.presentation.editor.resolveDecision(.cancel, id: decision.id)
+        XCTAssertEqual(h.presentation.editor.assistantSnapshot?.availability, .available)
+        XCTAssertEqual(h.presentation.quoteHighlight?.id, highlight.id)
+        h.presentation.edit("Changed quoted source")
+        XCTAssertNil(h.presentation.quoteHighlight)
+    }
+
     func testAcceptanceDetectsChangedDiskWithoutOverwritingIt() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
@@ -436,6 +531,136 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
     }
 
+    func testCancelledWindowCloseKeepsAssistantDraftAndTranscript() throws {
+        var dialogs: [MacLibraryAssistantDialog] = []
+        let h = try MacLibraryAssistantHarness(editorDialog: { _, dialog, respond in
+            let record = MacLibraryAssistantDialog(dialog: dialog, respond: respond)
+            dialogs.append(record)
+            return { record.cancelled = true }
+        })
+        defer { h.close() }
+        h.presentation.edit("Unsaved source")
+        let view = try h.assistant()
+        view.brief = "New prompt"
+        view.feedback = "Keep this feedback"
+        try h.request { view.write() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        let bytes = try XCTUnwrap(view.state.candidate?.content.canonicalBytes)
+        let transcript = view.state.transcript
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        controller.requestClose()
+        let dialog = try XCTUnwrap(dialogs.last)
+        guard case .decision(let decision, _) = dialog.dialog else { return XCTFail("Expected the close guard") }
+        XCTAssertEqual(decision.action, .close)
+        dialog.respond(.decision(.cancel))
+        XCTAssertTrue(controller.window?.isVisible == true)
+        XCTAssertTrue(h.presentation.isAssistantVisible)
+        XCTAssertTrue(try h.assistant() === view)
+        XCTAssertEqual(view.state.phase, .ready)
+        XCTAssertEqual(view.state.candidate?.content.canonicalBytes, bytes)
+        XCTAssertEqual(view.state.transcript, transcript)
+        XCTAssertEqual(view.brief, "New prompt")
+        XCTAssertEqual(view.feedback, "Keep this feedback")
+        XCTAssertEqual(h.presentation.editorState.source, "Unsaved source")
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        controller.requestClose()
+        XCTAssertEqual(dialogs.count, 2, "Cancel permits a subsequent close attempt")
+    }
+
+    func testSaveAndDiscardWindowCloseRetireAssistantAfterApproval() throws {
+        for choice in [EditorDecision.save, .discard] {
+            var respond: ((LibraryEditorResponse) -> Void)?
+            let h = try MacLibraryAssistantHarness(editorDialog: { _, _, response in respond = response; return {} })
+            defer { h.close() }
+            h.presentation.edit("Unsaved source")
+            let view = try h.assistant()
+            view.brief = "Draft brief"
+            try h.request { view.write() }
+            try h.respond(MacLibraryAssistantHarness.artifact())
+            let controller = try XCTUnwrap(h.delegate.libraryWindow)
+            controller.requestClose()
+            XCTAssertTrue(controller.window?.isVisible == true)
+            XCTAssertEqual(view.state.phase, .ready)
+            try XCTUnwrap(respond)(.decision(choice))
+            h.work.drain()
+            XCTAssertFalse(controller.window?.isVisible == true)
+            XCTAssertNil(h.presentation.assistant)
+            XCTAssertFalse(view.canWrite)
+            XCTAssertNil(h.presentation.quoteHighlight)
+            let body = PromptCodec.parseFile(try h.files.read(at: "one.md"), filename: "one.md").body
+            XCTAssertEqual(body, choice == .save ? "Unsaved source" : "Original")
+            XCTAssertEqual(try h.files.listFiles().count, 1)
+        }
+    }
+
+    func testWindowCloseCancelsOnlyPendingOrQueuedAcceptanceGuard() throws {
+        for queued in [false, true] {
+            var dialogs: [MacLibraryAssistantDialog] = []
+            let h = try MacLibraryAssistantHarness(editorDialog: { _, dialog, respond in
+                let record = MacLibraryAssistantDialog(dialog: dialog, respond: respond)
+                dialogs.append(record)
+                return { record.cancelled = true }
+            })
+            defer { h.close() }
+            h.presentation.edit("Unsaved source")
+            let view = try h.assistant()
+            view.brief = "New prompt"
+            try h.request { view.write() }
+            try h.respond(MacLibraryAssistantHarness.artifact())
+            let transcript = view.state.transcript
+            let artifact = view.state.artifact
+            if queued { h.presentation.editor.request(.revert) }
+            let earlier = h.presentation.editorState.pendingDecision
+            view.accept()
+            XCTAssertTrue(view.state.isAccepting)
+            let controller = try XCTUnwrap(h.delegate.libraryWindow)
+            controller.requestClose()
+            XCTAssertFalse(view.state.isAccepting)
+            XCTAssertEqual(view.state.artifact, artifact)
+            XCTAssertEqual(view.state.transcript, transcript)
+            XCTAssertEqual(view.brief, "New prompt")
+            if queued {
+                XCTAssertEqual(h.presentation.editorState.pendingDecision, earlier)
+                XCTAssertEqual(h.presentation.editorState.queuedActions, [.close])
+                XCTAssertFalse(try XCTUnwrap(dialogs.last).cancelled)
+                try XCTUnwrap(dialogs.last).respond(.decision(.cancel))
+            }
+            let close = try XCTUnwrap(dialogs.last)
+            guard case .decision(let decision, _) = close.dialog else { return XCTFail("Expected the close guard") }
+            XCTAssertEqual(decision.action, .close)
+            close.respond(.decision(.cancel))
+            XCTAssertTrue(controller.window?.isVisible == true)
+            XCTAssertTrue(try h.assistant() === view)
+            XCTAssertEqual(view.state.artifact, artifact)
+            controller.requestClose()
+            try XCTUnwrap(dialogs.last).respond(.decision(.discard))
+            h.work.drain()
+            XCTAssertFalse(controller.window?.isVisible == true)
+            XCTAssertNil(h.presentation.assistant)
+            XCTAssertEqual(try h.files.listFiles().count, 1)
+            XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        }
+    }
+
+    func testWindowCloseWaitsForRunningAcceptanceInsteadOfCancellingIt() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Improve")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact(body: "Committed improvement"))
+        view.accept()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        controller.requestClose()
+        XCTAssertTrue(view.state.isAccepting)
+        XCTAssertNil(view.state.acceptanceOutcome)
+        XCTAssertTrue(controller.window?.isVisible == true)
+        h.work.drain()
+        XCTAssertFalse(controller.window?.isVisible == true)
+        XCTAssertNil(h.presentation.assistant)
+        XCTAssertEqual(PromptCodec.parseFile(try h.files.read(at: "one.md"), filename: "one.md").body, "Committed improvement")
+    }
+
     func testTimerUsesMainThreadAndStopsAfterCancellation() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
@@ -480,6 +705,16 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertTrue(controller.handleKeyEvent(key))
         XCTAssertTrue(h.presentation.isAssistantVisible)
         XCTAssertGreaterThan(window.contentMinSize.width, CGFloat(Limits.setupWindowSize.width))
+        XCTAssertTrue(controller.handleKeyEvent(key))
+        XCTAssertFalse(h.presentation.isAssistantVisible)
+        h.presentation.setLibraryAvailable(false)
+        XCTAssertFalse(controller.handleKeyEvent(key), "An unavailable Assistant must not consume the shortcut")
+        h.presentation.setLibraryAvailable(true)
+        XCTAssertTrue(controller.handleKeyEvent(key))
+        h.presentation.setLibraryAvailable(false)
+        XCTAssertTrue(controller.handleKeyEvent(key), "A visible Assistant can always be closed")
+        XCTAssertFalse(h.presentation.isAssistantVisible)
+        XCTAssertFalse(controller.handleKeyEvent(key))
         let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false
         defer { other.close() }
@@ -516,7 +751,8 @@ private final class MacLibraryAssistantHarness {
     var presentation: LibraryViewState { delegate.libraryWindow!.presentation }
 
     init(source: String? = "Original", sourcePath: String = "one.md", configured: Bool = true,
-         kind: ProviderKind = .openaiCompatible, secondSource: String? = nil) throws {
+         kind: ProviderKind = .openaiCompatible, secondSource: String? = nil,
+         editorDialog: @escaping LibraryWindowController.DialogPresenter = { _, _, _ in {} }) throws {
         self.kind = kind
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let root = directory.appendingPathComponent("library", isDirectory: true)
@@ -526,7 +762,7 @@ private final class MacLibraryAssistantHarness {
         if let secondSource { try files.write(Data(secondSource.utf8), at: "two.md") }
         delegate = AppDelegate(libraryRoot: root, dataRoot: directory.appendingPathComponent("data"),
             backgroundWork: work, httpTransport: transport, secrets: MacLibraryAssistantSecrets(),
-            clipboard: clipboard, editorDialog: { _, _, _ in {} }, setActivationPolicy: { _ in }, activateApplication: {},
+            clipboard: clipboard, editorDialog: editorDialog, setActivationPolicy: { _ in }, activateApplication: {},
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in false }),
                     mainThread: main, scheduler: scheduler, isTrusted: { false }, deactivateIfUnused: {})
@@ -605,6 +841,16 @@ private final class MacLibraryAssistantHarness {
     }
 
     deinit { close() }
+}
+
+private final class MacLibraryAssistantDialog {
+    let dialog: LibraryEditorDialog
+    let respond: (LibraryEditorResponse) -> Void
+    var cancelled = false
+    init(dialog: LibraryEditorDialog, respond: @escaping (LibraryEditorResponse) -> Void) {
+        self.dialog = dialog
+        self.respond = respond
+    }
 }
 
 private final class MacLibraryAssistantWork: BackgroundWork {
