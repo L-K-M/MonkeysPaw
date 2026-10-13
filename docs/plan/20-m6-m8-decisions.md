@@ -53,7 +53,7 @@ changes a contract amends the referenced section in the same PR.
 
 | ID / gates | Ambiguity or conflict | Default |
 |---|---|---|
-| F1 · K1 | §10.2/§10.8 pin JDK 17, but the complete Android toolchain has not been proved. | Start with AGP 9.3.1 / Gradle 9.7.0 / Kotlin 2.4.10; propose Temurin 21 for Gradle/CI, Java/Kotlin output 17. Amend §10.2/§10.8 together if K1 proves lint/debug/R8. If it fails, document one complete tested replacement set. Exact catalog pins and wrapper distribution SHA-256; no independent latest upgrades. |
+| F1 · K1 | §10.2/§10.8 pin JDK 17 for CI, but this implementation host has only JDK 21, and the complete Android toolchain has not been proved. | Pin AGP 9.3.1 / Gradle 9.7.0 / Kotlin 2.4.10 as one set. CI keeps Temurin 17 (§10.8); the host may build with JDK 21. Both emit Java/Kotlin 17 bytecode without toolchain auto-provisioning. K1 must prove lint/debug/R8 in CI before later work; if it fails, document one complete tested replacement set. Exact catalog pins and wrapper distribution SHA-256; no independent latest upgrades. |
 | F2 · K1/K17 | §10.2 pins SDK 37.0/minSdk 26; §10.4 B splits tile launch at API 34. | minSdk 26, targetSdk 37, compileSdkVersion("android-37.0") using the pinned AGP's supported DSL. Provision that exact CI platform and build-tools 36.0.0. Initially retain android.suppressUnsupportedCompileSdk=37; suppression is not compatibility proof. No NDK. Guard runtime tile branches, test 26–33/34+ policy on JVM and obtain owner proof under target 37. |
 | F3 · K1/K12–K17 | §10.2 leaves KSP/compiler/test wiring incomplete; JVM Kotlin and AGP built-in Kotlin have different owners. | Compose BOM 2026.08.00/Material 3, compiler 2.4.10, Hilt 2.60.1 and proposed KSP 2.3.10; K1 proves combination and artifact resolution. JVM plugin only in :core; no kotlin-android/kapt in :app. Pin stable serialization/coroutines/DataStore/test versions when used, no dynamic/snapshot/RC defaults. No Compose/Hilt/AndroidX in :core. |
 | F4 · K3/K4/K8 | Generic YAML loading erases duplicate/style evidence and widens §5.2's strict subset. | Pin snakeyaml-engine 3.2. Low-level events plus handwritten strict resolver/ordered AST retain tag/style/mark/order. Reject anchor/alias subtrees before construction/duplicate hashing, without expansion; one document and source-byte cap. No Load-to-Map/bean constructor. Mirror Swift recovery/valid siblings. BigInteger handles radix integers; decimal-string mantissa/exponent preserves float identity. |
@@ -86,7 +86,8 @@ changes a contract amends the referenced section in the same PR.
 - **M6 LAN HTTP / URI exposure:** use E16's literal private-address exemption
   and disclose E28's one-use Linux fallback argv exposure. HTTPS-only or
   D-Bus-only policy would require an explicit §12/§14 change.
-- **M8 JDK:** accept the Temurin 21 deviation only if K1 proves it (F1).
+- **M8 JDK:** CI keeps Temurin 17 (§10.8); JDK 21 is a local build
+  convenience only (F1).
 - **M8 signer:** keep Q12's checked-in signer and recorded fingerprint (F18).
 - **M8 first tag:** use a stable Android tag. Settle increasing codes/engine
   support before K19 if repeated same-core betas are needed (F20).
