@@ -58,7 +58,7 @@ private struct JSONLogHandler: LogHandler {
 
     private static func safeMessage(_ message: String) -> String {
         switch message {
-        case "Account mutation committed", "API request failed",
+        case "Account mutation committed", "API request failed", "Retention batch committed", "Retention maintenance failed",
              "Healthcheck configuration invalid; check MONKEYSPAW_HTTP_PORT and MONKEYSPAW_TRUSTED_PROXIES",
              "Shutting down", "Server channel error", "HTTP parse error, closing connection",
              "Idle read timeout, so close channel", "Unrecognised Error":
@@ -73,7 +73,8 @@ private struct JSONLogHandler: LogHandler {
 
     private static func safeFields(_ metadata: Logger.Metadata) -> [String: String] {
         var fields: [String: String] = [:]
-        for key in ["action", "actor_id", "target_id", "method", "status", "code", "error_type"] {
+        for key in ["action", "actor_id", "target_id", "method", "status", "code", "error_type",
+                    "changes_purged", "floors_raised", "tombstones_purged", "revisions_pruned", "failed_runs"] {
             guard case .string(let value) = metadata[key] else { continue }
             let valid: Bool
             switch key {
@@ -83,6 +84,8 @@ private struct JSONLogHandler: LogHandler {
             case "method": valid = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE"].contains(value)
             case "status": valid = Int(value).map { (100...599).contains($0) && String($0) == value } ?? false
             case "code": valid = SyncAPI.FailureCode(rawValue: value) != nil
+            case "changes_purged", "floors_raised", "tombstones_purged", "revisions_pruned", "failed_runs":
+                valid = Int(value).map { $0 >= 0 && String($0) == value } ?? false
             case "error_type":
                 valid = value.utf8.count <= ServerLimits.logErrorTypeMaxBytes
                     && value.range(of: "\\A[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*\\z", options: .regularExpression) != nil
