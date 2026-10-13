@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#else
+import Darwin
+#endif
 import SQLKit
 import Testing
 @testable import MonkeysPawServer
@@ -15,6 +20,8 @@ struct ServerBootstrapTests {
             #expect(user.accountKind == .admin)
             #expect(user.displayName == nil)
             #expect(try await BcryptPasswordHasher().verify(AccountTestFixture.password, hash: user.passwordHash))
+            let verified = try await fixture.accounts.verifyCredentials(username: "root", password: AccountTestFixture.password)
+            #expect(verified.user.id == user.id)
             let safeConfiguration = !String(reflecting: configuration).contains(AccountTestFixture.password)
             #expect(safeConfiguration)
             try await fixture.persistence.execute("UPDATE users SET disabled_at = created_at")
@@ -26,6 +33,56 @@ struct ServerBootstrapTests {
             #expect(try await fixture.persistence.count("users") == 1)
             #expect(try await fixture.persistence.count("devices") == 0)
         }
+    }
+
+    @Test func secretFileSizeLimitFailsWithATypedErrorAndNeverFallsBack() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-s6-secret-limit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("admin.secret")
+        for (size, expected) in [
+            (ServerLimits.bootstrapSecretFileMaximumBytes, BootstrapError.invalidCredentials),
+            (ServerLimits.bootstrapSecretFileMaximumBytes + 1, .secretFileTooLarge)
+        ] {
+            try Data(repeating: 97, count: size).write(to: file)
+            try await withAccountFixture { fixture in
+                do {
+                    _ = try await fixture.accounts.bootstrap(.init(environment: [
+                        "MONKEYSPAW_ADMIN_PASSWORD_FILE": file.path,
+                        "MONKEYSPAW_ADMIN_PASSWORD": AccountTestFixture.password
+                    ]))
+                    Issue.record("An invalid secret file must fail bootstrap")
+                } catch let error as BootstrapError {
+                    #expect(error == expected)
+                }
+                #expect(try await fixture.persistence.count("users") == 0)
+                #expect(try await fixture.persistence.count("devices") == 0)
+            }
+        }
+        let boundary = String(repeating: "a", count: 72)
+        for ending in ["", "\n", "\r\n"] {
+            try Data((boundary + ending).utf8).write(to: file)
+            let credentials = try BootstrapConfiguration(environment: ["MONKEYSPAW_ADMIN_PASSWORD_FILE": file.path]).credentials()
+            #expect(credentials.password == boundary)
+        }
+        let link = directory.appendingPathComponent("admin.secret.link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        let credentials = try BootstrapConfiguration(environment: ["MONKEYSPAW_ADMIN_PASSWORD_FILE": link.path]).credentials()
+        #expect(credentials.password == boundary)
+    }
+
+    @Test func serveRejectsAFIFOSecretBeforeListening() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-s6-secret-fifo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("admin.secret")
+        try #require(mkfifo(file.path, 0o600) == 0)
+        let result = try await ServerDatabaseLifecycleTests.runCLI("serve", dataDirectory: directory, overrides: [
+            "MONKEYSPAW_ADMIN_PASSWORD_FILE": file.path, "MONKEYSPAW_ADMIN_PASSWORD": AccountTestFixture.password
+        ])
+        #expect(result.exitedNormally)
+        #expect(result.status != 0)
+        #expect(result.error.contains("Bootstrap admin credentials are missing, unreadable, or invalid."))
     }
 
     @Test func bootstrapFailsClosedForMissingUnreadableEmptyAndInvalidSecrets() async throws {
@@ -124,6 +181,6 @@ struct ServerBootstrapTests {
 }
 
 private struct UnavailablePasswordHasher: PasswordHashing {
-    func hash(_ password: String) async throws -> String { throw BootstrapError() }
-    func verify(_ password: String, hash: String) async throws -> Bool { throw BootstrapError() }
+    func hash(_ password: String) async throws -> String { throw BootstrapError.invalidCredentials }
+    func verify(_ password: String, hash: String) async throws -> Bool { throw BootstrapError.invalidCredentials }
 }

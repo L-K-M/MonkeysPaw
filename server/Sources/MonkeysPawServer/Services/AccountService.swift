@@ -25,12 +25,13 @@ struct AccountService: Sendable {
     func bootstrap(_ configuration: BootstrapConfiguration) async throws -> Bool {
         guard try await !repository.read({ accounts, _ in try await accounts.hasUsers() }) else { return false }
         let credentials = try configuration.credentials()
+        let username = try AccountValidation.username(credentials.username)
         let hash = try await passwords.hash(credentials.password)
         return try await repository.write { accounts, _ in
             guard try await !accounts.hasUsers() else { return false }
             let now = clock()
             try await accounts.insert(.init(
-                id: ServerTimestamp.id(at: now), username: credentials.username, displayName: nil,
+                id: ServerTimestamp.id(at: now), username: username, displayName: nil,
                 passwordHash: hash, accountKind: .admin, createdAt: ServerTimestamp.string(now), disabledAt: nil
             ))
             return true

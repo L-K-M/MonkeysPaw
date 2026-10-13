@@ -22,6 +22,7 @@ public enum ServerLimits {
     static let bcryptCost: UInt8 = 12
     static let passwordMinimumLength = 12
     static let passwordMaximumBytes = 72
+    static let bootstrapSecretFileMaximumBytes = 4 * 1_024
     static let deviceTokenEncodedBytes = 43
     static let deviceSeenUpdateInterval: TimeInterval = 5 * 60
     static let snapshotLifetimeSeconds = 15 * 60

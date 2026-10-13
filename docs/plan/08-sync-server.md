@@ -168,6 +168,10 @@ Write responses:
 | Internal failure | `500 {code: "internal_error"}` | Sanitized; no underlying error text (B3). |
 | Expired/restarted frozen snapshot | `409 {code: "snapshot_expired", scopes: [scope_key]}` | The client discards the entire incomplete collected pull and restarts affected scopes without their cursors (B17). |
 
+Unexpected API failures log one fixed server-side message with only the error
+type as diagnostic metadata. Error descriptions and request data are never
+logged; the client keeps the generic `internal_error` envelope.
+
 Request and response types live in `MonkeysPawCore/SyncAPI` and are shared by
 both sides. Their complete, data-only field descriptions and strict Codable
 fixtures pin the JSON Schema 2020-12 contract (B2); see
@@ -358,11 +362,14 @@ enforced by later server slices, not by an unbounded Foundation JSON encoder.
   - Clients keep the token in the OS secret store.
 - **Bootstrap.** On an empty `users` table, the server creates an admin from
   `MONKEYSPAW_ADMIN_USERNAME` and the compose secret file
-  `MONKEYSPAW_ADMIN_PASSWORD_FILE`. The username defaults to `admin`. A direct
+  `MONKEYSPAW_ADMIN_PASSWORD_FILE`. The username defaults to `admin` and uses
+  the same validation and lowercase normalization as login (B7). A direct
   `MONKEYSPAW_ADMIN_PASSWORD` environment value is supported when no file is
   configured. A configured file is authoritative; unreadable/invalid files
   never fall back to the environment value. Remove at most one terminal LF
-  or CRLF from a file, preserving password spaces. Missing, unreadable, empty
+  or CRLF from a file, preserving password spaces. Secret files must resolve
+  to regular files; reads are bounded by a 4 KiB file limit, with oversized
+  files reported through a typed bootstrap error. Missing, unreadable, empty
   or invalid credentials fail startup before the listener starts. Creation
   rechecks the empty table inside the write transaction. Once any users exist,
   all bootstrap inputs are ignored without validation or secret-file access,

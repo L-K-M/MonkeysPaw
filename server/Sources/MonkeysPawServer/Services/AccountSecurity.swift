@@ -87,18 +87,33 @@ struct DeviceToken: Sendable, CustomStringConvertible, CustomDebugStringConverti
 }
 
 enum ServerTimestamp {
-    static func string(_ date: Date) -> String { formatter().string(from: date) }
-    static func date(_ value: String) -> Date? { formatter().date(from: value) }
+    static func string(_ date: Date) -> String { formatter.string(date) }
+    static func date(_ value: String) -> Date? { formatter.date(value) }
 
-    private static func formatter() -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter
-    }
+    private static let formatter = Formatter()
 
     static func id(at date: Date) throws -> String {
         let entropy = SymmetricKey(size: .bits128).withUnsafeBytes { Array($0.prefix(10)) }
         return try ULID.generate(at: date, entropy: entropy).rawValue
+    }
+
+    // Foundation's formatter is not Sendable; keep its cached instance behind a lock.
+    private final class Formatter: @unchecked Sendable {
+        private let lock = NSLock()
+        private let value: ISO8601DateFormatter
+
+        init() {
+            value = ISO8601DateFormatter()
+            value.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            value.timeZone = TimeZone(secondsFromGMT: 0)
+        }
+
+        func string(_ date: Date) -> String {
+            lock.withLock { value.string(from: date) }
+        }
+
+        func date(_ text: String) -> Date? {
+            lock.withLock { value.date(from: text) }
+        }
     }
 }

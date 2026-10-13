@@ -5,6 +5,7 @@ extension ServerMigration {
     static let nullableAccountMetadata = ServerMigration(name: "002_nullable_account_metadata") { sql in
         // Defer references while rebuilding the parent, then verify before commit.
         // No user identity or referenced row is deleted from the resulting database.
+        // MigrationRepository.apply keeps this closure in one transaction on one connection.
         try await sql.raw("PRAGMA defer_foreign_keys = ON").run()
         try await sql.raw("CREATE TEMP TABLE account_metadata_copy AS SELECT * FROM users").run()
         try await sql.raw("DROP TABLE users").run()
@@ -21,7 +22,11 @@ extension ServerMigration {
                 disabled_at TEXT
             )
             """).run()
-        try await sql.raw("INSERT INTO users SELECT * FROM account_metadata_copy").run()
+        try await sql.raw("""
+            INSERT INTO users (id, username, display_name, password_hash, account_kind, created_at, disabled_at)
+            SELECT id, username, display_name, password_hash, account_kind, created_at, disabled_at
+            FROM account_metadata_copy
+            """).run()
         try await sql.raw("DROP TABLE account_metadata_copy").run()
         try await sql.raw("CREATE TEMP TABLE device_metadata_copy AS SELECT * FROM devices").run()
         try await sql.raw("DROP TABLE devices").run()
@@ -36,7 +41,11 @@ extension ServerMigration {
                 revoked_at TEXT
             )
             """).run()
-        try await sql.raw("INSERT INTO devices SELECT * FROM device_metadata_copy").run()
+        try await sql.raw("""
+            INSERT INTO devices (id, user_id, name, token_hash, created_at, last_seen_at, revoked_at)
+            SELECT id, user_id, name, token_hash, created_at, last_seen_at, revoked_at
+            FROM device_metadata_copy
+            """).run()
         try await sql.raw("DROP TABLE device_metadata_copy").run()
         guard try await sql.raw("PRAGMA foreign_key_check").all().isEmpty else {
             throw PersistenceError.invalidAccountRecord

@@ -7,8 +7,24 @@ import Testing
 
 @Suite(.serialized)
 struct ServerAccountSecurityTests {
+    @Test func timestampsKeepMillisecondUTCFormatAcrossConcurrentRequests() async throws {
+        let date = Date(timeIntervalSince1970: 1_797_552_000.125)
+        let text = "2026-12-18T00:00:00.125Z"
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<64 {
+                group.addTask {
+                    #expect(ServerTimestamp.string(date) == text)
+                    #expect(ServerTimestamp.date(text) == date)
+                }
+            }
+            try await group.waitForAll()
+        }
+        #expect(ServerTimestamp.date("invalid") == nil)
+    }
+
     @Test func usernamesHaveOneBoundedASCIIUniquenessRule() async throws {
         #expect(try AccountValidation.username("ALIce_1.-") == "alice_1.-")
+        #expect(try AccountValidation.username("A") == "a")
         #expect(try AccountValidation.username(String(repeating: "A", count: 64)) == String(repeating: "a", count: 64))
         for invalid in ["", ".alice", "_alice", "-alice", "alice ", "a/b", "é", "a\u{0}b", String(repeating: "a", count: 65)] {
             #expect(throws: AccountError.malformedRequest) { try AccountValidation.username(invalid) }
@@ -75,15 +91,15 @@ struct ServerAccountSecurityTests {
             let fixture = AccountTestFixture(persistence: .init(database: database))
             let user = try await fixture.user()
             let issued = try await fixture.session(user)
-            let stored = try await fixture.accounts.repository.read { _, devices in try await devices.device(id: issued.identity.deviceID) }
-            let hashOnly = stored?.tokenHash == issued.token.hash && stored?.tokenHash.utf8.count == 64
+            let stored = try #require(await fixture.accounts.repository.read { _, devices in try await devices.device(id: issued.identity.deviceID) })
+            let hashOnly = stored.tokenHash == issued.token.hash && stored.tokenHash.utf8.count == 64
             #expect(hashOnly)
             try AccountTestFixture.scan(directory, excluding: [issued.token.value, AccountTestFixture.password])
             let response = try JSONEncoder().encode(try await fixture.accounts.me(issued.identity))
             let safeResponse = !String(decoding: response, as: UTF8.self).contains("hash")
             #expect(safeResponse)
             let redacted = [String(describing: issued), String(reflecting: issued.token), String(describing: user),
-                            String(reflecting: stored!)].allSatisfy { !$0.contains(issued.token.value) && !$0.contains(user.passwordHash) }
+                            String(reflecting: stored)].allSatisfy { !$0.contains(issued.token.value) && !$0.contains(user.passwordHash) }
             #expect(redacted)
             return issued.token
         }
@@ -97,13 +113,13 @@ struct ServerAccountSecurityTests {
             try await fixture.persistence.execute("CREATE TABLE seen_updates (at TEXT)")
             try await fixture.persistence.execute("""
                 CREATE TRIGGER count_seen AFTER UPDATE OF last_seen_at ON devices
-                BEGIN INSERT INTO seen_updates VALUES (NEW.last_seen_at); END
+                BEGIN INSERT INTO seen_updates (at) VALUES (NEW.last_seen_at); END
                 """)
             _ = try await fixture.sessions.authenticate(token: issued.token.value)
-            fixture.clock.advance(299.999)
+            fixture.clock.advance(299)
             _ = try await fixture.sessions.authenticate(token: issued.token.value)
             #expect(try await fixture.persistence.count("seen_updates") == 0)
-            fixture.clock.advance(0.001)
+            fixture.clock.advance(1)
             try await withThrowingTaskGroup(of: Void.self) { group in
                 for _ in 0..<16 {
                     group.addTask { _ = try await fixture.sessions.authenticate(token: issued.token.value) }
@@ -120,6 +136,8 @@ struct ServerAccountSecurityTests {
             try await fixture.persistence.execute("UPDATE devices SET last_seen_at = NULL")
             _ = try await fixture.sessions.authenticate(token: issued.token.value)
             #expect(try await fixture.persistence.count("seen_updates") == 4)
+            try await fixture.persistence.execute("DROP TRIGGER count_seen")
+            try await fixture.persistence.execute("DROP TABLE seen_updates")
         }
     }
 
@@ -150,7 +168,8 @@ struct ServerAccountSecurityTests {
                 switch action {
                 case "revoke": try await fixture.sessions.logout(current.identity)
                 case "reset": try await fixture.persistence.execute("UPDATE users SET password_hash = 'concurrent reset'")
-                default: try await fixture.persistence.execute("UPDATE users SET disabled_at = created_at")
+                case "disable": try await fixture.persistence.execute("UPDATE users SET disabled_at = created_at")
+                default: Issue.record("Unexpected action argument: \(action)")
                 }
                 await blocking.release.open()
                 await #expect(throws: AccountError.unauthorized) { try await change.value }

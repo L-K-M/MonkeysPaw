@@ -10,7 +10,8 @@ struct ServerAccountMigrationTests {
             try await repository.insertPrompt(id: PersistenceTestRepository.prompt)
             try await repository.execute(PersistenceTestRepository.revision())
             try await repository.execute("""
-                INSERT INTO devices VALUES ('device', \(bind: PersistenceTestRepository.user),
+                INSERT INTO devices (id, user_id, name, token_hash, created_at, last_seen_at, revoked_at)
+                VALUES ('device', \(bind: PersistenceTestRepository.user),
                     'Device', 'hash', \(bind: PersistenceTestRepository.time), \(bind: PersistenceTestRepository.time), NULL)
                 """)
             let identity = try await MetaRepository(database: repository.database).databaseID()

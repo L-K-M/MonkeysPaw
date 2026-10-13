@@ -15,6 +15,7 @@ struct ServerAccountRouteTests {
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
             try await app.test(.router) { client in
                 try await client.execute(uri: "/api/health", method: .get) { #expect($0.status == .ok) }
+                try await client.execute(uri: "/api/v1/me", method: .patch) { try Self.failure($0, .notFound) }
                 for header in ["", "Basic anything", "Bearer", "Bearer invalid", "Bearer  \(session.token.value)", "Bearer \(DeviceToken.generate().value)"] {
                     try await client.execute(uri: "/api/v1/me", method: .get, headers: [.authorization: header]) {
                         try Self.failure($0, .unauthorized)
@@ -35,6 +36,25 @@ struct ServerAccountRouteTests {
         }
     }
 
+    @Test func passwordChangeAcceptsMaximumLengthAndMinimumLengthPasswords() async throws {
+        try await withAccountFixture { fixture in
+            let user = try await fixture.user()
+            let current = try await fixture.session(user)
+            let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
+            let headers: HTTPFields = [.authorization: "Bearer \(current.token.value)", .contentType: "application/json"]
+            try await app.test(.router) { client in
+                var password = AccountTestFixture.password
+                for replacement in [String(repeating: "a", count: 72), String(repeating: "a", count: 12)] {
+                    let request = SyncAPI.PasswordChangeRequest(currentPassword: password, newPassword: replacement)
+                    try await client.execute(uri: "/api/v1/auth/password", method: .post, headers: headers,
+                                             body: .init(bytes: JSONEncoder().encode(request))) { try Self.empty($0) }
+                    _ = try await fixture.accounts.verifyCredentials(username: user.username, password: replacement)
+                    password = replacement
+                }
+            }
+        }
+    }
+
     @Test func meContainsOnlyOwnDevicesAndCurrentMembershipsEvenForAdmins() async throws {
         try await withAccountFixture { fixture in
             let caller = try await fixture.user(kind: .admin)
@@ -47,9 +67,13 @@ struct ServerAccountRouteTests {
                                          (PersistenceTestRepository.otherGroup, other.id, false),
                                          (PersistenceTestRepository.prompt, caller.id, true)] {
                 try await fixture.persistence.execute("""
-                    INSERT INTO groups VALUES (\(bind: id), 'Group', \(bind: owner), \(bind: caller.createdAt), \(bind: deleted ? caller.createdAt : nil))
+                    INSERT INTO groups (id, name, created_by, created_at, deleted_at)
+                    VALUES (\(bind: id), 'Group', \(bind: owner), \(bind: caller.createdAt), \(bind: deleted ? caller.createdAt : nil))
                     """)
-                try await fixture.persistence.execute("INSERT INTO memberships VALUES (\(bind: id), \(bind: owner), 'owner', \(bind: caller.createdAt))")
+                try await fixture.persistence.execute("""
+                    INSERT INTO memberships (group_id, user_id, role, joined_at)
+                    VALUES (\(bind: id), \(bind: owner), 'owner', \(bind: caller.createdAt))
+                    """)
             }
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
             try await app.test(.router) { client in
@@ -118,6 +142,7 @@ struct ServerAccountRouteTests {
             try await app.test(.router) { client in
                 for (password, newPassword, code) in [("wrong", replacement, SyncAPI.FailureCode.unauthorized),
                                                      (AccountTestFixture.password, "short", .malformedRequest),
+                                                     (AccountTestFixture.password, String(repeating: "a", count: 11), .malformedRequest),
                                                      (AccountTestFixture.password, String(repeating: "a", count: 73), .malformedRequest)] {
                     let body = try JSONSerialization.data(withJSONObject: ["current_password": password, "new_password": newPassword])
                     try await client.execute(uri: "/api/v1/auth/password", method: .post, headers: headers, body: .init(bytes: body)) { try Self.failure($0, code) }
@@ -128,9 +153,9 @@ struct ServerAccountRouteTests {
                 #expect(try await fixture.sessions.authenticate(token: current.token.value) == current.identity)
                 #expect(try await fixture.sessions.authenticate(token: foreign.token.value) == foreign.identity)
                 await #expect(throws: AccountError.unauthorized) { _ = try await fixture.sessions.authenticate(token: old.token.value) }
-                _ = try await fixture.accounts.verifyCredentials(username: "alice", password: replacement)
+                _ = try await fixture.accounts.verifyCredentials(username: user.username, password: replacement)
                 await #expect(throws: AccountError.unauthorized) {
-                    _ = try await fixture.accounts.verifyCredentials(username: "alice", password: AccountTestFixture.password)
+                    _ = try await fixture.accounts.verifyCredentials(username: user.username, password: AccountTestFixture.password)
                 }
                 #expect(try await fixture.accounts.me(current.identity).user == user.metadata)
                 try await fixture.assertNoPlaintext([current.token.value, old.token.value, foreign.token.value,
@@ -147,9 +172,11 @@ struct ServerAccountRouteTests {
             let headers: HTTPFields = [.authorization: "Bearer \(current.token.value)", .contentType: "application/json"]
             try await app.test(.router) { client in
                 for invalid in ["{", "{}", "{\"current_password\":true,\"new_password\":\"replacement-password\"}",
-                                "{\"current_password\":\"account-test-password\",\"new_password\":\"replacement-password\",\"extra\":1}"] {
+                                "{\"current_password\":\"\(AccountTestFixture.password)\",\"new_password\":\"replacement-password\",\"extra\":1}"] {
                     try await client.execute(uri: "/api/v1/auth/password", method: .post, headers: headers, body: .init(string: invalid)) { try Self.failure($0, .malformedRequest) }
                 }
+                try await client.execute(uri: "/api/v1/auth/password", method: .post, headers: headers,
+                                         body: .init(repeating: 32, count: SyncAPI.requestEnvelopeMaxBytes)) { try Self.failure($0, .malformedRequest) }
                 try await client.execute(uri: "/api/v1/auth/password", method: .post, headers: headers,
                                          body: .init(repeating: 32, count: SyncAPI.requestEnvelopeMaxBytes + 1)) { try Self.failure($0, .envelopeTooLarge) }
                 try await fixture.persistence.execute("""
@@ -158,6 +185,7 @@ struct ServerAccountRouteTests {
                     """)
                 try await client.execute(uri: "/api/v1/auth/logout", method: .post, headers: headers) { try Self.failure($0, .internalError) }
                 #expect(try await fixture.sessions.authenticate(token: current.token.value) == current.identity)
+                try await fixture.persistence.execute("DROP TRIGGER fail_revoke")
             }
         }
     }
@@ -173,7 +201,7 @@ struct ServerAccountRouteTests {
                 """)
             let request = SyncAPI.PasswordChangeRequest(currentPassword: AccountTestFixture.password, newPassword: "replacement-password")
             await #expect(throws: (any Error).self) { try await fixture.accounts.changePassword(request, session: current.identity) }
-            _ = try await fixture.accounts.verifyCredentials(username: "alice", password: AccountTestFixture.password)
+            _ = try await fixture.accounts.verifyCredentials(username: user.username, password: AccountTestFixture.password)
             #expect(try await fixture.sessions.authenticate(token: other.token.value) == other.identity)
             try await fixture.persistence.execute("DROP TRIGGER fail_revoke")
             try await fixture.sessions.logout(current.identity)
