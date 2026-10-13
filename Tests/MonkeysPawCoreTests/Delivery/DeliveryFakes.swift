@@ -7,6 +7,7 @@ enum DeliveryEvent: Equatable {
     case paste(PasteBackend, PasteChord)
     case copied, pressPaste(PasteChord, CopyReason), done(DeliveryOutcome)
     case testPresent(String), testReadBack, testClose
+    case snapshotClipboard, restoreClipboard
 }
 
 final class DeliveryRecorder {
@@ -124,13 +125,72 @@ final class FakeFocus: FocusTracker {
     }
 }
 
-final class FakeClipboard: Clipboard, @unchecked Sendable {
+final class FakeClipboard: ClipboardRestoring, @unchecked Sendable {
+    private final class Revision: ClipboardRevision {
+        weak var clipboard: FakeClipboard?
+        let value: Int
+        init(_ clipboard: FakeClipboard, value: Int) {
+            self.clipboard = clipboard
+            self.value = value
+        }
+    }
+
+    private final class Ownership: ClipboardWriteOwnership {
+        weak var clipboard: FakeClipboard?
+        let value: Int
+        init(_ clipboard: FakeClipboard, value: Int) {
+            self.clipboard = clipboard
+            self.value = value
+        }
+    }
+
+    private final class SnapshotRead: ClipboardSnapshotRead {
+        weak var clipboard: FakeClipboard?
+        var snapshot: ClipboardTextSnapshot?
+        private let completion: (ClipboardTextSnapshot?) -> Void
+        private var didCancel = false
+
+        init(_ clipboard: FakeClipboard, snapshot: ClipboardTextSnapshot?,
+             completion: @escaping (ClipboardTextSnapshot?) -> Void) {
+            self.clipboard = clipboard
+            self.snapshot = snapshot
+            self.completion = completion
+        }
+
+        func cancel() {
+            guard !didCancel else { return }
+            didCancel = true
+            snapshot = nil
+            clipboard?.snapshotCancellations += 1
+        }
+
+        func complete(repeating count: Int) {
+            let value = snapshot
+            snapshot = nil
+            for _ in 0..<count { completion(value) }
+        }
+    }
+
     private let lock = NSLock()
     private var storedText: String?
+    private var revision = 0
     private var numberOfReads = 0
     private var mode: FakeCompletionMode = .immediate
     private var reads: [@Sendable (String?) -> Void] = []
     private let recorder: DeliveryRecorder
+    private var snapshots: [SnapshotRead] = []
+    var snapshotMode: FakeCompletionMode = .immediate
+    var snapshotUnavailable = false
+    var canOwnWrite = true
+    var onSnapshot: (() -> Void)?
+    var onClipboardRestore: (() -> Void)?
+    private(set) var snapshotBudgets: [Duration] = []
+    private(set) var snapshotByteLimits: [Int] = []
+    private(set) var snapshotCancellations = 0
+    private(set) var ownershipWrites = 0
+    private(set) var restoreCalls = 0
+    private(set) var restorationWrites = 0
+    private(set) weak var lastSnapshot: ClipboardTextSnapshot?
 
     var text: String? { locked { storedText } }
     var readCount: Int { locked { numberOfReads } }
@@ -168,8 +228,70 @@ final class FakeClipboard: Clipboard, @unchecked Sendable {
     }
 
     func writeText(_ text: String) {
-        locked { storedText = text }
+        replaceText(text)
         recorder.events.append(.write(text))
+    }
+
+    /// Set initial text or model a competing copy, including identical bytes.
+    /// No previous clipboard text enters the event recorder.
+    func replaceText(_ text: String?) {
+        locked {
+            revision += 1
+            storedText = text
+        }
+    }
+
+    func snapshotText(budget: Duration, byteLimit: Int,
+                      completion: @escaping (ClipboardTextSnapshot?) -> Void) -> ClipboardSnapshotRead {
+        snapshotBudgets.append(budget)
+        snapshotByteLimits.append(byteLimit)
+        recorder.events.append(.snapshotClipboard)
+        let snapshot: ClipboardTextSnapshot? = locked {
+            numberOfReads += 1
+            guard !snapshotUnavailable, let storedText else { return nil }
+            return ClipboardTextSnapshot(text: storedText, revision: Revision(self, value: revision))
+        }
+        lastSnapshot = snapshot
+        let read = SnapshotRead(self, snapshot: snapshot, completion: completion)
+        onSnapshot?()
+        switch snapshotMode {
+        case .immediate: read.complete(repeating: 1)
+        case .deferred: snapshots.append(read)
+        }
+        return read
+    }
+
+    func completeSnapshot(repeating count: Int = 1) {
+        snapshots.removeFirst().complete(repeating: count)
+    }
+
+    func writeTextOwning(_ text: String, after snapshotRevision: ClipboardRevision) -> ClipboardWriteOwnership? {
+        ownershipWrites += 1
+        let ownership: ClipboardWriteOwnership? = locked {
+            let token = snapshotRevision as? Revision
+            let unchanged = token?.clipboard === self && token?.value == revision
+            revision += 1
+            storedText = text
+            return unchanged && canOwnWrite ? Ownership(self, value: revision) : nil
+        }
+        recorder.events.append(.write(text))
+        return ownership
+    }
+
+    func restore(_ snapshot: ClipboardTextSnapshot, ifOwnedBy ownership: ClipboardWriteOwnership) {
+        restoreCalls += 1
+        onClipboardRestore?()
+        let restored: Bool = locked {
+            guard let token = ownership as? Ownership,
+                  token.clipboard === self, token.value == revision else { return false }
+            storedText = snapshot.withText { $0 }
+            revision += 1
+            return true
+        }
+        if restored {
+            restorationWrites += 1
+            recorder.events.append(.restoreClipboard)
+        }
     }
 
     private func locked<T>(_ work: () -> T) -> T {
@@ -267,7 +389,8 @@ final class DeliveryHarness {
     let target: FakeSelfTestTarget
     let service: DeliveryService
 
-    init(session: DesktopSession = .macOS, available: [PasteBackend] = PasteBackend.allCases) {
+    init(session: DesktopSession = .macOS, available: [PasteBackend] = PasteBackend.allCases,
+         clipboardRestore: ClipboardRestoreMode = .off) {
         let recorder = self.recorder
         self.session = FakeSession(session)
         scheduler = FakeScheduler(recorder)
@@ -280,7 +403,8 @@ final class DeliveryHarness {
         service = DeliveryService(
             panel: FakePanel(recorder), focus: focus, clipboard: clipboard,
             injectors: Array(injectors.values), notifier: FakeNotifier(recorder),
-            session: self.session, scheduler: scheduler, mainThread: main, failureCache: cache
+            session: self.session, scheduler: scheduler, mainThread: main, failureCache: cache,
+            clipboardRestore: clipboardRestore
         )
     }
 

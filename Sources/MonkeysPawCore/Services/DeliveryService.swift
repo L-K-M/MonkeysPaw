@@ -14,6 +14,20 @@ public final class DeliveryService {
         case idle, running
     }
 
+    // Timers hold this weakly. Clearing the slot releases previous text now,
+    // rather than retaining it inside a cancelled timer until its deadline.
+    private final class ClipboardRestore {
+        let generation: UInt64
+        let captureDeadline = ContinuousClock.now.advanced(by: Limits.clipboardSnapshotBudget)
+        var snapshot: ClipboardTextSnapshot?
+        var ownership: ClipboardWriteOwnership?
+        var read: ClipboardSnapshotRead?
+        var resumeCapture: (() -> Void)?
+        var wasCancelled = false
+
+        init(generation: UInt64) { self.generation = generation }
+    }
+
     // Continuations share the terminal state even after the next operation starts.
     private final class Request {
         let text: String
@@ -21,18 +35,21 @@ public final class DeliveryService {
         let target: DeliveryTarget?
         let session: DesktopSession
         let selection: Selection
+        let clipboardGeneration: UInt64
         let done: (DeliveryOutcome) -> Void
         var didComplete = false
 
         init(
             text: String, mode: DeliveryMode, target: DeliveryTarget?,
-            session: DesktopSession, selection: Selection, done: @escaping (DeliveryOutcome) -> Void
+            session: DesktopSession, selection: Selection, clipboardGeneration: UInt64,
+            done: @escaping (DeliveryOutcome) -> Void
         ) {
             self.text = text
             self.mode = mode
             self.target = target
             self.session = session
             self.selection = selection
+            self.clipboardGeneration = clipboardGeneration
             self.done = done
         }
     }
@@ -40,6 +57,7 @@ public final class DeliveryService {
     private let panel: PanelWindow
     private let focus: FocusTracker
     private let clipboard: Clipboard
+    private let restoringClipboard: ClipboardRestoring?
     private let injectors: [PasteInjector]
     private let notifier: Notifier
     private let session: SessionProbe
@@ -50,21 +68,46 @@ public final class DeliveryService {
     private var presentationGeneration: UInt64 = 0
     private var pending: [() -> Void] = []
     private var operationState = OperationState.idle
+    private var clipboardRestoreMode: ClipboardRestoreMode
+    private var clipboardGeneration: UInt64 = 0
+    private var pendingClipboardRestore: ClipboardRestore?
+    private var isShutdown = false
 
     public init(
         panel: PanelWindow, focus: FocusTracker, clipboard: Clipboard,
         injectors: [PasteInjector], notifier: Notifier, session: SessionProbe,
-        scheduler: Scheduler, mainThread: MainThread, failureCache: PasteFailureCache
+        scheduler: Scheduler, mainThread: MainThread, failureCache: PasteFailureCache,
+        clipboardRestore: ClipboardRestoreMode = .off
     ) {
         self.panel = panel
         self.focus = focus
         self.clipboard = clipboard
+        restoringClipboard = clipboard as? ClipboardRestoring
         self.injectors = injectors
         self.notifier = notifier
         self.session = session
         self.scheduler = scheduler
         self.mainThread = mainThread
         self.failureCache = failureCache
+        clipboardRestoreMode = clipboardRestore
+    }
+
+    /// Composition forwards the committed D3 preference and shared settings
+    /// changes here. Read-only settings must supply .off.
+    public func setClipboardRestore(_ mode: ClipboardRestoreMode) {
+        mainThread.run {
+            guard !self.isShutdown, self.clipboardRestoreMode != mode else { return }
+            self.clipboardRestoreMode = mode
+            self.invalidateClipboardRestore()
+        }
+    }
+
+    /// Permanently retire clipboard restoration during application shutdown.
+    public func shutdown() {
+        mainThread.run {
+            self.isShutdown = true
+            self.invalidateClipboardRestore()
+        }
     }
 
     public func arm() {
@@ -131,6 +174,7 @@ public final class DeliveryService {
         mainThread.run {
             self.presentationGeneration &+= 1
             self.armedTarget = nil
+            self.invalidateClipboardRestore()
         }
     }
 
@@ -160,6 +204,7 @@ public final class DeliveryService {
     // SelfTest releases the operation only after its last target closes.
     func performSelfTest(_ start: @escaping (@escaping () -> Void) -> Void) {
         mainThread.run {
+            self.invalidateClipboardRestore()
             self.queue {
                 var didComplete = false
                 start {
@@ -190,6 +235,7 @@ public final class DeliveryService {
         done: @escaping (DeliveryOutcome) -> Void
     ) {
         mainThread.run {
+            self.invalidateClipboardRestore()
             let request = self.request(text, mode: mode, selection: .ladder) { outcome in
                 done(outcome)
                 self.completeOperation()
@@ -208,7 +254,8 @@ public final class DeliveryService {
         case .only: target = focus.captureTarget()
         }
         return Request(text: text, mode: mode, target: target,
-                       session: session.currentSession(), selection: selection, done: done)
+                       session: session.currentSession(), selection: selection,
+                       clipboardGeneration: clipboardGeneration, done: done)
     }
 
     private func queue(_ work: @escaping () -> Void) {
@@ -228,8 +275,66 @@ public final class DeliveryService {
     }
 
     private func start(_ request: Request) {
+        guard !isShutdown, clipboardRestoreMode == .previousText,
+              case .ladder = request.selection, case .paste = request.mode,
+              request.clipboardGeneration == clipboardGeneration,
+              let restoringClipboard else {
+            writeAndHide(request)
+            return
+        }
+
+        let restoration = ClipboardRestore(generation: clipboardGeneration)
+        pendingClipboardRestore = restoration
+        restoration.resumeCapture = { [weak self] in self?.writeAndHide(request) }
+        scheduler.after(Limits.clipboardSnapshotBudget) { [weak self, weak restoration] in
+            self?.mainThread.run { [weak self, weak restoration] in
+                guard let self, let restoration,
+                      self.pendingClipboardRestore === restoration,
+                      restoration.resumeCapture != nil else { return }
+                self.discardClipboardRestore()
+            }
+        }
+        let read = restoringClipboard.snapshotText(
+            budget: Limits.clipboardSnapshotBudget, byteLimit: Limits.clipboardSnapshotMaxBytes
+        ) { [weak self, weak restoration] snapshot in
+            self?.mainThread.run { [weak self, weak restoration] in
+                guard let self, let restoration else { return }
+                self.captured(snapshot, for: restoration)
+            }
+        }
+        // Inline completion can write/hide before the read handle is returned.
+        if restoration.resumeCapture != nil { restoration.read = read }
+        else if restoration.wasCancelled { read.cancel() }
+    }
+
+    private func captured(_ snapshot: ClipboardTextSnapshot?, for restoration: ClipboardRestore) {
+        guard pendingClipboardRestore === restoration,
+              let resume = restoration.resumeCapture else { return }
+        restoration.resumeCapture = nil
+        restoration.read = nil
+
+        // A busy UI loop may deliver a late read before its timeout callback.
+        if ContinuousClock.now < restoration.captureDeadline, let snapshot,
+           snapshot.withText({ $0.utf8.prefix(Limits.clipboardSnapshotMaxBytes + 1).count })
+            <= Limits.clipboardSnapshotMaxBytes {
+            restoration.snapshot = snapshot
+        } else {
+            pendingClipboardRestore = nil
+        }
+
+        resume()
+    }
+
+    private func writeAndHide(_ request: Request) {
         // Wayland needs the panel's selection serial before it loses focus.
-        clipboard.writeText(request.text)
+        if let restoration = pendingClipboardRestore,
+           restoration.generation == request.clipboardGeneration,
+           let snapshot = restoration.snapshot, let restoringClipboard {
+            restoration.ownership = restoringClipboard.writeTextOwning(request.text, after: snapshot.revision)
+            if restoration.ownership == nil { discardClipboardRestore() }
+        } else {
+            clipboard.writeText(request.text)
+        }
         panel.hideForDelivery()
         let delay = request.session == .macOS ? Limits.settleDelayMacOS : Limits.settleDelayLinux
         var didSettle = false
@@ -286,6 +391,7 @@ public final class DeliveryService {
         }
 
         if case .ladder = request.selection, let reason = failureCache.failure(for: backend) {
+            discardClipboardRestore(for: request)
             attempt(remaining.dropFirst(), for: request, chord: chord, focus: focus,
                     failures: failures + [BackendFailure(backend: backend, reason: reason)])
             return
@@ -323,6 +429,7 @@ public final class DeliveryService {
         _ reason: PasteFailure, backend: PasteBackend, remaining: ArraySlice<PasteBackend>,
         request: Request, chord: PasteChord, focus: FocusConfirmation, failures: [BackendFailure]
     ) {
+        discardClipboardRestore(for: request)
         failureCache.record(reason, for: backend)
         attempt(remaining.dropFirst(), for: request, chord: chord, focus: focus,
                 failures: failures + [BackendFailure(backend: backend, reason: reason)])
@@ -335,6 +442,53 @@ public final class DeliveryService {
         if case .ladder = request.selection {
             lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
         }
+        if case .pasted = outcome { scheduleClipboardRestore(for: request) }
+        else { discardClipboardRestore(for: request) }
         request.done(outcome)
+    }
+
+    private func scheduleClipboardRestore(for request: Request) {
+        guard let restoration = pendingClipboardRestore,
+              restoration.generation == request.clipboardGeneration,
+              restoration.snapshot != nil, restoration.ownership != nil else { return }
+        // Release the operation queue normally; this timer never owns its slot.
+        scheduler.after(Limits.clipboardRestoreDelay) { [weak self, weak restoration] in
+            self?.mainThread.run { [weak self, weak restoration] in
+                guard let self, let restoration,
+                      self.pendingClipboardRestore === restoration,
+                      restoration.generation == self.clipboardGeneration,
+                      !self.isShutdown, self.clipboardRestoreMode == .previousText,
+                      let snapshot = restoration.snapshot, let ownership = restoration.ownership,
+                      let restoringClipboard = self.restoringClipboard else { return }
+                self.pendingClipboardRestore = nil
+                restoration.snapshot = nil
+                restoration.ownership = nil
+                restoringClipboard.restore(snapshot, ifOwnedBy: ownership)
+            }
+        }
+    }
+
+    private func invalidateClipboardRestore() {
+        clipboardGeneration &+= 1
+        discardClipboardRestore()
+    }
+
+    private func discardClipboardRestore(for request: Request) {
+        guard pendingClipboardRestore?.generation == request.clipboardGeneration else { return }
+        discardClipboardRestore()
+    }
+
+    private func discardClipboardRestore() {
+        guard let restoration = pendingClipboardRestore else { return }
+        pendingClipboardRestore = nil
+        let resume = restoration.resumeCapture
+        restoration.resumeCapture = nil
+        restoration.snapshot = nil
+        restoration.ownership = nil
+        restoration.wasCancelled = true
+        let read = restoration.read
+        restoration.read = nil
+        read?.cancel()
+        resume?()
     }
 }
