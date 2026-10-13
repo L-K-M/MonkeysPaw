@@ -91,6 +91,27 @@ The Core portability job compiles Core and
 its tests without GTK; the Linux app job runs both suites. `swift test --filter`
 still builds all test targets, so filtering alone cannot isolate Core from GTK.
 
+## CI job selection
+
+On pull requests, `.github/workflows/ci.yml` first runs `changes` with a full
+checkout. `scripts/ci-changes.py` selects jobs from the base/head merge-base
+diff, including both names of a rename. Android-only changes run `android`;
+pure documentation changes run no build jobs. `README.md` is also a version
+check input, so it runs `core-linux` and `deb`. Xcode project changes run
+those validation jobs as well as the macOS app jobs. Linux source changes
+also run Core portability and server jobs: SwiftPM validates the parent
+manifest's target paths and the image copies the full source tree.
+
+Pushes, manual runs and reusable release calls run every job. The reusable
+call's `full-ci` input defaults to true, including release PR dry runs whose
+GitHub event is still `pull_request`. Unknown paths, workflow/action changes,
+and changes to the selector or its test also run everything. Selector errors
+fail `changes`; they must never produce a successful run with empty outputs.
+Keep path rules and `scripts/tests/test_ci_changes.py` current when adding
+job inputs. Existing check names stay unchanged; skipped jobs count as passing
+for GitHub and the supervisor's merge script. The separate GLM review workflow
+is unaffected.
+
 ## macOS app rules
 
 - M1 delivery drivers live in `MonkeysPaw/Drivers/`; `PanelController` is
