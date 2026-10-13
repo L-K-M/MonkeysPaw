@@ -4,13 +4,21 @@ import Testing
 @testable import MonkeysPawServer
 
 struct ServerGroupMigrationTests {
-    @Test func auditUpgradePreservesAccountEventsAndDatabaseIdentity() async throws {
-        try await withPersistenceDatabase(migrations: [.foundation, .nullableAccountMetadata]) { repository in
+    @Test(arguments: [[ServerMigration.foundation], [.foundation, .nullableAccountMetadata]])
+    func auditUpgradePreservesAccountEventsAndDatabaseIdentity(migrations: [ServerMigration]) async throws {
+        try await withPersistenceDatabase(migrations: migrations) { repository in
             try await repository.seed()
             try await repository.execute("""
                 INSERT INTO audit_events (id, actor_id, action, target, at)
                 VALUES ('original', NULL, 'user.create', \(bind: PersistenceTestRepository.user), \(bind: PersistenceTestRepository.time))
                 """)
+            #expect(try await repository.count("schema_migrations") == migrations.count)
+            let hasGroupColumn = try await repository.database.read { sql in
+                try await sql.raw("PRAGMA table_info(audit_events)").all().contains {
+                    try $0.decode(column: "name", as: String.self) == "group_id"
+                }
+            }
+            #expect(!hasGroupColumn)
             let identity = try await MetaRepository(database: repository.database).databaseID()
             try await repository.database.migrate()
             try await repository.database.migrate()

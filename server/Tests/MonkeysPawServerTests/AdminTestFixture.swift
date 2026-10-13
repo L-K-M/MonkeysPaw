@@ -16,7 +16,8 @@ struct StoredTestAudit: Sendable {
 extension PersistenceTestRepository {
     func auditEvents() async throws -> [StoredTestAudit] {
         try await database.read { sql in
-            try await sql.raw("SELECT * FROM audit_events ORDER BY rowid").all().map { row in
+            // Explicit columns refresh a reader's cached schema after the audit upgrade.
+            try await sql.raw("SELECT id, actor_id, action, target, group_id, at FROM audit_events ORDER BY rowid").all().map { row in
                 try .init(id: row.decode(column: "id", as: String.self),
                           actorID: row.decode(column: "actor_id", as: String?.self),
                           action: row.decode(column: "action", as: String.self),
