@@ -9,11 +9,63 @@ import XCTest
 /// Launch the real executable on the private bus and observe its X11 windows.
 /// Calling the environment directly would bypass remote command-line routing.
 final class LinuxLauncherStartupTests: XCTestCase {
+    /// Drain continuously so diagnostics cannot fill a pipe and stall GTK.
+    /// Keep a bounded tail in memory; only failed tests print child stderr.
+    private final class ChildStderr {
+        let pipe = Pipe()
+        private let lock = NSLock()
+        private var tail = Data()
+        private var truncated = false
+        private var reachedEOF = false
+        private static let capacity = 64 * 1_024
+
+        init() {
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                guard let self else { return }
+                let data = handle.availableData
+                self.append(data)
+                if data.isEmpty { handle.readabilityHandler = nil }
+            }
+        }
+
+        private func append(_ data: Data) {
+            lock.lock()
+            defer { lock.unlock() }
+            if data.isEmpty { reachedEOF = true }
+            tail.append(data)
+            if tail.count > Self.capacity {
+                tail.removeFirst(tail.count - Self.capacity)
+                truncated = true
+            }
+        }
+
+        var text: String {
+            lock.lock()
+            defer { lock.unlock() }
+            return (truncated ? "[stderr tail truncated]\n" : "") + String(decoding: tail, as: UTF8.self)
+        }
+
+        var hasFinished: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return reachedEOF
+        }
+
+        deinit {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            try? pipe.fileHandleForReading.close()
+            try? pipe.fileHandleForWriting.close()
+        }
+    }
+
     private var bus: FakeStatusNotifierWatcher!
     private var tools: FakeLinuxTools!
     private var windowTools: LinuxToolRunner!
     private var childEnvironment: [String: String] = [:]
     private var children: [Process] = []
+    private var windowManager: Process?
+    private var stderr: [Int32: ChildStderr] = [:]
+    private var reportedChildDiagnostics = false
     private var files: RootedFileStore!
     private var settings: SettingsModel!
 
@@ -38,14 +90,18 @@ final class LinuxLauncherStartupTests: XCTestCase {
         }
 
         let windowManager = Process()
+        self.windowManager = windowManager
         windowManager.executableURL = openbox
         windowManager.arguments = ["--sm-disable"]
         windowManager.environment = environment
         windowManager.standardInput = FileHandle.nullDevice
         windowManager.standardOutput = FileHandle.nullDevice
-        windowManager.standardError = FileHandle.nullDevice
+        let windowManagerStderr = ChildStderr()
+        windowManager.standardError = windowManagerStderr.pipe
         try windowManager.run()
+        try windowManagerStderr.pipe.fileHandleForWriting.close()
         children.append(windowManager)
+        stderr[windowManager.processIdentifier] = windowManagerStderr
         XCTAssertTrue(GTKTestSupport.spin {
             guard case .success(let output) = self.windowTools.run("xprop",
                 arguments: ["-root", "_NET_SUPPORTING_WM_CHECK"], timeout: .seconds(1)) else { return false }
@@ -63,6 +119,7 @@ final class LinuxLauncherStartupTests: XCTestCase {
         childEnvironment["XDG_SESSION_TYPE"] = "wayland"
         childEnvironment["XDG_CURRENT_DESKTOP"] = "sway"
         childEnvironment["GDK_BACKEND"] = "x11"
+        childEnvironment["MONKEYSPAW_TEST_PICKER_TRACE"] = "1"
         let paths = LinuxPaths(environment: childEnvironment)
         files = try RootedFileStore(root: paths.configDirectory)
         settings = SettingsModel(settings: SettingsService(store: SettingsStore(files: files)))
@@ -71,6 +128,9 @@ final class LinuxLauncherStartupTests: XCTestCase {
     }
 
     override func tearDown() {
+        if (testRun?.totalFailureCount ?? 0) > 0, !reportedChildDiagnostics {
+            print(childDiagnostics())
+        }
         for child in children.reversed() {
             // Let Openbox remove its root properties before the next test.
             if child.isRunning { child.terminate() }
@@ -81,6 +141,9 @@ final class LinuxLauncherStartupTests: XCTestCase {
                 "The test app did not exit during cleanup.")
         }
         children.removeAll()
+        stderr.removeAll()
+        windowManager = nil
+        reportedChildDiagnostics = false
         bus?.shutdown()
         bus = nil
         settings = nil
@@ -125,6 +188,39 @@ final class LinuxLauncherStartupTests: XCTestCase {
         XCTAssertNil(visibleWindow(titled: LinuxStrings.onboarding, in: primary))
         XCTAssertNil(visibleWindow(titled: LinuxStrings.setup, in: primary))
         try quit(primary)
+    }
+
+    func testPickerTraceRecordsLifecycleWithoutPromptOrTokenContent() throws {
+        completeFirstRun()
+        let prompt = "TRACE_PRIVATE_PROMPT_SENTINEL"
+        let token = "TRACE_PRIVATE_TOKEN_SENTINEL"
+        let paths = LinuxPaths(environment: childEnvironment)
+        let library = try RootedFileStore(root: paths.documentsDirectory.appendingPathComponent("MonkeysPaw"))
+        try library.write(Data(prompt.utf8), at: "private.md")
+        childEnvironment["XDG_ACTIVATION_TOKEN"] = token
+
+        let primary = try launch([])
+        let picker = try waitForWindow(titled: AppIdentity.displayName, in: primary)
+        try close(picker, titled: AppIdentity.displayName, in: primary)
+        XCTAssertTrue(GTKTestSupport.spin { self.stderr[primary.processIdentifier]?.text.contains("hide.end") == true })
+        let trace = try XCTUnwrap(stderr[primary.processIdentifier]).text
+        for event in ["source=command-line.local", "launcher.gate step=complete", "present.begin",
+                      "signal=map", "surface.mapped", "surfaceMapped=true", "reason=close-request", "signal=unmap"] {
+            XCTAssertTrue(trace.contains(event), "Missing lifecycle event: \(event)")
+        }
+        XCTAssertFalse(trace.contains(prompt))
+        XCTAssertFalse(trace.contains(token))
+        try quit(primary)
+    }
+
+    func testPickerTraceIsOffUnlessEnabled() throws {
+        childEnvironment.removeValue(forKey: "MONKEYSPAW_TEST_PICKER_TRACE")
+        completeFirstRun()
+        let primary = try launch([])
+        _ = try waitForWindow(titled: AppIdentity.displayName, in: primary)
+        try quit(primary)
+        XCTAssertTrue(GTKTestSupport.spin { self.stderr[primary.processIdentifier]?.hasFinished == true })
+        XCTAssertFalse(try XCTUnwrap(stderr[primary.processIdentifier]).text.contains("[picker-trace]"))
     }
 
     func testServiceLaunchStaysHiddenAndToggleActionStillOpensAndClosesPicker() throws {
@@ -217,6 +313,8 @@ final class LinuxLauncherStartupTests: XCTestCase {
         let state = child.isRunning ? "still running"
             : "exited with status \(child.terminationStatus) (\(child.terminationReason))"
         var details = ["Expected visible window '\(title)' from PID \(child.processIdentifier); child \(state)."]
+        details.append(childDiagnostics())
+        reportedChildDiagnostics = true
         // Include hidden windows and our app class: GTK can omit _NET_WM_PID
         // in a sandbox, so repeating only the failed PID query loses evidence.
         guard case .success(let output) = windowTools.run("xdotool",
@@ -229,12 +327,38 @@ final class LinuxLauncherStartupTests: XCTestCase {
         let windows = output.text.split(separator: "\n")
         if windows.isEmpty { details.append("No X11 windows matched the child PID or app class.") }
         for window in windows {
+            if case .success(let attributes) = windowTools.run("xwininfo", arguments: ["-id", String(window)],
+                timeout: .seconds(1)),
+               let mapState = attributes.text.split(separator: "\n").first(where: { $0.contains("Map State:") }) {
+                details.append("Window \(window): \(mapState.trimmingCharacters(in: .whitespaces))")
+            }
             if case .success(let properties) = windowTools.run("xprop",
                 arguments: ["-id", String(window), "WM_NAME", "WM_CLASS", "_NET_WM_PID", "WM_STATE"],
                 timeout: .seconds(1)) {
                 details.append("Window \(window): \(properties.text)")
             } else {
                 details.append("Could not read X11 properties of window \(window).")
+            }
+        }
+        return details.joined(separator: "\n")
+    }
+
+    private func childDiagnostics() -> String {
+        var details = ["Openbox running=\(windowManager?.isRunning == true)."]
+        if let windowManager, !windowManager.isRunning {
+            details.append("Openbox exited with status \(windowManager.terminationStatus) (\(windowManager.terminationReason)).")
+        }
+        guard let windowTools else { return details.joined(separator: "\n") }
+        if case .success(let root) = windowTools.run("xprop",
+            arguments: ["-root", "_NET_SUPPORTING_WM_CHECK", "_NET_ACTIVE_WINDOW"], timeout: .seconds(1)) {
+            details.append(root.text)
+        }
+        if case .success(let focus) = windowTools.run("xdotool", arguments: ["getwindowfocus"], timeout: .seconds(1)) {
+            details.append("X11 focus window: \(focus.text)")
+        }
+        for child in children {
+            if let capture = stderr[child.processIdentifier] {
+                details.append("Child PID \(child.processIdentifier) stderr:\n\(capture.text)")
             }
         }
         return details.joined(separator: "\n")
@@ -315,12 +439,14 @@ final class LinuxLauncherStartupTests: XCTestCase {
         child.arguments = arguments
         child.environment = childEnvironment
         child.standardInput = FileHandle.nullDevice
-        // Keep GTK/GLib startup errors in the test log, including early exits
-        // that would otherwise look like a window-mapping timeout.
+        // Capture GTK/GLib startup errors and the opt-in picker trace on failure.
         child.standardOutput = FileHandle.standardOutput
-        child.standardError = FileHandle.standardError
+        let capture = ChildStderr()
+        child.standardError = capture.pipe
         try child.run()
+        try capture.pipe.fileHandleForWriting.close()
         children.append(child)
+        stderr[child.processIdentifier] = capture
         return child
     }
 

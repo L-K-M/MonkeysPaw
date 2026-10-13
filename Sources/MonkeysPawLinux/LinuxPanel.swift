@@ -67,13 +67,31 @@ final class LinuxPanel: PanelWindow {
             // GTK owns the window; its Swift wrapper and queued UI work can outlive it.
             self.isDestroyed = true
             self.blurRevision += 1
+            self.trace("destroy", reason: "native")
         }
+
+        if LinuxPickerTrace.isEnabled {
+            for signal in ["show", "hide", "realize", "unrealize", "map", "unmap"] {
+                GTK.onSignal(UnsafeMutableRawPointer(window), signal) { [weak self] in
+                    guard let self else { return }
+                    self.trace("signal", reason: "native", signal: signal)
+                    if signal == "realize", let native = gtk_widget_get_native(self.window),
+                       let surface = gtk_native_get_surface(native) {
+                        GTK.onNotify(UnsafeMutableRawPointer(surface), "mapped") { [weak self] in
+                            self?.trace("surface.mapped", reason: "native")
+                        }
+                    }
+                }
+            }
+        }
+        trace("created", reason: "application-window")
 
         // The window survives library switches. Install its controllers once;
         // they always use the current binding rather than a captured picker.
         GTK.observeKeys(window) { [weak self] key, modifiers in self?.keyPressed(key, modifiers: modifiers) ?? false }
         GTK.onCloseRequested(window) { [weak self] in
             guard let self, !self.isDestroyed else { return }
+            self.trace("dismiss.request", reason: "close-request")
             if let picker = self.picker { picker.dismiss() } else { self.hide() }
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "is-active") { [weak self] in self?.focusChanged() }
@@ -100,6 +118,7 @@ final class LinuxPanel: PanelWindow {
         gtk_window_set_child(mp_window(window), nil)
         isRendering = false
         self.picker = picker
+        trace("rebind", reason: "library-graph")
         self.openSettings = openSettings
         let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
@@ -221,6 +240,7 @@ final class LinuxPanel: PanelWindow {
         for button in [useButton!, copyButton!, forgetButton!, editButton!, libraryButton!,
                        GTK.button(LinuxStrings.cancel, { [weak self, weak picker] in
                            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+                           self.trace("dismiss.request", reason: "cancel-button")
                            picker.dismiss()
                        }),
                        GTK.button(LinuxStrings.setup, { [weak self, weak picker] in
@@ -235,6 +255,7 @@ final class LinuxPanel: PanelWindow {
 
         picker.onChange = { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            self.trace("model.changed", reason: "onChange")
             if picker.state == .picker, let intent = picker.takeRequestedIntent() {
                 requestedIntent(intent)
                 return
@@ -470,6 +491,7 @@ final class LinuxPanel: PanelWindow {
     }
 
     private func fieldFocusChanged() {
+        trace("focus.changed", reason: "focus-widget")
         guard !isDestroyed, !isRendering, let position = focusedControl else { return }
         picker?.fillModel?.focusField(at: position)
     }
@@ -490,7 +512,9 @@ final class LinuxPanel: PanelWindow {
         case .edit: picker.editSelected()
         case .openLibrary: picker.openLibrary()
         case .openSettings: openSettings?()
-        case .escape: picker.escape()
+        case .escape:
+            trace("escape.request", reason: "key")
+            picker.escape()
         case .focusNext: picker.fillModel?.focusNext()
         case .focusPrevious: picker.fillModel?.focusPrevious()
         case .deliverPreferred: usePreferred()
@@ -517,10 +541,14 @@ final class LinuxPanel: PanelWindow {
         guard !isDestroyed else { return }
         blurRevision += 1
         let revision = blurRevision
+        trace("focus.changed", reason: "is-active")
         guard isVisible, !isActiveAndVisible else { return }
+        trace("blur.queued", reason: "inactive")
         GTK.after(Limits.blurHideDelay.timeInterval) { [weak self] in
+            self?.trace("blur.fired", reason: "timeout", revision: revision)
             guard let self, !self.isDestroyed, self.blurRevision == revision,
                   self.isVisible, !self.isActiveAndVisible else { return }
+            self.trace("dismiss.request", reason: "blur")
             self.picker?.dismiss()
         }
     }
@@ -529,28 +557,54 @@ final class LinuxPanel: PanelWindow {
         // Retire blur at the open intent: the queued GLib show can run after
         // the old timeout, which would otherwise dismiss the new picker.
         blurRevision += 1
+        trace("blur.cancelled", reason: "open-intent")
     }
 
     func useActivationToken(_ token: String?) { activationToken = token }
 
     func show() {
+        trace("show.request", reason: "delivery.show")
         guard !isDestroyed else { return }
         blurRevision += 1
         if let activationToken {
             gtk_window_set_startup_id(mp_window(window), activationToken)
             self.activationToken = nil
         }
+        trace("present.begin", reason: "delivery.show")
         gtk_window_present(mp_window(window))
+        trace("present.end", reason: "delivery.show")
         gtk_widget_grab_focus(initialFocus ?? window)
+        trace("focus.request", reason: "initial-widget")
     }
 
-    func hideForDelivery() { hide() }
+    func hideForDelivery() { hide(reason: "delivery") }
 
-    func hide() {
+    func hide() { hide(reason: "delivery.dismiss") }
+
+    func hide(reason: StaticString) {
+        trace("hide.request", reason: reason)
         guard !isDestroyed else { return }
         blurRevision += 1
         transientStatus = nil
         gtk_widget_set_visible(window, 0)
+        trace("hide.end", reason: reason)
+    }
+
+    private func trace(_ event: StaticString, reason: StaticString,
+                       signal: String = "none", revision: Int? = nil) {
+        guard LinuxPickerTrace.isEnabled else { return }
+        guard !isDestroyed else {
+            LinuxPickerTrace.record(event, "reason=\(reason) destroyed=true")
+            return
+        }
+        let surface = gtk_widget_get_native(window).flatMap { gtk_native_get_surface($0) }
+        let surfaceMapped = surface.map { String(gdk_surface_get_mapped($0) != 0) } ?? "none"
+        LinuxPickerTrace.record(event, "reason=\(reason) signal=\(signal) visible=\(isVisible)"
+            + " realized=\(gtk_widget_get_realized(window) != 0) mapped=\(gtk_widget_get_mapped(window) != 0)"
+            + " surfaceMapped=\(surfaceMapped)"
+            + " active=\(gtk_window_is_active(mp_window(window)) != 0)"
+            + " state=\(LinuxPickerTrace.pickerState(picker?.state)) blur=\(blurRevision)"
+            + " timer=\(revision.map(String.init) ?? "none")")
     }
 }
 #endif
