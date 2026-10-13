@@ -220,6 +220,15 @@ M2a content API clarifications:
   This avoids repeated scans of a growing decimal value and retains
   arbitrary-size typed key comparison and exact future format versions
   under the source limit.
+- Android K3 uses the catalog-pinned snakeyaml-engine low-level event API
+  (M8 F4) with an ordered internal `YamlNode` tree and a handwritten resolver
+  matching `PortableYAML`. No generic loader or library value constructor
+  participates. Anchor targets are never expanded; rejected subtrees retain
+  valid siblings, while ordinary syntax duplicates discard the header as on
+  Swift. `BigInteger` supplies radix conversion and arbitrary-size exponent
+  arithmetic; float identity retains decimal mantissa/exponent strings rather
+  than rounding through `Double`. K4 adds template/validator assembly and K5
+  supplies canonical writing.
 - The reviewed Yams 6.2.2 backport is pinned by immutable revision (§3, D3).
   Core opts into `Parser.DuplicateKeyPolicy.deferAnchoredKeys`, which defers
   every comparison involving a key subtree containing an anchor or alias.
