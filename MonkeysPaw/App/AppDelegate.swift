@@ -775,6 +775,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
+        mainMenu.addItem(makeLibraryFileMenu())
+
         // Leave targets unset so the responder chain finds the focused text view.
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")

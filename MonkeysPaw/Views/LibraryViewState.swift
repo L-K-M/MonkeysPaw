@@ -12,7 +12,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     enum Direction { case up, down }
-    enum EditorTab: Hashable { case edit, preview, fields }
+    enum EditorTab: Hashable { case edit, preview, fields, history }
     private enum OpenContext { case library, picker }
 
     @Published private(set) var snapshot: LibraryBrowserState
@@ -24,7 +24,11 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var editorState: EditorState
     @Published private(set) var sourceRevision: UInt64 = 0
     @Published private(set) var imports: LibraryImportViewState?
-    @Published var editorTab = EditorTab.edit
+    @Published var editorTab = EditorTab.edit {
+        didSet { if editorTab == .history, oldValue != .history { loadHistory() } }
+    }
+    @Published private(set) var fileCommandRequest: LibraryFileCommandRequest?
+    @Published private(set) var commandMessage: String?
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
     private(set) var model: LibraryBrowserModel
@@ -74,6 +78,19 @@ final class LibraryViewState: ObservableObject {
             && editorState.conflict?.isLoading == false && editorState.pendingDecision == nil
     }
 
+    var canRunFileCommand: Bool {
+        canRevert && editorState.canEdit && editorState.stamp != nil
+    }
+    var canLoadHistory: Bool {
+        isActive && libraryAvailable && editorState.prompt != nil && editorState.status != .commandRunning
+    }
+    var selectedRevision: PromptHistorySnapshot? {
+        editorState.history.revisions.first { $0.revision == editorState.history.selectedRevision }
+    }
+    var canRestoreRevision: Bool {
+        canRunFileCommand && fileCommandRequest == nil && !editorState.history.isLoading && selectedRevision != nil
+    }
+
     var canToggleFavorite: Bool {
         guard isActive, libraryAvailable, let row = snapshot.selectedPrompt else { return false }
         if row.relativePath == editorState.prompt?.relativePath,
@@ -97,6 +114,8 @@ final class LibraryViewState: ObservableObject {
         self.editor = editor
         editorState = editor.state
         editorTab = .edit
+        fileCommandRequest = nil
+        commandMessage = nil
         copySelection = nil
         isClosingEditor = false
         lastClosedPromptPath = nil
@@ -118,6 +137,8 @@ final class LibraryViewState: ObservableObject {
         detachObservers()
         libraryAvailable = false
         favoriteOutcome = nil
+        fileCommandRequest = nil
+        commandMessage = nil
         onEditorChange = nil
         onConflictRequested = nil
     }
@@ -126,6 +147,8 @@ final class LibraryViewState: ObservableObject {
         guard isActive else { return }
         libraryAvailable = available
         imports?.setLibraryAvailable(available)
+        if !available { fileCommandRequest = nil }
+        onEditorChange?()
     }
 
     func didShow() {
@@ -192,6 +215,7 @@ final class LibraryViewState: ObservableObject {
 
     func edit(_ source: String) {
         guard isActive, libraryAvailable else { return }
+        commandMessage = nil
         editor.edit(source)
     }
 
@@ -202,6 +226,55 @@ final class LibraryViewState: ObservableObject {
     }
     func saveAsCopy() { if canSave { editor.saveAsCopy() } }
     func revert() { if canRevert { editor.revert() } }
+
+    func loadHistory() { if canLoadHistory { editor.loadHistory() } }
+
+    func selectRevision(_ filename: String?) {
+        guard isActive else { return }
+        editor.selectRevision(editorState.history.revisions.first { $0.revision.filename == filename }?.revision)
+    }
+
+    func restoreRevision() {
+        guard canRestoreRevision, let revision = selectedRevision?.revision else { return }
+        editor.restore(revision, completion: commandCompletion(success: LibraryCommandStrings.restored))
+    }
+
+    func requestFileCommand(_ command: LibraryFileCommand) {
+        guard canRunFileCommand, fileCommandRequest == nil, let prompt = editorState.prompt else { return }
+        let folders = snapshot.sections.compactMap { section -> String? in
+            if case .folder(let folder) = section.id { return folder.string }
+            return nil
+        }
+        fileCommandRequest = LibraryFileCommandRequest(command: command, prompt: prompt, folders: folders)
+        onEditorChange?()
+    }
+
+    func resolveFileCommand(_ response: LibraryEditorResponse, id: UUID) {
+        guard let request = fileCommandRequest, request.id == id,
+              LibraryEditorDialog.fileCommand(request).accepts(response) else { return }
+        fileCommandRequest = nil
+        onEditorChange?()
+        guard response != .cancelFileCommand, canRunFileCommand, editorState.prompt == request.prompt else { return }
+        switch response {
+        case .rename(let filename):
+            editor.rename(to: filename, completion: commandCompletion(success: LibraryCommandStrings.renamed))
+        case .move(let folder):
+            editor.move(to: folder, completion: commandCompletion(success: LibraryCommandStrings.moved))
+        case .delete:
+            editor.delete(completion: commandCompletion(success: LibraryCommandStrings.deleted))
+        default: break
+        }
+    }
+
+    private func commandCompletion(success: String) -> (PromptCommandOutcome) -> Void {
+        commandMessage = nil
+        let revision = bindingRevision
+        // Core owns the unsaved guard, ordering and exactly-once completion.
+        return { [weak self] outcome in
+            guard let self, self.isActive, self.bindingRevision == revision else { return }
+            self.commandMessage = LibraryCommandStrings.message(outcome, success: success)
+        }
+    }
 
     func requestClose(_ completion: @escaping (EditorGuardResult) -> Void) {
         guard isActive else { completion(.inactive); return }
@@ -274,6 +347,10 @@ final class LibraryViewState: ObservableObject {
                 guard let self, let editor, self.isActive,
                       self.bindingRevision == revision, self.editor === editor else { return }
                 let previousPrompt = self.editorState.prompt
+                if previousPrompt != state.prompt || state.status == .loading
+                    || state.status == .saving || state.status == .commandRunning {
+                    self.commandMessage = nil
+                }
                 if previousPrompt?.relativePath != state.prompt?.relativePath { self.sourceRevision &+= 1 }
                 // External deletion and conflict discard can clear the editor
                 // before the browser retires its selected row.
@@ -283,6 +360,8 @@ final class LibraryViewState: ObservableObject {
                 let adoptedCopy = previousPrompt != nil
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
+                if let request = self.fileCommandRequest,
+                   request.prompt != state.prompt || !self.canRunFileCommand { self.fileCommandRequest = nil }
                 self.refreshPreview()
                 // Copy adoption selects a new path. An external deletion keeps
                 // the draft visible even when the browser clears its selection.
@@ -300,6 +379,8 @@ final class LibraryViewState: ObservableObject {
                     self.select(selection)
                 }
                 self.onEditorChange?()
+                if self.editorTab == .history, previousPrompt != state.prompt,
+                   state.prompt != nil, !state.history.isLoading { self.loadHistory() }
             }
         }
     }

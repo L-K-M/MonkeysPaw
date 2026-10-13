@@ -131,6 +131,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             } else if let conflict = state.conflict, conflict != self.dismissedConflict {
                 desired = .conflict(conflict, status: state.status)
             } else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status) }
+            else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
             self.endDialog()
@@ -141,7 +142,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             let cancel = self.presentDialog(window, desired) { [weak self] response in
                 self?.mainThread.run { [weak self] in
                     guard let self, !self.isTornDown, self.dialogRevision == revision,
-                          self.activeDialog == desired, desired.responses.contains(response) else { return }
+                          self.activeDialog == desired, desired.accepts(response) else { return }
                     self.activeDialog = nil
                     self.cancelDialog = nil
                     self.dialogRevision &+= 1
@@ -155,6 +156,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                         if let decision = self.presentation.editor.state.pendingDecision {
                             self.presentation.editor.resolveDecision(.cancel, id: decision.id)
                         }
+                    case (.fileCommand(let request), _):
+                        self.presentation.resolveFileCommand(response, id: request.id)
                     default: break
                     }
                 }
@@ -229,12 +232,13 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             let button = alert.addButton(withTitle: response.title)
             // Return saves unsaved edits; overwriting an external version requires an explicit choice.
             switch response {
-            case .decision(.save): button.keyEquivalent = "\r"
-            case .decision(.cancel), .dismissConflict: button.keyEquivalent = "\u{1b}"
-            case .decision(.discard), .conflict: button.keyEquivalent = ""
+            case .decision(.save), .rename, .move: button.keyEquivalent = "\r"
+            case .decision(.cancel), .dismissConflict, .cancelFileCommand: button.keyEquivalent = "\u{1b}"
+            case .decision(.discard), .conflict, .delete: button.keyEquivalent = ""
             }
-            button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard)
+            button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
+        if case .fileCommand(let request) = dialog { configureFileCommandAlert(alert, request: request) }
         return alert
     }
 
@@ -244,11 +248,15 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         let responses = dialog.responses
         alert.beginSheetModal(for: window) { response in
             let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            if responses.indices.contains(index) { done(responses[index]); return }
+            if responses.indices.contains(index) {
+                done(fileCommandResponse(responses[index], alert: alert))
+                return
+            }
             // Non-button dismissal must complete the pending dialog without losing the draft.
             switch dialog {
             case .decision: done(.decision(.cancel))
             case .conflict: done(.dismissConflict)
+            case .fileCommand: done(.cancelFileCommand)
             }
         }
         return {

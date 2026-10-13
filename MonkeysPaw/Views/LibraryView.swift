@@ -152,17 +152,28 @@ struct LibraryView: View {
                     Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSave)
                         .accessibilityIdentifier("library-save-copy")
                 }
+                HStack {
+                    Button(LibraryCommandStrings.rename) { presentation.requestFileCommand(.rename) }
+                        .accessibilityIdentifier("library-rename")
+                    Button(LibraryCommandStrings.move) { presentation.requestFileCommand(.move) }
+                        .accessibilityIdentifier("library-move")
+                    Button(LibraryCommandStrings.delete) { presentation.requestFileCommand(.delete) }
+                        .accessibilityIdentifier("library-delete")
+                }
+                .disabled(!presentation.canRunFileCommand || presentation.fileCommandRequest != nil)
                 TabView(selection: $presentation.editorTab) {
                     source.tabItem { Text(EditorStrings.editTab) }.tag(LibraryViewState.EditorTab.edit)
                     preview.tabItem { Text(EditorStrings.previewTab) }.tag(LibraryViewState.EditorTab.preview)
                     fields.tabItem { Text(EditorStrings.fieldsTab) }.tag(LibraryViewState.EditorTab.fields)
+                    LibraryHistoryView(presentation: presentation)
+                        .tabItem { Text(LibraryCommandStrings.historyTab) }.tag(LibraryViewState.EditorTab.history)
                 }
-                Text(EditorStrings.status(presentation.editorState)).font(.caption)
-                    .accessibilityIdentifier("library-editor-status")
             } else {
                 Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
                 Spacer()
             }
+            Text(presentation.commandMessage ?? EditorStrings.status(presentation.editorState)).font(.caption)
+                .accessibilityIdentifier("library-editor-status")
         }
         .padding(12)
     }
