@@ -30,7 +30,10 @@ internal class ParsingConformanceTest {
             val fixture = entry.fixture
             assertEquals(fixture.expected.keys, entry.completed + entry.pending.keys,
                 "Unregistered expectation in ${fixture.envelopeFile.relativePath}")
-            entry.pending.values.forEach { assertTrue(it.slice in setOf("K4", "K5") && it.reason.isNotBlank()) }
+            entry.pending.values.forEach { pending ->
+                assertTrue(pending.slice in setOf("K4", "K5") && pending.reason.isNotBlank(),
+                    "${fixture.envelopeFile.relativePath}: invalid pending registration $pending")
+            }
             checkParsing(entry)
         }
         val format = registrations.filter { it.fixture.category == Category.FORMAT }
@@ -87,7 +90,8 @@ internal class ParsingConformanceTest {
                 for (field in fixture.expected["fields"].arrayValue().map { it.objectValue() }) {
                     if (field["implicit"].booleanValue()) continue
                     val name = field["name"].stringValue()
-                    val declaration = document.frontMatter.fields.single { it.name == name }
+                    val declaration = document.frontMatter.fields.singleOrNull { it.name == name }
+                        ?: error("$label: expected exactly one declared field named '$name'")
                     assertEquals(field, fieldJson(declaration), "$label declaration $name")
                 }
             }
