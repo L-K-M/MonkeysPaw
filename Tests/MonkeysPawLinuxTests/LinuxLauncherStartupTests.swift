@@ -186,6 +186,8 @@ final class LinuxLauncherStartupTests: XCTestCase {
         XCTAssertNil(settings.error)
     }
 
+    private static let launchedWindowTimeout: Duration = .seconds(20)
+
     private func visibleWindow(titled title: String, in child: Process) -> String? {
         let result = windowTools.run("xdotool", arguments: ["search", "--onlyvisible", "--all",
             "--pid", String(child.processIdentifier), "--name", "^" + NSRegularExpression.escapedPattern(for: title) + "$"],
@@ -199,10 +201,12 @@ final class LinuxLauncherStartupTests: XCTestCase {
 
     private func waitForWindow(titled title: String, in child: Process) throws -> String {
         var window: String?
-        XCTAssertTrue(GTKTestSupport.spin {
+        // A cold child launch on a loaded CI runner can take several seconds,
+        // and each probe is a bounded xdotool process.
+        XCTAssertTrue(GTKTestSupport.spin(until: {
             window = self.visibleWindow(titled: title, in: child)
             return window != nil
-        }, "The expected app window did not appear.")
+        }, timeout: Self.launchedWindowTimeout), "The expected app window did not appear.")
         return try XCTUnwrap(window)
     }
 
