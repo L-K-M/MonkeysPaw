@@ -72,9 +72,17 @@ re-entry or Clear before it can be used.
     `SYNC_RESPONSE_CAP = 16 MiB` on the same transport.
     The request selects the cap; delegate callbacks cancel receipt as soon
     as the body exceeds it, including chunked bodies without Content-Length.
-    An advertised length above the cap is rejected before body accumulation.
+    An advertised length above the cap is refused with `.cancel` in the
+    response-header callback. Each data callback checks cumulative bytes
+    before appending; an observed cap failure survives later cancellation
+    and deadline callbacks. Foundation may buffer bytes before invoking
+    delegates; callback boundaries need not match the peer's writes.
   - Each request uses an ephemeral URLSession with cookies, URL cache and
-    credential storage disabled. A separate monotonic deadline cancels the
+    credential storage explicitly set to nil. Authentication challenges
+    never supply credentials or retry the request. Darwin rejects credential
+    protection spaces while retaining standard TLS server-trust validation;
+    corelibs uses default handling with no credential store to retain bounded
+    HTTP error bodies. A separate monotonic deadline cancels the
     task even while bytes keep arriving; caller cancellation does the same.
     Every 3xx response is refused with a typed error, including responses
     without a usable Location header. No automatic retry is performed.

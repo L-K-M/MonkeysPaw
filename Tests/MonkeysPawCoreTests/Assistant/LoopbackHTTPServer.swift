@@ -161,6 +161,11 @@ final class LoopbackHTTPServer: @unchecked Sendable {
                 var timeout = timeval(tv_sec: 3, tv_usec: 0)
                 _ = setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
                 _ = setsockopt(peer, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+                // Flush each scripted write without Nagle's delay. Foundation
+                // may still combine writes into a single delegate callback.
+                var noDelay: Int32 = 1
+                XCTAssertEqual(setsockopt(peer, Int32(IPPROTO_TCP), TCP_NODELAY, &noDelay,
+                    socklen_t(MemoryLayout<Int32>.size)), 0)
                 #if canImport(Darwin)
                 var suppressPipe: Int32 = 1
                 _ = setsockopt(peer, SOL_SOCKET, SO_NOSIGPIPE, &suppressPipe, socklen_t(MemoryLayout<Int32>.size))

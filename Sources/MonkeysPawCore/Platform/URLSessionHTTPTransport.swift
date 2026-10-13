@@ -4,8 +4,8 @@ import FoundationNetworking
 #endif
 
 /// The portable networking driver allowed in Core by §19 B1. Each operation
-/// owns an ephemeral session, so credentials, cookies and cached data cannot
-/// pass between requests. Services consume it only through HTTPTransporting.
+/// owns an ephemeral session with credentials, cookies and caching disabled.
+/// Services consume it only through HTTPTransporting.
 public struct URLSessionHTTPTransport: HTTPTransporting {
     public init() {}
 
@@ -51,7 +51,7 @@ public struct URLSessionHTTPTransport: HTTPTransporting {
     }
 }
 
-private final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let cap: Int
     private let deadline: ContinuousClock.Instant
     // Protects every mutable field against delegate, deadline and cancellation
@@ -122,7 +122,13 @@ private final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked S
 
     func finish(_ proposed: Result<HTTPResponse, HTTPTransportError>) {
         lock.lock()
-        guard result == nil else { lock.unlock(); return }
+        finishLocked(proposed)()
+    }
+
+    // Caller holds the lock. Claim the result before releasing it, then run
+    // framework calls and continuation resumption outside the lock.
+    private func finishLocked(_ proposed: Result<HTTPResponse, HTTPTransportError>) -> () -> Void {
+        guard result == nil else { lock.unlock(); return {} }
         var outcome = proposed
         if case .success = outcome, ContinuousClock.now >= deadline {
             outcome = .failure(.deadlineExceeded)
@@ -140,11 +146,29 @@ private final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked S
         body = Data()
         lock.unlock()
 
-        deadlineTask?.cancel()
-        task?.cancel()
-        // URLSession retains its delegate until invalidation completes.
-        session?.invalidateAndCancel()
-        continuation?.resume(with: outcome.mapError { $0 as Error })
+        return {
+            deadlineTask?.cancel()
+            task?.cancel()
+            // URLSession retains its delegate until invalidation completes.
+            session?.invalidateAndCancel()
+            continuation?.resume(with: outcome.mapError { $0 as Error })
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        #if canImport(FoundationNetworking)
+        // corelibs cancels on rejectProtectionSpace. With storage nil, default
+        // handling has no credential and delivers the original HTTP error.
+        completionHandler(.performDefaultHandling, nil)
+        #else
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+            completionHandler(.performDefaultHandling, nil)
+        } else {
+            // Reject credentials without retrying or discarding the HTTP body.
+            completionHandler(.rejectProtectionSpace, nil)
+        }
+        #endif
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -165,10 +189,14 @@ private final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked S
             else if response.expectedContentLength > Int64(cap) { error = .responseTooLarge }
             else { self.response = response; error = nil }
         } else { error = .invalidResponse }
-        lock.unlock()
-
-        completionHandler(error == nil ? .allow : .cancel)
-        if let error { finish(.failure(error)) }
+        if let error {
+            let complete = finishLocked(.failure(error))
+            completionHandler(.cancel)
+            complete()
+        } else {
+            lock.unlock()
+            completionHandler(.allow)
+        }
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -178,9 +206,8 @@ private final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked S
         if ContinuousClock.now >= deadline { error = .deadlineExceeded }
         else if data.count > cap - body.count { error = .responseTooLarge }
         else { body.append(data); error = nil }
-        lock.unlock()
-
-        if let error { finish(.failure(error)) }
+        if let error { finishLocked(.failure(error))() }
+        else { lock.unlock() }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -204,7 +231,6 @@ private final class HTTPTransfer: NSObject, URLSessionDataDelegate, @unchecked S
                 outcome = .success(HTTPResponse(statusCode: response.statusCode, headers: headers, body: body))
             }
         } else { outcome = .failure(.invalidResponse) }
-        lock.unlock()
-        finish(outcome)
+        finishLocked(outcome)()
     }
 }

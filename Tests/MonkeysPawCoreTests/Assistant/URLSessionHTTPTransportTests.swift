@@ -83,7 +83,9 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     func testAdvertisedOversizeCancelsBeforeCompleteBodyArrives() async throws {
         let closed = expectation(description: "Oversized length closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\na")
+            // An explicit type avoids Darwin's MIME sniffing. Send no body:
+            // refusal must happen from the advertised length alone.
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n")
             XCTAssertTrue(connection.waitForPeerClose())
             closed.fulfill()
         }
@@ -95,8 +97,9 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     func testChunkedOversizeCancelsBeforeFinalChunk() async throws {
         let closed = expectation(description: "Chunked overflow closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
-            connection.write("40\r\n" + String(repeating: "a", count: 64) + "\r\n1\r\nb\r\n")
+            connection.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+            connection.write("40\r\n" + String(repeating: "a", count: 64) + "\r\n")
+            connection.write("1\r\nb\r\n")
             XCTAssertTrue(connection.waitForPeerClose())
             closed.fulfill()
         }
@@ -119,7 +122,10 @@ final class URLSessionHTTPTransportTests: XCTestCase {
     func testUnknownLengthErrorBodyIsCappedDuringReceipt() async throws {
         let closed = expectation(description: "Unknown length overflow closed the peer")
         let server = try LoopbackHTTPServer { connection, _, _ in
-            connection.write("HTTP/1.1 500 Test\r\nConnection: close\r\n\r\n" + String(repeating: "a", count: 65))
+            connection.write("HTTP/1.1 500 Test\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+            connection.write(String(repeating: "a", count: 32))
+            connection.write(String(repeating: "a", count: 32))
+            connection.write("b")
             XCTAssertTrue(connection.waitForPeerClose())
             closed.fulfill()
         }
@@ -308,7 +314,7 @@ final class URLSessionHTTPTransportTests: XCTestCase {
         XCTAssertEqual(response.statusCode, 401)
         XCTAssertEqual(response.body, Data("auth error".utf8))
         XCTAssertEqual(server.requests.count, 1)
-        XCTAssertNil(server.requests.first?.headers["authorization"])
+        XCTAssertTrue(server.requests.allSatisfy { $0.headers["authorization"] == nil })
     }
 
     func testErrorsAndActualStderrNeverContainSecretHeadersBodiesOrURLs() async throws {
