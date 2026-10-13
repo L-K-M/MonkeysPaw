@@ -88,8 +88,9 @@ Rollout by milestone:
     that a container cannot set (Vervellum).
 - **release.yml.**
   - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
-    true. PRs touching packaging, `server/**` or the release workflow run
-    the dry-run path too. Every path first calls `ci.yml`, then checks
+    true. PRs touching packaging, `server/Dockerfile` or the release
+    workflow run the dry-run path too. Every path first calls `ci.yml`, then
+    checks
     committed versions. A real tag's numeric
     core must equal the committed `MARKETING_VERSION` and README marker;
     `python3 scripts/check-version.py --check-tag v0.1.0` enforces this.

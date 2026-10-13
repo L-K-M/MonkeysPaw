@@ -8,8 +8,8 @@ universal macOS packaging with Xcode 26.0, and tests the server and its image.
 See [§14](docs/plan/14-repository-packaging-ci-release.md) for each gate.
 
 `.github/workflows/release.yml` runs on `v*` tags, manual dispatches and PRs
-touching its workflow, packaging inputs or `server/**`. It calls CI before
-packaging. Once S20's compose smoke job lands in `ci.yml`, this existing
+touching its workflow, packaging inputs or `server/Dockerfile`. It calls CI
+before packaging. Once S20's compose smoke job lands in `ci.yml`, this existing
 `uses: ./.github/workflows/ci.yml` call also gates image publishing and GitHub
 undrafting on that job from the release commit, without another workflow edit.
 `scripts/check-version.py --check-tag <tag>` requires the tag's numeric core

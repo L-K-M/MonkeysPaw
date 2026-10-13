@@ -12,7 +12,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
-      - server/**
+      - server/Dockerfile
       - packaging/**
       - scripts/package-macos.sh
       - scripts/build.sh
