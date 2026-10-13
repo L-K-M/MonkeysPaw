@@ -95,6 +95,21 @@ final class KeychainSecretScanTests: XCTestCase {
         try checkpoint("restart after deletion")
     }
 
+    func testMissingScanRootFailsInsteadOfPassingVacuously() throws {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("mp-scan-missing-\(UUID().uuidString)")
+        XCTAssertThrowsError(try SecretScan("sentinel-\(UUID().uuidString)").matches(in: [missing]))
+    }
+
+    func testScanTreatsOnlyMissingPathsAsVanished() {
+        let missingUnderlying = NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))])
+        XCTAssertTrue(SecretScan.isVanished(CocoaError(.fileNoSuchFile)))
+        XCTAssertTrue(SecretScan.isVanished(CocoaError(.fileReadNoSuchFile)))
+        XCTAssertTrue(SecretScan.isVanished(missingUnderlying))
+        XCTAssertFalse(SecretScan.isVanished(CocoaError(.fileReadNoPermission)))
+        XCTAssertFalse(SecretScan.isVanished(NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))))
+    }
+
     func testScannerFindsRawEncodedAndNestedJSONInHiddenDirectories() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("mp-scan-calibration-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
