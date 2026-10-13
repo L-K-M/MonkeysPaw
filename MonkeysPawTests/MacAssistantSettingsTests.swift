@@ -553,6 +553,10 @@ private final class MacAssistantSettingsClient: AssistantClient, @unchecked Send
     func perform(_ request: AssistantRequest, using connection: ProviderConnection) async throws -> AssistantResponse {
         throw AssistantError.notConfigured
     }
+    func perform(_ request: AssistantRequest, using connection: ProviderConnection,
+                 deadline: ContinuousClock.Instant) async throws -> AssistantResponse {
+        throw AssistantError.notConfigured
+    }
     func listModels(using connection: ProviderConnection) async throws -> AssistantModelPage { try next() }
     func listModels(using connection: ProviderConnection, afterID: String?,
                     deadline: ContinuousClock.Instant) async throws -> AssistantModelPage { try next() }
