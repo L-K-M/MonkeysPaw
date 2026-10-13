@@ -28,7 +28,7 @@ case "$1" in
         [ "$2" = backup ]
         [ "${FAKE_BACKUP_FAILURE:-0}" = 0 ] || exit 23
         destination="$FAKE_BACKUP_DIRECTORY/${3##*/}"
-        [ ! -e "$destination" ] && [ ! -L "$destination" ] || exit 24
+        if [ -e "$destination" ] || [ -L "$destination" ]; then exit 24; fi
         printf '%s\n' snapshot > "$destination"
         printf '%s\n' "$3"
         ;;
@@ -67,25 +67,27 @@ mkdir "$fixture/backups/20260101T000000Z.db"
 ln -s manual.db "$fixture/backups/20260102T000000Z.db"
 cd "$fixture"
 bash "$checkout/scripts/backup.sh"
-[ "$(count_backups)" = 14 ] || fail 'Default retention must keep exactly 14 backups.'
-[ ! -e "$fixture/backups/20261007T000000Z.db" ] || fail 'Old backups survived retention.'
-[ -f "$fixture/backups/20261008T000000Z.db" ] || fail 'A retained backup was removed.'
+if ! [ "$(count_backups)" = 14 ]; then fail 'Default retention must keep exactly 14 backups.'; fi
+if ! [ ! -e "$fixture/backups/20261007T000000Z.db" ]; then fail 'Old backups survived retention.'; fi
+if ! [ -f "$fixture/backups/20261008T000000Z.db" ]; then fail 'A retained backup was removed.'; fi
 for name in manual.db monkeyspaw.pre-restore-example.db .monkeyspaw-backup-incomplete; do
-    [ "$(cat "$fixture/backups/$name")" = keep ] || fail 'An unrelated file was changed.'
+    if ! [ "$(cat "$fixture/backups/$name")" = keep ]; then fail 'An unrelated file was changed.'; fi
 done
-[ -d "$fixture/backups/20260101T000000Z.db" ] && [ -L "$fixture/backups/20260102T000000Z.db" ]
+if ! [ -d "$fixture/backups/20260101T000000Z.db" ]; then fail 'A non-regular backup directory was removed.'; fi
+if ! [ -L "$fixture/backups/20260102T000000Z.db" ]; then fail 'A non-regular backup symlink was removed.'; fi
 
 seed
 if FAKE_BACKUP_FAILURE=1 bash "$checkout/scripts/backup.sh"; then fail 'Failed backup returned success.'; fi
-[ "$(count_backups)" = 21 ] || fail 'Failed backup ran retention.'
+if ! [ "$(count_backups)" = 21 ]; then fail 'Failed backup ran retention.'; fi
 if bash "$checkout/scripts/backup.sh"; then fail 'Occupied backup returned success.'; fi
-[ "$(count_backups)" = 21 ] || fail 'Occupied backup ran retention.'
+if ! [ "$(count_backups)" = 21 ]; then fail 'Occupied backup ran retention.'; fi
 
 for value in 0 01 invalid 9999999999; do
     if BACKUP_KEEP="$value" bash "$checkout/scripts/backup.sh"; then fail 'Invalid retention returned success.'; fi
-    [ "$(count_backups)" = 21 ] || fail 'Invalid retention removed backups.'
+    if ! [ "$(count_backups)" = 21 ]; then fail 'Invalid retention removed backups.'; fi
 done
 FAKE_UTC_TIMESTAMP=20261022T000000Z BACKUP_KEEP=2 bash "$checkout/scripts/backup.sh"
-[ "$(count_backups)" = 2 ] || fail 'Custom retention did not keep two backups.'
-[ -f "$fixture/backups/20261021T000000Z.db" ] && [ -f "$fixture/backups/20261022T000000Z.db" ]
+if ! [ "$(count_backups)" = 2 ]; then fail 'Custom retention did not keep two backups.'; fi
+if ! [ -f "$fixture/backups/20261021T000000Z.db" ]; then fail 'Custom retention removed the previous newest backup.'; fi
+if ! [ -f "$fixture/backups/20261022T000000Z.db" ]; then fail 'Custom retention removed the new backup.'; fi
 printf '%s\n' 'Backup script tests passed.'

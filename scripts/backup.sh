@@ -28,13 +28,13 @@ docker compose exec -T monkeyspaw-server sh -eu -c '
     set -- [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.db
     count=0
     for file do
-        [ -f "$file" ] && [ ! -L "$file" ] || continue
+        if [ ! -f "$file" ] || [ -L "$file" ]; then continue; fi
         count=$((count + 1))
     done
     # The fixed-width UTC names sort oldest first in the C locale.
     for file do
         [ "$count" -gt "$keep" ] || break
-        [ -f "$file" ] && [ ! -L "$file" ] || continue
+        if [ ! -f "$file" ] || [ -L "$file" ]; then continue; fi
         rm -- "$file"
         count=$((count - 1))
     done
