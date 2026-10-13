@@ -11,6 +11,8 @@ from pathlib import Path
 SMOKE = Path(__file__).resolve().parents[1] / "compose-smoke.sh"
 PASSWORD = 'smoke-"password\\$# café  '
 TOKEN = "A" * 43
+# A non-default name proves the optional ADMIN_USERNAME argument reaches login.
+USERNAME = "owner"
 FAKE_CURL = r'''#!/usr/bin/env python3
 import json
 import os
@@ -66,9 +68,9 @@ case = os.environ["FAKE_CASE"]
 if step == 0:
     response = {"status": "ok", "version": "dev"}
 elif step == 1:
-    assert body == {"username": "admin", "password": os.environ["FAKE_PASSWORD"], "device_name": "Compose smoke CI"}
+    assert body == {"username": os.environ["FAKE_USERNAME"], "password": os.environ["FAKE_PASSWORD"], "device_name": "Compose smoke CI"}
     response = {"device_token": "A" * 43, "user": {
-        "id": user_id, "username": "admin", "display_name": None, "account_kind": "admin",
+        "id": user_id, "username": os.environ["FAKE_USERNAME"], "display_name": None, "account_kind": "admin",
         "created_at": "2026-10-13T00:00:00.000Z", "disabled_at": None,
     }}
     if case == "bad_login":
@@ -148,11 +150,11 @@ class ComposeSmokeTests(unittest.TestCase):
             temporary.mkdir()
             state = work / "state.json"
             env = {**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
-                   "TMPDIR": str(temporary), "FAKE_PASSWORD": PASSWORD,
+                   "TMPDIR": str(temporary), "FAKE_PASSWORD": PASSWORD, "FAKE_USERNAME": USERNAME,
                    "FAKE_STATE": str(state), "FAKE_CASE": case,
                    "http_proxy": "http://proxy.invalid:9999", "https_proxy": "http://proxy.invalid:9999",
                    "all_proxy": "http://proxy.invalid:9999", "no_proxy": "", "NO_PROXY": ""}
-            result = subprocess.run(["bash", "-x", str(SMOKE), "http://127.0.0.1:8790", str(password)],
+            result = subprocess.run(["bash", "-x", str(SMOKE), "http://127.0.0.1:8790", str(password), USERNAME],
                                     env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertNotIn(PASSWORD, result.stdout + result.stderr)
             self.assertNotIn(TOKEN, result.stdout + result.stderr)
