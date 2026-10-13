@@ -45,7 +45,7 @@ class SchemaValidatorTest {
         // Every emitted schema requires at least one valid and one invalid DTO fixture.
         assertEquals(validator.names, valid)
         assertEquals(validator.names, invalid)
-        println("Schema-only conformance: ${cases.size} cases, ${validator.names.size} local schemas; typed K10 coverage remains pending.")
+        println("Independent schema conformance: ${cases.size} cases, ${validator.names.size} local schemas.")
     }
 
     @Test
