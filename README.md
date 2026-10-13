@@ -73,7 +73,7 @@ sudo install -d -m 0700 -o 1000 -g 1000 ./config/monkeyspaw
 
 Edit the private `.env` before starting. Supply `MONKEYSPAW_ADMIN_PASSWORD`
 with at least 12 Unicode scalars and at most 72 UTF-8 bytes. Quote passwords
-using Compose's `.env` syntax, especially values containing `$` or `#`.
+using Compose's `.env` syntax; use single quotes for literal `$` or `#`.
 The username defaults to `admin`. Compose exposes the password to the server
 only as `/run/secrets/admin_password`, owned by `PUID`/`PGID` with mode 0400;
 `MONKEYSPAW_ADMIN_PASSWORD_FILE` points there. The password is absent from
@@ -110,6 +110,9 @@ docker compose --profile tls config --quiet
 docker compose --profile tls up -d --build --wait --wait-timeout 120
 curl --fail https://prompts.example.com/api/health
 ```
+
+Caddy refuses startup with UID 0 or a non-HTTPS public URL. The check runs
+only when Caddy starts, so default non-TLS Compose configuration still works.
 
 [Caddyfile.example](deploy/caddy/Caddyfile.example) obtains and renews
 certificates through [Caddy's automatic HTTPS](https://caddyserver.com/docs/automatic-https).

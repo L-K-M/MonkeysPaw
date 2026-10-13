@@ -56,6 +56,20 @@ services:
     environment:
       TZ: ${TZ:-Etc/UTC}
       MONKEYSPAW_PUBLIC_URL: ${MONKEYSPAW_PUBLIC_URL:-http://localhost:8790}
+    # Validate only when the profile runs, so non-TLS config needs no domain.
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        if [ "$$(id -u)" -eq 0 ]; then
+          printf '%s\n' 'Refusing UID 0; set PUID to a non-root UID.' >&2
+          exit 1
+        fi
+        case "$$MONKEYSPAW_PUBLIC_URL" in
+          https://*) ;;
+          *) printf '%s\n' 'The tls profile requires an HTTPS MONKEYSPAW_PUBLIC_URL.' >&2; exit 1 ;;
+        esac
+        umask 077
+        exec /usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     depends_on:
       monkeyspaw-server:
         condition: service_healthy

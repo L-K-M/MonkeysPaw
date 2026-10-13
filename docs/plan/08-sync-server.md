@@ -424,6 +424,8 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     private host binds under `${CONFIG_DIR:-./config}/caddy/{data,config}`
     for certificates and state. An isolated network namespace allows its
     non-root process to bind 80/443 without added capabilities.
+    Its startup guard rejects UID 0 and non-HTTPS public URLs, with umask 077;
+    the guard runs only when Caddy starts, not during Compose interpolation.
     The dedicated bridge defaults to `172.30.80.0/29`, with server at
     `172.30.80.2` and Caddy at `172.30.80.3`; trust only the Caddy peer
     (`172.30.80.3/32`), never all private networks. Fixed addresses keep
