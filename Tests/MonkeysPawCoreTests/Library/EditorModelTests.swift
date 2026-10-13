@@ -18,7 +18,8 @@ final class EditorModelTests: XCTestCase {
                 let artifact = LlmArtifact(title: "Candidate", description: "", tags: [], fields: [],
                     body: "Generated", notes: "")
                 guard case .ready(let content) = ArtifactMerge.write(artifact, id: id) else {
-                    return XCTFail("Expected a crafted matching candidate.")
+                    XCTFail("Expected a crafted matching candidate.")
+                    continue
                 }
                 let path = PromptCreation.relativePath(title: content.document.frontMatter.title, now: e.h.clock.date)
                 XCTAssertEqual(selection, LibraryPromptSelection(identity: PromptIdentity(path: path, id: id),
@@ -39,7 +40,8 @@ final class EditorModelTests: XCTestCase {
                 e.settle()
                 XCTAssertEqual(replies.count, 1)
                 guard case .failed(.editing(.library(.identityMismatch))) = replies.first else {
-                    return XCTFail("The matching decision must run its checked save.")
+                    XCTFail("The matching decision must run its checked save.")
+                    continue
                 }
                 XCTAssertNil(e.model.state.pendingDecision)
                 XCTAssertTrue(e.model.state.queuedActions.isEmpty)

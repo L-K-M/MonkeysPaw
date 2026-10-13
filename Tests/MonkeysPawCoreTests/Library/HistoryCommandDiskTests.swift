@@ -61,7 +61,10 @@ final class HistoryCommandDiskTests: XCTestCase {
             let snapshot = model.assistantSnapshot
             let merge = improve ? ArtifactMerge.improve(artifact, original: try XCTUnwrap(snapshot).document)
                 : ArtifactMerge.write(artifact, id: id)
-            guard case .ready(let content) = merge else { return XCTFail("Expected ready bytes.") }
+            guard case .ready(let content) = merge else {
+                XCTFail("Expected ready bytes.")
+                continue
+            }
             let candidate = AssistantCandidate(content: content,
                 diff: try ArtifactDiff.compare(original: snapshot?.document, candidate: content),
                 context: AssistantContext(libraryID: UUID(), profile: profile, editor: snapshot), mutationAccess: .currentScope)

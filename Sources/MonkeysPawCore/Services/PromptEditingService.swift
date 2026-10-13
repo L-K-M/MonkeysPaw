@@ -220,14 +220,12 @@ public final class PromptEditingService: @unchecked Sendable {
                 let result = try library.acceptForEditing(prepared, source: source, destination: destination)
                 if let entry = result.committedEntry {
                     let path = destination == .improve ? (source?.relativePath.string ?? entry.relativePath) : entry.relativePath
-                    if destination != .improve {
-                        let snapshot = index.editingSnapshot(at: path)
-                        // A newer publication may describe the destination before creation.
-                        // Advance the baseline only after verifying our committed stamp again.
-                        if snapshot.version > version,
-                           case .loaded(let loaded) = checkedLoad(at: path), loaded.stamp == entry.stamp {
-                            version = snapshot.version
-                        }
+                    let snapshot = index.editingSnapshot(at: path)
+                    // A newer publication may describe the path before our write.
+                    // Advance the baseline only after verifying the committed stamp.
+                    if snapshot.version > version,
+                       case .loaded(let loaded) = checkedLoad(at: path), loaded.stamp == entry.stamp {
+                        version = snapshot.version
                     }
                     index.acceptCommand(entry, at: path, expectedVersion: version,
                         expectedSourceStamp: destination == .improve ? source?.stamp : nil)
@@ -251,9 +249,11 @@ public final class PromptEditingService: @unchecked Sendable {
                 if let source, path(for: source.session) != nil {
                     let file: CommittedFile
                     if destination == .improve, let commit = outcome.committed { file = .present(commit.entry.stamp) }
-                    else if destination == .improve, case .conflict(.deleted) = outcome { file = .missing }
+                    else if case .conflict(.deleted) = outcome { file = .missing }
+                    else if case .conflict(.modified(let stamp)) = outcome { file = .present(stamp) }
                     else { file = .unchanged }
-                    completeWrite(file, session: source.session) { completion(outcome) }
+                    completeWrite(file, session: source.session,
+                        supersedingStamp: destination == .improve ? outcome.committed?.entry.stamp : nil) { completion(outcome) }
                 } else { completion(outcome) }
             }
         }
@@ -478,6 +478,7 @@ public final class PromptEditingService: @unchecked Sendable {
     }
 
     private func completeWrite(_ file: CommittedFile, session: PromptEditingSession,
+                               supersedingStamp: FileStamp? = nil,
                                completion: () -> Void) {
         let deferred = locked { () -> [PromptExternalChange] in
             guard var state = sessions[session] else { return [] }
@@ -492,7 +493,13 @@ public final class PromptEditingService: @unchecked Sendable {
             }
             var changes: [PromptExternalChange] = []
             if state.savesInFlight == 0 {
-                changes = state.deferredChanges.filter { change in
+                changes = state.deferredChanges
+                // A verified Assistant publication supersedes earlier notifications.
+                // Later external publications must still reach the editor.
+                if let supersedingStamp, let ownChange = changes.lastIndex(where: { $0.newStamp == supersedingStamp }) {
+                    changes.removeFirst(ownChange + 1)
+                }
+                changes = changes.filter { change in
                     !state.committedStamps.contains { $0 == change.newStamp }
                 }
                 state.deferredChanges = []

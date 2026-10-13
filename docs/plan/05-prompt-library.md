@@ -648,9 +648,14 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   modification remains a modification. While a save is in flight,
   notifications wait for its result so its own committed stamp can be
   excluded; subsequent external stamps and deletion are still reported.
-  Assistant creation rechecks its committed destination on the worker when a
-  newer index publication races creation. A verified commit reaches the index;
+  Assistant acceptance rechecks its committed destination on the worker when a
+  newer index publication races its write. A verified commit reaches the index;
   a later replacement or deletion is preserved.
+  Improve uses the same reconciliation when an earlier index publication
+  describes the source before its committed write. Its verified publication
+  supersedes earlier deferred notifications; later external changes still reach
+  the editor. Source conflicts update the session's notification baseline with
+  the known modified stamp or deletion.
   A checked missing load supersedes earlier parked publications, while later
   recreations survive. Reload replies cannot rewind newer observed state.
   If a publication races a missing probe, load checks the path once more;
@@ -688,8 +693,9 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   token counts. External changes cannot inherit a mismatched head record.
   History listings omit a revision's corrupt or unsupported provenance while
   retaining its bytes and the other revisions. Explicit provenance reads fail
-  with `invalidProvenance`; file-read errors still fail the listing. A corrupt
-  head record never blocks editing: the next committed save replaces or clears
+  with `invalidProvenance`; revision-byte and provenance file-read errors still
+  fail the listing. A corrupt head record never blocks editing: the next
+  committed save replaces or clears
   it and reports a provenance warning. Restore likewise commits readable
   revision content with an explicit provenance warning when that revision's
   record is corrupt or unsupported; provenance I/O errors still prevent restore.

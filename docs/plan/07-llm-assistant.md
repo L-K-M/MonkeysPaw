@@ -328,8 +328,8 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   and checked disk stamp, plus the profile, library graph and access state.
   Review and improve require a validated, writable, nonprivate buffer. Write
   creates a new prompt from the brief alone and does not check an open document's
-  health or privacy. New requests and diff preparation refuse while editor I/O,
-  queued or pending guard decisions or unresolved disk conflicts remain.
+  health or privacy. New provider requests and diff preparation refuse while
+  editor I/O, queued or pending guard decisions or unresolved disk conflicts remain.
   Requests send template source for review and improve, never the rendered
   preview.
   Later buffer or disk changes keep the generated artifact but withdraw its
@@ -361,7 +361,7 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   Source disk modification/deletion opens §11.7's existing conflict dialog,
   retaining the editor draft. A buffer change requires a fresh Show diff.
   If verification sees a replaced or missing newly created prompt, acceptance
-  reports failure and retains the original editor (§5.5).
+  reports `failed` and retains the original editor (§5.5).
   Write and private copy first use §11.7's Save / Discard / Cancel guard for
   unsaved edits;
   Save or Discard changing that snapshot also requires a fresh preview.
@@ -373,6 +373,9 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   and completes exactly once.
   Publication already started may finish; newer buffer edits stay dirty and
   an obsolete Assistant token cannot hide the authoritative editor result.
+  A same-session buffer change invalidates the save permit but keeps an
+  in-flight acceptance pending until its actual outcome arrives. Both models
+  adopt a committed outcome; they never replace it with a buffer conflict.
   The typed outcome is `saved`, `conflict`, `failed`, or
   `committedWithProvenanceWarning`; both committed outcomes carry the saved
   entry, stamp and history-maintenance warning. `AssistantState.acceptanceOutcome`
@@ -426,8 +429,8 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   invalidates drafts; the server still enforces permissions independently
   ([§19 B32](19-m4-m5-decisions.md)).
   A viewer's accepted copy is a fresh private prompt in the library root,
-  retaining the previewed copy ID. Group editor/owner writes create beside
-  the open group prompt; improve retains its path and ID. Access is rechecked
+  retaining the previewed candidate's fresh ID. Group editor/owner writes create
+  beside the open group prompt; improve retains its path and ID. Access is rechecked
   before accepting and changes invalidate queued publication.
 
 ### 7.4 Shipped system prompts (outline)

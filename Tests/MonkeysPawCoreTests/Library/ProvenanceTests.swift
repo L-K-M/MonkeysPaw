@@ -6,6 +6,11 @@ final class ProvenanceTests: XCTestCase {
     private let metadata = PromptProvenance(timestamp: Date(timeIntervalSince1970: 1.234),
         providerHost: "example.com", model: "model-1", usage: AssistantTokenUsage(inputTokens: 11, outputTokens: 7))
 
+    private func origin(_ seconds: Double) -> PromptProvenance {
+        PromptProvenance(timestamp: Date(timeIntervalSince1970: seconds), providerHost: "example.com", model: "model-1",
+            usage: AssistantTokenUsage(inputTokens: 11, outputTokens: 7))
+    }
+
     private func save(_ h: PromptEditingHarness, _ source: String, stamp: FileStamp? = nil,
                       provenance: PromptProvenance? = nil) throws -> PromptSaveOutcome {
         try h.library.saveForEditing(PromptCodec.parse(source, filename: "a.md"), at: "a.md",
@@ -46,9 +51,9 @@ final class ProvenanceTests: XCTestCase {
 
     func testHistoryListingOmitsCorruptSidecarAndRestoreCommitsWithProvenanceWarning() throws {
         let h = PromptEditingHarness()
-        var entry = try XCTUnwrap(save(h, "First", provenance: metadata).committedEntry)
-        for source in ["Second", "Third", "Current"] {
-            entry = try XCTUnwrap(save(h, source, stamp: entry.stamp, provenance: metadata).committedEntry)
+        var entry = try XCTUnwrap(save(h, "First", provenance: origin(1)).committedEntry)
+        for (offset, source) in ["Second", "Third", "Current"].enumerated() {
+            entry = try XCTUnwrap(save(h, source, stamp: entry.stamp, provenance: origin(Double(offset + 2))).committedEntry)
         }
         let revisions = try h.library.history(for: entry.identity)
         XCTAssertEqual(revisions.count, 3)
@@ -61,7 +66,7 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertEqual(snapshots.map(\.revision), revisions)
         XCTAssertEqual(snapshots.compactMap(\.source).map { PromptCodec.parse($0, filename: "a.md").body },
                        ["Third", "Second", "First"])
-        XCTAssertEqual(snapshots.map(\.provenance), [metadata, nil, metadata])
+        XCTAssertEqual(snapshots.map(\.provenance), [origin(3), nil, origin(1)])
         XCTAssertThrowsError(try h.library.provenance(for: corrupt)) {
             XCTAssertEqual($0 as? LibraryError, .invalidProvenance)
         }
@@ -114,17 +119,17 @@ final class ProvenanceTests: XCTestCase {
 
     func testAssignedMovesKeepHeadAndRevisionProvenanceWithoutMigration() throws {
         let h = PromptEditingHarness()
-        let first = try XCTUnwrap(save(h, "First", provenance: metadata).committedEntry)
-        let second = try XCTUnwrap(save(h, "Second", stamp: first.stamp, provenance: metadata).committedEntry)
+        let first = try XCTUnwrap(save(h, "First", provenance: origin(1)).committedEntry)
+        let second = try XCTUnwrap(save(h, "Second", stamp: first.stamp, provenance: origin(2)).committedEntry)
         let before = try h.data.listFiles()
         let renamed = try h.library.move(from: "a.md", to: "b.md")
         let moved = try h.library.move(from: "b.md", to: "folder/b.md")
         XCTAssertEqual(moved.identity, first.identity)
         XCTAssertEqual(renamed.identity, first.identity)
         XCTAssertEqual(try h.data.listFiles(), before)
-        XCTAssertEqual(try h.library.provenance(at: moved.relativePath), metadata)
+        XCTAssertEqual(try h.library.provenance(at: moved.relativePath), origin(2))
         let revision = try XCTUnwrap(h.library.history(for: moved.identity).first)
-        XCTAssertEqual(try h.library.provenance(for: revision), metadata)
+        XCTAssertEqual(try h.library.provenance(for: revision), origin(1))
         try h.library.delete(at: moved.relativePath, expectedStamp: second.stamp)
         XCTAssertEqual(try h.data.listFiles(), before)
     }
@@ -145,6 +150,22 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertEqual(sidecars.count, Limits.historyCapPerPrompt)
         XCTAssertEqual(try h.data.text(at: "settings.json"), "Keep")
         XCTAssertEqual(try h.data.text(at: directory + "/unrecognized.json"), "Keep too")
+    }
+
+    func testHistoryListingIgnoresOrphanedSidecarsWithoutReadingThem() throws {
+        let h = PromptEditingHarness()
+        let first = try XCTUnwrap(save(h, "First", provenance: metadata).committedEntry)
+        let second = try XCTUnwrap(save(h, "Second", stamp: first.stamp).committedEntry)
+        let revision = try XCTUnwrap(h.library.history(for: second.identity).first)
+        let path = "history/" + (try second.identity.storageKey) + "/" + revision.filename
+        try h.data.delete(at: path)
+        XCTAssertNotNil(try h.data.stamp(at: path + ".json"))
+        h.data.onRead = { read in if read == path + ".json" { XCTFail("Listings must ignore orphaned sidecars.") } }
+
+        XCTAssertTrue(try h.library.historyForEditing(second.identity, filename: "a.md").isEmpty)
+        XCTAssertThrowsError(try h.library.provenance(for: revision)) {
+            XCTAssertEqual($0 as? LibraryError, .revisionNotFound)
+        }
     }
 
     func testHeadAndArchiveWriteFailuresAreCommittedWarnings() throws {

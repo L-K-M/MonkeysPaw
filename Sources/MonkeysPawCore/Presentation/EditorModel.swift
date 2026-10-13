@@ -898,13 +898,14 @@ extension EditorModel {
                          permit: AssistantSavePermit, validate: @escaping () -> AssistantSaveRefusal?,
                          completion: @escaping (AssistantAcceptanceOutcome) -> Void) {
         guard isActive else { return main.run { completion(.failed(.inactive)) } }
-        guard !isWriting, state.status != .loading, assistantPermit == nil else {
+        guard state.conflict == nil, !isWriting, state.status != .loading, assistantPermit == nil else {
             return main.run { completion(.failed(.editorBusy)) }
         }
         assistantPermit = permit
         let generation = self.generation
         let start: (EditorModel) -> Void = { model in
             guard model.generation == generation else {
+                permit.invalidate(.failed(.staleContext))
                 model.releaseAssistantPermit(permit)
                 return completion(.failed(.staleContext))
             }
@@ -914,7 +915,7 @@ extension EditorModel {
                 model.releaseAssistantPermit(permit)
                 return completion(refusal.outcome)
             }
-            guard !model.isWriting, model.state.status != .loading else {
+            guard model.state.conflict == nil, !model.isWriting, model.state.status != .loading else {
                 permit.invalidate(.failed(.editorBusy))
                 model.releaseAssistantPermit(permit)
                 return completion(.failed(.editorBusy))

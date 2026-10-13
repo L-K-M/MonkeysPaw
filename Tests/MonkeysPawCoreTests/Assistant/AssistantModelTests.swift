@@ -109,7 +109,8 @@ final class AssistantModelTests: XCTestCase {
         try await h.phase(.saved)
         h.ui { h.model.showDiff() }
         try await h.phase(.ready)
-        XCTAssertNotEqual(first, h.model.state.candidate?.content.document.frontMatter.id)
+        let second = try XCTUnwrap(h.model.state.candidate?.content.document.frontMatter.id)
+        XCTAssertNotEqual(first, second)
     }
 
     func testWritePhasesUsageElapsedAndAcceptIntentUnderInlineAndQueuedMain() async throws {

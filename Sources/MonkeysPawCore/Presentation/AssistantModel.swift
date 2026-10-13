@@ -106,14 +106,14 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         } else {
             cancelledGuard = cancelAcceptanceGuard
             cancelAcceptanceGuard = nil
-            if savingPermit != nil {
-                savingPermit?.invalidate(.conflict(.changedBuffer))
-                savingPermit = nil
-                state.acceptanceOutcome = .conflict(.changedBuffer)
+            if let savingPermit {
+                savingPermit.invalidate(.conflict(.changedBuffer))
+                // Keep this attempt until the worker reports whether it committed.
+            } else {
+                state.isAccepting = false
+                acceptanceID = nil
             }
             state.candidate = nil
-            state.isAccepting = false
-            acceptanceID = nil
             state.selectedFindings = []
             state.isStale = true
             if state.phase == .ready || state.phase == .saved { state.phase = .draft }

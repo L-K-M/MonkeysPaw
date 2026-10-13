@@ -67,6 +67,89 @@ final class AssistantAcceptanceServiceTests: XCTestCase {
         }
     }
 
+    func testImproveReconcilesIndexDeletionPublishedBeforeCommit() throws {
+        for queued in [false, true] {
+            let e = EditorHarness(heldWork: true, queuedMain: queued)
+            try e.open("Original")
+            let candidate = try prepared(e, improve: true)
+            e.h.libraryFiles.beforeWrite = { path in
+                guard path == "a.md" else { return }
+                e.h.libraryFiles.beforeWrite = nil
+                e.h.index.acceptCommand(nil, at: path, expectedVersion: e.h.index.publicationVersion)
+            }
+            let outcome = try accept(e, candidate, destination: .improve)
+            let entry = try XCTUnwrap(outcome.committed?.entry)
+
+            XCTAssertEqual(try e.h.files.read(at: "a.md"), candidate.content.canonicalBytes)
+            XCTAssertEqual(e.h.index.cachedEntry(at: "a.md")?.stamp, entry.stamp,
+                "A pre-commit index deletion cannot hide the committed improve.")
+        }
+    }
+
+    func testImproveReportsCommitWithoutReplacingNewerIndexDeletionOrReplacement() throws {
+        for deleted in [false, true] {
+            let e = EditorHarness(heldWork: true, queuedMain: true)
+            try e.open("Original")
+            let candidate = try prepared(e, improve: true)
+            var newer: LibraryEntry?
+            e.h.data.onWrite = { record in
+                guard record.hasSuffix("/head.json") else { return }
+                e.h.data.onWrite = nil
+                do {
+                    if deleted { try e.h.files.delete(at: "a.md") }
+                    else {
+                        try e.h.files.put("Newer replacement", at: "a.md")
+                        newer = LibraryEntry(path: "a.md", document: PromptCodec.parse("Newer replacement", filename: "a.md"),
+                            stamp: try XCTUnwrap(e.h.files.stamp(at: "a.md")))
+                    }
+                    e.h.index.acceptCommand(newer, at: "a.md", expectedVersion: e.h.index.publicationVersion)
+                } catch { XCTFail("Could not publish the newer test state.") }
+            }
+            let outcome = try accept(e, candidate, destination: .improve)
+
+            XCTAssertNotNil(outcome.committed, "A later publication cannot turn a committed save into failure.")
+            if deleted { XCTAssertNil(e.h.index.cachedEntry(at: "a.md")) }
+            else {
+                let entry = try XCTUnwrap(newer)
+                XCTAssertEqual(e.h.index.cachedEntry(at: "a.md")?.stamp, entry.stamp)
+                XCTAssertEqual(try e.h.files.text(at: "a.md"), "Newer replacement")
+            }
+        }
+    }
+
+    func testSourceConflictUpdatesSessionNotificationBaselineForEveryDestination() throws {
+        for destination in [AssistantSaveDestination.newPrompt, .improve, .privateCopy] {
+            for deleted in [false, true] {
+                let e = EditorHarness(heldWork: true, queuedMain: true)
+                var changes: [PromptExternalChange] = []
+                let (session, loaded) = try e.h.open("Original", changes: { changes.append($0) })
+                let source = AssistantEditorSnapshot(source: try XCTUnwrap(loaded.source), relativePath: RelativePath("a.md"),
+                    revision: 0, session: session, stamp: loaded.stamp)
+                let candidate = try prepared(e)
+                var outcome: AssistantAcceptanceOutcome?
+                e.ui { e.h.editor.accept(candidate, source: source, destination: destination) { outcome = $0 } }
+                if deleted { try e.h.files.delete(at: "a.md") }
+                else { try e.h.files.put("Modified", at: "a.md") }
+                e.settle()
+                if deleted {
+                    guard case .conflict(.deleted) = outcome else { XCTFail("Expected a source deletion."); continue }
+                    try e.h.files.put("Recreated", at: "a.md")
+                } else {
+                    guard case .conflict(.modified(let stamp)) = outcome else { XCTFail("Expected a source modification."); continue }
+                    XCTAssertEqual(stamp, try e.h.files.stamp(at: "a.md"))
+                }
+                try e.h.index.apply(LibraryChangeSet(modified: ["a.md"]))
+                e.settle()
+
+                if deleted {
+                    XCTAssertEqual(changes.map(\.kind), [.recreated], "A known deletion makes the next incarnation a recreation.")
+                } else { XCTAssertTrue(changes.isEmpty, "The conflict already reported this exact modified stamp.") }
+                XCTAssertNil(try e.h.files.stamp(at: "Candidate.md"))
+                XCTAssertTrue(try e.h.data.listFiles().isEmpty)
+            }
+        }
+    }
+
     func testStaleOrDeletedSourceProducesConflictForEveryDestinationWithoutAppDataWrites() throws {
         for destination in [AssistantSaveDestination.newPrompt, .improve, .privateCopy] {
             for deleted in [false, true] {

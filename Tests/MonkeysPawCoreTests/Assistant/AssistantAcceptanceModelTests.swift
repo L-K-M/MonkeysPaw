@@ -37,6 +37,9 @@ final class AssistantAcceptanceHarness {
             if await transport.snapshot().count == 1 { break }
             try await Task.sleep(for: .milliseconds(5))
         }
+        let requests = await transport.snapshot()
+        XCTAssertEqual(requests.count, 1, "Assistant must issue exactly one request before its response is released.")
+        guard requests.count == 1 else { throw EditingTestError.unexpectedOutcome }
         let artifact = ["title": "Candidate", "description": "", "tags": [], "fields": [], "body": body, "notes": notes] as [String: Any]
         let text = try AssistantOutputFixtures.json(artifact)
         await transport.release(HTTPResponse(statusCode: 200, body: try JSONSerialization.data(withJSONObject: [
@@ -81,7 +84,8 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                     let first = try XCTUnwrap(firstOutcome?.committed?.entry)
                     if provenanceWarning {
                         guard case .committedWithProvenanceWarning = firstOutcome else {
-                            return XCTFail("Expected a committed provenance warning.")
+                            XCTFail("Expected a committed provenance warning.")
+                            continue
                         }
                     }
                     h.editor.h.dataFiles.beforeWrite = nil
@@ -113,7 +117,8 @@ final class AssistantAcceptanceModelTests: XCTestCase {
         for held in [false, true] {
             for queued in [false, true] {
                 let h = try AssistantAcceptanceHarness(held: held, queued: queued)
-                h.model.onChange = { XCTAssertTrue(h.e.h.marker.isUI) }
+                let marker = h.e.h.marker
+                h.model.onChange = { XCTAssertTrue(marker.isUI) }
                 try await h.ready()
                 let candidate = try XCTUnwrap(h.model.state.candidate)
                 let result = try h.accept()
@@ -125,7 +130,10 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 XCTAssertFalse(h.e.model.state.isDirty)
                 XCTAssertEqual(h.e.model.state.stamp, commit.entry.stamp)
                 XCTAssertEqual(h.model.state.phase, .saved)
-                guard case .saved = h.model.state.acceptanceOutcome else { return XCTFail("Missing saved model outcome.") }
+                guard case .saved = h.model.state.acceptanceOutcome else {
+                    XCTFail("Missing saved model outcome.")
+                    continue
+                }
                 XCTAssertEqual(try h.e.h.library.provenance(at: commit.entry.relativePath)?.usage,
                                AssistantTokenUsage(inputTokens: 11, outputTokens: 7))
             }
@@ -179,16 +187,25 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             else { try h.e.h.files.put("Newer disk", at: "a.md") }
             h.e.settle()
             if deleted {
-                guard case .conflict(.deleted) = result else { return XCTFail("Expected deleted outcome.") }
+                guard case .conflict(.deleted) = result else {
+                    XCTFail("Expected deleted outcome.")
+                    continue
+                }
                 XCTAssertEqual(h.e.model.state.conflict?.kind, .deleted)
             } else {
-                guard case .conflict(.modified(let stamp)) = result else { return XCTFail("Expected stale-file outcome.") }
+                guard case .conflict(.modified(let stamp)) = result else {
+                    XCTFail("Expected stale-file outcome.")
+                    continue
+                }
                 XCTAssertEqual(stamp, try h.e.h.files.stamp(at: "a.md"))
                 XCTAssertEqual(h.e.model.state.conflict?.theirsSource, "Newer disk")
             }
             XCTAssertEqual(h.e.model.state.source, "Original")
             XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
-            guard case .conflict = h.model.state.acceptanceOutcome else { return XCTFail("Missing conflict model outcome.") }
+            guard case .conflict = h.model.state.acceptanceOutcome else {
+                XCTFail("Missing conflict model outcome.")
+                continue
+            }
             XCTAssertFalse(h.model.canAccept)
         }
     }
@@ -208,7 +225,8 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 catch { XCTFail("Could not replace the new test prompt.") }
             }
             guard case .failed(.editing(.library(.conflict))) = try h.accept() else {
-                return XCTFail("A destination replacement cannot open the original's conflict dialog.")
+                XCTFail("A destination replacement cannot open the original's conflict dialog.")
+                continue
             }
             XCTAssertEqual(h.e.model.state.prompt, selection)
             XCTAssertEqual(h.e.model.state.stamp, stamp)
@@ -263,7 +281,10 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 }
             }
             h.e.settle()
-            guard case .failed(let failure) = result else { return XCTFail("Expected a retired acceptance outcome.") }
+            guard case .failed(let failure) = result else {
+                XCTFail("Expected a retired acceptance outcome.")
+                continue
+            }
             switch change {
             case .cancel, .close, .reject: XCTAssertEqual(failure, .cancelled)
             case .library, .profile, .access: XCTAssertEqual(failure, .staleContext)
@@ -322,10 +343,14 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             XCTAssertEqual(h.model.state.phase, .saved)
             if provenanceFailure {
                 guard case .committedWithProvenanceWarning = h.model.state.acceptanceOutcome else {
-                    return XCTFail("Missing committed warning in AssistantModel.")
+                    XCTFail("Missing committed warning in AssistantModel.")
+                    continue
                 }
             } else {
-                guard case .saved = h.model.state.acceptanceOutcome else { return XCTFail("Missing saved history warning.") }
+                guard case .saved = h.model.state.acceptanceOutcome else {
+                    XCTFail("Missing saved history warning.")
+                    continue
+                }
             }
         }
     }
@@ -337,12 +362,18 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             if historyFailure {
                 h.e.h.dataFiles.beforeWrite = { path in if path.hasSuffix(".md") { throw FileStoreError.ioFailure } }
             } else { h.e.h.files.failNextWrite = true }
-            guard case .failed(.editing(.fileStore(.ioFailure))) = try h.accept() else { return XCTFail("Expected typed save failure.") }
+            guard case .failed(.editing(.fileStore(.ioFailure))) = try h.accept() else {
+                XCTFail("Expected typed save failure.")
+                continue
+            }
             XCTAssertEqual(h.e.model.state.source, "Original")
             XCTAssertEqual(try h.e.h.files.text(at: "a.md"), "Original")
             XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
             XCTAssertEqual(h.model.state.phase, .failed)
-            guard case .failed = h.model.state.acceptanceOutcome else { return XCTFail("Missing failed outcome.") }
+            guard case .failed = h.model.state.acceptanceOutcome else {
+                XCTFail("Missing failed outcome.")
+                continue
+            }
         }
     }
 
@@ -395,11 +426,17 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 try h.e.decide(decision)
                 h.e.settle()
                 if decision == .cancel {
-                    guard case .failed(.cancelled) = result else { return XCTFail("Expected cancelled guard.") }
+                    guard case .failed(.cancelled) = result else {
+                        XCTFail("Expected cancelled guard.")
+                        continue
+                    }
                     XCTAssertEqual(h.e.model.state.source, "Unsaved")
                     XCTAssertTrue(try h.e.h.data.listFiles().isEmpty)
                 } else {
-                    guard case .conflict(.changedBuffer) = result else { return XCTFail("Save/discard requires a fresh preview.") }
+                    guard case .conflict(.changedBuffer) = result else {
+                        XCTFail("Save/discard requires a fresh preview.")
+                        continue
+                    }
                 }
                 XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
                 let expected = decision == .save ? try XCTUnwrap(h.e.model.state.source) : "Original"
@@ -426,7 +463,10 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 }
                 h.e.settle()
                 XCTAssertEqual(replies, 1)
-                guard case .failed(let failure) = result else { return XCTFail("Pending acceptance must complete on retirement.") }
+                guard case .failed(let failure) = result else {
+                    XCTFail("Pending acceptance must complete on retirement.")
+                    continue
+                }
                 XCTAssertEqual(failure, changedProfile ? .staleContext : .cancelled)
                 XCTAssertNil(h.e.model.state.pendingDecision)
                 XCTAssertEqual(h.e.model.state.source, "Unsaved")
@@ -448,7 +488,8 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             h.e.ui { h.e.model.edit("Unsaved") }
             try await h.ready()
             var cancelled = false
-            h.e.model.onChange = {
+            h.e.model.onChange = { [weak h] in
+                guard let h else { return }
                 h.model.contextChanged()
                 if !cancelled, h.e.model.state.pendingDecision != nil {
                     cancelled = true
@@ -457,9 +498,12 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             }
             var result: AssistantAcceptanceOutcome?
             var replies = 0
-            h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1 } }
+            h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1; XCTAssertTrue(h.e.h.marker.isUI) } }
             h.e.settle()
-            guard case .failed(.cancelled) = result else { return XCTFail("An inline close must cancel the guard.") }
+            guard case .failed(.cancelled) = result else {
+                XCTFail("An inline close must cancel the guard.")
+                continue
+            }
             XCTAssertEqual(replies, 1)
             XCTAssertNil(h.e.model.state.pendingDecision)
             XCTAssertEqual(h.e.model.state.source, "Unsaved")
@@ -488,7 +532,7 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             h.e.settle()
             switch result {
             case .failed(.cancelled): break
-            default: XCTFail("Queued acceptance must complete on close.")
+            default: XCTFail("Close must cancel the queued acceptance.")
             }
             XCTAssertEqual(replies, 1)
             XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
@@ -578,6 +622,7 @@ final class AssistantAcceptanceModelTests: XCTestCase {
         h.e.settle()
         XCTAssertEqual(outcomes.count, 1)
         let entry = try XCTUnwrap(outcomes.first?.committed?.entry)
+        XCTAssertNotEqual(entry.relativePath, "a.md", "A clean Write creates a new prompt.")
         XCTAssertEqual(try h.e.h.files.read(at: entry.relativePath), candidate.content.canonicalBytes)
         XCTAssertEqual(try h.e.h.files.text(at: "a.md"), "Original")
         XCTAssertEqual(h.model.state.phase, .saved)
@@ -640,6 +685,14 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             let h = try AssistantAcceptanceHarness(source: improve ? "Original" : nil, key: sentinels[0])
             try await h.ready(improve: improve, brief: sentinels[1] + sentinels[2], notes: sentinels[3])
             XCTAssertTrue(h.model.state.transcript.contains { $0.content.contains(sentinels[1]) })
+            XCTAssertTrue(h.model.state.transcript.contains { $0.content.contains(sentinels[2]) })
+            XCTAssertTrue(h.model.state.transcript.contains { $0.content.contains(sentinels[3]) })
+            XCTAssertEqual(h.model.state.artifact?.notes, sentinels[3])
+            let requests = await h.transport.snapshot()
+            let request = try XCTUnwrap(requests.first)
+            XCTAssertEqual(request.headers["Authorization"], "Bearer " + sentinels[0])
+            let requestBody = try XCTUnwrap(request.body)
+            for sentinel in sentinels[1...2] { XCTAssertNotNil(requestBody.range(of: Data(sentinel.utf8))) }
             if reject { h.e.ui { h.model.reject() }; h.e.settle() }
             else { _ = try h.accept() }
             let stores: [FileStore] = [h.provider.files, h.e.h.data, h.e.h.files]
