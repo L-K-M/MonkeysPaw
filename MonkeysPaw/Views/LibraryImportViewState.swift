@@ -25,8 +25,8 @@ final class LibraryImportViewState: ObservableObject {
     @Published private(set) var progress: ImportProgress?
     @Published private(set) var reports: [CompletedRequest] = []
     @Published private(set) var selectionMessage: String?
-    @Published private(set) var destinations = [ImportStrings.defaultDestination]
-    @Published private(set) var destination = ImportStrings.defaultDestination
+    @Published private(set) var destinations = [RelativePath(ImportStrings.defaultDestination)]
+    @Published private(set) var destination = RelativePath(ImportStrings.defaultDestination)
     @Published private(set) var requestNumber = 0
     @Published private(set) var requestCount = 0
     @Published private(set) var libraryAvailable: Bool
@@ -75,16 +75,16 @@ final class LibraryImportViewState: ObservableObject {
 
     func updateDestinations(_ sections: [LibraryBrowserSection]) {
         guard active else { return }
-        let folders = sections.compactMap { section -> String? in
+        let folders = sections.compactMap { section -> RelativePath? in
             guard case .folder(let path) = section.id,
-                  !path.utf8.elementsEqual(ImportStrings.defaultDestination.utf8) else { return nil }
+                  path != RelativePath(ImportStrings.defaultDestination) else { return nil }
             return path
         }
-        destinations = [ImportStrings.defaultDestination] + folders
-        if !isBusy, !destinations.contains(destination) { destination = ImportStrings.defaultDestination }
+        destinations = [RelativePath(ImportStrings.defaultDestination)] + folders
+        if !isBusy, !destinations.contains(destination) { destination = RelativePath(ImportStrings.defaultDestination) }
     }
 
-    func selectDestination(_ path: String) {
+    func selectDestination(_ path: RelativePath) {
         guard canImport, destinations.contains(path) else { return }
         destination = path
     }
@@ -193,7 +193,7 @@ final class LibraryImportViewState: ObservableObject {
 
     private func beginBatch() {
         revision = UUID()
-        batchDestination = destination
+        batchDestination = destination.string
         reports = []
         selectionMessage = nil
         progress = .enumerating
@@ -238,7 +238,7 @@ final class LibraryImportViewState: ObservableObject {
     private func finishBatch() {
         isBusy = false
         progress = nil
-        if !destinations.contains(destination) { destination = ImportStrings.defaultDestination }
+        if !destinations.contains(destination) { destination = RelativePath(ImportStrings.defaultDestination) }
         onAvailabilityChange?()
     }
 }

@@ -13,7 +13,7 @@ struct LibraryImportControls: View {
             Picker(ImportStrings.destination, selection: Binding(get: { presentation.destination },
                 set: presentation.selectDestination)) {
                 ForEach(presentation.destinations, id: \.self) { path in
-                    Text(verbatim: path + "/").tag(path)
+                    Text(verbatim: path.string + "/").tag(path)
                 }
             }
             .pickerStyle(.menu)

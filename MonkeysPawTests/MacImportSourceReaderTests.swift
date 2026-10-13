@@ -102,4 +102,16 @@ final class MacImportSourceReaderTests: XCTestCase {
         let reader = MacImportSourceReader()
         XCTAssertEqual(reader.requests(for: [file, folder, linked]), [.files([file.path, linked.path]), .folder(folder.path)])
     }
+
+    func testInvalidAbsolutePathsAreRejectedBeforeFileAccess() {
+        let reader = MacImportSourceReader()
+        for path in ["relative.md", "/a/../file.md", "/a/./file.md", "/a//file.md", "/a/", "/a/\\file.md", "/a/\u{0}file.md"] {
+            XCTAssertThrowsError(try reader.readFile(at: path, maximumBytes: 20)) {
+                XCTAssertEqual($0 as? ImportSourceError, .invalidPath)
+            }
+            XCTAssertThrowsError(try reader.listFiles(in: path)) {
+                XCTAssertEqual($0 as? ImportSourceError, .invalidPath)
+            }
+        }
+    }
 }

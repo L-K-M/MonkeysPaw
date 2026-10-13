@@ -31,10 +31,17 @@ final class MacImportSourceReader: ImportSourceReading {
     }
 
     func listFiles(in folderPath: String) throws -> [ImportSourceEntry] {
+        try validateSourcePath(folderPath)
         closeFolders()
-        let (parent, name) = try openParent(of: folderPath)
-        defer { _ = Darwin.close(parent) }
-        let descriptor = try openDirectory(name, relativeTo: parent, access: O_RDONLY)
+        let descriptor: Int32
+        if folderPath == "/" {
+            descriptor = Darwin.open("/", O_RDONLY | Self.directoryFlags)
+            guard descriptor >= 0 else { throw ImportSourceError.ioFailure }
+        } else {
+            let (parent, name) = try openParent(of: folderPath)
+            defer { _ = Darwin.close(parent) }
+            descriptor = try openDirectory(name, relativeTo: parent, access: O_RDONLY)
+        }
         defer { _ = Darwin.close(descriptor) }
         var entries: [ImportSourceEntry] = []
         try collect(in: descriptor, prefix: "", into: &entries)
@@ -45,14 +52,17 @@ final class MacImportSourceReader: ImportSourceReading {
     }
 
     func readFile(at path: String, maximumBytes: Int) throws -> Data {
-        guard FileStorePath.isValid(path, mode: .absolute), maximumBytes >= 0, maximumBytes < Int.max else {
+        try validateSourcePath(path)
+        guard path != "/" else { throw ImportSourceError.notRegularFile }
+        guard maximumBytes >= 0, maximumBytes < Int.max else {
             throw ImportSourceError.invalidPath
         }
         let parent: Int32
         let name: String
-        if let folder = folders.filter({ path.utf8.starts(with: ($0.path + "/").utf8) })
+        if let folder = folders.filter({ path.utf8.starts(with: ($0.path == "/" ? "/" : $0.path + "/").utf8) })
             .max(by: { $0.path.utf8.count < $1.path.utf8.count }) {
-            let relative = String(decoding: path.utf8.dropFirst(folder.path.utf8.count + 1), as: UTF8.self)
+            let prefixCount = folder.path.utf8.count + (folder.path == "/" ? 0 : 1)
+            let relative = String(decoding: path.utf8.dropFirst(prefixCount), as: UTF8.self)
             let parts = relative.split(separator: "/").map(String.init)
             parent = try walk(parts.dropLast(), from: folder.descriptor)
             name = parts.last!
@@ -93,7 +103,8 @@ final class MacImportSourceReader: ImportSourceReading {
     }
 
     private func openParent(of path: String) throws -> (Int32, String) {
-        guard FileStorePath.isValid(path, mode: .absolute), path != "/" else { throw ImportSourceError.invalidPath }
+        try validateSourcePath(path)
+        guard path != "/" else { throw ImportSourceError.notRegularFile }
         let url = URL(fileURLWithPath: path)
         // Canonicalize only ancestors of the selection, including macOS /var.
         guard let resolved = Darwin.realpath(url.deletingLastPathComponent().path, nil) else {
@@ -105,6 +116,17 @@ final class MacImportSourceReader: ImportSourceReading {
         guard root >= 0 else { throw ImportSourceError.ioFailure }
         defer { _ = Darwin.close(root) }
         return (try walk(parts[...], from: root), url.lastPathComponent)
+    }
+
+    private func validateSourcePath(_ path: String) throws {
+        guard path.utf8.first == UInt8(ascii: "/") else { throw ImportSourceError.invalidPath }
+        if path == "/" { return }
+        // Absolute sources have no whole-library-path cap. Reuse the public
+        // lexical validator on individual components, without normalizing them.
+        for component in path.utf8.dropFirst().split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false) {
+            do { try FileStorePath.validate(String(decoding: component, as: UTF8.self)) }
+            catch { throw ImportSourceError.invalidPath }
+        }
     }
 
     private func walk(_ parts: ArraySlice<String>, from root: Int32) throws -> Int32 {

@@ -554,7 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 backgroundWork.run { done(importSources.requests(for: urls)) }
             }, openImported: { [weak self] path in
                 guard isCurrent(), let self,
-                      let entry = index.browseContents().first(where: { $0.entry.relativePath.utf8.elementsEqual(path.utf8) })?.entry
+                      let entry = index.search("").first(where: { $0.relativePath.utf8.elementsEqual(path.utf8) })?.entry
                 else { return false }
                 self.libraryWindow?.presentation.openPrompt(LibraryPromptSelection(identity: entry.identity,
                     relativePath: RelativePath(entry.relativePath)))
