@@ -34,6 +34,14 @@ class DtoConformanceTest {
     }
 
     @Test
+    fun `case order does not affect complete corpus accounting`() {
+        val corpus = Corpus.load()
+        val coverage = DtoRegistry.consumeCompleted(corpus, corpus.cases(Category.DTO).reversed())
+        assertEquals(corpus.cases(Category.DTO).flatMap { it.files }.map { it.relativePath }.toSet(),
+            coverage.completedFiles + coverage.pendingFiles)
+    }
+
+    @Test
     fun `missing accepted rejected or pending family cannot pass coverage`() {
         val corpus = Corpus.load()
         val cases = corpus.cases(Category.DTO)

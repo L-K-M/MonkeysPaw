@@ -7,6 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertContentEquals
+import kotlinx.serialization.json.JsonPrimitive
 
 class WireJsonTest {
     private val id = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -32,14 +33,23 @@ class WireJsonTest {
     @Test
     fun `strict parser rejects malformed JSON and UTF-8`() {
         for (source in listOf("", "tru", "nul", "{", "[1", "1 2", "{}{}", "[1,]", "{\"x\":1,}",
-            "{x:1}", "{\"x\" 1}", "[01]", "[-01]", "[+1]", "[.5]", "[1.]", "[1e]", "[NaN]",
+            "{x:1}", "{\"x\" 1}", "[01]", "[-01]", "[+1]", "[.5]", "[1.]", "[1e]", "[NaN]", "-", "1.", "1e", "1e+",
             "[Infinity]", "/*comment*/1", "\"\\x20\"", "\"raw\nline\"", "\"raw\tline\"", "\"raw\u0000nul\"",
             "\"\\uD800\"", "\"\\uDC00\"", "\"\\uD800\\u0041\"", "\"\\uZZZZ\"", "\u00A01")) {
             assertFailsWith<WireContractException> { WireJson.parse(source.toByteArray()) }
         }
+        val dtoPrefix = "{\"status\":\"ok\",\"version\":\"".toByteArray()
+        val dtoSuffix = "\"}".toByteArray()
+        assertEquals(HealthResponse("ok", "valid"), HealthResponse.codec.decode(dtoPrefix + "valid".toByteArray() + dtoSuffix))
         for (bytes in listOf(byteArrayOf(0xff.toByte()), byteArrayOf(0xc3.toByte(), 0x28),
             byteArrayOf(0xed.toByte(), 0xa0.toByte(), 0x80.toByte()))) {
+            assertFailsWith<WireContractException> { WireJson.parse(bytes) }
             assertFailsWith<WireDecodingException> { HealthResponse.codec.decode(bytes) }
+            // Otherwise, JSON syntax alone could reject a lenient UTF-8 decoder's replacement characters.
+            val string = byteArrayOf('"'.code.toByte()) + bytes + '"'.code.toByte()
+            assertFailsWith<WireContractException> { WireJson.parse(string) }
+            val dto = dtoPrefix + bytes + dtoSuffix
+            assertFailsWith<WireDecodingException> { HealthResponse.codec.decode(dto) }
         }
     }
 
@@ -55,15 +65,34 @@ class WireJsonTest {
 
     @Test
     fun `canonical JSON sorts recursively and pins escapes and literal Unicode`() {
-        val source = """{"z":[{"z":null,"a":"é/😀﻿"}],"a":"\"\\\b\f\n\r\t\u0000\u001f"}"""
-        val expected = """{"a":"\"\\\b\f\n\r\t\u0000\u001f","z":[{"a":"é/😀﻿","z":null}]}"""
+        val source = """{"z":[{"z":null,"a":"é/😀""" + "\uFEFF" + """"}],"a":"\"\\\b\f\n\r\t\u0000\u001f"}"""
+        val expected = """{"a":"\"\\\b\f\n\r\t\u0000\u001f","z":[{"a":"é/😀""" + "\uFEFF" + """","z":null}]}"""
         val bytes = WireJson.canonical(WireJson.parse(source.toByteArray()))
         assertContentEquals(expected.toByteArray(), bytes)
         assertTrue(bytes.last() != '\n'.code.toByte())
         val escaped = WireJson.parse("\"\\uD83D\\uDE00\\/\\uFEFF\"".toByteArray())
         assertContentEquals("\"😀/\uFEFF\"".toByteArray(), WireJson.canonical(escaped))
         val keys = WireValue.ObjectValue(mapOf("😀" to wireLong(1), "\uE000" to wireLong(2), "a" to wireLong(3)))
-        assertContentEquals("""{"a":3,"":2,"😀":1}""".toByteArray(), WireJson.canonical(keys))
+        assertContentEquals("{\"a\":3,\"\uE000\":2,\"😀\":1}".toByteArray(), WireJson.canonical(keys))
+    }
+
+    @Test
+    fun `canonical key order matches Swift JSONEncoder sortedKeys`() {
+        // Swift 6.4 golden order: raw UTF-8, including prefixes, combining marks and every scalar width.
+        val orderedKeys = listOf("", "\u0000", "\u001F", "\"", "A", "Z", "\\", "a", "a01", "a10", "a2",
+            "a\uE000", "a\uD800\uDC00", "e\u0301", "f", "\u007F", "\u0080", "é!", "\u07FF", "\u0800",
+            "\uD7FF", "\uE000", "\uFEFF", "\uFFFF", "\uD800\uDC00", "\uD800\uDC01", "😀", "\uDBFF\uDFFF")
+        val keys = WireValue.ObjectValue(orderedKeys.reversed().associateWith { wireLong(1) })
+        val expected = orderedKeys.joinToString(",", "{", "}") { "${JsonPrimitive(it)}:1" }
+        assertContentEquals(expected.toByteArray(), WireJson.canonical(keys))
+        assertContentEquals("[$expected]".toByteArray(), WireJson.canonical(WireValue.ArrayValue(listOf(keys))))
+    }
+
+    @Test
+    fun `ambiguous enum spellings cannot decode or encode`() {
+        val codec = enumCodec("Duplicate", listOf(1, 2)) { "duplicate" }
+        assertFailsWith<WireDecodingException> { codec.decode("\"duplicate\"".toByteArray()) }
+        for (value in listOf(1, 2)) assertFailsWith<WireEncodingException> { codec.encode(value) }
     }
 
     @Test
@@ -101,9 +130,14 @@ class WireJsonTest {
 
     @Test
     fun `unions reject mixed partial foreign and null branches`() {
-        for (source in listOf("""{"scope":"user","group_id":null}""", """{"scope":"group"}""",
+        for (source in listOf("""{"scope":"user","group_id":null}""", """{"scope":"user","group_id":"$id"}""", """{"scope":"group"}""",
             """{"scope":"group","group_id":null}""", """{"scope":"private"}""", """{"scope":"user","role":"viewer"}""")) {
             assertFailsWith<WireDecodingException> { PromptScope.codec.decode(source.toByteArray()) }
+        }
+        for ((scope, source) in listOf(PromptScope.User to """{"scope":"user"}""",
+            PromptScope.Group(id) to """{"group_id":"$id","scope":"group"}""")) {
+            assertEquals(scope, PromptScope.codec.decode(source.toByteArray()))
+            assertContentEquals(source.toByteArray(), PromptScope.codec.encode(scope))
         }
         for (source in listOf("""{"role":"viewer"}""", """{"group_id":"$id"}""",
             """{"group_id":null,"role":"viewer"}""", """{"group_id":"$id","role":"owner"}""",

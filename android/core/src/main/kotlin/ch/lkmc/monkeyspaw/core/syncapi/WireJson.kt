@@ -176,6 +176,7 @@ internal object WireJson {
         }
     }
 
+    // Swift JSONEncoder .sortedKeys compares the unescaped, unsigned UTF-8 key bytes.
     private val utf8Order = Comparator<String> { left, right ->
         val a = left.toByteArray(Charsets.UTF_8)
         val b = right.toByteArray(Charsets.UTF_8)
