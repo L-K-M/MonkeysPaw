@@ -149,12 +149,13 @@ hashes and device tokens are hashed. Protect Caddy's certificate keys too.
 Neither the server nor this Caddyfile enables request access logs; never add
 logging of credentials, tokens, prompt bodies or field values.
 
-Use a consistent online snapshot through the planned `monkeyspaw-server
-backup` command, and the stopped-server `restore` command, which rotates
-the database identity so clients resnapshot ([deployment plan §8.6](docs/plan/08-sync-server.md#86-deployment-compose--updatesh)).
-These backup/restore commands are a separate M5 slice; check that they have
-landed before using them. Never copy a live SQLite database.
-Keep a verified, private backup before upgrades; migrations are forward-only.
+Take consistent online snapshots with `scripts/backup.sh` or
+`monkeyspaw-server backup`, and restore only with the server stopped; restore
+rotates the database identity so clients resnapshot (see
+[Server backup and restore](#server-backup-and-restore) and
+[deployment plan §8.6](docs/plan/08-sync-server.md#86-deployment-compose--updatesh)).
+Never copy a live SQLite database. Keep a verified, private backup before
+upgrades; migrations are forward-only.
 
 After preparing `.env` and the host directories above, use the root updater
 for a fresh deployment or an upgrade. Install Git and optionally the GitHub
@@ -200,3 +201,39 @@ when available; the Linux file fallback is visibly unencrypted and private
 (0600). Sync sends data to your configured server. See the
 [security and privacy plan](docs/plan/12-security-and-privacy.md) for the
 trust boundaries and storage tiers; full platform documentation follows in M7.
+
+## Server backup and restore
+
+The server supports one serving process on local SQLite storage, with no
+replicas. For a compose deployment, run `scripts/backup.sh` from the checkout
+or any other directory. It creates `/data/backups/<UTC timestamp>.db` through
+the running server's CLI and keeps the newest 14 successful backups. Set
+`BACKUP_KEEP` to a positive integer to change retention. A failed backup
+preserves existing backups. To choose a path yourself:
+
+```sh
+docker compose exec -T monkeyspaw-server monkeyspaw-server backup /data/backups/manual.db
+```
+
+Backup refuses existing paths. Both commands accept `--json` for path and
+database identity metadata; restore also reports its previous database's
+recovery path. Backups contain plaintext prompts and credential hashes.
+Protect the data volume and backup copies; volume encryption and off-host
+copies are your responsibility. Never copy a live database file.
+
+Stop the server before restoring a backup that is accessible inside `/data`:
+
+```sh
+docker compose stop monkeyspaw-server
+docker compose run --rm --no-deps monkeyspaw-server monkeyspaw-server restore /data/backups/20261013T120000Z.db --json
+docker compose up -d monkeyspaw-server
+```
+
+Start the server only after restore succeeds. Restore refuses a live database,
+invalid SQLite files, foreign databases and schemas newer than the binary.
+It migrates a staged snapshot and rotates `database_id` before replacement,
+so every client resnapshots. The previous database remains at the reported
+`monkeyspaw.pre-restore-<UUID>.db` path, outside automatic backup retention;
+remove it after verifying the restore. Restore that recovery file through the
+same stopped-server procedure if needed. Keep `/data/.monkeyspaw.lock` in
+place so serving and maintenance commands share the same lock.

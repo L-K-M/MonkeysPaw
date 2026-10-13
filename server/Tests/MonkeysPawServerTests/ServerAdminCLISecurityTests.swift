@@ -52,14 +52,15 @@ struct ServerAdminCLISecurityTests {
                               ["user", "reset-password", "id", "--password=\(sentinel)"],
                               ["user", "disable", "id", "--\(sentinel)"],
                               ["invite", "create", "--issuer", "id", "--expires-in", sentinel],
-                              [sentinel], ["backup", sentinel], ["restore", sentinel],
+                              [sentinel], ["backup", sentinel, sentinel], ["restore", sentinel, sentinel],
                               ["group", "\(sentinel)"]] {
                 try await fixture.run(arguments).assertFailure(excluding: [sentinel])
             }
             let help = try await fixture.run(["--help"])
             #expect(help.status == 0 && help.error.isEmpty)
-            for command in ["serve", "healthcheck", "migrate", "user", "group", "invite"] { #expect(help.output.contains(command)) }
-            #expect(!help.output.contains("backup") && !help.output.contains("restore"))
+            for command in ["serve", "healthcheck", "migrate", "user", "group", "invite", "backup", "restore"] {
+                #expect(help.output.contains(command))
+            }
             for (command, leaves) in [("user", ["add", "disable", "reset-password"]),
                                       ("group", ["add", "add-member"]), ("invite", ["create"])] {
                 let help = try await fixture.run([command, "--help"])
