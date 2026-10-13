@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.core.domain.format
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
@@ -7,24 +8,10 @@ import java.nio.charset.CodingErrorAction.REPORT
 import org.snakeyaml.engine.v2.exceptions.MarkedYamlEngineException
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException
 
-/** Reading result; K4 adds template/validation assembly, K5 adds writing. */
-class ParsedPrompt internal constructor(
-    val source: String,
-    val body: String,
-    val frontMatter: FrontMatter,
-    val decodingIssues: List<PromptIssue> = emptyList(),
-    internal val preservedHeader: YamlNode.Mapping? = null,
-    internal val declarationLocations: Map<String, PromptIssueLocation> = emptyMap(),
-) {
-    val isReadOnly: Boolean get() = frontMatter.format.isFuture
-}
-
 object PromptCodec {
-    internal const val maxSourceBytes = 256 * 1024
-
     /** Checks the byte cap before decoding or invoking YAML. A leading BOM remains body data. */
-    fun parseFile(bytes: ByteArray, filename: String): ParsedPrompt {
-        if (bytes.size > maxSourceBytes) return failedBytes(filename, PromptIssueCode.SOURCE_TOO_LARGE)
+    fun parseFile(bytes: ByteArray, filename: String): PromptDocument {
+        if (bytes.size > Limits.maxPromptBytes) return failedBytes(filename, PromptIssueCode.SOURCE_TOO_LARGE)
         val source = try {
             Charsets.UTF_8.newDecoder().onMalformedInput(REPORT).onUnmappableCharacter(REPORT)
                 .decode(ByteBuffer.wrap(bytes)).toString()
@@ -35,21 +22,22 @@ object PromptCodec {
     }
 
     /** Text input only; filename is a basename used exclusively for title fallback. */
-    fun parse(source: String, filename: String): ParsedPrompt {
+    fun parse(source: String, filename: String): PromptDocument {
         val title = fallbackTitle(filename)
-        val size = if (source.length > maxSourceBytes) source.length else try {
+        val size = if (source.length > Limits.maxPromptBytes) source.length else try {
             Charsets.UTF_8.newEncoder().onMalformedInput(REPORT).onUnmappableCharacter(REPORT)
                 .encode(CharBuffer.wrap(source)).remaining()
         } catch (_: CharacterCodingException) {
             return failedBytes(filename, PromptIssueCode.INVALID_UTF8)
         }
-        if (size > maxSourceBytes) {
-            return ParsedPrompt(source, source, FrontMatter(title, isPrivate = true),
+        if (size > Limits.maxPromptBytes) {
+            return PromptDocument(source, source, FrontMatter(title, isPrivate = true), Template.parse(""),
                 listOf(PromptIssue(PromptIssueCode.SOURCE_TOO_LARGE)))
         }
         val parts = split(source)
-        val header = parts.header ?: return ParsedPrompt(source, parts.body,
-            FrontMatter(title, isPrivate = parts.unclosed),
+        val template = Template.parse(parts.body)
+        val header = parts.header ?: return PromptDocument(source, parts.body,
+            FrontMatter(title, isPrivate = parts.unclosed), template,
             if (parts.unclosed) listOf(PromptIssue(PromptIssueCode.UNCLOSED_FRONT_MATTER,
                 PromptIssueLocation.FrontMatter(1, 1))) else emptyList())
 
@@ -63,27 +51,27 @@ object PromptCodec {
                 normalized == null || (normalized is YamlNode.Scalar && normalized.tag == YamlTag.NULL && normalized.value.isEmpty()) -> YamlNode.Mapping(emptyList())
                 else -> {
                     issues.add(PromptIssue(PromptIssueCode.FRONT_MATTER_NOT_MAPPING, normalized.mark))
-                    return ParsedPrompt(source, parts.body, FrontMatter(title, isPrivate = true), issues.toList())
+                    return PromptDocument(source, parts.body, FrontMatter(title, isPrivate = true), template, issues.toList())
                 }
             }
             val decoder = FrontMatterDecoder(mapping, issues)
             val metadata = decoder.decode(title)
-            return ParsedPrompt(source, parts.body, metadata, decoder.issues.toList(), mapping, decoder.locations.toMap())
+            return PromptDocument(source, parts.body, metadata, template, decoder.issues.toList(), mapping, decoder.locations.toMap())
         } catch (error: YamlFailure) {
-            return invalidHeader(source, parts.body, title, error.issue)
+            return invalidHeader(source, parts.body, title, template, error.issue)
         } catch (error: YamlEngineException) {
             // Do not retain or describe the exception: engine error messages include source.
             val mark = (error as? MarkedYamlEngineException)?.problemMark?.orElse(null)
             val location = mark?.let { yamlSource.location(it.index) }
-            return invalidHeader(source, parts.body, title, PromptIssue(PromptIssueCode.INVALID_YAML, location))
+            return invalidHeader(source, parts.body, title, template, PromptIssue(PromptIssueCode.INVALID_YAML, location))
         }
     }
 
-    private fun invalidHeader(source: String, body: String, title: String, issue: PromptIssue) =
-        ParsedPrompt(source, body, FrontMatter(title, isPrivate = true), listOf(issue))
+    private fun invalidHeader(source: String, body: String, title: String, template: Template, issue: PromptIssue) =
+        PromptDocument(source, body, FrontMatter(title, isPrivate = true), template, listOf(issue))
 
     private fun failedBytes(filename: String, code: PromptIssueCode) =
-        ParsedPrompt("", "", FrontMatter(fallbackTitle(filename), isPrivate = true), listOf(PromptIssue(code)))
+        PromptDocument("", "", FrontMatter(fallbackTitle(filename), isPrivate = true), Template.parse(""), listOf(PromptIssue(code)))
 
     private fun fallbackTitle(filename: String): String {
         val dot = filename.lastIndexOf('.')

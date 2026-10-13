@@ -1,27 +1,10 @@
 package ch.lkmc.monkeyspaw.core.domain.format
 
-import java.text.Normalizer
-
-enum class FieldKind(val rawValue: String) { TEXT("text"), MULTILINE("multiline"), CHOICE("choice") }
-
-data class FieldOption(val label: String, val value: String)
-
-/** File declarations retain file order; K4 assembles effective fields in body first-use order. */
-data class PromptField(
-    val name: String,
-    val kind: FieldKind = FieldKind.TEXT,
-    val label: String = name,
-    val description: String? = null,
-    val defaultValue: String = "",
-    val options: List<FieldOption> = emptyList(),
-    val optional: Boolean = false,
-    val remember: Boolean = true,
-    val isImplicit: Boolean = false,
-)
+import ch.lkmc.monkeyspaw.core.domain.ULID
 
 data class FrontMatter(
     val title: String,
-    val id: String? = null,
+    val id: ULID? = null,
     val description: String? = null,
     val tags: List<String> = emptyList(),
     val favorite: Boolean = false,
@@ -36,7 +19,7 @@ internal class FrontMatterDecoder(private val mapping: YamlNode.Mapping, initial
 
     fun decode(fallbackTitle: String): FrontMatter {
         val idNode = value("id", mapping)
-        val id = PortableYaml.string(idNode)?.let(::decodeId)
+        val id = PortableYaml.string(idNode)?.let(ULID::parse)
         if (idNode != null && id == null) add(PromptIssueCode.INVALID_ID, idNode)
 
         val title = string("title", mapping, PromptIssueCode.INVALID_METADATA_TYPE) ?: fallbackTitle
@@ -74,8 +57,8 @@ internal class FrontMatterDecoder(private val mapping: YamlNode.Mapping, initial
             val name = PortableYaml.string(key)
             if (name == null) { add(PromptIssueCode.INVALID_FIELD_NAME, key); continue }
             key.mark?.let { locations[name] = it }
-            if (!validName.matches(name)) add(PromptIssueCode.INVALID_FIELD_NAME, key)
-            if (name in reservedNames) add(PromptIssueCode.RESERVED_FIELD_NAME, key)
+            if (!Template.isValidName(name)) add(PromptIssueCode.INVALID_FIELD_NAME, key)
+            if (Template.isReserved(name)) add(PromptIssueCode.RESERVED_FIELD_NAME, key)
             if (declaration !is YamlNode.Mapping) {
                 add(PromptIssueCode.INVALID_FIELD_DECLARATION, declaration)
                 fields.add(PromptField(name))
@@ -95,8 +78,7 @@ internal class FrontMatterDecoder(private val mapping: YamlNode.Mapping, initial
             val defaultNode = value("default", declaration)
             val defaultString = PortableYaml.string(defaultNode)
             if (kind == FieldKind.CHOICE && defaultNode != null && defaultString != null &&
-                options.none { Normalizer.normalize(it.value, Normalizer.Form.NFC) ==
-                    Normalizer.normalize(defaultString, Normalizer.Form.NFC) }) add(PromptIssueCode.INVALID_FIELD_DEFAULT, defaultNode)
+                options.none { equalChoiceValues(it.value, defaultString) }) add(PromptIssueCode.INVALID_FIELD_DEFAULT, defaultNode)
             fields.add(PromptField(name, kind, label, description, default, options, optional, remember))
         }
         return fields
@@ -139,15 +121,4 @@ internal class FrontMatterDecoder(private val mapping: YamlNode.Mapping, initial
     }
 
     private fun add(code: PromptIssueCode, node: YamlNode) { issues.add(PromptIssue(code, node.mark)) }
-
-    private fun decodeId(value: String): String? {
-        if (value.length != 26 || value.any { it.code > 127 }) return null
-        val upper = value.map { if (it in 'a'..'z') it - 32 else it }.joinToString("")
-        return upper.takeIf { it[0] in '0'..'7' && it.all { c -> c in "0123456789ABCDEFGHJKMNPQRSTVWXYZ" } }
-    }
-
-    private companion object {
-        val validName = Regex("[A-Za-z_][A-Za-z0-9_-]*")
-        val reservedNames = setOf("clipboard", "date", "time", "selection", "cursor", "datetime", "uuid")
-    }
 }

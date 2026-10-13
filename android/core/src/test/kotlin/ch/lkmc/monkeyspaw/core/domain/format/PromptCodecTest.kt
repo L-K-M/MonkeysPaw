@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.core.domain.format
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import java.math.BigInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -10,7 +11,7 @@ import kotlin.test.assertTrue
 
 class PromptCodecTest {
     private fun read(header: String, body: String = "Body") = PromptCodec.parse("---\n$header\n---\n$body", "Fallback.md")
-    private fun codes(document: ParsedPrompt) = document.decodingIssues.map { it.code }
+    private fun codes(document: PromptDocument) = document.decodingIssues.map { it.code }
 
     @Test fun invalidUtf8IsNeverRepairedAndSizeWinsBeforeDecode() {
         val invalid = listOf(byteArrayOf(0x80.toByte()), byteArrayOf(0xc0.toByte(), 0xaf.toByte()),
@@ -23,7 +24,7 @@ class PromptCodecTest {
             assertEquals("", document.body)
             assertTrue(document.frontMatter.isPrivate)
         }
-        val oversized = ByteArray(PromptCodec.maxSourceBytes + 1) { 0x80.toByte() }
+        val oversized = ByteArray(Limits.maxPromptBytes + 1) { 0x80.toByte() }
         assertEquals(listOf(PromptIssueCode.SOURCE_TOO_LARGE), codes(PromptCodec.parseFile(oversized, "Fallback.md")))
         val replacement = PromptCodec.parseFile("\uFFFD".toByteArray(), "Fallback.md")
         assertEquals("\uFFFD", replacement.body)
@@ -293,7 +294,7 @@ class PromptCodecTest {
     }
 
     @Test(timeout = 20000) fun hugeRadixVersionsAndKeysHaveNoMachineWordCeiling() {
-        val digits = PromptCodec.maxSourceBytes - 256
+        val digits = Limits.maxPromptBytes - 256
         for ((prefix, digit, bits) in listOf(Triple("0x", 'f', 4), Triple("0o", '7', 3))) {
             val document = read("format: $prefix${digit.toString().repeat(digits)}")
             val expected = BigInteger.ONE.shiftLeft(digits * bits).subtract(BigInteger.ONE).toString()
@@ -308,9 +309,9 @@ class PromptCodecTest {
     }
 
     @Test fun sourceByteCapPrecedesYamlAndPreservesTextRecovery() {
-        val exact = "x".repeat(PromptCodec.maxSourceBytes)
+        val exact = "x".repeat(Limits.maxPromptBytes)
         assertTrue(PromptCodec.parse(exact, "Fallback.md").decodingIssues.isEmpty())
-        for (source in listOf(exact + "x", "é".repeat(PromptCodec.maxSourceBytes / 2 + 1), "---\nx: [broken\n" + exact)) {
+        for (source in listOf(exact + "x", "é".repeat(Limits.maxPromptBytes / 2 + 1), "---\nx: [broken\n" + exact)) {
             val text = PromptCodec.parse(source, "Fallback.md")
             assertEquals(listOf(PromptIssueCode.SOURCE_TOO_LARGE), codes(text))
             assertEquals(source, text.source)
@@ -329,7 +330,7 @@ class PromptCodecTest {
 
     @Test fun metadataOrderFallbackAndSafeDiagnosticLocations() {
         val document = read("id: 01k6z4v9kqwzx7mpq4t8znb2pd\ntitle: 1\ndescription: false\ntags: [good, 1]\nprivate: on\nformat: 0\nfields: {x: {type: future, label: 1, optional: yes, remember: 'true'}}")
-        assertEquals("01K6Z4V9KQWZX7MPQ4T8ZNB2PD", document.frontMatter.id)
+        assertEquals("01K6Z4V9KQWZX7MPQ4T8ZNB2PD", document.frontMatter.id?.rawValue)
         assertEquals("Fallback", document.frontMatter.title)
         assertEquals(listOf("good"), document.frontMatter.tags)
         assertEquals(listOf(PromptIssueCode.NON_PORTABLE_SCALAR, PromptIssueCode.NON_PORTABLE_SCALAR,
