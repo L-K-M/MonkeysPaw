@@ -24,10 +24,17 @@ pending. `CanonicalConformanceTest` adds all 19 canonical cases (50 files),
 checking exact stored bytes/body, hashes, favourite extraction, warning order,
 typed refusals, idempotence and symmetric adoption. It executes all 83
 expectation members and 12 adoption comparisons in both directions.
+K8 adds `ImportConformanceTest`: all 14 import cases (28 files), 74 expectation
+members, 10 conversions, two native copies and two typed refusals. It checks
+exact source/body bytes and ordered mappings, preserved keys, presentation
+losses and warnings. Together these six categories execute 206 cases,
+424 files and 1,075 expectation members, with nothing pending within them.
 The tests report dynamic counts and reject unregistered expectations;
-no golden is changed to fit Kotlin. Paths (K6), ranking (K7), import (K8)
-and DTOs (K9/K10) retain their semantic work. K2's all-category structural
-gate remains mandatory; the full nine-category semantic gate belongs to K10.
+no golden is changed to fit Kotlin. Paths (K6, PR #127), ranking (K7)
+and DTOs (K9/K10) remain outside this branch's semantic gate: 810 cases and
+1,680 files. K2's all-category structural gate remains mandatory; the full
+nine-category semantic gate belongs to K10. Pure import parity adds no
+Android import UI or template, tool, environment or file-reference execution.
 
 This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
