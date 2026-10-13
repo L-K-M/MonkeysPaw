@@ -1,7 +1,17 @@
 # Portable prompt content fixtures
 
-M2 has the Swift consumer in `PromptConformanceTests`; the Kotlin consumer
-arrives in M8. This corpus covers file content, search/ranking, import,
+M2 has the Swift consumer in `PromptConformanceTests`, run from the repository
+root with `swift test --filter PromptConformanceTests`. M8 K2 adds the Kotlin
+test reader in `android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/`:
+run `android/gradlew -p android :core:test` from the repository root, or
+`./gradlew :core:test` from `android/`. Gradle supplies absolute fixture/schema
+paths from its root project and tracks both directories as test inputs;
+neither is copied into resources. K2 checks **structural accounting only**,
+including strict envelopes and exactly one reference to every visible file.
+Semantic consumption arrives per category in K3-K10, with the full conformance
+gate in K10. K2 does not establish M8 acceptance.
+
+This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
 their slice.
 
