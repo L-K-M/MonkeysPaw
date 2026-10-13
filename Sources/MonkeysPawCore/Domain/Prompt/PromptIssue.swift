@@ -8,7 +8,8 @@ public struct PromptIssue: Equatable, Sendable {
 
     init(_ code: PromptIssueCode, at location: PromptIssueLocation? = nil) {
         self.code = code
-        self.severity = code == .invalidPlaceholder || code == .unusedField ? .warning : .error
+        self.severity = code == .invalidPlaceholder || code == .unusedField || code == .groupPrivateRemoved
+            ? .warning : .error
         self.location = location
     }
 }
@@ -38,6 +39,7 @@ public enum PromptIssueCode: String, Sendable {
     case nonPortableTag = "yaml.tag_not_portable"
     case invalidID = "metadata.invalid_id"
     case invalidMetadataType = "metadata.invalid_type"
+    case groupPrivateRemoved = "metadata.group_private_removed"
     case invalidFormat = "metadata.invalid_format"
     case unsupportedFormat = "format.unsupported"
     case invalidFieldName = "field.invalid_name"
@@ -66,6 +68,7 @@ public enum PromptIssueCode: String, Sendable {
         case .nonPortableTag: return "Use a shared YAML Core-schema tag, or a literal string."
         case .invalidID: return "Supply a valid 26-character ULID, or omit the id."
         case .invalidMetadataType: return "Use the declared type for this metadata property."
+        case .groupPrivateRemoved: return "The private flag is personal and is removed from group content."
         case .invalidFormat: return "Use a positive integer for the file format."
         case .unsupportedFormat: return "This file format is newer than supported. Open it read-only."
         case .invalidFieldName: return "Use a valid placeholder name for the field."

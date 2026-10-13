@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "group",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\nfields:\n  unused: {}\n---\n{{not valid}}\n",
+    "body": "{{not valid}}\n",
+    "canonicalHash": "1ec1cdd40286b2a00f701cc26ad95da2d4d5f178066d7e5b0a025988370e0709",
+    "favorite": null,
+    "warnings": [
+      {
+        "code": "template.invalid_placeholder",
+        "severity": "warning"
+      },
+      {
+        "code": "field.unused",
+        "severity": "warning"
+      },
+      {
+        "code": "metadata.group_private_removed",
+        "severity": "warning"
+      }
+    ]
+  }
+}

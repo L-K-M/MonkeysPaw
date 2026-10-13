@@ -5,7 +5,7 @@ import XCTest
 /// The corpus is enumerated, not a hand-picked list. Each JSON and source
 /// must be dispatched exactly once so future language consumers share a gate.
 final class PromptConformanceTests: XCTestCase {
-    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import", "paths"]
+    private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import", "paths", "canonical"]
     private let rankingAccuracy = 1e-12
 
     private var fixtureRoot: URL {
@@ -26,14 +26,14 @@ final class PromptConformanceTests: XCTestCase {
             for category in categories {
                 let directory = root.appendingPathComponent(category)
                 directories.append(directory)
-                if category == "import" || category == "ranking" {
+                if ["import", "ranking", "paths", "canonical"].contains(category) {
                     let cases = try FileManager.default.contentsOfDirectory(atPath: directory.path)
                         .filter { !$0.hasPrefix(".") }
                     directories += cases.map { directory.appendingPathComponent($0) }
                 }
             }
             for directory in directories {
-                for name in [".DS_Store", "._metadata"] {
+                for name in [".DS_Store", "._metadata", ".gitattributes"] {
                     try Data([0xff]).write(to: directory.appendingPathComponent(name))
                 }
             }
@@ -91,7 +91,7 @@ final class PromptConformanceTests: XCTestCase {
     }
 
     func testRejectsUnknownSchemaVersionsAndContentMembers() throws {
-        for category in categories.subtracting(["ranking", "import", "paths"]).sorted() {
+        for category in categories.subtracting(["ranking", "import", "paths", "canonical"]).sorted() {
             let files = try FileManager.default.contentsOfDirectory(atPath: fixtureRoot.appendingPathComponent(category).path)
                 .filter { !$0.hasPrefix(".") }
             let file = try XCTUnwrap(files.sorted().first { $0.hasSuffix(".json") })
@@ -222,6 +222,17 @@ final class PromptConformanceTests: XCTestCase {
                     try consume(path, in: &consumed)
                 }
                 cases += paths.cases
+                continue
+            }
+
+            if category == "canonical" {
+                let canonical = try CanonicalFixtureCorpus.consume(at: directory)
+                for file in canonical.files {
+                    let path = "canonical/" + file
+                    allFiles.insert(RelativePath(path))
+                    try consume(path, in: &consumed)
+                }
+                cases += canonical.cases
                 continue
             }
 

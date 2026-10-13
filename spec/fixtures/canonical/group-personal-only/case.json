@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "group",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\n{}\n---\n\ufeffBody\r\n  indent\t \n\n",
+    "body": "\ufeffBody\r\n  indent\t \n\n",
+    "canonicalHash": "f821a1a35c1db1186f438edf207dbeceaa3298b405b727251dfa7e31942b1160",
+    "favorite": false,
+    "warnings": [
+      {
+        "code": "metadata.group_private_removed",
+        "severity": "warning"
+      }
+    ]
+  },
+  "comparison": {
+    "source": "candidate.md",
+    "equivalent": true
+  }
+}

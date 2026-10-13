@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "user",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\r\n# keep this comment\r\nprivate: true\r\nfavorite: true\r\nid: 01arz3ndektsv4rrffq69g5fav\r\ntitle: 'Shared'\r\nunknown: {nested: [a, b]}\r\n---\r\nBody\r\n",
+    "body": "Body\r\n",
+    "canonicalHash": "1821042f5b322b74f25819bd48d295a69b8a6faf09439e4d80ff55e186dc09d0",
+    "favorite": null,
+    "warnings": []
+  },
+  "comparison": {
+    "source": "candidate.md",
+    "equivalent": true
+  }
+}

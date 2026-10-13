@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "group",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\ntitle: Shared\n---\nNo final newline",
+    "body": "No final newline",
+    "canonicalHash": "a83bb158626e542242b5634b80ae8b84edf0fc266d92ac591825ddbe95c1cc53",
+    "favorite": false,
+    "warnings": [
+      {
+        "code": "metadata.group_private_removed",
+        "severity": "warning"
+      }
+    ]
+  }
+}

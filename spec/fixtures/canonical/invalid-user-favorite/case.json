@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "user",
+  "source": "source.md",
+  "expected": {
+    "error": {
+      "code": "invalid_prompt"
+    }
+  }
+}

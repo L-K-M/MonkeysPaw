@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "category": "canonical",
+  "scope": "group",
+  "source": "source.md",
+  "expected": {
+    "bytes": "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ntitle: Shared\nunknown: a\n---\nBody\n",
+    "body": "Body\n",
+    "canonicalHash": "6e116163a16be486f68f88b4ac384326b21389db3f12cafc01e45423b6d96794",
+    "favorite": null,
+    "warnings": []
+  },
+  "comparison": {
+    "source": "candidate.md",
+    "equivalent": false
+  }
+}

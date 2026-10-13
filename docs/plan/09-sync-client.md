@@ -166,13 +166,39 @@ instead of doubling.
 
 - **What is stripped.** For group-scope files the canonical form excludes
   `favorite` and `private`, which are personal.
-  - On ingest and before push, Core's `CanonicalForm.group` lifts
-    `favorite` into `state.favorites`. It drops `private` with a validation
-    warning, and rewrites the file once in canonical form.
-  - `canonical_hash` is the hash of the canonical bytes, which are also the
-    bytes the server stores.
+  - On ingest and before push, Core's pure `CanonicalForm.group(bytes,
+    filename:)` returns canonical bytes, an optional extracted `favorite`
+    and warnings. Absent favourite is `nil`; explicit `false` stays `false`.
+    Every present `private` key, including `false`, produces the validation
+    warning `metadata.group_private_removed`. Existing content warnings
+    remain nonblocking. Invalid content and future formats fail before
+    stripping. M6 owns updating `state.favorites` and rewriting the file;
+    Core never reads or changes per-user state.
+  - Canonical serialization follows §5.2: optional-key presence, typed
+    unknown values and nested ordering survive; YAML comments and scalar
+    presentation can change (B26). Only top-level personal keys are removed.
+    Markdown body UTF-8 bytes, including CRLF, BOMs and trailing newlines,
+    remain exact. Canonicalizing the result again returns identical bytes
+    and hash, with no extracted favourite or private-key warning.
+  - `canonical_hash` is lowercase SHA-256 over the full canonical bytes,
+    including `id`, which are also the bytes the server stores. Core reuses
+    its pure Swift FIPS 180-4 implementation, already tested against standard
+    known-answer and million-byte vectors; no CryptoKit or new dependency
+    is needed on Linux. `CanonicalForm.user(bytes, filename:)` validates
+    private content but retains the supplied bytes verbatim and hashes those
+    exact bytes, including comments, personal keys and id spelling.
   - The server runs the same canonicalizer, so a stray key cannot cause a
     re-push loop.
+- **Adoption comparison (B5).** `CanonicalForm.equivalentForAdoption(local,
+  server, scope:, filename:)` compares canonical content with `id` removed,
+  using exact UTF-8 byte equality. It strips personal keys for group scope
+  and retains them for user scope. Empty headers are treated as absent only
+  in this comparison, so an id-only server file matches a plain idless local
+  file. The body is also compared separately, so body text resembling front
+  matter cannot be mistaken for metadata after an empty header is removed.
+  Other optional keys, unknown metadata and body bytes still matter.
+  Invalid/future inputs fail rather than compare equal. This comparison
+  never assigns an id and never substitutes for the stored-byte hash.
 - **Remembered values** are never synced.
 
 ### 9.6 Conflicts and errors
