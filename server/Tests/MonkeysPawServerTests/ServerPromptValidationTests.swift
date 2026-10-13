@@ -34,10 +34,13 @@ struct ServerPromptValidationTests {
         }
     }
 
-    @Test func invalidContentAndURLIdentityReturnOnlyErrorIssues() async throws {
+    @Test(arguments: PromptTestScope.allCases)
+    func invalidContentAndURLIdentityReturnOnlyErrorIssues(scopeKind: PromptTestScope) async throws {
         try await withGroupFixture { fixture in
             let owner = try await fixture.user("owner")
+            let group = try await fixture.group(owner: owner)
             let session = try await fixture.account.session(owner)
+            let scope = scopeKind.wire(groupID: group.id)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts, sessions: fixture.account.sessions)
             let cases: [(String, String)] = [
                 ("No front matter\n", "prompt.id_mismatch"),
@@ -53,7 +56,7 @@ struct ServerPromptValidationTests {
             let before = try await fixture.persistence.promptStorageState()
             try await app.test(.router) { client in
                 for (content, code) in cases {
-                    let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "Example.md", content: content)
+                    let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: scope, path: "Example.md", content: content)
                     try await client.execute(uri: "/api/v1/prompts/\(GroupTestFixture.livePrompt)", method: .put, headers: PromptHTTPTest.headers(session),
                                              body: .init(bytes: JSONEncoder().encode(request))) {
                         #expect($0.status == .unprocessableContent)
@@ -66,16 +69,16 @@ struct ServerPromptValidationTests {
                         }
                     }
                 }
+                #expect(try await fixture.persistence.promptStorageState() == before)
                 // Failed edits preserve the live head, earlier history and immutable event.
-                _ = try await fixture.writePrompt(session: session.identity)
+                _ = try await fixture.writePrompt(scope: scope, session: session.identity)
                 let validState = try await fixture.persistence.promptStorageState()
-                let edit = SyncAPI.PutPromptRequest(baseRev: 1, scope: .user, path: "Renamed.md", content: promptContent(id: GroupTestFixture.secondLivePrompt))
+                let edit = SyncAPI.PutPromptRequest(baseRev: 1, scope: scope, path: "Renamed.md", content: promptContent(id: GroupTestFixture.secondLivePrompt))
                 try await client.execute(uri: "/api/v1/prompts/\(GroupTestFixture.livePrompt)", method: .put, headers: PromptHTTPTest.headers(session),
                                          body: .init(bytes: JSONEncoder().encode(edit))) {
                     try PromptHTTPTest.error($0, .validation(issues: [.init(code: "prompt.id_mismatch", severity: .error)]))
                 }
                 #expect(try await fixture.persistence.promptStorageState() == validState)
-                #expect(before.rows["prompts"]?.isEmpty == true)
             }
         }
     }
@@ -88,9 +91,15 @@ struct ServerPromptValidationTests {
             let source = promptContent(metadata: "# preserved privately\ntitle: 'Shared'\nfavorite: true\nprivate: true\nfields:\n  unused:\n    type: text\nx: [a, b]\n", body: "Body {{123}}.\r\n")
             let canonical = try CanonicalForm.group(Data(source.utf8), filename: "Café.md")
             let privateWrite = try await fixture.writePrompt(path: "Cafe\u{301}.md", content: source, session: session.identity)
-            #expect(Set(privateWrite.warnings?.map(\.code) ?? []) == Set([PromptIssueCode.unusedField.rawValue, PromptIssueCode.invalidPlaceholder.rawValue]))
+            let validatorWarnings = PromptValidator.validate(PromptCodec.parse(source, filename: "Café.md"))
+                .filter { $0.severity == .warning }.map { SyncAPI.Issue($0) }
+            #expect(privateWrite.warnings == validatorWarnings)
+            #expect(Set(validatorWarnings.map(\.code)) == Set([PromptIssueCode.unusedField.rawValue, PromptIssueCode.invalidPlaceholder.rawValue]))
             let privateHead = try #require(await fixture.promptRepository.read { prompts, _, _, _ in try await prompts.head(id: GroupTestFixture.livePrompt) })
-            #expect(privateHead.path == "Café.md" && privateHead.pathKey == "café.md" && privateHead.content == source && privateHead.title == "Shared")
+            #expect(privateHead.path == "Café.md")
+            #expect(privateHead.pathKey == "café.md")
+            #expect(privateHead.content == source)
+            #expect(privateHead.title == "Shared")
             let scope = SyncAPI.PromptScope.group(groupID: group.id)
             let id = GroupTestFixture.secondLivePrompt
             let groupSource = source.replacingOccurrences(of: GroupTestFixture.livePrompt, with: id)
@@ -100,14 +109,17 @@ struct ServerPromptValidationTests {
                 try await client.execute(uri: "/api/v1/prompts/\(id)", method: .put, headers: PromptHTTPTest.headers(session), body: .init(bytes: body)) {
                     let write = try PromptHTTPTest.success($0, as: SyncAPI.WriteResponse.self)
                     #expect(write.rev == 1)
-                    #expect(Set(write.warnings?.map(\.code) ?? []) == Set(canonical.warnings.map { $0.code.rawValue }))
+                    #expect(write.warnings == canonical.warnings.map { SyncAPI.Issue($0) })
                     #expect(write.warnings?.allSatisfy { $0.severity == .warning } == true)
                 }
                 let head = try await fixture.prompts.get(id: id, session: session.identity)
                 let expected = try CanonicalForm.group(Data(groupSource.utf8), filename: "Café.md")
-                #expect(head.content == String(decoding: expected.bytes, as: UTF8.self) && head.path == "Café.md")
+                #expect(head.content == String(decoding: expected.bytes, as: UTF8.self))
+                #expect(head.path == "Café.md")
                 let doc = PromptCodec.parse(head.content, filename: "Café.md")
-                #expect(!doc.frontMatter.favorite && !doc.frontMatter.isPrivate && doc.body == "Body {{123}}.\r\n")
+                #expect(!doc.frontMatter.favorite)
+                #expect(!doc.frontMatter.isPrivate)
+                #expect(doc.body == "Body {{123}}.\r\n")
                 // Reserved Groups is a private restriction; fallback title uses the basename.
                 let thirdID = GroupTestFixture.otherPrompt
                 _ = try await fixture.writePrompt(id: thirdID, scope: scope, path: "Groups/Fallback.md",
@@ -167,14 +179,13 @@ struct ServerPromptValidationTests {
             #expect(source.utf8.count == Limits.maxPromptBytes)
             let scope = SyncAPI.PromptScope.group(groupID: group.id)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts, sessions: fixture.account.sessions)
+            let before = try await fixture.persistence.promptStorageState()
             try await app.test(.router) { client in
                 let body = try JSONEncoder().encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: scope, path: "Example.md", content: source))
                 try await client.execute(uri: "/api/v1/prompts/\(GroupTestFixture.livePrompt)", method: .put, headers: PromptHTTPTest.headers(session), body: .init(bytes: body)) {
                     try PromptHTTPTest.error($0, .validation(issues: [.init(code: PromptIssueCode.sourceTooLarge.rawValue, severity: .error)]))
                 }
-                #expect(try await fixture.persistence.count("prompts") == 0)
-                #expect(try await fixture.persistence.count("prompt_revisions") == 0)
-                #expect(try await fixture.persistence.count("changes") == 0)
+                #expect(try await fixture.persistence.promptStorageState() == before)
                 _ = try await fixture.writePrompt(content: source, session: session.identity)
                 #expect(try await fixture.prompts.get(id: GroupTestFixture.livePrompt, session: session.identity).content == source)
             }

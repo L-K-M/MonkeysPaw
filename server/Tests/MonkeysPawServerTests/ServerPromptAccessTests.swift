@@ -146,13 +146,19 @@ struct ServerPromptAccessTests {
                 try await client.execute(uri: "/api/v1/prompts/\(id)", method: .get, headers: PromptHTTPTest.headers(session)) {
                     try PromptHTTPTest.error($0, .failure(.notFound))
                 }
-                for suffix in ["/revisions", "/revisions/2"] {
+                for suffix in ["/revisions", "/revisions/1", "/revisions/2"] {
                     try await client.execute(uri: "/api/v1/prompts/\(id)\(suffix)", method: .get, headers: PromptHTTPTest.headers(session)) {
                         if role == .nonMember { try PromptHTTPTest.error($0, .failure(.notFound)); return }
                         #expect($0.status == .ok)
-                        if suffix == "/revisions/2" {
+                        if suffix == "/revisions" {
+                            let list = try PromptHTTPTest.success($0, as: SyncAPI.RevisionsResponse.self)
+                            #expect(list.revisions.map(\.rev) == [2, 1])
+                        } else {
                             let revision = try PromptHTTPTest.success($0, as: SyncAPI.Revision.self)
-                            #expect(revision.origin == .delete && revision.authorID == owner.id && revision.scope == scope)
+                            #expect(revision.origin == (suffix == "/revisions/1" ? .edit : .delete))
+                            #expect(revision.authorID == owner.id)
+                            #expect(revision.scope == scope)
+                            #expect(revision.content == promptContent())
                         }
                     }
                 }
@@ -174,8 +180,10 @@ struct ServerPromptAccessTests {
                 let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "Revived.md", content: promptContent())
                 try await client.execute(uri: "/api/v1/prompts/\(id)", method: .put, headers: PromptHTTPTest.headers(session),
                                          body: .init(bytes: JSONEncoder().encode(request))) { try PromptHTTPTest.error($0, denied) }
-                try await client.execute(uri: "/api/v1/prompts/\(id)/revisions", method: .get, headers: PromptHTTPTest.headers(session)) {
-                    try PromptHTTPTest.error($0, .failure(.notFound))
+                for suffix in ["/revisions", "/revisions/1"] {
+                    try await client.execute(uri: "/api/v1/prompts/\(id)\(suffix)", method: .get, headers: PromptHTTPTest.headers(session)) {
+                        try PromptHTTPTest.error($0, .failure(.notFound))
+                    }
                 }
                 #expect(try await fixture.persistence.count("prompts") == 0)
                 #expect(try await fixture.persistence.count("retired_prompt_ids") == 1)
@@ -197,8 +205,9 @@ struct ServerPromptAccessTests {
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.account.accounts, sessions: fixture.account.sessions)
             let put = try JSONEncoder().encode(SyncAPI.PutPromptRequest(baseRev: 1, scope: .user, path: "Example.md", content: promptContent()))
             try await app.test(.router) { client in
+                let routeCases: [(String, HTTPRequest.Method)] = [("", .get), ("", .put), ("/revisions", .get), ("/revisions/1", .get)]
                 for headers: HTTPFields in [[:], [.authorization: "Bearer invalid"], PromptHTTPTest.headers(revoked), PromptHTTPTest.headers(disabled)] {
-                    for (suffix, method) in [("", HTTPRequest.Method.get), ("", .put), ("/revisions", .get), ("/revisions/1", .get)] {
+                    for (suffix, method) in routeCases {
                         try await client.execute(uri: "/api/v1/prompts/\(id)\(suffix)", method: method, headers: headers, body: method == .put ? .init(bytes: put) : nil) {
                             try PromptHTTPTest.error($0, .failure(.unauthorized))
                             #expect($0.headers[.wwwAuthenticate] == "Bearer")
@@ -206,7 +215,7 @@ struct ServerPromptAccessTests {
                     }
                 }
                 for badID in ["invalid", id.lowercased()] {
-                    for (suffix, method) in [("", HTTPRequest.Method.get), ("", .put), ("/revisions", .get), ("/revisions/1", .get)] {
+                    for (suffix, method) in routeCases {
                         try await client.execute(uri: "/api/v1/prompts/\(badID)\(suffix)", method: method, headers: PromptHTTPTest.headers(session),
                                                  body: method == .put ? .init(bytes: put) : nil) {
                             try PromptHTTPTest.error($0, .failure(.malformedRequest))
@@ -218,8 +227,10 @@ struct ServerPromptAccessTests {
                         try PromptHTTPTest.error($0, .failure(.malformedRequest))
                     }
                 }
-                try await client.execute(uri: "/api/v1/prompts/\(id)/revisions/2", method: .get, headers: PromptHTTPTest.headers(session)) {
-                    try PromptHTTPTest.error($0, .failure(.notFound))
+                for rev in [Int64(2), Int64.max] {
+                    try await client.execute(uri: "/api/v1/prompts/\(id)/revisions/\(rev)", method: .get, headers: PromptHTTPTest.headers(session)) {
+                        try PromptHTTPTest.error($0, .failure(.notFound))
+                    }
                 }
                 #expect(try await fixture.persistence.count("prompt_revisions") == 1)
             }

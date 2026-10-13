@@ -133,12 +133,14 @@ struct PromptService: Sendable {
 
         let filename = (path.path as NSString).lastPathComponent
         let document = PromptCodec.parse(request.content, filename: filename)
+        // CanonicalForm returns these validator warnings after this error gate.
         let errors = PromptValidator.validate(document).filter { $0.severity == .error }.map { SyncAPI.Issue($0) }
         if !errors.isEmpty { throw PromptError(.validation(issues: errors)) }
         guard document.frontMatter.id?.rawValue == id else {
             throw PromptError(.validation(issues: [.init(code: "prompt.id_mismatch", severity: .error)]))
         }
 
+        // Invalid/future input was rejected above; serializer failures are internal.
         let canonical: CanonicalForm
         do {
             let bytes = Data(request.content.utf8)

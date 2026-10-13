@@ -12,6 +12,7 @@ private enum PromptRaceResult: Sendable {
 }
 enum PromptWriteOperation: Sendable, CaseIterable { case create, update }
 enum PromptFailureStage: Sendable, CaseIterable { case head, revision, change, scopeHead }
+enum PromptMembershipChange: Sendable, CaseIterable { case demote, remove, deleteGroup, disable, revoke }
 
 @Suite(.serialized)
 struct ServerPromptServiceTests {
@@ -25,6 +26,7 @@ struct ServerPromptServiceTests {
             for iteration in 0..<5 {
                 let id = try ServerTimestamp.id(at: fixture.account.clock.now())
                 let otherID = try ServerTimestamp.id(at: fixture.account.clock.now())
+                #expect(otherID != id, "Path races require distinct IDs at the same timestamp")
                 let initialPath = "Original\(iteration).md"
                 if race == .update { _ = try await fixture.writePrompt(id: id, scope: scope, path: initialPath, session: session.identity) }
                 let before = try await fixture.persistence.count("changes")
@@ -126,8 +128,8 @@ struct ServerPromptServiceTests {
         }
     }
 
-    @Test(arguments: ["demote", "remove", "delete_group", "disable", "revoke"], PromptWriteOperation.allCases)
-    func queuedWritesRecheckCurrentSessionAndMembership(change: String, operation: PromptWriteOperation) async throws {
+    @Test(arguments: PromptMembershipChange.allCases, PromptWriteOperation.allCases)
+    func queuedWritesRecheckCurrentSessionAndMembership(change: PromptMembershipChange, operation: PromptWriteOperation) async throws {
         try await withGroupFixture { fixture in
             let owner = try await fixture.user("owner")
             let actor = try await fixture.user("actor")
@@ -142,11 +144,11 @@ struct ServerPromptServiceTests {
             let blocker = Task {
                 try await fixture.persistence.database.write { sql in
                     switch change {
-                    case "demote": try await sql.raw("UPDATE memberships SET role = 'viewer' WHERE user_id = \(bind: actor.id)").run()
-                    case "remove": try await sql.raw("DELETE FROM memberships WHERE user_id = \(bind: actor.id)").run()
-                    case "delete_group": try await sql.raw("UPDATE groups SET deleted_at = created_at WHERE id = \(bind: group.id)").run()
-                    case "disable": try await sql.raw("UPDATE users SET disabled_at = created_at WHERE id = \(bind: actor.id)").run()
-                    default: try await sql.raw("UPDATE devices SET revoked_at = created_at WHERE id = \(bind: session.identity.deviceID)").run()
+                    case .demote: try await sql.raw("UPDATE memberships SET role = 'viewer' WHERE user_id = \(bind: actor.id)").run()
+                    case .remove: try await sql.raw("DELETE FROM memberships WHERE user_id = \(bind: actor.id)").run()
+                    case .deleteGroup: try await sql.raw("UPDATE groups SET deleted_at = created_at WHERE id = \(bind: group.id)").run()
+                    case .disable: try await sql.raw("UPDATE users SET disabled_at = created_at WHERE id = \(bind: actor.id)").run()
+                    case .revoke: try await sql.raw("UPDATE devices SET revoked_at = created_at WHERE id = \(bind: session.identity.deviceID)").run()
                     }
                     await entered.open()
                     await release.wait()
@@ -156,7 +158,11 @@ struct ServerPromptServiceTests {
             let pending = Task { try await fixture.writePrompt(baseRev: operation == .update ? 1 : 0, scope: scope, session: session.identity) }
             await release.open()
             try await blocker.value
-            let expected: AccountError = change == "demote" ? .forbidden : (change == "remove" || change == "delete_group" ? .notFound : .unauthorized)
+            let expected: AccountError = switch change {
+            case .demote: .forbidden
+            case .remove, .deleteGroup: .notFound
+            case .disable, .revoke: .unauthorized
+            }
             await #expect(throws: expected) { _ = try await pending.value }
             #expect(try await fixture.persistence.promptStorageState() == before)
         }
@@ -204,6 +210,7 @@ struct ServerPromptServiceTests {
                     #expect(failures.count == 1 && failures.first?.level == "error")
                     try await fixture.persistence.execute("DROP TRIGGER injected_prompt_failure")
                     let accepted = try await fixture.prompts.put(id: GroupTestFixture.livePrompt, request: request, session: session.identity)
+                    // The log starts empty, and SQLite rolls back its sequence allocation.
                     #expect(accepted.rev == (operation == .update ? 2 : 1) && accepted.seq == accepted.rev)
                     #expect(try await fixture.persistence.count("prompt_revisions") == Int(accepted.rev))
                     #expect(try await fixture.persistence.count("changes") == Int(accepted.rev))

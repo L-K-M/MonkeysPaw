@@ -32,6 +32,7 @@ extension GroupTestFixture {
                 SELECT id, rev + 1, \(bind: actorID), scope, owner_id, group_id, path, content, \(bind: at), 'delete'
                 FROM prompts WHERE id = \(bind: id)
                 """).run()
+            // changes_raise_head maintains the scope head for this delete too.
             try await sql.raw("""
                 INSERT INTO changes (scope_key, scope, owner_id, group_id, prompt_id, kind, path, rev, content, at)
                 SELECT CASE scope WHEN 'user' THEN 'user:' || owner_id ELSE 'group:' || group_id END,

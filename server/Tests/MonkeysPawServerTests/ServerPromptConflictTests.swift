@@ -40,6 +40,7 @@ struct ServerPromptConflictTests {
                     (secondID, .init(baseRev: 99, scope: scope, path: "../invalid.md", content: "invalid YAML ---"), conflict),
                     (secondID, .init(baseRev: 1, scope: scopeKind == .user ? .group(groupID: group.id) : .user,
                                      path: "Second.md", content: promptContent(id: secondID)), conflict),
+                    // The target is absent; the 409 exposes only the authorized current head.
                     (secondID, .init(baseRev: 1, scope: .group(groupID: PersistenceTestRepository.otherGroup),
                                      path: "Second.md", content: promptContent(id: secondID)), conflict),
                     (newID, .init(baseRev: 1, scope: scope, path: "Missing.md", content: promptContent(id: newID)), .failure(.notFound))

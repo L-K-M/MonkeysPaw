@@ -332,9 +332,12 @@ content over 256 KiB, empty paths and paths over 1,024 UTF-8 bytes as malformed
 requests (400). Within those bounds, Core content/path errors and a missing
 or mismatched front-matter id return 422. Group canonicalization that expands
 past the stored content cap also returns the Core `source.too_large` issue.
-Warnings never block a write; private content stays verbatim, and group
-content uses Core's canonical form with personal keys removed. The
-`path.segment_hidden` diagnostic is included in the shared issue DTO.
+Warnings from Core validation and group canonicalization appear once in the
+write response and never block a write. Private content stays verbatim, and
+group content uses Core's canonical form with personal keys removed. Invalid
+and future-format content is rejected before canonicalization with Core 422
+issues; an unexpected serializer failure uses the sanitized 500 envelope.
+The `path.segment_hidden` diagnostic is included in the shared issue DTO.
 
 ### 8.4 Server behaviour
 

@@ -25,7 +25,7 @@ struct PromptRoutes {
         }
         protected.get("/{id}/revisions/{rev}") { request, context in
             guard let id = context.parameters.get("id"), let value = context.parameters.get("rev"),
-                  let rev = Int64(value), String(rev) == value else { throw AccountError.malformedRequest }
+                  let rev = Int64(value), rev > 0, String(rev) == value else { throw AccountError.malformedRequest }
             let revision = try await prompts.revision(id: id, rev: rev, session: context.authenticatedSession())
             return try context.responseEncoder.encode(revision, from: request, context: context)
         }
