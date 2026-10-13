@@ -9,9 +9,16 @@ final class LinuxImportSourceReader: ImportSourceReading {
     private var folder: (path: String, descriptor: Int32)?
     private static let directoryFlags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
     private let inspectEntry: (String) -> Void
+    private let openSourceDirectory: (Int32, String) -> Int32
 
-    // The seam reproduces vanished entries without permission tricks under root.
-    init(inspectEntry: @escaping (String) -> Void = { _ in }) { self.inspectEntry = inspectEntry }
+    // The seams reproduce vanished/unreadable entries even when tests run as root.
+    init(inspectEntry: @escaping (String) -> Void = { _ in },
+         openDirectory: @escaping (Int32, String) -> Int32 = {
+             Glibc.openat($0, $1, LinuxImportSourceReader.directoryFlags)
+         }) {
+        self.inspectEntry = inspectEntry
+        openSourceDirectory = openDirectory
+    }
 
     deinit { closeFolder() }
 
@@ -63,8 +70,9 @@ final class LinuxImportSourceReader: ImportSourceReading {
             let prefixCount = folder.path.utf8.count + (folder.path == "/" ? 0 : 1)
             let relative = String(decoding: path.utf8.dropFirst(prefixCount), as: UTF8.self)
             let parts = components(relative)
+            guard let last = parts.last, last != ".", last != ".." else { throw ImportSourceError.invalidPath }
             parent = try walk(parts.dropLast(), from: folder.descriptor)
-            name = parts.last!
+            name = last
         } else { (parent, name) = try openParent(of: path) }
         defer { _ = Glibc.close(parent) }
 
@@ -138,6 +146,7 @@ final class LinuxImportSourceReader: ImportSourceReading {
         guard descriptor >= 0 else { throw ImportSourceError.ioFailure }
         do {
             for part in parts {
+                guard part != ".", part != ".." else { throw ImportSourceError.invalidPath }
                 let child = try openDirectory(part, relativeTo: descriptor)
                 _ = Glibc.close(descriptor)
                 descriptor = child
@@ -150,7 +159,7 @@ final class LinuxImportSourceReader: ImportSourceReading {
     }
 
     private func openDirectory(_ name: String, relativeTo parent: Int32) throws -> Int32 {
-        let descriptor = Glibc.openat(parent, name, Self.directoryFlags)
+        let descriptor = openSourceDirectory(parent, name)
         guard descriptor >= 0 else { throw failure(name, relativeTo: parent, code: errno) }
         return descriptor
     }
@@ -190,6 +199,7 @@ final class LinuxImportSourceReader: ImportSourceReading {
                     String(validatingUTF8: $0)
                 }
             }
+            // Core's String paths cannot report raw names without changing their bytes.
             guard let name else { throw ImportSourceError.invalidPath }
             if name == "." || name == ".." { continue }
             let path = prefix + name
@@ -220,6 +230,10 @@ final class LinuxImportSourceReader: ImportSourceReading {
                     continue
                 } catch ImportSourceError.symbolicLink {
                     entries.append(ImportSourceEntry(relativePath: path, kind: .symbolicLink))
+                    continue
+                } catch {
+                    // Core reports this directory as a skip, preserving readable siblings.
+                    entries.append(ImportSourceEntry(relativePath: path, kind: .other))
                     continue
                 }
                 defer { _ = Glibc.close(child) }

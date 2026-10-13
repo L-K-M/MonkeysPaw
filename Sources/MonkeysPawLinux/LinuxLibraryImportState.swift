@@ -112,7 +112,13 @@ final class LinuxLibraryImportState {
     /// Native chooser and GtkDropTarget both enter this intent.
     @discardableResult
     func importURLs(_ urls: [URL]) -> Bool {
-        guard canImport, !urls.isEmpty else { return false }
+        guard active, libraryAvailable, !urls.isEmpty else { return false }
+        guard !isBusy else {
+            if message != LinuxImportStrings.missingReport { message = LinuxImportStrings.importInProgress }
+            onChange?()
+            return false
+        }
+        guard !isChoosing else { return false }
         let local = urls.filter {
             $0.isFileURL && ($0.host == nil || $0.host == "" || $0.host?.lowercased() == "localhost")
         }
@@ -175,6 +181,7 @@ final class LinuxLibraryImportState {
         guard !pending.isEmpty else {
             isBusy = false
             progress = nil
+            if message == LinuxImportStrings.fileURLsOnly || message == LinuxImportStrings.importInProgress { message = nil }
             if !destinations.contains(destination) { destination = RelativePath(LinuxImportStrings.defaultDestination) }
             onChange?()
             return

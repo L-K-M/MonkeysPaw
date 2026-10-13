@@ -14,6 +14,7 @@ enum LinuxImportStrings {
     static let dismiss = "Dismiss report"
     static let selectedFiles = "Selected files"
     static let fileURLsOnly = "Drop local files or folders to import them."
+    static let importInProgress = "An import is already running. Wait for it to finish before dropping more files."
     static let waitingForRefresh = "The imported prompt is waiting for the library to refresh. Try opening it again."
     static let missingReport = "The import finished without a report. Check the destination before trying again."
 

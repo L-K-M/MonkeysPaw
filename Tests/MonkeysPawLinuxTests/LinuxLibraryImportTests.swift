@@ -53,7 +53,7 @@ final class LinuxLibraryImportTests: XCTestCase {
         let observed = try XCTUnwrap(model.onChange)
         model.onChange = { value in observed(value.isImporting ? value : idle) }
         XCTAssertTrue(state.importURLs([file, folderFile.deletingLastPathComponent()]))
-        drainWork()
+        finishImport()
         XCTAssertFalse(state.isBusy)
         XCTAssertNil(state.progress)
         XCTAssertTrue(state.canImport)
@@ -64,7 +64,7 @@ final class LinuxLibraryImportTests: XCTestCase {
         XCTAssertEqual(try files.read(at: "Imported/b.md"), Data("Second".utf8))
         model.onChange = observed
         XCTAssertTrue(state.importURLs([file]))
-        drainWork()
+        finishImport()
         XCTAssertFalse(state.isBusy)
         XCTAssertEqual(state.createdCount, 1)
     }
@@ -266,6 +266,91 @@ final class LinuxLibraryImportTests: XCTestCase {
         XCTAssertEqual(Set(paths), ["Imported/a.md", "Imported/b.md"])
     }
 
+    func testMixedURLHintDisappearsWhenImportFinishes() throws {
+        let window = try openLibrary()
+        let state = environment.libraryImportState
+        let local = try source("local.md", "Local")
+        let remote = try XCTUnwrap(URL(string: "https://example.invalid/prompt.md"))
+        XCTAssertTrue(try drop([local, remote], onto: window))
+        XCTAssertEqual(state.message, LinuxImportStrings.fileURLsOnly)
+        finishImport()
+        XCTAssertEqual(state.createdCount, 1)
+        XCTAssertNil(state.message)
+        XCTAssertEqual(gtk_widget_get_visible(try settingsWidget("library-import-message", in: window)), 0)
+    }
+
+    func testBusyDropExplainsRefusalAndClearsHintAtCompletion() throws {
+        let window = try openLibrary()
+        let state = environment.libraryImportState
+        let local = try source("busy.md", "Local")
+        XCTAssertTrue(try drop([local], onto: window))
+        XCTAssertFalse(try drop([local], onto: window))
+        XCTAssertEqual(state.message, LinuxImportStrings.importInProgress)
+        XCTAssertNotEqual(gtk_widget_get_visible(try settingsWidget("library-import-message", in: window)), 0)
+        finishImport()
+        XCTAssertEqual(state.createdCount, 1)
+        XCTAssertNil(state.message)
+        XCTAssertEqual(gtk_widget_get_visible(try settingsWidget("library-import-message", in: window)), 0)
+    }
+
+    func testBusyRefusalAndBatchCompletionPreserveMissingReportDiagnostic() throws {
+        let first = try source("first.md", "First")
+        let second = try source("Folder/second.md", "Second")
+        let state = environment.libraryImportState
+        let model = environment.importModel
+        let idle = model.state
+        let observed = try XCTUnwrap(model.onChange)
+        var checkedBusyRefusal = false
+        model.onChange = { [weak state] value in
+            observed(value.isImporting ? value : idle)
+            if state?.message == LinuxImportStrings.missingReport, state?.isBusy == true {
+                checkedBusyRefusal = true
+                XCTAssertFalse(state?.importURLs([first]) ?? true)
+                XCTAssertEqual(state?.message, LinuxImportStrings.missingReport)
+            }
+        }
+        XCTAssertTrue(state.importURLs([first, second.deletingLastPathComponent()]))
+        finishImport()
+        XCTAssertTrue(checkedBusyRefusal)
+        XCTAssertEqual(state.requestNumber, 2)
+        XCTAssertEqual(state.message, LinuxImportStrings.missingReport)
+    }
+
+    func testRebindCancelsNativeImportChooserAndRetiresItsResponse() throws {
+        let state = environment.libraryImportState
+        let local = try source("late-native.md", "Late")
+        var native: OpaquePointer?
+        let nativeChooser = GTKImportChooser(showDialog: {
+            g_object_ref(UnsafeMutableRawPointer($0))
+            native = $0
+        })
+        defer { if let native { g_object_unref(UnsafeMutableRawPointer(native)) } }
+        let view = LinuxLibraryWindow(application: application,
+            browser: environment.libraryBrowserModel, editor: environment.editorModel,
+            imports: .init(state: state, chooser: nativeChooser), openFolder: {})
+        defer { view.tearDown() }
+        view.show()
+        state.choose(.files)
+        let dialog = try XCTUnwrap(native)
+        let file = try XCTUnwrap(g_file_new_for_path(local.path))
+        defer { g_object_unref(UnsafeMutableRawPointer(file)) }
+        XCTAssertNotEqual(gtk_file_chooser_set_file(mp_file_chooser(dialog), file, nil), 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let selected = gtk_file_chooser_get_file(mp_file_chooser(dialog)) else { return false }
+            defer { g_object_unref(UnsafeMutableRawPointer(selected)) }
+            return g_file_equal(file, selected) != 0
+        })
+        XCTAssertTrue(state.isChoosing)
+        view.rebind(browser: environment.libraryBrowserModel, editor: environment.editorModel, imports: state)
+        XCTAssertFalse(state.isChoosing)
+        XCTAssertTrue(state.canImport)
+        mp_test_emit_native_response(dialog, GTK_RESPONSE_ACCEPT.rawValue)
+        drainWork()
+        XCTAssertFalse(state.isBusy)
+        XCTAssertFalse(state.hasReport)
+        XCTAssertNil(try files.stamp(at: "Imported/late-native.md"))
+    }
+
     func testCloseDuringImportKeepsReportOnReopenAndReportOpenUsesEditorGuard() throws {
         try files.write(Data("Old prompt".utf8), at: "old.md")
         let url = try source("new.md", "Imported prompt")
@@ -352,6 +437,27 @@ final class LinuxLibraryImportTests: XCTestCase {
         finishImport()
         XCTAssertEqual(state.reports.first?.report.failure, .source(.notFound))
         XCTAssertTrue(labels(try settingsWidget("library-import-report", in: window)).contains { $0.contains("Import failed:") })
+    }
+
+    func testUnreadableSubdirectoryIsTypedSkipWhileValidSiblingImports() throws {
+        let sibling = try source("Folder/kept.md", "Kept")
+        _ = try source("Folder/blocked/nested.md", "Blocked")
+        compose(sourceFactory: {
+            LinuxImportSourceReader(openDirectory: { parent, name in
+                if name == "blocked" { errno = EACCES; return -1 }
+                return Glibc.openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            })
+        })
+        let window = try openLibrary()
+        let state = environment.libraryImportState
+        XCTAssertTrue(state.importURLs([sibling.deletingLastPathComponent()]))
+        finishImport()
+        XCTAssertNil(state.reports.first?.report.failure)
+        XCTAssertEqual(state.createdCount, 1)
+        XCTAssertEqual(state.skippedCount, 1)
+        XCTAssertEqual(state.files.first { $0.sourcePath.hasSuffix("/blocked") }?.outcome, .skipped(.notRegularFile))
+        XCTAssertEqual(try files.read(at: "Imported/kept.md"), Data("Kept".utf8))
+        XCTAssertTrue(labels(try settingsWidget("library-import-report", in: window)).contains(LinuxImportStrings.skipped(.notRegularFile)))
     }
 
     func testCloseCancelsChooserAndRemoteSelectionsCannotCreateFiles() throws {
@@ -470,8 +576,12 @@ final class LinuxLibraryImportTests: XCTestCase {
         for index in 0..<g_list_model_get_n_items(controllers) {
             guard let item = g_list_model_get_item(controllers, index) else { continue }
             if g_type_check_instance_is_a(item.assumingMemoryBound(to: GTypeInstance.self), gtk_drop_target_get_type()) != 0 {
-                target = item
-                break
+                var count: gsize = 0
+                if let types = gtk_drop_target_get_gtypes(OpaquePointer(item), &count),
+                   UnsafeBufferPointer(start: types, count: Int(count)).contains(gdk_file_list_get_type()) {
+                    target = item
+                    break
+                }
             }
             g_object_unref(item)
         }
