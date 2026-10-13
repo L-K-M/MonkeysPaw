@@ -65,7 +65,8 @@ Per OS:
 
   Linux attaches one StatusNotifierItem at resident startup, with left click and
   **Show Picker** toggling the picker, the shared library status row opening the
-  folder when available, and **Settings…**, **Setup…** and **Quit** actions.
+  Library window (§11.7) when available, and **Settings…**, **Setup…** and
+  **Quit** actions.
   Without a tray watcher, the hotkey, desktop actions and picker Settings button
   remain the entry points.
 
@@ -324,7 +325,9 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   at most `Limits.libraryRecentCap = 100` entries before filtering. Using a
   prompt never writes its file. Selection follows assigned identity across
   renames, with exact path bytes disambiguating duplicate ids; an ambiguous
-  identity or deletion clears it. Changing section or filter retains an
+  identity clears the selection key. External deletion hides the row but keeps
+  the remembered selection key, so a restored file can reopen; the editor's
+  Delete command clears the key. Changing section or filter retains an
   existing selection even if its row is hidden, without choosing another
   prompt. Invalid and future-format entries remain visible with their state.
   Conflicts and groups join the sidebar with sync (M6).
@@ -368,13 +371,15 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   keeps the original session, draft, conflict and pending decision. The app
   never merges.
 - **Unsaved edits.** Changing selection, closing the window, renaming,
-  moving, deleting, switching libraries, reverting, or quitting asks Save /
+  moving, deleting, reverting, or quitting asks Save /
   Discard / Cancel. Core's `EditorModel` publishes a tokenized pending
   decision for these discard requests; the view resolves it, and file-command
   callers proceed only after an allowed result through `MainThread`.
   Requests queue in order while a save is in flight, and a failed save or a
-  newer draft retains the decision. A library switch retires the session
-  only after the guard allows it.
+  newer draft retains the decision. Both desktops refuse a library switch
+  while the editor has unsaved edits, a save or file command in flight, a
+  pending decision or queued actions. Settings shows an editor-specific
+  message and keeps the active library. An allowed switch retires the session.
   History restore uses the revert guard. `EditorModel`'s file commands perform
   their writes only after the guard allows them. Open-prompt, close and revert
   requests issued during a command queue in order and act after it completes.
@@ -391,7 +396,7 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   `LibraryBrowserModel` follows the committed rename/move or Save as Copy
   adoption only while that editor prompt remains selected, including an
   unassigned path-hash move (§5.2). A committed editor Delete command explicitly
-  clears that selection, closes the editor and keeps its history; restoring a
+  clears that key, closes the editor and keeps its history; restoring a
   deleted prompt arrives later. Window close and Cmd+W retain the browser
   selection, filter and section for reopening; Escape retains the selection
   when it closes the window after the filter is clear. External deletion
