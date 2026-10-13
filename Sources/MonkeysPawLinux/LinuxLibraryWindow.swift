@@ -267,7 +267,7 @@ final class LinuxLibraryWindow {
     func setLibraryAvailable(_ available: Bool) {
         let becameAvailable = available && !self.available
         self.available = available
-        if becameAvailable, isHistorySelected { loadHistory() }
+        if becameAvailable, !isDestroyed, isHistorySelected { loadHistory() }
         render()
     }
 
@@ -447,7 +447,9 @@ final class LinuxLibraryWindow {
         if isHistorySelected, state.prompt != historyPrompt { loadHistory() }
     }
 
-    private var isHistorySelected: Bool { gtk_notebook_get_current_page(mp_notebook(tabs)) == historyPage }
+    private var isHistorySelected: Bool {
+        historyPage >= 0 && gtk_notebook_get_current_page(mp_notebook(tabs)) == historyPage
+    }
 
     private func loadHistory() {
         guard !isDestroyed, available, let editor, let prompt = editor.state.prompt,
