@@ -18,10 +18,6 @@ extension AppDelegate: NSMenuItemValidation {
         return item
     }
 
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        validateLibraryFileMenuItem(menuItem, in: NSApp.keyWindow)
-    }
-
     /// Explicit window input keeps hosted tests independent of native key status.
     func validateLibraryFileMenuItem(_ item: NSMenuItem, in window: NSWindow?) -> Bool {
         switch item.action {
@@ -30,7 +26,7 @@ extension AppDelegate: NSMenuItemValidation {
             return presentation.canSave || presentation.canShowConflict
         case #selector(renameLibraryPrompt), #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt):
             return libraryCommandTarget(in: window)?.canRunFileCommand == true
-        default: return true
+        default: return false
         }
     }
 

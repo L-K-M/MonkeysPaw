@@ -145,9 +145,11 @@ final class LibraryViewState: ObservableObject {
 
     func setLibraryAvailable(_ available: Bool) {
         guard isActive else { return }
+        let becameAvailable = available && !libraryAvailable
         libraryAvailable = available
         imports?.setLibraryAvailable(available)
         if !available { fileCommandRequest = nil }
+        if becameAvailable, editorTab == .history { loadHistory() }
         onEditorChange?()
     }
 
@@ -241,6 +243,7 @@ final class LibraryViewState: ObservableObject {
 
     func requestFileCommand(_ command: LibraryFileCommand) {
         guard canRunFileCommand, fileCommandRequest == nil, let prompt = editorState.prompt else { return }
+        commandMessage = nil
         let folders = snapshot.sections.compactMap { section -> String? in
             if case .folder(let folder) = section.id { return folder.string }
             return nil
@@ -269,15 +272,17 @@ final class LibraryViewState: ObservableObject {
     private func commandCompletion(success: String) -> (PromptCommandOutcome) -> Void {
         commandMessage = nil
         let revision = bindingRevision
-        // Core owns the unsaved guard, ordering and exactly-once completion.
+        // Queue feedback with state publications so an older busy update cannot erase it.
         return { [weak self] outcome in
-            guard let self, self.isActive, self.bindingRevision == revision else { return }
-            // Cancelling a guard can leave an unresolved save conflict.
-            if case .cancelled = outcome, self.editorState.conflict != nil {
-                self.commandMessage = nil
-                return
+            self?.mainThread.run { [weak self] in
+                guard let self, self.isActive, self.bindingRevision == revision else { return }
+                // Cancelling a guard can leave an unresolved save conflict.
+                if case .cancelled = outcome, self.editorState.conflict != nil {
+                    self.commandMessage = nil
+                    return
+                }
+                self.commandMessage = LibraryCommandStrings.message(outcome, success: success)
             }
-            self.commandMessage = LibraryCommandStrings.message(outcome, success: success)
         }
     }
 
@@ -355,9 +360,10 @@ final class LibraryViewState: ObservableObject {
                 let pathChanged = previousPrompt?.relativePath != state.prompt?.relativePath
                 let identityChanged = previousPrompt?.identity != state.prompt?.identity
                 let commandFinished = self.editorState.status == .commandRunning && state.status != .commandRunning
+                let saveCommitted = self.editorState.status == .saving && state.status == .saved
                 // Conflict rereads must preserve the command's typed outcome.
                 let newConflict = self.editorState.conflict == nil && state.conflict != nil
-                if pathChanged || identityChanged || state.status == .loading
+                if !commandFinished, pathChanged || identityChanged || state.status == .loading
                     || state.status == .saving || state.status == .commandRunning
                     || newConflict || state.pendingDecision != nil {
                     self.commandMessage = nil
@@ -392,8 +398,8 @@ final class LibraryViewState: ObservableObject {
                 }
                 self.onEditorChange?()
                 // History keys follow identity; moving also retires Core's path-bound load.
-                if self.editorTab == .history, pathChanged || identityChanged || commandFinished,
-                   state.prompt != nil, !state.history.isLoading { self.loadHistory() }
+                if self.editorTab == .history, pathChanged || identityChanged || commandFinished || saveCommitted,
+                   state.prompt != nil, !state.history.isLoading, !editor.state.history.isLoading { self.loadHistory() }
             }
         }
     }

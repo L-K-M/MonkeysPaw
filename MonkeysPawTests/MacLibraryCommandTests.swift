@@ -324,6 +324,117 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(presentation.commandMessage, LibraryCommandStrings.occupied)
     }
 
+    func testCommandFeedbackKeepsEachOutcomeThroughQueuedEditorUpdates() throws {
+        let name = try seedRevision(Data("Earlier".utf8))
+        try files.write(Data("Other".utf8), at: "other.md")
+        let native = try open()
+        let main = CommandTestMainThread()
+        let presentation = LibraryViewState(model: native.model, editor: native.editor,
+            libraryPath: root.path, available: true, mainThread: main, revealLibrary: {})
+        defer { presentation.deactivate() }
+        selectHistory(presentation, filename: name)
+
+        func finish(_ message: String) {
+            main.queuesWork = true
+            work.drain()
+            main.drain()
+            work.drain()
+            main.drain()
+            main.queuesWork = false
+            XCTAssertEqual(presentation.commandMessage, message)
+        }
+
+        presentation.restoreRevision()
+        XCTAssertEqual(presentation.editorState.status, .commandRunning)
+        finish(LibraryCommandStrings.restored)
+        let commands: [(LibraryFileCommand, LibraryEditorResponse, String)] = [
+            (.rename, .rename("renamed.md"), LibraryCommandStrings.renamed),
+            (.move, .move("new"), LibraryCommandStrings.moved),
+            (.delete, .delete, LibraryCommandStrings.deleted)
+        ]
+        for (command, response, message) in commands {
+            presentation.requestFileCommand(command)
+            XCTAssertNil(presentation.commandMessage, "A new command clears earlier feedback")
+            let request = try XCTUnwrap(presentation.fileCommandRequest)
+            presentation.resolveFileCommand(response, id: request.id)
+            XCTAssertEqual(presentation.editorState.status, .commandRunning)
+            finish(message)
+        }
+        XCTAssertNil(presentation.editorState.prompt)
+        presentation.selectPath("other.md")
+        XCTAssertNil(presentation.commandMessage)
+        work.drain()
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "other.md")
+    }
+
+    func testCommandFeedbackSurvivesQueuedStartAndCompletionPublications() throws {
+        let native = try open()
+        let main = CommandTestMainThread()
+        let presentation = LibraryViewState(model: native.model, editor: native.editor,
+            libraryPath: root.path, available: true, mainThread: main, revealLibrary: {})
+        defer { presentation.deactivate() }
+        presentation.requestFileCommand(.rename)
+        let request = try XCTUnwrap(presentation.fileCommandRequest)
+        main.queuesWork = true
+        presentation.resolveFileCommand(.rename("renamed.md"), id: request.id)
+        work.drain()
+        XCTAssertEqual(presentation.editor.state.prompt?.relativePath, "renamed.md")
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "one.md")
+        main.drain()
+        work.drain()
+        main.drain()
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "renamed.md")
+        XCTAssertEqual(presentation.commandMessage, LibraryCommandStrings.renamed)
+        presentation.edit(try XCTUnwrap(presentation.editorState.source) + " draft")
+        XCTAssertNil(presentation.commandMessage)
+    }
+
+    func testHistoryReloadsAfterCommittedSaveWhileTabStaysOpen() throws {
+        let name = try seedRevision(Data("Earlier".utf8))
+        let presentation = try open()
+        selectHistory(presentation, filename: name)
+        let prompt = presentation.editorState.prompt
+        let sourceRevision = presentation.sourceRevision
+        presentation.edit(original + " saved")
+        XCTAssertTrue(presentation.canSave)
+        presentation.save()
+        XCTAssertEqual(presentation.editorState.status, .saving)
+        work.drain()
+        XCTAssertEqual(presentation.editorState.status, .saved)
+        XCTAssertEqual(presentation.editorTab, .history)
+        XCTAssertEqual(presentation.editorState.prompt, prompt)
+        XCTAssertEqual(presentation.sourceRevision, sourceRevision)
+        XCTAssertEqual(presentation.editorState.history.revisions.count, 2)
+        XCTAssertEqual(presentation.editorState.history.revisions.first?.source, original)
+        XCTAssertEqual(presentation.editorState.history.selectedRevision?.filename, name)
+        XCTAssertEqual(try body(), "Original saved")
+    }
+
+    func testHistoryReloadsWhenLibraryReturnsWithoutChangingTabs() throws {
+        let first = try seedRevision(Data("Earlier".utf8))
+        let presentation = try open()
+        presentation.setLibraryAvailable(false)
+        presentation.editorTab = .history
+        XCTAssertFalse(presentation.editorState.history.isLoading)
+        XCTAssertTrue(presentation.editorState.history.revisions.isEmpty)
+        presentation.setLibraryAvailable(true)
+        XCTAssertTrue(presentation.editorState.history.isLoading)
+        work.drain()
+        XCTAssertEqual(presentation.editorState.history.revisions.map(\.revision.filename), [first])
+        presentation.selectRevision(first)
+
+        presentation.setLibraryAvailable(false)
+        let second = try seedRevision(Data("Later".utf8), sequence: 1)
+        presentation.setLibraryAvailable(true)
+        XCTAssertTrue(presentation.editorState.history.isLoading)
+        work.drain()
+        XCTAssertEqual(presentation.editorTab, .history)
+        XCTAssertEqual(presentation.editorState.history.revisions.map(\.revision.filename), [second, first])
+        XCTAssertEqual(presentation.editorState.history.selectedRevision?.filename, first)
+        presentation.setLibraryAvailable(true)
+        XCTAssertFalse(presentation.editorState.history.isLoading, "Unchanged availability does not reload History")
+    }
+
     func testFirstSaveReloadsHistoryAtSamePathWithoutResettingSourceSession() throws {
         let presentation = try open(Data("Plain".utf8))
         let before = try XCTUnwrap(presentation.editorState.prompt)
@@ -674,6 +785,38 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertNil(edit.items.first { $0.keyEquivalent == "x" }?.target)
         XCTAssertNil(edit.items.first { $0.keyEquivalent == "c" }?.target)
         XCTAssertNil(edit.items.first { $0.keyEquivalent == "v" }?.target)
+        let unknown = NSMenuItem(title: "Unknown", action: Selector("unknownLibraryAction:"), keyEquivalent: "")
+        XCTAssertFalse(delegate.validateMenuItem(unknown))
+        XCTAssertFalse(delegate.validateLibraryFileMenuItem(unknown, in: try window()))
+        let settings = NSMenuItem(title: "Settings", action: #selector(AppDelegate.showSettings), keyEquivalent: "")
+        XCTAssertTrue(delegate.validateMenuItem(settings))
+    }
+
+    func testSaveMenuReopensDismissedConflictWithoutWritingDraft() throws {
+        let presentation = try open()
+        let menu = try XCTUnwrap(delegate.makeLibraryFileMenu().submenu)
+        let save = try XCTUnwrap(menu.items.first)
+        presentation.edit(original + " draft")
+        let external = original + " external"
+        try files.write(Data(external.utf8), at: "one.md")
+        presentation.save()
+        work.drain()
+        try respond(.dismissConflict)
+        XCTAssertFalse(presentation.canSave)
+        XCTAssertTrue(presentation.canShowConflict)
+        XCTAssertTrue(delegate.validateLibraryFileMenuItem(save, in: try window()))
+        for item in menu.items.dropFirst() {
+            XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window()))
+        }
+        let dismissed = dialogs.count
+        presentation.save()
+        XCTAssertEqual(dialogs.count, dismissed + 1)
+        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected reopened conflict choices") }
+        XCTAssertEqual(conflict.theirsSource, external)
+        XCTAssertEqual(presentation.editorState.source, original + " draft")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(try files.read(at: "one.md"), Data(external.utf8))
+        try respond(.dismissConflict)
     }
 
     func testNativeRenameUsesEditedTextAndNonButtonDismissalCancelsForms() throws {
@@ -731,6 +874,22 @@ private final class CommandTestWork: BackgroundWork {
             pending.removeFirst()()
         }
         if !pending.isEmpty { XCTFail("Command worker did not settle in 100 jobs; \(pending.count) still queued") }
+    }
+}
+
+private final class CommandTestMainThread: MainThread {
+    var queuesWork = false
+    private var pending: [() -> Void] = []
+    func run(_ work: @escaping () -> Void) {
+        if queuesWork { pending.append(work) }
+        else { work() }
+    }
+    func drain() {
+        for _ in 0..<100 {
+            guard !pending.isEmpty else { return }
+            pending.removeFirst()()
+        }
+        if !pending.isEmpty { XCTFail("Command main thread did not settle in 100 jobs") }
     }
 }
 

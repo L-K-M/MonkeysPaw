@@ -795,6 +795,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
     }
 
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(saveLibraryPrompt), #selector(renameLibraryPrompt),
+             #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt):
+            return validateLibraryFileMenuItem(menuItem, in: NSApp.keyWindow)
+        case #selector(importFromMenu):
+            return libraryWindow?.presentation.imports?.canImport == true
+        case #selector(openLibraryFromMenu), #selector(showLibrary):
+            return libraryStatusModel?.libraryAvailable == true
+        case #selector(showPanel), #selector(showSetup), #selector(showSettings):
+            return true
+        default: return false
+        }
+    }
+
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(systemSymbolName: "text.quote",

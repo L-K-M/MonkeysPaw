@@ -52,10 +52,13 @@ struct LibraryHistoryView: View {
                                     ? LibraryCommandStrings.oversizedPreview : LibraryCommandStrings.noUTF8Preview)
                             }
                         } else {
-                            Text(presentation.editorState.history.revisions.isEmpty
-                                && !presentation.editorState.history.isLoading
-                                ? LibraryCommandStrings.noHistory : LibraryCommandStrings.selectRevision)
-                                .foregroundStyle(.secondary)
+                            if presentation.editorState.history.isLoading {
+                                Text(LibraryCommandStrings.loadingHistory).foregroundStyle(.secondary)
+                            } else if presentation.editorState.history.revisions.isEmpty {
+                                Text(LibraryCommandStrings.noHistory).foregroundStyle(.secondary)
+                            } else {
+                                Text(LibraryCommandStrings.selectRevision).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading).padding(8)
