@@ -78,8 +78,7 @@
           "type" : "array"
         },
         "key" : {
-          "format" : "scope-key",
-          "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "pattern" : "^(?:group:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
           "type" : "string"
         },
         "kind" : {

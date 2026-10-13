@@ -1,6 +1,12 @@
 import Foundation
 import MonkeysPawCore
+import MonkeysPawServer
 import XCTest
+#if canImport(Glibc)
+import Glibc
+#else
+import Darwin
+#endif
 
 final class SchemaTests: XCTestCase {
     private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -11,15 +17,18 @@ final class SchemaTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: temporary) }
         let first = temporary.appendingPathComponent("first")
         let second = temporary.appendingPathComponent("second")
-        XCTAssertEqual(try runDumpSchema([first.path]).status, 0)
-        XCTAssertEqual(try runDumpSchema([second.path]).status, 0)
+        try SchemaRenderer.write(to: first)
+        try SchemaRenderer.write(to: second)
+        for directory in [first, second] {
+            try Data([0xff]).write(to: directory.appendingPathComponent(".DS_Store"))
+        }
 
         let names = SyncAPI.schemas.map { $0.name + ".json" }
         let expected = Set(names + ["README.md"])
-        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: first.path)), expected)
-        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: second.path)), expected)
+        XCTAssertEqual(try visibleFiles(at: first), expected)
+        XCTAssertEqual(try visibleFiles(at: second), expected)
         let committed = root.appendingPathComponent("spec/schema")
-        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: committed.path)), expected)
+        XCTAssertEqual(try visibleFiles(at: committed), expected)
         for name in expected.sorted() {
             let data = try Data(contentsOf: first.appendingPathComponent(name))
             XCTAssertEqual(data, try Data(contentsOf: second.appendingPathComponent(name)), name)
@@ -38,7 +47,7 @@ final class SchemaTests: XCTestCase {
         }
     }
 
-    func testSchemaCLIRejectsWrongArgumentsAndWriteFailures() throws {
+    func testSchemaCLIExportsAndRejectsWrongArgumentsAndWriteFailures() throws {
         for arguments in [[], [""], ["one", "two"]] as [[String]] {
             let result = try runDumpSchema(arguments)
             XCTAssertEqual(result.status, 64)
@@ -47,6 +56,18 @@ final class SchemaTests: XCTestCase {
         let temporary = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: temporary) }
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let output = temporary.appendingPathComponent("schemas")
+        let success = try runDumpSchema([output.path])
+        XCTAssertEqual(success.status, 0)
+        XCTAssertEqual(success.error, "")
+        let rendered = temporary.appendingPathComponent("rendered")
+        try SchemaRenderer.write(to: rendered)
+        let names = Set(SyncAPI.schemas.map { $0.name + ".json" } + ["README.md"])
+        XCTAssertEqual(try visibleFiles(at: output), names)
+        for name in names {
+            XCTAssertEqual(try Data(contentsOf: output.appendingPathComponent(name)),
+                           try Data(contentsOf: rendered.appendingPathComponent(name)), name)
+        }
         let file = temporary.appendingPathComponent("file")
         try Data().write(to: file)
         let result = try runDumpSchema([file.path])
@@ -57,10 +78,17 @@ final class SchemaTests: XCTestCase {
         XCTAssertTrue(result.error.hasSuffix("\n"), result.error)
     }
 
+    func testSchemaCLIRunnerStopsTimedOutProcesses() {
+        XCTAssertThrowsError(try runCLI(URL(fileURLWithPath: "/bin/sleep").resolvingSymlinksInPath(),
+                                       arguments: ["30"], timeout: .milliseconds(100))) { error in
+            guard case CLIError.timedOut = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+
     func testSchemaRendererBoundsBytesAndOmitsRedundantConstraints() throws {
         let temporary = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: temporary) }
-        XCTAssertEqual(try runDumpSchema([temporary.path]).status, 0)
+        try SchemaRenderer.write(to: temporary)
         let validator = try loadValidator(at: temporary)
         var byteSchemas: [Int64: SchemaJSON] = [:]
         for (name, schema) in validator.schemas {
@@ -80,7 +108,7 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(Set(byteSchemas.keys), [72, 1_024, 262_144])
         for (maximum, schema) in byteSchemas {
             let limit = Int(maximum)
-            for text in [String(repeating: "a", count: limit), String(repeating: "é", count: limit / 2)] {
+            for text in [String(repeating: "a", count: limit), String(repeating: "\u{00E9}", count: limit / 2)] {
                 XCTAssertEqual(text.utf8.count, limit)
                 XCTAssertTrue(try validator.validate(.string(text), against: schema, mode: .schema), "\(limit)")
                 XCTAssertTrue(try validator.validate(.string(text), against: schema), "\(limit)")
@@ -88,7 +116,7 @@ final class SchemaTests: XCTestCase {
             let tooManyScalars = SchemaJSON.string(String(repeating: "a", count: limit + 1))
             XCTAssertFalse(try validator.validate(tooManyScalars, against: schema, mode: .schema), "\(limit)")
             XCTAssertFalse(try validator.validate(tooManyScalars, against: schema), "\(limit)")
-            let tooManyBytes = SchemaJSON.string(String(repeating: "é", count: limit / 2 + 1))
+            let tooManyBytes = SchemaJSON.string(String(repeating: "\u{00E9}", count: limit / 2 + 1))
             XCTAssertTrue(try validator.validate(tooManyBytes, against: schema, mode: .schema), "\(limit)")
             XCTAssertFalse(try validator.validate(tooManyBytes, against: schema), "\(limit)")
         }
@@ -97,7 +125,7 @@ final class SchemaTests: XCTestCase {
     func testSchemaValidationAgreesWithStrictDTOFixtures() throws {
         let temporary = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: temporary) }
-        XCTAssertEqual(try runDumpSchema([temporary.path]).status, 0)
+        try SchemaRenderer.write(to: temporary)
         let validator = try loadValidator(at: temporary)
         let types: [any SyncAPIDTO.Type] = [
             SyncAPI.HealthResponse.self, SyncAPI.EmptyResponse.self, SyncAPI.IDPath.self,
@@ -145,13 +173,52 @@ final class SchemaTests: XCTestCase {
         let cases = [
             ("ScopeIdentity", "{\"key\":\"group:01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"kind\":\"group\",\"group_id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAW\",\"name\":\"Group\",\"role\":\"viewer\"}"),
             ("Group", "{\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"name\":\"Group\",\"created_by\":\"01ARZ3NDEKTSV4RRFFQ69G5FAW\",\"created_at\":\"2025-02-29T12:00:00.000Z\"}"),
-            ("FeedPrompt", "{\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"rev\":1,\"path\":\"a.md\",\"content\":\"" + String(repeating: "é", count: 131_073) + "\"}")
+            ("FeedPrompt", "{\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"rev\":1,\"path\":\"a.md\",\"content\":\"" + String(repeating: "\u{00E9}", count: 131_073) + "\"}")
         ]
         for (name, source) in cases {
             let value = try SchemaJSON(data: Data(source.utf8))
             let schema = try XCTUnwrap(validator.schemas[name + ".json"])
             XCTAssertTrue(try validator.validate(value, against: schema, mode: .schema), name)
             XCTAssertFalse(try validator.validate(value, against: schema), name)
+        }
+    }
+
+    func testSchemaScopeKeysMustMatchTheirBranch() throws {
+        let temporary = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try SchemaRenderer.write(to: temporary)
+        let validator = try loadValidator(at: temporary)
+        for (name, type) in [("scope-identity", SyncAPI.ScopeIdentity.self as any SyncAPIDTO.Type),
+                             ("sync-scope", SyncAPI.SyncScope.self as any SyncAPIDTO.Type)] {
+            let schema = try XCTUnwrap(validator.schemas[type.schemaName + ".json"])
+            for kind in ["user", "group"] {
+                let directory = root.appendingPathComponent("spec/fixtures/dto/\(name)-\(kind)-cross-prefixed-key")
+                let data = try Data(contentsOf: directory.appendingPathComponent("body.json"))
+                let value = try SchemaJSON(data: data)
+                XCTAssertFalse(try validator.validate(value, against: schema, mode: .schema), directory.lastPathComponent)
+                XCTAssertThrowsError(try JSONDecoder().decode(type, from: data), directory.lastPathComponent)
+            }
+        }
+    }
+
+    func testSchemaAdminInviteTargetBranchesAreExclusive() throws {
+        let validator = try loadValidator(at: root.appendingPathComponent("spec/schema"))
+        let schema = try XCTUnwrap(validator.schemas["AdminInviteRequest.json"])
+        let sources: [(String, SyncAPI.InviteTarget?)] = [
+            ("{}", .account), (#"{"expires_in":3600}"#, .account),
+            (#"{"group_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","role":"viewer"}"#,
+             .group(groupID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", role: .viewer)),
+            (#"{"group_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}"#, nil),
+            (#"{"role":"viewer"}"#, nil), (#"{"group_id":null,"role":"viewer"}"#, nil),
+            (#"{"group_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","role":"owner"}"#, nil),
+            (#"{"expires_in":null}"#, nil)
+        ]
+        for (source, target) in sources {
+            let data = Data(source.utf8)
+            let value = try SchemaJSON(data: data)
+            XCTAssertEqual(try validator.validate(value, against: schema, mode: .schema), target != nil, source)
+            let decoded = try? JSONDecoder().decode(SyncAPI.AdminInviteRequest.self, from: data)
+            XCTAssertEqual(decoded?.target, target, source)
         }
     }
 
@@ -183,6 +250,10 @@ final class SchemaTests: XCTestCase {
         FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-schema-" + UUID().uuidString)
     }
 
+    private func visibleFiles(at directory: URL) throws -> Set<String> {
+        Set(try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { !$0.hasPrefix(".") })
+    }
+
     private func runDumpSchema(_ arguments: [String]) throws -> (status: Int32, error: String) {
         // Find sibling products from this test bundle, including when XCTest
         // uses an external launcher. SwiftPM builds executable products with tests.
@@ -193,16 +264,36 @@ final class SchemaTests: XCTestCase {
             if FileManager.default.isExecutableFile(atPath: candidate.path) { executable = candidate; break }
             directory.deleteLastPathComponent()
         }
+        return try runCLI(XCTUnwrap(executable, "SwiftPM must build dump-schema beside its test products"), arguments: arguments)
+    }
+
+    private enum CLIError: Error { case timedOut }
+
+    private func runCLI(_ executable: URL, arguments: [String], timeout: DispatchTimeInterval = .seconds(10)) throws -> (status: Int32, error: String) {
+        let temporary = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let diagnostics = temporary.appendingPathComponent("stderr")
+        try Data().write(to: diagnostics)
+        let error = try FileHandle(forWritingTo: diagnostics)
+        defer { try? error.close() }
+
         let process = Process()
-        process.executableURL = try XCTUnwrap(executable, "SwiftPM must build dump-schema beside its test products")
+        process.executableURL = executable
         process.arguments = arguments
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        let error = Pipe()
         process.standardError = error
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        let data = error.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+            _ = exited.wait(timeout: .now() + .seconds(1))
+            throw CLIError.timedOut
+        }
+        // A regular file avoids a pipe read blocking ahead of the deadline.
+        let data = try Data(contentsOf: diagnostics)
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 }

@@ -4,7 +4,7 @@ import Foundation
 // Test-only subset: exact Int64s, emitted 2020-12 keywords and documented
 // SyncAPI extensions. This deliberately does not implement arbitrary schemas.
 enum SchemaJSON: Equatable {
-    case string(String), integer(Int64), number(Double), boolean(Bool), null
+    case string(String), integer(Int64), number(Decimal), boolean(Bool), null
     case array([SchemaJSON]), object([String: SchemaJSON])
 
     init(data: Data) throws {
@@ -18,13 +18,14 @@ enum SchemaJSON: Equatable {
             // Read integer spelling before Double so Int64.max does not lose precision.
             if let integer = Int64(number.stringValue) { self = .integer(integer); return }
             // NSNumber.compare can round an underflow back into range; compare decimal spelling.
-            if let integer = Int64(exactly: number.doubleValue),
-               let decimal = Decimal(string: number.stringValue, locale: Locale(identifier: "en_US_POSIX")),
-               decimal == Decimal(integer) {
+            guard let decimal = Decimal(string: number.stringValue, locale: Locale(identifier: "en_US_POSIX")) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unsupported JSON number."))
+            }
+            if let integer = Int64(exactly: number.doubleValue), decimal == Decimal(integer) {
                 self = .integer(integer)
                 return
             }
-            self = .number(number.doubleValue)
+            self = .number(decimal)
             return
         }
         if let value = value as? String { self = .string(value); return }
@@ -36,6 +37,13 @@ enum SchemaJSON: Equatable {
 
     var string: String? { if case .string(let value) = self { return value }; return nil }
     var integer: Int64? { if case .integer(let value) = self { return value }; return nil }
+    var decimal: Decimal? {
+        switch self {
+        case .integer(let value): return Decimal(value)
+        case .number(let value): return value
+        default: return nil
+        }
+    }
     var array: [Self]? { if case .array(let value) = self { return value }; return nil }
     var object: [String: Self]? { if case .object(let value) = self { return value }; return nil }
 }
@@ -83,15 +91,17 @@ struct SchemaValidator {
 
         if let type = object["type"]?.string {
             switch (type, value) {
-            case ("string", .string), ("integer", .integer), ("boolean", .boolean),
+            case ("string", .string), ("integer", .integer), ("number", .integer),
+                 ("number", .number), ("boolean", .boolean),
                  ("null", .null), ("array", .array), ("object", .object): break
             default: return false
             }
         }
         switch value {
-        case .integer(let number):
-            if let minimum = object["minimum"]?.integer, number < minimum { return false }
-            if let maximum = object["maximum"]?.integer, number > maximum { return false }
+        case .integer, .number:
+            guard let number = value.decimal else { throw Failure.unsupportedSchema }
+            if let minimum = object["minimum"]?.decimal, number < minimum { return false }
+            if let maximum = object["maximum"]?.decimal, number > maximum { return false }
         case .string(let text):
             let count = Int64(text.unicodeScalars.count)
             if let minimum = object["minLength"]?.integer, count < minimum { return false }
@@ -142,6 +152,8 @@ struct SchemaValidator {
     }
 
     private func validCalendarDate(_ text: String) -> Bool {
+        let pattern = "\\A(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z\\z"
+        guard text.range(of: pattern, options: .regularExpression) != nil else { return false }
         let date = text.prefix(10).split(separator: "-").compactMap { Int($0) }
         guard date.count == 3, date[0] >= 1, (1...12).contains(date[1]) else { return false }
         let year = date[0]

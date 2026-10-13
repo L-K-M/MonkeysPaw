@@ -1,4 +1,5 @@
 import Foundation
+import MonkeysPawServer
 
 @main
 struct DumpSchemaCommand {

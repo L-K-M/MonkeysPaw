@@ -41,7 +41,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "dump-schema",
-            dependencies: [.product(name: "MonkeysPawCore", package: "MonkeysPaw")]
+            dependencies: ["MonkeysPawServer"]
         ),
         .testTarget(
             name: "MonkeysPawServerTests",
