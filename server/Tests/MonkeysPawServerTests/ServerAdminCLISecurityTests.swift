@@ -15,7 +15,8 @@ struct ServerAdminCLISecurityTests {
         try await withAdminCLI { fixture in
             let secret = "s16-private-password-sentinel"
             for input in [Data(), Data([0xff, 0xfe]), Data(repeating: 65, count: ServerLimits.operatorPasswordInputMaximumBytes + 1)] {
-                try await fixture.run(["user", "add", "invalid"], input: input).assertFailure(excluding: [secret])
+                try await fixture.run(["user", "add", "invalid"], input: input)
+                    .assertFailure(excluding: [secret], expectedError: .passwordInput)
             }
             let file = fixture.directory.appendingPathComponent(secret)
             try await fixture.run(["user", "add", "invalid", "--password-file", file.path], input: Data(secret.utf8))
@@ -24,7 +25,7 @@ struct ServerAdminCLISecurityTests {
             try await fixture.run(["user", "add", "invalid", "--password-file", file.path], input: Data(secret.utf8))
                 .assertFailure(excluding: [secret, file.path])
             try FileManager.default.removeItem(at: file)
-            #expect(mkfifo(file.path, 0o600) == 0)
+            try #require(mkfifo(file.path, 0o600) == 0)
             try await fixture.run(["user", "add", "invalid", "--password-file", file.path], input: Data(secret.utf8))
                 .assertFailure(excluding: [secret, file.path])
             try FileManager.default.removeItem(at: file)
@@ -100,10 +101,11 @@ struct ServerAdminCLISecurityTests {
             try await fixture.persistence.execute("""
                 CREATE TRIGGER fail_operator_audit AFTER INSERT ON audit_events
                 WHEN NEW.action = \(literal: actionName)
-                BEGIN SELECT RAISE(ABORT, 's16-backend-secret-sentinel'); END
+                BEGIN SELECT RAISE(ABORT, \(literal: errorSecret)); END
                 """)
             let arguments = action.arguments(adminID: admin.id, targetID: target.id, groupID: group.id)
-            try await fixture.run(arguments, input: Data(password.utf8)).assertFailure(excluding: [password, errorSecret, "group-fixture-hash"])
+            try await fixture.run(arguments, input: Data(password.utf8))
+                .assertFailure(excluding: [password, errorSecret, "group-fixture-hash"], expectedError: .failed)
             #expect(try await fixture.persistence.auditEvents().count == before)
             #expect(try await fixture.persistence.count("users") == 2)
             #expect(try await fixture.persistence.count("groups") == 1)

@@ -27,6 +27,7 @@ struct ServerAdminCLITests {
             #expect(events.map(\.targetID) == [admin.id, member.id])
             #expect(events.allSatisfy { $0.actorID == nil && $0.groupID == nil && ServerTimestamp.date($0.at) != nil })
             let outputIsSafe = !first.output.contains(Self.password) && !second.output.contains(password)
+                && !first.error.contains(Self.password) && !second.error.contains(password)
             #expect(outputIsSafe)
             try FileManager.default.removeItem(at: file)
             try await fixture.accounts.assertNoPlaintext([Self.password, password])
@@ -42,7 +43,7 @@ struct ServerAdminCLITests {
                 try await fixture.run(["user", "add", "invalid"], input: Data(password.utf8)).assertFailure(excluding: [password])
             }
             try await fixture.run(["user", "add", "invalid", "--kind", "s16-kind-secret"], input: Data(Self.password.utf8))
-                .assertFailure(excluding: ["s16-kind-secret"])
+                .assertFailure(excluding: ["s16-kind-secret", Self.password], expectedError: .invalidInput)
             #expect(try await fixture.persistence.count("users") == 0)
             let first = try await fixture.run(["user", "add", "unique"], input: Data(Self.password.utf8))
             #expect(first.status == 0 && first.error.isEmpty)
@@ -66,8 +67,8 @@ struct ServerAdminCLITests {
             await #expect(throws: AccountError.unauthorized) { try await fixture.accounts.sessions.authenticate(token: session.token.value) }
             #expect(try await fixture.run(["user", "disable", target.id]).status == 0)
             #expect(try await fixture.persistence.auditEvents().count == 1)
-            try await fixture.run(["user", "disable", admin.id]).assertFailure()
-            try await fixture.run(["user", "disable", Self.missingID]).assertFailure()
+            try await fixture.run(["user", "disable", admin.id]).assertFailure(expectedError: .forbidden)
+            try await fixture.run(["user", "disable", Self.missingID]).assertFailure(expectedError: .notFound)
             try await fixture.run(["user", "disable", "s16-id-secret"]).assertFailure(excluding: ["s16-id-secret"])
             let backup = try await fixture.accounts.user(username: "backup", kind: .admin)
             #expect(try await fixture.run(["user", "disable", backup.id]).status == 0)
@@ -95,7 +96,8 @@ struct ServerAdminCLITests {
             }
             _ = try await fixture.accounts.accounts.verifyCredentials(username: user.username, password: Self.password)
             try await fixture.run(["user", "reset-password", user.id], input: Data("short".utf8)).assertFailure(excluding: ["short"])
-            try await fixture.run(["user", "reset-password", Self.missingID], input: Data(Self.password.utf8)).assertFailure()
+            try await fixture.run(["user", "reset-password", Self.missingID], input: Data(Self.password.utf8))
+                .assertFailure(excluding: [Self.password], expectedError: .notFound)
             try await fixture.run(["user", "reset-password", "invalid-secret-id"], input: Data(Self.password.utf8))
                 .assertFailure(excluding: ["invalid-secret-id", Self.password])
             let events = try await fixture.persistence.auditEvents()
@@ -165,6 +167,8 @@ struct ServerAdminCLITests {
                 #expect(onlyOnce)
                 let stored = try await fixture.persistence.storedInvite(token)
                 #expect(stored.target == .group(groupID: group.id, role: role) && stored.createdBy == issuer.id)
+                let echoedTarget = InviteRecord.Target.group(groupID: try #require(output.groupID), role: try #require(output.role))
+                #expect(stored.target == echoedTarget)
                 if role == .owner {
                     let issued = try await invites.register(.init(inviteToken: token, username: "redeemed", password: Self.password, deviceName: "CLI test"))
                     let membership = try await fixture.accounts.accounts.me(issued.identity).groups.first
@@ -182,11 +186,12 @@ struct ServerAdminCLITests {
         }
     }
 
-    @Test func configuredInviteLinkContainsTheTokenOnceAndDescriptionsAreRedacted() async throws {
+    @Test(arguments: [Int64(1), 604_800])
+    func configuredInviteLinkContainsTheTokenOnceAndDescriptionsAreRedacted(expiresIn: Int64) async throws {
         try await withAdminCLI { fixture in
             let issuer = try await fixture.accounts.user(username: "issuer", kind: .admin)
             let publicURL = "https://sync.example.test:8443/paw?value=a+b&next=%2F"
-            let result = try await fixture.run(["invite", "create", "--issuer", issuer.id, "--expires-in", "1", "--json"],
+            let result = try await fixture.run(["invite", "create", "--issuer", issuer.id, "--expires-in", String(expiresIn), "--json"],
                                                environment: ["MONKEYSPAW_PUBLIC_URL": publicURL])
             let output = try result.value(InviteJSON.self)
             let components = try #require(URLComponents(string: output.secret))
@@ -195,13 +200,21 @@ struct ServerAdminCLITests {
             let token = try #require(components.queryItems?.first { $0.name == "token" }?.value)
             let once = result.output.components(separatedBy: token).count == 2 && result.error.isEmpty
             #expect(once)
+            let events = try await fixture.persistence.auditEvents()
+            let issuance = try #require(events.first { $0.action == "invite.create" })
+            let issuedAt = try #require(ServerTimestamp.date(issuance.at))
+            let expiresAt = try #require(ServerTimestamp.date(output.expiresAt))
+            #expect(expiresAt.timeIntervalSince(issuedAt) == TimeInterval(expiresIn))
+            #expect(try await fixture.persistence.storedInvite(token).expiresAt == output.expiresAt)
             let configuration = try ServerConfiguration(environment: ["MONKEYSPAW_PUBLIC_URL": publicURL])
             let invite = try await OperatorAdminService(database: fixture.database, configuration: configuration)
                 .createInvite(issuerID: issuer.id, groupID: nil, role: nil, expiresIn: nil)
             let redacted = !String(describing: invite).contains(invite.secret) && !String(reflecting: invite).contains(invite.secret)
                 && Mirror(reflecting: invite).children.isEmpty
             #expect(redacted)
-            try await fixture.accounts.assertNoPlaintext([token])
+            let inProcessLink = try #require(URLComponents(string: invite.secret))
+            let inProcessToken = try #require(inProcessLink.queryItems?.first { $0.name == "token" }?.value)
+            try await fixture.accounts.assertNoPlaintext([token, invite.secret, inProcessToken])
         }
     }
 

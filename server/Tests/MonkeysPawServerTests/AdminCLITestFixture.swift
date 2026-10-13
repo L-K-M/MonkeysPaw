@@ -14,9 +14,10 @@ struct AdminCLIResult: Sendable {
         return try JSONDecoder().decode(type, from: Data(output.utf8))
     }
 
-    func assertFailure(excluding secrets: [String] = []) {
+    func assertFailure(excluding secrets: [String] = [], expectedError: OperatorCommandError? = nil) {
+        let messageIsCurated = expectedError.map { error == "Error: \($0.description)\n" } ?? true
         let failedSafely = exitedNormally && status != 0 && output.isEmpty && !error.isEmpty
-            && error.utf8.count < 1_024 && secrets.allSatisfy { !error.contains($0) }
+            && error.utf8.count < 1_024 && secrets.allSatisfy { !error.contains($0) } && messageIsCurated
         #expect(failedSafely)
     }
 }

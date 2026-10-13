@@ -13,6 +13,7 @@ enum AdministrationActor: Sendable {
     }
 
     func requireAdmin(accounts: AccountRepository.Transaction, devices: DeviceRepository) async throws {
+        // Only the local CLI entry path constructs .cliOperator, never HTTP request state.
         guard case .session(let session) = self else { return }
         let user = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
         guard user.accountKind == .admin else { throw AccountError.forbidden }
