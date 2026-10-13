@@ -35,6 +35,8 @@ struct ServerRetentionMigrationTests {
                 "EXPLAIN QUERY PLAN SELECT id FROM prompts WHERE deleted_at < \(bind: PersistenceTestRepository.purgeCutoff) ORDER BY deleted_at, id LIMIT 1",
                 "EXPLAIN QUERY PLAN SELECT id FROM prompts WHERE rev > \(literal: ServerLimits.revisionsPerPrompt) AND id > '' ORDER BY id LIMIT \(literal: ServerLimits.retentionBatchSize)"
             ]
+            // zip stops at the shorter list; a missing plan or index must fail.
+            #expect(plans.count == Self.indexes.count)
             for (query, index) in zip(plans, Self.indexes) {
                 let plan = try await repository.database.read { sql in
                     // EXPLAIN alone can retain this pooled reader's pre-migration schema.
