@@ -11,8 +11,10 @@
           "x-max-utf8-bytes" : 262144
         },
         "path" : {
-          "minLength" : 0,
-          "type" : "string"
+          "maxLength" : 1024,
+          "minLength" : 1,
+          "type" : "string",
+          "x-max-utf8-bytes" : 1024
         },
         "rev" : {
           "maximum" : 9223372036854775807,
@@ -48,8 +50,10 @@
           "type" : "string"
         },
         "path" : {
-          "minLength" : 0,
-          "type" : "string"
+          "maxLength" : 1024,
+          "minLength" : 1,
+          "type" : "string",
+          "x-max-utf8-bytes" : 1024
         },
         "rev" : {
           "maximum" : 9223372036854775807,

@@ -19,8 +19,10 @@
           "$ref" : "WriteOrigin.json"
         },
         "path" : {
-          "minLength" : 0,
-          "type" : "string"
+          "maxLength" : 1024,
+          "minLength" : 1,
+          "type" : "string",
+          "x-max-utf8-bytes" : 1024
         },
         "scope" : {
           "const" : "user",
@@ -59,8 +61,10 @@
           "$ref" : "WriteOrigin.json"
         },
         "path" : {
-          "minLength" : 0,
-          "type" : "string"
+          "maxLength" : 1024,
+          "minLength" : 1,
+          "type" : "string",
+          "x-max-utf8-bytes" : 1024
         },
         "scope" : {
           "const" : "group",
