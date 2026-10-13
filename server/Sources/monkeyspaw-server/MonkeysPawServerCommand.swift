@@ -10,7 +10,7 @@ struct MonkeysPawServerCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "monkeyspaw-server",
         abstract: "Run the Monkey's Paw sync server.",
-        subcommands: [Serve.self, Healthcheck.self],
+        subcommands: [Serve.self, Migrate.self, Healthcheck.self],
         defaultSubcommand: Serve.self
     )
 }
@@ -22,7 +22,22 @@ private struct Serve: AsyncParsableCommand {
         let configuration = try ServerConfiguration()
         let application = buildApplication(configuration: configuration)
 
-        try await application.runService()
+        try await ServerDatabase.withMigratedDatabase(configuration: DatabaseConfiguration()) { _ in
+            try await application.runService()
+        }
+    }
+}
+
+private struct Migrate: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Apply pending database migrations.")
+
+    mutating func run() async throws {
+        do {
+            try await ServerDatabase.withMigratedDatabase(configuration: DatabaseConfiguration()) { _ in }
+        } catch {
+            // Driver errors can contain stored data; report only the operation.
+            throw ValidationError("Database initialization or migration failed.")
+        }
     }
 }
 

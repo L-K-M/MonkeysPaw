@@ -4,10 +4,11 @@
 
 ```text
 -- every *.id below is a ULID string
-meta(database_id)                         -- random UUID; rotated by `monkeyspaw-server restore`
+meta(singleton PK CHECK(singleton = 1), database_id UNIQUE)
+                                         -- random UUID; generated once, rotated by restore
 users(id, username UNIQUE, display_name, password_hash,
       account_kind ∈ {member, admin}, created_at, disabled_at NULL)
-groups(id, name, created_by, created_at)
+groups(id, name, created_by, created_at, deleted_at NULL)
 memberships(group_id, user_id, role ∈ {owner, editor, viewer}, joined_at, PK(group_id, user_id))
 prompts(id ULID PK,                       -- the same id as the file's front matter
         scope ∈ {user, group}, owner_id NULL, group_id NULL,
@@ -19,14 +20,22 @@ prompts(id ULID PK,                       -- the same id as the file's front mat
         created_by, created_at, updated_by, updated_at, deleted_at NULL,
         CHECK ((scope = 'user'  AND owner_id IS NOT NULL AND group_id IS NULL)
             OR (scope = 'group' AND group_id IS NOT NULL AND owner_id IS NULL)))
-prompt_revisions(prompt_id, rev, author_id, content, created_at, origin, PK(prompt_id, rev))
+prompt_revisions(prompt_id, rev, author_id, scope, owner_id NULL, group_id NULL,
+                 path, content, created_at, origin, PK(prompt_id, rev))
 changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,
         scope_key,                        -- "user:<id>" or "group:<id>"; INDEX(scope_key, seq)
-        prompt_id, kind ∈ {upsert, delete, move_out}, at)
-scope_floors(scope_key PK, floor_seq)     -- one past the highest purged seq; only ever raised
+        scope, owner_id NULL, group_id NULL,
+        prompt_id, kind ∈ {upsert, delete, move_out}, path, rev, content NULL, at)
+scope_heads(scope_key PK, head_seq)       -- durable high-water mark, raised by change inserts
+scope_floors(scope_key PK FK scope_heads, floor_seq)
+                                         -- one past the highest purged seq; only ever raised
+retired_prompt_ids(prompt_id PK, scope, owner_id NULL, group_id NULL, retired_at)
+snapshots(database_id, scope_key, head_seq, manifest BLOB, created_at, expires_at,
+          PK(database_id, scope_key, head_seq))
 devices(id, user_id, name, token_hash UNIQUE, created_at, last_seen_at, revoked_at NULL)
-invites(token_hash PK, group_id NULL, role, created_by, expires_at, consumed_at NULL)
-login_attempts(username, ip, failures, locked_until, PK(username, ip))
+invites(token_hash PK, group_id NULL, role NULL, created_by, expires_at, consumed_at NULL)
+login_account_buckets(username PK, failures, locked_until NULL, updated_at)
+login_ip_buckets(ip PK, failures, locked_until NULL, updated_at)
 audit_events(id, actor_id, action, target, at)   -- admin and owner actions on accounts and memberships
 ```
 
@@ -36,7 +45,6 @@ indexes:
 ```sql
 CREATE UNIQUE INDEX prompts_user_path  ON prompts(owner_id, path_key) WHERE deleted_at IS NULL AND scope = 'user';
 CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE deleted_at IS NULL AND scope = 'group';
-PRAGMA journal_mode = WAL;   -- persistent; set once
 ```
 
 - **Path uniqueness** is per scope, case-insensitive, and
@@ -47,6 +55,26 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
 - **History.** Every accepted write appends a `prompt_revisions` row, and
   `prompts` holds the materialized head. The desktop's local history (§5.5)
   stays local. The server history is the shared, durable record.
+  Revisions retain their event-time scope and path (§19 B14). Foreign keys
+  keep authors and owners valid; users are disabled and groups soft-deleted
+  rather than removing referenced identities.
+- **Constraints.** Revisions are positive, roles and kinds are checked, and
+  every scope-bearing record uses the prompt ownership CHECK above.
+  Usernames use one lowercase ASCII spelling, 1–64 bytes of `a-z`, `0-9`,
+  `_`, `.` or `-`, in both users and account login buckets (§19 B7).
+  Account-only invites have no role; group invites require a checked role.
+  The database UUID uses uppercase canonical UUID text. Its singleton cannot
+  be deleted/replaced; explicit UUID UPDATE remains available for restore.
+- **Feed payloads.** Changes are immutable event-time scope/path/rev records.
+  An upsert carries its own content; delete and move_out carry no content.
+  Feed rows have no foreign key to a prompt or revision, so purging heads
+  or pruning revisions cannot invalidate retained events (§19 B16).
+- **Frozen snapshots.** A manifest contains frozen prompt payloads ordered
+  by id, keyed by database UUID, scope and captured head (§19 B17). Storage
+  allows at most 64 MiB per manifest and 256 MiB in total, with a lifetime
+  of at most 15 minutes. S14 supplies encoding, expiry cleanup and page
+  reauthorization; no read transaction spans HTTP requests. Restore clears
+  manifests before rotating the database UUID.
 - **One blob column.** `content` is the whole canonical file, so end-to-end
   encryption could be added later as an opaque payload without a schema
   break.
@@ -58,6 +86,13 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
   - The floor is never cleared, so a cursor in a purged gap is always
     detected. Revisions are capped at
   `SERVER_REVISIONS_PER_PROMPT = 200`.
+  Retired prompt IDs keep only their last scope and retirement time forever
+  after content/history purge (§19 B15). Scope heads and floors cannot be
+  lowered or deleted by ordinary SQL; stale detection uses
+  `cursor + 1 < floor_seq` (§19 B18).
+  Empty scopes may initialize head 0. Nonzero head inserts/raises must name an
+  existing change in that scope; floors cannot exceed head + 1, and snapshot
+  heads cannot exceed the scope head at materialization.
 - **Time.** Every stored timestamp is UTC ISO-8601.
 
 ### 8.2 Roles and permissions
@@ -380,7 +415,20 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   - `ARG VERSION=dev REVISION=unknown CREATED=1970-01-01T00:00:00Z` and OCI
     labels.
 - **Migrations.** `serve` migrates first. Migrations are forward-only, and
-  each runs in a transaction.
+  `monkeyspaw-server migrate` applies pending migrations and exits nonzero
+  on failure. Each migration's DDL, data and applied marker commit in one
+  transaction; failures roll back and retries are idempotent.
+  `MONKEYSPAW_DATA_DIR` defaults to `/data`; the database is
+  `monkeyspaw.db` inside it on local disk. Before any transaction, opening
+  the database sets and verifies persistent `journal_mode=WAL`. Every
+  checked-out connection sets and verifies `foreign_keys=ON`, a 5-second
+  `busy_timeout`, and `synchronous=FULL`. A serial writer gate uses
+  `BEGIN IMMEDIATE`; a separate pool serves concurrent, query-only readers.
+  Shutdown closes both pools. The process must finish migrating before it
+  starts the HTTP listener, and fails startup if initialization or migration
+  fails (§19 B6). Schema rollback is transaction rollback on failure;
+  successful migrations are forward-only and operator rollback uses a
+  stopped-server backup restore, not automatic down migrations.
 - **Backups.**
   - `monkeyspaw-server backup /data/backups/<UTC>.db` uses `VACUUM INTO`, a
     consistent online snapshot.
