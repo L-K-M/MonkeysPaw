@@ -23,6 +23,7 @@ public final class PromptIndex: @unchecked Sendable {
     private let observers = ChangeObservers<Void>()
     private let changeObservers = ChangeObservers<PromptIndexChange>()
     private var version: UInt64 = 0
+    private var pathVersions: [RelativePath: UInt64] = [:]
     private var compatibilityObserver: UUID?
 
     public init(service: LibraryService, usage: UsageStore, clock: WallClock) {
@@ -148,11 +149,53 @@ public final class PromptIndex: @unchecked Sendable {
         if let publication { publish(publication) }
     }
 
+    /// Publish a stamped file command without disk work on the UI thread.
+    /// Reconcile each path independently: a newer destination publication must
+    /// survive without keeping the old source row. Newer source recreations
+    /// also survive, and unrelated publications cannot hide the command.
+    func acceptCommand(_ entry: LibraryEntry?, at source: String, expectedVersion: UInt64,
+                       expectedSourceStamp: FileStamp? = nil) {
+        let publication: Publication? = locked {
+            let sourcePath = RelativePath(source)
+            let destination = entry.map { RelativePath($0.relativePath) } ?? sourcePath
+            let previousIdentities = Set([prompts[sourcePath]?.entry.identity, prompts[destination]?.entry.identity].compactMap { $0 })
+            var deleted: Set<RelativePath> = []
+            var created: Set<RelativePath> = []
+            var modified: Set<RelativePath> = []
+            // A publication may have read the source before the physical move
+            // but committed later. Its unchanged stamp is safe to replace;
+            // a recreated source has a different incarnation and must survive.
+            let sameSource = expectedSourceStamp.map { prompts[sourcePath]?.entry.stamp == $0 } == true
+            if pathVersions[sourcePath, default: 0] <= expectedVersion || sameSource,
+               entry == nil || destination != sourcePath {
+                prompts.removeValue(forKey: sourcePath)
+                // Keep a deletion publication even without a cached row: an
+                // earlier command must not later resurrect this missing path.
+                deleted.insert(sourcePath)
+            }
+            if let entry, pathVersions[destination, default: 0] <= expectedVersion || (destination == sourcePath && sameSource) {
+                let existed = prompts[destination] != nil
+                prompts[destination] = PromptRanking.Input(entry)
+                useEvents[entry.identity] = usage.cachedUseEvents()[entry.identity] ?? useEvents[entry.identity] ?? []
+                if existed { modified.insert(destination) }
+                else { created.insert(destination) }
+            }
+            let changes = LibraryChangeSet(created: created, modified: modified, deleted: deleted)
+            guard !changes.isEmpty else { return nil }
+            for identity in previousIdentities where !prompts.values.contains(where: { $0.entry.identity == identity }) {
+                useEvents[identity] = nil
+            }
+            return capturePublication(changes)
+        }
+        if let publication { publish(publication) }
+    }
+
     /// Called only with the index lock held. Payload and subscriber membership
     /// belong to this commit even if a callback makes another publication.
     private func capturePublication(_ set: LibraryChangeSet) -> Publication {
         version &+= 1
         var stamps: [RelativePath: FileStamp] = [:]
+        for path in set.created.union(set.modified).union(set.deleted) { pathVersions[path] = version }
         for path in set.created.union(set.modified) { stamps[path] = prompts[path]?.entry.stamp }
         return Publication(observers: observers.capture(), changeObservers: changeObservers.capture(),
                            change: PromptIndexChange(changes: set, stamps: stamps, version: version))

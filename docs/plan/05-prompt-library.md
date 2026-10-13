@@ -607,8 +607,8 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
 
 `PromptEditingService` wraps `LibraryService` for the M3 editor.
 
-- **Threading.** Load, save and exclusive copy run on `BackgroundWork`, with
-  typed results on `MainThread`.
+- **Threading.** Load, save, exclusive copy, history reads, restore, rename,
+  move and delete run on `BackgroundWork`, with typed results on `MainThread`.
 - **Loaded result.** `LoadedPrompt` retains exact source bytes, optional UTF-8
   text, the parsed document/issues, stamp and read-only reason. Normal saves
   pass that stamp; conflicts carry the current stamp, and a vanished path
@@ -626,7 +626,19 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   deactivation also removes the index subscription. Tokens created after
   deactivation immediately complete requests with
   `failed(.library(.operationFailed))`, without file work. Previously live
-  tokens remain retired and drop replies.
+  tokens remain retired and drop service replies. `EditorModel` separately
+  completes its file-command callers exactly once with `inactive` through
+  `MainThread` on model retirement or release.
+  A committed rename or move rebinds the live session to the destination;
+  queued publications for the old path cannot affect it. File commands use a
+  required editor stamp, reject missing and read-only prompts, and reuse the
+  library's reversible identity-keyed migrations. Only destination collisions
+  report `destinationOccupied`; a keyed-state collision remains a failure.
+  Rebinding discards deferred notifications accepted for the old path. If
+  destination verification diverges after the physical move, `relocated`
+  carries the last known source at its new path and the checked destination
+  state. Conflict choices and recovery then act on that destination, without
+  recreating the vacated source or duplicating its assigned identity.
 - **Notifications.** External notifications use the open path's immutable
   index change payload, with no UI-thread file reads. Separate delete/recreate
   publications remain separate under queued delivery; one coalesced watch
@@ -659,6 +671,10 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   current file and grows history up to the cap. Invalid/non-UTF-8 snapshots
   are forensic-only: restore refuses them with `PromptWriteError.invalidPrompt`.
   Future formats are refused with `PromptWriteError.unsupportedFormat`.
+  `PromptHistorySnapshot` carries timestamp, byte size, optional exact UTF-8
+  source and the typed restore-refusal reason. `EditorModel` selects its
+  read-only preview without editing the draft. M3 restore requires a live prompt
+  and its editor stamp; restoring a deleted prompt through presentation is deferred.
   LLM provenance belongs to M4 and is absent in M2b.
 - **External edits.** M2c's `LibraryWatcher` emits labeled
   `LibraryChangeSet {created, modified, deleted}` after

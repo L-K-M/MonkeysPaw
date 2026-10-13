@@ -385,6 +385,188 @@ final class LibraryBrowserModelTests: XCTestCase {
         XCTAssertEqual(changes, 0)
     }
 
+    func testEditorCloseRetainsSelectionAndReopensAfterCleanOrDiscardedDraft() throws {
+        for queuedMain in [false, true] {
+            for dirty in [false, true] {
+                let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                let source = "---\ntitle: Kept\nfavorite: true\n---\nOriginal"
+                let original = try e.open(source)
+                let model = browser(e)
+                e.ui {
+                    model.selectPrompt(original)
+                    model.selectSection(.favourites)
+                    model.setFilter("Kept")
+                    if dirty { e.model.edit(source + " Mine") }
+                    e.model.close()
+                }
+                e.settle()
+                if dirty { try e.decide(.discard); e.settle() }
+
+                XCTAssertNil(e.model.state.prompt)
+                XCTAssertEqual(model.selection, original)
+                XCTAssertEqual(model.filter, "Kept")
+                XCTAssertEqual(model.selectedSection, .favourites)
+                let retained = try XCTUnwrap(model.selection)
+                e.ui { e.model.open(retained) }
+                e.settle()
+                XCTAssertEqual(e.model.state.prompt, original)
+                XCTAssertEqual(e.model.state.source, source)
+            }
+        }
+    }
+
+    func testEditorCloseDuringSaveRetainsCommittedSelection() throws {
+        for queuedMain in [false, true] {
+            for assigned in [false, true] {
+                let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                let source = assigned ? historyCommandSource : "Original"
+                let original = try e.open(source)
+                let model = browser(e)
+                e.ui {
+                    model.selectPrompt(original)
+                    e.model.edit(source + " Saved")
+                    e.model.save()
+                    e.model.close()
+                }
+                e.settle()
+
+                XCTAssertNil(e.model.state.prompt)
+                let committed = e.selection(try e.h.library.load(at: "a.md"))
+                XCTAssertEqual(model.selection, committed)
+                e.ui { e.model.open(committed) }
+                e.settle()
+                XCTAssertTrue(try XCTUnwrap(e.model.state.source).hasSuffix(" Saved"))
+            }
+        }
+    }
+
+    func testExternalDeletionDiscoveredByRereadRetainsSelectionForFreshOpen() throws {
+        for queuedMain in [false, true] {
+            let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+            let original = try e.open()
+            let model = browser(e)
+            e.ui { model.selectPrompt(original) }
+            e.settle()
+            try e.h.files.delete(at: "a.md")
+            e.ui { e.model.revert() }
+            e.settle()
+
+            XCTAssertNil(e.model.state.prompt)
+            XCTAssertEqual(model.selection, original)
+            e.ui { model.setFilter("Original"); e.model.request(.rename) }
+            e.settle()
+            XCTAssertNil(e.model.state.prompt)
+            XCTAssertEqual(model.selection, original)
+            try e.h.files.put("Restored", at: "a.md")
+            let retained = try XCTUnwrap(model.selection)
+            e.ui { e.model.open(retained) }
+            e.settle()
+            XCTAssertEqual(e.model.state.source, "Restored")
+        }
+    }
+
+    func testExternalDeletionPublicationRetainsSelectionThroughRestoreAndConflictDiscard() throws {
+        for queuedMain in [false, true] {
+            for dirty in [false, true] {
+                let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                let original = try e.open(historyCommandSource)
+                let model = browser(e)
+                e.ui { model.selectPrompt(original); if dirty { e.model.edit(historyCommandSource + " Mine") } }
+                try e.change(nil)
+                e.settle()
+                XCTAssertNil(model.selection, "The deleted file has no row while its selection key is retained.")
+                if dirty {
+                    XCTAssertEqual(e.model.state.conflict?.kind, .deleted)
+                    e.ui { e.model.resolveConflict(.discard) }
+                    e.settle()
+                }
+                XCTAssertNil(e.model.state.prompt)
+
+                try e.h.files.put(historyCommandSource, at: "a.md")
+                try e.h.index.apply(LibraryChangeSet(created: ["a.md"]))
+                e.settle()
+                XCTAssertEqual(model.selection, original)
+                e.ui { e.model.open(original) }
+                e.settle()
+                XCTAssertEqual(e.model.state.source, historyCommandSource)
+            }
+        }
+    }
+
+    func testCommittedDeleteClearsRetainedSelectionEvenWhenTheFileIsRestored() throws {
+        for queuedMain in [false, true] {
+            let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+            let original = try e.open(historyCommandSource)
+            let model = browser(e)
+            for _ in 0..<2 {
+                e.ui { model.selectPrompt(original); e.model.delete() }
+                e.settle()
+                XCTAssertNil(e.model.state.prompt)
+                XCTAssertNil(model.selection)
+                try e.h.files.put(historyCommandSource, at: "a.md")
+                try e.h.index.apply(LibraryChangeSet(created: ["a.md"]))
+                e.settle()
+                XCTAssertNil(model.selection, "A committed Delete must retire the selection key.")
+                e.ui { e.model.open(original) }
+                e.settle()
+            }
+        }
+    }
+
+    func testCopyAdoptionFollowsEditorAndClosePreservesCopyFilterAndSection() throws {
+        for queuedMain in [false, true] {
+            let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+            let source = "---\ntitle: Kept\nfavorite: true\n---\nOriginal"
+            let original = try e.open(source)
+            let model = browser(e)
+            e.ui { model.selectPrompt(original); e.model.edit(source + " Copy"); e.model.saveAsCopy() }
+            e.settle()
+            let copy = try XCTUnwrap(e.model.state.lastCopy)
+            XCTAssertNotEqual(copy, original)
+            // Copy creation is indexed by the watcher, as in the native tests.
+            try e.h.index.apply(LibraryChangeSet(created: [copy.relativePath]))
+            e.settle()
+            XCTAssertEqual(model.selection, copy)
+            e.ui { model.selectSection(.favourites); model.setFilter("Kept"); e.model.close() }
+            e.settle()
+            XCTAssertNil(e.model.state.prompt)
+            XCTAssertNil(e.model.state.lastCopy)
+            XCTAssertEqual(model.selection, copy)
+            let retained = try XCTUnwrap(model.selection)
+            e.ui { e.model.open(retained) }
+            e.settle()
+            XCTAssertEqual(e.model.state.prompt, copy)
+            XCTAssertEqual(model.filter, "Kept")
+            XCTAssertEqual(model.selectedSection, .favourites)
+        }
+    }
+
+    func testQueuedCloseRetainsCommittedRenameAndMoveSelectionForBothIdentityKinds() throws {
+        for queuedMain in [false, true] {
+            for assigned in [false, true] {
+                for command in [HistoryTestCommand.rename, .move] {
+                    let e = EditorHarness(heldWork: true, queuedMain: queuedMain)
+                    let original = try e.open(assigned ? historyCommandSource : "Original")
+                    let revision = try historySnapshot(e.h, identity: original.identity)
+                    let model = browser(e)
+                    e.ui {
+                        model.selectPrompt(original)
+                        command.run(e.model, revision: revision) { _ in }
+                        e.model.close()
+                    }
+                    e.settle()
+                    XCTAssertNil(e.model.state.prompt)
+                    let committed = e.selection(try e.h.library.load(at: command.destination))
+                    XCTAssertEqual(model.selection, committed)
+                    let retained = try XCTUnwrap(model.selection)
+                    e.ui { e.model.open(retained) }
+                    e.settle()
+                    XCTAssertEqual(e.model.state.prompt, committed)
+                }
+            }
+        }
+    }
+
     func testFiveThousandEntryFilterSmokeHasNoFilesystemWork() throws {
         let h = PromptFlowHarness()
         for number in 0..<5_000 {
@@ -406,6 +588,11 @@ final class LibraryBrowserModelTests: XCTestCase {
 
     private func browser(_ h: PromptFlowHarness) -> LibraryBrowserModel {
         LibraryBrowserModel(index: h.index, usage: h.usage, favorites: h.service, main: h.delivery.main)
+    }
+
+    private func browser(_ e: EditorHarness) -> LibraryBrowserModel {
+        LibraryBrowserModel(index: e.h.index, usage: e.h.usage, favorites: e.h.library,
+                            main: e.h.main, editor: e.model)
     }
 
     private func paths(_ model: LibraryBrowserModel) -> [RelativePath] { model.rows.map(\.relativePath) }
