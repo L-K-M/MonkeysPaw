@@ -67,8 +67,9 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         if let message = writeDisabledMessage { return message }
         if let reason = editorState.readOnlyReason { return EditorStrings.readOnly(reason) }
         guard editorState.source != nil, editorState.prompt != nil else { return LibraryAssistantStrings.noEditor }
-        if editorState.isPrivate { return LibraryAssistantStrings.privatePrompt }
+        // Unparseable front matter is conservatively private; the fix is to repair it.
         if editorState.issues.contains(where: { $0.severity == .error }) { return LibraryAssistantStrings.invalid }
+        if editorState.isPrivate { return LibraryAssistantStrings.privatePrompt }
         return nil
     }
 
