@@ -91,9 +91,10 @@ struct BackupRepository: Sendable {
         let names = try await sql.raw("SELECT name FROM schema_migrations ORDER BY name").all().map {
             try $0.decode(column: "name", as: String.self)
         }
-        guard names.first == ServerMigration.foundation.name else { throw BackupRestoreError.foreignBackup }
         let known = ServerMigration.current.map(\.name)
-        guard names == Array(known.prefix(names.count)),
+        guard names.contains(ServerMigration.foundation.name) else { throw BackupRestoreError.foreignBackup }
+        // The query sorts by name; compare sets so declaration order never has to be lexicographic.
+        guard names.sorted() == known.prefix(names.count).sorted(),
               let version = try await sql.raw("PRAGMA user_version").first(),
               try version.decode(column: "user_version", as: Int.self) == 0 else {
             throw BackupRestoreError.newerSchema
