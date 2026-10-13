@@ -328,9 +328,10 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   and checked disk stamp, plus the profile, library graph and access state.
   Review and improve require a validated, writable, nonprivate buffer. Write
   creates a new prompt from the brief alone and does not check an open document's
-  health or privacy. All actions wait for editor I/O, queued or pending guard
-  decisions and unresolved disk conflicts. Requests send template source for
-  review and improve, never the rendered preview.
+  health or privacy. New provider requests and diff preparation refuse while
+  editor I/O, queued or pending guard decisions or unresolved disk conflicts remain.
+  Requests send template source for review and improve, never the rendered
+  preview.
   Later buffer or disk changes keep the generated artifact but withdraw its
   acceptable candidate and diff. Returning to the same text does not restore
   acceptance. An explicit Show diff revalidates and merges against a fresh
@@ -340,10 +341,49 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   use `profileChanged()` even when the non-secret profile remains identical.
   Final candidate bytes include a preflighted identity before the diff appears;
   a new write or private copy gets a fresh ID, while improve retains an existing
-  ID and preflights an absent first-save ID. Accept rechecks the live context
-  and exposes the exact canonical candidate and a completion token. A11 owns
-  the checked file write and provenance, then reports saved or failed through
-  that token. A10 performs no prompt writes; Reject discards the draft.
+  ID even when the unsaved buffer omits it: the editing token carries the
+  checked load's identity hint without changing token membership. A genuinely
+  unassigned file preflights its first-save ID. Accept rechecks the live context
+  and exposes the exact canonical candidate and a completion token.
+  `AssistantModel.accept(using:completion:)` commits through the active
+  `EditorModel` and `PromptEditingService`. Guard availability changing between
+  available and busy alone does not invalidate an already previewed candidate.
+  Accept queues behind earlier guard requests and rechecks the preview when its
+  turn arrives; editor I/O and conflicts still refuse acceptance. Cancelling
+  acceptance removes only its own guard and preserves earlier decisions.
+  Write creates exclusively with alternate names and the previewed ID;
+  improve passes the captured editor
+  session and load stamp through the normal history save. Final serialization
+  is checked against the preview, and publication uses those exact bytes.
+  A changed buffer (including edits away and back), graph, profile, access,
+  session or cancelled request refuses queued publication. The worker rechecks
+  the source stamp at publication, including when creating a new prompt.
+  Source disk modification/deletion opens §11.7's existing conflict dialog,
+  retaining the editor draft. A buffer change requires a fresh Show diff.
+  If verification sees a replaced or missing newly created prompt, acceptance
+  reports `failed` and retains the original editor (§5.5).
+  Write and private copy first use §11.7's Save / Discard / Cancel guard for
+  unsaved edits;
+  Save or Discard changing that snapshot also requires a fresh preview.
+  Retiring acceptance cancels its pending discard dialog and completes its
+  caller without blocking later editor navigation.
+  Retirement also releases the editor's save permit; a delayed preflight or
+  completion cannot release a newer acceptance's permit.
+  A guard matching the already-open prompt still runs its attached operation
+  and completes exactly once.
+  Publication already started may finish; newer buffer edits stay dirty and
+  an obsolete Assistant token cannot hide the authoritative editor result.
+  A same-session buffer change invalidates the save permit but keeps an
+  in-flight acceptance pending until its actual outcome arrives. Both models
+  adopt a committed outcome; they never replace it with a buffer conflict.
+  The typed outcome is `saved`, `conflict`, `failed`, or
+  `committedWithProvenanceWarning`; both committed outcomes carry the saved
+  entry, stamp and history-maintenance warning. `AssistantState.acceptanceOutcome`
+  exposes it for native rendering. A committed accept, including a provenance
+  warning, releases the candidate's retained ID. A later Write retry or Show
+  diff preflights a fresh ID; improve continues to retain the saved prompt's
+  identity. Provenance follows §5.5. Reject discards
+  the draft and writes no prompt, history or provenance.
   A retired token returns false from `completeAcceptance`; A11 must still
   surface any committed-file or provenance outcome through the editor's save
   contract. Non-secret provider snapshots have a separate short lock so model
@@ -388,6 +428,10 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   access blocks mutation. M6 supplies authoritative role changes and
   invalidates drafts; the server still enforces permissions independently
   ([§19 B32](19-m4-m5-decisions.md)).
+  A viewer's accepted copy is a fresh private prompt in the library root,
+  retaining the previewed candidate's fresh ID. Group editor/owner writes create
+  beside the open group prompt; improve retains its path and ID. Access is rechecked
+  before accepting and changes invalidate queued publication.
 
 ### 7.4 Shipped system prompts (outline)
 

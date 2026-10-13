@@ -629,6 +629,9 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   tokens remain retired and drop service replies. `EditorModel` separately
   completes its file-command callers exactly once with `inactive` through
   `MainThread` on model retirement or release.
+  Assistant acceptance releases its editor permit on retirement and every
+  preflight or save completion. Stale callbacks release only their own permit;
+  an already-published save still reports its actual outcome exactly once.
   A committed rename or move rebinds the live session to the destination;
   queued publications for the old path cannot affect it. File commands use a
   required editor stamp, reject missing and read-only prompts, and reuse the
@@ -645,6 +648,14 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   modification remains a modification. While a save is in flight,
   notifications wait for its result so its own committed stamp can be
   excluded; subsequent external stamps and deletion are still reported.
+  Assistant acceptance rechecks its committed destination on the worker when a
+  newer index publication races its write. A verified commit reaches the index;
+  a later replacement or deletion is preserved.
+  Improve uses the same reconciliation when an earlier index publication
+  describes the source before its committed write. Its verified publication
+  supersedes earlier deferred notifications; later external changes still reach
+  the editor. Source conflicts update the session's notification baseline with
+  the known modified stamp or deletion.
   A checked missing load supersedes earlier parked publications, while later
   recreations survive. Reload replies cannot rewind newer observed state.
   If a publication races a missing probe, load checks the path once more;
@@ -675,7 +686,34 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   source and the typed restore-refusal reason. `EditorModel` selects its
   read-only preview without editing the draft. M3 restore requires a live prompt
   and its editor stamp; restoring a deleted prompt through presentation is deferred.
-  LLM provenance belongs to M4 and is absent in M2b.
+  M4 stores version-1 LLM provenance beside history: `head.json` for the
+  current head and `<revision filename>.json` for archived revisions. Each
+  record binds to the exact content SHA-256 and contains only `origin: llm`,
+  a UTC ISO-8601 timestamp, provider host, model and optional input/output
+  token counts. External changes cannot inherit a mismatched head record.
+  History listings omit a revision's corrupt or unsupported provenance while
+  retaining its bytes and the other revisions. Explicit provenance reads fail
+  with `invalidProvenance`; revision-byte and provenance file-read errors still
+  fail the listing. A corrupt head record never blocks editing: the next
+  committed save replaces or clears
+  it and reports a provenance warning. Restore likewise commits readable
+  revision content with an explicit provenance warning when that revision's
+  record is corrupt or unsupported; provenance I/O errors still prevent restore.
+  A normal editor save archives the previous head's provenance and clears
+  the new head's LLM origin; restoring a revision restores its provenance.
+  Identity migration moves all these records with history. Rename and move
+  preserve them; delete retains them with recoverable history. Retention
+  removes a revision's sidecar with its bytes, under the same 50-revision cap.
+  Removal deletes revision bytes first so a failed deletion cannot strip a
+  surviving revision's provenance. A sidecar cleanup failure is reported and
+  may leave an orphaned record, which history listings ignore.
+  Archived provenance is staged with its history bytes and removed on a failed
+  save; it survives an external replacement detected after publication. Head
+  provenance is published after the prompt commits. A maintenance failure reports
+  `savedButProvenanceFailed`, retaining the entry, stamp and any concurrent
+  history-maintenance warning. Callers adopt that commit without retrying
+  the file write. Assistant notes, briefs, transcripts and credentials are
+  never added to provenance or prompt metadata.
 - **External edits.** M2c's `LibraryWatcher` emits labeled
   `LibraryChangeSet {created, modified, deleted}` after
   `Limits.watchDebounce` (500 ms) of prompt-path quiet. Every prompt-path

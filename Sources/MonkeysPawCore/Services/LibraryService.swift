@@ -32,8 +32,10 @@ public final class LibraryService: PromptFavoriteEditing {
         let entry: LibraryEntry
     }
 
-    private struct CommittedHistoryFailure: Error {
+    private struct CommittedMaintenanceFailure: Error {
         let entry: LibraryEntry
+        let history: Bool
+        let provenance: Bool
     }
 
     private struct CommittedExternalReplacement: Error {
@@ -77,7 +79,7 @@ public final class LibraryService: PromptFavoriteEditing {
     /// Keep the editor's preflight and save under the library lock. A nil stamp
     /// explicitly permits overwrite/recreation, as in the synchronous API.
     func saveForEditing(_ document: PromptDocument, at path: String,
-                        expectedStamp: FileStamp?) throws -> PromptSaveOutcome {
+                        expectedStamp: FileStamp?, provenance: PromptProvenance? = nil) throws -> PromptSaveOutcome {
         try locked {
             let current = try readCurrent(at: path)
             if let expectedStamp {
@@ -88,7 +90,7 @@ public final class LibraryService: PromptFavoriteEditing {
                 return .readOnly(reason)
             }
             return try editingCommit {
-                try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp))
+                try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp), provenance: provenance)
             }
         }
     }
@@ -97,6 +99,46 @@ public final class LibraryService: PromptFavoriteEditing {
         try locked {
             let copy = try PromptCodec.removingIdentity(from: document)
             return try editingCommit { try createDocument(copy, near: path, naming: .alternateOnly) }
+        }
+    }
+
+    /// The preview already owns its identity and bytes. Recheck its source even
+    /// for Write/private copy, then use normal history or exclusive creation.
+    func acceptForEditing(_ prepared: AssistantPreparedSave, source: AssistantEditorSnapshot?,
+                          destination: AssistantSaveDestination) throws -> PromptSaveOutcome {
+        try locked {
+            try prepared.permit.check()
+            var current: LoadedFile?
+            if let source {
+                guard let loaded = try readCurrent(at: source.relativePath.string) else { return .deleted }
+                guard loaded.entry.stamp == source.stamp else { return .conflict(currentStamp: loaded.entry.stamp) }
+                if let reason = LoadedPrompt.readOnlyReason(for: loaded.entry.document) { return .readOnly(reason) }
+                current = loaded
+            }
+            if destination == .improve {
+                guard let source else { throw LibraryError.invalidPromptPath }
+                return try editingCommit {
+                    try saveDocument(prepared.content.document, at: source.relativePath.string,
+                        mode: .replace(expectedStamp: source.stamp), prepared: prepared)
+                }
+            }
+            guard let id = prepared.content.document.frontMatter.id else { throw LibraryError.previewMismatch }
+            guard !(try libraryEntries()).contains(where: { $0.document.frontMatter.id == id }) else {
+                throw LibraryError.identityMismatch
+            }
+            let folder = destination == .privateCopy ? "" : (current?.entry.folder ?? "")
+            let name = PromptCreation.relativePath(title: prepared.content.document.frontMatter.title, now: clock.now())
+            let path = (folder.isEmpty ? "" : folder + "/") + name
+            do {
+                let outcome = try editingCommit {
+                    try createDocument(prepared.content.document, near: path, naming: .preferredPath,
+                                       prepared: prepared, creationSource: source)
+                }
+                // Verification belongs to the new path, never the open editor's
+                // source. Source stamp checks use AssistantSaveRefusal instead.
+                if case .conflict = outcome { return .failed(.library(.conflict)) }
+                return outcome
+            } catch LibraryError.conflict { return .failed(.library(.conflict)) }
         }
     }
 
@@ -144,12 +186,14 @@ public final class LibraryService: PromptFavoriteEditing {
     }
 
     private func createDocument(_ document: PromptDocument, near path: String,
-                                naming: CreationNaming) throws -> LibraryEntry {
+                                naming: CreationNaming, prepared: AssistantPreparedSave? = nil,
+                                creationSource: AssistantEditorSnapshot? = nil) throws -> LibraryEntry {
         var startingSuffix = naming.startingSuffix
         for _ in 0..<Limits.libraryCreateAttemptCap {
             let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
             do {
-                return try saveDocument(document, at: candidate.path, mode: .createOnly)
+                return try saveDocument(document, at: candidate.path, mode: .createOnly,
+                                        prepared: prepared, creationSource: creationSource)
             } catch LibraryError.destinationOccupied {
                 // Move forward even if the external file disappears before the next probe.
                 startingSuffix = candidate.suffix + 1
@@ -338,10 +382,28 @@ public final class LibraryService: PromptFavoriteEditing {
         try locked { try historyStore.revisions(for: identity) }
     }
 
+    /// Content binding prevents an external/manual replacement inheriting the
+    /// previous head's LLM origin. Deleted prompts retain app-data for restore.
+    public func provenance(at path: String) throws -> PromptProvenance? {
+        try locked {
+            let loaded = try requireCurrent(at: path)
+            return try historyStore.headProvenance(for: loaded.entry.identity, bytes: loaded.bytes)
+        }
+    }
+
+    public func provenance(for revision: HistoryRevision) throws -> PromptProvenance? {
+        try locked { try historyStore.provenance(for: revision, bytes: historyStore.read(revision)) }
+    }
+
     func historyForEditing(_ identity: PromptIdentity, filename: String) throws -> [PromptHistorySnapshot] {
         try locked {
-            try historyStore.revisions(for: identity).map {
-                PromptHistorySnapshot(revision: $0, bytes: try historyStore.read($0), filename: filename)
+            try historyStore.revisions(for: identity).map { revision in
+                let bytes = try historyStore.read(revision)
+                let provenance: PromptProvenance?
+                do { provenance = try historyStore.provenance(for: revision, bytes: bytes) }
+                catch LibraryError.invalidProvenance { provenance = nil }
+                return PromptHistorySnapshot(revision: revision, bytes: bytes, filename: filename,
+                    provenance: provenance)
             }
         }
     }
@@ -419,7 +481,18 @@ public final class LibraryService: PromptFavoriteEditing {
         if case .assigned(let id) = revision.identity {
             document = try PromptCodec.assigningIdentity(id, to: document)
         }
-        return try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp))
+        let provenance: PromptProvenance?
+        do { provenance = try historyStore.provenance(for: revision, bytes: bytes) }
+        catch LibraryError.invalidProvenance {
+            // Restore readable content, but never silently discard its unknown origin.
+            let entry: LibraryEntry
+            do { entry = try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp)) }
+            catch let warning as CommittedMaintenanceFailure {
+                throw CommittedMaintenanceFailure(entry: warning.entry, history: warning.history, provenance: true)
+            }
+            throw CommittedMaintenanceFailure(entry: entry, history: false, provenance: true)
+        }
+        return try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp), provenance: provenance)
     }
 
     private func libraryEntries() throws -> [LibraryEntry] {
@@ -433,7 +506,10 @@ public final class LibraryService: PromptFavoriteEditing {
             }
     }
 
-    private func saveDocument(_ draft: PromptDocument, at path: String, mode: SaveMode) throws -> LibraryEntry {
+    private func saveDocument(_ draft: PromptDocument, at path: String, mode: SaveMode,
+                              provenance: PromptProvenance? = nil, prepared: AssistantPreparedSave? = nil,
+                              creationSource: AssistantEditorSnapshot? = nil) throws -> LibraryEntry {
+        try prepared?.permit.check()
         try LibraryPath.validate(path)
         _ = try PromptCodec.write(draft)
         let current: LoadedFile?
@@ -458,22 +534,44 @@ public final class LibraryService: PromptFavoriteEditing {
             let id = try ULID.generate(at: date, entropy: entropy.bytes(count: Limits.ulidEntropyBytes))
             document = try PromptCodec.assigningIdentity(id, to: document)
         }
-        let bytes = PromptUTF8.encode(try PromptCodec.write(document))
+        let canonical = PromptUTF8.encode(try PromptCodec.write(document))
+        if let prepared, canonical != prepared.content.canonicalBytes { throw LibraryError.previewMismatch }
+        let bytes = prepared?.content.canonicalBytes ?? canonical
+        let provenance = prepared.map {
+            PromptProvenance(timestamp: date, providerHost: $0.metadata.providerHost,
+                             model: $0.metadata.model, usage: $0.metadata.usage)
+        } ?? provenance
         let sourceIdentity = current?.entry.identity ?? PromptIdentity(path: path, id: nil)
         let targetIdentity = PromptIdentity(path: path, id: document.frontMatter.id)
         var migrated = [PromptKeyedStore]()
         var snapshot: HistoryRevision?
+        var previousProvenance: PromptProvenance?
+        var provenanceFailed = false
         do {
             try migrate(from: sourceIdentity, to: targetIdentity, completed: &migrated)
             if let current {
+                do { previousProvenance = try historyStore.headProvenance(for: targetIdentity, bytes: current.bytes) }
+                catch { provenanceFailed = true }
                 snapshot = try historyStore.snapshot(current.bytes, for: targetIdentity, at: date)
+                if let snapshot {
+                    do { try historyStore.archiveProvenance(previousProvenance, for: snapshot, bytes: current.bytes) }
+                    catch { provenanceFailed = true }
+                }
             }
             switch mode {
             case .replace:
                 // Recheck after staging history/migration, before replacing bytes.
                 guard try files.stamp(at: path) == current?.entry.stamp else { throw LibraryError.conflict }
+                try prepared?.permit.check()
                 try files.write(bytes, at: path)
             case .createOnly:
+                if let source = creationSource {
+                    guard let stamp = try files.stamp(at: source.relativePath.string) else {
+                        throw AssistantSaveRefusal.conflict(.deleted)
+                    }
+                    guard stamp == source.stamp else { throw AssistantSaveRefusal.conflict(.modified(currentStamp: stamp)) }
+                }
+                try prepared?.permit.check()
                 do { try files.create(bytes, at: path) }
                 catch FileStoreError.alreadyExists { throw LibraryError.destinationOccupied }
             }
@@ -494,14 +592,25 @@ public final class LibraryService: PromptFavoriteEditing {
         guard committed.bytes == bytes else {
             throw CommittedExternalReplacement(currentStamp: committed.entry.stamp)
         }
+        // Head publication and retention failures cannot turn a committed file
+        // into a retryable save failure.
+        do { try historyStore.setHeadProvenance(provenance, for: targetIdentity, bytes: bytes) }
+        catch { provenanceFailed = true }
+        var historyFailed = false
         do { try historyStore.prune(for: targetIdentity) }
-        catch { throw CommittedHistoryFailure(entry: committed.entry) }
+        catch { historyFailed = true }
+        if historyFailed || provenanceFailed {
+            throw CommittedMaintenanceFailure(entry: committed.entry, history: historyFailed, provenance: provenanceFailed)
+        }
         return committed.entry
     }
 
     private func editingCommit(_ work: () throws -> LibraryEntry) throws -> PromptSaveOutcome {
         do { return .saved(try work()) }
-        catch let error as CommittedHistoryFailure { return .savedButHistoryMaintenanceFailed(error.entry) }
+        catch let error as CommittedMaintenanceFailure {
+            if error.provenance { return .savedButProvenanceFailed(error.entry, historyMaintenanceFailed: error.history) }
+            return .savedButHistoryMaintenanceFailed(error.entry)
+        }
         catch let error as CommittedExternalReplacement { return .conflict(currentStamp: error.currentStamp) }
     }
 
@@ -548,13 +657,16 @@ public final class LibraryService: PromptFavoriteEditing {
         lock.lock()
         defer { lock.unlock() }
         do { return try work() }
-        catch is CommittedHistoryFailure { throw LibraryError.historyMaintenanceFailed }
+        catch let error as CommittedMaintenanceFailure {
+            throw error.provenance ? LibraryError.provenanceMaintenanceFailed : LibraryError.historyMaintenanceFailed
+        }
         catch is CommittedExternalReplacement { throw LibraryError.conflict }
         catch let error as FileStoreError { throw error }
         catch let error as LibraryError { throw error }
         catch let error as PromptWriteError { throw error }
         catch let error as ULIDGenerationError { throw error }
         catch let error as ImportSkipReason { throw error }
+        catch let error as AssistantSaveRefusal { throw error }
         catch { throw LibraryError.operationFailed }
     }
 }

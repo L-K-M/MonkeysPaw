@@ -4,10 +4,22 @@ import Foundation
 public struct PromptEditingSession: Hashable, Sendable {
     let token: UUID
     let isInactive: Bool
+    /// Checked editor-load hint for assistant preflight, not token membership.
+    let loadedID: ULID?
 
-    init(token: UUID, isInactive: Bool = false) {
+    init(token: UUID, isInactive: Bool = false, loadedID: ULID? = nil) {
         self.token = token
         self.isInactive = isInactive
+        self.loadedID = loadedID
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.token == rhs.token && lhs.isInactive == rhs.isInactive
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(token)
+        hasher.combine(isInactive)
     }
 }
 
@@ -69,6 +81,7 @@ public enum PromptLoadOutcome: Sendable {
 public enum PromptSaveOutcome: Sendable {
     case saved(LibraryEntry)
     case savedButHistoryMaintenanceFailed(LibraryEntry)
+    case savedButProvenanceFailed(LibraryEntry, historyMaintenanceFailed: Bool)
     case conflict(currentStamp: FileStamp)
     case deleted
     case invalid([PromptIssue])
@@ -77,7 +90,8 @@ public enum PromptSaveOutcome: Sendable {
 
     var committedEntry: LibraryEntry? {
         switch self {
-        case .saved(let entry), .savedButHistoryMaintenanceFailed(let entry): return entry
+        case .saved(let entry), .savedButHistoryMaintenanceFailed(let entry),
+             .savedButProvenanceFailed(let entry, _): return entry
         default: return nil
         }
     }

@@ -55,6 +55,8 @@ enum LinuxEditorStrings {
     static let inactive = "This editor session is no longer active. Reopen the prompt to try again."
     static let noSelection = "Open a prompt before using a file command."
     static let historyWarning = "The prompt was updated, but its history needs maintenance."
+    static let provenanceWarning = "The prompt was updated, but its provenance record needs maintenance."
+    static let historyAndProvenanceWarning = "The prompt was updated, but its history and provenance record need maintenance."
     static let relocated = "The file moved, but its destination changed or could not be checked. Resolve the conflict or check the library before retrying."
     static let revisionMissing = "The revision is missing. Refresh History and choose another revision."
     static let librarySwitchRefused = "Save or discard your Library edits before switching folders. Wait for any save to finish."
@@ -88,6 +90,8 @@ enum LinuxEditorStrings {
         switch outcome {
         case .updated: return success
         case .updatedButHistoryMaintenanceFailed: return historyWarning
+        case .updatedButProvenanceFailed(_, let historyFailed):
+            return historyFailed ? historyAndProvenanceWarning : provenanceWarning
         case .relocated: return relocated
         case .deleted: return deleted
         case .missing: return missing

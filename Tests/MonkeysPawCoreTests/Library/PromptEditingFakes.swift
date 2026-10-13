@@ -79,7 +79,9 @@ final class EditingFileStore: FileStore {
     func read(at path: String) throws -> Data { check(); return try memory.read(at: path) }
     func write(_ data: Data, at path: String) throws { check(); try beforeWrite?(path); try memory.write(data, at: path) }
     func create(_ data: Data, at path: String) throws { check(); try memory.create(data, at: path) }
-    func writePrivate(_ data: Data, at path: String) throws { check(); try memory.writePrivate(data, at: path) }
+    func writePrivate(_ data: Data, at path: String) throws {
+        check(); try beforeWrite?(path); try memory.writePrivate(data, at: path)
+    }
     func delete(at path: String) throws { check(); try onDelete?(path); try memory.delete(at: path) }
     func move(from source: String, to destination: String) throws { check(); try memory.move(from: source, to: destination) }
 }

@@ -47,6 +47,59 @@ final class HistoryCommandDiskTests: XCTestCase {
         XCTAssertEqual(try store.listFiles().map(\.relativePath), ["nested/a.md"])
     }
 
+    func testAssistantAcceptPersistsExactPreviewAndProvenanceAcrossReopenMoveAndDelete() throws {
+        let provider = ProviderHarness()
+        let secret = "key-" + UUID().uuidString
+        let notes = "notes-" + UUID().uuidString
+        try provider.service.save(ProviderDraft(kind: .openaiCompatible, modelID: "manual-model", key: .replace(SecretValue(secret))))
+        let profile = try XCTUnwrap(provider.service.snapshot.settings.profiles.first)
+        let id = try ULID.generate(at: clock.date, entropy: Array(repeating: 3, count: Limits.ulidEntropyBytes))
+        var firstBytes: Data?
+        for improve in [false, true] {
+            let artifact = LlmArtifact(title: "Candidate", description: "", tags: [], fields: [],
+                body: improve ? "  Changed e\u{301}\r\n\n" : "  Original 文書\r\n\n", notes: notes)
+            let snapshot = model.assistantSnapshot
+            let merge = improve ? ArtifactMerge.improve(artifact, original: try XCTUnwrap(snapshot).document)
+                : ArtifactMerge.write(artifact, id: id)
+            guard case .ready(let content) = merge else {
+                XCTFail("Expected ready bytes.")
+                continue
+            }
+            let candidate = AssistantCandidate(content: content,
+                diff: try ArtifactDiff.compare(original: snapshot?.document, candidate: content),
+                context: AssistantContext(libraryID: UUID(), profile: profile, editor: snapshot), mutationAccess: .currentScope)
+            let acceptance = AssistantAcceptance(id: UUID(), candidate: candidate, usage: nil)
+            var outcome: AssistantAcceptanceOutcome?
+            marker.ui {
+                model.acceptAssistant(acceptance, destination: improve ? .improve : .newPrompt,
+                    permit: AssistantSavePermit(), validate: { nil }) { outcome = $0; XCTAssertTrue(self.marker.isUI) }
+            }
+            let entry = try XCTUnwrap(outcome?.committed?.entry)
+            XCTAssertEqual(try files.read(at: entry.relativePath), content.canonicalBytes)
+            XCTAssertEqual(model.state.source.map { Data($0.utf8) }, content.canonicalBytes)
+            XCTAssertEqual(entry.identity, .assigned(id))
+            if improve {
+                let revision = try XCTUnwrap(library.history(for: entry.identity).first)
+                XCTAssertEqual(try library.provenance(for: revision)?.origin, .llm)
+                XCTAssertEqual(try data.read(at: "history/" + id.rawValue + "/" + revision.filename), firstBytes)
+            } else { firstBytes = content.canonicalBytes }
+        }
+        marker.ui { model.rename(to: "renamed.md"); model.move(to: "folder") }
+        let reopened = LibraryService(library: files, data: data, clock: clock, entropy: LibraryEntropy())
+        XCTAssertEqual(try reopened.provenance(at: "folder/renamed.md")?.providerHost, "api.openai.com")
+        let revision = try XCTUnwrap(reopened.history(for: .assigned(id)).first)
+        XCTAssertEqual(try reopened.provenance(for: revision)?.model, "manual-model")
+        for file in try data.listFiles() {
+            let bytes = try data.read(at: file.relativePath)
+            for sentinel in [secret, notes] { XCTAssertNil(bytes.range(of: Data(sentinel.utf8))) }
+        }
+        let before = try data.listFiles()
+        marker.ui { model.delete() }
+        XCTAssertNil(try files.stamp(at: "folder/renamed.md"))
+        XCTAssertEqual(try data.listFiles(), before)
+        XCTAssertEqual(try reopened.provenance(for: revision)?.origin, .llm)
+    }
+
     func testCreateEditRenameMoveRestoreRoundTripsOnDiskWithIdentityAndHistory() throws {
         let body = "  Original {{field}}\r\n\r\n"
         let created = try library.create(PromptCodec.parse("---\ntitle: Keep title\n---\n" + body,

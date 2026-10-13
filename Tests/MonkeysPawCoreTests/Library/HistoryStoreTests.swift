@@ -82,6 +82,34 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(files.listCount, listings)
     }
 
+    func testRemovalFailuresPreserveProvenanceWheneverRevisionSurvives() throws {
+        for failRevision in [true, false] {
+            let h = PromptEditingHarness()
+            let store = HistoryStore(files: h.dataFiles)
+            let bytes = Data("Revision".utf8)
+            let revision = try store.snapshot(bytes, for: identity, at: date)
+            let metadata = PromptProvenance(timestamp: date, providerHost: "example.com", model: "model", usage: nil)
+            try store.archiveProvenance(metadata, for: revision, bytes: bytes)
+            let path = "history/" + (try identity.storageKey) + "/" + revision.filename
+            let sidecar = try h.data.read(at: path + ".json")
+            h.dataFiles.onDelete = { target in
+                if target == (failRevision ? path : path + ".json") { throw FileStoreError.ioFailure }
+            }
+
+            XCTAssertThrowsError(try store.remove(revision)) {
+                XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+            }
+            XCTAssertEqual(try h.data.read(at: path + ".json"), sidecar)
+            if failRevision {
+                XCTAssertEqual(try store.read(revision), bytes)
+                XCTAssertEqual(try store.provenance(for: revision, bytes: bytes), metadata)
+            } else {
+                XCTAssertNil(try h.data.stamp(at: path))
+                XCTAssertTrue(try store.revisions(for: identity).isEmpty, "An orphaned sidecar is not a revision.")
+            }
+        }
+    }
+
     func testReadExternallyDeletedRevisionReportsRevisionNotFoundWithoutListing() throws {
         let revision = try store.snapshot(Data("Revision".utf8), for: identity, at: date)
         let listings = files.listCount

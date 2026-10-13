@@ -16,6 +16,7 @@ public struct AssistantState: CustomStringConvertible, CustomDebugStringConverti
     public fileprivate(set) var elapsed: TimeInterval = 0
     public fileprivate(set) var isStale = false
     public fileprivate(set) var isAccepting = false
+    public fileprivate(set) var acceptanceOutcome: AssistantAcceptanceOutcome?
     public fileprivate(set) var providerHost: String?
     public fileprivate(set) var modelID: String?
     public fileprivate(set) var mutationAccess = AssistantMutationAccess.unavailable
@@ -48,6 +49,8 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     private var reviewContext: AssistantContext?
     private var requestID: UUID?
     private var acceptanceID: UUID?
+    private var savingPermit: AssistantSavePermit?
+    private var cancelAcceptanceGuard: (() -> Void)?
     private var retainedID: ULID?
     private var cancelWork: (() -> Void)?
     private var started: ContinuousClock.Instant?
@@ -71,14 +74,18 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         updateFooter()
     }
 
-    deinit { cancelWork?() }
+    deinit {
+        cancelWork?()
+        savingPermit?.invalidate(.failed(.cancelled))
+        cancelAcceptanceGuard?()
+    }
 
     public var canAccept: Bool {
         guard isActive, state.phase == .ready, !state.isStale, !state.isAccepting,
               !state.issues.contains(where: { $0.severity == .error }),
               let candidate = state.candidate else { return false }
         let latest = currentContext()
-        return candidate.context == latest && service.isCurrent(latest)
+        return candidate.context.matchesForAcceptance(latest) && service.isCurrent(latest)
     }
 
     /// Also rechecked at every intent and callback. Notifications are necessary
@@ -87,18 +94,33 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         guard isActive else { return }
         let latest = currentContext()
         guard latest != context else { return }
+        var cancelledGuard: (() -> Void)?
+        if context.matchesForAcceptance(latest) {
+            // Preserve the preview, but new actions must see the live busy gate.
+            context = latest
+            return
+        }
         if !context.sameSession(as: latest) {
+            savingPermit?.invalidate(.failed(.staleContext))
             reset()
         } else {
+            cancelledGuard = cancelAcceptanceGuard
+            cancelAcceptanceGuard = nil
+            if let savingPermit {
+                savingPermit.invalidate(.conflict(.changedBuffer))
+                // Keep this attempt until the worker reports whether it committed.
+            } else {
+                state.isAccepting = false
+                acceptanceID = nil
+            }
             state.candidate = nil
-            state.isAccepting = false
-            acceptanceID = nil
             state.selectedFindings = []
             state.isStale = true
             if state.phase == .ready || state.phase == .saved { state.phase = .draft }
         }
         context = latest
         updateFooter()
+        cancelledGuard?()
         changed()
     }
 
@@ -106,6 +128,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     /// Settings composition forwards them here without exposing a key value.
     public func profileChanged() {
         guard isActive else { return }
+        savingPermit?.invalidate(.failed(.staleContext))
         reset()
         context = currentContext()
         updateFooter()
@@ -196,9 +219,76 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         acceptanceID = nil
         state.isAccepting = false
         switch result {
-        case .success: state.phase = .saved
+        case .success:
+            retainedID = nil
+            state.phase = .saved
         case .failure(let failure): state.phase = .failed; state.failure = failure
         }
+        changed()
+        return true
+    }
+
+    /// Native composition uses this overload for the checked Core save. Write
+    /// and viewer copies follow the editor's unsaved-edit guard before opening.
+    public func accept(using editor: EditorModel,
+                       completion: @escaping (AssistantAcceptanceOutcome) -> Void = { _ in }) {
+        guard let attempt, let acceptance = accept() else { return main.run { completion(.failed(.notReady)) } }
+        let access = acceptance.candidate.mutationAccess
+        guard access != .unavailable, access == acceptance.candidate.context.access.mutationAccess else {
+            let outcome = AssistantAcceptanceOutcome.failed(.accessDenied)
+            completeAcceptance(acceptance.id, outcome: outcome)
+            return main.run { completion(outcome) }
+        }
+        let destination: AssistantSaveDestination
+        if access == .privateCopy { destination = .privateCopy }
+        else if case .write = attempt.command { destination = .newPrompt }
+        else { destination = .improve }
+        let permit = AssistantSavePermit()
+        savingPermit = permit
+        cancelAcceptanceGuard = { [weak editor] in editor?.cancelAssistantGuard(permit: permit) }
+        editor.acceptAssistant(acceptance, destination: destination, permit: permit, validate: { [weak self] in
+            do { try permit.check() }
+            catch let refusal as AssistantSaveRefusal { return refusal }
+            catch { return .failed(.inactive) }
+            guard let self, self.isActive, self.acceptanceID == acceptance.id else { return .failed(.cancelled) }
+            let latest = self.currentContext()
+            guard acceptance.candidate.context.sameSession(as: latest), self.service.isCurrent(latest) else {
+                return .failed(.staleContext)
+            }
+            guard acceptance.candidate.context.matchesForAcceptance(latest) else { return .conflict(.changedBuffer) }
+            return nil
+        }) { [weak self] outcome in
+            self?.completeAcceptance(acceptance.id, outcome: outcome)
+            completion(outcome)
+        }
+    }
+
+    /// Editor adoption precedes this callback, and its observers follow it.
+    /// Retired tokens remain retired; callers still receive the actual outcome.
+    @discardableResult
+    public func completeAcceptance(_ id: UUID, outcome: AssistantAcceptanceOutcome) -> Bool {
+        guard isActive, acceptanceID == id else { return false }
+        if outcome.committed == nil {
+            contextChanged()
+            guard acceptanceID == id else { return false }
+        }
+        acceptanceID = nil
+        savingPermit = nil
+        cancelAcceptanceGuard = nil
+        state.isAccepting = false
+        state.acceptanceOutcome = outcome
+        state.failure = nil
+        state.candidate = nil
+        switch outcome {
+        case .saved, .committedWithProvenanceWarning:
+            retainedID = nil
+            state.phase = .saved
+            state.isStale = false
+        case .conflict: state.phase = .draft; state.isStale = true
+        case .failed: state.phase = .failed
+        }
+        context = currentContext()
+        updateFooter()
         changed()
         return true
     }
@@ -243,6 +333,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         state.candidate = nil
         state.issues = []
         state.failure = nil
+        state.acceptanceOutcome = nil
         state.usage = nil
         state.isStale = false
         state.transcript = []
@@ -355,6 +446,10 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
     }
 
     private func reset() {
+        savingPermit?.invalidate(.failed(.cancelled))
+        savingPermit = nil
+        let cancelledGuard = cancelAcceptanceGuard
+        cancelAcceptanceGuard = nil
         invalidateWork()
         attempt = nil
         reviewContext = nil
@@ -362,6 +457,7 @@ public final class AssistantModel: CustomStringConvertible, CustomDebugStringCon
         retainedID = nil
         started = nil
         state = AssistantState()
+        cancelledGuard?()
     }
 
     private func measureElapsed() {

@@ -3,6 +3,68 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class EditorModelTests: XCTestCase {
+    func testMatchingAssistantOpenDecisionCompletesOnceAndReleasesItsPermit() throws {
+        for held in [false, true] {
+            for queued in [false, true] {
+                let e = EditorHarness(heldWork: held, queuedMain: queued)
+                let id = try XCTUnwrap(ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PD"))
+                let source = "---\nid: \(id.rawValue)\ntitle: Candidate\n---\nOriginal"
+                let selection = try e.open(source, at: "Candidate.md")
+                e.ui { e.model.edit(source + " Unsaved") }
+                let snapshot = try XCTUnwrap(e.model.assistantSnapshot)
+                let provider = ProviderHarness()
+                try provider.service.save(ProviderDraft(kind: .openaiCompatible, modelID: "manual-model",
+                    key: .replace(SecretValue("test-key"))))
+                let artifact = LlmArtifact(title: "Candidate", description: "", tags: [], fields: [],
+                    body: "Generated", notes: "")
+                guard case .ready(let content) = ArtifactMerge.write(artifact, id: id) else {
+                    XCTFail("Expected a crafted matching candidate.")
+                    continue
+                }
+                let path = PromptCreation.relativePath(title: content.document.frontMatter.title, now: e.h.clock.date)
+                XCTAssertEqual(selection, LibraryPromptSelection(identity: PromptIdentity(path: path, id: id),
+                    relativePath: RelativePath(path)))
+                let candidate = AssistantCandidate(content: content,
+                    diff: try ArtifactDiff.compare(original: snapshot.document, candidate: content),
+                    context: AssistantContext(libraryID: UUID(), profile: provider.service.snapshot.settings.profiles.first,
+                        editor: snapshot), mutationAccess: .currentScope)
+                let acceptance = AssistantAcceptance(id: UUID(), candidate: candidate, usage: nil)
+                let permit = AssistantSavePermit()
+                var replies: [AssistantAcceptanceOutcome] = []
+                e.ui {
+                    e.model.acceptAssistant(acceptance, destination: .newPrompt, permit: permit, validate: { nil }) {
+                        XCTAssertTrue(e.h.marker.isUI)
+                        replies.append($0)
+                    }
+                }
+                e.settle()
+                XCTAssertEqual(replies.count, 1)
+                guard case .failed(.editing(.library(.identityMismatch))) = replies.first else {
+                    XCTFail("The matching decision must run its checked save.")
+                    continue
+                }
+                XCTAssertNil(e.model.state.pendingDecision)
+                XCTAssertTrue(e.model.state.queuedActions.isEmpty)
+                XCTAssertEqual(e.model.state.source, source + " Unsaved")
+                XCTAssertEqual(try e.h.files.text(at: "Candidate.md"), source)
+
+                var next: [AssistantAcceptanceOutcome] = []
+                e.ui {
+                    e.model.acceptAssistant(acceptance, destination: .improve, permit: AssistantSavePermit(),
+                        validate: { nil }) { next.append($0) }
+                }
+                e.settle()
+                XCTAssertEqual(next.count, 1)
+                XCTAssertNotNil(next.first?.committed)
+                XCTAssertEqual(try e.h.files.read(at: "Candidate.md"), content.canonicalBytes)
+                e.ui { e.model.cancelAssistantGuard(permit: permit) }
+                e.settle()
+                XCTAssertEqual(replies.count, 1)
+                XCTAssertEqual(next.count, 1)
+            }
+        }
+    }
+
     func testOpenTracksExactSourceBytesAndUndoClearsDirty() throws {
         let e = EditorHarness()
         let selection = try e.open("e\u{301}\r\n")

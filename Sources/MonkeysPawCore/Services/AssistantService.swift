@@ -121,7 +121,11 @@ public final class AssistantService: CustomStringConvertible, CustomDebugStringC
                     document = try PromptCodec.removingIdentity(from: document)
                 }
                 if document.frontMatter.id == nil {
-                    document = try PromptCodec.assigningIdentity(try retainingID ?? freshID(), to: document)
+                    let loadedID: ULID?
+                    if case .improve = command, context.access.mutationAccess == .currentScope {
+                        loadedID = context.editor?.session.loadedID
+                    } else { loadedID = nil }
+                    document = try PromptCodec.assigningIdentity(try loadedID ?? retainingID ?? freshID(), to: document)
                 }
                 let content = ArtifactMergeCandidate(document: document, canonicalBytes: Data(try PromptCodec.write(document).utf8))
                 let baseline: PromptDocument?

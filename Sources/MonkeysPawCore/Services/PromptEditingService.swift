@@ -44,6 +44,7 @@ public final class PromptEditingService: @unchecked Sendable {
     private let lock = NSLock()
     private var isActive = true
     private var sessions: [PromptEditingSession: Session] = [:]
+    private var assistantSaves: [UUID: (session: PromptEditingSession?, permit: AssistantSavePermit)] = [:]
     private var indexObserver: UUID?
 
     public init(library: LibraryService, index: PromptIndex, work: BackgroundWork, main: MainThread) {
@@ -87,13 +88,19 @@ public final class PromptEditingService: @unchecked Sendable {
 
     /// Drops queued requests and replies. A write already executing may finish;
     /// its completion cannot reach a retired editor.
-    public func retire(_ session: PromptEditingSession) { locked { sessions[session] = nil } }
+    public func retire(_ session: PromptEditingSession) {
+        locked {
+            sessions[session] = nil
+            for save in assistantSaves.values where save.session == session { save.permit.invalidate(.failed(.inactive)) }
+        }
+    }
 
     /// Composition retires the whole graph before replacing its library root.
     public func deactivate() {
         let observer = locked { () -> UUID? in
             isActive = false
             sessions.removeAll()
+            assistantSaves.values.forEach { $0.permit.invalidate(.failed(.inactive)) }
             let observer = indexObserver
             indexObserver = nil
             return observer
@@ -185,6 +192,71 @@ public final class PromptEditingService: @unchecked Sendable {
                 try service.library.createCopyForEditing(document, near: path)
             }
         }, completion: { _, result in completion(result) })
+    }
+
+    /// Unlike ordinary session replies, acceptance always reports its actual
+    /// outcome. A retired graph cannot hide a file that already committed.
+    func accept(_ prepared: AssistantPreparedSave, source: AssistantEditorSnapshot?,
+                destination: AssistantSaveDestination, completion: @escaping (AssistantAcceptanceOutcome) -> Void) {
+        let id = UUID()
+        let registered = locked { () -> Bool in
+            guard isActive else { return false }
+            if let source {
+                guard var state = sessions[source.session], state.path.utf8.elementsEqual(source.relativePath.string.utf8) else {
+                    return false
+                }
+                state.savesInFlight += 1
+                sessions[source.session] = state
+            }
+            assistantSaves[id] = (source?.session, prepared.permit)
+            return true
+        }
+        guard registered else { return main.run { completion(.failed(.inactive)) } }
+        work.run { [self] in
+            let outcome: AssistantAcceptanceOutcome
+            var version = index.publicationVersion
+            do {
+                try prepared.permit.check()
+                let result = try library.acceptForEditing(prepared, source: source, destination: destination)
+                if let entry = result.committedEntry {
+                    let path = destination == .improve ? (source?.relativePath.string ?? entry.relativePath) : entry.relativePath
+                    let snapshot = index.editingSnapshot(at: path)
+                    // A newer publication may describe the path before our write.
+                    // Advance the baseline only after verifying the committed stamp.
+                    if snapshot.version > version,
+                       case .loaded(let loaded) = checkedLoad(at: path), loaded.stamp == entry.stamp {
+                        version = snapshot.version
+                    }
+                    index.acceptCommand(entry, at: path, expectedVersion: version,
+                        expectedSourceStamp: destination == .improve ? source?.stamp : nil)
+                }
+                outcome = AssistantAcceptanceOutcome(result)
+            } catch let refusal as AssistantSaveRefusal { outcome = refusal.outcome }
+            catch LibraryError.conflict {
+                if let source {
+                    switch checkedLoad(at: source.relativePath.string) {
+                    case .loaded(let loaded):
+                        outcome = loaded.stamp == source.stamp ? .failed(.editing(.library(.conflict)))
+                            : .conflict(.modified(currentStamp: loaded.stamp))
+                    case .deleted: outcome = .conflict(.deleted)
+                    case .failed(let failure): outcome = .failed(.editing(failure))
+                    }
+                } else { outcome = .failed(.editing(.library(.conflict))) }
+            }
+            catch { outcome = .failed(.editing(Self.failure(error))) }
+            main.run { [self] in
+                locked { assistantSaves[id] = nil }
+                if let source, path(for: source.session) != nil {
+                    let file: CommittedFile
+                    if destination == .improve, let commit = outcome.committed { file = .present(commit.entry.stamp) }
+                    else if case .conflict(.deleted) = outcome { file = .missing }
+                    else if case .conflict(.modified(let stamp)) = outcome { file = .present(stamp) }
+                    else { file = .unchanged }
+                    completeWrite(file, session: source.session,
+                        supersedingStamp: destination == .improve ? outcome.committed?.entry.stamp : nil) { completion(outcome) }
+                } else { completion(outcome) }
+            }
+        }
     }
 
     public func history(for identity: PromptIdentity, session: PromptEditingSession,
@@ -406,6 +478,7 @@ public final class PromptEditingService: @unchecked Sendable {
     }
 
     private func completeWrite(_ file: CommittedFile, session: PromptEditingSession,
+                               supersedingStamp: FileStamp? = nil,
                                completion: () -> Void) {
         let deferred = locked { () -> [PromptExternalChange] in
             guard var state = sessions[session] else { return [] }
@@ -420,7 +493,13 @@ public final class PromptEditingService: @unchecked Sendable {
             }
             var changes: [PromptExternalChange] = []
             if state.savesInFlight == 0 {
-                changes = state.deferredChanges.filter { change in
+                changes = state.deferredChanges
+                // A verified Assistant publication supersedes earlier notifications.
+                // Later external publications must still reach the editor.
+                if let supersedingStamp, let ownChange = changes.lastIndex(where: { $0.newStamp == supersedingStamp }) {
+                    changes.removeFirst(ownChange + 1)
+                }
+                changes = changes.filter { change in
                     !state.committedStamps.contains { $0 == change.newStamp }
                 }
                 state.deferredChanges = []
