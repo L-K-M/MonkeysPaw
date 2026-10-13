@@ -79,7 +79,7 @@ public final class ServerDatabase: Sendable {
         }
     }
 
-    func migrate(_ migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata]) async throws {
+    func migrate(_ migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata, .membershipAuditContext]) async throws {
         try await MigrationRepository(database: self).apply(migrations)
     }
 

@@ -8,6 +8,11 @@ enum AuditAction: String, Sendable, CaseIterable {
     case userDisable = "user.disable"
     case userEnable = "user.enable"
     case userResetPassword = "user.reset_password"
+    case groupCreate = "group.create"
+    case groupRename = "group.rename"
+    case groupDelete = "group.delete"
+    case membershipUpsert = "membership.upsert"
+    case membershipRemove = "membership.remove"
 }
 
 enum AuditActor: Sendable, Equatable {
@@ -27,15 +32,18 @@ struct AuditEvent: Sendable, Equatable {
     let actor: AuditActor
     let action: AuditAction
     let targetID: String
+    let groupID: String?
     let at: String
 
-    init(actor: AuditActor, action: AuditAction, targetID: String, at date: Date) throws {
+    init(actor: AuditActor, action: AuditAction, targetID: String, groupID: String? = nil, at date: Date) throws {
         if let id = actor.userID { try AccountValidation.dto(SyncAPI.IDPath(id: id)) }
         try AccountValidation.dto(SyncAPI.IDPath(id: targetID))
+        if let groupID { try AccountValidation.dto(SyncAPI.IDPath(id: groupID)) }
         id = try ServerTimestamp.id(at: date)
         self.actor = actor
         self.action = action
         self.targetID = targetID
+        self.groupID = groupID
         at = ServerTimestamp.string(date)
     }
 }
@@ -46,9 +54,9 @@ struct AuditRepository: Sendable {
 
     func insert(_ event: AuditEvent) async throws {
         try await sql.raw("""
-            INSERT INTO audit_events (id, actor_id, action, target, at)
+            INSERT INTO audit_events (id, actor_id, action, target, group_id, at)
             VALUES (\(bind: event.id), \(bind: event.actor.userID), \(bind: event.action.rawValue),
-                    \(bind: event.targetID), \(bind: event.at))
+                    \(bind: event.targetID), \(bind: event.groupID), \(bind: event.at))
             """).run()
     }
 }

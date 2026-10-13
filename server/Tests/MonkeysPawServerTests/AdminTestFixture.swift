@@ -9,6 +9,7 @@ struct StoredTestAudit: Sendable {
     let actorID: String?
     let action: String
     let targetID: String
+    let groupID: String?
     let at: String
 }
 
@@ -20,6 +21,7 @@ extension PersistenceTestRepository {
                           actorID: row.decode(column: "actor_id", as: String?.self),
                           action: row.decode(column: "action", as: String.self),
                           targetID: row.decode(column: "target", as: String.self),
+                          groupID: row.decode(column: "group_id", as: String?.self),
                           at: row.decode(column: "at", as: String.self))
             }
         }

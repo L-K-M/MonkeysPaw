@@ -107,7 +107,7 @@ struct PersistenceTestRepository: Sendable {
 }
 
 func withPersistenceDatabase(
-    migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata],
+    migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata, .membershipAuditContext],
     _ operation: @Sendable (PersistenceTestRepository) async throws -> Void
 ) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-s5-\(UUID().uuidString)")
