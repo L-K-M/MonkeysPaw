@@ -53,6 +53,13 @@ final class UpdateMainThread: MainThread {
 final class UpdateScheduler: Scheduler {
     private let lock = NSLock()
     private var jobs: [(Duration, () -> Void)] = []
+    private var schedules = 0
+
+    var scheduledCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return schedules
+    }
 
     var delays: [Duration] {
         lock.lock()
@@ -63,6 +70,7 @@ final class UpdateScheduler: Scheduler {
     func after(_ delay: Duration, _ work: @escaping () -> Void) {
         lock.lock()
         jobs.append((delay, work))
+        schedules += 1
         lock.unlock()
     }
 
@@ -72,6 +80,32 @@ final class UpdateScheduler: Scheduler {
         let work = jobs.removeFirst().1
         lock.unlock()
         work()
+    }
+}
+
+/// Observer publications and status reads can signal the same completed state.
+final class UpdateExpectation {
+    let expectation: XCTestExpectation
+    private let lock = NSLock()
+    private var calls = 0
+
+    init(in test: XCTestCase, description: String) {
+        expectation = test.expectation(description: description)
+        expectation.assertForOverFulfill = true
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+
+    func fulfill() {
+        lock.lock()
+        calls += 1
+        let first = calls == 1
+        lock.unlock()
+        if first { expectation.fulfill() }
     }
 }
 
@@ -129,12 +163,12 @@ final class UpdateHarness {
     func completed(in test: XCTestCase, matching predicate: @escaping (UpdateSnapshot) -> Bool = {
         !$0.isChecking && $0.result != .notChecked
     }) async -> UpdateSnapshot {
-        let done = test.expectation(description: "Update outcome")
+        let done = UpdateExpectation(in: test, description: "Update outcome")
         let token = service.addObserver { snapshot in
             if predicate(snapshot) { done.fulfill() }
         }
         service.readStatus { if predicate($0) { done.fulfill() } }
-        await test.fulfillment(of: [done], timeout: 5)
+        await test.fulfillment(of: [done.expectation], timeout: 5)
         service.removeObserver(token)
         return await status()
     }

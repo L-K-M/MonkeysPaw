@@ -95,7 +95,7 @@ actor ConnectionTransport: HTTPTransporting {
     private var requests: [HTTPRequest] = []
     private var sentWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var held: [CheckedContinuation<HTTPResponse, Never>] = []
-    private var cancelled = false
+    private(set) var cancellationCount = 0
     private var cancellationWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(_ replies: [Reply], afterSend: @escaping @Sendable () -> Void = {}) {
@@ -109,7 +109,7 @@ actor ConnectionTransport: HTTPTransporting {
         await withCheckedContinuation { sentWaiters.append((count, $0)) }
     }
     func waitUntilCancelled() async {
-        if cancelled { return }
+        if cancellationCount > 0 { return }
         await withCheckedContinuation { cancellationWaiters.append($0) }
     }
     func release(_ response: HTTPResponse) {
@@ -132,7 +132,7 @@ actor ConnectionTransport: HTTPTransporting {
         case .waiting:
             do { try await Task.sleep(for: .seconds(60)) }
             catch {
-                cancelled = true
+                cancellationCount += 1
                 cancellationWaiters.forEach { $0.resume() }
                 cancellationWaiters = []
                 throw error

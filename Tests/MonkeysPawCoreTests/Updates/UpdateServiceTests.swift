@@ -143,11 +143,12 @@ final class UpdateServiceTests: XCTestCase {
     func testFailedAttemptPersistencePreventsTraffic() async {
         let h = UpdateHarness()
         h.files.failNextWrite = true
-        let done = expectation(description: "Persistence failure")
+        let done = UpdateExpectation(in: self, description: "Persistence failure")
         let token = h.service.addObserver { if $0.stateError == .writeFailed(.ioFailure) { done.fulfill() } }
         h.service.startAutomaticChecks()
-        await fulfillment(of: [done], timeout: 5)
+        await fulfillment(of: [done.expectation], timeout: 5)
         h.service.removeObserver(token)
+        XCTAssertEqual(done.callCount, 1)
         let requests = await h.transport.snapshot()
         XCTAssertTrue(requests.isEmpty)
     }
@@ -186,12 +187,13 @@ final class UpdateServiceTests: XCTestCase {
 
     func testAttemptPersistenceFailureRemainsVisibleAcrossPassiveReads() async {
         let h = UpdateHarness()
-        let failed = expectation(description: "Attempt persistence failure")
+        let failed = UpdateExpectation(in: self, description: "Attempt persistence failure")
         let token = h.service.addObserver { if $0.stateError == .writeFailed(.ioFailure) { failed.fulfill() } }
         h.files.failNextWrite = true
         h.service.startAutomaticChecks()
-        await fulfillment(of: [failed], timeout: 5)
+        await fulfillment(of: [failed.expectation], timeout: 5)
         h.service.removeObserver(token)
+        XCTAssertEqual(failed.callCount, 1)
         let status = await h.status()
         XCTAssertEqual(status.stateError, .writeFailed(.ioFailure))
         let requests = await h.transport.snapshot()
@@ -209,10 +211,16 @@ final class UpdateServiceTests: XCTestCase {
         XCTAssertEqual(final.result, .notChecked)
         XCTAssertNil(final.lastSuccessfulCheck)
         XCTAssertTrue(h.scheduler.delays.isEmpty)
+        XCTAssertEqual(h.scheduler.scheduledCount, 0)
+        let cancelledRequests = await h.transport.snapshot()
+        let cancellations = await h.transport.cancellationCount
+        XCTAssertEqual(cancelledRequests.count, 1)
+        XCTAssertEqual(cancellations, 1)
 
         let later = UpdateHarness([.failure(.networkFailure)])
         later.service.startAutomaticChecks()
         _ = await later.completed(in: self)
+        XCTAssertEqual(later.scheduler.scheduledCount, 1)
         later.settings.setAutomaticUpdateChecks(.disabled)
         later.service.refreshAutomaticPolicy()
         _ = await later.status()
@@ -222,6 +230,41 @@ final class UpdateServiceTests: XCTestCase {
         let requests = await later.transport.snapshot()
         XCTAssertEqual(requests.count, 1)
         XCTAssertTrue(later.scheduler.delays.isEmpty, "The retired timer never rearms")
+        XCTAssertEqual(later.scheduler.scheduledCount, 1)
+    }
+
+    func testCompletionSignalHandlesObserverAndStatusRead() async {
+        let h = UpdateHarness([.waiting])
+        h.service.startAutomaticChecks()
+        await h.transport.waitUntilSent()
+        let done = UpdateExpectation(in: self, description: "Cancelled update")
+        let token = h.service.addObserver { if !$0.isChecking { done.fulfill() } }
+        h.settings.setAutomaticUpdateChecks(.disabled)
+        h.service.refreshAutomaticPolicy()
+        await fulfillment(of: [done.expectation], timeout: 5)
+
+        let final = await withCheckedContinuation { continuation in
+            h.service.readStatus { snapshot in
+                if !snapshot.isChecking { done.fulfill() }
+                continuation.resume(returning: snapshot)
+            }
+        }
+        h.service.removeObserver(token)
+        XCTAssertEqual(done.callCount, 2, "The observer and passive read each report the same completed state")
+        XCTAssertEqual(final.result, .notChecked)
+        XCTAssertNil(final.lastSuccessfulCheck)
+        let requests = await h.transport.snapshot()
+        let cancellations = await h.transport.cancellationCount
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertEqual(h.scheduler.scheduledCount, 0)
+    }
+
+    func testCompletionSignalCountsConcurrentCallsAndFulfillsOnce() async {
+        let done = UpdateExpectation(in: self, description: "Concurrent update reports")
+        DispatchQueue.concurrentPerform(iterations: 16) { _ in done.fulfill() }
+        await fulfillment(of: [done.expectation], timeout: 5)
+        XCTAssertEqual(done.callCount, 16)
     }
 
     func testDisableIgnoresANoncooperativeResultAndKeepsTheSingleFlightSlot() async {
