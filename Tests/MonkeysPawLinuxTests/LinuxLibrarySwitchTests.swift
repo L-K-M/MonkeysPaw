@@ -449,7 +449,8 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         })
         XCTAssertNotEqual(gtk_widget_activate(create), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == "New prompt.md"
-            && self.environment.editorModel.state.source != nil })
+            && self.environment.editorModel.state.source != nil && self.environment.editorModel.state.status != .loading },
+            "Created prompt must finish loading into the editor")
         XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertFalse(environment.panel.isVisible)
         XCTAssertEqual(environment.pickerModel.state, .closed)

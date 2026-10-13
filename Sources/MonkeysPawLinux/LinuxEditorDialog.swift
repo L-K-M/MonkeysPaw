@@ -71,6 +71,7 @@ enum LinuxEditorResponse: Equatable {
 final class LinuxEditorDialog {
     private let window: GTK.Widget
     private var isDestroyed = false
+    private var hasResponded = false
 
     init(parent: GTK.Widget, state: LinuxEditorDialogState, respond: @escaping (LinuxEditorResponse) -> Void) {
         window = gtk_window_new()!
@@ -80,16 +81,21 @@ final class LinuxEditorDialog {
         gtk_window_set_modal(mp_window(window), 1)
         gtk_window_set_destroy_with_parent(mp_window(window), 1)
         GTK.onSignal(window, "destroy") { [weak self] in self?.isDestroyed = true }
+        let respondOnce: (LinuxEditorResponse) -> Void = { [weak self] response in
+            guard let self, !self.isDestroyed, !self.hasResponded else { return }
+            self.hasResponded = true
+            respond(response)
+        }
         let cancel: LinuxEditorResponse = {
             if case .decision = state { return .decision(.cancel) }
             return .dismissConflict
         }()
-        GTK.onCloseRequested(window) { respond(cancel) }
+        GTK.onCloseRequested(window) { respondOnce(cancel) }
         GTK.observeKeys(window) { key, modifiers in
             let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
                 | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
             guard key == UInt32(GDK_KEY_Escape), modifiers & relevant == 0 else { return false }
-            respond(cancel)
+            respondOnce(cancel)
             return true
         }
         let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
@@ -102,7 +108,7 @@ final class LinuxEditorDialog {
         let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         var cancelButton: GTK.Widget?
         for (position, response) in state.responses.enumerated() {
-            let button = GTK.button(response.title) { respond(response) }
+            let button = GTK.button(response.title) { respondOnce(response) }
             gtk_widget_set_name(button, "library-dialog-response-\(position)")
             mp_accessible_label(button, response.title)
             gtk_box_append(mp_box(buttons), button)

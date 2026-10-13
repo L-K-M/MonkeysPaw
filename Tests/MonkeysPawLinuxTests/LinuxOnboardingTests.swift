@@ -634,8 +634,12 @@ final class LinuxOnboardingTests: XCTestCase {
         XCTAssertEqual(environment.onboardingModel.state.step, .libraryFolder)
         XCTAssertTrue(environment.editorModel === old)
         XCTAssertEqual(old.state.source, "Draft")
+        var usedDefault = false
+        GTK.onSignal(try settingsWidget("onboarding-use-default", in: onboarding), "clicked") { usedDefault = true }
         try click("onboarding-use-default", in: onboarding)
+        XCTAssertTrue(GTKTestSupport.spin { usedDefault }, "Use Default must activate before checking its refusal")
         drainUI()
+        XCTAssertEqual(environment.onboardingModel.state.step, .libraryFolder)
         XCTAssertEqual(try label("onboarding-library-message", in: onboarding), LinuxEditorStrings.librarySwitchRefused)
         XCTAssertTrue(environment.editorModel === old)
     }

@@ -132,6 +132,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
             try waitForConflict(.modified)
             try respond(.conflict(choice))
             XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.conflict == nil && !self.environment.editorModel.state.isDirty })
+            drain()
+            XCTAssertEqual(contents(try widget("library-source", in: window)), environment.editorModel.state.source)
             if choice == .keepMine {
                 XCTAssertEqual(PromptCodec.parseFile(try files.read(at: path), filename: path).body, "Mine")
             } else if choice == .takeTheirs {
@@ -302,7 +304,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
     }
 
     func testQuitActionApprovesAfterEnvironmentIsReleased() {
-        weak let released = environment
+        weak var released = environment
         environment.shutdown()
         environment = nil
         XCTAssertNil(released, "Quit's action must not retain the environment")
@@ -388,6 +390,36 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(environment.editorModel.state.source, "Draft")
     }
 
+    func testDialogRespondsOnceWhenCallbackReentersNativeEvents() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        environment.editorModel.request(.quit)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision != nil && self.dialog != nil })
+        let decision = try XCTUnwrap(environment.editorModel.state.pendingDecision)
+        for firstResponse in [LinuxEditorResponse.decision(.save), .decision(.cancel)] {
+            let existingWindows = windows
+            var alert: GTK.Widget?
+            var responses: [LinuxEditorResponse] = []
+            let native = LinuxEditorDialog(parent: window, state: .decision(decision, status: .idle)) { response in
+                responses.append(response)
+                if responses.count == 1, let alert {
+                    XCTAssertNotEqual(mp_test_emit_key_pressed(alert, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+                }
+            }
+            defer { native.destroy() }
+            alert = try XCTUnwrap(windows.first { !existingWindows.contains($0) })
+            let presented = try XCTUnwrap(alert)
+            if firstResponse == .decision(.save) {
+                XCTAssertNotEqual(gtk_widget_activate(try widget("library-dialog-response-0", in: presented)), 0)
+                XCTAssertTrue(GTKTestSupport.spin { !responses.isEmpty })
+            } else { gtk_window_close(mp_window(presented)) }
+            XCTAssertEqual(responses, [firstResponse], "A nested Escape must not send a second response")
+            gtk_window_close(mp_window(presented))
+            XCTAssertEqual(responses, [firstResponse], "Later native dismissal must not send another response")
+        }
+    }
+
     func testUnchangedPreviewKeepsNativeBufferAndCaret() throws {
         try files.write(Data("Body".utf8), at: "a.md")
         let window = try open("a.md")
@@ -447,6 +479,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         g_object_ref_sink(native.widget)
         defer { g_object_unref(native.widget) }
         native.update(environment.editorModel.state, revision: 1, available: true)
+        XCTAssertEqual(contents(native.widget), "Original", "Load must populate the buffer before drafting")
         gtk_text_buffer_begin_user_action(buffer(native.widget))
         gtk_text_buffer_insert_at_cursor(buffer(native.widget), "Draft", -1)
         gtk_text_buffer_end_user_action(buffer(native.widget))
@@ -578,7 +611,10 @@ final class LinuxLibraryEditorTests: XCTestCase {
         replace(try widget("library-source", in: window), with: "Retry draft")
         let root = LinuxPaths(environment: tools.environment).documentsDirectory.appendingPathComponent("MonkeysPaw")
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path) }
+        defer {
+            do { try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path) }
+            catch { XCTFail("Could not restore library permissions for cleanup: \(error)") }
+        }
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
         try respond(.decision(.save))
@@ -609,7 +645,54 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
         try respond(.decision(.discard))
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == "Original" && self.environment.editorModel.state.status != .loading })
+        drain()
+        XCTAssertEqual(contents(try widget("library-source", in: window)), "Original")
         XCTAssertFalse(environment.editorModel.state.isDirty)
+    }
+
+    func testSamePathExternalReloadRefreshesNativeSource() throws {
+        let original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal"
+        try files.write(Data(original.utf8), at: "a.md")
+        let window = try open("a.md")
+        let prompt = try XCTUnwrap(environment.editorModel.state.prompt)
+        let changed = original.replacingOccurrences(of: "Original", with: "External")
+        try files.write(Data(changed.utf8), at: "a.md")
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == changed
+            && self.environment.editorModel.state.status != .loading })
+        drain()
+        XCTAssertEqual(environment.editorModel.state.prompt, prompt)
+        XCTAssertFalse(environment.editorModel.state.isDirty)
+        XCTAssertEqual(contents(try widget("library-source", in: window)), changed)
+    }
+
+    func testReopeningSavedCopyRetainsFilterAndSection() throws {
+        try files.write(Data("Original".utf8), at: "folder/a.md")
+        try files.write(Data("Original Charlie".utf8), at: "folder/c.md")
+        let window = try open("folder/a.md")
+        try click("library-save-copy", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.lastCopy != nil
+            && self.environment.editorModel.state.status == .saved })
+        drain()
+        let copy = try XCTUnwrap(environment.editorModel.state.lastCopy)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.selection == copy },
+            "The copy must be indexed and selected before navigating away")
+        environment.libraryBrowserModel.selectSection(.folder("folder"))
+        environment.libraryBrowserModel.setFilter("Original")
+        try select("folder/c.md", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == "Original Charlie"
+            && self.environment.editorModel.state.status != .loading })
+        XCTAssertNil(environment.editorModel.state.lastCopy, "A fresh open clears the earlier adoption")
+        try select(copy.relativePath.string, in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt == copy
+            && self.environment.editorModel.state.status != .loading })
+        drain()
+        XCTAssertEqual(environment.libraryBrowserModel.filter, "Original")
+        XCTAssertEqual(environment.libraryBrowserModel.selectedSection, .folder("folder"))
+        gtk_window_close(mp_window(window))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
+        _ = try open(copy.relativePath.string)
+        XCTAssertEqual(environment.libraryBrowserModel.filter, "Original")
+        XCTAssertEqual(environment.libraryBrowserModel.selectedSection, .folder("folder"))
     }
 
     func testSettingsRefusesDirtySavingAndPendingEditorWithSpecificMessage() throws {
@@ -682,6 +765,30 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(try second.read(at: "a.md"), Data("New".utf8))
         XCTAssertNotEqual(current.state.status, .saved)
         XCTAssertEqual(gtk_widget_get_visible(window), 0)
+    }
+
+    func testSettingsRetainsUnavailableSwitchMessageWhenRaisedAgain() throws {
+        environment.shutdown()
+        compose(watcherFactory: { _ in throw FileStoreError.ioFailure })
+        let second = tools.directory.appendingPathComponent("Unavailable")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.window(titled: LinuxStrings.settings) != nil })
+        let settings = try XCTUnwrap(window(titled: LinuxStrings.settings))
+        environment.generalSettingsModel.chooseFolder(second.path)
+        let outcome = LibrarySwitchOutcome.libraryUnavailable(.ioFailure)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.lastSwitchMessage == outcome })
+        drain()
+        let message = try widget("settings-library-message", in: settings)
+        XCTAssertFalse(environment.editorModel.state.isDirty)
+        XCTAssertEqual(label(message), GeneralSettingsStrings.message(for: outcome))
+        XCTAssertNotEqual(gtk_widget_get_visible(message), 0)
+        gtk_window_close(mp_window(settings))
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(settings) != 0 })
+        drain()
+        XCTAssertEqual(label(message), GeneralSettingsStrings.message(for: outcome))
+        XCTAssertNotEqual(gtk_widget_get_visible(message), 0, "Idle editor work must not hide a startup failure")
     }
 
     func testNativeUndoAndCaretSurviveSaveNormalizationAndUnrelatedRefresh() throws {
@@ -767,7 +874,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
         try files.write(Data("Original".utf8), at: "a.md")
         let window = try open("a.md")
         let source = try widget("library-source", in: window)
-        XCTAssertTrue(GTKTestSupport.spin { gtk_window_is_active(mp_window(window)) != 0 })
+        XCTAssertTrue(GTKTestSupport.spin { gtk_window_is_active(mp_window(window)) != 0 },
+            "Window never became active; the display must support focus")
         gtk_widget_grab_focus(source)
         mp_test_emit_preedit_changed(source, "かな")
         for (key, flags) in [(UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)),
@@ -790,7 +898,12 @@ final class LinuxLibraryEditorTests: XCTestCase {
         try files.write(Data("Beta".utf8), at: "folder/b.md")
         let window = try open("a.md")
         let tabs = try widget("library-editor-tabs", in: window)
-        gtk_notebook_set_current_page(mp_notebook(tabs), 2)
+        let fields = try widget("library-fields", in: window)
+        let fieldsPage = try XCTUnwrap((0..<gtk_notebook_get_n_pages(mp_notebook(tabs))).first { index in
+            guard let page = gtk_notebook_get_nth_page(mp_notebook(tabs), index) else { return false }
+            return gtk_widget_is_ancestor(fields, page) != 0
+        }, "Fields must have a notebook page")
+        gtk_notebook_set_current_page(mp_notebook(tabs), fieldsPage)
         replace(try widget("library-source", in: window), with: "Draft alpha")
         try select("folder/b.md", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision != nil })
@@ -808,9 +921,10 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(environment.libraryBrowserModel.selection?.relativePath.string, "folder/b.md")
     }
 
-    private func compose() {
+    private func compose(watcherFactory: ((URL) throws -> FileStoreWatcher)? = nil) {
         environment = LinuxEnvironment(application: application, environment: tools.environment,
-            backgroundWork: heldWork, clipboard: clipboard, launchURI: { _ in XCTFail("Editor launched an external URI") })
+            libraryWatcherFactory: watcherFactory, backgroundWork: heldWork, clipboard: clipboard,
+            launchURI: { _ in XCTFail("Editor launched an external URI") })
         MonkeysPawLinuxApp.installLibraryAction(application: application, environment: environment)
         MonkeysPawLinuxApp.installQuitAction(application: application, environment: environment, approved: { [weak self] in self?.quitCount += 1 })
     }

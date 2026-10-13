@@ -154,6 +154,10 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertNotEqual(gtk_widget_get_visible(message), 0)
         XCTAssertEqual(labelText(pathLabel), second.path)
         XCTAssertEqual(environment.settingsModel.libraryFolderPath, second.path)
+        gtk_window_close(mp_window(window))
+        XCTAssertEqual(try showSettings(), window)
+        XCTAssertEqual(labelText(message), GeneralSettingsStrings.message(for: failure))
+        XCTAssertNotEqual(gtk_widget_get_visible(message), 0, "Reopening must retain an unrelated switch error")
 
         try click("settings-use-default", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.labelText(pathLabel) == self.defaultFolder.path })
@@ -184,6 +188,11 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertEqual(environment.generalSettingsModel.state.lastSwitchMessage, .settingsNotSaved(failure))
         XCTAssertEqual(labelText(try settingsWidget("settings-library-message", in: window)),
             GeneralSettingsStrings.message(for: .settingsNotSaved(failure)))
+        gtk_window_close(mp_window(window))
+        XCTAssertEqual(try showSettings(), window)
+        let switchMessage = try settingsWidget("settings-library-message", in: window)
+        XCTAssertEqual(labelText(switchMessage), GeneralSettingsStrings.message(for: .settingsNotSaved(failure)))
+        XCTAssertNotEqual(gtk_widget_get_visible(switchMessage), 0, "Reopening must retain a persistence failure")
         XCTAssertNotEqual(gtk_widget_get_sensitive(try settingsWidget("settings-choose-folder", in: window)), 0)
         XCTAssertTrue(environment.pickerModel.libraryAvailable)
         environment.pickerModel.open()
