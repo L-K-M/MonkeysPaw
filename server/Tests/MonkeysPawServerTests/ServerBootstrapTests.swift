@@ -69,12 +69,14 @@ struct ServerBootstrapTests {
                 }
             }
         }
-        try Data(secret.utf8).write(to: file)
-        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        // A directory is unreadable as a secret file even for root, which
+        // ignores permission bits (CI's server job runs as root).
+        let unreadable = file.deletingLastPathComponent().appendingPathComponent("secret-directory")
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: unreadable) }
         try await withAccountFixture { fixture in
             await #expect(throws: BootstrapError.self) {
-                _ = try await fixture.accounts.bootstrap(.init(environment: ["MONKEYSPAW_ADMIN_PASSWORD_FILE": file.path]))
+                _ = try await fixture.accounts.bootstrap(.init(environment: ["MONKEYSPAW_ADMIN_PASSWORD_FILE": unreadable.path]))
             }
         }
     }
