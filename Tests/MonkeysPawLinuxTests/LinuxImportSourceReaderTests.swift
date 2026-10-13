@@ -65,6 +65,27 @@ final class LinuxImportSourceReaderTests: XCTestCase {
         XCTAssertEqual(try reader.readFile(at: tools.directory.appendingPathComponent("kept.md").path, maximumBytes: 4), Data("Kept".utf8))
     }
 
+    func testNoFollowWalkRecognizesSlashBeforeCombiningMark() throws {
+        let tools = try FakeLinuxTools()
+        let root = tools.directory.appendingPathComponent("Sources")
+        let parent = root.appendingPathComponent("ordinary")
+        let directory = parent.appendingPathComponent("\u{301}nested")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("a.md")
+        try Data("Original".utf8).write(to: url)
+        let reader = LinuxImportSourceReader()
+        XCTAssertEqual(try reader.readFile(at: url.path, maximumBytes: 8), Data("Original".utf8))
+        _ = try reader.listFiles(in: root.path)
+        XCTAssertEqual(try reader.readFile(at: url.path, maximumBytes: 8), Data("Original".utf8))
+        let outside = tools.directory.appendingPathComponent("Outside")
+        let redirected = outside.appendingPathComponent("\u{301}nested")
+        try FileManager.default.createDirectory(at: redirected, withIntermediateDirectories: true)
+        try Data("Escaped".utf8).write(to: redirected.appendingPathComponent("a.md"))
+        try FileManager.default.removeItem(at: parent)
+        try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: outside)
+        assertError(.symbolicLink) { _ = try reader.readFile(at: url.path, maximumBytes: 8) }
+    }
+
     func testCapsReadsAndRejectsInvalidAbsolutePathsBeforeAccess() throws {
         let tools = try FakeLinuxTools()
         let file = tools.directory.appendingPathComponent("a.md")

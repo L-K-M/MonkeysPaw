@@ -61,7 +61,7 @@ final class LinuxImportSourceReader: ImportSourceReading {
         if let folder, path.utf8.starts(with: (folder.path == "/" ? "/" : folder.path + "/").utf8) {
             let prefixCount = folder.path.utf8.count + (folder.path == "/" ? 0 : 1)
             let relative = String(decoding: path.utf8.dropFirst(prefixCount), as: UTF8.self)
-            let parts = relative.split(separator: "/").map(String.init)
+            let parts = components(relative)
             parent = try walk(parts.dropLast(), from: folder.descriptor)
             name = parts.last!
         } else { (parent, name) = try openParent(of: path) }
@@ -110,7 +110,7 @@ final class LinuxImportSourceReader: ImportSourceReading {
     }
 
     private func openParent(of path: String) throws -> (Int32, String) {
-        let parts = path.split(separator: "/").map(String.init)
+        let parts = components(path)
         guard let name = parts.last else { throw ImportSourceError.notRegularFile }
         let parentPath = "/" + parts.dropLast().joined(separator: "/")
         // Only selection ancestors may be aliases. Walk the canonical result
@@ -119,11 +119,17 @@ final class LinuxImportSourceReader: ImportSourceReading {
             throw errno == ENOENT ? ImportSourceError.notFound : ImportSourceError.ioFailure
         }
         defer { free(resolved) }
-        let canonical = String(cString: resolved).split(separator: "/").map(String.init)
+        let canonical = components(String(cString: resolved))
         let root = Glibc.open("/", Self.directoryFlags)
         guard root >= 0 else { throw ImportSourceError.ioFailure }
         defer { _ = Glibc.close(root) }
         return (try walk(canonical[...], from: root), name)
+    }
+
+    private func components(_ path: String) -> [String] {
+        // POSIX separates slash bytes even when a following combining mark
+        // joins that slash's Swift Character. Each openat sees one component.
+        path.utf8.split(separator: UInt8(ascii: "/")).map { String(decoding: $0, as: UTF8.self) }
     }
 
     private func walk(_ parts: ArraySlice<String>, from root: Int32) throws -> Int32 {
