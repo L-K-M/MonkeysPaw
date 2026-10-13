@@ -172,6 +172,17 @@ public enum Limits {
     /// §8.4: bound each NFC sync path segment, including a filename's suffix.
     public static let syncPathSegmentMaxBytes: Int = 255
 
+    /// §9.2: versioned private client records, independent of wire/API versions.
+    static let syncStateVersion: Int = 1
+    static let syncAccountVersion: Int = 1
+    static let syncBindingVersion: Int = 1
+
+    /// §9.2: fail closed rather than truncate oversized state/ownership records.
+    static let syncRecordMaxBytes: Int = 16 * mebibyte
+
+    /// §9.1: viewer replacements and role transitions must retain mode 0444.
+    public static let readOnlyFileMode: Int = 0o444
+
     /// Desktop creation uses one filename within the common POSIX NAME_MAX.
     public static let promptFilenameMaxBytes: Int = 255
 

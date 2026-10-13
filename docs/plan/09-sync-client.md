@@ -28,25 +28,62 @@
 
 ### 9.2 State
 
-`<data>/sync/state.json` is scoped to one `(server_url, user_id)` pair.
+Version-1 `<data>/sync/state.json` is scoped to one normalized
+`(server_url, user_id)` pair and one library root. Server URLs here are
+deployment bases, without `/api/v1`; URL input normalization and transport
+policy belong to the sync client. Root identity uses an absolute lexical path,
+not a symlink-resolving filesystem lookup.
 
 ```
-version, server_url, user_id, database_id,
+version, server_url, user_id, library_root, database_id,
 cursors:   scope_key → cursor (opaque string),
 groups:    group_id → {name, folder, role},
 prompts:   id → {scope_key, path, rev, canonical_hash, origin?, last_error?}
 favorites: id → true                    (group prompts only, §9.5)
 ```
 
-- **Atomic and durable.** `state.json` is written atomically. Scope cursors
-  are persisted only after the collected pull is applied and its file writes
-  are on disk.
-- **Account changes.** Signing in with a different server or user discards
-  the state and runs first sync (§9.4). Folders that don't match the new
-  account's membership are rescued, never pushed into another account's
-  groups.
-- **Sign-out.** It revokes the device token, clears the state, and leaves
-  files in place.
+- **Validated, fail closed.** IDs are canonical ULIDs/UUIDs, cursors remain
+  opaque nonempty strings, paths are scope-relative NFC sync paths and hashes
+  cover the full canonical bytes. A corrupt, unsupported or future-version
+  document blocks ordinary edits and sync, preserving library files. Reset
+  is an explicit intent. Unknown fields of a supported version survive edits,
+  including nested records. Each record is capped at 16 MiB; exceeding the cap
+  fails rather than truncates it. Failed writes retain the previous memory cache.
+- **Atomic and durable.** Private records use the app-data `FileStore`'s
+  atomic 0600 writes, followed by checked file and directory flushes through
+  `SyncFileOperations`. Its library capability also covers checked durable
+  publication, 0444/normal modes, trash and managed directory lifecycle.
+  Existing `FileStore` semantics are unchanged. A failure after publication
+  reports uncertain durability and blocks further edits pending recovery;
+  best-effort directory fsync is not a successful sync commit. Scope cursors
+  commit only after the journaled pull's files and affected directories are
+  on disk (§9.3).
+- **Connection metadata.** `<data>/sync/account.json` is a version-1 optional
+  connection: normalized server URL, user ID, username, device ID/name and a
+  local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;
+  no password, device token or invite token enters these records.
+- **Library ownership.** Separate version-1 `<data>/sync/binding.json`
+  retains ownership by library root, managed group-folder ownership and an
+  upload hold set independently of active state or connection metadata.
+  Holds retain local `PromptIdentity` (including path hashes for idless
+  files), exact relative path, source account and raw-content hash. Editing
+  held content does not authorize upload; explicit inclusion/import releases
+  it. Different roots start snapshot/adoption without inferring deletions
+  from the previous root. Returning to a root retains its ownership/holds.
+- **Account changes.** A different server or user discards active state and
+  runs first sync (§9.4). Journal group rescue and hold every prior-account
+  private/rescued file, including idless files, before enabling the new account.
+  They remain usable locally and are never uploaded automatically to the new
+  account. Same-account reauthentication retains queued edits.
+- **Sign-out.** Revoke the device token, clear active state and connection
+  metadata, and leave library files and non-secret library ownership in place.
+- **Personal values and errors.** Group favourite `true` inserts, explicit
+  `false` removes, and absent preserves the remembered value. There is no
+  group-private overlay. Origin is typed as conflict-of a ULID or rescued;
+  it is separate from server write origin and Assistant provenance (§9.6).
+  Per-file errors store only a fixed issue code and an operation fingerprint
+  of bytes, path, scope and access generation, never an error body. Repairing
+  an offending input allows another attempt (§9.6).
 
 ### 9.3 One sync pass
 
@@ -145,7 +182,12 @@ in again.
 
 ### 9.4 First sync on a device
 
-This covers enabling sync, a second device, and an account change.
+This covers enabling sync, a second device, and an account change. A first-ever
+sign-in adopts/creates the chosen library; a copied library on a second device
+still converges. On a previously bound root, the §9.2 account-change hold set
+excludes old-account files from creates/adoption until explicit inclusion or
+import. New-account snapshot content may be installed safely. A fresh library
+also authorizes its chosen content for that account.
 
 1. Pull snapshots for all scopes.
 2. Match local files to server prompts:
