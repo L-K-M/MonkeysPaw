@@ -327,8 +327,10 @@ instead of doubling.
     Rescues instead carry `x-monkeyspaw-rescued: true` and rescued origin.
     Ingest requires a canonical uppercase ULID distinct from the copy's ID,
     and an actual boolean for rescued; false means no rescued origin. A
-    conflict marker together with rescued true is invalid. Invalid markers
-    are held with `metadata.invalid_type`, never trusted as origin. Group
+    conflict marker together with rescued true is invalid. Invalid local markers
+    are held raw with `metadata.invalid_type`, never trusted as origin. Canonical
+    server bytes with invalid markers are installed exactly with nil origin and
+    a fingerprinted per-file error, so one bad marker cannot block the whole pull. Group
     metadata is validated but only private state projects origin. Ordinary
     copies, renames and private sync preserve the keys; clearing them clears
     state origin on ingest. The Conflicts filter uses marker-derived origin,
@@ -365,7 +367,8 @@ instead of doubling.
   a stable source-path hash suffix; the journal retains the exact source map.
 - **Denied (`403`)** never proves the user is a viewer (§20 E20). Refresh
   memberships. An edit/delete/move restores only an accessible GET head whose
-  ID, scope and path match the acknowledged recorded original. Otherwise
+  ID, scope and path match the acknowledged recorded original. Malformed or
+  mismatched GET heads are unavailable for restoration. Otherwise
   rescue locally. Creates always rescue locally. Keep any local version
   privately and notify; do not immediately repeat the denied operation.
 - **Input errors** (`422`, `404` on update): persist a sanitized issue code
@@ -379,10 +382,18 @@ instead of doubling.
   A conflict of a marked copy retains its root origin rather than pointing at
   another conflict copy. Reuse a current private copy only when regenerating
   it with its own ID/origin yields identical full bytes; this works after
-  restart or rename. Recheck that copy through the apply journal before
-  retiring the source. Different versions in the same minute get bounded
+  restart or rename. Reuse requires a conflict-of origin identifying the original;
+  rescued true alone cannot identify a source, so equal-bodied rescues stay distinct.
+  Recheck that copy through the apply journal before retiring the source. Plan
+  every pull's copies together, reserving incoming paths and prior allocations
+  and excluding any candidate that the same plan replaces or removes.
+  Different versions in the same minute get bounded
   distinct names. Journal the chosen destination and fresh ID once and replay
   those choices. Forensic/unsupported content remains byte-exact with a typed
   upload hold; no marker or ID is injected into invalid bytes (§20 E14).
+  Permanent retention records bind raw holds to account/root, destination,
+  source, hash, issue and typed origin. Ingest must read those holds before
+  duplicate-ID repair or ownership matching; an embedded raw ID never identifies
+  a live server head. Held files remain path occupants and are preserved on clashes.
 - **Timestamps.** Conflict names use UTC. `{{date}}` and `{{time}}` stay
   local, because they are template values, not records.
