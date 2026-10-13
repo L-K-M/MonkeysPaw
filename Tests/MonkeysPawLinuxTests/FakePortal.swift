@@ -110,6 +110,8 @@ final class FakePortal {
     private var notificationOwner: guint = 0
     private var notificationsReady = false
     private(set) var notificationCount = 0
+    private var secrets: [String: String] = [:]
+    private(set) var secretMethods: [String] = []
     private var nameSubscription: guint = 0
 
     static func requirePrivateBus() throws -> String {
@@ -173,6 +175,12 @@ final class FakePortal {
         XCTAssertTrue(GTKTestSupport.spin { self.notificationsReady })
     }
 
+    /// Test-only secret-tool bridge: keep fake OS secrets off disk during scans.
+    func exportSecretStore() throws {
+        try register(path: "/org/freedesktop/portal/desktop",
+                     interface: "ch.lkmc.monkeyspaw.tests.SecretStore")
+    }
+
     func dropName() {
         guard nameOwner != 0 else { return }
         g_bus_unown_name(nameOwner)
@@ -199,6 +207,7 @@ final class FakePortal {
         registrations.removeAll()
         calls.removeAll()
         ordinaryCalls.removeAll()
+        secrets.removeAll()
         if g_dbus_connection_is_closed(connection) == 0 {
             let receipt = ConnectionBox()
             g_dbus_connection_flush(connection, nil, { source, result, data in
@@ -337,6 +346,27 @@ final class FakePortal {
 
     private func receive(sender: String, path: String, interface: String, method: String,
                          parameters: OpaquePointer, invocation: OpaquePointer) {
+        if interface == "ch.lkmc.monkeyspaw.tests.SecretStore" {
+            secretMethods.append(method)
+            let accountValue = g_variant_get_child_value(parameters, 0)!
+            defer { g_variant_unref(accountValue) }
+            let account = String(cString: g_variant_get_string(accountValue, nil))
+            switch method {
+            case "Store":
+                let value = g_variant_get_child_value(parameters, 1)!
+                defer { g_variant_unref(value) }
+                secrets[account] = String(cString: g_variant_get_string(value, nil))
+            case "Clear": secrets[account] = nil
+            default:
+                var children: [OpaquePointer?] = [g_variant_new_boolean(secrets[account] == nil ? 0 : 1),
+                    g_variant_new_string(method == "Lookup" ? (secrets[account] ?? "") : "")]
+                let reply = children.withUnsafeMutableBufferPointer { g_variant_new_tuple($0.baseAddress, 2) }
+                g_dbus_method_invocation_return_value(invocation, reply)
+                return
+            }
+            g_dbus_method_invocation_return_value(invocation, nil)
+            return
+        }
         if interface == "org.freedesktop.Notifications" {
             let body: String
             switch method {
@@ -478,6 +508,12 @@ final class FakePortal {
     // enforce session ownership on the real bus without desktop consent UI.
     private static let xml = """
         <node>
+          <interface name='ch.lkmc.monkeyspaw.tests.SecretStore'>
+            <method name='Store'><arg type='s' direction='in'/><arg type='s' direction='in'/></method>
+            <method name='Clear'><arg type='s' direction='in'/></method>
+            <method name='Lookup'><arg type='s' direction='in'/><arg type='b' direction='out'/><arg type='s' direction='out'/></method>
+            <method name='Search'><arg type='s' direction='in'/><arg type='b' direction='out'/><arg type='s' direction='out'/></method>
+          </interface>
           <interface name='org.freedesktop.Notifications'>
             <method name='Notify'><arg type='s' direction='in'/><arg type='u' direction='in'/>
               <arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/>

@@ -194,14 +194,6 @@ implementation host do not prove a real Compose run. CI builds the server
 image and checks `/api/health`; the Compose smoke gate and owner HTTPS check
 complete runtime verification in subsequent M5 slices.
 
-The desktop assistant sends your selected content to the configured LLM
-provider only on an explicit action; `private: true` blocks assistant use.
-Providers see what you send. Keys use macOS Keychain or Linux Secret Service
-when available; the Linux file fallback is visibly unencrypted and private
-(0600). Sync sends data to your configured server. See the
-[security and privacy plan](docs/plan/12-security-and-privacy.md) for the
-trust boundaries and storage tiers; full platform documentation follows in M7.
-
 ## Server backup and restore
 
 The server supports one serving process on local SQLite storage, with no
@@ -237,3 +229,36 @@ so every client resnapshots. The previous database remains at the reported
 remove it after verifying the restore. Restore that recovery file through the
 same stopped-server procedure if needed. Keep `/data/.monkeyspaw.lock` in
 place so serving and maintenance commands share the same lock.
+
+## Assistant privacy and key storage
+
+Assistant requests go to the provider you configured only when you explicitly
+choose an action. Write sends your brief. Review and Improve send the current
+template source, including front matter; Improve also sends your instruction
+and selected findings. An explicit retry can include the session's previous
+messages and your feedback. Requests include the app's system instructions,
+output schema and model selection. Providers can read what you send and may
+charge for it. Fill values, rendered fill previews and remembered values are
+never sent. `private: true` blocks Review and Improve for that prompt; Write
+sends only your brief, including while a private prompt is open.
+
+Settings → Assistant → Test connection sends an authenticated model-list
+request, without prompt content. Saving, renaming or switching a profile does
+not send a provider request. No assistant request runs in the background
+without your action.
+
+Keys use macOS Keychain, with no plaintext fallback on macOS. Linux uses
+Secret Service through `secret-tool`, or a read-only per-profile environment
+override. If `secret-tool` is absent, saved keys use
+`<config>/secrets-unencrypted.json`, an atomic file with mode 0600. Settings
+labels this tier **unencrypted**: anyone who can read the file can read its
+keys; file permissions do not encrypt them. An installed but failing secret
+service does not silently create a new plaintext key. Keys are never shown
+after saving or stored in provider settings, command arguments or logs.
+Prompt content, fill values and provider error bodies are also excluded from
+logs. Remembered values stay local in private `values.json` and are not synced.
+
+Sync sends prompts to your configured server, with the operator-access limits
+described above. See the [security and privacy plan](docs/plan/12-security-and-privacy.md)
+and [assistant owner checklist](docs/platform/assistant.md). Full SECURITY.md
+and PRIVACY.md documentation follows in M7.
