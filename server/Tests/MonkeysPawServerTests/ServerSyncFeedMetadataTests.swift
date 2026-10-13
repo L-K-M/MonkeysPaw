@@ -131,12 +131,13 @@ struct ServerSyncFeedMetadataTests {
                     cursor: cursor, hasMore: hasMore, items: prompts.prefix(32).map { .upsert(seq: 100, prompt: $0) })], removed: [])
             }
             let encoder = JSONEncoder()
-            let padding = ServerLimits.syncPageBytes + 1 - (try encoder.encode(candidate(position: 100, hasMore: false)).count)
+            // Position 100 is complete, so 99 is the widest valid unfinished continuation.
+            let padding = ServerLimits.syncPageBytes + 1 - (try encoder.encode(candidate(position: 99, hasMore: false)).count)
             try #require((1...Limits.maxPromptBytes).contains(padding))
             prompts[31] = .init(id: prompts[31].id, rev: 1, path: prompts[31].path, content: String(repeating: "x", count: padding))
-            #expect(try encoder.encode(candidate(position: 100, hasMore: false)).count == ServerLimits.syncPageBytes + 1)
-            #expect(try encoder.encode(candidate(position: 0, hasMore: false)).count == ServerLimits.syncPageBytes - 1)
-            #expect(try encoder.encode(candidate(position: 32, hasMore: true)).count == ServerLimits.syncPageBytes - 1)
+            #expect(try encoder.encode(candidate(position: 99, hasMore: false)).count == ServerLimits.syncPageBytes + 1)
+            #expect(try encoder.encode(candidate(position: 0, hasMore: false)).count == ServerLimits.syncPageBytes)
+            #expect(try encoder.encode(candidate(position: 32, hasMore: true)).count == ServerLimits.syncPageBytes)
             let frozenPrompts = prompts
             try await fixture.promptRepository.write { repository, _, _, _ in
                 for prompt in frozenPrompts.reversed() {
