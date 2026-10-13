@@ -32,6 +32,8 @@ scope_floors(scope_key PK FK scope_heads, floor_seq)
 retired_prompt_ids(prompt_id PK, scope, owner_id NULL, group_id NULL, retired_at)
 snapshots(database_id, scope_key, head_seq, manifest BLOB, created_at, expires_at,
           PK(database_id, scope_key, head_seq))
+snapshot_cursor_key(singleton PK CHECK(singleton = 1), secret BLOB)
+                                         -- durable 256-bit HMAC key, never sent or logged
 devices(id, user_id, name, token_hash UNIQUE, created_at, last_seen_at, revoked_at NULL)
 invites(token_hash PK, group_id NULL, role NULL, created_by, expires_at, consumed_at NULL)
 login_account_buckets(username PK, failures, locked_until NULL, updated_at)
@@ -72,9 +74,15 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 - **Frozen snapshots.** A manifest contains frozen prompt payloads ordered
   by id, keyed by database UUID, scope and captured head (§19 B17). Storage
   allows at most 64 MiB per manifest and 256 MiB in total, with a lifetime
-  of at most 15 minutes. S14 supplies encoding, expiry cleanup and page
-  reauthorization; no read transaction spans HTTP requests. Restore clears
-  manifests before rotating the database UUID.
+  of at most 15 minutes. Each JSON manifest has a random generation UUID and
+  frozen id/rev/path/content records. Creation and head capture share one
+  write transaction; cached pages use separate read transactions. Creation
+  deletes expired manifests and evicts oldest manifests as needed to stay
+  within the total bound. A scope exceeding the per-manifest bound fails
+  with sanitized 500, rather than returning a partial snapshot. A durable
+  signing key authenticates cursors even after a manifest expires or the
+  process restarts. No transaction spans HTTP requests. Restore clears
+  manifests before rotating the database UUID, preserving scope heads/floors.
 - **One blob column.** `content` is the whole canonical file, so end-to-end
   encryption could be added later as an opaque payload without a schema
   break.
@@ -380,7 +388,9 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
 - **Per-scope feeds.** Every change row belongs to exactly one scope: a
   user's private scope or one group. Visibility follows from membership, so
   no row reaches a non-member and no id leaks. `POST /sync/pull` answers in
-  one read transaction:
+  one read transaction, or one write transaction when it must materialize
+  snapshots. A read-only preflight can select the write path, which rechecks
+  the session, scopes, database UUID and heads before freezing anything:
 
   ```
   { database_id,
@@ -403,11 +413,12 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
       purged seq does not repeat forever
     - the cursor is above the scope head (a restored database)
     - `database_id` differs from the client's
-  - Delta pages return at most `SYNC_PAGE_MAX = 200` emitted items **per
+  - Pull pages return at most `SYNC_PAGE_MAX = 200` emitted items **per
     response**, shared across scopes (B19). A response stops early at
     `SYNC_PAGE_BYTES = 8 MiB` of serialized JSON, including metadata, and
     asserts its final size ≤16 MiB (B3). Metadata reserves the head's cursor
-    width and the longer `false` spelling before items are admitted. An item
+    width (or the widest snapshot continuation) and the longer `false`
+    spelling before items are admitted. An item
     that does not fit is left unconsumed; if metadata alone prevents even one
     item from fitting an otherwise empty page, the request fails rather than
     returning an endless empty continuation.
@@ -430,6 +441,13 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
       Items carry `seq = head`. Every page reauthorizes access; expired or
       restarted manifests use the 409 signaling above, never silently splice
       a new snapshot into already collected pages.
+      The versioned `snap:1:…` cursor authenticates the database UUID, scope,
+      captured head, generation UUID and next prompt index with HMAC-SHA256.
+      Canonical spellings, scope/request-database binding and authentication
+      are validated; malformed, altered or foreign-scope cursors return 400.
+      A continuation naming an old database after restore/reset returns 409
+      `snapshot_expired` for accessible affected scopes. Inaccessible scopes
+      are reported only in `removed`, without loading their manifest.
     - The final page sets `cursor` to the head captured on page one.
     - Changes made meanwhile arrive as normal deltas after it.
   - Scope keys are `user:<ULID>` or `group:<ULID>`; private scope metadata has
@@ -443,12 +461,6 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
   - Heads are durable high-water marks, independent of retained change rows
     and never reset by retention (B18). A snapshot with head 0 is empty; every
     emitted item has a positive seq (B2/B17/B18).
-  - S13 implements delta pages only. Until S14 supplies frozen snapshots,
-    requests requiring a snapshot or continuing a `snap:…` cursor raise the
-    typed `SyncFeedError.snapshotRequired` TODO after current authorization.
-    The existing error middleware returns sanitized `500 internal_error`;
-    it does not present an incomplete or empty delta as a completed snapshot.
-    S14 replaces this boundary with the snapshot and expiry contract above.
 - **Delete** increments the revision once, preserves content and creation
   metadata in the tombstone, and appends a delete revision, a content-free
   delete event and an indefinitely retained retired-ID/ownership record in

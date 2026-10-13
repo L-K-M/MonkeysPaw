@@ -19,10 +19,20 @@ struct SyncFeedRepository: Sendable {
         }
     }
 
+    func write<T: Sendable>(
+        _ operation: @escaping @Sendable (Transaction, AccountRepository.Transaction, DeviceRepository) async throws -> T
+    ) async throws -> T {
+        try await database.write {
+            try await operation(Transaction(sql: $0), AccountRepository.Transaction(sql: $0), DeviceRepository(sql: $0))
+        }
+    }
+
     struct Transaction: Sendable {
         private let sql: any SQLDatabase
 
         init(sql: any SQLDatabase) { self.sql = sql }
+
+        var snapshots: SnapshotRepository { .init(sql: sql) }
 
         func databaseID() async throws -> String {
             guard let row = try await sql.raw("SELECT database_id FROM meta WHERE singleton = 1").first(),
