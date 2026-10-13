@@ -51,3 +51,14 @@ public enum ShortcutVerification: Equatable, Sendable {
     case waiting
     case verified
 }
+
+public enum ShortcutRebindError: Error, Equatable {
+    case unavailable
+    case invalidAccelerator(AcceleratorError)
+    case unsupportedCarbonKey
+    case overlappingCommandModifiers
+    case collision(HotkeyAction)
+    case registrationFailed
+    case saveFailed(SettingsError)
+    case recoveryFailed
+}

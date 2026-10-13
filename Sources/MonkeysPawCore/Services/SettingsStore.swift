@@ -10,9 +10,10 @@ public final class SettingsStore: @unchecked Sendable {
         let firstRun: FirstRunProgress
         let delivery: DeliveryPreferences
         let automaticUpdateChecks: AutomaticUpdateChecks
+        let carbonShortcuts: CarbonShortcutChoices
 
         private enum CodingKeys: String, CodingKey {
-            case version, libraryFolderPath, firstRun, delivery, automaticUpdateChecks
+            case version, libraryFolderPath, firstRun, delivery, automaticUpdateChecks, carbonShortcuts
         }
 
         init(from decoder: Decoder) throws {
@@ -24,6 +25,8 @@ public final class SettingsStore: @unchecked Sendable {
                 ? try values.decode(DeliveryPreferences.self, forKey: .delivery) : DeliveryPreferences()
             automaticUpdateChecks = values.contains(.automaticUpdateChecks)
                 ? try values.decode(AutomaticUpdateChecks.self, forKey: .automaticUpdateChecks) : .enabled
+            carbonShortcuts = values.contains(.carbonShortcuts)
+                ? try values.decode(CarbonShortcutChoices.self, forKey: .carbonShortcuts) : CarbonShortcutChoices()
         }
     }
 
@@ -102,7 +105,7 @@ public final class SettingsStore: @unchecked Sendable {
             guard payload.version == SettingsDocument.currentVersion else { throw SettingsError.corruptFile }
             let document = try SettingsDocument(libraryFolderPath: payload.libraryFolderPath,
                 firstRun: payload.firstRun, delivery: payload.delivery,
-                automaticUpdateChecks: payload.automaticUpdateChecks)
+                automaticUpdateChecks: payload.automaticUpdateChecks, carbonShortcuts: payload.carbonShortcuts)
             return Loaded(document: document, object: object,
                           needsRewrite: sourceVersion != SettingsDocument.currentVersion)
         } catch { throw SettingsError.corruptFile }
@@ -121,6 +124,10 @@ public final class SettingsStore: @unchecked Sendable {
         delivery["clipboardRestore"] = document.delivery.clipboardRestore.rawValue
         object["delivery"] = delivery
         object["automaticUpdateChecks"] = document.automaticUpdateChecks.rawValue
+        var shortcuts = object["carbonShortcuts"] as? [String: Any] ?? [:]
+        shortcuts["togglePicker"] = document.carbonShortcuts.togglePicker.map { $0.settingsText as Any } ?? NSNull()
+        shortcuts["repeatLast"] = document.carbonShortcuts.repeatLast.map { $0.settingsText as Any } ?? NSNull()
+        object["carbonShortcuts"] = shortcuts
         object["libraryFolderPath"] = document.libraryFolderPath.map { $0 as Any } ?? NSNull()
         object["version"] = document.version
 

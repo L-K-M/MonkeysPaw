@@ -1,12 +1,5 @@
 import Foundation
 
-public enum ShortcutRebindError: Error, Equatable {
-    case unavailable
-    case invalidAccelerator(AcceleratorError)
-    case unsupportedCarbonKey
-    case overlappingCommandModifiers
-}
-
 /// Registration is reported immediately; verification requires a real activation.
 public final class ShortcutService {
     /// Registration results, updated with live facts by SetupService refreshes.
