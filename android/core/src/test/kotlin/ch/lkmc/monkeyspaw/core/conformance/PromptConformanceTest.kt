@@ -13,6 +13,7 @@ import ch.lkmc.monkeyspaw.core.domain.format.TemplateToken
 import java.math.BigInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -72,10 +73,13 @@ internal class PromptConformanceTest {
             Category.FORMAT -> {
                 assertEquals(fixture.expected["metadata"], metadataJson(document.frontMatter), "$label metadata")
                 assertUtf8Equal(fixture.expected["body"].stringValue(), document.body, "$label body")
-                val written = try { PromptCodec.write(document) } catch (_: PromptWriteError) { null }
-                if (fixture.expected["canonical"] == JsonNull) assertEquals(null, written, "$label writer refusal")
-                else {
-                    assertUtf8Equal(fixture.expected["canonical"].stringValue(), written ?: error("Writer refused $label"), "$label canonical")
+                if (fixture.expected["canonical"] == JsonNull) {
+                    val expected = if (document.isReadOnly) PromptWriteError.UnsupportedFormat(document.frontMatter.format)
+                        else PromptWriteError.InvalidPrompt
+                    assertEquals(expected, assertFailsWith<PromptWriteError> { PromptCodec.write(document) }, "$label writer refusal")
+                } else {
+                    val written = PromptCodec.write(document)
+                    assertUtf8Equal(fixture.expected["canonical"].stringValue(), written, "$label canonical")
                     val repeated = PromptCodec.parse(written, fixture.envelope["filename"].stringValue())
                     assertUtf8Equal(written, PromptCodec.write(repeated), "$label idempotence")
                     assertUtf8Equal(document.body, repeated.body, "$label stored body")
@@ -85,8 +89,13 @@ internal class PromptConformanceTest {
                 assertEquals(fixture.expected["private"].booleanValue(), document.frontMatter.isPrivate, "$label private")
                 assertEquals(fixture.expected["readOnly"].booleanValue(), document.isReadOnly, "$label readOnly")
                 assertEquals(fixture.expected["canRender"].booleanValue(), document.canRender, "$label canRender")
-                val canWrite = try { PromptCodec.write(document); true } catch (_: PromptWriteError) { false }
-                assertEquals(fixture.expected["canWrite"].booleanValue(), canWrite, "$label canWrite")
+                if (fixture.expected["canWrite"].booleanValue()) {
+                    PromptCodec.write(document)
+                } else {
+                    val expected = if (fixture.expected["readOnly"].booleanValue()) PromptWriteError.UnsupportedFormat(document.frontMatter.format)
+                        else PromptWriteError.InvalidPrompt
+                    assertEquals(expected, assertFailsWith<PromptWriteError> { PromptCodec.write(document) }, "$label writer refusal")
+                }
             }
             Category.GRAMMAR -> {
                 assertEquals(fixture.expected["tokens"], JsonArray(document.template.tokens.map(::tokenJson)), "$label tokens")
