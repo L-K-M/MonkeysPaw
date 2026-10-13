@@ -104,8 +104,8 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 | Move private → group | owner, if `editor`+ in the target | | | | only through memberships |
 | Move group → private | | ✗ | prompt creator only | ✓ | only through memberships |
 | Move group → group | | ✗ | creator, if `editor`+ in the target | ✓ (+ `editor`+ in the target) | only through memberships |
-| List members, see revision authors | | ✓ | ✓ | ✓ | ✓ |
-| Invite (`editor`/`viewer` roles), change roles, remove members | | ✗ | ✗ | ✓ | ✓, except on themselves |
+| List members, see revision authors | | ✓ | ✓ | ✓ | members globally; revision authors only through memberships |
+| Invite (`editor`/`viewer` roles), change roles, remove members | | ✗ | ✗ | ✓ | ✓, no self-add or self-elevation |
 | Owner-role invites | | | | | admin CLI only |
 | Rename group | | ✗ | ✗ | ✓ | ✓ |
 | Delete group (prompts are deleted; members lose the scope) | | ✗ | ✗ | ✓ | ✓ |
@@ -114,6 +114,12 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 
 - **No read endpoint for admins.** Admins have no endpoint that reads a
   prompt directly, and cannot grant themselves membership (403).
+  Creating a new group makes its creator an owner, including an admin; this
+  is the bounded exception, not authority to join an existing group (§19 B11).
+  Admins may list membership metadata globally. Owner promotion is allowed;
+  self-demotion and self-removal are allowed when another owner remains.
+  An admin cannot add themselves or raise their own role in an existing group,
+  even if they are already a member. Keeping the same role is idempotent.
   - Every successful admin or owner change to accounts and memberships is
     written to `audit_events`.
   - The plan is honest about the limit. An admin who can reset passwords,
@@ -123,12 +129,30 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 - **Out-of-scope reads return 404, not 403**, so ids don't leak.
 - **Viewers writing get 403.**
 - **A group always keeps at least one owner.** Removing or demoting the last
-  owner is refused.
+  owner returns 403. The service checks current authority and owner count in
+  the same serialized write transaction as the membership change (§19 B12).
 - **At least one active admin remains.** Disabling or demoting the last
   enabled admin returns `403 forbidden`. Disabled admins do not count. The
   service checks for another enabled admin inside the same write transaction
   as the update, so concurrent removals cannot leave HTTP administration
   without an admin.
+- **Group deletion.** One transaction soft-deletes the group, removes its
+  memberships, and tombstones all live group prompts. Each newly tombstoned
+  prompt gains one revision and an immutable delete event; existing tombstones
+  keep their revision and deletion time. Retired IDs are recorded for every
+  group prompt, including existing tombstones, and retained events/history and
+  relational group identities survive until their retention rules apply
+  (§19 B15/B16). The scope immediately disappears from every member's `/me`
+  response. Membership inspection and further group operations return 404,
+  including for admins. Unrelated scopes are unchanged.
+- **Group audit.** Stable actions are `group.create`, `group.rename`,
+  `group.delete`, `membership.upsert` and `membership.remove`. Membership
+  events identify the affected user in `target` and the group in a nullable
+  `group_id` audit column; existing account events leave that column null.
+  Creation audits the automatic owner, and deletion audits each membership
+  removal. All audit rows commit with their mutations; audit failure rolls
+  back the entire operation. No name, role payload, prompt content or
+  credentials are recorded.
 - **Disabled users.** All of their tokens fail with 401. Their prompts and
   memberships are kept. Disable and admin password reset revoke all target
   devices, including the caller's device on a self-reset. Enabling requires a
@@ -231,7 +255,13 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   `{user_id, username, display_name, role, joined_at}`; list wraps these in
   `{members}` and removal returns `{}`. `/me` and `/groups/join` group metadata
   is `{group_id, name, role}`. Roles are owner/editor/viewer; permission and
-  last-owner checks remain transactional server responsibilities.
+  last-owner checks remain transactional server responsibilities. PUT preserves
+  an existing member's `joined_at`; re-adding a removed member gets a new time.
+  Missing groups, deleted groups, missing target users and missing memberships
+  on removal return 404. Non-member, non-admin callers receive 404 for existing
+  group reads and writes; visible viewer/editor writes return 403. Admin
+  self-add/elevation and last-owner removal/demotion return 403. Group JSON
+  bodies use the same streamed 2 MiB envelope cap as account requests.
 - Admin invites take `{expires_in?}` for an account-only invite, or
   `{group_id, role, expires_in?}` for a group invite. Responses expose
   `{invite_token, expires_at, group_id?, role?}` once. Account-only invites

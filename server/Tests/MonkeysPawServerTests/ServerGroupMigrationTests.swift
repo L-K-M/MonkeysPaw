@@ -20,9 +20,10 @@ struct ServerGroupMigrationTests {
             #expect(original.id == "original" && original.actorID == nil && original.groupID == nil)
             #expect(original.action == "user.create" && original.targetID == PersistenceTestRepository.user)
             #expect(original.at == PersistenceTestRepository.time)
+            let date = try #require(ServerTimestamp.date(PersistenceTestRepository.time))
             let event = try AuditEvent(actor: .user(PersistenceTestRepository.user), action: .userUpdate,
                                        targetID: PersistenceTestRepository.otherUser, groupID: PersistenceTestRepository.group,
-                                       at: ServerTimestamp.date(PersistenceTestRepository.time)!)
+                                       at: date)
             try await AccountRepository(database: repository.database).writeAudited { _, _, audit in try await audit.insert(event) }
             #expect(try await repository.auditEvents().last?.groupID == PersistenceTestRepository.group)
             #expect(throws: AccountError.malformedRequest) {
