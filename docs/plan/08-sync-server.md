@@ -540,6 +540,21 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   8. `docker image prune -f`.
   9. `docker compose ps`.
   It must be shellcheck-clean and bash 3.2 safe.
+  Run `./update.sh [branch]`, defaulting to `main`. Before checkout, refuse
+  tracked or untracked changes. Fetch the named branch from `origin` and
+  require local `HEAD` to be its ancestor before sync or fallback; local
+  commits ahead of or diverged from the remote require operator resolution.
+  Never force, reset, stash or merge local changes. If `gh` is unavailable
+  or sync fails, use `git pull --ff-only origin <branch>`.
+  Detect active configured services with `docker compose config --services`
+  and running services with unprofiled `docker compose ps --services --status
+  running`; either listing containing exactly `caddy` enables `--profile tls`
+  for subsequent Compose commands. Pull with `--ignore-buildable`, then build
+  the repo-owned server locally. Apart from the explicit sync fallback,
+  command failures stop the update and preserve their nonzero exit status.
+  Fake-command tests under `scripts/tests/` prove arguments, order, refusals,
+  TLS preservation and failure propagation; CI runs them and shellcheck.
+  Owner-run fresh-host health and TLS re-run checks still require Docker.
 - **`server/Dockerfile`.**
   - Build stage `swift:6.4-noble`: `swift build -c release
     --static-swift-stdlib`, with a SwiftPM cache mount.
