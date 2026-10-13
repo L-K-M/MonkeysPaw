@@ -49,6 +49,11 @@ struct SecretScan {
         var visited = Set<URL>()
         var matches = Set<URL>()
         for root in roots {
+            // Only descendants may vanish; a missing root would make the scan vacuous.
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw Failure.unreadableTree
+            }
             var failed = false
             guard let files = FileManager.default.enumerator(at: root,
                 includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],

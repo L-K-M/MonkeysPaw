@@ -23,6 +23,11 @@ final class LinuxSecretScanTests: XCTestCase {
         try lifecycle(tier: .file)
     }
 
+    func testMissingScanRootFailsInsteadOfPassingVacuously() throws {
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("mp-scan-missing-\(UUID().uuidString)")
+        XCTAssertThrowsError(try SecretScan("sentinel-\(UUID().uuidString)").matches(in: [missing]))
+    }
+
     func testScanTreatsOnlyMissingPathsAsVanished() {
         let missingUnderlying = NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError,
             userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))])
