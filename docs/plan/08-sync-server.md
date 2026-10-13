@@ -128,6 +128,15 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
     other, not from the operator.
 - **Out-of-scope reads return 404, not 403**, so ids don't leak.
 - **Viewers writing get 403.**
+- **Prompt history.** Reading a head, revision list or revision content and
+  authors requires current prompt visibility, including a live group and
+  membership. Admin account status grants no extra access. The creator may
+  read earlier revisions while the prompt remains visible to them. Other
+  readers see only the current destination era: revisions in the head's scope
+  and ownership after the most recent revision in another scope or ownership.
+  Returning to a former group starts a new era. Lists return the newest 200
+  visible revisions in descending revision order. A visible tombstone keeps
+  its history readable until purge, while GET of its head returns 404 (B14).
 - **A group always keeps at least one owner.** Removing or demoting the last
   owner returns 403. The service checks current authority and owner count in
   the same serialized write transaction as the membership change (§19 B12).
@@ -318,16 +327,40 @@ wrong-password accounts. Its fifth failure and locked requests return 429 with
 `Retry-After`; neither response discloses which independent bucket caused the
 lock.
 
+Prompt PUT uses the same streamed envelope cap. S1 wire bounds reject decoded
+content over 256 KiB, empty paths and paths over 1,024 UTF-8 bytes as malformed
+requests (400). Within those bounds, Core content/path errors and a missing
+or mismatched front-matter id return 422. Group canonicalization that expands
+past the stored content cap also returns the Core `source.too_large` issue.
+Warnings never block a write; private content stays verbatim, and group
+content uses Core's canonical form with personal keys removed. The
+`path.segment_hidden` diagnostic is included in the shared issue DTO.
+
 ### 8.4 Server behaviour
 
 - **Writes are compare-and-swap** in one transaction:
-  1. Resolve scope, membership, and role.
-  2. Validate the path and content with Core (§8.4 validation).
-  3. Check that the front-matter `id` equals the URL id.
-  4. Run `UPDATE prompts … SET rev = rev + 1 WHERE id = ? AND rev = ?`.
-  5. Append to `prompt_revisions` and `changes`; `seq` comes from
+  1. Recheck the enabled caller and active device. For an existing head or
+     retired id, authorize its actual scope and ownership before returning
+     any conflict or deletion response. Foreign or inaccessible ids return
+     404, and visible viewer writes return 403, regardless of the proposed
+     scope. A new id requires write access to the proposed scope.
+  2. A writable tombstone or retired id returns 410. A live existing id with
+     stale `base_rev` (including 0), or different PUT scope/group_id, returns
+     409 with its current head. An absent id with nonzero `base_rev` is 404.
+  3. Validate and NFC-normalize the path, validate content with Core and
+     check that the front-matter `id` equals the URL id. Canonicalize group
+     content. Check the folded live path in the authorized scope; a clash
+     returns 409 `path_taken` with only a readable existing prompt. Revision
+     conflict takes precedence over a destination path clash (B13).
+  4. Strictly INSERT a new id at rev 1 for `base_rev = 0`; otherwise run
+     `UPDATE prompts … SET rev = rev + 1 WHERE id = ? AND rev = ?`.
+     Creation metadata is preserved on edits and renames.
+  5. Append event-time scope, ownership, path, content and author to
+     `prompt_revisions`, and an immutable upsert payload to `changes`;
+     `seq` comes from
      AUTOINCREMENT inside this transaction.
-  6. Commit.
+  6. Commit the head, revision, change and durable scope-head update together;
+     a failure anywhere rolls them all back.
 - **Ordering.** SQLite serializes writers, so `seq` values commit in order.
   A reader never sees seq 101 while seq 100 is uncommitted. The server runs
   as one process; v1 supports no replicas, and the README says so.

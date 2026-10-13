@@ -40,6 +40,7 @@ public enum ServerLimits {
     static let forwardedForMaxBytes = 8_192
     static let forwardedForMaxHops = 64
     static let ipAddressMaxBytes = 45
+    static let revisionsPerPrompt = 200
     static let snapshotLifetimeSeconds = 15 * 60
     static let snapshotMaxBytes = 64 * 1_024 * 1_024
     static let snapshotTotalMaxBytes = 256 * 1_024 * 1_024

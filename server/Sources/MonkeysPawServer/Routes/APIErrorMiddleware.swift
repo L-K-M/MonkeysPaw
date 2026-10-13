@@ -9,6 +9,13 @@ struct APIErrorMiddleware: RouterMiddleware {
     ) async throws -> Response {
         do {
             return try await next(request, context)
+        } catch let error as PromptError {
+            context.logger.debug("API request failed", metadata: [
+                "status": .string(String(error.response.httpStatus)), "method": .string(request.method.rawValue)
+            ])
+            var response = try context.responseEncoder.encode(error.response, from: request, context: context)
+            response.status = .init(code: error.response.httpStatus)
+            return response
         } catch {
             let code: SyncAPI.FailureCode
             var retryAfter: SyncAPI.RetryAfter?
