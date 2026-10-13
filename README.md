@@ -104,10 +104,10 @@ Provision these directories before every fresh deployment; do not use
 rendered `docker compose config` output as a replacement deployment file.
 Verify missing-path refusal on your actual Engine/Compose combination.
 
-For public HTTPS, point a domain's DNS at this host and allow TCP 80/443.
-Set `MONKEYSPAW_PUBLIC_URL=https://prompts.example.com` to your bare HTTPS
-origin, with no path, query or fragment, and enable `COMPOSE_PROFILES=tls`
-in `.env`. Prepare Caddy's certificate and state directories, using your
+For public HTTPS, point a domain's DNS at this host and allow TCP 80 and
+TCP/UDP 443. Set `MONKEYSPAW_PUBLIC_URL=https://prompts.example.com` to your
+bare HTTPS origin, with no path, query or fragment, and enable
+`COMPOSE_PROFILES=tls` in `.env`. Prepare Caddy's certificate and state directories, using your
 chosen `CONFIG_DIR`, `PUID` and `PGID` (defaults shown):
 
 ```sh

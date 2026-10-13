@@ -76,6 +76,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # HTTP/3: Caddy advertises h3 on UDP 443 by default.
+      - "443:443/udp"
     volumes:
       - type: bind
         source: ./deploy/caddy/Caddyfile.example
@@ -98,7 +100,7 @@ services:
         ipv4_address: ${MONKEYSPAW_CADDY_IP:-172.30.80.3}
     # Namespaced: allow non-root listeners on 80/443 without capabilities.
     sysctls:
-      net.ipv4.ip_unprivileged_port_start: "0"
+      net.ipv4.ip_unprivileged_port_start: "80"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
