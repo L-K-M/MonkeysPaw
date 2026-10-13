@@ -9,12 +9,14 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if let imports = presentation.imports { LibraryImportControls(presentation: imports) }
             Divider()
             HSplitView {
                 sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
-                prompts.frame(minWidth: 180, idealWidth: 240)
+                importablePrompts.frame(minWidth: 180, idealWidth: 240)
                 editor.frame(minWidth: 240, maxWidth: .infinity)
             }
+            if let imports = presentation.imports { LibraryImportReportView(presentation: imports) }
             if !presentation.libraryAvailable {
                 Text(Strings.libraryUnavailable).font(.caption)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(8)
@@ -102,6 +104,13 @@ struct LibraryView: View {
         }
         .tag(section.id)
         .accessibilityLabel(section.title + ", " + String(section.count) + (section.count == 1 ? " prompt" : " prompts"))
+    }
+
+    @ViewBuilder
+    private var importablePrompts: some View {
+        if let imports = presentation.imports {
+            prompts.modifier(LibraryImportDropTarget(presentation: imports))
+        } else { prompts }
     }
 
     private var prompts: some View {
