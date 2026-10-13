@@ -437,8 +437,8 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
 - **Moves** authorize the actual source and destination inside the write
   transaction, and check stale revision before destination validation or
   path collision. A destination equal to the current ownership returns 409
-  conflict; renames use PUT. Destination paths use the same per-scope folded uniqueness
-  as PUT. Each accepted move increments the revision once and appends a move
+  conflict; renames use PUT. Destination paths use the same per-scope folded
+  uniqueness as PUT. Each accepted move increments the revision once and appends a move
   revision stamped with destination ownership, path and content, establishing
   the history era boundary (B13/B14). It writes a content-free `move_out` with
   the old scope/path and an immutable `upsert` with the new scope/path/content,
