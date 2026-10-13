@@ -203,11 +203,40 @@ final class LinuxLauncherStartupTests: XCTestCase {
         var window: String?
         // A cold child launch on a loaded CI runner can take several seconds,
         // and each probe is a bounded xdotool process.
-        XCTAssertTrue(GTKTestSupport.spin(until: {
+        _ = GTKTestSupport.spin(until: {
             window = self.visibleWindow(titled: title, in: child)
-            return window != nil
-        }, timeout: Self.launchedWindowTimeout), "The expected app window did not appear.")
-        return try XCTUnwrap(window)
+            return window != nil || !child.isRunning
+        }, timeout: Self.launchedWindowTimeout)
+        if let window { return window }
+
+        return try XCTUnwrap(window, windowFailureDetails(titled: title, in: child))
+    }
+
+    private func windowFailureDetails(titled title: String, in child: Process) -> String {
+        let state = child.isRunning ? "still running"
+            : "exited with status \(child.terminationStatus) (\(child.terminationReason))"
+        var details = ["Expected visible window '\(title)' from PID \(child.processIdentifier); child \(state)."]
+        // Include hidden windows and our app class: GTK can omit _NET_WM_PID
+        // in a sandbox, so repeating only the failed PID query loses evidence.
+        guard case .success(let output) = windowTools.run("xdotool",
+            arguments: ["search", "--any", "--pid", String(child.processIdentifier),
+                "--class", "^" + NSRegularExpression.escapedPattern(for: AppIdentity.linuxAppID) + "$"],
+            timeout: .seconds(1), acceptedStatuses: [0, 1]) else {
+            details.append("Could not query the child's X11 windows.")
+            return details.joined(separator: "\n")
+        }
+        let windows = output.text.split(separator: "\n")
+        if windows.isEmpty { details.append("No X11 windows matched the child PID or app class.") }
+        for window in windows {
+            if case .success(let properties) = windowTools.run("xprop",
+                arguments: ["-id", String(window), "WM_NAME", "WM_CLASS", "_NET_WM_PID", "WM_STATE"],
+                timeout: .seconds(1)) {
+                details.append("Window \(window): \(properties.text)")
+            } else {
+                details.append("Could not read X11 properties of window \(window).")
+            }
+        }
+        return details.joined(separator: "\n")
     }
 
     private func close(_ window: String, titled title: String, in child: Process) throws {
@@ -285,8 +314,10 @@ final class LinuxLauncherStartupTests: XCTestCase {
         child.arguments = arguments
         child.environment = childEnvironment
         child.standardInput = FileHandle.nullDevice
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
+        // Keep GTK/GLib startup errors in the test log, including early exits
+        // that would otherwise look like a window-mapping timeout.
+        child.standardOutput = FileHandle.standardOutput
+        child.standardError = FileHandle.standardError
         try child.run()
         children.append(child)
         return child
