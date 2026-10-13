@@ -82,6 +82,7 @@ public protocol SyncFileOperations {
     /// Flush newly created ancestors and their parents before success.
     func createDirectory(at path: RelativePath) throws
     /// Never replace or merge into an occupied destination. Flush both parents.
+    /// Require an existing destination parent; never create it implicitly.
     /// Case-only renames use journaled, exclusive intermediate names at the caller.
     func renameDirectory(from source: RelativePath, to destination: RelativePath) throws
     /// Direct child directories only, relative to this root; include empty/hidden
