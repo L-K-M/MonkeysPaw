@@ -155,9 +155,9 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
 - [ ] Click another window while filling. The panel hides after 300 ms,
   leaves focus in that window and restores typed values on the next form open.
 - [ ] Search for no matches. Open the library folder, create a prompt and
-  verify its safe filename opens in the default editor. The assistant action
-  is disabled and shows the Settings hint. Ctrl+Return edits a selected file;
-  Ctrl+L opens the Library window and dismisses the picker. Open Folder inside
+  verify its safe filename opens in Library's Edit tab. The assistant action
+  is disabled and shows the Settings hint. Ctrl+Return opens a selected prompt
+  in Library's Edit tab; Ctrl+L opens Library and dismisses the picker. Open Folder inside
   Library reveals the active folder.
 - [ ] Make the library unavailable at startup, then remove it while running.
   The app stays usable and shows the banner; cached prompts remain available
@@ -168,8 +168,8 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
 Run these on X11 and GNOME/KDE Wayland, including GNOME without a tray
 extension. Record the commit, date, desktop/compositor, GTK, Orca and portal
 versions. The implementation uses GTK 4.8 controls; private-bus/Xvfb tests
-do not complete these owner checks. Editing, history and file management
-remain for later M3 slices.
+do not complete these owner checks. History and file management remain
+for later M3 slices; the editor checks follow below.
 
 | Check | Expected result | Status |
 |---|---|---|
@@ -182,6 +182,31 @@ remain for later M3 slices.
 | Open Folder and folder switching | Open Folder reveals the active folder. With Library visible or hidden, change the folder in Settings or Use Default: the same window binds to the new library, clears its old selection/filter and receives no retired-library updates. | NOT RUN |
 | Keyboard, Orca and visible focus | Tab/Shift+Tab reach the labelled sidebar, prompt list, preview and actions. Arrows navigate the lists; Return on a prompt opens nothing. Escape clears a nonempty filter, then hides the window. Input-method Escape stays with active filter preedit. Orca announces rows/counts, badges, preview and favourite errors; focus stays visible. | NOT RUN |
 | Settings and shutdown | Settings and Library can remain open together; closing either leaves the other usable. Quit with both open and reopen the app: no stale window or callback survives. | NOT RUN |
+
+## Library editor tabs (M3L2, NOT RUN)
+
+Run these on X11 and GNOME/KDE Wayland with GTK 4.8 or newer. Record the
+commit, date, desktop/compositor, GTK, Orca and input-method versions.
+Private-bus/Xvfb tests exercise saves, guards and native controls, including
+Core file-command busy states and selection following; these real desktop
+checks remain owner-run. History and rename/move/delete controls belong to
+a later slice. While a Core command runs, the editor shows "Updating the
+file…", disables Revert and holds conflict/discard dialogs until completion.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Edit, Preview and Fields | Select a prompt. Edit shows its exact raw source in a native monospace multiline control; validation updates as you type. Preview uses field defaults, real date/time and literal `{clipboard}`. Fields shows parsed names, labels, descriptions, kinds, defaults, options and behavior read-only. | NOT RUN |
+| Native editing and undo | Copy/cut/paste, selection, multiline Return, Ctrl+Z and redo work natively. Save normalization keeps the caret in the body and can be undone. Closing/reopening or replacing the library resets the old session's undo. | NOT RUN |
+| Save, Ctrl+S, Revert and Save as Copy | Save writes disk bytes and shows saving/saved or a typed failure while retaining failed drafts. Revert asks before discarding edits. Copy creates a distinct file/id and selects it without replacing the original. History-maintenance failures report a committed save with a warning. | NOT RUN |
+| Read-only prompts | Future format, non-UTF-8 and oversized files show the specific reason and disable Edit, Save and Save as Copy. | NOT RUN |
+| Modified conflict and Cancel | Edit, then save the file externally. The modal dialog offers Keep Mine, Take Theirs and Save Mine as Copy. Check each choice on separate files. Native close/Escape/Cancel keeps the conflict and draft; repair invalid text and Save reopens the choices. | NOT RUN |
+| Deleted conflict and Cancel | Delete a dirty file externally. The draft remains visible after its browser row disappears. Keep Mine recreates it; Save Mine as Copy creates a distinct file; Discard closes the draft. Cancel retains the conflict and draft. External deletion retains the selection key, including after Discard; restoring the file recovers its selection. | NOT RUN |
+| Selection, window close and app quit | Dirty selection changes, native close, Ctrl+W and the tray/GApplication quit action wait for Save/Discard/Cancel. Cancel preserves the current selection/window/draft; a failed save keeps the decision pending. Closing retains the selection, filter and section for reopening. Close/quit during a save or file command wait for completion and any newer draft. | NOT RUN |
+| Settings folder switch | While dirty, saving, running a file command or awaiting a decision, choosing another folder or Use Default is refused with the Library editor message and preserves the graph. Save/discard or wait for completion, then switch; no old editor publication or draft leaks into the replacement. | NOT RUN |
+| Picker Edit and no-match creation | Ctrl+Return/Edit and no-match Create dismiss the picker and open the prompt in Library's Edit tab. A target hidden by the Library filter/section is revealed only after the discard guard allows it. Open Folder still reveals the active folder. | NOT RUN |
+| Real IBus/Fcitx editor composition | Compose with a real conversion engine. Return commits and Escape cancels through the input method without saving or closing. Model refreshes preserve active preedit; committed characters appear once and update validation/preview. Switch/reopen the session and confirm no old composition survives. | NOT RUN |
+| Orca and visible focus | Tab/Shift+Tab reach source, tabs, actions, validation, Fields and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |
+| Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, tab changes and saves read zero times when the prompt source contains `{{clipboard}}`; Preview renders the literal marker `{clipboard}`. | NOT RUN |
 
 ## Orca, visible focus and reduced motion (M2, NOT RUN)
 

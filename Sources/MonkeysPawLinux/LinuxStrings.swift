@@ -19,13 +19,13 @@ enum LinuxStrings {
     static let filterLibrary = "Filter library"
     static let librarySections = "Library sections"
     static let libraryPrompts = "Library prompts"
-    static let selectLibraryPrompt = "Select a prompt to preview it."
+    static let selectLibraryPrompt = "Select a prompt to edit it."
     static let noLibraryMatches = "No prompts in this section match your filter."
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
     static let readOnly = "Read-only"
     static let invalidPrompt = "Invalid"
-    static let libraryHint = "Ctrl+D: toggle favourite · Esc: clear filter, then close"
+    static let libraryHint = "Ctrl+S: save · Ctrl+D: toggle favourite · Ctrl+W: close · Esc: clear filter, then close"
 
     static func lastUsed(_ date: Date) -> String {
         "Last used: " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)

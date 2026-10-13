@@ -11,6 +11,7 @@ final class LinuxSettingsWindow {
     private let rememberedValues: RememberedValuesSettingsModel
     private let chooser: LinuxFolderChoosing
     private let openSetup: () -> Void
+    private let librarySwitchMessage: () -> String?
     private var isDestroyed = false
     private var isChoosing = false
     private var chooserRevision = 0
@@ -38,12 +39,14 @@ final class LinuxSettingsWindow {
 
     init(application: UnsafeMutablePointer<GtkApplication>, general: GeneralSettingsModel,
          shortcuts: ShortcutsSettingsModel, rememberedValues: RememberedValuesSettingsModel,
-         chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void) {
+         chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
+         librarySwitchMessage: @escaping () -> String? = { nil }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         self.chooser = chooser
         self.openSetup = openSetup
+        self.librarySwitchMessage = librarySwitchMessage
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
         gtk_window_set_title(mp_window(window), LinuxStrings.settings)
@@ -87,6 +90,7 @@ final class LinuxSettingsWindow {
     func show() {
         guard !isDestroyed else { return }
         general.refresh()
+        renderGeneral()
         shortcuts.refresh()
         gtk_window_present(mp_window(window))
     }
@@ -200,7 +204,11 @@ final class LinuxSettingsWindow {
         gtk_label_set_text(mp_label(libraryPath), state.activeLibraryPath)
         gtk_label_set_text(mp_label(libraryDefault), state.isDefaultLibrary
             ? LinuxStrings.defaultLibraryFolder : LinuxStrings.customLibraryFolder)
-        setMessage(libraryMessage, state.lastSwitchMessage.flatMap(GeneralSettingsStrings.message))
+        let switchMessage: String? = state.lastSwitchMessage.flatMap { outcome in
+            if outcome == .deliveryInFlight, let message = librarySwitchMessage() { return message }
+            return GeneralSettingsStrings.message(for: outcome)
+        }
+        setMessage(libraryMessage, switchMessage)
         setMessage(settingsError, state.settingsError.map(GeneralSettingsStrings.settingsError))
         gtk_widget_set_sensitive(defaultButton, state.isDefaultLibrary && state.settingsError == nil ? 0 : 1)
         gtk_widget_set_sensitive(chooseButton, isChoosing ? 0 : 1)

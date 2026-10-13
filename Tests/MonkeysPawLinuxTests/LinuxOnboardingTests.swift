@@ -613,6 +613,37 @@ final class LinuxOnboardingTests: XCTestCase {
         paths.documentsDirectory.appendingPathComponent("MonkeysPaw", isDirectory: true)
     }
 
+    func testFolderSwitchRefusalUsesEditorCopyForChooseAndDefault() throws {
+        _ = try folderStep()
+        let files = try RootedFileStore(root: defaultFolder)
+        try files.write(Data("Original".utf8), at: "a.md")
+        environment.showLibrary()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.rows.contains { $0.relativePath.string == "a.md" } })
+        environment.editorModel.open(try XCTUnwrap(environment.libraryBrowserModel.rows.first { $0.relativePath.string == "a.md" }).selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == "Original" })
+        let old = environment.editorModel
+        old.edit("Draft")
+        environment.presentFromLauncher()
+        let onboarding = try visibleWindow(titled: LinuxStrings.onboarding)
+        let replacement = tools.directory.appendingPathComponent("Second")
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        environment.onboardingModel.chooseFolder(replacement.path)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.lastSwitchMessage == .deliveryInFlight })
+        drainUI()
+        XCTAssertEqual(try label("onboarding-library-message", in: onboarding), LinuxEditorStrings.librarySwitchRefused)
+        XCTAssertEqual(environment.onboardingModel.state.step, .libraryFolder)
+        XCTAssertTrue(environment.editorModel === old)
+        XCTAssertEqual(old.state.source, "Draft")
+        var usedDefault = false
+        GTK.onSignal(try settingsWidget("onboarding-use-default", in: onboarding), "clicked") { usedDefault = true }
+        try click("onboarding-use-default", in: onboarding)
+        XCTAssertTrue(GTKTestSupport.spin { usedDefault }, "Use Default must activate before checking its refusal")
+        drainUI()
+        XCTAssertEqual(environment.onboardingModel.state.step, .libraryFolder)
+        XCTAssertEqual(try label("onboarding-library-message", in: onboarding), LinuxEditorStrings.librarySwitchRefused)
+        XCTAssertTrue(environment.editorModel === old)
+    }
+
     private func compose(watcherFactory: ((URL) throws -> FileStoreWatcher)? = nil) {
         environment?.shutdown()
         environment = nil

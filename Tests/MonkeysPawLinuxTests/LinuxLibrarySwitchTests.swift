@@ -45,7 +45,7 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         tools = nil
     }
 
-    func testSwitchRebindsTheSameWindowAndRoutesKeysAndURIsToTheNewPicker() throws {
+    func testSwitchRebindsTheSameWindowAndRoutesKeysAndEditToTheNewPicker() throws {
         try files.write(Data("Alpha".utf8), at: "a.md")
         let second = try library("B", prompts: ["b.md": "Beta", "c.md": "Charlie", "d.md": "Delta"])
         try openPicker()
@@ -68,8 +68,9 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Down), GdkModifierType(rawValue: 0)), 0)
         XCTAssertEqual(environment.pickerModel.selectionIndex, 1)
         environment.pickerModel.editSelected()
-        XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 1 })
-        XCTAssertEqual(launchedURLs, [second.appendingPathComponent("c.md")])
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == "c.md"
+            && self.environment.editorModel.state.source == "Charlie" })
+        XCTAssertTrue(launchedURLs.isEmpty)
         try openPicker()
         environment.pickerModel.openLibrary()
         XCTAssertTrue(GTKTestSupport.spin {
@@ -77,7 +78,7 @@ final class LinuxLibrarySwitchTests: XCTestCase {
                   let title = gtk_window_get_title(window) else { return false }
             return String(cString: title) == LinuxStrings.library
         })
-        XCTAssertEqual(launchedURLs, [second.appendingPathComponent("c.md")])
+        XCTAssertTrue(launchedURLs.isEmpty)
 
         try openPicker()
         gtk_window_close(mp_window(window))
@@ -447,8 +448,10 @@ final class LinuxLibrarySwitchTests: XCTestCase {
             mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == label
         })
         XCTAssertNotEqual(gtk_widget_activate(create), 0)
-        let target = second.appendingPathComponent("New prompt.md")
-        XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs == [target] })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == "New prompt.md"
+            && self.environment.editorModel.state.source != nil && self.environment.editorModel.state.status != .loading },
+            "Created prompt must finish loading into the editor")
+        XCTAssertTrue(launchedURLs.isEmpty)
         XCTAssertFalse(environment.panel.isVisible)
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertNil(try files.stamp(at: "New prompt.md"))

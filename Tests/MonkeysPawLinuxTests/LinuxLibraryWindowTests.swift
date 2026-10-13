@@ -55,7 +55,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertEqual(gtk_window_get_hide_on_close(mp_window(window)), 1)
         XCTAssertEqual(try openLibrary(), window)
         gtk_window_close(mp_window(window))
-        XCTAssertEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
         XCTAssertEqual(try openLibrary(), window)
         XCTAssertTrue(environment.libraryBrowserModel === browser)
         XCTAssertEqual(g_list_model_get_n_items(controllers), controllerCount)
@@ -172,7 +172,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertEqual(String(cString: mp_entry_text(filter)), "")
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
-        XCTAssertEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
     }
 
     func testFavoriteButtonAndShortcutSaveThroughSharedIndexIncludingIdentityMigration() throws {
@@ -196,21 +196,17 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertEqual(gtk_widget_get_visible(try settingsWidget("library-status", in: window)), 0)
     }
 
-    func testFavoriteFailuresShowConflictAndValidationWithoutOptimisticMutation() throws {
+    func testFavoriteWhileDirtyChangesOnlyTheDraft() throws {
         try files.write(Data("Original".utf8), at: "a.md")
-        try files.write(Data("---\n[broken\n---\nInvalid".utf8), at: "invalid.md")
         let window = try openLibrary()
         try select("a.md", in: window)
-        try files.write(Data("External edit".utf8), at: "a.md")
-        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_d), GDK_CONTROL_MASK), 0)
-        let status = try settingsWidget("library-status", in: window)
-        XCTAssertEqual(labelText(status), LinuxStrings.favoriteMessage(.libraryFailure(.conflict)))
-        XCTAssertEqual(environment.libraryBrowserModel.state.selectedPrompt?.favorite, false)
-        XCTAssertEqual(try files.read(at: "a.md"), Data("External edit".utf8))
-        try select("invalid.md", in: window)
-        XCTAssertEqual(gtk_widget_get_visible(status), 0)
-        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_d), GDK_CONTROL_MASK), 0)
-        XCTAssertEqual(labelText(status), LinuxStrings.favoriteMessage(.writeFailure(.invalidPrompt)))
+        environment.editorModel.edit("Draft")
+        try click("library-favorite", in: window)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.editorModel.state.source?.contains("favorite: true") == true
+        })
+        XCTAssertTrue(environment.editorModel.state.isDirty)
+        XCTAssertEqual(try files.read(at: "a.md"), Data("Original".utf8))
         XCTAssertEqual(environment.libraryBrowserModel.state.selectedPrompt?.favorite, false)
     }
 
@@ -255,8 +251,9 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertEqual(oldPublications, 0)
         XCTAssertEqual(try openLibrary(), window)
         try select("b.md", in: window)
-        XCTAssertEqual(preview(in: window), "Beta")
+        XCTAssertTrue(GTKTestSupport.spin { self.preview(in: window) == "Beta" })
         gtk_window_close(mp_window(window))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
         XCTAssertEqual(environment.switchLibrary(to: nil), .switched)
         XCTAssertEqual(try openLibrary(), window)
         XCTAssertEqual(environment.libraryBrowserModel.rows.count, 2)
@@ -271,12 +268,12 @@ final class LinuxLibraryWindowTests: XCTestCase {
 
         // Keep a native view wrapper alive after GTK destroys its borrowed window.
         let browser = environment.libraryBrowserModel
-        let view = LinuxLibraryWindow(application: application, browser: browser, openFolder: {})
+        let view = LinuxLibraryWindow(application: application, browser: browser, editor: environment.editorModel, openFolder: {})
         view.show()
         let window = try XCTUnwrap(libraryWindows.first)
         gtk_window_destroy(mp_window(window))
         browser.setFilter("Queued after destroy")
-        view.rebind(browser: browser)
+        view.rebind(browser: browser, editor: environment.editorModel)
         view.show()
         view.hide()
         drain()
@@ -296,7 +293,9 @@ final class LinuxLibraryWindowTests: XCTestCase {
         let index = try XCTUnwrap(browser.rows.firstIndex { $0.relativePath.string == path })
         let list = try settingsWidget("library-list", in: window)
         gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)))
-        XCTAssertTrue(GTKTestSupport.spin { browser.selection?.relativePath.string == path })
+        XCTAssertTrue(GTKTestSupport.spin { browser.selection?.relativePath.string == path
+            && self.environment.editorModel.state.prompt?.relativePath.string == path
+            && self.environment.editorModel.state.status != .loading })
         drain()
     }
 
@@ -389,13 +388,4 @@ final class LinuxLibraryWindowTests: XCTestCase {
     }
 }
 
-final class LinuxLibraryPreviewTests: XCTestCase {
-    func testDefaultsEmptyChoicesNamesEscapesAndBuiltinsWithoutClipboardDependency() {
-        let document = PromptCodec.parseFile(Data("---\nfields:\n  topic: {default: Earth}\n  choice: {type: choice, options: [One, Two]}\n---\n{{topic}} {{choice}} {{missing}} \\{{literal}} {{date}} {{time}} {{clipboard}}".utf8), filename: "preview.md")
-        XCTAssertTrue(document.canRender)
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
-        XCTAssertEqual(LinuxLibraryPreview.text(for: document, now: now, timeZone: TimeZone(secondsFromGMT: 0)!),
-            "Earth {choice} {missing} {{literal}} 2023-11-14 22:13 {clipboard}")
-    }
-}
 #endif
