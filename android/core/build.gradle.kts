@@ -18,6 +18,7 @@ kotlin {
 
 dependencies {
     implementation(libs.icu4j)
+    implementation(libs.snakeyaml.engine)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.serialization.json)
 }
