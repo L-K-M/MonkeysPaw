@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "ab ́cd",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "matched.md",
+      "path": "matched.md",
+      "uses": []
+    },
+    {
+      "source": "missing.md",
+      "path": "missing.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "matched.md",
+        "score": 2.142857142857143,
+        "matchedFields": [
+          "title",
+          "tags"
+        ]
+      }
+    ]
+  }
+}

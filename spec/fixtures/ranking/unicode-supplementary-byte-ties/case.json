@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#x",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "title-supplementary.md",
+      "path": "title-supplementary.md",
+      "uses": []
+    },
+    {
+      "source": "title-bmp.md",
+      "path": "title-bmp.md",
+      "uses": []
+    },
+    {
+      "source": "path-supplementary.md",
+      "path": "𐀀.md",
+      "uses": []
+    },
+    {
+      "source": "path-bmp.md",
+      "path": ".md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": ".md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "𐀀.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "title-bmp.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "title-supplementary.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      }
+    ]
+  }
+}

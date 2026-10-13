@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "𐐨",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "upper.md",
+      "path": "upper.md",
+      "uses": []
+    },
+    {
+      "source": "lower.md",
+      "path": "lower.md",
+      "uses": []
+    },
+    {
+      "source": "emoji.md",
+      "path": "emoji.md",
+      "uses": []
+    },
+    {
+      "source": "midword.md",
+      "path": "midword.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "upper.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "lower.md",
+        "score": 4,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "emoji.md",
+        "score": 3,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "midword.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

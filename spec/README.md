@@ -28,6 +28,13 @@ The test reports dynamic counts and rejects unregistered expectations;
 pending writer work is not claimed as complete format/validation conformance.
 K2's all-category structural gate remains mandatory.
 
+K7 adds semantic ranking consumption in `RankingFixturesTest`: all dynamically
+enumerated cases check exact path bytes and sorting, ordered matched fields,
+and scores with absolute `1e-12` tolerance. The 20 baseline cases plus 16
+Unicode compatibility cases currently cover 36 cases and 164 files. Usage
+histories retain their last 1,024 events in recording order. Run `:core:test`
+for ranking and the unchanged all-category structural gate.
+
 This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
 their slice.
@@ -137,6 +144,16 @@ Word-start boundaries follow scalars outside Unicode general categories
 The Kotlin consumer must preserve these classes, including marks and all
 number categories.
 
+Search preserves the Swift reference's Foundation comparison behavior (F6),
+independently of Unicode 17 sync folding. Its legacy case/word tables and
+`CFStringNormalize` have differences from ICU 78.3: Cherokee folds toward
+lowercase, some newer letters do not fold, its word bitmap excludes some
+ICU L/M/N scalars, and expanding combining sequences have original-class
+boundaries and a 64-scalar decomposition buffer. The compatibility fixtures
+pin these differences without changing Swift. Exact tag sets also preserve
+Swift `String` canonical equality after comparison normalization; fuzzy
+matching continues to compare the resulting scalars.
+
 Ranking expectations are handwritten from §5.4, with no implementation
 output used to generate them. The cases pin the arithmetic as follows:
 
@@ -153,6 +170,15 @@ output used to generate them. The cases pin the arithmetic as follows:
 | `usage-recording-tail` | The first recent use is discarded, leaving 1,024 events aged 140 days, each `1/1024`: score 8. The control scores 10; retaining that first use would reverse the order with score 12. |
 | `unicode-canonical`, `unicode-case-expansion`, `accent-significant` | NFC-equivalent accents match; plain `e` does not match `é`. `Straße` folds to seven scalars: raw 15 over denominator 27 gives title score `20/9`. |
 | `no-match` | An unmatched ordinary query returns an empty list. |
+| `unicode-nbsp-terms`, `unicode-whitespace-grapheme` | NBSP, including its attached combining mark, separates `ab` and `cd`. Title plus tag still averages to `15/7`. |
+| `unicode-word-classes` | L/M/N predecessors give no word-start bonus; punctuation does. Length-two titles score 1 or 3 for a single final `b`. |
+| `unicode-supplementary-scores`, `unicode-supplementary-byte-ties` | Deseret folds and scalar lengths give scores 4, 3, 1; BMP private-use bytes precede supplementary bytes even when UTF-16 order disagrees. |
+| `unicode-hash-grapheme` | A marked `#` is ordinary text. Exact four-scalar title has `W = 2`, `C = 3`, so its score is `44/15`. |
+| `unicode-fold-cyrillic`, `unicode-fold-latin`, `unicode-fold-supplementary`, `unicode-fold-cherokee`, `unicode-dotted-i` | Pin Foundation's comparison fold independently of the broader sync table, including non-Turkic dotted I and Cherokee equivalence. Filter matches score 1. |
+| `unicode-fold-mark-order` | Case expansion preserves the order of following marks: `Α` + ypogegrammeni + grave compares as `αὶ`, not `ὰι`. |
+| `unicode-foundation-word-boundaries` | New marks/letters and Tangut absent from Foundation's word bitmap give score 3 before `b`; known letters give 1. |
+| `unicode-foundation-tibetan-normalization`, `unicode-foundation-canonical-tags` | Repeated Tibetan decompositions retain Foundation's scalar order: exact five-scalar title scores `44/19`; tag equality still recognizes canonical equivalents. |
+| `unicode-foundation-expanding-marks` | After `q`, 33 expanding U+0344 marks retain 31 decompositions within Foundation's 64-scalar buffer. The fully expanded tag does not match. |
 
 Metadata includes nullable `id`/`description`, `title`, `tags`, `favorite`,
 `private`, `format` and ordered field `declarations`. Format integers are

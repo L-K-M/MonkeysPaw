@@ -1,0 +1,4 @@
+---
+title: "Dotted"
+tags: ["i̇"]
+---

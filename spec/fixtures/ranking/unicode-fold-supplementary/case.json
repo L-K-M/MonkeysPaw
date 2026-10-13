@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#𐵐 #𖺠",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "original.md",
+      "path": "original.md",
+      "uses": []
+    },
+    {
+      "source": "full-fold.md",
+      "path": "full-fold.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "original.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      }
+    ]
+  }
+}

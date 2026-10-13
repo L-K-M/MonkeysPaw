@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#Ὰͅ",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "ordered.md",
+      "path": "ordered.md",
+      "uses": []
+    },
+    {
+      "source": "reordered.md",
+      "path": "reordered.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "ordered.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      }
+    ]
+  }
+}
