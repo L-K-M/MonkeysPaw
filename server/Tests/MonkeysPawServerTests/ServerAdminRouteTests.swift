@@ -7,6 +7,42 @@ import Testing
 
 @Suite(.serialized)
 struct ServerAdminRouteTests {
+    @Test(arguments: ["{\"disabled\":true}", "{\"account_kind\":\"member\"}",
+                       "{\"disabled\":true,\"account_kind\":\"member\",\"password\":\"replacement-password\"}"])
+    func lastAdminRemovalReturnsTheTypedForbiddenEnvelope(body: String) async throws {
+        try await withAccountFixture { fixture in
+            let actor = try await fixture.user(kind: .admin)
+            let session = try await fixture.session(actor)
+            let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
+            try await app.test(.router) { client in
+                try await client.execute(uri: "/api/v1/admin/users/\(actor.id)", method: .patch,
+                    headers: Self.headers(session), body: .init(string: body)) { try Self.failure($0, .forbidden) }
+            }
+            #expect(try await fixture.sessions.authenticate(token: session.token.value) == session.identity)
+            #expect(try await fixture.persistence.count("audit_events") == 0)
+        }
+    }
+
+    @Test(arguments: [String(repeating: "a", count: ServerLimits.passwordMinimumLength),
+                       String(repeating: "é", count: ServerLimits.passwordMaximumBytes / 2)])
+    func adminPasswordPolicyAcceptsExactScalarAndUTF8Boundaries(password: String) async throws {
+        try await withAccountFixture { fixture in
+            let actor = try await fixture.user(username: "admin", kind: .admin)
+            let target = try await fixture.user()
+            let session = try await fixture.session(actor)
+            let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
+            try await app.test(.router) { client in
+                let create = SyncAPI.CreateUserRequest(username: "boundary-user", password: password)
+                try await client.execute(uri: "/api/v1/admin/users", method: .post, headers: Self.headers(session),
+                    body: .init(bytes: JSONEncoder().encode(create))) { #expect($0.status == .ok) }
+                let patch = SyncAPI.UpdateUserRequest(password: password)
+                try await client.execute(uri: "/api/v1/admin/users/\(target.id)", method: .patch, headers: Self.headers(session),
+                    body: .init(bytes: JSONEncoder().encode(patch))) { #expect($0.status == .ok) }
+            }
+            #expect(try await fixture.accounts.verifyCredentials(username: target.username, password: password).user.id == target.id)
+        }
+    }
+
     @Test func adminCreatesMembersAndAdminsButMembersAreForbidden() async throws {
         try await withAccountFixture { fixture in
             let admin = try await fixture.user(username: "admin", kind: .admin)
@@ -82,6 +118,7 @@ struct ServerAdminRouteTests {
             try await fixture.persistence.seedAccountData(target)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
             try await app.test(.router) { client in
+                // Re-disabling after a clock advance keeps the first disabledAt and adds no audit event.
                 for repeated in 0..<2 {
                     try await client.execute(uri: "/api/v1/admin/users/\(target.id)", method: .patch,
                                              headers: Self.headers(admin), body: .init(string: "{\"disabled\":true}")) {
@@ -118,7 +155,7 @@ struct ServerAdminRouteTests {
                 #expect(try await fixture.persistence.count("memberships") == 1)
                 #expect(try await fixture.persistence.string("SELECT content FROM prompts", column: "content") == "preserved private prompt")
                 let events = try await fixture.persistence.auditEvents()
-                #expect(events.map(\.action) == ["user.disable", "user.disable", "user.enable", "user.enable"])
+                #expect(events.map(\.action) == ["user.disable", "user.enable"])
                 #expect(events.allSatisfy { $0.actorID == actor.id && $0.targetID == target.id })
                 let revoked = try await fixture.accounts.repository.read { _, devices in try await devices.device(id: first.identity.deviceID)?.revokedAt }
                 #expect(revoked == target.createdAt)
@@ -147,6 +184,8 @@ struct ServerAdminRouteTests {
                     try await client.execute(uri: "/api/v1/me", method: .get, headers: Self.headers(session)) { try Self.failure($0, .unauthorized) }
                 }
                 #expect(try await fixture.sessions.authenticate(token: admin.token.value) == admin.identity)
+                let adminDevices = try await fixture.accounts.repository.read { _, devices in try await devices.list(userID: actor.id) }
+                #expect(adminDevices.count == 1 && adminDevices.allSatisfy { $0.revokedAt == nil })
                 let verified = try await fixture.accounts.verifyCredentials(username: target.username, password: "replacement-password")
                 #expect(verified.user.metadata == target.metadata)
                 await #expect(throws: AccountError.unauthorized) {
@@ -166,6 +205,7 @@ struct ServerAdminRouteTests {
     func selfAdministrationCommitsThenEnforcesChangedAuthority(action: String) async throws {
         try await withAccountFixture { fixture in
             let actor = try await fixture.user(kind: .admin)
+            _ = try await fixture.user(username: "backup-admin", kind: .admin)
             let session = try await fixture.session(actor)
             let other = try await fixture.session(actor)
             let app = makeApplication(configuration: try .init(environment: [:]), accounts: fixture.accounts, sessions: fixture.sessions)
@@ -214,7 +254,8 @@ struct ServerAdminRouteTests {
                 for invalid in ["{", "{}", "{\"password\":null}", "{\"disabled\":null}", "{\"account_kind\":null}",
                                 "{\"account_kind\":\"owner\"}", "{\"disabled\":\"true\"}", "{\"disabled\":false,\"extra\":1}",
                                 "{\"password\":\"short\"}", "{\"password\":\"twelve-chars!\\u0000suffix\"}",
-                                "{\"password\":\"\(String(repeating: "é", count: 37))\"}"] {
+                                "{\"password\":\"\(String(repeating: "a", count: ServerLimits.passwordMinimumLength - 1))\"}",
+                                "{\"password\":\"\(String(repeating: "é", count: ServerLimits.passwordMaximumBytes / 2 + 1))\"}"] {
                     try await client.execute(uri: "/api/v1/admin/users/\(target.id)", method: .patch,
                                              headers: Self.headers(admin), body: .init(string: invalid)) { try Self.failure($0, .malformedRequest) }
                 }
@@ -222,11 +263,15 @@ struct ServerAdminRouteTests {
                     try await client.execute(uri: "/api/v1/admin/users/\(id)", method: .patch,
                                              headers: Self.headers(admin), body: .init(string: "{\"disabled\":false}")) { try Self.failure($0, failure) }
                 }
-                for username in ["alice", "ALICE", "bad username"] {
+                for username in ["ALICE", "bad username"] {
                     let body = try JSONSerialization.data(withJSONObject: ["username": username, "password": AccountTestFixture.password])
                     try await client.execute(uri: "/api/v1/admin/users", method: .post,
                                              headers: Self.headers(admin), body: .init(bytes: body)) { try Self.failure($0, .malformedRequest) }
                 }
+                // A valid but already-taken username retains §8.3's 400 contract.
+                let duplicate = SyncAPI.CreateUserRequest(username: target.username, password: AccountTestFixture.password)
+                try await client.execute(uri: "/api/v1/admin/users", method: .post, headers: Self.headers(admin),
+                    body: .init(bytes: JSONEncoder().encode(duplicate))) { try Self.failure($0, .malformedRequest) }
                 try await client.execute(uri: "/api/v1/admin/users", method: .post, headers: Self.headers(admin),
                                          body: .init(repeating: 32, count: SyncAPI.requestEnvelopeMaxBytes + 1)) { try Self.failure($0, .envelopeTooLarge) }
                 #expect(try await fixture.persistence.count("users") == 2)

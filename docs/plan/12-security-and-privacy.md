@@ -118,10 +118,16 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
   provider/tool error bodies.
 - **Server diagnostics:** messages use fixed safe text. Framework messages
   containing addresses, paths or errors are reduced to a fixed event name.
-  Only validated action names, actor/target ids, HTTP methods/statuses and
-  failure codes enter `fields`. Arbitrary metadata, error descriptions,
+  Only validated action names, actor/target ids, HTTP methods/statuses,
+  failure codes and bounded ASCII error type names enter `fields`. Type names
+  omit reflective private-context addresses; messages never enter `error_type`.
+  Arbitrary metadata, error descriptions,
   credential hashes, headers, query strings and request bodies are dropped,
   including at trace level. JSON encoding escapes embedded line breaks; a
-  serialized stdout sink keeps concurrent events on separate lines. Account
-  success events are emitted only after their audit transaction commits.
+  serialized sink keeps concurrent events on separate lines. Logger copies
+  retain independent metadata, metadata providers and log levels. Account
+  success events describe actual changes and are emitted only after their
+  audit transaction commits. Healthcheck configuration failures log the
+  configuration type name and a fixed instruction to check
+  `MONKEYSPAW_HTTP_PORT` and `MONKEYSPAW_TRUSTED_PROXIES`, never their values.
 - **Bug reports:** the `--selftest` output plus the log tail.

@@ -50,7 +50,10 @@ private struct Healthcheck: AsyncParsableCommand {
         do {
             configuration = try ServerConfiguration()
         } catch {
-            ServerLogging.logger().error("Healthcheck configuration invalid")
+            ServerLogging.logger().error(
+                "Healthcheck configuration invalid; check MONKEYSPAW_HTTP_PORT and MONKEYSPAW_TRUSTED_PROXIES",
+                metadata: ["error_type": .string(String(describing: type(of: error)))]
+            )
             throw ExitCode.failure
         }
 

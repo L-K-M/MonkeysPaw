@@ -13,6 +13,8 @@ public enum ServerLimits {
     /// Bound Docker health probes so an unresponsive server cannot hang them.
     public static let healthcheckTimeout: TimeInterval = 5
 
+    static let logErrorTypeMaxBytes = 128
+
     static let defaultDataDirectory = "/data"
     static let databaseFilename = "monkeyspaw.db"
     static let databaseBusyTimeoutMilliseconds = 5_000

@@ -39,6 +39,26 @@ private struct SecretLogError: Error, CustomStringConvertible {
     var description: String { "s8-private-error-sentinel" }
 }
 
+// Detect overlap independently of the lock that protects the test's own records.
+private final class ConcurrentLogSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var activeWrites = 0
+    private var overlapped = false
+    let capture = CapturedServerLogs()
+
+    func write(_ bytes: Data) {
+        lock.withLock {
+            activeWrites += 1
+            if activeWrites > 1 { overlapped = true }
+        }
+        Thread.sleep(forTimeInterval: 0.002)
+        capture.write(bytes)
+        lock.withLock { activeWrites -= 1 }
+    }
+
+    var hadOverlap: Bool { lock.withLock { overlapped } }
+}
+
 @Suite(.serialized)
 struct ServerLoggingTests {
     @Test func configuredLevelsFilterAndLoggerCopiesKeepTheirOwnMetadata() throws {
@@ -97,12 +117,60 @@ struct ServerLoggingTests {
         let events = try capture.events()
         #expect(events.count == Logger.Level.allCases.count + 5)
         #expect(events.prefix(7).allSatisfy { $0.message == "Server event" && $0.fields == ["code": "unauthorized", "method": "POST", "status": "403"] })
-        #expect(events[8].message == "Server started")
-        #expect(events[9].message == "Server state changed")
-        #expect(events[10].fields == ["action": "user.disable", "actor_id": PersistenceTestRepository.user,
-                                     "target_id": PersistenceTestRepository.otherUser, "method": "POST"])
-        #expect(events[11].fields.isEmpty)
+        #expect(events.first { $0.message == "Server channel error" }?.fields == ["method": "POST", "status": "401"])
+        #expect(events.contains { $0.message == "Server started" })
+        #expect(events.contains { $0.message == "Server state changed" })
+        #expect(events.first { $0.message == "Account mutation committed" }?.fields == [
+            "action": "user.disable", "actor_id": PersistenceTestRepository.user,
+            "target_id": PersistenceTestRepository.otherUser, "method": "POST"
+        ])
+        #expect(events.first { $0.message == "API request failed" }?.fields.isEmpty == true)
         for event in events { #expect(ServerTimestamp.date(event.at) != nil) }
+    }
+
+    @Test func concurrentCopiesKeepValueStateAndSerializeTheInjectedSink() throws {
+        let sink = ConcurrentLogSink()
+        var original = ServerLogging.makeLogger(level: .info, sink: sink.write)
+        original.handler.metadata = ["method": "GET", "status": "400"]
+        let logger = original
+        DispatchQueue.concurrentPerform(iterations: 32) { index in
+            var copy = logger
+            copy.logLevel = .debug
+            copy.handler.metadata = ["status": .string(String(400 + index))]
+            copy[metadataKey: "method"] = "POST"
+            copy.handler.metadataProvider = .init { ["code": "forbidden"] }
+            copy.debug("API request failed")
+            logger.debug("API request failed")
+            logger.info("API request failed")
+        }
+        #expect(!sink.hadOverlap)
+        #expect(logger.logLevel == .info)
+        #expect(logger.handler.metadata == ["method": "GET", "status": "400"])
+        #expect(logger.metadataProvider == nil)
+        let events = try sink.capture.events()
+        let copies = events.filter { $0.level == "debug" }
+        let originals = events.filter { $0.level == "info" }
+        #expect(events.count == 64 && copies.count == 32 && originals.count == 32)
+        #expect(Set(copies.compactMap { $0.fields["status"] }) == Set((400..<432).map(String.init)))
+        #expect(copies.allSatisfy { $0.fields["method"] == "POST" && $0.fields["code"] == "forbidden" })
+        #expect(originals.allSatisfy { $0.fields == ["method": "GET", "status": "400"] })
+    }
+
+    @Test func errorTypeFieldsRejectDescriptionsAndNonStringMetadata() throws {
+        let capture = CapturedServerLogs()
+        let logger = ServerLogging.makeLogger(level: .trace, sink: capture.write)
+        logger.error("API request failed", metadata: ["error_type": "Module.DatabaseError"])
+        let invalid: [Logger.Metadata.Value] = ["", "error message with secrets", "/secret/path", "password=secret",
+                                                "Error\nsecret", "Error\n", .string(String(repeating: "A", count: ServerLimits.logErrorTypeMaxBytes + 1)),
+                                                .array(["SecretError"]), .stringConvertible(SecretLogError())]
+        for value in invalid {
+            logger.error("API request failed", metadata: ["error_type": value])
+        }
+        let events = try capture.events()
+        #expect(events.first?.fields == ["error_type": "Module.DatabaseError"])
+        #expect(events.dropFirst().allSatisfy { $0.fields.isEmpty })
+        let text = String(decoding: capture.snapshot(), as: UTF8.self)
+        #expect(!text.contains("secret") && !text.contains(SecretLogError().description))
     }
 
     @Test func concurrentEventsRemainSeparateJSONLines() async throws {
@@ -182,7 +250,9 @@ struct ServerLoggingTests {
             #expect(successes.count == successesBefore && successes.count == 3)
             #expect(successes.map { $0.fields["action"] } == ["user.create", "user.update", "user.reset_password"])
             #expect(events.contains { $0.message == "Server started" })
-            #expect(events.contains { $0.message == "API request failed" && $0.level == "error" && $0.fields["code"] == "internal_error" })
+            let unexpected = events.filter { $0.message == "API request failed" && $0.fields["code"] == "internal_error" }
+            #expect(unexpected.count == 1)
+            #expect(unexpected.first?.level == "error" && unexpected.first?.fields["error_type"] == "SecretLogError")
         }
     }
 }

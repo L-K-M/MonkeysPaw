@@ -26,7 +26,7 @@ struct APIErrorMiddleware: RouterMiddleware {
             default:
                 // Error descriptions can contain credentials, paths or SQL;
                 // only the type name is logged.
-                unexpectedType = String(reflecting: type(of: error))
+                unexpectedType = String(describing: type(of: error))
                 code = .internalError
             }
             // One entry per failed request: error level for unexpected errors.

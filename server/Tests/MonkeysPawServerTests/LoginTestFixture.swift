@@ -4,12 +4,22 @@ import Testing
 @testable import MonkeysPawServer
 
 actor LoginTestLatch {
+    enum WaitError: Error { case timeout }
     private var opened = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func wait() async {
         guard !opened else { return }
         await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func wait(timeout: Duration) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !opened {
+            guard clock.now < deadline else { throw WaitError.timeout }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     func open() {

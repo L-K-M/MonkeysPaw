@@ -73,6 +73,13 @@ struct AccountRepository: Sendable {
             try await sql.raw("SELECT * FROM users WHERE username = \(bind: username)").first().map(AccountRecord.init(row:))
         }
 
+        func hasActiveAdmin(excluding id: String) async throws -> Bool {
+            try await sql.raw("""
+                SELECT 1 FROM users WHERE account_kind = \(bind: SyncAPI.AccountKind.admin.rawValue)
+                    AND disabled_at IS NULL AND id <> \(bind: id) LIMIT 1
+                """).first() != nil
+        }
+
         func insert(_ user: AccountRecord) async throws {
             try await sql.raw("""
                 INSERT INTO users (id, username, display_name, password_hash, account_kind, created_at, disabled_at)
