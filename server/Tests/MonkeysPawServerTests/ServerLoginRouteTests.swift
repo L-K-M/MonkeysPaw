@@ -86,7 +86,8 @@ struct ServerLoginRouteTests {
             try await app.test(.live) { client in
                 for index in 1...5 {
                     var headers = HTTPFields()
-                    headers[values: Self.forwardedFor] = ["spoof\(index),198.51.100.7", "10.2.3.4"]
+                    let spoof = index == 5 ? String(repeating: "x", count: ServerLimits.forwardedForMaxBytes + 1) : "spoof\(index)"
+                    headers[values: Self.forwardedFor] = [spoof + ",198.51.100.7", "10.2.3.4"]
                     try await client.execute(uri: "/api/v1/auth/login", method: .post, headers: headers,
                                              body: Self.body(username: "user\(index)")) {
                         try Self.failure($0, index == 5 ? .rateLimited : .unauthorized, retry: index == 5 ? 30 : nil)

@@ -23,6 +23,18 @@ struct ServerTrustedProxyTests {
         #expect(try proxies.clientIP(peer: peer, forwardedFor: ["10.3.4.5,10.2.3.4"]).value == "10.3.4.5")
     }
 
+    @Test func oversizedSpoofedPrefixesCannotSelectTheProxyBucket() throws {
+        let proxies = try TrustedProxies(configuration: "10.0.0.0/8")
+        let peer = try SocketAddress(ipAddress: "10.0.0.1", port: 1234)
+        let oversizedBytes = String(repeating: "x", count: ServerLimits.forwardedForMaxBytes + 1)
+        let oversizedHops = Array(repeating: "192.0.2.55", count: ServerLimits.forwardedForMaxHops + 1).joined(separator: ",")
+        for prefix in [oversizedBytes, oversizedHops] {
+            #expect(try proxies.clientIP(peer: peer, forwardedFor: [prefix + ",198.51.100.7,10.2.3.4"]).value == "198.51.100.7")
+        }
+        let repeatedFields = Array(repeating: "spoof", count: ServerLimits.forwardedForMaxHops + 1) + ["198.51.100.7,10.2.3.4"]
+        #expect(try proxies.clientIP(peer: peer, forwardedFor: repeatedFields).value == "198.51.100.7")
+    }
+
     @Test func CIDRBitsAndAddressFamiliesAreChecked() throws {
         let v4 = try TrustedProxies(configuration: "192.0.2.128/25")
         for (peer, expected) in [("192.0.2.127", "192.0.2.127"), ("192.0.2.128", "198.51.100.1"),

@@ -246,9 +246,10 @@ semantic 422 issues. Every prompt `path`, including move, revision, conflict
 head and feed payloads, is nonempty and at most `Limits.maxPathBytes` (1,024
 decoded UTF-8 bytes) at the DTO boundary. Full path rules and normalization
 remain with `SyncPathValidator` (§8.4). Transport header/body limits are
-enforced by later server slices, not by an unbounded Foundation JSON encoder. Account routes, including login, cap streamed request
-bodies at 2 MiB before decoding or credential work. Login returns the same
-401 envelope for unknown, disabled and wrong-password accounts. Its fifth
+enforced by later server slices, not by an unbounded Foundation JSON encoder.
+Account JSON decoders, including login, collect streamed bodies with a 2 MiB
+cap before decoding. Login checks credentials only after decoding, returning
+the same 401 envelope for unknown, disabled and wrong-password accounts. Its fifth
 failure and locked requests return 429 with `Retry-After`; neither response
 discloses which independent bucket caused the lock.
 
@@ -418,11 +419,14 @@ discloses which independent bucket caused the lock.
     trusted socket peer enables `X-Forwarded-For`: combine repeated fields
     in wire order, walk right to left through trusted hops, and use the first
     untrusted address. Ignore any prefix left of that address. Untrusted
-    peers' headers are ignored. A missing, malformed trusted suffix or
-    oversized chain falls back to the socket peer. IPv6 spelling and
+    peers' headers are ignored. A missing, malformed or oversized trusted
+    suffix falls back to the socket peer. IPv6 spelling and
     IPv4-mapped IPv6 normalize to one bucket key. Scoped addresses, hostnames,
     ports, brackets and NUL are rejected. Configuration permits at most 64
-    entries/4096 bytes; forwarded chains at most 64 hops/8192 bytes.
+    entries/4096 bytes; trusted suffix inspection at most 64 hops/8192 bytes.
+    Prefixes left of the first untrusted address are neither parsed nor
+    counted toward these bounds, so spoofed prefixes cannot select a
+    different IP bucket.
 - **TLS.** Terminated by Caddy (`tls` profile, site address
   `MONKEYSPAW_PUBLIC_URL`) or the operator's proxy.
   - The server speaks plain HTTP on the compose network only.

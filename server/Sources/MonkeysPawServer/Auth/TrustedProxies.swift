@@ -54,18 +54,39 @@ struct TrustedProxies: Sendable {
         guard let value = peer?.ipAddress else { throw ClientIPError.missingPeer }
         let peer = try ClientIPAddress(value)
         guard contains(peer), !forwardedFor.isEmpty else { return peer }
-        guard forwardedFor.count <= ServerLimits.forwardedForMaxHops,
-              forwardedFor.reduce(0, { $0 + $1.utf8.count }) + forwardedFor.count - 1 <= ServerLimits.forwardedForMaxBytes else { return peer }
-        let hops = forwardedFor.joined(separator: ",").split(separator: ",", omittingEmptySubsequences: false)
-        guard hops.count <= ServerLimits.forwardedForMaxHops else { return peer }
-
         var current = peer
-        for hop in hops.reversed() {
-            guard contains(current) else { break }
-            // Ignore spoofed prefixes left of the first untrusted hop. A bad
-            // trusted suffix falls back to the socket, never to attacker text.
-            guard let parsed = try? ClientIPAddress(String(hop).trimmingCharacters(in: .whitespaces)) else { return peer }
+        var hop: [UInt8] = []
+        var inspectedBytes = 0
+        var inspectedHops = 0
+
+        func consumeHop() -> Bool {
+            guard inspectedHops < ServerLimits.forwardedForMaxHops,
+                  let parsed = try? ClientIPAddress(String(decoding: hop.reversed(), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespaces)) else { return false }
             current = parsed
+            inspectedHops += 1
+            hop.removeAll(keepingCapacity: true)
+            return true
+        }
+
+        // Inspect only the trusted suffix. Counting spoofable prefixes could
+        // let a client select the proxy bucket by padding an otherwise valid XFF.
+        for index in forwardedFor.indices.reversed() {
+            for byte in forwardedFor[index].utf8.reversed() {
+                if byte == 44 {
+                    guard consumeHop() else { return peer }
+                    guard contains(current) else { return current }
+                }
+                guard inspectedBytes < ServerLimits.forwardedForMaxBytes else { return peer }
+                inspectedBytes += 1
+                if byte != 44 { hop.append(byte) }
+            }
+            guard consumeHop() else { return peer }
+            guard contains(current) else { return current }
+            if index > 0 {
+                guard inspectedBytes < ServerLimits.forwardedForMaxBytes else { return peer }
+                inspectedBytes += 1 // Repeated fields are separated by a comma.
+            }
         }
         return current
     }
