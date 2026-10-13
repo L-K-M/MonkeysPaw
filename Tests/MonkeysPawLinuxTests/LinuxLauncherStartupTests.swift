@@ -81,12 +81,14 @@ final class LinuxLauncherStartupTests: XCTestCase {
               windowTools.executable("xdotool") != nil,
               windowTools.executable("gapplication") != nil,
               windowTools.executable("xprop") != nil,
+              windowTools.executable("xwininfo") != nil,
+              windowTools.executable("xterm") != nil,
               let openbox = windowTools.executable("openbox") else {
             if environment["MONKEYSPAW_REQUIRE_DISPLAY"] == "1" {
-                XCTFail("Executable launcher tests require X11, xdotool, gapplication, xprop and Openbox.")
+                XCTFail("Executable launcher tests require X11, xdotool, gapplication, xprop, xwininfo, xterm and Openbox.")
                 throw NSError(domain: "LinuxLauncherStartupTests", code: 1)
             }
-            throw XCTSkip("Requires X11, xdotool, gapplication, xprop and Openbox.")
+            throw XCTSkip("Requires X11, xdotool, gapplication, xprop, xwininfo, xterm and Openbox.")
         }
 
         let windowManager = Process()
@@ -102,11 +104,7 @@ final class LinuxLauncherStartupTests: XCTestCase {
         try windowManagerStderr.pipe.fileHandleForWriting.close()
         children.append(windowManager)
         stderr[windowManager.processIdentifier] = windowManagerStderr
-        XCTAssertTrue(GTKTestSupport.spin {
-            guard case .success(let output) = self.windowTools.run("xprop",
-                arguments: ["-root", "_NET_SUPPORTING_WM_CHECK"], timeout: .seconds(1)) else { return false }
-            return windowManager.isRunning && output.text.contains("0x")
-        }, "The test window manager did not start.")
+        try waitForWindowManager()
 
         bus = try FakeStatusNotifierWatcher(address: address)
         tools = try FakeLinuxTools()
@@ -151,6 +149,24 @@ final class LinuxLauncherStartupTests: XCTestCase {
         tools = nil
         windowTools = nil
         childEnvironment = [:]
+    }
+
+    func testWindowManagerReadinessRejectsAdvertisedButUnresponsiveManager() throws {
+        let manager = try XCTUnwrap(windowManager)
+        XCTAssertEqual(kill(manager.processIdentifier, SIGSTOP), 0)
+        defer { kill(manager.processIdentifier, SIGCONT) }
+
+        XCTAssertThrowsError(try waitForWindowManager(timeout: .seconds(2))) { error in
+            let diagnostic = (error as NSError).localizedDescription
+            XCTAssertTrue(diagnostic.hasPrefix("Window manager not ready:"))
+            XCTAssertTrue(diagnostic.contains("_NET_SUPPORTING_WM_CHECK(WINDOW)"))
+            XCTAssertTrue(diagnostic.contains("WM_STATE:  not found."))
+            XCTAssertTrue(diagnostic.contains("Map State: IsUnMapped"))
+        }
+        XCTAssertEqual(children.filter { $0.isRunning }.count, 1, "Readiness probes must not leave a client running.")
+
+        XCTAssertEqual(kill(manager.processIdentifier, SIGCONT), 0)
+        try waitForWindowManager()
     }
 
     func testResidentLaunchResumesPendingFolderStep() throws {
@@ -280,6 +296,75 @@ final class LinuxLauncherStartupTests: XCTestCase {
         settings.markSeedsOffered()
         settings.completeTour()
         XCTAssertNil(settings.error)
+    }
+
+    private func waitForWindowManager(timeout: Duration = .seconds(10)) throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        let advertised = GTKTestSupport.spin(until: {
+            guard self.windowManager?.isRunning == true,
+                  case .success(let output) = self.windowTools.run("xprop",
+                    arguments: ["-root", "_NET_SUPPORTING_WM_CHECK"], timeout: .seconds(1)) else { return false }
+            return output.text.contains("0x")
+        }, timeout: timeout)
+        guard advertised else {
+            throw NSError(domain: "LinuxLauncherStartupTests", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                "Window manager not ready: Openbox did not advertise a WM within \(timeout).\n\(childDiagnostics())"])
+        }
+
+        // Advertising a WM does not prove it has started handling MapRequests.
+        let probe = Process()
+        let title = "Launcher WM readiness probe \(UUID().uuidString)"
+        probe.executableURL = try XCTUnwrap(windowTools.executable("xterm"))
+        probe.arguments = ["-title", title, "-geometry", "20x2", "-e",
+            try XCTUnwrap(windowTools.executable("cat")).path]
+        probe.environment = windowTools.environment
+        probe.standardInput = FileHandle.nullDevice
+        probe.standardOutput = FileHandle.nullDevice
+        let capture = ChildStderr()
+        probe.standardError = capture.pipe
+        try probe.run()
+        children.append(probe)
+        stderr[probe.processIdentifier] = capture
+        defer {
+            if probe.isRunning { probe.terminate() }
+            if !GTKTestSupport.spin(until: { !probe.isRunning }, timeout: .seconds(1)) {
+                kill(probe.processIdentifier, SIGKILL)
+            }
+            XCTAssertTrue(GTKTestSupport.spin(until: { !probe.isRunning }, timeout: .seconds(1)),
+                "The window manager readiness probe did not exit.")
+        }
+        try capture.pipe.fileHandleForWriting.close()
+
+        var window: String?
+        var properties = "Could not read the probe's WM_STATE."
+        var mapState = "Could not read the probe's X11 map state."
+        let ready = GTKTestSupport.spin(until: {
+            guard self.windowManager?.isRunning == true, probe.isRunning else { return false }
+            if window == nil, case .success(let output) = self.windowTools.run("xdotool",
+                arguments: ["search", "--name", "^" + NSRegularExpression.escapedPattern(for: title) + "$"],
+                timeout: .seconds(1), acceptedStatuses: [0, 1]) {
+                window = output.text.split(separator: "\n").first.map(String.init)
+            }
+            guard let window else { return false }
+            guard case .success(let output) = self.windowTools.run("xprop",
+                arguments: ["-id", window, "WM_STATE"], timeout: .seconds(1)) else { return false }
+            properties = output.text
+            guard case .success(let attributes) = self.windowTools.run("xwininfo",
+                arguments: ["-id", window], timeout: .seconds(1)) else { return false }
+            mapState = attributes.text.split(separator: "\n").first(where: { $0.contains("Map State:") })
+                .map { $0.trimmingCharacters(in: .whitespaces) } ?? "No X11 map state reported."
+            if properties.contains("window state: Normal"), mapState == "Map State: IsViewable" { return true }
+            // Only the probe is remapped if its first MapRequest raced WM startup.
+            _ = self.windowTools.run("xdotool", arguments: ["windowmap", window], timeout: .seconds(1))
+            return false
+        }, timeout: max(.zero, clock.now.duration(to: deadline)))
+        guard ready else {
+            throw NSError(domain: "LinuxLauncherStartupTests", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                "Window manager not ready: probe PID \(probe.processIdentifier), window \(window ?? "not found") "
+                + "was not managed and viewable within \(timeout).\n"
+                + "\(properties)\n\(mapState)\n\(childDiagnostics())"])
+        }
     }
 
     private static let launchedWindowTimeout: Duration = .seconds(20)
