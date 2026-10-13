@@ -521,6 +521,37 @@ member rejection would need a separate lexical decoding contract.
 | `.reference(name)` | A named definition reference, never a sample-value inference. |
 | `SyncAPI.rateLimitHeaders` | Required `Retry-After` for 429, referencing `RetryAfter` (JSON integer for tooling, decimal seconds in HTTP). |
 
+M5 S2 renders every named description with
+`swift run --package-path server dump-schema spec/schema`. The thin CLI calls
+`MonkeysPawServer.SchemaRenderer`, which imports Foundation and Core only.
+The committed JSON Schema 2020-12 files and generated README are under
+[`schema/`](schema/README.md); register their stable `$id`s to resolve sibling
+references offline. The test validator looks up bare filenames in its catalog.
+Null branches and required members independently describe nullability and
+omission. Required const/enum
+discriminators and distinct required fields select closed `oneOf` branches.
+The existing server CI job regenerates into a fresh temporary directory and
+compares recursively, failing on changed, missing or extra files. Server
+Schema tests call the renderer directly to verify deterministic bytes and
+exact catalog/file coverage, ignoring hidden metadata in directory listings.
+One test runs the built CLI with a ten-second deadline to verify exports and
+failure behavior. Tests compare every DTO fixture against the emitted schema
+keywords plus the documented `x-` checks, independently comparing strict Codable.
+The test validator supports only the emitted subset; it is not a general
+JSON Schema engine. It retains exact Int64s, decimal numbers and Unicode scalar
+lengths, and uses Foundation's CFBoolean type identity to distinguish literal booleans
+from numeric 0/1. `number` accepts integers and decimals; `integer` accepts
+only integral values within the helper's Int64 representation. Numeric bounds
+use decimal comparison. It rejects malformed JSON and `type`/`required` values;
+other keyword value shapes are trusted to the renderer's emitted subset.
+
+Every decoded UTF-8 byte cap renders both standard `maxLength` at most that
+cap and `x-max-utf8-bytes` for exact enforcement. Code points cannot outnumber
+UTF-8 bytes, so the standard bound is a sound backstop for generic validators.
+Multi-byte strings can still exceed the byte cap below `maxLength`; validate
+the byte annotation as well. Zero `minLength`/`minItems` bounds are omitted,
+and patterns use one strict full-match wrapper without redundant inner anchors.
+
 Descriptions also drive the strict Codable object validation on **both**
 decode and encode; unknown properties cannot silently disappear, and directly
 constructed invalid values cannot be sent. They contain no transport/database
@@ -543,8 +574,8 @@ definitions, with these corpus boundaries:
   invalid calendar dates and missing/excess precision.
 - Prompt scopes use `user` with absent `group_id`, or `group` with a
   required ULID `group_id`; `private` is rejected as a scope wire value.
-  Feed identities use `kind: user|group` and
-  `user:<ULID>`/`group:<ULID>` keys. Private feed metadata omits group id,
+  Feed identities use `kind: user|group` and require the matching
+  `user:<ULID>`/`group:<ULID>` key prefix. Private feed metadata omits group id,
   name and role; group metadata requires all three.
 - `rev`, successful write/feed `seq`, and delete/move `base_rev` are positive
   Int64; PUT `base_rev` and feed head may be zero. Overflow, fractional values,
@@ -587,8 +618,9 @@ definitions, with these corpus boundaries:
   `path.segment` is required and nullable; invite `expires_in` is optional
   and nonnullable. Omission and null have distinct meanings at the schema boundary.
 - Content strings are bounded to 262,144 decoded UTF-8 bytes, independent
-  of JSON escaping. Request-envelope 2 MiB and serialized-response 16 MiB
-  limits are transport responsibilities in later server slices. Every prompt
+  of JSON escaping; rendered schemas carry `maxLength: 262144` and
+  `x-max-utf8-bytes: 262144`. Request-envelope 2 MiB and serialized-response
+  16 MiB limits are transport responsibilities in later server slices. Every prompt
   path, including move, revision, conflict head and feed payloads, is nonempty
   and bounded to `Limits.maxPathBytes` (1,024 decoded UTF-8 bytes). Descriptions
   carry `minLength: 1`, `maxLength: 1024` and `x-max-utf8-bytes: 1024`.

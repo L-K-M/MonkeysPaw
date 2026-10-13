@@ -1,0 +1,36 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/FeedPrompt.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "content" : {
+      "maxLength" : 262144,
+      "type" : "string",
+      "x-max-utf8-bytes" : 262144
+    },
+    "id" : {
+      "format" : "ulid",
+      "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+      "type" : "string"
+    },
+    "path" : {
+      "maxLength" : 1024,
+      "minLength" : 1,
+      "type" : "string",
+      "x-max-utf8-bytes" : 1024
+    },
+    "rev" : {
+      "maximum" : 9223372036854775807,
+      "minimum" : 1,
+      "type" : "integer"
+    }
+  },
+  "required" : [
+    "content",
+    "id",
+    "path",
+    "rev"
+  ],
+  "title" : "FeedPrompt",
+  "type" : "object"
+}

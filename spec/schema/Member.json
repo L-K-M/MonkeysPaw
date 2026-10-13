@@ -1,0 +1,47 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/Member.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "display_name" : {
+      "oneOf" : [
+        {
+          "type" : "null"
+        },
+        {
+          "maxLength" : 255,
+          "type" : "string"
+        }
+      ]
+    },
+    "joined_at" : {
+      "format" : "date-time",
+      "pattern" : "^(?:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z)(?![\\s\\S])",
+      "type" : "string",
+      "x-syncapi-format" : "utc-milliseconds"
+    },
+    "role" : {
+      "$ref" : "Role.json"
+    },
+    "user_id" : {
+      "format" : "ulid",
+      "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+      "type" : "string"
+    },
+    "username" : {
+      "maxLength" : 64,
+      "minLength" : 1,
+      "pattern" : "^(?:[a-z0-9][a-z0-9._-]{0,63})(?![\\s\\S])",
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "display_name",
+    "joined_at",
+    "role",
+    "user_id",
+    "username"
+  ],
+  "title" : "Member",
+  "type" : "object"
+}

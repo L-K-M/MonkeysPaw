@@ -1,0 +1,23 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/RevisionPath.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "id" : {
+      "format" : "ulid",
+      "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+      "type" : "string"
+    },
+    "rev" : {
+      "maximum" : 9223372036854775807,
+      "minimum" : 1,
+      "type" : "integer"
+    }
+  },
+  "required" : [
+    "id",
+    "rev"
+  ],
+  "title" : "RevisionPath",
+  "type" : "object"
+}

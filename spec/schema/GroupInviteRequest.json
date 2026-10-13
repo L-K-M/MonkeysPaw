@@ -1,0 +1,20 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/GroupInviteRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "expires_in" : {
+      "maximum" : 604800,
+      "minimum" : 1,
+      "type" : "integer"
+    },
+    "role" : {
+      "$ref" : "InviteRole.json"
+    }
+  },
+  "required" : [
+    "role"
+  ],
+  "title" : "GroupInviteRequest",
+  "type" : "object"
+}

@@ -403,6 +403,13 @@ jobs:
         run: swift build --package-path server
       - name: Test server
         run: swift test --package-path server
+      - name: Check SyncAPI schema drift
+        run: |
+          set -eu
+          schema_dir=$(mktemp -d)
+          trap 'rm -rf "$schema_dir"' EXIT
+          swift run --package-path server dump-schema "$schema_dir"
+          diff -ru spec/schema "$schema_dir"
 
   server-image:
     name: Server image and health

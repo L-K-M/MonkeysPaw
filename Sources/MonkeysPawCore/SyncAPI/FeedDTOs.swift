@@ -82,7 +82,7 @@ extension SyncAPI {
         static func schema(fields: [SyncAPIField], rules: [SyncAPIRule] = []) -> SyncAPISchema {
             .oneOf([
                 .object(fields: fields + [.init("key", .string(.init(pattern: "^user:[0-7][0-9A-HJKMNP-TV-Z]{25}$"))), .init("kind", .constant("user"))], rules: rules),
-                .object(fields: fields + [.init("key", .scopeKey), .init("kind", .constant("group")), .init("group_id", .ulid),
+                .object(fields: fields + [.init("key", .string(.init(pattern: "^group:[0-7][0-9A-HJKMNP-TV-Z]{25}$"))), .init("kind", .constant("group")), .init("group_id", .ulid),
                                          .init("name", .name), .init("role", .reference("Role"))], rules: rules + [.groupScopeKey])
             ])
         }

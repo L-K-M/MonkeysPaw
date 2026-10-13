@@ -8,6 +8,7 @@ let package = Package(
     products: [
         .library(name: "MonkeysPawServer", targets: ["MonkeysPawServer"]),
         .executable(name: "monkeyspaw-server", targets: ["monkeyspaw-server"]),
+        .executable(name: "dump-schema", targets: ["dump-schema"]),
     ],
     dependencies: [
         // An explicit name keeps this reference stable in renamed worktrees.
@@ -37,6 +38,10 @@ let package = Package(
                 "MonkeysPawServer",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
+        ),
+        .executableTarget(
+            name: "dump-schema",
+            dependencies: ["MonkeysPawServer"]
         ),
         .testTarget(
             name: "MonkeysPawServerTests",

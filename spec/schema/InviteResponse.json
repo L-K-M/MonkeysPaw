@@ -1,0 +1,57 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/InviteResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "expires_at" : {
+          "format" : "date-time",
+          "pattern" : "^(?:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z)(?![\\s\\S])",
+          "type" : "string",
+          "x-syncapi-format" : "utc-milliseconds"
+        },
+        "invite_token" : {
+          "pattern" : "^(?:[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?![\\s\\S])",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "expires_at",
+        "invite_token"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "expires_at" : {
+          "format" : "date-time",
+          "pattern" : "^(?:(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z)(?![\\s\\S])",
+          "type" : "string",
+          "x-syncapi-format" : "utc-milliseconds"
+        },
+        "group_id" : {
+          "format" : "ulid",
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "invite_token" : {
+          "pattern" : "^(?:[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?![\\s\\S])",
+          "type" : "string"
+        },
+        "role" : {
+          "$ref" : "InviteRole.json"
+        }
+      },
+      "required" : [
+        "expires_at",
+        "group_id",
+        "invite_token",
+        "role"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "InviteResponse"
+}

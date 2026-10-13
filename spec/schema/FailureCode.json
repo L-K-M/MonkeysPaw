@@ -1,0 +1,15 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/FailureCode.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "enum" : [
+    "envelope_too_large",
+    "forbidden",
+    "internal_error",
+    "malformed_request",
+    "not_found",
+    "rate_limited",
+    "unauthorized"
+  ],
+  "title" : "FailureCode",
+  "type" : "string"
+}

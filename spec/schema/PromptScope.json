@@ -1,0 +1,39 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/PromptScope.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "scope" : {
+          "const" : "user",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "scope"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "group_id" : {
+          "format" : "ulid",
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "scope" : {
+          "const" : "group",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "group_id",
+        "scope"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "PromptScope"
+}

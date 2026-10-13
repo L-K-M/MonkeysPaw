@@ -1,0 +1,62 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/ScopeIdentity.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "key" : {
+          "pattern" : "^(?:user:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "kind" : {
+          "const" : "user",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "key",
+        "kind"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "group_id" : {
+          "format" : "ulid",
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "key" : {
+          "pattern" : "^(?:group:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "kind" : {
+          "const" : "group",
+          "type" : "string"
+        },
+        "name" : {
+          "maxLength" : 255,
+          "minLength" : 1,
+          "type" : "string"
+        },
+        "role" : {
+          "$ref" : "Role.json"
+        }
+      },
+      "required" : [
+        "group_id",
+        "key",
+        "kind",
+        "name",
+        "role"
+      ],
+      "type" : "object",
+      "x-syncapi-rules" : [
+        "group-scope-key"
+      ]
+    }
+  ],
+  "title" : "ScopeIdentity"
+}

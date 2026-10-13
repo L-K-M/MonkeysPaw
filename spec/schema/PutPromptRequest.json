@@ -1,0 +1,83 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/PutPromptRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "base_rev" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "content" : {
+          "maxLength" : 262144,
+          "type" : "string",
+          "x-max-utf8-bytes" : 262144
+        },
+        "origin" : {
+          "$ref" : "WriteOrigin.json"
+        },
+        "path" : {
+          "maxLength" : 1024,
+          "minLength" : 1,
+          "type" : "string",
+          "x-max-utf8-bytes" : 1024
+        },
+        "scope" : {
+          "const" : "user",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "base_rev",
+        "content",
+        "path",
+        "scope"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "base_rev" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "content" : {
+          "maxLength" : 262144,
+          "type" : "string",
+          "x-max-utf8-bytes" : 262144
+        },
+        "group_id" : {
+          "format" : "ulid",
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "origin" : {
+          "$ref" : "WriteOrigin.json"
+        },
+        "path" : {
+          "maxLength" : 1024,
+          "minLength" : 1,
+          "type" : "string",
+          "x-max-utf8-bytes" : 1024
+        },
+        "scope" : {
+          "const" : "group",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "base_rev",
+        "content",
+        "group_id",
+        "path",
+        "scope"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "PutPromptRequest"
+}

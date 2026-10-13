@@ -1,0 +1,10 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/Severity.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "enum" : [
+    "error",
+    "warning"
+  ],
+  "title" : "Severity",
+  "type" : "string"
+}

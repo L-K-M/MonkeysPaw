@@ -1,0 +1,17 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/RenameGroupRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "name" : {
+      "maxLength" : 255,
+      "minLength" : 1,
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "name"
+  ],
+  "title" : "RenameGroupRequest",
+  "type" : "object"
+}

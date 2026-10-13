@@ -1,0 +1,19 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/RevisionsResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "revisions" : {
+      "items" : {
+        "$ref" : "RevisionSummary.json"
+      },
+      "maxItems" : 200,
+      "type" : "array"
+    }
+  },
+  "required" : [
+    "revisions"
+  ],
+  "title" : "RevisionsResponse",
+  "type" : "object"
+}

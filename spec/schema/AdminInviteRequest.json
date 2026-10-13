@@ -1,0 +1,44 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/AdminInviteRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "expires_in" : {
+          "maximum" : 604800,
+          "minimum" : 1,
+          "type" : "integer"
+        }
+      },
+      "required" : [
+
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "expires_in" : {
+          "maximum" : 604800,
+          "minimum" : 1,
+          "type" : "integer"
+        },
+        "group_id" : {
+          "format" : "ulid",
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "role" : {
+          "$ref" : "InviteRole.json"
+        }
+      },
+      "required" : [
+        "group_id",
+        "role"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "AdminInviteRequest"
+}

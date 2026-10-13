@@ -313,7 +313,8 @@ lock.
     - The final page sets `cursor` to the head captured on page one.
     - Changes made meanwhile arrive as normal deltas after it.
   - Scope keys are `user:<ULID>` or `group:<ULID>`; private scope metadata has
-    only key/kind, while group metadata requires group_id/name/role. Group
+    only key/kind, while group metadata requires group_id/name/role. The key
+    prefix must match kind: `user:` for user and `group:` for group. Group
     keys must agree with group_id. Each response has exactly one private
     scope, unique scope keys, and disjoint, unique removed keys (B2). The
     initial request uses explicit `database_id: null` and `cursors: {}`.

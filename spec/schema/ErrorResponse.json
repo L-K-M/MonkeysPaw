@@ -1,0 +1,161 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/ErrorResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "code" : {
+          "const" : "conflict",
+          "type" : "string"
+        },
+        "head" : {
+          "$ref" : "ConflictHead.json"
+        }
+      },
+      "required" : [
+        "code",
+        "head"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "code" : {
+          "const" : "path_taken",
+          "type" : "string"
+        },
+        "existing" : {
+          "$ref" : "ExistingPrompt.json"
+        }
+      },
+      "required" : [
+        "code",
+        "existing"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "code" : {
+          "const" : "deleted",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "code"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "issues" : {
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "code" : {
+                "enum" : [
+                  "field.invalid_boolean",
+                  "field.invalid_declaration",
+                  "field.invalid_default",
+                  "field.invalid_name",
+                  "field.invalid_options",
+                  "field.invalid_property",
+                  "field.reserved_name",
+                  "field.unknown_type",
+                  "format.unsupported",
+                  "front_matter.unclosed",
+                  "metadata.invalid_format",
+                  "metadata.invalid_id",
+                  "metadata.invalid_type",
+                  "path.absolute",
+                  "path.backslash",
+                  "path.control_character",
+                  "path.empty",
+                  "path.invalid_extension",
+                  "path.normalization_failed",
+                  "path.reserved_groups_prefix",
+                  "path.segment_dot",
+                  "path.segment_empty",
+                  "path.segment_too_long",
+                  "path.too_long",
+                  "path.trailing_dot_or_space",
+                  "prompt.id_mismatch",
+                  "source.invalid_utf8",
+                  "source.too_large",
+                  "template.unbalanced_opener",
+                  "yaml.anchor_or_alias",
+                  "yaml.duplicate_key",
+                  "yaml.invalid",
+                  "yaml.merge_key",
+                  "yaml.root_not_mapping",
+                  "yaml.scalar_not_portable",
+                  "yaml.tag_not_portable"
+                ],
+                "type" : "string"
+              },
+              "location" : {
+                "$ref" : "IssueLocation.json"
+              },
+              "severity" : {
+                "const" : "error",
+                "type" : "string"
+              }
+            },
+            "required" : [
+              "code",
+              "severity"
+            ],
+            "type" : "object"
+          },
+          "minItems" : 1,
+          "type" : "array"
+        }
+      },
+      "required" : [
+        "issues"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "code" : {
+          "$ref" : "FailureCode.json"
+        }
+      },
+      "required" : [
+        "code"
+      ],
+      "type" : "object"
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "code" : {
+          "const" : "snapshot_expired",
+          "type" : "string"
+        },
+        "scopes" : {
+          "items" : {
+            "format" : "scope-key",
+            "pattern" : "^(?:(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+            "type" : "string"
+          },
+          "minItems" : 1,
+          "type" : "array",
+          "uniqueItems" : true
+        }
+      },
+      "required" : [
+        "code",
+        "scopes"
+      ],
+      "type" : "object"
+    }
+  ],
+  "title" : "ErrorResponse"
+}

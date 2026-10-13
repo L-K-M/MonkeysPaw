@@ -1,0 +1,13 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/RevisionOrigin.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "enum" : [
+    "delete",
+    "edit",
+    "llm",
+    "move",
+    "restore"
+  ],
+  "title" : "RevisionOrigin",
+  "type" : "string"
+}

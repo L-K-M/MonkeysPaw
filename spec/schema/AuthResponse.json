@@ -1,0 +1,20 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/AuthResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "device_token" : {
+      "pattern" : "^(?:[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?![\\s\\S])",
+      "type" : "string"
+    },
+    "user" : {
+      "$ref" : "User.json"
+    }
+  },
+  "required" : [
+    "device_token",
+    "user"
+  ],
+  "title" : "AuthResponse",
+  "type" : "object"
+}

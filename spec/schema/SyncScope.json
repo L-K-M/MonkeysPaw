@@ -1,0 +1,120 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/SyncScope.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "oneOf" : [
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "cursor" : {
+          "minLength" : 1,
+          "type" : "string"
+        },
+        "has_more" : {
+          "type" : "boolean"
+        },
+        "head" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "items" : {
+          "items" : {
+            "$ref" : "FeedItem.json"
+          },
+          "maxItems" : 200,
+          "type" : "array"
+        },
+        "key" : {
+          "pattern" : "^(?:user:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "kind" : {
+          "const" : "user",
+          "type" : "string"
+        },
+        "mode" : {
+          "$ref" : "Mode.json"
+        }
+      },
+      "required" : [
+        "cursor",
+        "has_more",
+        "head",
+        "items",
+        "key",
+        "kind",
+        "mode"
+      ],
+      "type" : "object",
+      "x-syncapi-rules" : [
+        "sync-page"
+      ]
+    },
+    {
+      "additionalProperties" : false,
+      "properties" : {
+        "cursor" : {
+          "minLength" : 1,
+          "type" : "string"
+        },
+        "group_id" : {
+          "format" : "ulid",
+          "pattern" : "^(?:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "has_more" : {
+          "type" : "boolean"
+        },
+        "head" : {
+          "maximum" : 9223372036854775807,
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "items" : {
+          "items" : {
+            "$ref" : "FeedItem.json"
+          },
+          "maxItems" : 200,
+          "type" : "array"
+        },
+        "key" : {
+          "pattern" : "^(?:group:[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])",
+          "type" : "string"
+        },
+        "kind" : {
+          "const" : "group",
+          "type" : "string"
+        },
+        "mode" : {
+          "$ref" : "Mode.json"
+        },
+        "name" : {
+          "maxLength" : 255,
+          "minLength" : 1,
+          "type" : "string"
+        },
+        "role" : {
+          "$ref" : "Role.json"
+        }
+      },
+      "required" : [
+        "cursor",
+        "group_id",
+        "has_more",
+        "head",
+        "items",
+        "key",
+        "kind",
+        "mode",
+        "name",
+        "role"
+      ],
+      "type" : "object",
+      "x-syncapi-rules" : [
+        "sync-page",
+        "group-scope-key"
+      ]
+    }
+  ],
+  "title" : "SyncScope"
+}
