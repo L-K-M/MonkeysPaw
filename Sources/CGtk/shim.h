@@ -249,11 +249,12 @@ static inline GFileMonitor *mp_monitor_directory(const char *path, GError **erro
     return monitor;
 }
 
-/* A one-shot rescan runs after queued monitor events on their owning context.
+/* Run after default-priority monitor events, ahead of GTK resize/redraw work
+ * so a busy frame clock cannot starve the scan and consume the picker budget.
  * The destroy notify releases its callback context on completion or removal. */
 static inline guint mp_rescan_idle(GSourceFunc rescan, gpointer data, GDestroyNotify destroy) {
     GSource *source = g_idle_source_new();
-    g_source_set_priority(source, G_PRIORITY_DEFAULT_IDLE);
+    g_source_set_priority(source, G_PRIORITY_HIGH_IDLE);
     g_source_set_callback(source, rescan, data, destroy);
     GMainContext *context = g_main_context_ref_thread_default();
     guint id = g_source_attach(source, context);

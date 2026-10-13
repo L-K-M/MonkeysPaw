@@ -63,6 +63,23 @@ final class RootedFileWatcherTests: XCTestCase {
         expect(LibraryChangeSet(deleted: ["renamed.md"]))
     }
 
+    func testRescanRunsWhileGtkRedrawWorkRemainsReady() throws {
+        try store.write(Data("Original".utf8), at: "a.md")
+        let watcher = try RootedFileWatcher(root: root, log: StandardErrorLog())
+        defer { watcher.stop() }
+        let events = RawEvents()
+        try watcher.start { events.append($0) }
+
+        // Model continuous GTK frame work: a default-idle rescan starves,
+        // while native monitor events still run at default priority.
+        let redraw = g_idle_add_full(GDK_PRIORITY_REDRAW, { _ in 1 }, nil, nil)
+        defer { g_source_remove(redraw) }
+        try Data("Updated".utf8).write(to: root.appendingPathComponent("a.md"))
+
+        XCTAssertTrue(spin { !events.values.isEmpty }, "GTK redraw work must not starve the file rescan")
+        XCTAssertEqual(events.values, [FileStoreEvent(relativePath: "a.md", kind: .modified)])
+    }
+
     func testByteDistinctTwinsAndNormalizationOnlyRename() throws {
         try start()
         try store.write(Data("Composed".utf8), at: "é.md")
