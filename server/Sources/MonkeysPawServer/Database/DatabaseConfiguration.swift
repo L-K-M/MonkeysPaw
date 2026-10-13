@@ -8,7 +8,7 @@ public struct DatabaseConfiguration: Sendable {
         let path = configured.flatMap {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
         } ?? ServerLimits.defaultDataDirectory
-        dataDirectory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        dataDirectory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
     }
 
     var databasePath: String {

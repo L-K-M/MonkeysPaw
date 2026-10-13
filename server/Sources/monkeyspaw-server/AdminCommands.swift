@@ -134,7 +134,7 @@ private func administer<T: Sendable>(_ operation: @escaping @Sendable (OperatorA
     }
 }
 
-private struct AdminOutput: ParsableArguments {
+struct AdminOutput: ParsableArguments {
     @Flag(help: "Print one JSON result to stdout; failures use safe stderr messages.") var json = false
 
     func write(_ value: some Encodable, text: String) throws {

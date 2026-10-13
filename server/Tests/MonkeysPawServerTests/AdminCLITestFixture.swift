@@ -29,6 +29,10 @@ struct AdminCLITestFixture: Sendable {
     var accounts: AccountTestFixture { .init(persistence: persistence) }
 
     func run(_ arguments: [String], input: Data = Data(), environment overrides: [String: String] = [:]) async throws -> AdminCLIResult {
+        try await Self.run(arguments, dataDirectory: directory, input: input, environment: overrides)
+    }
+
+    static func executableURL() throws -> URL {
         var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
         var executable: URL?
         for _ in 0..<6 {
@@ -39,9 +43,14 @@ struct AdminCLITestFixture: Sendable {
             }
             directory.deleteLastPathComponent()
         }
-        let path = try #require(executable)
+        return try #require(executable)
+    }
+
+    static func run(_ arguments: [String], dataDirectory: URL, input: Data = Data(),
+                    environment overrides: [String: String] = [:]) async throws -> AdminCLIResult {
+        let path = try executableURL()
         var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("MONKEYSPAW_") }
-        environment["MONKEYSPAW_DATA_DIR"] = self.directory.path
+        environment["MONKEYSPAW_DATA_DIR"] = dataDirectory.path
         environment["MONKEYSPAW_LOG_LEVEL"] = "trace"
         environment.merge(overrides) { _, supplied in supplied }
         let commandEnvironment = environment

@@ -7,15 +7,12 @@ import SQLKit
 public final class ServerDatabase: Sendable {
     private let fluent: Fluent
     private let writer: any Database
+    private let fileLock: DatabaseFileLock
     private let gate = WriterGate()
     private static let readers = DatabaseID(string: "readers")
 
     private init(configuration: DatabaseConfiguration) throws {
-        try FileManager.default.createDirectory(
-            at: configuration.dataDirectory,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
+        fileLock = try DatabaseFileLock(directory: configuration.dataDirectory, mode: .shared)
 
         // SQL and driver errors can contain credentials or prompt text (§12).
         let logger = ServerLogging.logger(level: .critical)
@@ -79,12 +76,27 @@ public final class ServerDatabase: Sendable {
         }
     }
 
-    func migrate(_ migrations: [ServerMigration] = [.foundation, .nullableAccountMetadata, .membershipAuditContext]) async throws {
+    func migrate(_ migrations: [ServerMigration] = ServerMigration.current) async throws {
         try await MigrationRepository(database: self).apply(migrations)
     }
 
     func shutdown() async {
         await fluent.databases.shutdownAsync()
+        fileLock.release()
+    }
+
+    /// VACUUM and checkpoints cannot run inside a transaction.
+    func maintenance<T: Sendable>(
+        _ operation: @escaping @Sendable (any SQLDatabase) async throws -> T
+    ) async throws -> T {
+        try await gate.run {
+            try await self.writer.withConnection { connection in
+                let sql = try Self.sql(connection)
+                try await Self.configure(sql)
+                try await Self.verifyWAL(sql)
+                return try await operation(sql)
+            }
+        }
     }
 
     func read<T: Sendable>(

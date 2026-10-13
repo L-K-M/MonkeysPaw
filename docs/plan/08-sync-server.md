@@ -716,20 +716,39 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   successful migrations are forward-only and operator rollback uses a
   stopped-server backup restore, not automatic down migrations.
 - **Backups.**
-  - Backup and restore commands are supplied by S17, after the S16 account,
-    group and invite CLI.
   - `monkeyspaw-server backup /data/backups/<UTC>.db` uses `VACUUM INTO`, a
-    consistent online snapshot.
+    consistent online snapshot while `serve` continues writing. It refuses any
+    occupied destination, writes a private temporary beside the destination,
+    checks integrity, syncs it and publishes with an atomic non-replacing rename.
+    Failure cleans up the temporary and preserves older backups. Plain output
+    is the absolute backup path; `--json` adds its `database_id`.
   - `scripts/backup.sh` wraps it through `docker compose exec` and keeps
-    `BACKUP_KEEP = 14`.
+    `BACKUP_KEEP=14` successful UTC-named backups by default. Retention runs only
+    after a successful backup; unrelated files and restore recovery files are
+    excluded. Run the script from any directory; it uses the checkout's compose
+    configuration. It is Bash 3.2 compatible.
   - Restores go only through `monkeyspaw-server restore`, which rotates
     `database_id` so every client resnapshots.
   - Stop `serve` first, then use a one-shot
     `docker compose run --rm --no-deps monkeyspaw-server monkeyspaw-server
     restore <path>`; never use `compose exec` to restore a live database.
-    Restore takes an exclusive lock, validates integrity/schema compatibility,
-    stages replacement with safe WAL handling, migrates and rotates the UUID
-    before restart. Live, newer-schema or corrupt inputs are refused (§19 B20).
+    Every database user holds a shared process lock for its connection lifetime;
+    restore takes the exclusive lock before opening the live database. Keep the
+    lock file in place. Restore requires a regular SQLite file, valid integrity
+    and foreign keys, a canonical UUID and the Monkey's Paw foundation migration.
+    Applied migrations must be a known prefix supported by this binary; unknown
+    migration markers or nonzero unsupported SQLite user versions are refused.
+    Foreign application IDs are refused. The foundation marker and schema identify
+    legacy Monkey's Paw files, whose SQLite application ID is zero.
+    Restore stages a SQLite snapshot beside the live database, migrates forward,
+    clears frozen manifests and durably rotates the UUID before replacement. It
+    checkpoints the old WAL and closes connections before swapping, retaining
+    the previous database at `monkeyspaw.pre-restore-<UUID>.db` for recovery.
+    Plain output is the live database path; `--json` adds the new `database_id`
+    and optional `previous_path`. Remove the recovery file when no longer needed.
+    Live, newer-schema, corrupt and foreign inputs fail with static safe messages
+    (§19 B20). All database users must use the same local data directory and this
+    binary's locking protocol; v1 supports one serving process and no replicas.
   - Never copy a live database file. A Litestream sidecar is documented as
     an option, not shipped.
 - **Image publishing.** `release.yml` publishes

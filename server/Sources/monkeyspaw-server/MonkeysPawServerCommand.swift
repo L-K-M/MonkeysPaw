@@ -10,7 +10,8 @@ struct MonkeysPawServerCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "monkeyspaw-server",
         abstract: "Run the Monkey's Paw sync server.",
-        subcommands: [Serve.self, Migrate.self, Healthcheck.self, UserCommand.self, GroupCommand.self, InviteCommand.self],
+        subcommands: [Serve.self, Migrate.self, Healthcheck.self, UserCommand.self, GroupCommand.self, InviteCommand.self,
+                      Backup.self, Restore.self],
         defaultSubcommand: Serve.self
     )
 
