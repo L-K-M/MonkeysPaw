@@ -20,7 +20,7 @@ public enum RegistrationStatus: Equatable, Sendable {
     case unbound
 }
 
-public enum HotkeyConfiguration: Sendable { case systemSettings, attachPortal, nativeFallback }
+public enum HotkeyConfiguration: Sendable { case systemSettings, attachPortal, nativeFallback, unavailable }
 
 /// The opaque id lets a driver retain its native registration privately.
 public struct HotkeyRegistration: Equatable, Sendable {

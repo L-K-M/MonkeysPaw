@@ -93,9 +93,9 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertEqual(harness.presentation.togglePicker.changePath, .inApp)
         XCTAssertEqual(harness.presentation.togglePicker.verification, .notStarted)
         XCTAssertEqual(harness.presentation.repeatLast.binding, .unbound)
-        XCTAssertEqual(harness.presentation.repeatLast.changePath, .unavailable)
+        XCTAssertEqual(harness.presentation.repeatLast.changePath, .inApp)
         XCTAssertEqual(harness.presentation.repeatLast.registrationStatus, .unbound)
-        XCTAssertNil(harness.backend.current[.repeatLast])
+        XCTAssertEqual(harness.backend.current[.repeatLast]?.status, .unbound)
         harness.presentation.beginVerification()
         XCTAssertEqual(harness.presentation.togglePicker.verification, .waiting)
         harness.presentation.refresh()
@@ -219,21 +219,22 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertEqual(harness.presentation.togglePicker.registrationStatus, .registered)
     }
 
-    func testBackendFailureDropsPreviousBindingAndDisplaysFailedStatusAndDetail() throws {
+    func testFailedRecoveryDisplaysFailedStatusAndActionableError() throws {
         let harness = ShortcutSettingsHarness()
         let original = try XCTUnwrap(harness.backend.current[.togglePicker])
         let staleFire = harness.backend.fire
         harness.backend.status = .failed
         harness.backend.detail = Strings.carbonRegistrationFailure(status: -9878)
         harness.presentation.setAccelerator("Ctrl+Alt+K")
-        XCTAssertEqual(harness.backend.unregistered, [original])
+        XCTAssertEqual(harness.backend.unregistered.count, 2)
+        XCTAssertEqual(harness.backend.unregistered.first, original)
         XCTAssertNotEqual(harness.backend.current[.togglePicker]?.id, original.id)
         XCTAssertEqual(harness.presentation.togglePicker.binding, .unknown)
         XCTAssertEqual(harness.presentation.togglePicker.registrationStatus, .failed)
         XCTAssertEqual(Strings.registrationStatus(try XCTUnwrap(harness.presentation.togglePicker.registrationStatus)), "Failed")
         XCTAssertEqual(harness.presentation.togglePicker.registration?.detail, harness.backend.detail)
         XCTAssertEqual(harness.presentation.togglePicker.verification, .notStarted)
-        XCTAssertNil(harness.presentation.shortcutError, "Native failure is a backend status, not a parse error")
+        XCTAssertEqual(harness.presentation.shortcutError, .recoveryFailed)
         XCTAssertFalse(harness.presentation.canVerifyShortcut)
         staleFire?()
         XCTAssertEqual(harness.activations, 0, "The removed registration cannot fire after the failed rebind")
@@ -333,8 +334,14 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
     private(set) var unregistered: [HotkeyRegistration] = []
     private(set) var fire: (() -> Void)?
     let unbound = HotkeyRegistration(mechanism: .carbon, status: .unbound, detail: SetupStrings.unboundShortcut)
+    let unboundRepeat = HotkeyRegistration(mechanism: .carbon, status: .unbound, detail: SetupStrings.unboundShortcut)
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator, onFire: @escaping () -> Void) -> HotkeyRegistration {
+    func register(_ action: HotkeyAction, accelerator: Accelerator?, onFire: @escaping () -> Void) -> HotkeyRegistration {
+        guard let accelerator else {
+            let registration = action == .togglePicker ? unbound : unboundRepeat
+            current[action] = registration
+            return registration
+        }
         requested.append(accelerator)
         let registration = HotkeyRegistration(mechanism: .carbon, status: status, detail: detail)
         current[action] = registration
@@ -345,7 +352,7 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
     func unregister(_ registration: HotkeyRegistration) {
         unregistered.append(registration)
         current = current.filter { $0.value != registration }
-        fire = nil
+        if registration.id != unboundRepeat.id { fire = nil }
     }
 }
 
@@ -370,9 +377,11 @@ private final class SettingsShortcutPorts: PanelWindow, FocusTracker, Clipboard,
     func accessibilityStatus() -> SetupStatus { .ok }
     func portalStatus() -> SetupStatus { .notApplicable }
     func ydotoolStatus() -> SetupStatus { .notApplicable }
-    func hotkeyRegistration() -> HotkeyRegistration { backend.current[.togglePicker] ?? backend.unbound }
+    func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration {
+        backend.current[action] ?? (action == .togglePicker ? backend.unbound : backend.unboundRepeat)
+    }
     func kdeStatus() -> SetupStatus { .notApplicable }
-    func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) { done() }
+    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) { done() }
     func present(fieldExpecting text: String) {}
     func readBack() -> String? { nil }
     func close() {}

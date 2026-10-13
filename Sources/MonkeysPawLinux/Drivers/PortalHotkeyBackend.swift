@@ -5,6 +5,7 @@ import MonkeysPawCore
 
 /// GNOME capability selection and both portal registration phases share one id.
 final class PortalHotkeyBackend: LinuxHotkeyBackend {
+    let unboundActions = UnboundHotkeyActions()
     private enum Selection { case probing, portal(UInt32), fallback, stopped }
     private enum Teardown { case close, alreadyClosed, ownerLost }
     enum Migration { case gnomeHost, none }
@@ -12,6 +13,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     // Unlike handle_token, this identity remains stable across app runs (§6.3).
     static let sessionToken = "monkeyspaw_shortcuts"
     var mechanism: HotkeyMechanism { currentRegistration.mechanism }
+    private(set) var activationRevision: UUID? = UUID()
     var onChange: (() -> Void)?
     private(set) var currentRegistration = HotkeyRegistration(
         mechanism: .globalShortcutsPortal, status: .needsAction, detail: LinuxStrings.shortcutAllow)
@@ -35,7 +37,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private var onFire: (() -> Void)?
     private var accelerator: Accelerator?
     private var activationToken: String?
-    private var activationRevision = 0
+    private var tokenRevision = 0
     private var parentLease: PortalParent?
     private var creating = false
     private var uncertainCreation = false
@@ -93,10 +95,13 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     deinit { shutdown() }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        guard action == .togglePicker, let accelerator else {
+            if action == .togglePicker { unregister(currentRegistration) }
+            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
         }
         close(.close)
         completeConfiguration()
@@ -327,13 +332,13 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             guard lastActivation != timestamp else { return }
             lastActivation = timestamp
             activationToken = token
-            activationRevision += 1
-            let activationRevision = activationRevision
+            tokenRevision += 1
+            let tokenRevision = tokenRevision
             onFire?()
             // ShortcutService marshals its callback through MainThread first.
             // Clear an unconsumed token after that hop (e.g. a debounced toggle).
             GTK.onMainLoop { [weak self] in
-                guard let self, self.activationRevision == activationRevision else { return }
+                guard let self, self.tokenRevision == tokenRevision else { return }
                 self.activationToken = nil
             }
         case .shortcutsChanged(let session, let shortcuts):
@@ -365,6 +370,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func unregister(_ registration: HotkeyRegistration) {
+        if unboundActions.unregister(registration) { return }
         guard registration.id == currentRegistration.id else { return }
         onFire = nil
         revision += 1
@@ -375,6 +381,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     func shutdown() {
         unregister(currentRegistration)
+        unboundActions.clearCallbacks()
         selection = .stopped
         if let observation { transport.removeObserver(observation); self.observation = nil }
     }
@@ -383,6 +390,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         // A native parent export may complete after teardown and a new gesture.
         // Invalidate that continuation before the next session can start.
         revision += 1
+        activationRevision = UUID()
         let ids = calls
         calls.removeAll()
         // Disable continuations before cancelling their native waits.

@@ -116,6 +116,10 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(backend.currentRegistration.configuration, .systemSettings)
         let repeatRegistration = backend.register(.repeatLast, accelerator: try Accelerator("Alt+R")) { XCTFail("Repeat must stay unbound") }
         XCTAssertEqual(repeatRegistration.status, .unbound)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatRegistration)
+        XCTAssertEqual(backend.register(.repeatLast, accelerator: nil) { XCTFail("Unbound repeat") }, repeatRegistration)
+        XCTAssertNotEqual(repeatRegistration.id, id)
+        XCTAssertEqual(service.calls.count, calls.count)
         backend.unregister(repeatRegistration)
         XCTAssertTrue(service.present)
         service.emit()
@@ -279,8 +283,12 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         start()
         ready()
         let id = backend.currentRegistration.id
+        let port: HotkeyBackend = backend
+        let previousRevision = port.activationRevision
+        XCTAssertNotNil(previousRevision)
         service.dropName()
         ready(.failed)
+        XCTAssertNotEqual(port.activationRevision, previousRevision)
         service.emit()
         let replacement = try FakeKGlobalAccel(address: address)
         defer { replacement.shutdown() }

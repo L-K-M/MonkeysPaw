@@ -30,7 +30,7 @@ public final class ShortcutsSettingsModel {
         public let changePath: ChangePath
 
         public var registrationStatus: RegistrationStatus? {
-            action == .repeatLast ? .unbound : registration?.status
+            registration?.status
         }
     }
 
@@ -40,16 +40,18 @@ public final class ShortcutsSettingsModel {
         action: .togglePicker, binding: .unknown, registration: nil,
         verification: .notStarted, changePath: .unavailable
     )
-    public let repeatLast = ActionState(
+    public private(set) var repeatLast = ActionState(
         action: .repeatLast, binding: .unbound, registration: nil,
         verification: .notStarted, changePath: .unavailable
     )
-    public private(set) var error: ShortcutRebindError?
-    public private(set) var instructions: String?
+    public var error: ShortcutRebindError? { error(for: .togglePicker) }
+    public var instructions: String? { instructions(for: .togglePicker) }
 
     private let shortcuts: ShortcutService
     private let setup: SetupService
     private var observer: UUID?
+    private var errors: [HotkeyAction: ShortcutRebindError] = [:]
+    private var actionInstructions: [HotkeyAction: String] = [:]
 
     public init(shortcuts: ShortcutService, setup: SetupService) {
         self.shortcuts = shortcuts
@@ -66,64 +68,69 @@ public final class ShortcutsSettingsModel {
         setup.refresh { _ in }
     }
 
-    public func beginVerification() {
-        setup.beginHotkeyVerification()
+    public func state(for action: HotkeyAction) -> ActionState {
+        action == .togglePicker ? togglePicker : repeatLast
     }
 
-    /// Only the picker has a change intent. Repeat remains inactive until M7.
-    public func setAccelerator(_ text: String) {
-        shortcuts.setPickerAccelerator(text) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success:
-                // The refreshed action state may compare equal, so publish
-                // the cleared error here rather than relying on update.
-                if self.error != nil {
-                    self.error = nil
-                    self.onChange?()
-                }
-                self.refresh()
-            case .failure(let error):
-                self.error = error
-                self.onChange?()
-            }
+    public func error(for action: HotkeyAction) -> ShortcutRebindError? { errors[action] }
+    public func instructions(for action: HotkeyAction) -> String? { actionInstructions[action] }
+
+    public func beginVerification(_ action: HotkeyAction = .togglePicker) {
+        setup.beginHotkeyVerification(action)
+    }
+
+    public func setAccelerator(_ text: String, for action: HotkeyAction = .togglePicker) {
+        shortcuts.setAccelerator(text, for: action) { [weak self] in self?.completed($0, for: action) }
+    }
+
+    public func clear(_ action: HotkeyAction) {
+        shortcuts.clear(action) { [weak self] in self?.completed($0, for: action) }
+    }
+
+    private func completed(_ result: Result<HotkeyRegistration, ShortcutRebindError>, for action: HotkeyAction) {
+        switch result {
+        case .success:
+            // An unchanged refreshed state must still publish the cleared error.
+            if errors.removeValue(forKey: action) != nil { onChange?() }
+            refresh()
+        case .failure(let error):
+            errors[action] = error
+            onChange?()
         }
     }
 
-    public func performPlatformChange() {
+    public func performPlatformChange(for action: HotkeyAction = .togglePicker) {
         // Recheck the live mechanism/capability before choosing an action.
         setup.refresh { [weak self] _ in
             guard let self else { return }
-            self.instructions = nil
+            self.actionInstructions.removeValue(forKey: action)
             defer { self.onChange?() }
-            switch self.togglePicker.changePath {
-            case .systemSettings(let action), .setup(let action):
-                self.setup.performFix(for: action)
+            switch self.state(for: action).changePath {
+            case .systemSettings(let kind), .setup(let kind):
+                self.setup.performFix(for: kind, action: action)
             case .systemSettingsGuidance(let text), .manualInstructions(let text):
-                self.instructions = text
+                self.actionInstructions[action] = text
             case .unavailable, .inApp: break
             }
         }
     }
 
     private func update(_ snapshot: SetupSnapshot) {
-        guard let registration = snapshot.rows.first(where: { $0.kind == .hotkey })?.registration else { return }
-        if togglePicker.registration != registration {
-            error = nil
-            instructions = nil
+        var changed = false
+        for action in HotkeyAction.allCases {
+            guard let registration = snapshot.shortcutRegistrations[action] else { continue }
+            if state(for: action).registration != registration {
+                changed = errors.removeValue(forKey: action) != nil || changed
+                changed = actionInstructions.removeValue(forKey: action) != nil || changed
+            }
+            let state = ActionState(action: action, binding: binding(for: registration),
+                registration: registration, verification: shortcuts.verification(for: action),
+                changePath: changePath(for: registration, session: snapshot.session))
+            guard state != self.state(for: action) else { continue }
+            if action == .togglePicker { togglePicker = state } else { repeatLast = state }
+            changed = true
         }
-
-        let verification: ShortcutVerification
-        switch registration.status {
-        case .unbound, .failed: verification = .notStarted
-        case .registered, .needsAction: verification = shortcuts.verification(for: .togglePicker)
-        }
-        let state = ActionState(action: .togglePicker, binding: binding(for: registration),
-            registration: registration, verification: verification,
-            changePath: changePath(for: registration, session: snapshot.session))
-        guard state != togglePicker else { return }
-        togglePicker = state
-        onChange?()
+        if changed { onChange?() }
     }
 
     private func binding(for registration: HotkeyRegistration) -> Binding {
@@ -136,6 +143,7 @@ public final class ShortcutsSettingsModel {
     }
 
     private func changePath(for registration: HotkeyRegistration, session: DesktopSession) -> ChangePath {
+        if registration.configuration == .unavailable { return .unavailable }
         switch registration.mechanism {
         case .carbon: return .inApp
         case .kglobalaccel:

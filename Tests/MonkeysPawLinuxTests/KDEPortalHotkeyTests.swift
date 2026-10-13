@@ -88,6 +88,23 @@ final class KDEPortalHotkeyTests: XCTestCase {
         try XCTUnwrap(service.sessionOwners.keys.first)
     }
 
+    func testUnboundRepeatAdapterPreservesNativePickerAndStartsNoPortalInteraction() throws {
+        start()
+        let picker = backend.currentRegistration
+        let calls = daemon.calls.count
+        let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Repeat adapter is unbound") }
+        XCTAssertEqual(repeatAction.status, .unbound)
+        XCTAssertNotEqual(repeatAction.id, picker.id)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+        backend.unregister(repeatAction)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(daemon.calls.count, calls)
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(daemon.present)
+        daemon.emit()
+        XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
+    }
+
     private func activate(_ timestamp: UInt64 = 1) throws {
         service.emit(member: "Activated", body: "(objectpath '\(try session())', 'toggle', uint64 \(timestamp), {'activation_token': <'fixture-token'>})")
         PortalSessionTestSupport.barrier(transport)

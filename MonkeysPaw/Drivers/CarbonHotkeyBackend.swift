@@ -36,6 +36,7 @@ final class CarbonHotkeyBackend: HotkeyBackend {
     private var entries: [UUID: Entry] = [:]
     private var liveRegistrations: [HotkeyAction: HotkeyRegistration] = [:]
     private var unboundRegistrations: [HotkeyAction: HotkeyRegistration] = [:]
+    private var unboundCallbacks: [UUID: () -> Void] = [:]
 
     deinit {
         for entry in entries.values { UnregisterEventHotKey(entry.reference) }
@@ -46,9 +47,15 @@ final class CarbonHotkeyBackend: HotkeyBackend {
         liveRegistrations[action] ?? unboundRegistration(for: action)
     }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         if let previous = liveRegistrations[action] { unregister(previous) }
+        guard let accelerator else {
+            let registration = unboundRegistration(for: action)
+            liveRegistrations[action] = registration
+            unboundCallbacks[registration.id] = onFire
+            return registration
+        }
 
         let combination: Combination
         do {
@@ -80,6 +87,7 @@ final class CarbonHotkeyBackend: HotkeyBackend {
     }
 
     func unregister(_ registration: HotkeyRegistration) {
+        unboundCallbacks.removeValue(forKey: registration.id)
         if let entry = entries.removeValue(forKey: registration.id) {
             UnregisterEventHotKey(entry.reference)
         }

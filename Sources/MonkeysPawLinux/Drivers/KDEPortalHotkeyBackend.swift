@@ -6,6 +6,7 @@ import MonkeysPawCore
 /// GLib owns selection, presence ordering and callback routing. The two drivers
 /// share KDE's stored component, but only one may supply activation proof.
 final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
+    let unboundActions = UnboundHotkeyActions()
     private enum Effective { case none, native, portal }
     private enum Phase { case idle, busy, stopped }
     var mechanism: HotkeyMechanism { currentRegistration.mechanism }
@@ -59,10 +60,13 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
 
     deinit { shutdown() }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        guard action == .togglePicker, let accelerator else {
+            if action == .togglePicker { unregister(currentRegistration) }
+            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
         }
         guard phase != .stopped else { return currentRegistration }
         self.onFire = onFire
@@ -356,6 +360,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     func fire(_ action: HotkeyAction) -> Bool { false }
 
     func unregister(_ registration: HotkeyRegistration) {
+        if unboundActions.unregister(registration) { return }
         guard registration.id == currentRegistration.id else { return }
         onFire = nil
         operation += 1
@@ -367,6 +372,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func shutdown() {
+        unboundActions.clearCallbacks()
         guard phase != .stopped else { return }
         unregister(currentRegistration)
         phase = .stopped

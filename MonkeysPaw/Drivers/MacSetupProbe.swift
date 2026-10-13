@@ -22,11 +22,11 @@ final class MacSetupProbe: SetupProbe {
     func ydotoolStatus() -> SetupStatus { .notApplicable }
     func kdeStatus() -> SetupStatus { .notApplicable }
 
-    func hotkeyRegistration() -> HotkeyRegistration {
-        hotkeys.registration(for: .togglePicker)
+    func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration {
+        hotkeys.registration(for: action)
     }
 
-    func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) {
+    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) {
         mainThread.run { [self] in
             guard kind == .accessibility else {
                 done()

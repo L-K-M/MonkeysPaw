@@ -24,10 +24,14 @@ public struct SetupRow: Equatable, Sendable {
 public struct SetupSnapshot: Equatable, Sendable {
     public let session: DesktopSession
     public let rows: [SetupRow]
+    /// Setup's existing hotkey row remains the picker; Settings consumes both.
+    public let shortcutRegistrations: [HotkeyAction: HotkeyRegistration]
 
-    public init(session: DesktopSession, rows: [SetupRow]) {
+    public init(session: DesktopSession, rows: [SetupRow],
+                shortcutRegistrations: [HotkeyAction: HotkeyRegistration] = [:]) {
         self.session = session
         self.rows = rows
+        self.shortcutRegistrations = shortcutRegistrations
     }
 }
 

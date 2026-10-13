@@ -9,6 +9,27 @@ final class GnomeKeybindingTests: XCTestCase {
     private let itemSchema = GnomeKeybindingInstaller.itemSchema
     private let base = GnomeKeybindingInstaller.basePath
 
+    func testUnboundRepeatAdaptersPreserveManualAndGnomeToggleCallbacksWithoutWriting() throws {
+        let tools = try fakeSettings()
+        let backends: [LinuxHotkeyBackend] = [ManualHotkeyBackend(),
+            GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())]
+        for backend in backends {
+            var fires = 0
+            let picker = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) { fires += 1 }
+            let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Repeat adapter is unbound") }
+            XCTAssertNotEqual(repeatAction.id, picker.id)
+            XCTAssertEqual(repeatAction.status, .unbound)
+            XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+            XCTAssertFalse(backend.fire(.repeatLast))
+            backend.unregister(repeatAction)
+            XCTAssertEqual(backend.currentRegistration, picker)
+            XCTAssertTrue(backend.fire(.togglePicker))
+            XCTAssertEqual(fires, 1)
+            backend.shutdown()
+        }
+        XCTAssertTrue(tools.arguments.isEmpty)
+    }
+
     func testRegistrationIsQuietUntilExplicitSetupAction() throws {
         let tools = try fakeSettings()
         let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())

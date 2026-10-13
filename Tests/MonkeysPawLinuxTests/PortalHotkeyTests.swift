@@ -57,6 +57,41 @@ final class PortalHotkeyTests: XCTestCase {
 
     private func session() throws -> String { try XCTUnwrap(portal.sessionOwners.keys.first) }
 
+    func testActivationRevisionTracksSessionRetirementRatherThanIndividualEvents() throws {
+        try register()
+        let port: HotkeyBackend = backend
+        XCTAssertNotNil(port.activationRevision)
+        configure()
+        let attachedRevision = port.activationRevision
+        let handle = try session()
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'toggle', uint64 1, @a{sv} {})")
+        XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
+        XCTAssertEqual(port.activationRevision, attachedRevision)
+        var closed = false
+        backend.quiesce { closed = $0 }
+        XCTAssertTrue(GTKTestSupport.spin { closed })
+        XCTAssertNotEqual(port.activationRevision, attachedRevision)
+    }
+
+    func testUnboundRepeatDeclarationPreservesAttachedPickerAndStartsNoInteraction() throws {
+        try register()
+        configure()
+        let picker = backend.currentRegistration
+        let methods = portal.calls.map(\.method)
+        let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Repeat adapter is unbound") }
+        XCTAssertEqual(repeatAction.status, .unbound)
+        XCTAssertEqual(repeatAction.configuration, .unavailable)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+        XCTAssertNotEqual(repeatAction.id, picker.id)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(portal.calls.map(\.method), methods)
+        backend.unregister(repeatAction)
+        let handle = try session()
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'toggle', uint64 1, @a{sv} {})")
+        XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
+        XCTAssertEqual(backend.currentRegistration, picker)
+    }
+
     func testQuietProbeThenBindingUsesStableTokenSameConnectionAndActualTrigger() throws {
         try register()
         XCTAssertTrue(portal.calls.isEmpty)

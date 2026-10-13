@@ -175,7 +175,10 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
         detail: "Ctrl+K, Ctrl+P; Alt+F9", configuration: .systemSettings)
     var mechanism: HotkeyMechanism { registration.mechanism }
     var fire: (() -> Void)?
-    func register(_ action: HotkeyAction, accelerator: Accelerator, onFire: @escaping () -> Void) -> HotkeyRegistration {
+    let unboundRepeat = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
+        detail: SetupStrings.unboundShortcut, configuration: .unavailable)
+    func register(_ action: HotkeyAction, accelerator: Accelerator?, onFire: @escaping () -> Void) -> HotkeyRegistration {
+        guard action == .togglePicker, accelerator != nil else { return unboundRepeat }
         fire = onFire
         return registration
     }
@@ -190,8 +193,10 @@ private final class SettingsSetupProbe: SetupProbe {
     func portalStatus() -> SetupStatus { .notApplicable }
     func ydotoolStatus() -> SetupStatus { .notApplicable }
     func kdeStatus() -> SetupStatus { .needsAction(fix: SetupStrings.kdeShortcut) }
-    func hotkeyRegistration() -> HotkeyRegistration { backend.registration }
-    func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) { fixes.append(kind); done() }
+    func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration {
+        action == .togglePicker ? backend.registration : backend.unboundRepeat
+    }
+    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) { fixes.append(kind); done() }
 }
 
 /// Shortcuts never uses delivery ports. Fail if the view accidentally does.
