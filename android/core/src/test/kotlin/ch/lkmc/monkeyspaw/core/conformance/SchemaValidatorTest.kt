@@ -4,14 +4,29 @@ import ch.lkmc.monkeyspaw.core.syncapi.WireJson
 import ch.lkmc.monkeyspaw.core.syncapi.WireValue
 import ch.lkmc.monkeyspaw.core.syncapi.wireLong
 import ch.lkmc.monkeyspaw.core.syncapi.wireString
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 
 class SchemaValidatorTest {
+    @get:Rule
+    val temporary = TemporaryFolder()
+
     private fun json(source: String): WireValue = WireJson.parse(source.toByteArray())
     private val validator = SchemaValidator()
+
+    @Test
+    fun `pathless schema ids fail with UnsupportedSchema`() {
+        val file = temporary.newFile("HealthResponse.json").toPath()
+        for (id in listOf("urn:example:HealthResponse.json", "mailto:health@example.test")) {
+            Files.writeString(file, """{"${'$'}schema":"https://json-schema.org/draft/2020-12/schema","${'$'}id":"$id","title":"HealthResponse","type":"object"}""")
+            assertFailsWith<UnsupportedSchema> { SchemaValidator.load(mapOf("HealthResponse" to file)) }
+        }
+    }
 
     @Test
     fun `every emitted schema agrees with every dto fixture offline`() {

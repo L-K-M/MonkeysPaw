@@ -188,7 +188,7 @@ internal class SchemaValidator(
                 val fields = schema.objectValue()
                 val id = fields["\$id"]?.text() ?: throw UnsupportedSchema()
                 val uri = URI(id)
-                if (!uri.isAbsolute || uri.path.substringAfterLast('/') != "$name.json" ||
+                if (!uri.isAbsolute || uri.path?.substringAfterLast('/') != "$name.json" ||
                     fields["title"] != WireValue.Text(name) ||
                     fields["\$schema"] != WireValue.Text("https://json-schema.org/draft/2020-12/schema")) throw UnsupportedSchema()
                 if (schemas.put(id, schema) != null) throw UnsupportedSchema()
