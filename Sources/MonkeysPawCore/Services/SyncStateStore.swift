@@ -35,9 +35,11 @@ public final class SyncStateStore: @unchecked Sendable {
 
     func blockForRecovery(retaining state: SyncState?) { persistence.blockForRecovery(retaining: state) }
 
-    func recover(for binding: SyncLibraryIdentity) throws -> SyncState? {
+    func recover(for binding: SyncLibraryIdentity,
+                 validating validate: (SyncState?) throws -> Void = { _ in }) throws -> SyncState? {
         try persistence.recover { state in
             guard state == nil || state?.binding == binding else { throw SyncError.bindingMismatch }
+            try validate(state)
         }
     }
 }

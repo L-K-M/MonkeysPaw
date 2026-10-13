@@ -15,7 +15,7 @@ protocol SyncKeyedStore {
 /// own store lock. Writes already in progress finish before preparation can
 /// snapshot that store; new writes are refused until the journal is settled.
 final class SyncLibraryWriteGate {
-    private enum Owner: Equatable { case apply(UUID), unreadableJournal }
+    private enum Owner: Equatable { case apply(UUID, SyncState), unreadableJournal }
     private let lock = NSLock()
     private var owner: Owner?
 
@@ -25,32 +25,41 @@ final class SyncLibraryWriteGate {
         guard owner == nil else { throw LibraryError.recoveryRequired }
     }
 
-    func begin(_ id: UUID) throws {
+    func begin(_ id: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard owner == nil || owner == .apply(id) || owner == .unreadableJournal else { throw LibraryError.recoveryRequired }
-        owner = .apply(id)
+        if case .apply(let current, _)? = owner, current != id { throw LibraryError.recoveryRequired }
+        owner = .apply(id, nextState)
     }
 
     func finish(_ id: UUID) {
         lock.lock()
         defer { lock.unlock() }
-        if owner == .apply(id) { owner = nil }
+        if case .apply(let current, _)? = owner, current == id { owner = nil }
     }
 
-    func replace(_ previous: UUID, with next: UUID) throws {
+    func replace(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
-        guard owner == .apply(previous) else { throw LibraryError.recoveryRequired }
-        owner = .apply(next)
+        guard case .apply(let current, _)? = owner, current == previous else { throw LibraryError.recoveryRequired }
+        owner = .apply(next, nextState)
     }
 
     /// Serialized recovery adopts the validated on-disk journal even after
     /// its former journal instance was abandoned before a permit swap.
-    func resume(_ id: UUID) {
+    func resume(_ id: UUID, nextState: SyncState) {
         lock.lock()
         defer { lock.unlock() }
-        owner = .apply(id)
+        owner = .apply(id, nextState)
+    }
+
+    /// Retain completion evidence in the live graph when its journal object
+    /// is abandoned after an uncertain deletion removed the on-disk intent.
+    var pendingPermit: (id: UUID, nextState: SyncState)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard case .apply(let id, let nextState)? = owner else { return nil }
+        return (id, nextState)
     }
 
     var hasUnreadableJournal: Bool {

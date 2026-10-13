@@ -676,10 +676,10 @@ public final class LibraryService: PromptFavoriteEditing {
         catch { throw LibraryError.operationFailed }
     }
 
-    func beginSyncApply(_ id: UUID) throws {
+    func beginSyncApply(_ id: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
-        try syncWriteGate.begin(id)
+        try syncWriteGate.begin(id, nextState: nextState)
     }
 
     func endSyncApply(_ id: UUID) {
@@ -688,10 +688,10 @@ public final class LibraryService: PromptFavoriteEditing {
         syncWriteGate.finish(id)
     }
 
-    func replaceSyncApply(_ previous: UUID, with next: UUID) throws {
+    func replaceSyncApply(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
-        try syncWriteGate.replace(previous, with: next)
+        try syncWriteGate.replace(previous, with: next, nextState: nextState)
     }
 
     func blockSyncApplyForRecovery() {
@@ -700,10 +700,16 @@ public final class LibraryService: PromptFavoriteEditing {
         syncWriteGate.blockForRecovery()
     }
 
-    func resumeSyncApply(_ id: UUID) {
+    func resumeSyncApply(_ id: UUID, nextState: SyncState) {
         lock.lock()
         defer { lock.unlock() }
-        syncWriteGate.resume(id)
+        syncWriteGate.resume(id, nextState: nextState)
+    }
+
+    var pendingSyncApplyPermit: (id: UUID, nextState: SyncState)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return syncWriteGate.pendingPermit
     }
 
     var hasUnreadableSyncJournal: Bool {

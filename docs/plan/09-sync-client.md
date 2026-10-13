@@ -92,6 +92,10 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   journal/state records on the same live graph before releasing the permit.
   A replacement journal instance may resume the validated on-disk plan after
   abandoning its predecessor; each graph still serializes one journal.
+  The live permit retains the intended state across journal-object replacement.
+  If the journal is already absent, recovery verifies that intended state and
+  reflushes state and deletion before releasing the permit; a missing intent
+  with uncommitted state stays recovery-required until restored or resolved.
   Corrupt/future journals stay blocked until explicitly restored or reset;
   a reset's deletion must be flushed before ordinary access resumes.
   Publish exact server bytes, verify the result, flush files and affected

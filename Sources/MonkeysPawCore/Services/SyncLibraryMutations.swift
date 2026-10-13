@@ -172,12 +172,15 @@ final class SyncLibraryMutations {
         return edit
     }
 
-    func begin(_ id: UUID) throws { try library.beginSyncApply(id) }
+    func begin(_ id: UUID, nextState: SyncState) throws { try library.beginSyncApply(id, nextState: nextState) }
     func finish(_ id: UUID) { library.endSyncApply(id) }
-    func replacePermit(_ previous: UUID, with next: UUID) throws { try library.replaceSyncApply(previous, with: next) }
+    func replacePermit(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
+        try library.replaceSyncApply(previous, with: next, nextState: nextState)
+    }
     func blockForRecovery() { library.blockSyncApplyForRecovery() }
     func finishEmptyRecovery() { library.finishEmptySyncRecovery() }
-    func resume(_ id: UUID) { library.resumeSyncApply(id) }
+    func resume(_ id: UUID, nextState: SyncState) { library.resumeSyncApply(id, nextState: nextState) }
+    var pendingPermit: (id: UUID, nextState: SyncState)? { library.pendingSyncApplyPermit }
     var hasUnreadableJournal: Bool { library.hasUnreadableSyncJournal }
 
     func prepareMigrations(for edit: SyncLibraryEdit) throws -> [SyncKeyedMigration] {

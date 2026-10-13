@@ -117,7 +117,6 @@ final class SyncApplyJournal {
     private let states: SyncStateStore
     private let persistence: SyncPersistence<SyncApplyRecord>
     private let lock = NSLock()
-    private var permit: (id: UUID, nextState: SyncState)?
 
     init(files: FileStore, operations: SyncFileOperations,
          mutations: SyncLibraryMutations, states: SyncStateStore) throws {
@@ -129,8 +128,9 @@ final class SyncApplyJournal {
             path: "sync/apply.json", version: Limits.syncApplyJournalVersion)
         do {
             if let record = try persistence.load() {
-                mutations.resume(record.id)
-                permit = (record.id, record.nextState)
+                mutations.resume(record.id, nextState: record.nextState)
+            } else if let permit = mutations.pendingPermit {
+                try settleRemovedJournal(permit)
             } else if mutations.hasUnreadableJournal {
                 try SyncDurability.flushParents(of: "sync/apply.json", operations: operations)
                 mutations.finishEmptyRecovery()
@@ -151,8 +151,7 @@ final class SyncApplyJournal {
         guard try states.load(for: plan.nextState.binding) == plan.expectedState else {
             return .replanAsConflict(operationID: plan.id)
         }
-        try mutations.begin(plan.id)
-        permit = (plan.id, plan.nextState)
+        try mutations.begin(plan.id, nextState: plan.nextState)
         do {
             let steps = try plan.edits.map { edit in
                 try edit.validate()
@@ -164,7 +163,7 @@ final class SyncApplyJournal {
                 return record
             }
         } catch {
-            if persistence.snapshot.error == nil, persistence.snapshot.value == nil { finishPermit() }
+            if persistence.snapshot.error == nil, persistence.snapshot.value == nil { mutations.finish(plan.id) }
             throw Self.safe(error)
         }
         return try run()
@@ -175,20 +174,14 @@ final class SyncApplyJournal {
         lock.lock()
         defer { lock.unlock() }
         if let record = try persistence.recover() {
-            if let permit, permit.id != record.id {
+            if let permit = mutations.pendingPermit, permit.id != record.id {
                 // A failed replacement flush may leave the new ID on disk
                 // while this graph still owns the previous plan's permit.
-                try mutations.replacePermit(permit.id, with: record.id)
-            } else { try mutations.begin(record.id) }
-            permit = (record.id, record.nextState)
+                try mutations.replacePermit(permit.id, with: record.id, nextState: record.nextState)
+            } else { try mutations.begin(record.id, nextState: record.nextState) }
             _ = try states.recover(for: record.nextState.binding)
         } else {
-            if let permit {
-                guard try states.recover(for: permit.nextState.binding) == permit.nextState else {
-                    throw LibraryError.recoveryRequired
-                }
-                finishPermit()
-            }
+            if let permit = mutations.pendingPermit { try settleRemovedJournal(permit) }
             return .committed
         }
         return try run()
@@ -221,16 +214,14 @@ final class SyncApplyJournal {
                 guard current?.id == previous.id else { throw SyncError.invalidState }
                 return replacement
             }
-            try mutations.replacePermit(previous.id, with: replacement.id)
-            permit = (replacement.id, replacement.nextState)
+            try mutations.replacePermit(previous.id, with: replacement.id, nextState: replacement.nextState)
         } catch { throw Self.safe(error) }
         return try run()
     }
 
     private func run() throws -> SyncApplyOutcome {
         guard var record = try persistence.load() else { return .committed }
-        try mutations.begin(record.id)
-        permit = (record.id, record.nextState)
+        try mutations.begin(record.id, nextState: record.nextState)
         let binding = record.nextState.binding
         let state = try states.load(for: binding)
         guard state == record.expectedState || state == record.nextState else {
@@ -290,7 +281,7 @@ final class SyncApplyJournal {
             stateCommitted = true
             // StateStore's private write and checked flush must finish first.
             try persistence.reset(nil)
-            finishPermit()
+            mutations.finish(record.id)
             return .committed
         } catch LibraryError.keyedStateConflict {
             return .recoveryRequired(operationID: record.id)
@@ -302,10 +293,17 @@ final class SyncApplyJournal {
         }
     }
 
-    private func finishPermit() {
-        guard let permit else { return }
+    private func settleRemovedJournal(_ permit: (id: UUID, nextState: SyncState)) throws {
+        let previous = states.snapshot.value
+        _ = try states.recover(for: permit.nextState.binding) { state in
+            guard state == permit.nextState else { throw LibraryError.recoveryRequired }
+        }
+        do { try SyncDurability.flushParents(of: "sync/apply.json", operations: operations) }
+        catch {
+            states.blockForRecovery(retaining: previous)
+            throw error
+        }
         mutations.finish(permit.id)
-        self.permit = nil
     }
 
     private func save(_ record: SyncApplyRecord) throws {

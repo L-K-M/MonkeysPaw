@@ -135,6 +135,76 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertNoThrow(try rig.values.removeAll())
     }
 
+    func testAbandonedJournalRemovalFailureRecoversOnTheSameLibrary() throws {
+        for retryFails in [false, true] {
+            let rig = try SyncApplyTestRig()
+            let plan = try rig.plan([rig.replacement()])
+            var stateWritten = false
+            var stateDurable = false
+            do {
+                let abandoned = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                     mutations: rig.mutations, states: rig.states)
+                rig.dataOperations.onOperation = { operation in
+                    if operation == "file:sync/state.json" { stateWritten = true }
+                    if stateWritten, operation == "directory:/" { stateDurable = true }
+                    if stateDurable, operation == "directory:sync" {
+                        rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+                    }
+                }
+                XCTAssertThrowsError(try abandoned.apply(plan)) { XCTAssertEqual($0 as? SyncError, .durabilityUncertain) }
+            }
+            XCTAssertTrue(stateDurable)
+            XCTAssertNil(try rig.data.stamp(at: "sync/apply.json"))
+            XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+            rig.dataOperations.onOperation = nil
+            rig.dataOperations.failOperationNumber = nil
+            if retryFails {
+                rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount + 1
+                XCTAssertThrowsError(try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                         mutations: rig.mutations, states: rig.states)) {
+                    XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+                }
+                XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+                rig.dataOperations.failOperationNumber = nil
+            }
+            let recovered = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                mutations: rig.mutations, states: rig.states)
+            XCTAssertEqual(try recovered.replay(), .committed)
+            XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+            XCTAssertNil(rig.states.snapshot.error)
+            XCTAssertNoThrow(try rig.library.entries())
+            XCTAssertNoThrow(try rig.values.removeAll())
+        }
+    }
+
+    func testMissingUncommittedJournalCannotReportCompletedRecovery() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.libraryOperations.failFlushNumber = 1
+        do {
+            let abandoned = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                 mutations: rig.mutations, states: rig.states)
+            XCTAssertThrowsError(try abandoned.apply(plan)) {
+                XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .durabilityFailed)
+            }
+        }
+        let journal = try rig.data.read(at: "sync/apply.json")
+        try rig.data.delete(at: "sync/apply.json")
+        rig.libraryOperations.failFlushNumber = nil
+        XCTAssertThrowsError(try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                 mutations: rig.mutations, states: rig.states)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertNil(rig.states.snapshot.value)
+        // Restoring the retained intent permits recovery without a new graph.
+        try rig.data.writePrivate(journal, at: "sync/apply.json")
+        let restored = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                           mutations: rig.mutations, states: rig.states)
+        XCTAssertEqual(try restored.replay(), .committed)
+        XCTAssertNoThrow(try rig.library.entries())
+    }
+
     func testFailedRecoveryFlushKeepsPermitUntilADurableRetry() throws {
         let rig = try SyncApplyTestRig()
         let plan = try rig.plan([rig.replacement()])
@@ -249,7 +319,7 @@ final class SyncApplyJournalTests: XCTestCase {
             let rig = try SyncApplyTestRig()
             try rig.data.put(json, at: "sync/apply.json")
             let owner = UUID()
-            try rig.mutations.begin(owner)
+            try rig.mutations.begin(owner, nextState: SyncState(binding: rig.binding))
             let accesses = rig.files.accessCount
             XCTAssertThrowsError(try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
                                                     mutations: rig.mutations, states: rig.states)) {
