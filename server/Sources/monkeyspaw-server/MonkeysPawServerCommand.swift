@@ -10,9 +10,29 @@ struct MonkeysPawServerCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "monkeyspaw-server",
         abstract: "Run the Monkey's Paw sync server.",
-        subcommands: [Serve.self, Migrate.self, Healthcheck.self],
+        subcommands: [Serve.self, Migrate.self, Healthcheck.self, UserCommand.self, GroupCommand.self, InviteCommand.self],
         defaultSubcommand: Serve.self
     )
+
+    static func main() async {
+        var command: any ParsableCommand
+        do {
+            command = try await asyncParseAsRoot()
+        } catch {
+            if exitCode(for: error) == .success { exit(withError: error) }
+            // ArgumentParser's normal errors echo invalid values and extra arguments.
+            exit(withError: ValidationError("Invalid command or arguments. Use --help; passwords require stdin or --password-file."))
+        }
+        do {
+            if var asyncCommand = command as? any AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+        } catch {
+            exit(withError: error)
+        }
+    }
 }
 
 private struct Serve: AsyncParsableCommand {

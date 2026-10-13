@@ -16,17 +16,42 @@ struct GroupService: Sendable {
     }
 
     func create(_ request: SyncAPI.CreateGroupRequest, session: SessionIdentity) async throws -> SyncAPI.Group {
+        try await create(request, creator: .session(session))
+    }
+
+    func create(_ request: SyncAPI.CreateGroupRequest, ownerID: String) async throws -> SyncAPI.Group {
+        try AccountValidation.dto(SyncAPI.IDPath(id: ownerID))
+        return try await create(request, creator: .cliOperator(ownerID: ownerID))
+    }
+
+    private enum Creator: Sendable {
+        case session(SessionIdentity)
+        case cliOperator(ownerID: String)
+    }
+
+    private func create(_ request: SyncAPI.CreateGroupRequest, creator: Creator) async throws -> SyncAPI.Group {
         try AccountValidation.dto(request)
         return try await repository.write { groups, accounts, devices, audit in
-            let actor = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+            let owner: AccountRecord
+            let actor: AuditActor
+            switch creator {
+            case .session(let session):
+                owner = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+                actor = .user(owner.id)
+            case .cliOperator(let ownerID):
+                guard let user = try await accounts.user(id: ownerID) else { throw AccountError.notFound }
+                guard user.disabledAt == nil else { throw AccountError.forbidden }
+                owner = user
+                actor = .cliOperator
+            }
             let now = clock()
             let group = try SyncAPI.Group(id: ServerTimestamp.id(at: now), name: request.name,
-                                          createdBy: actor.id, createdAt: ServerTimestamp.string(now))
+                                          createdBy: owner.id, createdAt: ServerTimestamp.string(now))
             try await groups.insert(group)
             // New-group creation is the sole automatic-owner exception for admins.
-            try await groups.upsertMember(groupID: group.id, userID: actor.id, role: .owner, at: group.createdAt)
-            try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: .groupCreate, targetID: group.id, at: now))
-            try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: .membershipUpsert, targetID: actor.id, groupID: group.id, at: now))
+            try await groups.upsertMember(groupID: group.id, userID: owner.id, role: .owner, at: group.createdAt)
+            try await auditWrite(audit, AuditEvent(actor: actor, action: .groupCreate, targetID: group.id, at: now))
+            try await auditWrite(audit, AuditEvent(actor: actor, action: .membershipUpsert, targetID: owner.id, groupID: group.id, at: now))
             return group
         }
     }
@@ -71,14 +96,28 @@ struct GroupService: Sendable {
     func upsertMember(
         id: String, userID: String, request: SyncAPI.MembershipRequest, session: SessionIdentity
     ) async throws -> SyncAPI.Member {
+        try await upsertMember(id: id, userID: userID, request: request, actor: .session(session))
+    }
+
+    func upsertMember(
+        id: String, userID: String, request: SyncAPI.MembershipRequest, actor: AdministrationActor
+    ) async throws -> SyncAPI.Member {
         try AccountValidation.dto(SyncAPI.IDPath(id: id))
         try AccountValidation.dto(SyncAPI.IDPath(id: userID))
         try AccountValidation.dto(request)
         return try await repository.write { groups, accounts, devices, audit in
-            let actor = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
-            _ = try await Self.requireGroup(id: id, actor: actor, groups: groups, access: .manage)
+            let userActor: AccountRecord?
+            switch actor {
+            case .session(let session):
+                let user = try await SessionService.requireSession(session, accounts: accounts, devices: devices)
+                _ = try await Self.requireGroup(id: id, actor: user, groups: groups, access: .manage)
+                userActor = user
+            case .cliOperator:
+                guard try await groups.group(id: id) != nil else { throw AccountError.notFound }
+                userActor = nil
+            }
             let current = try await groups.member(groupID: id, userID: userID)
-            if actor.id == userID, actor.accountKind == .admin {
+            if let userActor, userActor.id == userID, userActor.accountKind == .admin {
                 guard let current, Self.rank(request.role) <= Self.rank(current.role) else { throw AccountError.forbidden }
             }
             guard let user = try await accounts.user(id: userID) else { throw AccountError.notFound }
@@ -88,7 +127,7 @@ struct GroupService: Sendable {
             let now = clock()
             let joinedAt = current?.joinedAt ?? ServerTimestamp.string(now)
             try await groups.upsertMember(groupID: id, userID: userID, role: request.role, at: joinedAt)
-            try await auditWrite(audit, AuditEvent(actor: .user(actor.id), action: .membershipUpsert, targetID: userID, groupID: id, at: now))
+            try await auditWrite(audit, AuditEvent(actor: actor.auditActor, action: .membershipUpsert, targetID: userID, groupID: id, at: now))
             return .init(userID: user.id, username: user.username, displayName: user.displayName, role: request.role, joinedAt: joinedAt)
         }
     }
