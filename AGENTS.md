@@ -175,6 +175,9 @@ is unaffected.
 
 ## Architecture and engineering rules (§4.2)
 
+- A change to format, grammar, validation, canonical form or the sync
+  protocol lands with fixture updates and both the Swift and Kotlin
+  implementations in the same PR (§10.7, the move-together rule).
 - Each layer calls only the layer directly below it: Views → Presentation
   models → Services → Domain and Ports. Services see drivers only through
   port protocols. Views render state and forward intents; they never touch
