@@ -33,7 +33,27 @@ final class ConnectionMainQueue: MainThread {
 
 struct ConnectionBackground: BackgroundWork {
     private let queue = DispatchQueue(label: "connection-test-work")
-    func run(_ work: @escaping () -> Void) { queue.async(execute: DispatchWorkItem(block: work)) }
+    private let afterWork: () -> Void
+    init(afterWork: @escaping () -> Void = {}) { self.afterWork = afterWork }
+    func run(_ work: @escaping () -> Void) {
+        queue.async(execute: DispatchWorkItem {
+            work()
+            self.afterWork()
+        })
+    }
+}
+
+final class ConnectionBlockingSecrets: SecretStore {
+    let allowReturn = DispatchSemaphore(value: 0)
+    let onRead: () -> Void
+    init(onRead: @escaping () -> Void) { self.onRead = onRead }
+    func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
+        onRead()
+        allowReturn.wait()
+        return nil
+    }
+    func write(_ value: SecretValue, account: SecretAccount) throws -> SecretTier { throw SecretStoreError.readOnly }
+    func delete(account: SecretAccount) throws { throw SecretStoreError.readOnly }
 }
 
 final class ConnectionQueuedWork: BackgroundWork {

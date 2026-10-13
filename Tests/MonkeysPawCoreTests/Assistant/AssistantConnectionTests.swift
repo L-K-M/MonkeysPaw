@@ -136,6 +136,15 @@ final class AssistantConnectionTests: XCTestCase {
         try await assertResult(harness, expected: .invalidResponse)
     }
 
+    func testAccumulatedPaginationIDBytesAreBoundedAcrossPages() async throws {
+        let suffix = String(repeating: "x", count: Limits.modelListByteCap / 2)
+        let harness = ConnectionHarness([
+            .response(try ConnectionHarness.page([["id": "a"]], more: true, last: "a" + suffix)),
+            .response(try ConnectionHarness.page([["id": "b"]], more: true, last: "b" + suffix)),
+            .response(try ConnectionHarness.page())])
+        try await assertResult(harness, expected: .invalidResponse)
+    }
+
     func testModelIDsDeduplicateByExactUTF8Bytes() async throws {
         let composed = "é"
         let decomposed = "e\u{301}"
@@ -300,6 +309,41 @@ final class AssistantConnectionTests: XCTestCase {
         work.drain()
         XCTAssertTrue(harness.provider.secrets.reads.isEmpty)
         XCTAssertEqual(harness.main.count, 0)
+    }
+
+    func testCancelAndDeadlineDuringBlockedSecretReadCompleteWithoutHTTP() async throws {
+        for expected in [ConnectionTestResult.cancelled, .timeout] {
+            let started = expectation(description: "Secret read blocked")
+            let finished = expectation(description: "Blocked work returned")
+            let queued = expectation(description: "Main completion queued")
+            let secrets = ConnectionBlockingSecrets { started.fulfill() }
+            defer { secrets.allowReturn.signal() }
+            let transport = ConnectionTransport([])
+            let main = ConnectionMainQueue()
+            main.onEnqueue = { queued.fulfill() }
+            let settings = ProviderSettingsService(store: ProviderSettingsStore(files: MemoryFileStore()), secrets: secrets)
+            let service = AssistantService(providerSettings: settings, anthropic: AnthropicClient(transport: transport),
+                openAICompatible: OpenAIClient(transport: transport, providerState: ProviderStateStore(files: MemoryFileStore())),
+                work: ConnectionBackground(afterWork: { finished.fulfill() }), main: main,
+                timeout: expected == .cancelled ? .seconds(15) : .milliseconds(200), now: { ContinuousClock.now })
+            var results: [ConnectionTestResult] = []
+            let test = service.testConnection(draft: ProviderDraft(kind: .openaiCompatible)) { result in
+                XCTAssertTrue(main.isRunning)
+                results.append(result)
+            }
+            await fulfillment(of: [started], timeout: 3)
+            if expected == .cancelled { test.cancel() }
+            await fulfillment(of: [queued], timeout: 3)
+            main.drain()
+            XCTAssertEqual(results, [expected])
+            // Completion must precede release of the native-style blocking read.
+            secrets.allowReturn.signal()
+            await fulfillment(of: [finished], timeout: 3)
+            test.cancel()
+            XCTAssertEqual(main.count, 0)
+            let requests = await transport.snapshot()
+            XCTAssertTrue(requests.isEmpty)
+        }
     }
 
     func testCancelBeforeBackgroundWorkPreventsCredentialReadAndCompletesOnce() async throws {

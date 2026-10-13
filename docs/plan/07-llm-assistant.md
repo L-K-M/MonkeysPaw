@@ -53,8 +53,8 @@ re-entry or Clear before it can be used.
   IDs collapse, preferring a display name and then its UTF-8 order. Partial
   lists are never published. Missing/repeated continuation cursors, empty pages
   claiming more data, or exceeding 100 pages, 10,000 total entries or 2 MiB of
-  total ID/display-name bytes fail as an invalid response. Ordinary empty lists
-  succeed.
+  total model/cursor ID and display-name bytes fail as an invalid response.
+  Ordinary empty lists succeed.
   Test outcomes distinguish authentication, not found (404), rate limited with
   parsed Retry-After, network, timeout, unsupported listing (405/501), invalid
   response, cancellation, local provider-settings errors and other provider

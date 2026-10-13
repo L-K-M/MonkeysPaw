@@ -76,6 +76,9 @@ public final class AssistantService: CustomStringConvertible, CustomDebugStringC
             try checkDeadline(deadline)
             guard page.models.count <= Limits.modelListEntryCap - count else { throw AssistantError.invalidOutput }
             count += page.models.count
+            let cursorBytes = [page.firstID, page.lastID].compactMap { $0 }.reduce(0) { $0 + $1.utf8.count }
+            guard cursorBytes <= Limits.modelListByteCap - bytes else { throw AssistantError.invalidOutput }
+            bytes += cursorBytes
             for model in page.models {
                 guard AssistantModelList.validID(model.id) else { throw AssistantError.invalidOutput }
                 let size = model.id.utf8.count + (model.displayName?.utf8.count ?? 0)
