@@ -58,6 +58,7 @@ final class LinuxLibraryWindow {
     private let history = LinuxLibraryHistoryView()
     private let commands: LinuxLibraryCommands
     private var historyPrompt: LibraryPromptSelection?
+    private var historyReloadPending = false
     private var renderedFields: [PromptField]?
     private var renderedPreview: String?
     private var importView: LinuxLibraryImportView?
@@ -176,6 +177,7 @@ final class LinuxLibraryWindow {
         self.editor = editor
         commands.bind(editor: editor, browser: browser)
         historyPrompt = nil
+        historyReloadPending = false
         if let imports { importView?.bind(imports) }
         previousPrompt = nil
         copySelection = nil
@@ -215,6 +217,8 @@ final class LinuxLibraryWindow {
                 self.selectPrompt(selection)
             }
             self.render()
+            // A tab opened while busy must retry even if its prompt stayed the same.
+            if gtk_notebook_get_current_page(mp_notebook(self.tabs)) == 3, self.historyReloadPending { self.loadHistory() }
         }
         render()
         imports?.updateDestinations(browser.sections)
@@ -260,7 +264,9 @@ final class LinuxLibraryWindow {
     }
 
     func setLibraryAvailable(_ available: Bool) {
+        let becameAvailable = available && !self.available
         self.available = available
+        if becameAvailable, gtk_notebook_get_current_page(mp_notebook(tabs)) == 3 { loadHistory() }
         render()
     }
 
@@ -442,9 +448,15 @@ final class LinuxLibraryWindow {
 
     private func loadHistory() {
         guard !isDestroyed, available, let editor, let prompt = editor.state.prompt,
-              editor.state.stamp != nil, editor.state.status != .loading,
-              editor.state.status != .saving, editor.state.status != .commandRunning else { return }
+              editor.state.stamp != nil, editor.state.status != .loading else { return }
+        guard editor.state.status != .saving, editor.state.status != .commandRunning else {
+            historyReloadPending = true
+            return
+        }
+        historyReloadPending = false
         historyPrompt = prompt
+        // Core may already be refreshing a committed save or restore.
+        guard !editor.state.history.isLoading else { return }
         editor.loadHistory()
     }
 
