@@ -79,6 +79,7 @@ public enum MonkeysPawLinuxApp {
     }
 
     private static func runPanel(mode: LaunchMode) -> Int32 {
+        LinuxPickerTrace.record("launch", "mode=\(mode)")
         // This identity is also the D-Bus name, desktop basename and StartupWMClass.
         // IS_SERVICE rejects an existing primary during registration. Register
         // normally to detect remote launches, then let run parse the service flag.
@@ -98,6 +99,7 @@ public enum MonkeysPawLinuxApp {
 
         let toggle = g_simple_action_new(ActionName.toggle.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(toggle)) {
+            LinuxPickerTrace.record("activation", "source=action.toggle")
             // Cold D-Bus actions need not emit "activate". The environment creates
             // the panel lazily here too, so the first shortcut actually shows it.
             environment.activateToggle()
@@ -124,6 +126,15 @@ public enum MonkeysPawLinuxApp {
 
         installQuitAction(application: application, environment: environment)
 
+        if LinuxPickerTrace.isEnabled {
+            GTK.onSignal(UnsafeMutableRawPointer(application), "startup") {
+                LinuxPickerTrace.record("application.startup")
+            }
+            GTK.onSignal(UnsafeMutableRawPointer(application), "shutdown") {
+                LinuxPickerTrace.record("application.shutdown")
+            }
+        }
+
         // Register early so a remote invocation exits without entering the main loop.
         var error: UnsafeMutablePointer<GError>?
         guard g_application_register(gapp, nil, &error) != 0 else {
@@ -136,7 +147,9 @@ public enum MonkeysPawLinuxApp {
         }
 
         let isRemote = g_application_get_is_remote(gapp) != 0
+        LinuxPickerTrace.record("application.registered", "remote=\(isRemote) mode=\(mode)")
         if isRemote, mode == .service {
+            LinuxPickerTrace.record("launch.skipped", "reason=remote-service")
             // Service activation races must leave the primary panel's visibility alone.
             // Run GLib's unregister cleanup without its default remote activation.
             // Destroying a registered GtkApplication without run emits a warning.
@@ -148,11 +161,14 @@ public enum MonkeysPawLinuxApp {
         }
 
         GTK.onSignal(UnsafeMutableRawPointer(application), "activate") {
-            environment.presentFromLauncher()
+            environment.presentFromLauncher(source: "activate")
         }
 
         GTK.onCommandLine(application) { command in
+            let remote = g_application_command_line_get_is_remote(command) != 0
+            LinuxPickerTrace.record("activation", "source=command-line remote=\(remote)")
             if g_variant_dict_contains(g_application_command_line_get_options_dict(command), "selftest") != 0 {
+                LinuxPickerTrace.record("launcher.skipped", "reason=selftest")
                 // Retaining the command keeps the remote CLI waiting. Its print
                 // method sends JSON to that caller's stdout, not the primary's.
                 g_object_ref(command)
@@ -174,7 +190,7 @@ public enum MonkeysPawLinuxApp {
 
             // Ordinary launches resume pending onboarding in the resident
             // primary too. Only the explicit toggle action toggles the picker.
-            environment.presentFromLauncher()
+            environment.presentFromLauncher(source: remote ? "command-line.remote" : "command-line.local")
             return 0
         }
 
@@ -193,14 +209,18 @@ public enum MonkeysPawLinuxApp {
         var argv = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
 
-        return argv.withUnsafeMutableBufferPointer {
+        LinuxPickerTrace.record("application.run", "mode=\(mode) remote=\(isRemote)")
+        let status = argv.withUnsafeMutableBufferPointer {
             g_application_run(gapp, Int32(arguments.count), $0.baseAddress)
         }
+        LinuxPickerTrace.record("application.exit", "status=\(status)")
+        return status
     }
 
     static func installSettingsAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment) {
         let settings = g_simple_action_new(ActionName.settings.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(settings)) { [weak environment] in
+            LinuxPickerTrace.record("activation", "source=action.settings")
             environment?.showSettings()
         }
         g_action_map_add_action(mp_action_map(application), mp_action(settings))
@@ -210,6 +230,7 @@ public enum MonkeysPawLinuxApp {
     static func installLibraryAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment) {
         let library = g_simple_action_new(ActionName.library.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(library)) { [weak environment] in
+            LinuxPickerTrace.record("activation", "source=action.library")
             environment?.showLibrary()
         }
         g_action_map_add_action(mp_action_map(application), mp_action(library))
@@ -220,6 +241,7 @@ public enum MonkeysPawLinuxApp {
                                   approved: (() -> Void)? = nil) {
         let quit = g_simple_action_new(ActionName.quit.rawValue, nil)!
         GTK.onActionActivated(UnsafeMutableRawPointer(quit)) { [weak environment] in
+            LinuxPickerTrace.record("activation", "source=action.quit")
             let finish = approved ?? { g_application_quit(mp_gapp(application)) }
             guard let environment else { finish(); return }
             environment.requestQuit(finish)

@@ -361,11 +361,13 @@ final class LinuxEnvironment {
 
     /// Start only in the registered primary, not remote invocations or unit tests.
     func start() {
+        LinuxPickerTrace.record("environment.start", "shutdown=\(isShutDown)")
         guard !isShutDown else { return }
         startLibrary()
         _ = onboardingModel
         startStatusNotifierItem()
-        if libraryStatusModel.needsLibraryFolderStep { presentFromLauncher() }
+        traceFirstRun("startup.gate")
+        if libraryStatusModel.needsLibraryFolderStep { presentFromLauncher(source: "startup-library-recovery") }
         hotkey.onChange = { [weak self] in self?.setupModel.refresh() }
         remoteDesktop.onChange = { [weak self] in self?.setupModel.refresh() }
         switch session.currentSession() {
@@ -422,47 +424,78 @@ final class LinuxEnvironment {
     }
 
     private func showSetupFromTray() {
+        LinuxPickerTrace.record("activation", "source=tray.setup")
         guard !isShutDown, pickerModel.state != .delivering else { return }
         onboardingRequestRevision += 1
         pickerModel.dismiss()
-        panel.hide()
+        panel.hide(reason: "tray.setup")
         delivery.invalidatePendingPresentation()
         mainThread.run { [weak self] in self?.showSetup() }
     }
 
     func activateToggle() {
+        LinuxPickerTrace.record("toggle.request", "source=action")
         // A cold action can race the queued registration. It must still show the
         // picker once, then later actions go through verification and debounce.
-        if !hotkey.fire(.togglePicker) { togglePicker() }
+        if !hotkey.fire(.togglePicker) {
+            LinuxPickerTrace.record("toggle.fallback", "reason=backend-not-ready")
+            togglePicker()
+        } else {
+            LinuxPickerTrace.record("toggle.dispatched", "reason=backend-handled")
+        }
     }
 
-    func presentFromLauncher() {
+    func presentFromLauncher(source: StaticString = "direct") {
+        LinuxPickerTrace.record("launcher.request", "source=\(source) shutdown=\(isShutDown)")
         guard !isShutDown else { return }
         onboardingRequestRevision += 1
         let revision = onboardingRequestRevision
         onboardingModel.refresh()
+        LinuxPickerTrace.record("launcher.queued", "source=\(source) revision=\(revision)")
         mainThread.run { [weak self] in
-            guard let self, !self.isShutDown, self.onboardingRequestRevision == revision else { return }
+            guard let self else { return }
+            LinuxPickerTrace.record("launcher.dispatch", "source=\(source) revision=\(revision)"
+                + " current=\(self.onboardingRequestRevision) shutdown=\(self.isShutDown)")
+            guard !self.isShutDown, self.onboardingRequestRevision == revision else {
+                LinuxPickerTrace.record("launcher.skipped", "reason=superseded-or-shutdown")
+                return
+            }
+            self.traceFirstRun("launcher.gate")
             if self.currentSetupWindow?.isVisible == true {
+                LinuxPickerTrace.record("launcher.route", "destination=existing-setup")
                 self.showSetup()
                 return
             }
             switch self.onboardingModel.state.step {
-            case .setup: self.showSetup()
-            case .libraryFolder, .seedOffer, .tour: self.showOnboarding()
+            case .setup:
+                LinuxPickerTrace.record("launcher.route", "destination=setup")
+                self.showSetup()
+            case .libraryFolder, .seedOffer, .tour:
+                LinuxPickerTrace.record("launcher.route", "destination=onboarding")
+                self.showOnboarding()
             case .complete:
+                LinuxPickerTrace.record("launcher.route", "destination=picker state=\(LinuxPickerTrace.pickerState(self.pickerModel.state))")
                 self.panel.cancelPendingBlur()
                 self.pickerModel.open()
+                LinuxPickerTrace.record("picker.open.returned", "state=\(LinuxPickerTrace.pickerState(self.pickerModel.state))")
             }
         }
     }
 
+    private func traceFirstRun(_ event: StaticString) {
+        LinuxPickerTrace.record(event, "step=\(onboardingModel.state.step) readOnly=\(settingsModel.isReadOnly)"
+            + " setup=\(settingsModel.firstRun.setupPresented) folder=\(settingsModel.firstRun.libraryFolderCompleted)"
+            + " seeds=\(settingsModel.firstRun.seedsOffered) tour=\(settingsModel.firstRun.tourCompleted)"
+            + " recovery=\(libraryStatusModel.needsLibraryFolderStep)")
+    }
+
     func showSettings() {
+        LinuxPickerTrace.record("settings.request", "state=\(LinuxPickerTrace.pickerState(currentLibraryGraph?.picker.state))")
         guard pickerModel.state != .delivering else { return }
         onboardingRequestRevision += 1
         currentOnboardingWindow?.hide()
         pickerModel.dismiss()
-        panel.hide()
+        panel.hide(reason: "settings")
         delivery.invalidatePendingPresentation()
         // Dismissal and invalidation enter DeliveryService through GLib idles.
         // Present only after those requests, including desktop-action entry.
@@ -490,6 +523,7 @@ final class LinuxEnvironment {
     }
 
     func showLibrary() {
+        LinuxPickerTrace.record("library.request", "shutdown=\(isShutDown)")
         guard !isShutDown, pickerModel.state != .delivering else { return }
         startLibrary()
         guard pickerModel.libraryAvailable else {
@@ -500,7 +534,7 @@ final class LinuxEnvironment {
         onboardingRequestRevision += 1
         currentOnboardingWindow?.hide()
         pickerModel.dismiss()
-        panel.hide()
+        panel.hide(reason: "library")
         delivery.invalidatePendingPresentation()
         // Match Settings: queued dismissal/focus work finishes before present.
         // Resolve the current graph here if a folder switch ran in the meantime.
@@ -560,6 +594,7 @@ final class LinuxEnvironment {
     }
 
     private func showSetup() {
+        LinuxPickerTrace.record("setup.request", "shutdown=\(isShutDown)")
         guard !isShutDown else { return }
         onboardingRequestRevision += 1
         currentOnboardingWindow?.hide()
@@ -577,6 +612,7 @@ final class LinuxEnvironment {
     }
 
     private func continueOnboarding() {
+        LinuxPickerTrace.record("onboarding.continue", "shutdown=\(isShutDown) revision=\(onboardingRequestRevision)")
         guard !isShutDown else { return }
         let revision = onboardingRequestRevision
         onboardingModel.refresh()
@@ -597,6 +633,7 @@ final class LinuxEnvironment {
     }
 
     private func showOnboarding() {
+        LinuxPickerTrace.record("onboarding.request", "shutdown=\(isShutDown)")
         guard !isShutDown, pickerModel.state != .delivering else { return }
         currentSettingsWindow?.hide()
         if currentOnboardingWindow == nil {
@@ -611,14 +648,17 @@ final class LinuxEnvironment {
     }
 
     private func togglePicker(origin: ToggleOrigin = .manual) {
+        LinuxPickerTrace.record("toggle.dispatch", "origin=\(origin) shutdown=\(isShutDown)")
         guard !isShutDown else { return }
         startLibrary()
         _ = onboardingModel
         // Only a focused panel toggles off. A buried or never-focused panel
         // must be raised, including when Wayland denied its initial activation.
         if panel.isActiveAndVisible {
+            LinuxPickerTrace.record("dismiss.request", "reason=toggle-active")
             pickerModel.dismiss()
         } else {
+            LinuxPickerTrace.record("picker.open.request", "reason=toggle")
             panel.cancelPendingBlur()
             panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken() : nil)
             pickerModel.open()
@@ -731,7 +771,7 @@ final class LinuxEnvironment {
         if editorHasUnsavedWork(old.editor.state) { return .editorBusy }
         guard old.picker.state != .delivering else { return .deliveryInFlight }
         old.picker.dismiss()
-        panel.hide()
+        panel.hide(reason: "switch-library")
 
         let target = directory ?? defaultLibraryDirectory
         let files: RootedFileStore
@@ -860,7 +900,7 @@ final class LinuxEnvironment {
                 return
             }
             graph.picker.dismiss()
-            panel.hide()
+            panel.hide(reason: "edit-intent")
             delivery.invalidatePendingPresentation()
             graph.callbacks.run { [weak self, weak graph] in
                 guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return }
@@ -885,6 +925,7 @@ final class LinuxEnvironment {
     }
 
     func shutdown() {
+        LinuxPickerTrace.record("environment.shutdown", "alreadyShutdown=\(isShutDown)")
         guard !isShutDown else { return }
         isShutDown = true
         quitPending = false
