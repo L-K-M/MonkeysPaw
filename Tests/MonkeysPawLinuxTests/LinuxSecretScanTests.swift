@@ -23,6 +23,16 @@ final class LinuxSecretScanTests: XCTestCase {
         try lifecycle(tier: .file)
     }
 
+    func testScanTreatsOnlyMissingPathsAsVanished() {
+        let missingUnderlying = NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))])
+        XCTAssertTrue(SecretScan.isVanished(CocoaError(.fileNoSuchFile)))
+        XCTAssertTrue(SecretScan.isVanished(CocoaError(.fileReadNoSuchFile)))
+        XCTAssertTrue(SecretScan.isVanished(missingUnderlying))
+        XCTAssertFalse(SecretScan.isVanished(CocoaError(.fileReadNoPermission)))
+        XCTAssertFalse(SecretScan.isVanished(NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))))
+    }
+
     func testScannerFindsRawEncodedAndNestedJSONInHiddenDirectories() throws {
         let tools = try FakeLinuxTools()
         let sentinel = "scan-\(UUID().uuidString)-\"\\/%+"

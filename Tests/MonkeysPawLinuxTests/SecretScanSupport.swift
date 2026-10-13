@@ -52,19 +52,42 @@ struct SecretScan {
             var failed = false
             guard let files = FileManager.default.enumerator(at: root,
                 includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-                options: [], errorHandler: { _, _ in failed = true; return false }) else {
+                options: [], errorHandler: { _, error in
+                    if Self.isVanished(error) { return true }
+                    failed = true
+                    return false
+                }) else {
                 throw Failure.unreadableTree
             }
             for case let file as URL in files {
                 let canonical = file.standardizedFileURL
                 guard visited.insert(canonical).inserted else { continue }
-                let kind = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-                guard kind.isRegularFile == true, kind.isSymbolicLink != true else { continue }
-                if try containsCopy(in: file) { matches.insert(canonical) }
+                do {
+                    let kind = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                    guard kind.isRegularFile == true, kind.isSymbolicLink != true else { continue }
+                    if try containsCopy(in: file) { matches.insert(canonical) }
+                } catch where Self.isVanished(error) {
+                    continue
+                }
             }
             if failed { throw Failure.unreadableTree }
         }
         return matches
+    }
+
+    /// Result bundles and logs change while the scan runs; a path that vanishes
+    /// between enumeration and reading holds no copy at rest. Any other error
+    /// still fails the scan.
+    static func isVanished(_ error: Error) -> Bool {
+        let error = error as NSError
+        switch (error.domain, error.code) {
+        case (NSCocoaErrorDomain, NSFileNoSuchFileError), (NSCocoaErrorDomain, NSFileReadNoSuchFileError),
+             (NSPOSIXErrorDomain, Int(ENOENT)):
+            return true
+        default:
+            guard let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError else { return false }
+            return isVanished(underlying)
+        }
     }
 
     private func containsCopy(in file: URL) throws -> Bool {
