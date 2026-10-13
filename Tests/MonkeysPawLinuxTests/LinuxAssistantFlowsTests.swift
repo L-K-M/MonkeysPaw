@@ -42,7 +42,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         transport?.releaseHeld()
         environment?.shutdown()
         environment = nil
-        try worker {}
+        if work != nil { try worker {} }
         drain()
         if let application { GTKTestSupport.destroy(application) }
         drain()
@@ -297,6 +297,170 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertNil(environment.assistantModel?.state.artifact)
     }
 
+    func testHiddenPanelRebindClearsAllSessionInputs() throws {
+        try open()
+        let model = try XCTUnwrap(environment.assistantModel)
+        let parent = gtk_application_window_new(application)!
+        let panel = LinuxAssistantPanel()
+        gtk_window_set_child(mp_window(parent), panel.widget)
+        defer { panel.retire(destroyed: false); gtk_window_destroy(mp_window(parent)) }
+        panel.bind(model: model, editor: environment.editorModel, available: true)
+        for suffix in ["brief", "instruction", "feedback"] {
+            mp_entry_set_text(try widget("assistant-" + suffix, in: parent), "Previous session")
+        }
+        panel.bind(model: nil, editor: environment.editorModel, available: true)
+        for suffix in ["brief", "instruction", "feedback"] {
+            XCTAssertEqual(String(cString: mp_entry_text(try widget("assistant-" + suffix, in: parent))), "", suffix)
+        }
+        model.editInstruction("Current instruction")
+        panel.bind(model: model, editor: environment.editorModel, available: true)
+        panel.show()
+        drain()
+        XCTAssertEqual(String(cString: mp_entry_text(try widget("assistant-instruction", in: parent))), "Current instruction")
+    }
+
+    func testDestroyedPanelClearsQuoteInSurvivingEditor() throws {
+        try open()
+        let model = try XCTUnwrap(environment.assistantModel)
+        let parent = gtk_application_window_new(application)!
+        let panel = LinuxAssistantPanel()
+        let source = try widget("library-source")
+        let buffer = try XCTUnwrap(gtk_text_view_get_buffer(mp_text_view(source)))
+        let tag = try XCTUnwrap(gtk_text_tag_table_lookup(gtk_text_buffer_get_tag_table(buffer), "assistant-quote"))
+        var highlighted: Range<Int>?
+        panel.onHighlight = { range in
+            highlighted = range
+            if range == nil {
+                var start = GtkTextIter(), end = GtkTextIter()
+                gtk_text_buffer_get_bounds(buffer, &start, &end)
+                gtk_text_buffer_remove_tag(buffer, tag, &start, &end)
+            }
+        }
+        gtk_window_set_child(mp_window(parent), panel.widget)
+        panel.bind(model: model, editor: environment.editorModel, available: true)
+        gtk_window_present(mp_window(parent))
+        transport.enqueue(try review())
+        panel.start(.review)
+        XCTAssertTrue(GTKTestSupport.spin { model.state.review != nil })
+        try clickWidget("assistant-quote-0", in: parent)
+        let range = try XCTUnwrap(highlighted)
+        let prefix = String(decoding: Data(original.utf8).prefix(range.lowerBound), as: UTF8.self)
+        var start = GtkTextIter(), end = GtkTextIter()
+        gtk_text_buffer_get_iter_at_offset(buffer, &start, Int32(prefix.unicodeScalars.count))
+        gtk_text_buffer_get_iter_at_offset(buffer, &end, Int32(prefix.unicodeScalars.count + 1))
+        gtk_text_buffer_apply_tag(buffer, tag, &start, &end)
+        gtk_window_destroy(mp_window(parent))
+        panel.retire(destroyed: true)
+        drain()
+        XCTAssertNil(highlighted)
+        XCTAssertNil(panel.onHighlight)
+        gtk_text_buffer_get_iter_at_offset(buffer, &start, Int32(prefix.unicodeScalars.count))
+        XCTAssertEqual(gtk_text_iter_has_tag(&start, tag), 0)
+    }
+
+    func testUnavailableAssistantShortcutsLeaveKeysAndPanelAlone() throws {
+        try open()
+        gtk_widget_set_visible(window, 0)
+        var suppliedModel = environment.assistantModel
+        let library = LinuxLibraryWindow(application: application, browser: environment.libraryBrowserModel,
+            editor: environment.editorModel, assistant: { suppliedModel }, openFolder: {})
+        library.show()
+        window = try XCTUnwrap(nativeWindow(LinuxStrings.library))
+        defer { library.tearDown() }
+        let model = try XCTUnwrap(suppliedModel)
+        suppliedModel = nil
+        for key in [GDK_KEY_r, GDK_KEY_i] {
+            XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(key), GDK_CONTROL_MASK), 0)
+            XCTAssertFalse(try visible("library-assistant-panel"))
+        }
+        suppliedModel = model
+        library.setLibraryAvailable(false)
+        for key in [GDK_KEY_R, GDK_KEY_I] {
+            XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(key), GDK_CONTROL_MASK), 0)
+            XCTAssertFalse(try visible("library-assistant-panel"))
+        }
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testDisabledTemplateShortcutsDoNotConsumeKeysOrStartRequests() throws {
+        try files.write(Data("---\nprivate: true\n---\nPrivate".utf8), at: "private.md")
+        try files.write(Data("---\nformat: 2\n---\nFuture".utf8), at: "future.md")
+        try files.write(Data("---\ntitle: [\n---\nInvalid".utf8), at: "invalid.md")
+        for path in ["private.md", "future.md", "invalid.md"] {
+            try open(path)
+            XCTAssertFalse(try sensitive("review"), path)
+            XCTAssertFalse(try sensitive("improve"), path)
+            for key in [GDK_KEY_r, GDK_KEY_i] {
+                XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(key), GDK_CONTROL_MASK), 0, path)
+            }
+            XCTAssertTrue(transport.requests.isEmpty)
+        }
+        try select("a.md")
+        try holdImprove()
+        for key in [GDK_KEY_r, GDK_KEY_i] {
+            XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(key), GDK_CONTROL_MASK), 0)
+        }
+        XCTAssertEqual(transport.requests.count, 1)
+    }
+
+    func testBusyAcceptanceOutcomeSurvivesBusyRenders() throws {
+        try assertOutcomeDuringSave(.editorBusy)
+    }
+
+    func testMissingQuoteTagDoesNotCallGTKWithNil() throws {
+        let parent = gtk_application_window_new(application)!
+        let source = LinuxLibrarySourceEditor()
+        gtk_window_set_child(mp_window(parent), source.widget)
+        defer { gtk_window_destroy(mp_window(parent)) }
+        let buffer = try XCTUnwrap(gtk_text_view_get_buffer(mp_text_view(source.widget)))
+        let table = try XCTUnwrap(gtk_text_buffer_get_tag_table(buffer))
+        let tag = try XCTUnwrap(gtk_text_tag_table_lookup(table, "assistant-quote"))
+        gtk_text_tag_table_remove(table, tag)
+        source.highlight(nil)
+        source.highlight(0..<1)
+    }
+
+    func testCancelledAcceptanceOutcomeSurvivesBusyRenders() throws {
+        try assertOutcomeDuringSave(.cancelled)
+    }
+
+    private func assertOutcomeDuringSave(_ failure: AssistantAcceptanceFailure) throws {
+        try open()
+        transport.enqueue(try artifact())
+        try click("improve")
+        try ready()
+        let model = try XCTUnwrap(environment.assistantModel)
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        var blocked = false
+        work.run { GTK.onMainLoop { blocked = true }; gate.wait() }
+        XCTAssertTrue(GTKTestSupport.spin { blocked })
+        // The native click starts acceptance before a competing save. Its
+        // queued acceptance guard must report the actual busy/cancelled result.
+        GTK.onSignal(try widget("assistant-accept"), "clicked") {
+            self.environment.editorModel.save()
+            if failure == .cancelled { model.cancel() }
+        }
+        try click("accept")
+        XCTAssertEqual(environment.editorModel.state.status, .saving)
+        let stamp = environment.editorModel.state.stamp
+        let expected = LinuxAssistantStrings.outcome(.failed(failure))
+        XCTAssertEqual(try widgetLabel("library-editor-status"), expected)
+        environment.libraryBrowserModel.setFilter("Original")
+        drain()
+        XCTAssertEqual(try widgetLabel("library-editor-status"), expected)
+        gate.signal()
+        try worker {}
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .saved })
+        drain()
+        XCTAssertNotEqual(environment.editorModel.state.stamp, stamp)
+        XCTAssertEqual(try widgetLabel("library-editor-status"), LinuxEditorStrings.status(environment.editorModel.state))
+        environment.editorModel.revert()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .idle })
+        drain()
+        XCTAssertEqual(try widgetLabel("library-editor-status"), LinuxEditorStrings.status(environment.editorModel.state))
+    }
+
     func testUndecodableEditorSessionChangeCancelsWriteWithoutSnapshot() throws {
         try files.write(Data([0xff]), at: "bytes-a.md")
         try files.write(Data([0xfe]), at: "bytes-b.md")
@@ -391,9 +555,8 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         drain()
         XCTAssertFalse(try sensitive("write"))
         XCTAssertTrue(try label("explanation").contains("decision"))
-        if let decision = environment.editorModel.state.pendingDecision {
-            environment.editorModel.resolveDecision(.discard, id: decision.id)
-        }
+        let decision = try XCTUnwrap(environment.editorModel.state.pendingDecision, "Revert must request a discard decision")
+        environment.editorModel.resolveDecision(.discard, id: decision.id)
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.editorModel.state.isDirty && self.environment.editorModel.state.status != .loading })
         try select("future.md")
         XCTAssertFalse(try sensitive("review"))
@@ -402,14 +565,16 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         environment.showSettings()
         XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.settings) != nil })
         let settings = try XCTUnwrap(nativeWindow(LinuxStrings.settings))
-        let tabs = try widget("settings-tabs", in: settings)
-        gtk_notebook_set_current_page(mp_notebook(tabs), 2)
+        try GTKTestSupport.selectAssistantTab(in: settings)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitiveWidget("settings-assistant-disable", in: settings)) == true })
         try clickWidget("settings-assistant-disable", in: settings)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.assistantModel?.state.providerHost == nil })
         drain()
         XCTAssertFalse(try sensitive("write"))
         XCTAssertTrue(try label("explanation").contains("Set up a provider"))
+        for key in [GDK_KEY_r, GDK_KEY_i] {
+            XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(key), GDK_CONTROL_MASK), 0)
+        }
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
@@ -419,7 +584,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         environment.showSettings()
         XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.settings) != nil })
         let settings = try XCTUnwrap(nativeWindow(LinuxStrings.settings))
-        gtk_notebook_set_current_page(mp_notebook(try widget("settings-tabs", in: settings)), 2)
+        try GTKTestSupport.selectAssistantTab(in: settings)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitiveWidget("settings-assistant-save", in: settings)) == true })
         let profile = environment.providerSettingsService.snapshot.settings
         // A byte-identical Save still invalidates actions; credentials can have
@@ -447,7 +612,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         environment.showSettings()
         XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.settings) != nil })
         let settings = try XCTUnwrap(nativeWindow(LinuxStrings.settings))
-        gtk_notebook_set_current_page(mp_notebook(try widget("settings-tabs", in: settings)), 2)
+        try GTKTestSupport.selectAssistantTab(in: settings)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitiveWidget("settings-assistant-save", in: settings)) == true })
         let profiles = try widget("settings-assistant-profiles", in: settings)
         let name = try widget("settings-assistant-name", in: settings)
@@ -485,6 +650,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
     func testCommittedProvenanceWarningIsVisibleAndDoesNotInviteAnotherSave() throws {
         try open()
         let data = try RootedFileStore(root: LinuxPaths(environment: tools.environment).dataDirectory)
+        try data.createRoot()
         try data.write(Data("invalid-json".utf8), at: "history/01ARZ3NDEKTSV4RRFFQ69G5FAV/head.json")
         transport.enqueue(try artifact())
         try click("improve")
@@ -524,6 +690,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         try open()
         let main = GLibMainThread()
         let config = try RootedFileStore(root: LinuxPaths(environment: tools.environment).configDirectory)
+        try config.createRoot()
         let service = AssistantService(providerSettings: environment.providerSettingsService,
             anthropic: AnthropicClient(transport: transport),
             openAICompatible: OpenAIClient(transport: transport, providerState: ProviderStateStore(files: config)),
@@ -604,7 +771,8 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         drain()
         let index = try XCTUnwrap(environment.libraryBrowserModel.rows.firstIndex { $0.relativePath.string == path })
         let list = try widget("library-list")
-        gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)))
+        let row = try XCTUnwrap(gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)), "No Library row at index \(index) for \(path)")
+        gtk_list_box_select_row(mp_list_box(list), row)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == path
             && self.environment.editorModel.state.status != .loading })
         drain()
@@ -658,7 +826,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
     private func clickWidget(_ name: String, in root: GTK.Widget? = nil) throws {
         drain()
         let button = try widget(name, in: root)
-        XCTAssertNotEqual(gtk_widget_is_sensitive(button), 0)
+        _ = try XCTUnwrap(gtk_widget_is_sensitive(button) != 0 ? button : nil, "Button \(name) is insensitive")
         var instance = GValue()
         g_value_init(&instance, gtk_button_get_type())
         g_value_set_object(&instance, button)
@@ -698,9 +866,9 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         return nil
     }
     private func worker(_ body: @escaping () throws -> Void) throws {
-        guard let work else { return }
+        let running = try XCTUnwrap(work, "Assistant worker unavailable")
         var result: Result<Void, Error>?
-        work.run { let outcome = Result(catching: body); GTK.onMainLoop { result = outcome } }
+        running.run { let outcome = Result(catching: body); GTK.onMainLoop { result = outcome } }
         XCTAssertTrue(GTKTestSupport.spin { result != nil })
         try XCTUnwrap(result).get()
     }

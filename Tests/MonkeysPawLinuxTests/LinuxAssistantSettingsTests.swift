@@ -42,7 +42,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         view?.hide()
         environment?.shutdown()
         view = nil
-        try worker {}
+        if work != nil { try worker {} }
         drainUI()
         if let application { GTKTestSupport.destroy(application) }
         environment = nil
@@ -329,6 +329,70 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
+    func testHiddenPageDetachesAndRefreshesOnceWhenShown() throws {
+        _ = try seed()
+        try show()
+        let reads = secrets.readCount
+        try input("key", "Staged replacement")
+        drainUI()
+        view.hide()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(try entryText("key"), "")
+        XCTAssertNil(model?.onChange)
+        XCTAssertEqual(model?.state.keyEdit, .keep)
+        XCTAssertEqual(secrets.readCount, reads)
+        model?.renameProfile("Background update")
+        drainUI()
+        XCTAssertEqual(secrets.readCount, reads)
+        view.show()
+        waitLoaded()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(modelCount, 1)
+        XCTAssertEqual(secrets.readCount, reads + 1)
+        XCTAssertEqual(try entryText("name"), "Saved")
+        view.show()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(secrets.readCount, reads + 1)
+    }
+
+    func testShowDuringAcceptedSaveDefersOneRefreshAndKeepsMutationCallbacks() throws {
+        _ = try seed()
+        try show()
+        var mutations = 0
+        var refreshes = 0
+        var previousOperation = model?.state.operation
+        model?.onProfilesChanged = { mutations += 1 }
+        secrets.blockNextWrite()
+        try input("key", "Replacement")
+        drainUI()
+        try click("save")
+        XCTAssertTrue(GTKTestSupport.spin { self.secrets.isWriteBlocked })
+        view.hide()
+        drainUI()
+        XCTAssertEqual(try entryText("key"), "")
+        XCTAssertNil(model?.onChange)
+        view.show()
+        let render = model?.onChange
+        model?.onChange = {
+            render?()
+            let operation = self.model?.state.operation
+            if operation == .loading, previousOperation != .loading { refreshes += 1 }
+            previousOperation = operation
+        }
+        secrets.releaseWrite()
+        waitLoaded()
+        try worker {}
+        drainUI()
+        XCTAssertEqual(mutations, 2)
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertEqual(modelCount, 1)
+        XCTAssertEqual(try entryText("key"), "")
+        XCTAssertEqual(service.snapshot.settings.profiles.first?.displayName, "Saved")
+    }
+
     func testSavingStaysResponsivePreservesNewerMetadataAndClearsCommittedKey() throws {
         _ = try seed()
         try show()
@@ -467,7 +531,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         environment.showSettings()
         XCTAssertTrue(GTKTestSupport.spin { self.settingsWindow() != nil })
         window = try XCTUnwrap(settingsWindow())
-        gtk_notebook_set_current_page(mp_notebook(try settingsWidget("settings-tabs", in: window)), 2)
+        try GTKTestSupport.selectAssistantTab(in: window)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitive("add")) == true })
         try click("add")
         XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitive("key")) == true })
@@ -532,6 +596,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
     }
 
     private func waitLoaded() {
+        drainUI() // A retained model can still be idle before show()'s queued refresh starts.
         XCTAssertTrue(GTKTestSupport.spin { self.model != nil && self.model?.state.operation == nil && self.model?.state.keyStorage != .loading })
     }
 
@@ -604,9 +669,9 @@ final class LinuxAssistantSettingsTests: XCTestCase {
     }
 
     private func worker(_ body: @escaping () throws -> Void) throws {
-        guard let work else { return }
+        let running = try XCTUnwrap(work, "Assistant settings worker unavailable")
         var result: Result<Void, Error>?
-        work.run {
+        running.run {
             let outcome = Result(catching: body)
             GTK.onMainLoop { result = outcome }
         }
@@ -630,8 +695,10 @@ private final class AssistantPageSecrets: SecretStore {
     private var deleteError: SecretStoreError?
     private var writeGate: DispatchSemaphore?
     private var writeBlocked = false
+    private var reads = 0
 
     var isWriteBlocked: Bool { locked { writeBlocked } }
+    var readCount: Int { locked { reads } }
     func setTier(_ value: SecretTier) { locked { tier = value } }
     func setEnvironment(_ value: SecretValue, account: SecretAccount) { locked { environment[account] = value } }
     func hasEnvironment(_ account: SecretAccount) -> Bool { locked { environment[account] != nil } }
@@ -644,6 +711,7 @@ private final class AssistantPageSecrets: SecretStore {
     func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
         XCTAssertFalse(Thread.isMainThread, "Secret I/O must stay off GLib")
         return try locked {
+            reads += 1
             if let readError { throw readError }
             if case .effective = source, let value = environment[account] {
                 return StoredSecret(value: value, tier: .environment)

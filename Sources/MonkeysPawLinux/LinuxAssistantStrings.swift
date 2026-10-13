@@ -3,6 +3,8 @@ import Foundation
 import MonkeysPawCore
 
 enum LinuxAssistantStrings {
+    static let waitingForAction = "Wait for the Assistant action, or Cancel it."
+    static let fixValidationErrors = "Fix the editor's validation errors to Review or Improve."
     static let title = "Assistant"
     static let setup = "Set up a provider in Settings."
     static let busy = "Wait for the editor operation or Save / Discard / Cancel decision to finish."

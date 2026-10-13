@@ -66,6 +66,7 @@ final class LinuxSettingsWindow {
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed, !self.isVisible else { return }
+            // Both hide() and native close retire here, once per visible lifetime.
             self.cancelFolderChoice()
             self.rememberedValues.cancelForgetAll()
             self.assistant.retire(.hidden)

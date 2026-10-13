@@ -3,6 +3,7 @@ import CGtk
 import Foundation
 import MonkeysPawCore
 import XCTest
+@testable import MonkeysPawLinux
 
 enum GTKTestSupport {
     // GTK initialization is one-shot even when opening the display fails.
@@ -47,6 +48,14 @@ enum GTKTestSupport {
             gtk_window_destroy(data.assumingMemoryBound(to: GtkWindow.self))
         }
         g_object_unref(application)
+    }
+
+    static func selectAssistantTab(in window: GTK.Widget) throws {
+        let notebook = try settingsWidget("settings-tabs", in: window)
+        let page = try settingsWidget("settings-assistant-page", in: window)
+        let position = gtk_notebook_page_num(mp_notebook(notebook), page)
+        let index = try XCTUnwrap(position >= 0 ? position : nil, "Assistant page is missing from the Settings notebook")
+        gtk_notebook_set_current_page(mp_notebook(notebook), index)
     }
 
     static func spin(until predicate: () -> Bool, timeout: Duration = .seconds(3)) -> Bool {

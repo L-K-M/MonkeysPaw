@@ -133,13 +133,15 @@ final class LinuxAssistantPanel {
         if self.model !== model {
             self.model?.onChange = nil
             stopTimer()
-            self.model = model
+            self.model = nil
             flow = nil
             highlightedFinding = nil
             preeditEntries.removeAll()
             onHighlight?(nil)
             mp_entry_set_text(brief, "")
             mp_entry_set_text(feedback, "")
+            mp_entry_set_text(instruction, "")
+            self.model = model
             model?.onChange = { [weak self, weak model] in
                 guard let self, let model, !self.isDestroyed, self.model === model else { return }
                 self.render()
@@ -175,6 +177,8 @@ final class LinuxAssistantPanel {
         if destroyed {
             isDestroyed = true
             model?.close()
+            if highlightedFinding != nil { onHighlight?(nil) }
+            highlightedFinding = nil
         } else { close() }
         stopTimer()
         model?.onChange = nil
@@ -184,10 +188,13 @@ final class LinuxAssistantPanel {
         if destroyed { onHighlight = nil }
     }
 
-    func start(_ flow: Flow) {
-        show()
-        guard let model, let editor, commonRefusal(model.state, editor.state) == nil else { return }
-        guard flow == .write || templateRefusal(editor.state) == nil else { return }
+    @discardableResult
+    func start(_ flow: Flow) -> Bool {
+        guard !isDestroyed, let model, let editor else { return false }
+        model.contextChanged()
+        guard commonRefusal(model.state, editor.state) == nil else { return false }
+        guard flow == .write || templateRefusal(editor.state) == nil else { return false }
+        gtk_widget_set_visible(widget, 1)
         self.flow = flow
         highlightedFinding = nil
         onHighlight?(nil)
@@ -197,6 +204,7 @@ final class LinuxAssistantPanel {
         case .improve: model.improve()
         }
         render()
+        return true
     }
 
     private enum Reset { case cancel, reject }
@@ -265,7 +273,7 @@ final class LinuxAssistantPanel {
     private func commonRefusal(_ state: AssistantState, _ editor: EditorState) -> String? {
         if !available || state.mutationAccess == .unavailable { return LinuxAssistantStrings.unavailable }
         if state.providerHost == nil || state.modelID == nil { return LinuxAssistantStrings.setup }
-        if state.phase == .working || state.isAccepting { return "Wait for the Assistant action, or Cancel it." }
+        if state.phase == .working || state.isAccepting { return LinuxAssistantStrings.waitingForAction }
         if editor.conflict != nil { return LinuxAssistantStrings.conflict }
         if editor.status == .loading || editor.status == .saving || editor.status == .commandRunning
             || editor.pendingDecision != nil || !editor.queuedActions.isEmpty { return LinuxAssistantStrings.busy }
@@ -276,7 +284,7 @@ final class LinuxAssistantPanel {
         if let reason = state.readOnlyReason { return LinuxEditorStrings.readOnly(reason) }
         if state.prompt == nil || state.source == nil { return LinuxAssistantStrings.noEditor }
         if state.isPrivate { return LinuxAssistantStrings.privatePrompt }
-        if state.issues.contains(where: { $0.severity == .error }) { return "Fix the editor's validation errors to Review or Improve." }
+        if state.issues.contains(where: { $0.severity == .error }) { return LinuxAssistantStrings.fixValidationErrors }
         return nil
     }
 

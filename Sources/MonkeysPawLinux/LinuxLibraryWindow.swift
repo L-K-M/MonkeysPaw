@@ -20,6 +20,7 @@ final class LinuxLibraryWindow {
     private var assistantMessage: String?
     private var assistantMessagePrompt: LibraryPromptSelection?
     private var assistantMessageStamp: FileStamp?
+    private var renderedEditorStatus: EditorStatus?
     private var observer: UUID?
     private var editorObserver: UUID?
     private var bindingRevision: UInt64 = 0
@@ -87,7 +88,6 @@ final class LinuxLibraryWindow {
         status = GTK.label("")
         empty = GTK.label(LinuxStrings.noLibraryMatches)
         commands.onChange = { [weak self] in
-            self?.assistantMessage = nil
             self?.render()
         }
 
@@ -188,6 +188,7 @@ final class LinuxLibraryWindow {
         self.editor = editor
         assistantProvider = assistant
         assistantMessage = nil
+        renderedEditorStatus = nil
         let binding = bindingRevision
         assistantPanel.onOutcome = { [weak self, weak editor] outcome in
             guard let self, let editor, !self.isDestroyed, self.bindingRevision == binding,
@@ -195,6 +196,8 @@ final class LinuxLibraryWindow {
             self.assistantMessage = LinuxAssistantStrings.outcome(outcome)
             self.assistantMessagePrompt = editor.state.prompt
             self.assistantMessageStamp = editor.state.stamp
+            // The outcome can arrive before this busy state was rendered.
+            self.renderedEditorStatus = editor.state.status
             self.render()
         }
         commands.bind(editor: editor, browser: browser)
@@ -484,8 +487,10 @@ final class LinuxLibraryWindow {
             && state.status != .saving && state.status != .commandRunning ? 1 : 0)
         commands.update(state, available: available)
         history.update(state, available: available, canRestore: commands.canRun && !commands.hasDialog)
+        let busy = state.status == .loading || state.status == .saving || state.status == .commandRunning
         if assistantMessagePrompt != state.prompt || assistantMessageStamp != state.stamp
-            || state.status == .loading || state.status == .saving || state.status == .commandRunning { assistantMessage = nil }
+            || (busy && renderedEditorStatus != state.status) { assistantMessage = nil }
+        renderedEditorStatus = state.status
         var status = assistantMessage ?? commands.message ?? LinuxEditorStrings.status(state)
         if assistantMessage != nil, state.isDirty { status += " Newer edits are unsaved." }
         if assistantMessage == nil, commands.message == nil, state.provenanceMaintenanceFailed {
@@ -643,9 +648,11 @@ final class LinuxLibraryWindow {
             return true
         }
         guard activeDialog == nil, !commands.hasDialog else { return false }
-        if modifiers == GDK_CONTROL_MASK.rawValue {
-            if [UInt32(GDK_KEY_r), UInt32(GDK_KEY_R)].contains(key) { assistantPanel.start(.review); return true }
-            if [UInt32(GDK_KEY_i), UInt32(GDK_KEY_I)].contains(key) { assistantPanel.start(.improve); return true }
+        if modifiers == GDK_CONTROL_MASK.rawValue,
+           [UInt32(GDK_KEY_r), UInt32(GDK_KEY_R), UInt32(GDK_KEY_i), UInt32(GDK_KEY_I)].contains(key) {
+            guard available, let editor, let model = assistantProvider() else { return false }
+            assistantPanel.bind(model: model, editor: editor, available: available)
+            return assistantPanel.start([UInt32(GDK_KEY_r), UInt32(GDK_KEY_R)].contains(key) ? .review : .improve)
         }
         if key == UInt32(GDK_KEY_Escape), modifiers == 0 {
             if !browser.filter.isEmpty { browser.setFilter(""); render(); return true }

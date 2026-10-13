@@ -168,21 +168,21 @@ final class LinuxAssistantSettingsPage {
     func retire(_ reason: Retirement) {
         guard isShown || reason == .destroyed else { return }
         isShown = false
+        model?.onChange = nil
         model?.cancelTest()
+        model?.keepKey()
         keyInputReset = nil
         pendingInputs.removeAll()
         if reason == .destroyed {
-            model?.onChange = nil
             model = nil
         } else {
             needsRefresh = true
-            refreshIfNeeded()
             render()
         }
     }
 
     private func refreshIfNeeded() {
-        guard needsRefresh, let model, model.state.operation == nil else { return }
+        guard isShown, needsRefresh, let model, model.state.operation == nil else { return }
         needsRefresh = false
         model.refresh()
     }
