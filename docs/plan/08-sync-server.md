@@ -541,7 +541,9 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   9. `docker compose ps`.
   It must be shellcheck-clean and bash 3.2 safe.
   Run `./update.sh [branch]`, defaulting to `main`. Before checkout, refuse
-  tracked or untracked changes. Fetch the named branch from `origin` and
+  tracked or untracked changes, explicitly inspecting untracked files and
+  submodules regardless of Git settings. Verify `HEAD` is on the named
+  branch (a tag collision must not leave it detached), fetch from `origin` and
   require local `HEAD` to be its ancestor before sync or fallback; local
   commits ahead of or diverged from the remote require operator resolution.
   Never force, reset, stash or merge local changes. If `gh` is unavailable

@@ -30,13 +30,23 @@ else
 fi
 
 git check-ref-format --branch "$branch" >/dev/null
-checkout_status=$(git status --porcelain)
+checkout_status=$(git status --porcelain --untracked-files=normal --ignore-submodules=none)
 if [ -n "$checkout_status" ]; then
   printf '%s\n' 'Refusing to update a dirty checkout; commit or remove local changes first.' >&2
   exit 1
 fi
 
 git checkout "$branch" --
+checked_out_ref=$(git symbolic-ref --quiet HEAD) || {
+  status=$?
+  printf '%s\n' 'Refusing to update: checkout is detached; resolve branch/tag name collisions first.' >&2
+  exit "$status"
+}
+if [ "$checked_out_ref" != "refs/heads/$branch" ]; then
+  printf '%s\n' 'Refusing to update: checkout did not select the named branch.' >&2
+  exit 1
+fi
+
 git fetch origin "$branch"
 # A pull can succeed with local-only commits; refuse them before either sync path.
 if git merge-base --is-ancestor HEAD FETCH_HEAD; then

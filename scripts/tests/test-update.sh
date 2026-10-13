@@ -31,8 +31,15 @@ if [ "$command_line" = "$FAKE_FAIL_AT" ]; then
 fi
 case "$command_line" in
   'git|check-ref-format|--branch|'*) ;;
-  'git|status|--porcelain') printf '%s\n' "$FAKE_DIRTY" ;;
-  'git|checkout|'*'|--'|'git|fetch|origin|'*) ;;
+  'git|status|--porcelain')
+    if [ "$FAKE_HIDE_UNTRACKED" = false ]; then printf '%s\n' "$FAKE_DIRTY"; fi ;;
+  'git|status|--porcelain|--untracked-files=normal|--ignore-submodules=none') printf '%s\n' "$FAKE_DIRTY" ;;
+  'git|checkout|'*'|--') printf '%s\n' "$2" >"$FAKE_BRANCH_FILE" ;;
+  'git|symbolic-ref|--quiet|HEAD')
+    [ "$FAKE_DETACHED" = false ] || exit 1
+    IFS= read -r checked_branch <"$FAKE_BRANCH_FILE"
+    printf 'refs/heads/%s\n' "$checked_branch" ;;
+  'git|fetch|origin|'*) ;;
   'git|merge-base|--is-ancestor|HEAD|FETCH_HEAD') ;;
   'git|pull|--ff-only|origin|'*) ;;
   'gh|repo|sync|--branch|'*) exit "$FAKE_GH_STATUS" ;;
@@ -64,6 +71,7 @@ start_case() {
   export FAKE_COMMANDS="$case_root/commands" FAKE_GH_PATH="$case_root/gh-path"
   export FAKE_CHECKOUT="$checkout" FAKE_DIRTY='' FAKE_FAIL_AT='' FAKE_FAIL_STATUS=42
   export FAKE_GH_STATUS=0
+  export FAKE_HIDE_UNTRACKED=false FAKE_DETACHED=false FAKE_BRANCH_FILE="$case_root/branch"
   export FAKE_CONFIGURED=monkeyspaw-server FAKE_RUNNING=monkeyspaw-server
   expected="$case_root/expected"
   : >"$FAKE_COMMANDS"
@@ -83,8 +91,9 @@ expect_git() {
   expected_branch=${1:-main}
   cat >>"$expected" <<EOF
 git|check-ref-format|--branch|$expected_branch
-git|status|--porcelain
+git|status|--porcelain|--untracked-files=normal|--ignore-submodules=none
 git|checkout|$expected_branch|--
+git|symbolic-ref|--quiet|HEAD
 git|fetch|origin|$expected_branch
 git|merge-base|--is-ancestor|HEAD|FETCH_HEAD
 EOF
@@ -220,7 +229,7 @@ start_case diverged-or-ahead
 FAKE_FAIL_AT='git|merge-base|--is-ancestor|HEAD|FETCH_HEAD'
 FAKE_FAIL_STATUS=1
 run_update
-head -n 5 "$test_root/baseline" >"$expected"
+head -n 6 "$test_root/baseline" >"$expected"
 grep -Fq 'ahead of or diverged' "$case_root/stderr"
 check_case 1
 
@@ -254,6 +263,21 @@ for fallback_reason in unavailable failed; do
   printf '%s\n' "$FAKE_FAIL_AT" >>"$expected"
   check_case 43
 done
+
+start_case hidden-untracked
+FAKE_DIRTY='?? draft.txt'
+FAKE_HIDE_UNTRACKED=true
+run_update
+head -n 2 "$test_root/baseline" >"$expected"
+check_case 1
+grep -Fq 'dirty checkout' "$case_root/stderr"
+
+start_case tag-shadows-branch
+FAKE_DETACHED=true
+run_update
+head -n 3 "$test_root/baseline" >"$expected"
+printf '%s\n' 'git|symbolic-ref|--quiet|HEAD' >>"$expected"
+check_case 1
 
 start_case missing-env
 rm "$checkout/.env"

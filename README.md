@@ -169,7 +169,8 @@ curl --fail http://127.0.0.1:8790/api/health
 The branch argument defaults to `main`. The updater refuses tracked or
 untracked local changes and commits ahead of or diverged from the fetched
 `origin` branch; resolve them manually before retrying. It checks out the
-named branch and uses `gh repo sync --branch`, falling back to
+named branch and refuses a branch/tag collision that leaves a detached HEAD.
+It uses `gh repo sync --branch`, falling back to
 `git pull --ff-only origin <branch>` if `gh` is unavailable or sync fails.
 It pulls only external images, builds the server with fresh base images,
 waits up to 120 seconds for startup health, prunes dangling Docker images,
