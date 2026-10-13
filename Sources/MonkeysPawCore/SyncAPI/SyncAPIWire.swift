@@ -118,7 +118,8 @@ extension SyncAPISchema {
         case (.object(let fields, let minimum, let rules), .object(let object)):
             let allowed = Set(fields.map(\.name))
             let required = Set(fields.filter(\.required).map(\.name))
-            guard object.count >= minimum, Set(object.keys).isSubset(of: allowed), required.isSubset(of: Set(object.keys)) else {
+            guard allowed.count == fields.count, object.count >= minimum,
+                  Set(object.keys).isSubset(of: allowed), required.isSubset(of: Set(object.keys)) else {
                 throw APIContractError.invalidValue
             }
             for field in fields {
@@ -138,13 +139,15 @@ extension SyncAPISchema {
 }
 
 extension SyncAPIString {
+    private static let regexCache = APIRegexCache()
+
     func validate(_ text: String) throws {
         let length = text.unicodeScalars.count
         guard length >= minimumLength, maximumLength.map({ length <= $0 }) ?? true,
               maximumUTF8Bytes.map({ text.utf8.count <= $0 }) ?? true,
               allowedValues.map({ $0.contains(text) }) ?? true else { throw APIContractError.invalidValue }
         if let pattern {
-            let regex = try NSRegularExpression(pattern: pattern)
+            let regex = try Self.regexCache.expression(pattern)
             let range = NSRange(text.startIndex..<text.endIndex, in: text)
             guard regex.firstMatch(in: text, range: range)?.range == range else { throw APIContractError.invalidValue }
         }
@@ -178,5 +181,21 @@ extension SyncAPIString {
         let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
         let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
         guard (1...days[month - 1]).contains(day) else { throw APIContractError.invalidValue }
+    }
+}
+
+/// Patterns come from schema descriptions; the lock owns all cache access.
+private final class APIRegexCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var expressions: [String: NSRegularExpression] = [:]
+
+    func expression(_ pattern: String) throws -> NSRegularExpression {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = expressions[pattern] { return cached }
+
+        let compiled = try NSRegularExpression(pattern: pattern)
+        expressions[pattern] = compiled
+        return compiled
     }
 }

@@ -87,12 +87,14 @@ extension SyncAPI {
         public var headerValue: String { String(seconds) }
         public static let schema: SyncAPISchema = .integer(minimum: 1, maximum: 15 * 60)
 
-        public init(seconds: Int64) { self.seconds = seconds }
+        public init(seconds: Int64) throws {
+            try Self.schema.validate(.integer(seconds))
+            self.seconds = seconds
+        }
 
         public init(headerValue: String) throws {
             guard let seconds = Int64(headerValue), String(seconds) == headerValue else { throw APIContractError.invalidValue }
-            try Self.schema.validate(.integer(seconds))
-            self.seconds = seconds
+            try self.init(seconds: seconds)
         }
 
         public init(from decoder: Decoder) throws {

@@ -99,7 +99,7 @@ PRAGMA journal_mode = WAL;   -- persistent; set once
 | `GET /api/health` | Liveness and version; no auth (Docker healthcheck) |
 | `POST /api/v1/auth/login` `{username, password, device_name}` | `{device_token, user}`. Rate-limited (§8.5). |
 | `POST /api/v1/auth/logout` | Revokes this device's token; `200 {}` |
-| `POST /api/v1/auth/register` `{invite_token, username, password, device_name}` | Consumes an invite and joins its group with its role. Returns `{device_token, user}`. |
+| `POST /api/v1/auth/register` `{invite_token, username, password, device_name}` | Consumes an invite; group invites join their group with its role, and account-only invites create an ungrouped account. Returns `{device_token, user}`. |
 | `POST /api/v1/auth/password` `{current_password, new_password}` | Change own password; revokes all other devices; `200 {}` (B9) |
 | `GET /api/v1/me` | `{user, groups, devices}`; caller device metadata only (B9) |
 | `DELETE /api/v1/me/devices/{id}` | Revoke a caller device; `200 {}` (B9) |
@@ -169,6 +169,9 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   omit both union fields; group invites require both. HTTP invite roles are
   editor/viewer; owner invites remain CLI-only. Tokens use 32 random bytes
   as unpadded base64url, and clients construct the §8.5 join link.
+  Closed object branches make these payloads mutually exclusive without
+  an additional discriminator: the account branch rejects `group_id`/`role`,
+  and the group branch requires both.
 - Usernames in every request and response, including login, are 1–64 lowercase
   ASCII letters, digits, dots, underscores or hyphens, beginning with a letter
   or digit. DTOs reject uppercase rather than normalize it; stored usernames
@@ -187,6 +190,8 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   `front_matter` with one-based `line`/`column`, `body` with zero-based UTF-8
   `byte_offset`, or `path` with zero-based nullable `segment`. Missing location
   is omitted. A 422 has at least one error; 200 warnings contain only warnings.
+  A path location requires `segment`, using explicit null for a global issue;
+  optional invite `expires_in` instead permits omission and rejects null.
 
 `MAX_PROMPT_BYTES = 256 KiB` bounds decoded prompt UTF-8, separately from the
 2 MiB HTTP request envelope and 16 MiB serialized pull response cap (B3).

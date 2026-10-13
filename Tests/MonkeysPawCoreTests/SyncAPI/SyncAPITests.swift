@@ -11,6 +11,7 @@ final class SyncAPITests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(SyncAPI.Prompt.self, from: encoded), prompt)
         XCTAssertTrue(String(decoding: encoded, as: UTF8.self).contains("9223372036854775807"))
         requireSendable(prompt)
+        requireSendable(SyncAPI.PromptScope.group(groupID: id))
         requireSendable(SyncAPI.ErrorResponse.conflict(head: .init(rev: 1, scope: .user, path: "a.md", content: "")))
     }
 
@@ -27,7 +28,7 @@ final class SyncAPITests: XCTestCase {
     }
 
     func testOpaqueCursorsAreNotParsedByDTOs() throws {
-        for cursor in ["0", "snap:not-the-server-grammar", "opaque 🐒", "9223372036854775808"] {
+        for cursor in ["0", "snap:not-the-server-grammar", "opaque 🐒", "9223372036854775808", String(repeating: "a", count: 1_024)] {
             let request = SyncAPI.PullRequest(databaseID: nil, cursors: ["user:" + id: cursor])
             XCTAssertEqual(try JSONDecoder().decode(SyncAPI.PullRequest.self, from: JSONEncoder().encode(request)), request)
         }
@@ -48,9 +49,10 @@ final class SyncAPITests: XCTestCase {
     func testContentLimitUsesUTF8BytesAndLeaves422ValidationToServices() throws {
         let encoder = JSONEncoder()
         let maximum = String(repeating: "é", count: Limits.maxPromptBytes / 2)
+        XCTAssertEqual(maximum.utf8.count, Limits.maxPromptBytes)
         let valid = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "../invalid.MD", content: maximum)
         XCTAssertNoThrow(try encoder.encode(valid))
-        XCTAssertThrowsError(try encoder.encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "a.md", content: maximum + "é")))
+        XCTAssertThrowsError(try encoder.encode(SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "a.md", content: maximum + "a")))
         // DTOs accept content/path strings before the shared semantic validators
         // produce 422 issues, rather than turning their errors into malformed JSON.
         let request = SyncAPI.PutPromptRequest(baseRev: 0, scope: .user, path: "../invalid.MD", content: "invalid YAML")

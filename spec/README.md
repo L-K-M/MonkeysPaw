@@ -575,12 +575,17 @@ definitions, with these corpus boundaries:
   account-only invites omit group id and role together. TTLs use seconds,
   1–604,800, with an absent TTL selecting the seven-day server default.
   Tokens are canonical unpadded base64url encodings of 32 random bytes.
+  Invite objects form an exclusive `oneOf`: the closed account branch rejects
+  `group_id`/`role`, while the group branch requires both. The DTO tests count
+  matching branches for the invite fixtures; no extra discriminator is needed.
 - Write warnings and 422 errors contain mapped Core issue codes with their
   matching severity; locations discriminate front matter/body/path with
   one-based line/column or zero-based byte/segment coordinates. Path segment
   is explicitly null for a global path issue. `prompt.id_mismatch` supplies
   the content/URL-id check. Response metadata and error envelopes reject
   password/token hashes, credentials and underlying error text.
+  `path.segment` is required and nullable; invite `expires_in` is optional
+  and nonnullable. Omission and null have distinct meanings at the schema boundary.
 - Content strings are bounded to 262,144 decoded UTF-8 bytes, independent
   of JSON escaping. Request-envelope 2 MiB and serialized-response 16 MiB
   limits are transport responsibilities in later server slices. Every prompt

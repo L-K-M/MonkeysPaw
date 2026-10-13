@@ -179,6 +179,129 @@ final class DTOConformanceTests: XCTestCase {
         print("Consumed \(result.cases) DTO fixtures (\(result.files.count) files).")
     }
 
+    func testInviteFixturesMatchExactlyOneClosedBranch() throws {
+        let schemas = [SyncAPI.AdminInviteRequest.schemaName: SyncAPI.AdminInviteRequest.schema,
+                       SyncAPI.InviteResponse.schemaName: SyncAPI.InviteResponse.schema]
+        var acceptedTargets = [String: Set<String>]()
+        for name in try FileManager.default.contentsOfDirectory(atPath: root.path).filter({ !$0.hasPrefix(".") }).sorted() {
+            let directory = root.appendingPathComponent(name)
+            let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("case.json"))) as? [String: Any])
+            let dto = try XCTUnwrap(envelope["dto"] as? String)
+            guard let schema = schemas[dto], case .oneOf(let branches) = schema else { continue }
+            let expected = try XCTUnwrap(envelope["expected"] as? [String: Any])
+            let valid = try XCTUnwrap(expected["valid"] as? Bool)
+            let bytes = try Data(contentsOf: directory.appendingPathComponent("body.json"))
+            let value: APIValue
+            do { value = try JSONDecoder().decode(APIValue.self, from: bytes) } catch is DecodingError {
+                XCTAssertFalse(valid, name)
+                continue
+            }
+            let matches = branches.filter { (try? $0.validate(value)) != nil }.count
+            XCTAssertEqual(matches, valid ? 1 : 0, name)
+            for (index, branch) in branches.enumerated() {
+                guard case .object(let fields, _, _) = branch else { return XCTFail("Invite branch must be a closed object") }
+                let required = Set(fields.filter(\.required).map(\.name))
+                XCTAssertEqual(required.contains("group_id"), index == 1)
+                XCTAssertEqual(required.contains("role"), index == 1)
+                if index == 0 { XCTAssertFalse(fields.contains { ["group_id", "role"].contains($0.name) }) }
+            }
+            if valid, case .object(let object) = value {
+                acceptedTargets[dto, default: []].insert(object["group_id"] == nil ? "account" : "group")
+            }
+            print("Invite branch matches: \(name) = \(matches)")
+        }
+        for dto in schemas.keys { XCTAssertEqual(acceptedTargets[dto], ["account", "group"]) }
+    }
+
+    func testBoundaryFixtureNamesPinExactScalarAndByteCounts() throws {
+        for name in try FileManager.default.contentsOfDirectory(atPath: root.path).filter({ !$0.hasPrefix(".") }).sorted() {
+            guard let suffix = name.components(separatedBy: "-path-").dropFirst().first,
+                  let expected = suffix.split(separator: "-").first.flatMap({ Int($0) }) else { continue }
+            let bytes = try Data(contentsOf: root.appendingPathComponent(name + "/body.json"))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            let nested = object["prompt"] as? [String: Any]
+            let path = try XCTUnwrap(object["path"] as? String ?? nested?["path"] as? String)
+            XCTAssertEqual(path.utf8.count, expected, name)
+        }
+        for (name, key, expected) in [("create-group-request-name-255", "name", 255),
+                                      ("create-group-request-name-overflow", "name", 256),
+                                      ("create-user-request-username-64", "username", 64),
+                                      ("create-user-request-long-username", "username", 65)] {
+            let bytes = try Data(contentsOf: root.appendingPathComponent(name + "/body.json"))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+            XCTAssertEqual(try XCTUnwrap(object[key] as? String).unicodeScalars.count, expected, name)
+        }
+    }
+
+    func testOversizedPullFixtureFailsOnlyTheSharedBudgetRule() throws {
+        let bytes = try Data(contentsOf: root.appendingPathComponent("pull-response-over-shared-budget/body.json"))
+        let value = try JSONDecoder().decode(APIValue.self, from: bytes)
+        guard case .object(let fields, let minimum, _) = SyncAPI.PullResponse.schema,
+              case .object(var object) = value,
+              case .array(var scopes) = object["scopes"],
+              case .object(var lastScope) = scopes.last,
+              case .array(var items) = lastScope["items"] else { return XCTFail("Expected pull object and scopes") }
+        XCTAssertNoThrow(try SyncAPISchema.object(fields: fields, minimumProperties: minimum).validate(value))
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncAPI.PullResponse.self, from: bytes))
+        items.removeLast()
+        lastScope["items"] = .array(items)
+        scopes[scopes.count - 1] = .object(lastScope)
+        object["scopes"] = .array(scopes)
+        let boundary = try JSONDecoder().decode(SyncAPI.PullResponse.self, from: JSONEncoder().encode(APIValue.object(object)))
+        XCTAssertEqual(boundary.scopes.reduce(0) { $0 + $1.items.count }, 200)
+    }
+
+    func testMixedUnionFixturesIsolateForeignFieldsInCompleteVariants() throws {
+        for (name, schema, foreignKey) in [("feed-item-mixed-union", SyncAPI.FeedItem.schema, "id"),
+                                           ("issue-location-mixed-union", SyncAPI.IssueLocation.schema, "line")] {
+            let bytes = try Data(contentsOf: root.appendingPathComponent(name + "/body.json"))
+            let value = try JSONDecoder().decode(APIValue.self, from: bytes)
+            XCTAssertThrowsError(try schema.validate(value), name)
+            guard case .object(var object) = value else { return XCTFail("Expected union object") }
+            XCTAssertNotNil(object.removeValue(forKey: foreignKey))
+            XCTAssertNoThrow(try schema.validate(.object(object)), name)
+        }
+    }
+
+    func testLiveSymlinksToOtherwiseValidCorpusEntriesAreRejected() throws {
+        for name in ["body.json", "case.json", "directory", "root"] {
+            try withCopy { copy in
+                let link: URL
+                if name == "root" {
+                    link = copy.appendingPathComponent(".root-link")
+                    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: ".")
+                } else {
+                    link = name == "directory" ? copy.appendingPathComponent("login-request-valid")
+                        : copy.appendingPathComponent("login-request-valid/" + name)
+                    let target = link.deletingLastPathComponent().appendingPathComponent(".original-" + name)
+                    try FileManager.default.moveItem(at: link, to: target)
+                    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: target.lastPathComponent)
+                }
+                XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType, .typeSymbolicLink)
+                XCTAssertThrowsError(try DTOFixtureCorpus.consume(at: name == "root" ? link : copy), name) { error in
+                    guard case DTOFixtureCorpus.Failure.invalidCorpus = error else { return XCTFail("Expected file-type rejection for \(name), got \(error)") }
+                }
+            }
+        }
+    }
+
+    func testEnvelopeVersionUsesNumericValueWithoutLexicalTokenRules() throws {
+        for token in ["1.0", "1e0"] {
+            try withCopy { copy in
+                let file = copy.appendingPathComponent("login-request-valid/case.json")
+                let text = try String(contentsOf: file, encoding: .utf8)
+                let changed = text.replacingOccurrences(of: "\"schema\": 1,", with: "\"schema\": " + token + ",")
+                XCTAssertNotEqual(changed, text)
+                try Data(changed.utf8).write(to: file)
+                XCTAssertNoThrow(try DTOFixtureCorpus.consume(at: copy))
+            }
+        }
+        try withCopy { copy in
+            try Data("[]".utf8).write(to: copy.appendingPathComponent("login-request-valid/case.json"))
+            XCTAssertThrowsError(try DTOFixtureCorpus.consume(at: copy))
+        }
+    }
+
     func testHiddenMetadataIsIgnoredWithoutWeakeningDispatch() throws {
         let original = try DTOFixtureCorpus.consume(at: root)
         try withCopy { copy in
