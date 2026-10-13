@@ -406,10 +406,23 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
   - Delta pages return at most `SYNC_PAGE_MAX = 200` emitted items **per
     response**, shared across scopes (B19). A response stops early at
     `SYNC_PAGE_BYTES = 8 MiB` of serialized JSON, including metadata, and
-    asserts its final size ≤16 MiB (B3). Fair scope scheduling is deterministic.
-    Only safe same-prompt runs in the consumed interval collapse, preserving
-    their final kind. The cursor is the highest consumed seq, including empty
-    pages, and `has_more` says whether that scope continues (B19).
+    asserts its final size ≤16 MiB (B3). Metadata reserves the head's cursor
+    width and the longer `false` spelling before items are admitted. An item
+    that does not fit is left unconsumed; if metadata alone prevents even one
+    item from fitting an otherwise empty page, the request fails rather than
+    returning an endless empty continuation.
+    Scheduling takes one row per pending scope per round, ordered by each
+    scope's oldest unconsumed seq. Global commit order ensures a quiet scope
+    cannot be overtaken forever by newer writes, even with more than 200
+    scopes. Work is bounded to 1,000 consumed rows per response, including
+    collapsed rows; this can leave a short page with `has_more: true`.
+    Only adjacent same-prompt runs within a scope's consumed interval
+    collapse to their last event, preserving its seq and final kind. Runs
+    separated by another prompt, or by a page boundary, do not collapse.
+    Payloads come solely from immutable changes, never current heads or
+    prunable revisions. The cursor is the highest consumed seq, including
+    empty pages, and `has_more` means unconsumed rows remain in that read
+    transaction (B19). An empty scope keeps its supplied delta cursor.
   - Snapshots page with the same limits, ordered by prompt id.
     - Until the snapshot is complete, `cursor` is opaque `snap:…`, identifying
       a frozen manifest/payload, its captured head and position (B17). It must
@@ -430,6 +443,12 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
   - Heads are durable high-water marks, independent of retained change rows
     and never reset by retention (B18). A snapshot with head 0 is empty; every
     emitted item has a positive seq (B2/B17/B18).
+  - S13 implements delta pages only. Until S14 supplies frozen snapshots,
+    requests requiring a snapshot or continuing a `snap:…` cursor raise the
+    typed `SyncFeedError.snapshotRequired` TODO after current authorization.
+    The existing error middleware returns sanitized `500 internal_error`;
+    it does not present an incomplete or empty delta as a completed snapshot.
+    S14 replaces this boundary with the snapshot and expiry contract above.
 - **Delete** increments the revision once, preserves content and creation
   metadata in the tombstone, and appends a delete revision, a content-free
   delete event and an indefinitely retained retired-ID/ownership record in
