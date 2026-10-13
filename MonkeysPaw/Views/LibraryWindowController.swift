@@ -102,11 +102,12 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                 $0.kind == .modified && $0.theirsSource == nil && $0.readOnlyReason == nil && $0.failure == nil
             } ?? false
             // A fresh detection or retry invalidates dismissal, even while hidden.
-            if state.conflict == nil || state.status == .saving || state.status == .loading
+            if state.conflict == nil || state.status == .saving || state.status == .loading || state.status == .commandRunning
                 || state.conflict?.isLoading == true || awaitingConflict { self.dismissedConflict = nil }
             guard let window = self.window, window.isVisible else { return }
             let desired: LibraryEditorDialog?
-            if state.status == .saving || state.status == .loading || state.conflict?.isLoading == true || awaitingConflict {
+            if state.status == .saving || state.status == .loading || state.status == .commandRunning
+                || state.conflict?.isLoading == true || awaitingConflict {
                 desired = nil
             } else if let conflict = state.conflict, conflict != self.dismissedConflict {
                 desired = .conflict(conflict, status: state.status)

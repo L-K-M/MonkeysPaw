@@ -191,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isEditorBusy: Bool {
         guard let state = editorModel?.state else { return false }
-        return state.isDirty || state.status == .saving || state.pendingDecision != nil
+        return state.isDirty || state.status == .saving || state.status == .commandRunning || state.pendingDecision != nil
             || !state.queuedActions.isEmpty
     }
 

@@ -63,6 +63,7 @@ final class LibraryViewState: ObservableObject {
     var canRevert: Bool {
         isActive && libraryAvailable && editorState.prompt != nil
             && editorState.status != .loading && editorState.status != .saving
+            && editorState.status != .commandRunning
             && editorState.conflict == nil && editorState.pendingDecision == nil
     }
     var canShowConflict: Bool {
