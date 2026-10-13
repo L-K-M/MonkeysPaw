@@ -16,6 +16,7 @@ struct APIErrorMiddleware: RouterMiddleware {
                 code = .rateLimited
                 retryAfter = retry
             case AccountError.unauthorized: code = .unauthorized
+            case AccountError.forbidden: code = .forbidden
             case AccountError.notFound: code = .notFound
             case AccountError.malformedRequest, is DecodingError: code = .malformedRequest
             case let error as any HTTPResponseError where error.status == .contentTooLarge: code = .envelopeTooLarge

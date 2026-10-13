@@ -50,6 +50,12 @@ struct AccountRepository: Sendable {
         try await database.write { try await operation(Transaction(sql: $0), DeviceRepository(sql: $0)) }
     }
 
+    func writeAudited<T: Sendable>(
+        _ operation: @escaping @Sendable (Transaction, DeviceRepository, AuditRepository) async throws -> T
+    ) async throws -> T {
+        try await database.write { try await operation(Transaction(sql: $0), DeviceRepository(sql: $0), AuditRepository(sql: $0)) }
+    }
+
     struct Transaction: Sendable {
         fileprivate let sql: any SQLDatabase
 
@@ -77,6 +83,14 @@ struct AccountRepository: Sendable {
 
         func changePassword(userID: String, hash: String) async throws {
             try await sql.raw("UPDATE users SET password_hash = \(bind: hash) WHERE id = \(bind: userID)").run()
+        }
+
+        func update(_ user: AccountRecord) async throws {
+            try await sql.raw("""
+                UPDATE users SET display_name = \(bind: user.displayName), password_hash = \(bind: user.passwordHash),
+                    account_kind = \(bind: user.accountKind.rawValue), disabled_at = \(bind: user.disabledAt)
+                WHERE id = \(bind: user.id)
+                """).run()
         }
 
         func groups(userID: String) async throws -> [SyncAPI.GroupMembership] {

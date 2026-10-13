@@ -110,7 +110,7 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 | Rename group | | ✗ | ✗ | ✓ | ✓ |
 | Delete group (prompts are deleted; members lose the scope) | | ✗ | ✗ | ✓ | ✓ |
 | Create groups | any user (becomes owner) | | | | ✓ |
-| Create or disable users, reset passwords | | | | | ✓ |
+| Create, disable or enable users, reset passwords, change account metadata or kind | | | | | ✓ |
 
 - **No read endpoint for admins.** Admins have no endpoint that reads a
   prompt directly, and cannot grant themselves membership (403).
@@ -125,7 +125,19 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 - **A group always keeps at least one owner.** Removing or demoting the last
   owner is refused.
 - **Disabled users.** All of their tokens fail with 401. Their prompts and
-  memberships are kept.
+  memberships are kept. Disable and admin password reset revoke all target
+  devices, including the caller's device on a self-reset. Enabling requires a
+  fresh login; it does not reactivate revoked devices. Ordinary members receive
+  403 for account administration, regardless of their group role. Services
+  recheck the enabled admin and calling device inside the write transaction.
+- **Account audit.** Stable actions are `user.create`, `user.update`,
+  `user.disable`, `user.enable` and `user.reset_password`. Each accepted admin
+  action records only an event id, actor and target ids, and UTC time. A combined
+  patch records its metadata, password and enable/disable actions in the same
+  transaction as the account and device changes. Repeated enable/disable is
+  idempotent and still audited; repeated disable keeps its original time.
+  Audit failure rolls back every mutation. A nullable actor represents the
+  explicit CLI operator (§19 B12); HTTP always records the authenticated user.
 
 ### 8.3 API (v1, JSON, `Authorization: Bearer <device token>`)
 
@@ -199,7 +211,10 @@ The previously unspecified bodies are pinned as follows (B2/B9/B10):
   defaults to member, and returns user metadata. Admin patch takes a nonempty
   subset of `{display_name, password, disabled, account_kind}`. Omitted values
   are unchanged; `display_name: null` clears it; password resets and disable
-  revoke devices per B9. Other optional fields reject explicit null.
+  revoke every target device per B9. Patch returns the updated user metadata;
+  enable preserves prompts and memberships and requires a fresh login.
+  Other optional fields reject explicit null. Duplicate canonical usernames
+  return the existing `400 malformed_request` envelope; no identity is exposed.
 - Group create/rename take `{name}` and return
   `{id, name, created_by, created_at}`; delete returns `{}`. Membership PUT
   takes `{role}` and explicitly adds or changes an existing user. It returns

@@ -12,7 +12,8 @@ public func buildApplication(configuration: ServerConfiguration, database: Serve
 }
 
 func makeApplication(
-    configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil
+    configuration: ServerConfiguration, accounts: AccountService? = nil, sessions: SessionService? = nil,
+    admin: AdminUserService? = nil
 ) -> some ApplicationProtocol {
     let router = Router(context: ServerRequestContext.self)
     router.add(middleware: APIErrorMiddleware())
@@ -24,6 +25,7 @@ func makeApplication(
     if let accounts, let sessions {
         LoginRoutes(login: .init(accounts: accounts, sessions: sessions), trustedProxies: configuration.trustedProxies).add(to: router)
         AccountRoutes(accounts: accounts, sessions: sessions).add(to: router)
+        AdminUserRoutes(admin: admin ?? .init(accounts: accounts), sessions: sessions).add(to: router)
     }
 
     return Application(

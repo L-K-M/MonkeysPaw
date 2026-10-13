@@ -75,4 +75,11 @@ struct DeviceRepository: Sendable {
             WHERE user_id = \(bind: userID) AND id != \(bind: deviceID) AND revoked_at IS NULL
             """).run()
     }
+
+    func revokeAll(userID: String, at: String) async throws {
+        try await sql.raw("""
+            UPDATE devices SET revoked_at = \(bind: at)
+            WHERE user_id = \(bind: userID) AND revoked_at IS NULL
+            """).run()
+    }
 }
