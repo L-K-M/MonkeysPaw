@@ -147,6 +147,7 @@ final class LinuxEnvironment {
     private let libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)?
     private let folderChooser: LinuxFolderChoosing
     private let backgroundWork: BackgroundWork
+    private let suppliedAssistantTransport: HTTPTransporting?
     private let suppliedClipboard: Clipboard?
     private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
     private let statusNotifierBusAddress: String?
@@ -185,6 +186,11 @@ final class LinuxEnvironment {
     private lazy var secretStore = LinuxSecretStore(paths: paths, runner: runner)
     private(set) lazy var providerSettingsService = ProviderSettingsService(
         store: ProviderSettingsStore(files: configFiles, log: log), secrets: secretStore, log: log)
+    private lazy var assistantTransport: HTTPTransporting = suppliedAssistantTransport ?? URLSessionHTTPTransport()
+    private lazy var assistantService = AssistantService(providerSettings: providerSettingsService,
+        anthropic: AnthropicClient(transport: assistantTransport),
+        openAICompatible: OpenAIClient(transport: assistantTransport, providerState: ProviderStateStore(files: configFiles)),
+        work: backgroundWork, main: mainThread)
     private(set) lazy var settingsModel = SettingsModel(settings: settings)
     private lazy var libraryLocation = LibraryLocation(environment: self,
         defaultLibraryPath: defaultLibraryDirectory.path)
@@ -263,6 +269,7 @@ final class LinuxEnvironment {
          libraryWatcherFactory: ((URL) throws -> FileStoreWatcher)? = nil,
          folderChooser: LinuxFolderChoosing? = nil,
          backgroundWork: BackgroundWork? = nil,
+         assistantTransport: HTTPTransporting? = nil,
          clipboard: Clipboard? = nil,
          libraryAvailabilityNotifier: LibraryAvailabilityNotifier? = nil,
          launchURI: @escaping (URL) -> Void = { url in
@@ -274,6 +281,7 @@ final class LinuxEnvironment {
         self.libraryWatcherFactory = libraryWatcherFactory
         self.folderChooser = folderChooser ?? GTKFolderChooser()
         self.backgroundWork = backgroundWork ?? LinuxBackgroundWork()
+        suppliedAssistantTransport = assistantTransport
         suppliedClipboard = clipboard
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
         statusNotifierBusAddress = environment["DBUS_SESSION_BUS_ADDRESS"]
@@ -428,6 +436,11 @@ final class LinuxEnvironment {
                 self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
                     rememberedValues: self.rememberedValuesSettingsModel,
+                    makeAssistant: { [weak self] in
+                        guard let self, !self.isShutDown else { return nil }
+                        return AssistantSettingsModel(settings: self.providerSettingsService,
+                            assistant: self.assistantService, work: self.backgroundWork, mainThread: self.mainThread)
+                    },
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
                     librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
             }

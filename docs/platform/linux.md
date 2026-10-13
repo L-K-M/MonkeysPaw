@@ -5,8 +5,8 @@
 - Commit / artifact version / desktop / keyring and libsecret-tools versions:
 - Date / tester / isolated XDG config and data directories:
 
-Use disposable provider profiles and test keys. Settings integration arrives
-in A14; exercise the driver through that build. Do not record key values,
+Use disposable provider profiles and test keys in Settings → Assistant.
+Do not record key values,
 stdin contents or keyring/tool error bodies in this checklist or logs.
 
 | Check | Expected result | Status |
@@ -19,6 +19,22 @@ stdin contents or keyring/tool error bodies in this checklist or logs.
 | Unavailable service and symlink refusal | With the tool installed but Secret Service stopped or inaccessible, save/Clear fails with a typed error and preserves existing data. Replace the fallback or a config ancestor with a symlink: file operations refuse it and leave the target unchanged. | NOT RUN |
 | Tool removal and restoration | Save a disposable service key, remove the tool from PATH, and save a different file key. Restoring the tool restores priority to the older service item. Re-enter and save the intended key through the unlocked service; it replaces that item and removes the file copy. Restore the tool before Clear to remove both copies. | NOT RUN |
 | Crash temporary cleanup | Terminate during a file save, then retry a file or service save. Any abandoned private `.secrets-<UUID>` files are removed before the next mutation; a live file writer's lock causes a typed failure without deleting its temporary. | NOT RUN |
+
+## Assistant Settings (M4 A14, NOT RUN)
+
+Record the commit, date, desktop, GTK, keyring and provider versions. Use
+disposable profiles and keys; never include key values or provider error
+bodies in evidence. Xvfb tests use injected transport and secret storage;
+these checks require a real desktop and, for Anthropic, owner-supplied access.
+
+| Check | Expected result | Status |
+|---|---|---|
+| GNOME Keyring profiles | Add two profiles, rename and select them, Keep/Replace/Clear a key, Save, close and reopen Settings. The active profile and metadata persist; Secret Service is shown, saved keys never populate the masked field, and deleting or clearing one profile keeps the other's key. A locked prompt leaves GTK responsive and reports a typed result. | NOT RUN |
+| KWallet profiles | With Secret Service support enabled, repeat the GNOME two-profile, key-edit and close/reopen checks. Selecting, disabling and deleting the active profile stay coherent; no plaintext fallback is created by a failing installed service. | NOT RUN |
+| Unencrypted storage notice | With secret-tool absent, save and reopen a profile. A prominent unencrypted-file warning and File tier appear; only the named 0600 secrets file contains the key. Clear and Save remove it and the warning. | NOT RUN |
+| Anthropic Test and model picker | Save an Anthropic profile, explicitly Test, and choose a returned model. No request occurs on editing, Save, selection or reopening. Test shows progress and success or a typed failure; an independently entered model ID works after failure. Changing the destination requires re-entry or Clear. | NOT RUN |
+| Ollama Test and manual model | Use OpenAI-compatible with http://localhost:11434/v1 and no key. Test lists installed models, or shows a typed listing failure while manual IDs remain editable. Save/reopen retains the ID; cancelling or closing during Test rejects late results. | NOT RUN |
+| Orca and keyboard | Navigate the Assistant tab with Tab/Shift+Tab and select profiles/models with the keyboard. Orca announces control labels, masked key input, active profile, key edit mode, storage tier, unencrypted warning, progress and typed results. Focus remains visible, and no saved key is spoken. | NOT RUN |
 
 ## Release deb installation (M2, NOT RUN)
 

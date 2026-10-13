@@ -39,6 +39,7 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
         view = LinuxSettingsWindow(application: application, general: environment.generalSettingsModel,
             shortcuts: model, rememberedValues: environment.rememberedValuesSettingsModel,
+            makeAssistant: { nil },
             chooser: SettingsFolderChooser(), openSetup: { XCTFail("Unexpected Setup intent") })
         view.show()
         XCTAssertTrue(GTKTestSupport.spin { self.model.togglePicker.registration != nil })
@@ -151,7 +152,9 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
             }
             return false
         }
-        XCTAssertFalse(containsEntry(window))
+        let tabs = try widget("settings-tabs")
+        let shortcutsPage = try XCTUnwrap(gtk_notebook_get_nth_page(mp_notebook(tabs), 1))
+        XCTAssertFalse(containsEntry(shortcutsPage))
         XCTAssertTrue(probe.fixes.isEmpty)
     }
 
