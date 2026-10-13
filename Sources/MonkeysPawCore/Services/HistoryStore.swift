@@ -56,9 +56,10 @@ final class HistoryStore: PromptKeyedStore {
 
     func remove(_ revision: HistoryRevision) throws {
         guard parts(of: revision.filename) != nil else { throw LibraryError.revisionNotFound }
-        try removeProvenance(at: path(for: revision) + ".json")
+        // A failed revision deletion must leave its attribution intact.
         do { try files.delete(at: path(for: revision)) }
         catch FileStoreError.notFound { throw LibraryError.revisionNotFound }
+        try removeProvenance(at: path(for: revision) + ".json")
     }
 
     func headProvenance(for identity: PromptIdentity, bytes: Data) throws -> PromptProvenance? {

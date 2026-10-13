@@ -128,6 +128,9 @@ public final class PromptIndex: @unchecked Sendable {
         locked { (version, prompts[RelativePath(path)]?.entry.stamp) }
     }
 
+    /// Global publication counter, including when a destination is not yet known.
+    var publicationVersion: UInt64 { locked { version } }
+
     /// Publish a completed metadata save without more I/O. A watcher may have
     /// already published a newer file or deletion; never replace that snapshot
     /// with the save's older result. Native editor work will own this hand-off.

@@ -361,6 +361,8 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
   Save or Discard changing that snapshot also requires a fresh preview.
   Retiring acceptance cancels its pending discard dialog and completes its
   caller without blocking later editor navigation.
+  Retirement also releases the editor's save permit; a delayed preflight or
+  completion cannot release a newer acceptance's permit.
   A guard matching the already-open prompt still runs its attached operation
   and completes exactly once.
   Publication already started may finish; newer buffer edits stay dirty and

@@ -318,6 +318,7 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             XCTAssertEqual(h.e.model.state.provenanceMaintenanceFailed, provenanceFailure)
             XCTAssertFalse(h.e.model.state.isDirty)
             XCTAssertEqual(h.e.model.state.stamp, commit.entry.stamp)
+            XCTAssertEqual(h.e.h.index.cachedEntry(at: commit.entry.relativePath)?.stamp, commit.entry.stamp)
             XCTAssertEqual(h.model.state.phase, .saved)
             if provenanceFailure {
                 guard case .committedWithProvenanceWarning = h.model.state.acceptanceOutcome else {

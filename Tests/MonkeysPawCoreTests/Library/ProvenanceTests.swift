@@ -44,7 +44,7 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertNil(try h.library.provenance(for: XCTUnwrap(h.library.history(for: manual.identity).first)))
     }
 
-    func testHistoryListingOmitsOneCorruptSidecarButExplicitReadsAndRestoreStayStrict() throws {
+    func testHistoryListingOmitsCorruptSidecarAndRestoreCommitsWithProvenanceWarning() throws {
         let h = PromptEditingHarness()
         var entry = try XCTUnwrap(save(h, "First", provenance: metadata).committedEntry)
         for source in ["Second", "Third", "Current"] {
@@ -65,11 +65,14 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertThrowsError(try h.library.provenance(for: corrupt)) {
             XCTAssertEqual($0 as? LibraryError, .invalidProvenance)
         }
-        XCTAssertThrowsError(try h.library.restore(corrupt, at: "a.md", expectedStamp: entry.stamp)) {
-            XCTAssertEqual($0 as? LibraryError, .invalidProvenance)
-        }
-        XCTAssertEqual(try h.files.read(at: "a.md"), Data(entry.document.source.utf8))
         XCTAssertEqual(try h.data.listFiles(), before)
+        guard case .updatedButProvenanceFailed(let restored, false) =
+            try h.library.restoreForEditing(corrupt, at: "a.md", expectedStamp: entry.stamp) else {
+            return XCTFail("Corrupt provenance must warn after restoring readable revision content.")
+        }
+        XCTAssertEqual(restored.document.body, "Second")
+        XCTAssertEqual(restored.stamp, try h.files.stamp(at: "a.md"))
+        XCTAssertNil(try h.library.provenance(at: "a.md"))
         XCTAssertEqual(try h.data.text(at: sidecarPath), "Corrupt JSON")
 
         for unreadablePath in [sidecarPath, revisionPath] {
@@ -77,6 +80,10 @@ final class ProvenanceTests: XCTestCase {
             XCTAssertThrowsError(try h.library.historyForEditing(entry.identity, filename: "a.md")) {
                 XCTAssertEqual($0 as? FileStoreError, .ioFailure)
             }
+            XCTAssertThrowsError(try h.library.restoreForEditing(corrupt, at: "a.md", expectedStamp: restored.stamp)) {
+                XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+            }
+            XCTAssertEqual(try h.files.read(at: "a.md"), Data(restored.document.source.utf8))
         }
     }
 
@@ -116,6 +123,8 @@ final class ProvenanceTests: XCTestCase {
         XCTAssertEqual(renamed.identity, first.identity)
         XCTAssertEqual(try h.data.listFiles(), before)
         XCTAssertEqual(try h.library.provenance(at: moved.relativePath), metadata)
+        let revision = try XCTUnwrap(h.library.history(for: moved.identity).first)
+        XCTAssertEqual(try h.library.provenance(for: revision), metadata)
         try h.library.delete(at: moved.relativePath, expectedStamp: second.stamp)
         XCTAssertEqual(try h.data.listFiles(), before)
     }
@@ -199,6 +208,82 @@ final class ProvenanceTests: XCTestCase {
             return XCTFail("Unavailable provenance must remain explicit after commit.")
         }
         XCTAssertEqual(entry.document.body, "Manual")
+        XCTAssertNil(try h.library.provenance(at: "a.md"))
+    }
+
+    func testCorruptHeadDoesNotBlockEditorSaveAndIsReplacedWithExplicitWarning() throws {
+        let e = EditorHarness(heldWork: true, queuedMain: true)
+        let generated = try XCTUnwrap(save(e.h, "Generated", provenance: metadata).committedEntry)
+        let path = "history/" + (try generated.identity.storageKey) + "/head.json"
+        try e.h.data.put("Corrupt JSON", at: path)
+        XCTAssertThrowsError(try e.h.library.provenance(at: "a.md")) {
+            XCTAssertEqual($0 as? LibraryError, .invalidProvenance)
+        }
+        try e.h.index.rebuild()
+        e.ui { e.model.open(e.selection(generated)) }
+        e.settle()
+        e.ui { e.model.edit(generated.document.source + " Manual"); e.model.save() }
+        e.settle()
+
+        XCTAssertEqual(e.model.state.status, .saved)
+        XCTAssertTrue(e.model.state.provenanceMaintenanceFailed)
+        XCTAssertFalse(e.model.state.isDirty)
+        XCTAssertEqual(e.model.state.stamp, try e.h.files.stamp(at: "a.md"))
+        XCTAssertNil(try e.h.data.stamp(at: path))
+        XCTAssertNil(try e.h.library.provenance(at: "a.md"))
+    }
+
+    func testEditorRestoreWithCorruptProvenanceAdoptsCommitAndBothMaintenanceWarnings() throws {
+        for historyFailure in [false, true] {
+            let e = EditorHarness(heldWork: true, queuedMain: true)
+            let first = try XCTUnwrap(save(e.h, "Generated", provenance: metadata).committedEntry)
+            let current = try XCTUnwrap(save(e.h, "Manual", stamp: first.stamp).committedEntry)
+            let revision = try XCTUnwrap(e.h.library.history(for: current.identity).first)
+            let directory = "history/" + (try current.identity.storageKey)
+            try e.h.data.put("Corrupt JSON", at: directory + "/" + revision.filename + ".json")
+            if historyFailure {
+                let store = HistoryStore(files: e.h.data)
+                for _ in 1..<Limits.historyCapPerPrompt {
+                    _ = try store.snapshot(Data("Older".utf8), for: current.identity, at: e.h.clock.date)
+                }
+                e.h.dataFiles.onDelete = { path in if path.hasSuffix(".md") { throw FileStoreError.ioFailure } }
+            }
+            try e.h.index.rebuild()
+            e.ui { e.model.open(e.selection(current)) }
+            e.settle()
+            var replies: [PromptCommandOutcome] = []
+            e.ui { e.model.restore(revision) { replies.append($0); XCTAssertTrue(e.h.marker.isUI) } }
+            e.settle()
+
+            XCTAssertEqual(replies.count, 1)
+            guard case .updatedButProvenanceFailed(let restored, let history) = replies.first else {
+                return XCTFail("Restore must commit readable content and report its unavailable provenance.")
+            }
+            XCTAssertEqual(history, historyFailure)
+            XCTAssertEqual(restored.document.body, "Generated")
+            XCTAssertEqual(e.model.state.source, restored.document.source)
+            XCTAssertEqual(e.model.state.stamp, restored.stamp)
+            XCTAssertEqual(e.h.index.cachedEntry(at: "a.md")?.stamp, restored.stamp)
+            XCTAssertTrue(e.model.state.provenanceMaintenanceFailed)
+            XCTAssertEqual(e.model.state.historyMaintenanceFailed, historyFailure)
+            XCTAssertFalse(e.model.state.isDirty)
+        }
+    }
+
+    func testSynchronousRestoreReportsCorruptProvenanceOnlyAfterContentCommits() throws {
+        let h = PromptEditingHarness()
+        let first = try XCTUnwrap(save(h, "Generated", provenance: metadata).committedEntry)
+        let current = try XCTUnwrap(save(h, "Manual", stamp: first.stamp).committedEntry)
+        let revision = try XCTUnwrap(h.library.history(for: current.identity).first)
+        let path = "history/" + (try current.identity.storageKey) + "/" + revision.filename + ".json"
+        try h.data.put("Corrupt JSON", at: path)
+
+        XCTAssertThrowsError(try h.library.restore(revision, at: "a.md", expectedStamp: current.stamp)) {
+            XCTAssertEqual($0 as? LibraryError, .provenanceMaintenanceFailed)
+        }
+        let restored = try h.library.load(at: "a.md")
+        XCTAssertEqual(restored.document.body, "Generated")
+        XCTAssertNotEqual(restored.stamp, current.stamp)
         XCTAssertNil(try h.library.provenance(at: "a.md"))
     }
 }

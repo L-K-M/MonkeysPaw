@@ -214,13 +214,21 @@ public final class PromptEditingService: @unchecked Sendable {
         guard registered else { return main.run { completion(.failed(.inactive)) } }
         work.run { [self] in
             let outcome: AssistantAcceptanceOutcome
-            let version = source.map { index.editingSnapshot(at: $0.relativePath.string).version }
-                ?? index.editingSnapshot(at: "").version
+            var version = index.publicationVersion
             do {
                 try prepared.permit.check()
                 let result = try library.acceptForEditing(prepared, source: source, destination: destination)
                 if let entry = result.committedEntry {
                     let path = destination == .improve ? (source?.relativePath.string ?? entry.relativePath) : entry.relativePath
+                    if destination != .improve {
+                        let snapshot = index.editingSnapshot(at: path)
+                        // A newer publication may describe the destination before creation.
+                        // Advance the baseline only after verifying our committed stamp again.
+                        if snapshot.version > version,
+                           case .loaded(let loaded) = checkedLoad(at: path), loaded.stamp == entry.stamp {
+                            version = snapshot.version
+                        }
+                    }
                     index.acceptCommand(entry, at: path, expectedVersion: version,
                         expectedSourceStamp: destination == .improve ? source?.stamp : nil)
                 }

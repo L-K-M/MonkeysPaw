@@ -348,7 +348,11 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func retireSession() {
-        assistantPermit?.invalidate(.failed(.inactive))
+        if let assistantPermit {
+            assistantPermit.invalidate(.failed(.inactive))
+            releaseAssistantPermit(assistantPermit)
+        }
+        commandHasExternalChange = false
         if let session { editing.retire(session) }
         session = nil
         generation &+= 1
@@ -898,19 +902,19 @@ extension EditorModel {
         assistantPermit = permit
         let generation = self.generation
         let start: (EditorModel) -> Void = { model in
-            model.assistantDecisionID = nil
             guard model.generation == generation else {
-                model.assistantPermit = nil
+                model.releaseAssistantPermit(permit)
                 return completion(.failed(.staleContext))
             }
+            model.assistantDecisionID = nil
             if let refusal = validate() {
                 permit.invalidate(refusal)
-                model.assistantPermit = nil
+                model.releaseAssistantPermit(permit)
                 return completion(refusal.outcome)
             }
             guard model.assistantSnapshot == acceptance.candidate.context.editor else {
                 permit.invalidate(.conflict(.changedBuffer))
-                model.assistantPermit = nil
+                model.releaseAssistantPermit(permit)
                 return completion(.conflict(.changedBuffer))
             }
             model.startAssistantSave(acceptance, destination: destination, permit: permit, completion: completion)
@@ -933,13 +937,16 @@ extension EditorModel {
                 catch let refusal as AssistantSaveRefusal { outcome = refusal.outcome }
                 catch { outcome = .failed(.inactive) }
                 permit.invalidate(.failed(failure))
-                if self?.assistantPermit === permit {
-                    self?.assistantPermit = nil
-                    self?.assistantDecisionID = nil
-                }
+                self?.releaseAssistantPermit(permit)
                 completion(outcome)
             }
         }
+    }
+
+    private func releaseAssistantPermit(_ permit: AssistantSavePermit) {
+        guard assistantPermit === permit else { return }
+        assistantPermit = nil
+        assistantDecisionID = nil
     }
 
     /// Retiring an Assistant draft removes only its own queued discard guard.
@@ -967,7 +974,8 @@ extension EditorModel {
     private func startAssistantSave(_ acceptance: AssistantAcceptance, destination: AssistantSaveDestination,
                                     permit: AssistantSavePermit, completion: @escaping (AssistantAcceptanceOutcome) -> Void) {
         guard let profile = acceptance.candidate.context.profile, let host = profile.baseURL.host else {
-            assistantPermit = nil
+            permit.invalidate(.failed(.staleContext))
+            releaseAssistantPermit(permit)
             return completion(.failed(.staleContext))
         }
         let prepared = AssistantPreparedSave(content: acceptance.candidate.content,
@@ -979,8 +987,8 @@ extension EditorModel {
         state.status = .saving
         changed()
         editing.accept(prepared, source: acceptance.candidate.context.editor, destination: destination) { [weak self] outcome in
+            self?.releaseAssistantPermit(permit)
             guard let self, self.isActive, self.generation == generation else { return completion(outcome) }
-            self.assistantPermit = nil
             self.completedAssistantSave(outcome, source: acceptance.candidate.context.editor,
                                         destination: destination, completion: completion)
         }

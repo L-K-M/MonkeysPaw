@@ -91,6 +91,111 @@ final class AssistantAcceptanceServiceTests: XCTestCase {
         }
     }
 
+    func testCreationKeepsSourceAndNewerDestinationPublicationsWithGlobalIndexVersion() throws {
+        for destination in [AssistantSaveDestination.newPrompt, .privateCopy] {
+            for replaceDestination in [false, true] {
+                let e = EditorHarness(heldWork: true, queuedMain: true)
+                try e.h.files.put("Other", at: "other.md")
+                try e.open("Original", at: "folder/a.md")
+                let source = try XCTUnwrap(e.model.assistantSnapshot)
+                let candidate = try prepared(e)
+                let path = destination == .privateCopy ? "Candidate.md" : "folder/Candidate.md"
+                var published: LibraryEntry?
+                e.h.data.onWrite = { record in
+                    guard record.hasSuffix("/head.json") else { return }
+                    e.h.data.onWrite = nil
+                    let changedPath = replaceDestination ? path : "other.md"
+                    do {
+                        try e.h.files.put("Newer publication", at: changedPath)
+                        let entry = LibraryEntry(path: changedPath,
+                            document: PromptCodec.parse("Newer publication", filename: changedPath),
+                            stamp: try XCTUnwrap(e.h.files.stamp(at: changedPath)))
+                        let version = e.h.index.editingSnapshot(at: changedPath).version
+                        e.h.index.acceptCommand(entry, at: changedPath, expectedVersion: version)
+                        published = entry
+                    } catch { XCTFail("Could not publish the test's newer index entry.") }
+                }
+                let outcome = try accept(e, candidate, destination: destination)
+                let commit = try XCTUnwrap(outcome.committed?.entry)
+                let newer = try XCTUnwrap(published)
+
+                XCTAssertEqual(commit.relativePath, path)
+                XCTAssertEqual(e.h.index.cachedEntry(at: path)?.stamp, replaceDestination ? newer.stamp : commit.stamp)
+                XCTAssertEqual(e.h.index.cachedEntry(at: source.relativePath.string)?.stamp, source.stamp)
+                XCTAssertEqual(try e.h.files.read(at: source.relativePath.string), source.sourceBytes)
+                if replaceDestination {
+                    XCTAssertNil(try e.h.library.provenance(at: path), "Replacement bytes cannot inherit the commit's origin.")
+                } else {
+                    XCTAssertEqual(try e.h.files.read(at: path), candidate.content.canonicalBytes)
+                    XCTAssertEqual(e.h.index.cachedEntry(at: "other.md")?.stamp, newer.stamp)
+                }
+            }
+        }
+    }
+
+    func testRetiringUnrelatedSessionDoesNotCancelSourcelessAcceptance() throws {
+        let e = EditorHarness(heldWork: true, queuedMain: true)
+        let session = e.h.editor.beginSession(at: "other.md")
+        let candidate = try prepared(e)
+        var replies: [AssistantAcceptanceOutcome] = []
+        e.ui {
+            e.h.editor.accept(candidate, source: nil, destination: .newPrompt) {
+                XCTAssertTrue(e.h.marker.isUI)
+                replies.append($0)
+            }
+            e.h.editor.retire(session)
+        }
+        e.settle()
+
+        XCTAssertEqual(replies.count, 1)
+        XCTAssertNotNil(replies.first?.committed)
+        XCTAssertEqual(try e.h.files.read(at: "Candidate.md"), candidate.content.canonicalBytes)
+    }
+
+    func testCreationReconcilesDestinationDeletionPublishedBeforeCommit() throws {
+        for hasSource in [false, true] {
+            for queued in [false, true] {
+                let e = EditorHarness(heldWork: true, queuedMain: queued)
+                if hasSource { try e.open("Original", at: "folder/a.md") }
+                let source = e.model.assistantSnapshot
+                let candidate = try prepared(e)
+                let path = hasSource ? "folder/Candidate.md" : "Candidate.md"
+                e.h.files.onCreate = { destination in
+                    guard destination == path else { return }
+                    e.h.files.onCreate = nil
+                    e.h.index.acceptCommand(nil, at: destination, expectedVersion: e.h.index.publicationVersion)
+                }
+                let outcome = try accept(e, candidate)
+                let commit = try XCTUnwrap(outcome.committed?.entry)
+
+                XCTAssertEqual(commit.relativePath, path)
+                XCTAssertEqual(try e.h.files.read(at: path), candidate.content.canonicalBytes)
+                XCTAssertEqual(e.h.index.cachedEntry(at: path)?.stamp, commit.stamp,
+                    "A deletion published before creation cannot hide its committed destination.")
+                if let source {
+                    XCTAssertEqual(e.h.index.cachedEntry(at: source.relativePath.string)?.stamp, source.stamp)
+                }
+            }
+        }
+    }
+
+    func testCreationDoesNotResurrectDestinationDeletedAfterCommit() throws {
+        let e = EditorHarness(heldWork: true, queuedMain: true)
+        let candidate = try prepared(e)
+        e.h.data.onWrite = { record in
+            guard record.hasSuffix("/head.json") else { return }
+            e.h.data.onWrite = nil
+            do { try e.h.files.delete(at: "Candidate.md") }
+            catch { XCTFail("Could not delete the test's committed destination.") }
+            e.h.index.acceptCommand(nil, at: "Candidate.md", expectedVersion: e.h.index.publicationVersion)
+        }
+        let outcome = try accept(e, candidate)
+
+        XCTAssertNotNil(outcome.committed, "Acceptance must report the file that committed before deletion.")
+        XCTAssertNil(try e.h.files.stamp(at: "Candidate.md"))
+        XCTAssertNil(e.h.index.cachedEntry(at: "Candidate.md"))
+    }
+
     func testCancelledQueuedSaveAndGraphRetirementCompleteOnceWithoutWrites() throws {
         for retired in [false, true] {
             let e = EditorHarness(heldWork: true, queuedMain: true)

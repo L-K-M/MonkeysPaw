@@ -481,7 +481,17 @@ public final class LibraryService: PromptFavoriteEditing {
         if case .assigned(let id) = revision.identity {
             document = try PromptCodec.assigningIdentity(id, to: document)
         }
-        let provenance = try historyStore.provenance(for: revision, bytes: bytes)
+        let provenance: PromptProvenance?
+        do { provenance = try historyStore.provenance(for: revision, bytes: bytes) }
+        catch LibraryError.invalidProvenance {
+            // Restore readable content, but never silently discard its unknown origin.
+            let entry: LibraryEntry
+            do { entry = try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp)) }
+            catch let warning as CommittedMaintenanceFailure {
+                throw CommittedMaintenanceFailure(entry: warning.entry, history: warning.history, provenance: true)
+            }
+            throw CommittedMaintenanceFailure(entry: entry, history: false, provenance: true)
+        }
         return try saveDocument(document, at: path, mode: .replace(expectedStamp: expectedStamp), provenance: provenance)
     }
 
