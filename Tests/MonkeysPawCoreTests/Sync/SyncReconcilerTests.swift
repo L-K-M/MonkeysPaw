@@ -683,9 +683,9 @@ final class SyncReconcilerTests: XCTestCase {
     private func rescue(_ plan: SyncReconciliationPlan, _ rig: SyncApplyTestRig,
                         at destination: RelativePath = "Conflicts/Copy.md") throws -> [RelativePath: SyncReconciliationCopy] {
         let preservation = try preservation(plan)
-        let edit = try rig.mutations.rescue(preservation.local, at: destination, freshID: SyncTestValues.device)
-        return [RelativePath(preservation.local.path): .init(edit: edit,
-            origin: preservation.reason == .restoreMissing ? .rescued : .conflictOf(preservation.id))]
+        let origin: SyncPromptOrigin = preservation.reason == .restoreMissing ? .rescued : .conflictOf(preservation.id)
+        let edit = try rig.mutations.rescue(preservation.local, at: destination, freshID: SyncTestValues.device, origin: origin)
+        return [RelativePath(preservation.local.path): .init(edit: edit, origin: origin)]
     }
 
     private func retained(_ rig: SyncApplyTestRig) throws -> [Data] {

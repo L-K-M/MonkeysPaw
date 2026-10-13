@@ -119,7 +119,8 @@ enum SyncReconciler {
                 // cannot turn an echoed move-back upsert into a deletion.
                 if mode != .restore, headMode == .delta, let previous, remote.rev <= previous.rev { continue }
                 prompts[identity] = try SyncPromptState(scope: remote.scope, path: remote.path, rev: remote.rev,
-                    canonicalHash: remote.hash, origin: remote.scope.pathScope == .user ? previous?.origin : nil)
+                    canonicalHash: remote.hash, origin: SyncConflictMetadata.origin(in: remote.bytes,
+                        filename: LibraryPath.filename(remote.path.string), scope: remote.scope.pathScope))
                 if remote.scope.pathScope == .user { favorites[identity] = nil }
                 if !LibraryPath.isPrompt(remote.libraryPath.string) {
                     operations.append(.localVisibility(remote))
@@ -246,6 +247,7 @@ enum SyncReconciler {
                 : CanonicalForm.group(bytes, filename: LibraryPath.filename(path.string))
             let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path.string))
             guard document.frontMatter.id == id, form.bytes == bytes else { throw SyncReconciliationError.invalidPull }
+            _ = try SyncConflictMetadata.origin(in: document)
             let mode: SyncFileMode
             if case .group(let group) = scope, groups[group]?.role == .viewer { mode = .readOnly }
             else { mode = .normal }
