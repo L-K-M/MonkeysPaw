@@ -47,14 +47,26 @@ final class MacAssistantSettingsTests: XCTestCase {
         XCTAssertTrue(view.canEditDraft)
         view.addProfile()
         view.renameProfile("Newer staged name")
+        view.setModelID("newer-manual-model")
+        view.setKeyInput("newer-staged-key")
+        let reset = view.state.keyInputReset
         h.work.drain()
         XCTAssertEqual(view.state.profiles.map(\.displayName), ["Local Ollama"])
         XCTAssertEqual(view.state.profiles.first?.modelID, "manual-unlisted-model")
         XCTAssertEqual(view.state.selectedProfileID, id)
         XCTAssertEqual(view.state.draft?.displayName, "Newer staged name")
+        XCTAssertEqual(view.state.draft?.modelID, "newer-manual-model")
+        XCTAssertEqual(view.state.keyEdit, .replace)
+        XCTAssertEqual(view.state.keyInputReset, reset, "Save must preserve newer secure-field input")
+        XCTAssertEqual(h.secrets.writes, 0, "The first Save captured the earlier key edit")
         view.save()
         h.work.drain()
         XCTAssertEqual(view.state.profiles.map(\.displayName), ["Newer staged name"])
+        XCTAssertEqual(view.state.profiles.first?.modelID, "newer-manual-model")
+        let saved = try XCTUnwrap(view.state.profiles.first)
+        XCTAssertEqual(try h.settings.resolveForTesting(ProviderDraft(profile: saved)).key,
+                       SecretValue("newer-staged-key"))
+        XCTAssertEqual(view.state.keyEdit, .keep)
         XCTAssertNil(view.state.operation)
         XCTAssertNil(view.progressMessage)
     }
@@ -81,10 +93,19 @@ final class MacAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(view.state.profiles.map(\.displayName), ["First", "Renamed"])
         view.addProfile()
         XCTAssertEqual(view.state.selectedProfileID, second.id)
+        let writes = h.files.writes
+        let secretWrites = h.secrets.writes
+        let reset = view.state.keyInputReset
         view.deleteProfile()
+        XCTAssertNil(view.state.operation, "Discarding a new draft is a local model intent")
         h.work.drain()
         XCTAssertEqual(view.state.profiles.count, 2, "Deleting an unsaved draft discards it")
         XCTAssertEqual(view.state.draft?.id, second.id)
+        XCTAssertFalse(view.state.isNewProfile)
+        XCTAssertNil(view.state.error)
+        XCTAssertNotEqual(view.state.keyInputReset, reset)
+        XCTAssertEqual(h.files.writes, writes)
+        XCTAssertEqual(h.secrets.writes, secretWrites)
         view.deleteProfile()
         XCTAssertEqual(view.state.operation, .deleting)
         h.work.drain()
@@ -352,6 +373,34 @@ final class MacAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(h.client.calls, 0)
     }
 
+    func testDiscardAndReloadCancelsQueuedTestForTheDiscardedDraft() throws {
+        let profile = ProviderDraft(displayName: "Saved")
+        let h = try MacAssistantSettingsHarness(profiles: [profile])
+        h.work.drain()
+        let view = h.presentation
+        view.renameProfile("Discarded")
+        view.setModelID("discarded-model")
+        view.setKeyInput("discarded-key")
+        let reset = view.state.keyInputReset
+        let writes = h.files.writes
+        view.testConnection()
+        XCTAssertTrue(view.state.isTesting)
+
+        view.refresh()
+        XCTAssertFalse(view.state.isTesting, "Reload cancels before queued Test work can run")
+        XCTAssertEqual(view.state.operation, .loading)
+        h.work.drain()
+        XCTAssertEqual(view.state.draft?.displayName, "Saved")
+        XCTAssertEqual(view.state.draft?.modelID, profile.modelID)
+        XCTAssertEqual(view.state.keyEdit, .keep)
+        XCTAssertNotEqual(view.state.keyInputReset, reset)
+        XCTAssertNil(view.state.testResult)
+        XCTAssertTrue(view.state.availableModels.isEmpty)
+        XCTAssertEqual(h.client.calls, 0)
+        XCTAssertEqual(h.files.writes, writes)
+        XCTAssertEqual(h.secrets.writes, 0)
+    }
+
     /// The controller tests use this public Core graph without native I/O.
     static func makeModel(work: BackgroundWork) -> AssistantSettingsModel {
         let files = MacAssistantSettingsFiles()
@@ -410,12 +459,14 @@ private final class MacAssistantSettingsHarness {
     let secrets = MacAssistantSettingsSecrets()
     let client = MacAssistantSettingsClient()
     let work = MacAssistantSettingsWork()
+    let settings: ProviderSettingsService
     var model: AssistantSettingsModel?
     let presentation: AssistantSettingsViewState
 
     init(profiles: [ProviderDraft] = [], settingsData: Data? = nil) throws {
         if let settingsData { files.contents["provider-settings.json"] = settingsData }
         let service = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: secrets)
+        settings = service
         for profile in profiles { try service.save(profile) }
         let main = DispatchMainThread()
         let assistant = AssistantService(providerSettings: service, anthropic: client,
@@ -431,8 +482,17 @@ private final class MacAssistantSettingsHarness {
 private final class MacAssistantSettingsWork: BackgroundWork {
     private var pending: [() -> Void] = []
     func run(_ work: @escaping () -> Void) { pending.append(work) }
-    func drain() {
-        while !pending.isEmpty { pending.removeFirst()() }
+    func drain(file: StaticString = #filePath, line: UInt = #line) {
+        var processed = 0
+        while !pending.isEmpty {
+            guard processed < 10_000 else {
+                pending.removeAll()
+                XCTFail("Assistant work did not settle after 10,000 items", file: file, line: line)
+                return
+            }
+            processed += 1
+            pending.removeFirst()()
+        }
     }
 }
 

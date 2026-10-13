@@ -473,9 +473,10 @@ not record prompt text, field values or clipboard contents in this checklist.
 
 The Linux implementation host cannot compile Security or run hosted macOS
 tests. Record `KeychainSecretStoreTests` and the real-login-keychain test's
-pass or explicit skip from `macos-app` CI. The hosted test uses a unique
-service, suppresses Keychain dialogs and removes its item; it does not prove
-interactive ACL or signing behavior. The Assistant settings UI arrives in
+explicit skip from `macos-app` CI. The real-store check runs only with the
+owner's `MONKEYSPAW_RUN_KEYCHAIN_INTEGRATION=1` opt-in; it uses a unique service,
+suppresses Keychain dialogs and removes its item. It does not prove interactive
+ACL or signing behavior. The Assistant settings UI arrives in
 A13; keep the saved-key display check NOT RUN until that UI is available.
 
 - Commit / `macos-app` CI run / hosted test result or skip reason:
@@ -568,15 +569,25 @@ compile SwiftUI/AppKit or run these hosted tests. Record the `macos-app` CI
 build and `MacAssistantSettingsTests`, `MacSettingsWindowTests` and
 `AppDelegateTests` results before performing the checks below. The production
 composition test opens the real Settings factory with a saved keyless profile
-and rejects every HTTP send; view-state tests use memory-only secrets and stub
-clients. They do not establish real provider, Keychain prompt or VoiceOver
-behavior.
+and rejects every HTTP send. Saved-tier composition tests inject memory-only
+secrets; hosted AppDelegate graphs without an injected store report secrets
+unavailable and never construct the login-Keychain store. View-state tests use
+memory-only secrets and stub clients. The real login-Keychain roundtrip is
+skipped unless the owner explicitly sets `MONKEYSPAW_RUN_KEYCHAIN_INTEGRATION=1`.
+These tests do not establish real provider, Keychain prompt or VoiceOver behavior.
 
 AppDelegate shares the provider settings service, bounded URLSession transport,
 provider clients and background worker with the lazy Assistant settings model.
 Opening Settings may read a saved key's storage tier on that worker; only
 explicit Test or assistant actions send network requests. Saved values never
 enter the pane's state or secure field.
+
+One Assistant model belongs to each retained Settings window. Closing cancels
+Test; reopening the same window keeps its draft and does not construct another
+model. Controller/application teardown retires it on the UI thread. Delete on
+an unsaved new profile discards the draft without persistence. Metadata and key
+input remain editable during Save; newer edits stay staged after the older Save
+completes. Discard edits and reload cancels Test before returning to saved state.
 
 - Commit / `macos-app` CI run / hosted test result:
 - macOS / hardware / signing identity / login-keychain state:
@@ -589,16 +600,16 @@ this checklist, screenshots or logs.
 
 | Check | Result | Details |
 |---|---|---|
-| Open Settings → Assistant in the production app; the tab exists and loading/progress finishes without freezing the window or sending network requests; saved-tier reads may prompt Keychain on a worker, repeated opening preserves the current draft, and close/reopen discards unsaved edits | NOT RUN | |
-| Add, select, rename and delete profiles; selecting a saved profile makes it active, Disable Assistant clears the active selection, and saving a new profile preserves an existing active provider | NOT RUN | |
+| Open Settings → Assistant in the production app; the tab exists and loading/progress finishes without freezing the window or sending network requests; saved-tier reads may prompt Keychain on a worker, and opening/reopening the same window preserves its model and draft | NOT RUN | |
+| Add, select, rename and delete profiles; Delete on an unsaved draft discards it without an error or persistence; selecting a saved profile makes it active, Disable Assistant clears the active selection, and saving a new profile preserves an existing active provider | NOT RUN | |
 | With one active profile, add a draft; no saved row is highlighted and clicking the active row returns to it. Add and Save another profile; its edited row is highlighted while the old provider stays active, and Make active selects the new provider | NOT RUN | |
 | Real Anthropic: enter the base URL and a test key, explicitly Test connection, observe typed success and listed models; select a listed ID, Save, then restart and verify saved metadata and Keychain tier | NOT RUN | |
 | Real Ollama: choose OpenAI-compatible, enter a loopback base URL and installed model ID with no key; Test connection lists models, Save and restart retain the keyless profile | NOT RUN | |
 | Enter an unlisted model ID before/after Test; success with no models, listing unsupported, authentication failure, network failure and timeout leave manual entry usable and show actionable typed copy | NOT RUN | |
-| Test an unsaved draft without Save; no profile or key is persisted. Editing or switching profiles cancels Test and no stale result or model list reappears | NOT RUN | |
+| Test an unsaved draft without Save; no profile or key is persisted. Editing, switching profiles, or Discard edits and reload cancels Test and no stale result or model list reappears | NOT RUN | |
 | Key field: saved keys never appear after selection, Save, close/reopen or restart; blank keeps, replacement stages, Keep discards typed input, and Clear empties the field without reverting to Keep | NOT RUN | |
 | Save after Clear removes the persisted key and saved status; failed Clear/delete preserves the saved profile/status and shows a typed error; deleting the active profile leaves no stale draft, key tier or model list | NOT RUN | |
 | Change kind or destination with a saved key; Save/Test requires re-entry or explicit Clear, and the previous key is never sent to the changed destination | NOT RUN | |
 | Record Keychain prompt timing/count; allow, deny, cancel and locked-keychain cases leave Settings responsive and show typed status/errors without exposing credentials | NOT RUN | |
-| Close Settings during Test and reopen; Test is cancelled and retired replies do not update the new pane. Close during Save; the accepted Save completes and reopen shows its committed result | NOT RUN | |
+| Close Settings during Test and reopen the same window; Test is cancelled and late replies do not update the retained pane. Edit metadata/key input during Save; the older Save commits and newer edits stay staged. Close during Save; the accepted Save completes and reopen preserves that state | NOT RUN | |
 | VoiceOver identifies Assistant, profile list/active provider, kind, base URL, model ID/picker, secure key input, key mode/tier, Save/Test/Cancel and progress/errors; Tab/Shift+Tab keep visible focus and all controls operable | NOT RUN | |

@@ -317,6 +317,9 @@ final class KeychainSecretStoreTests: XCTestCase {
     }
 
     func testRealLoginKeychainRoundTripWithoutPrompts() throws {
+        guard ProcessInfo.processInfo.environment["MONKEYSPAW_RUN_KEYCHAIN_INTEGRATION"] == "1" else {
+            throw XCTSkip("Real login-keychain checks require explicit owner-run opt-in")
+        }
         let service = "ch.lkmc.monkeyspaw.tests." + UUID().uuidString
         let store = KeychainSecretStore(service: service)
         do {

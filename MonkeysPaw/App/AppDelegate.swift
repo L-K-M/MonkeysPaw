@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchURI: (URL) -> Void
     private let backgroundWork: BackgroundWork
     private let httpTransport: HTTPTransporting
+    private let secrets: SecretStore
     private let clipboard: Clipboard
     private let editorDialog: LibraryWindowController.DialogPresenter
     private let importChooser: LibraryWindowController.ImportChooser
@@ -104,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          launchURI: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) },
          backgroundWork: BackgroundWork = DispatchBackgroundWork(),
          httpTransport: HTTPTransporting = URLSessionHTTPTransport(),
+         secrets: SecretStore? = nil,
          clipboard: Clipboard = PasteboardClipboard(),
          editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
          importChooser: @escaping LibraryWindowController.ImportChooser = MacImportChooser.choose,
@@ -140,6 +142,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.launchURI = launchURI
         self.backgroundWork = backgroundWork
         self.httpTransport = httpTransport
+        if let secrets { self.secrets = secrets }
+        else if Self.isRunningTests { self.secrets = UnavailableSecretStore() }
+        else { self.secrets = KeychainSecretStore() }
         self.clipboard = clipboard
         self.editorDialog = editorDialog
         self.importChooser = importChooser
@@ -240,7 +245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentedOnboardingStep = nil
         setupWindow?.tearDown()
         onboardingWindow?.tearDown()
-        settingsWindow?.presentation.retireAssistant()
+        if let presentation = settingsWindow?.presentation {
+            mainThread.run { presentation.retireAssistant() }
+        }
         windowActivation.tearDown()
     }
 
@@ -325,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsModel = SettingsModel(settings: settings)
         self.settingsModel = settingsModel
         let providers = ProviderSettingsService(store: ProviderSettingsStore(files: data, log: log),
-            secrets: KeychainSecretStore(), log: log)
+            secrets: secrets, log: log)
         providerSettingsService = providers
         // Clients inherit Limits caps/deadlines; construction sends no requests.
         let assistant = AssistantService(providerSettings: providers,
@@ -926,6 +933,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
+}
+
+/// Hosted graphs need an injected store to exercise secrets without the login Keychain.
+private struct UnavailableSecretStore: SecretStore {
+    func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
+        throw SecretStoreError.unavailable
+    }
+    func write(_ value: SecretValue, account: SecretAccount) throws -> SecretTier {
+        throw SecretStoreError.unavailable
+    }
+    func delete(account: SecretAccount) throws { throw SecretStoreError.unavailable }
 }
 
 /// General retains its port; a weak root prevents a resident composition cycle.

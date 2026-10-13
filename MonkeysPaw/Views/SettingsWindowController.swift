@@ -40,9 +40,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     deinit {
-        cancelConfirmation?()
-        presentation.cancelForgetAll()
-        presentation.retireAssistant()
+        let cancel = cancelConfirmation
+        let presentation = self.presentation
+        mainThread.run {
+            cancel?()
+            presentation.cancelForgetAll()
+            // Retire without publishing a tab removal from deinit.
+            presentation.assistant?.retire()
+        }
     }
 
     func show() {
@@ -68,7 +73,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         cancel?()
         endForgetAllConfirmation()
         presentation.cancelForgetAll()
-        presentation.retireAssistant()
+        // The native window is retained for reopening, along with its draft.
+        presentation.assistant?.cancelTest()
     }
 
     private func updateForgetAllConfirmation() {

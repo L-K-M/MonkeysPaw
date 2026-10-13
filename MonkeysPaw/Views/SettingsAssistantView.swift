@@ -66,9 +66,14 @@ final class AssistantSettingsViewState: ObservableObject {
     func cancelTest() { model?.cancelTest() }
     func deleteProfile() {
         guard canChangeProfiles, let id = state.draft?.id else { return }
+        // A12 discards an unsaved draft locally through this same intent.
         model?.deleteProfile(id)
     }
-    func refresh() { if state.operation == nil { model?.refresh() } }
+    func refresh() {
+        guard state.operation == nil else { return }
+        cancelTest()
+        model?.refresh()
+    }
 
     func retire() {
         model?.onChange = nil
