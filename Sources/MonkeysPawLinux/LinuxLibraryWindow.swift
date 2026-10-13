@@ -58,6 +58,8 @@ final class LinuxLibraryWindow {
     private let history = LinuxLibraryHistoryView()
     private let commands: LinuxLibraryCommands
     private var historyPrompt: LibraryPromptSelection?
+    private var historyReloadPending = false
+    private var historyPage: Int32 = -1
     private var renderedFields: [PromptField]?
     private var renderedPreview: String?
     private var importView: LinuxLibraryImportView?
@@ -176,6 +178,7 @@ final class LinuxLibraryWindow {
         self.editor = editor
         commands.bind(editor: editor, browser: browser)
         historyPrompt = nil
+        historyReloadPending = false
         if let imports { importView?.bind(imports) }
         previousPrompt = nil
         copySelection = nil
@@ -215,6 +218,8 @@ final class LinuxLibraryWindow {
                 self.selectPrompt(selection)
             }
             self.render()
+            // A History request made while busy must retry even if its prompt stayed the same.
+            if self.isHistorySelected, self.historyReloadPending { self.loadHistory() }
         }
         render()
         imports?.updateDestinations(browser.sections)
@@ -260,7 +265,9 @@ final class LinuxLibraryWindow {
     }
 
     func setLibraryAvailable(_ available: Bool) {
+        let becameAvailable = available && !self.available
         self.available = available
+        if becameAvailable, !isDestroyed, isHistorySelected { loadHistory() }
         render()
     }
 
@@ -372,9 +379,9 @@ final class LinuxLibraryWindow {
         gtk_notebook_append_page(mp_notebook(tabs), editPage, GTK.label(LinuxStrings.edit))
         gtk_notebook_append_page(mp_notebook(tabs), scrolled(preview, width: Limits.panelSize.width / 2), GTK.label(LinuxStrings.preview))
         gtk_notebook_append_page(mp_notebook(tabs), scrolled(fields, width: Limits.panelSize.width / 2), GTK.label(LinuxEditorStrings.fields))
-        gtk_notebook_append_page(mp_notebook(tabs), history.widget, GTK.label(LinuxEditorStrings.history))
+        historyPage = gtk_notebook_append_page(mp_notebook(tabs), history.widget, GTK.label(LinuxEditorStrings.history))
         GTK.onNotify(UnsafeMutableRawPointer(tabs), "page") { [weak self] in
-            guard let self, !self.isDestroyed, gtk_notebook_get_current_page(mp_notebook(self.tabs)) == 3 else { return }
+            guard let self, !self.isDestroyed, self.isHistorySelected else { return }
             self.loadHistory()
         }
         history.onLoad = { [weak self] in self?.loadHistory() }
@@ -437,13 +444,22 @@ final class LinuxLibraryWindow {
         history.update(state, available: available, canRestore: commands.canRun && !commands.hasDialog)
         gtk_label_set_text(mp_label(editorStatus), commands.message ?? LinuxEditorStrings.status(state))
         if state.prompt == nil { historyPrompt = nil }
-        if gtk_notebook_get_current_page(mp_notebook(tabs)) == 3, state.prompt != historyPrompt { loadHistory() }
+        if isHistorySelected, state.prompt != historyPrompt { loadHistory() }
+    }
+
+    private var isHistorySelected: Bool {
+        historyPage >= 0 && gtk_notebook_get_current_page(mp_notebook(tabs)) == historyPage
     }
 
     private func loadHistory() {
         guard !isDestroyed, available, let editor, let prompt = editor.state.prompt,
-              editor.state.stamp != nil, editor.state.status != .loading,
-              editor.state.status != .saving, editor.state.status != .commandRunning else { return }
+              editor.state.stamp != nil else { return }
+        guard editor.state.status != .loading, editor.state.status != .saving,
+              editor.state.status != .commandRunning else {
+            historyReloadPending = true
+            return
+        }
+        historyReloadPending = false
         historyPrompt = prompt
         editor.loadHistory()
     }
