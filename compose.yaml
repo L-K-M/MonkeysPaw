@@ -1,0 +1,101 @@
+# Docker Compose >= 2.20.0. Operator settings and defaults: .env.example.
+services:
+  monkeyspaw-server:
+    image: monkeyspaw-server:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    # The image entrypoint refuses UID 0, including an overridden PUID.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      MONKEYSPAW_DATA_DIR: /data
+      MONKEYSPAW_HTTP_HOST: 0.0.0.0
+      MONKEYSPAW_HTTP_PORT: "8080"
+      MONKEYSPAW_ADMIN_USERNAME: ${MONKEYSPAW_ADMIN_USERNAME:-admin}
+      MONKEYSPAW_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      MONKEYSPAW_PUBLIC_URL: ${MONKEYSPAW_PUBLIC_URL:-http://localhost:8790}
+      MONKEYSPAW_TRUSTED_PROXIES: ${MONKEYSPAW_TRUSTED_PROXIES:-172.30.80.3/32}
+      MONKEYSPAW_LOG_LEVEL: ${MONKEYSPAW_LOG_LEVEL:-info}
+    secrets:
+      - source: admin_password
+        target: admin_password
+        uid: "${PUID:-1000}"
+        gid: "${PGID:-1000}"
+        mode: 0400
+    volumes:
+      # Prepare this private directory on the host with PUID/PGID ownership.
+      - type: bind
+        source: ${CONFIG_DIR:-./config}/monkeyspaw
+        target: /data
+        bind:
+          create_host_path: false
+    ports:
+      - "${MONKEYSPAW_BIND_ADDRESS:-127.0.0.1}:${MONKEYSPAW_PORT:-8790}:8080"
+    networks:
+      # Keep the server from taking Caddy's reserved peer while tls is disabled.
+      proxy:
+        ipv4_address: ${MONKEYSPAW_SERVER_IP:-172.30.80.2}
+    healthcheck:
+      test: [CMD, /usr/local/bin/monkeyspaw-server, healthcheck]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  caddy:
+    image: caddy:2
+    profiles: [tls]
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      MONKEYSPAW_PUBLIC_URL: ${MONKEYSPAW_PUBLIC_URL:-http://localhost:8790}
+    depends_on:
+      monkeyspaw-server:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: ./deploy/caddy/Caddyfile.example
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CONFIG_DIR:-./config}/caddy/data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CONFIG_DIR:-./config}/caddy/config
+        target: /config
+        bind:
+          create_host_path: false
+    networks:
+      proxy:
+        ipv4_address: ${MONKEYSPAW_CADDY_IP:-172.30.80.3}
+    # Namespaced: allow non-root listeners on 80/443 without capabilities.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  admin_password:
+    environment: MONKEYSPAW_ADMIN_PASSWORD
+
+networks:
+  # Only the server and Caddy belong here; never trust a whole private range.
+  proxy:
+    ipam:
+      config:
+        - subnet: ${MONKEYSPAW_PROXY_SUBNET:-172.30.80.0/29}

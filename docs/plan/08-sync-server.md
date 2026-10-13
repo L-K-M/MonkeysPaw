@@ -410,20 +410,48 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     - port `${MONKEYSPAW_BIND_ADDRESS:-127.0.0.1}:${MONKEYSPAW_PORT:-8790}:8080`
     - healthcheck `monkeyspaw-server healthcheck`, `restart: unless-stopped`,
       `no-new-privileges`
+    - effective `user: ${PUID:-1000}:${PGID:-1000}`; the image refuses UID 0
+      before starting the server. Prepare the bind directory on the host
+      with that ownership and mode 0700. Missing directories fail instead of
+      being created by Docker as root; there is no runtime ownership repair.
   - Environment-sourced compose `secrets:` (`admin_password`, read through
-    `*_FILE`), so `docker inspect` shows paths, not values.
+    `MONKEYSPAW_ADMIN_PASSWORD_FILE=/run/secrets/admin_password`), so
+    `docker inspect` shows paths, not values. The secret file has the effective
+    UID/GID and mode 0400. Keep the source `.env` at 0600; Compose secrets do
+    not encrypt it or protect the secret from the Docker host operator.
   - Profile `tls`: `caddy:2` on 80/443 with
-    `deploy/caddy/Caddyfile.example`.
+    `deploy/caddy/Caddyfile.example`. Caddy also runs with `PUID`/`PGID` and
+    private host binds under `${CONFIG_DIR:-./config}/caddy/{data,config}`
+    for certificates and state. An isolated network namespace allows its
+    non-root process to bind 80/443 without added capabilities.
+    The dedicated bridge defaults to `172.30.80.0/29`, with server at
+    `172.30.80.2` and Caddy at `172.30.80.3`; trust only the Caddy peer
+    (`172.30.80.3/32`), never all private networks. Fixed addresses keep
+    Caddy's peer reserved without TLS. If the subnet conflicts, change the
+    subnet, both addresses and trusted peer together. Set
+    `MONKEYSPAW_PUBLIC_URL` to the bare HTTPS
+    origin for the configured domain, with no path, query or fragment.
   - Every tunable is `${VAR:-default}`, documented inline. No `${VAR:?}` in
     profile-gated services (dl-tool lesson).
-  - Requires Docker Compose ≥ 2.20, which covers environment-sourced secrets,
-    `pull_policy`, and `up --wait`. The README says so.
+  - Requires Docker Compose ≥ 2.20.0: this is the minimum supported release,
+    including the environment-secret permission fix, `pull_policy: build`
+    and `up --wait --wait-timeout` (verified against upstream release/source).
+    YAML/static validation does not prove a container deployment; CI or the
+    owner must run both default and TLS configurations on a Docker host.
 - **`.env.example`.** `PUID`, `PGID`, `TZ`, `CONFIG_DIR`,
   `MONKEYSPAW_BIND_ADDRESS`, `MONKEYSPAW_PORT`, `MONKEYSPAW_PUBLIC_URL`
   (invite links and the Caddy site), `MONKEYSPAW_ADMIN_USERNAME`,
   `MONKEYSPAW_ADMIN_PASSWORD` (compose mounts it as the secret file read via
   `MONKEYSPAW_ADMIN_PASSWORD_FILE`), `MONKEYSPAW_TRUSTED_PROXIES`,
-  `MONKEYSPAW_LOG_LEVEL`, and a commented `COMPOSE_PROFILES=tls`.
+  `MONKEYSPAW_LOG_LEVEL`, `MONKEYSPAW_PROXY_SUBNET`, `MONKEYSPAW_SERVER_IP`,
+  `MONKEYSPAW_CADDY_IP`,
+  and a commented `COMPOSE_PROFILES=tls`. Defaults are UID/GID 1000, UTC,
+  `./config`, `127.0.0.1:8790`, `http://localhost:8790`, admin user `admin`,
+  an empty bootstrap password (must be supplied on an empty database),
+  `172.30.80.3/32`, log level `info`, and the bridge addresses above.
+  Container paths `/data`, `/run/secrets/admin_password` and listener
+  `0.0.0.0:8080` are fixed by this deployment. Stored timestamps remain UTC
+  regardless of `TZ`. Run only one server process per database on local disk.
 - **`update.sh`.**
   1. `cd` to its own dir; warn on a missing `.env`.
   2. `gh` from PATH or next to the checkout (`../gh`, `../bin/gh`,
@@ -442,7 +470,9 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   - Build stage `swift:6.4-noble`: `swift build -c release
     --static-swift-stdlib`, with a SwiftPM cache mount.
   - Runtime stage `ubuntu:noble` with `tini`, a non-root `monkeyspaw` user,
-    `/data` owned by it, and `HEALTHCHECK`.
+    fixed UID/GID 1000, private `/data` owned by it, timezone data, and
+    `HEALTHCHECK`. The entrypoint rejects UID 0 and sets umask 077 before
+    executing the server; it never changes bind ownership.
   - `ARG VERSION=dev REVISION=unknown CREATED=1970-01-01T00:00:00Z` and OCI
     labels.
 - **Migrations.** `serve` migrates first. Migrations are forward-only, and

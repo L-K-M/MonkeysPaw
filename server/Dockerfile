@@ -41,22 +41,38 @@ ENV MONKEYSPAW_VERSION=$VERSION
 
 # tini forwards shutdown signals and reaps children. FoundationNetworking and
 # ICU still link the curl and C++ runtimes dynamically with static Swift.
+# tzdata makes the operator's TZ effective; stored timestamps remain UTC.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        tini ca-certificates libcurl4t64 libstdc++6 \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        tini ca-certificates libcurl4t64 libstdc++6 tzdata \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --user-group monkeyspaw \
-    && install -d -o monkeyspaw -g monkeyspaw /data
+    && if id -u ubuntu >/dev/null 2>&1; then userdel --remove ubuntu; fi \
+    && groupadd --gid 1000 monkeyspaw \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin monkeyspaw \
+    && install -d -m 0700 -o monkeyspaw -g monkeyspaw /data
 
 COPY --from=build /usr/local/bin/monkeyspaw-server /usr/local/bin/monkeyspaw-server
 
+# Numeric Compose overrides must never start a privileged server. Ownership
+# belongs to host provisioning, not a root entrypoint that repairs bind mounts.
+COPY --chmod=755 <<'EOF' /usr/local/bin/monkeyspaw-entrypoint
+#!/bin/sh
+set -eu
+if [ "$(id -u)" -eq 0 ]; then
+    printf '%s\n' 'Refusing UID 0; set PUID to a non-root UID and prepare the host data directory.' >&2
+    exit 1
+fi
+umask 077
+exec /usr/local/bin/monkeyspaw-server "$@"
+EOF
+
 WORKDIR /data
-USER monkeyspaw
+USER 1000:1000
 
 EXPOSE 8080
 
 # Probe with the shipped CLI so the runtime needs no separate HTTP client.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
     CMD ["monkeyspaw-server", "healthcheck"]
-ENTRYPOINT ["/usr/bin/tini", "--", "monkeyspaw-server"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/monkeyspaw-entrypoint"]
 CMD ["serve"]
