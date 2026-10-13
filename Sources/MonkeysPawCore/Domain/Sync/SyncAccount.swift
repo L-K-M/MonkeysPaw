@@ -167,10 +167,7 @@ struct SyncHeldPrompt: Equatable, Sendable, Codable {
     init(from decoder: Decoder) throws {
         let value = try decoder.container(keyedBy: CodingKeys.self)
         let key = try value.decode(String.self, forKey: .identity)
-        let identity: PromptIdentity
-        if key.utf8.count == 64 { identity = .local(try SyncHash(key).rawValue) }
-        else { identity = .assigned(try SyncIdentifiers.ulid(key)) }
-        try self.init(identity: identity, path: RelativePath(value.decode(String.self, forKey: .path)),
+        try self.init(identity: SyncIdentifiers.promptIdentity(key), path: RelativePath(value.decode(String.self, forKey: .path)),
                       sourceAccount: value.decode(SyncAccountIdentity.self, forKey: .sourceAccount),
                       contentHash: value.decode(SyncHash.self, forKey: .contentHash))
     }

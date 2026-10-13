@@ -169,7 +169,8 @@ enum SyncTestValues {
         return try SyncState(binding: binding(), databaseID: uuid,
                              cursors: [.user(user): "0", .group(group): "snap:any opaque value / Ω + ="],
                              groups: [group: SyncGroupState(name: "Team", folder: "Team", role: .viewer)],
-                             prompts: [personalPrompt: personal, groupPrompt: shared], favorites: [groupPrompt: true])
+                             prompts: [.assigned(personalPrompt): personal, .assigned(groupPrompt): shared],
+                             favorites: [.assigned(groupPrompt): true])
     }
 
     static func object<T: Encodable>(_ value: T) throws -> [String: Any] {

@@ -18,7 +18,7 @@ final class SyncStateStoreTests: XCTestCase {
         XCTAssertTrue(files.isPrivate(at: path))
         XCTAssertEqual(operations.flushedFiles, [RelativePath(path)])
         XCTAssertEqual(operations.flushedDirectories, [RelativePath("sync"), nil])
-        XCTAssertEqual(state.prompts[SyncTestValues.groupPrompt]?.rev, .max)
+        XCTAssertEqual(state.prompts[.assigned(SyncTestValues.groupPrompt)]?.rev, .max)
         XCTAssertEqual(try files.listFiles().map(\.relativePath), [path])
     }
 
@@ -55,10 +55,11 @@ final class SyncStateStoreTests: XCTestCase {
             },
             { value in Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = String(repeating: "A", count: 64) } },
             { value in Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = "short" } },
+            { value in Self.editPrompt(&value, id: personalID) { $0["canonical_hash"] = NSNull() } },
             { value in Self.editPrompt(&value, id: personalID) { $0["scope_key"] = "group:\(SyncTestValues.device.rawValue)" } },
             { value in Self.editPrompt(&value, id: personalID) { $0["path"] = "../escape.md" } },
             { value in Self.editPrompt(&value, id: personalID) { $0["path"] = "Cafe\u{301}.md" } },
-            { value in Self.editPrompt(&value, id: personalID) { $0["rev"] = 0 } },
+            { value in Self.editPrompt(&value, id: personalID) { $0["rev"] = -1 } },
             { value in Self.editPrompt(&value, id: personalID) { $0["origin"] = ["kind": "conflict_of", "prompt_id": "secret"] } },
             { value in Self.editPrompt(&value, id: personalID) {
                 var error = $0["last_error"] as! [String: Any]
@@ -141,8 +142,8 @@ final class SyncStateStoreTests: XCTestCase {
         XCTAssertEqual((updated["groups"] as! [String: [String: Any]])[SyncTestValues.group.rawValue]!["future_group"] as? Bool, true)
 
         try store.update(for: state.binding) {
-            $0.prompts.removeValue(forKey: SyncTestValues.personalPrompt)
-            try $0.applyGroupFavorite(false, for: SyncTestValues.groupPrompt)
+            $0.prompts.removeValue(forKey: .assigned(SyncTestValues.personalPrompt))
+            try $0.applyGroupFavorite(false, for: .assigned(SyncTestValues.groupPrompt))
         }
         let pruned = try JSONSerialization.jsonObject(with: files.read(at: path)) as! [String: Any]
         XCTAssertNil((pruned["prompts"] as! [String: Any])[SyncTestValues.personalPrompt.rawValue])
@@ -156,13 +157,13 @@ final class SyncStateStoreTests: XCTestCase {
         let store = SyncStateStore(files: files, operations: operations)
         try store.update(for: state.binding) { $0 = state }
         try store.update(for: state.binding) {
-            let previous = $0.prompts[SyncTestValues.personalPrompt]!
-            $0.prompts[SyncTestValues.personalPrompt] = try SyncPromptState(scope: previous.scope,
+            let previous = $0.prompts[.assigned(SyncTestValues.personalPrompt)]!
+            $0.prompts[.assigned(SyncTestValues.personalPrompt)] = try SyncPromptState(scope: previous.scope,
                 path: previous.path, rev: previous.rev, canonicalHash: previous.canonicalHash, origin: .rescued)
         }
         let reloaded = try XCTUnwrap(store.load(for: state.binding))
-        XCTAssertEqual(reloaded.prompts[SyncTestValues.personalPrompt]?.origin, .rescued)
-        XCTAssertNil(reloaded.prompts[SyncTestValues.personalPrompt]?.lastError)
+        XCTAssertEqual(reloaded.prompts[.assigned(SyncTestValues.personalPrompt)]?.origin, .rescued)
+        XCTAssertNil(reloaded.prompts[.assigned(SyncTestValues.personalPrompt)]?.lastError)
     }
 
     func testFailedWriteRetainsCacheAndRetryCommits() throws {
@@ -256,16 +257,66 @@ final class SyncStateStoreTests: XCTestCase {
         let store = SyncStateStore(files: files, operations: operations)
         try store.update(for: state.binding) { $0 = state }
         for input in [nil, false, nil, true, nil] as [Bool?] {
-            let previous = store.snapshot.value!.favorites[SyncTestValues.groupPrompt]
-            try store.update(for: state.binding) { try $0.applyGroupFavorite(input, for: SyncTestValues.groupPrompt) }
+            let previous = store.snapshot.value!.favorites[.assigned(SyncTestValues.groupPrompt)]
+            try store.update(for: state.binding) { try $0.applyGroupFavorite(input, for: .assigned(SyncTestValues.groupPrompt)) }
             let expected = input.map { $0 ? true : nil } ?? previous
             let reloaded = try XCTUnwrap(SyncStateStore(files: files, operations: operations).load(for: state.binding))
-            XCTAssertEqual(reloaded.favorites[SyncTestValues.groupPrompt], expected)
+            XCTAssertEqual(reloaded.favorites[.assigned(SyncTestValues.groupPrompt)], expected)
             XCTAssertEqual(reloaded.prompts, state.prompts)
         }
         XCTAssertThrowsError(try store.update(for: state.binding) {
-            try $0.applyGroupFavorite(true, for: SyncTestValues.personalPrompt)
+            try $0.applyGroupFavorite(true, for: .assigned(SyncTestValues.personalPrompt))
         })
+    }
+
+    func testPendingLocalPromptErrorAndFavoriteSurviveIdentityAssignment() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncStateStore(files: files, operations: operations)
+        let state = try SyncTestValues.state()
+        let path = RelativePath("Cafe\u{301}.md")
+        let local = PromptIdentity(path: path.string, id: nil)
+        let fingerprint = try SyncInputFingerprint(bytes: Data([0xff]), path: path,
+            scope: .group(SyncTestValues.group), accessGeneration: 17, operation: .put)
+        let pending = try SyncPromptState(scope: .group(SyncTestValues.group), path: path, rev: 0,
+            lastError: SyncPromptError(code: .content(.invalidUTF8), fingerprint: fingerprint))
+        try store.update(for: state.binding) {
+            $0 = state
+            $0.prompts[local] = pending
+            try $0.applyGroupFavorite(true, for: local)
+        }
+        let loaded = try XCTUnwrap(SyncStateStore(files: files, operations: operations).load(for: state.binding))
+        XCTAssertEqual(loaded.prompts[local], pending)
+        XCTAssertEqual(loaded.favorites[local], true)
+        XCTAssertNil(loaded.prompts[local]?.canonicalHash)
+        let assigned = PromptIdentity.assigned(SyncTestValues.device)
+        try store.update(for: state.binding) {
+            let favorite = $0.favorites[local]
+            try $0.applyGroupFavorite(false, for: local)
+            $0.prompts[assigned] = $0.prompts.removeValue(forKey: local)
+            try $0.applyGroupFavorite(favorite, for: assigned)
+        }
+        let migrated = try XCTUnwrap(store.load(for: state.binding))
+        XCTAssertNil(migrated.prompts[local])
+        XCTAssertNil(migrated.favorites[local])
+        XCTAssertEqual(migrated.prompts[assigned], pending)
+        XCTAssertEqual(migrated.favorites[assigned], true)
+    }
+
+    func testLocalIdentityCannotClaimAnAcknowledgedServerRevision() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let state = try SyncTestValues.state()
+        let store = SyncStateStore(files: files, operations: operations)
+        try store.update(for: state.binding) { $0 = state }
+        let original = try files.read(at: path)
+        XCTAssertThrowsError(try store.update(for: state.binding) {
+            let local = PromptIdentity(path: "Local.md", id: nil)
+            $0.prompts[local] = try SyncPromptState(scope: .user(SyncTestValues.user), path: "Local.md", rev: 1,
+                canonicalHash: SyncHash(bytes: Data("local bytes".utf8)))
+        }) { XCTAssertEqual($0 as? SyncError, .invalidState) }
+        XCTAssertEqual(try files.read(at: path), original)
+        XCTAssertEqual(store.snapshot.value, state)
     }
 
     func testFingerprintChangesWithEveryOffendingInput() throws {

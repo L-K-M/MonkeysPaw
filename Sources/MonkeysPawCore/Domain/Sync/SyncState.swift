@@ -117,16 +117,25 @@ struct SyncGroupState: Equatable, Sendable, Codable {
 struct SyncPromptState: Equatable, Sendable, Codable {
     let scope: SyncScopeKey
     let path: RelativePath
+    /// Zero means a local create has not been acknowledged by the server.
     let rev: Int64
-    let canonicalHash: SyncHash
+    /// The acknowledged full-byte baseline; pending invalid files have none.
+    let canonicalHash: SyncHash?
     let origin: SyncPromptOrigin?
     let lastError: SyncPromptError?
 
-    init(scope: SyncScopeKey, path: RelativePath, rev: Int64, canonicalHash: SyncHash,
+    init(scope: SyncScopeKey, path: RelativePath, rev: Int64, canonicalHash: SyncHash? = nil,
          origin: SyncPromptOrigin? = nil, lastError: SyncPromptError? = nil) throws {
-        let validated = try SyncPathValidator.validate(path.string, scope: scope.pathScope)
-        guard validated.path.utf8.elementsEqual(path.string.utf8), rev >= 1,
+        guard rev >= 0, rev == 0 || canonicalHash != nil,
               origin == nil || scope.pathScope == .user else { throw SyncError.invalidState }
+        if rev == 0 {
+            // A local candidate may have a repairable wire-path issue; it is
+            // never an acknowledged baseline or authorization to apply a pull.
+            try FileStorePath.validate(path.string)
+        } else {
+            let validated = try SyncPathValidator.validate(path.string, scope: scope.pathScope)
+            guard validated.path.utf8.elementsEqual(path.string.utf8) else { throw SyncError.invalidState }
+        }
         self.scope = scope
         self.path = path
         self.rev = rev
@@ -144,7 +153,7 @@ struct SyncPromptState: Equatable, Sendable, Codable {
         try self.init(scope: value.decode(SyncScopeKey.self, forKey: .scope),
                       path: RelativePath(value.decode(String.self, forKey: .path)),
                       rev: value.decode(Int64.self, forKey: .rev),
-                      canonicalHash: value.decode(SyncHash.self, forKey: .canonicalHash),
+                      canonicalHash: value.decodeIfPresent(SyncHash.self, forKey: .canonicalHash),
                       origin: value.decodeIfPresent(SyncPromptOrigin.self, forKey: .origin),
                       lastError: value.decodeIfPresent(SyncPromptError.self, forKey: .lastError))
     }
@@ -166,13 +175,13 @@ struct SyncState: Equatable, Sendable, Codable {
     var databaseID: UUID?
     var cursors: [SyncScopeKey: String]
     var groups: [ULID: SyncGroupState]
-    var prompts: [ULID: SyncPromptState]
-    private(set) var favorites: [ULID: Bool]
+    var prompts: [PromptIdentity: SyncPromptState]
+    private(set) var favorites: [PromptIdentity: Bool]
     var version: Int { Limits.syncStateVersion }
 
     init(binding: SyncLibraryIdentity, databaseID: UUID? = nil,
          cursors: [SyncScopeKey: String] = [:], groups: [ULID: SyncGroupState] = [:],
-         prompts: [ULID: SyncPromptState] = [:], favorites: [ULID: Bool] = [:]) throws {
+         prompts: [PromptIdentity: SyncPromptState] = [:], favorites: [PromptIdentity: Bool] = [:]) throws {
         self.binding = binding
         self.databaseID = databaseID
         self.cursors = cursors
@@ -182,7 +191,7 @@ struct SyncState: Equatable, Sendable, Codable {
         try validate()
     }
 
-    mutating func applyGroupFavorite(_ favorite: Bool?, for id: ULID) throws {
+    mutating func applyGroupFavorite(_ favorite: Bool?, for id: PromptIdentity) throws {
         guard let prompt = prompts[id], case .group = prompt.scope else { throw SyncError.invalidState }
         guard let favorite else { return }
         favorites[id] = favorite ? true : nil
@@ -203,7 +212,9 @@ struct SyncState: Equatable, Sendable, Codable {
         for group in groups.values {
             guard folders.insert(SyncPathCaseFold.fold(group.folder)).inserted else { throw SyncError.invalidState }
         }
-        for prompt in prompts.values {
+        for (identity, prompt) in prompts {
+            _ = try identity.storageKey
+            if case .local = identity, prompt.rev != 0 { throw SyncError.invalidState }
             try check(prompt.scope)
             if let error = prompt.lastError {
                 // A failed move may fingerprint a different destination scope.
@@ -254,8 +265,8 @@ struct SyncState: Equatable, Sendable, Codable {
         let binding = SyncLibraryIdentity(account: account, root: value.library_root)
         let cursors = try Dictionary(uniqueKeysWithValues: value.cursors.map { (try SyncScopeKey($0.key), $0.value) })
         let groups = try Dictionary(uniqueKeysWithValues: value.groups.map { (try SyncIdentifiers.ulid($0.key), $0.value) })
-        let prompts = try Dictionary(uniqueKeysWithValues: value.prompts.map { (try SyncIdentifiers.ulid($0.key), $0.value) })
-        let favorites = try Dictionary(uniqueKeysWithValues: value.favorites.map { (try SyncIdentifiers.ulid($0.key), $0.value) })
+        let prompts = try Dictionary(uniqueKeysWithValues: value.prompts.map { (try SyncIdentifiers.promptIdentity($0.key), $0.value) })
+        let favorites = try Dictionary(uniqueKeysWithValues: value.favorites.map { (try SyncIdentifiers.promptIdentity($0.key), $0.value) })
         try self.init(binding: binding, databaseID: value.database_id.map(SyncIdentifiers.uuid),
                       cursors: cursors, groups: groups, prompts: prompts, favorites: favorites)
     }
@@ -267,13 +278,18 @@ struct SyncState: Equatable, Sendable, Codable {
                     database_id: databaseID?.uuidString.lowercased(),
                     cursors: Dictionary(uniqueKeysWithValues: cursors.map { ($0.key.rawValue, $0.value) }),
                     groups: Dictionary(uniqueKeysWithValues: groups.map { ($0.key.rawValue, $0.value) }),
-                    prompts: Dictionary(uniqueKeysWithValues: prompts.map { ($0.key.rawValue, $0.value) }),
-                    favorites: Dictionary(uniqueKeysWithValues: favorites.map { ($0.key.rawValue, $0.value) }))
+                    prompts: Dictionary(uniqueKeysWithValues: prompts.map { (try $0.key.storageKey, $0.value) }),
+                    favorites: Dictionary(uniqueKeysWithValues: favorites.map { (try $0.key.storageKey, $0.value) }))
             .encode(to: encoder)
     }
 }
 
 enum SyncIdentifiers {
+    static func promptIdentity(_ key: String) throws -> PromptIdentity {
+        if key.utf8.count == 64 { return .local(try SyncHash(key).rawValue) }
+        return .assigned(try ulid(key))
+    }
+
     static func ulid(_ raw: String) throws -> ULID {
         guard let id = ULID(raw), id.rawValue.utf8.elementsEqual(raw.utf8) else { throw SyncError.invalidState }
         return id

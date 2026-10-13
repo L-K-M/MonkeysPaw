@@ -42,6 +42,15 @@ prompts:   id → {scope_key, path, rev, canonical_hash, origin?, last_error?}
 favorites: id → true                    (group prompts only, §9.5)
 ```
 
+Prompt/favourite keys use `PromptIdentity`: an uppercase ULID, or a lowercase
+device-local path SHA-256 before identity assignment (§9.3). Local keys never
+cross the wire and migrate with favourites when a ULID is assigned. Prompt
+`rev` is zero for an unacknowledged local create; only acknowledged revisions
+(≥1) require a non-null full canonical hash. This also lets invalid new files
+retain their sanitized error/fingerprint without claiming a server baseline.
+Pending local paths retain exact safe `FileStore` spellings so a repairable
+wire-path error can be recorded; acknowledged paths must be NFC sync paths.
+
 - **Validated, fail closed.** IDs are canonical ULIDs/UUIDs, cursors remain
   opaque nonempty strings, paths are scope-relative NFC sync paths and hashes
   cover the full canonical bytes. A corrupt, unsupported or future-version
