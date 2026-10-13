@@ -18,13 +18,20 @@ final class MemorySyncFileOperations: SyncFileOperations {
     func publish(_ bytes: Data, at path: RelativePath, expecting: SyncFileExpectation,
                  mode: SyncFileMode) throws -> SyncFilePublication {
         try checkParents(of: path)
-        guard try !allDirectories().contains(path) else { throw SyncFileOperationError(.occupied) }
+        let known = try allDirectories()
+        guard !known.contains(path) else { throw SyncFileOperationError(.occupied) }
         let displaced = try check(path, expecting: expecting)
         try fileStoreOperation { try files.write(bytes, at: path.string) }
         modes[path] = mode
         do {
             try flushFile(at: path)
-            try flushDirectory(at: parent(of: path))
+            // Creating an ancestor also changes its parent's directory entry.
+            var directory = parent(of: path)
+            while true {
+                try flushDirectory(at: directory)
+                guard let current = directory, !known.contains(current) else { break }
+                directory = parent(of: current)
+            }
         } catch {
             throw SyncFileOperationError(.durabilityFailed, effect: .applied, displacedBytes: displaced)
         }
@@ -86,6 +93,9 @@ final class MemorySyncFileOperations: SyncFileOperations {
         try checkParents(of: destination)
         let known = try allDirectories()
         guard known.contains(source) else { throw SyncFileOperationError(.notFound) }
+        guard !destination.string.utf8.starts(with: (source.string + "/").utf8) else {
+            throw SyncFileOperationError(.invalidPath)
+        }
         if let destinationParent = parent(of: destination), !known.contains(destinationParent) {
             throw SyncFileOperationError(.notFound)
         }

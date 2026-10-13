@@ -118,6 +118,53 @@ final class SyncStateFileOperationsTests: XCTestCase {
         }
     }
 
+    func testDirectoryRenameRejectsOwnSubtreeWithoutMutation() throws {
+        for hasFile in [false, true] {
+            let files = MemoryFileStore()
+            let operations = MemorySyncFileOperations(files: files)
+            try operations.createDirectory(at: "Source")
+            if hasFile { try files.put("original", at: "Source/File.md") }
+            let flushCount = operations.flushCount
+            assertFailure(.invalidPath) { try operations.renameDirectory(from: "Source", to: "Source/Child") }
+            XCTAssertEqual(try operations.directories(at: nil), [RelativePath("Source")])
+            XCTAssertTrue(try operations.directories(at: "Source").isEmpty)
+            XCTAssertEqual(files.moveCount, 0)
+            XCTAssertEqual(operations.flushCount, flushCount)
+            if hasFile { XCTAssertEqual(try files.text(at: "Source/File.md"), "original") }
+            XCTAssertNil(try files.stamp(at: "Source/Child/File.md"))
+        }
+    }
+
+    func testPublicationCreatesParentsAndFlushesEveryAffectedDirectory() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let path = RelativePath("Missing/Nested/File.md")
+        let bytes = Data("complete bytes".utf8)
+        let publication = try operations.publish(bytes, at: path, expecting: .absent, mode: .normal)
+        XCTAssertNil(publication.displacedBytes)
+        XCTAssertEqual(try files.read(at: path.string), bytes)
+        XCTAssertEqual(operations.flushedFiles, [path])
+        XCTAssertEqual(operations.flushedDirectories, [RelativePath("Missing/Nested"), "Missing", nil])
+        XCTAssertEqual(try operations.directories(at: nil), [RelativePath("Missing")])
+        XCTAssertEqual(try operations.directories(at: "Missing"), [RelativePath("Missing/Nested")])
+    }
+
+    func testNewParentFlushFailuresReportAppliedPublication() throws {
+        for failure in 2...4 {
+            let files = MemoryFileStore()
+            let operations = MemorySyncFileOperations(files: files)
+            operations.failFlushNumber = failure
+            let bytes = Data("complete bytes".utf8)
+            XCTAssertThrowsError(try operations.publish(bytes, at: "Missing/Nested/File.md", expecting: .absent, mode: .normal)) {
+                let error = $0 as? SyncFileOperationError
+                XCTAssertEqual(error?.code, .durabilityFailed)
+                XCTAssertEqual(error?.effect, .applied)
+                XCTAssertNil(error?.displacedBytes)
+            }
+            XCTAssertEqual(try files.read(at: "Missing/Nested/File.md"), bytes)
+        }
+    }
+
     private func assertFailure(_ code: SyncFileFailureCode, file: StaticString = #filePath, line: UInt = #line,
                                _ operation: () throws -> Void) {
         XCTAssertThrowsError(try operation(), file: file, line: line) {
