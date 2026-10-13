@@ -101,6 +101,9 @@ check input, so it runs `core-linux` and `deb`. Xcode project changes run
 those validation jobs as well as the macOS app jobs. Linux source changes
 also run Core portability and server jobs: SwiftPM validates the parent
 manifest's target paths and the image copies the full source tree.
+Android's JVM tests also read
+`Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift`, so that Core file enables
+Android as well as every Swift job.
 
 Pushes, manual runs and reusable release calls run every job. The reusable
 call's `full-ci` input defaults to true, including release PR dry runs whose

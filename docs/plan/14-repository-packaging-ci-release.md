@@ -65,7 +65,9 @@ Rollout by milestone:
     portability and server jobs enabled because the parent Swift manifest
     validates target paths and Docker copies the full source tree.
   - Core/package changes run all Swift consumers; `spec/` and `seed/` also
-    run Android. Platform, server and script paths select their consumers.
+    run Android. Android also runs for Core's `SyncPathCaseFold.swift` table,
+    which its JVM conformance tests read directly. Platform, server and
+    script paths select their consumers.
     Unknown paths, `.github/workflows/`, `.github/actions/`, and the selector
     or its test enable every job. Script failures fail `changes`, never
     silently skip the gates. Pushes, manual runs and reusable calls run all

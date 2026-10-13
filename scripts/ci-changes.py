@@ -24,6 +24,8 @@ LINUX_SOURCE_JOBS = LINUX_JOBS | SERVER_JOBS | {"core-linux"}
 FILES = {
     "Package.swift": SWIFT_JOBS,
     "Package.resolved": SWIFT_JOBS,
+    # Android's JVM conformance test reads the frozen Swift table directly.
+    "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL_JOBS,
     # This is a check-version.py input, despite its Markdown extension.
     "README.md": frozenset({"core-linux", "deb"}),
     "compose.yaml": SERVER_JOBS,
@@ -42,6 +44,7 @@ FILES = {
     "scripts/release.sh": ALL_JOBS,
     "scripts/generate-seeds.py": SWIFT_JOBS,
     "scripts/generate-assistant-prompts.py": SWIFT_JOBS,
+    "scripts/generate-kotlin-sync-fold.py": frozenset({"android"}),
     "scripts/backup.sh": SERVER_JOBS | {"deb"},
     # unittest discovery in core-linux also executes the compose script.
     "scripts/compose-smoke.sh": SERVER_JOBS | {"core-linux"},
