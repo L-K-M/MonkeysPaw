@@ -25,17 +25,27 @@ enum DatabaseFiles {
     }
 
     static func checkHeader(_ file: URL) throws {
-        let fd = open(file.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
-        guard fd >= 0 else { throw BackupRestoreError.invalidBackup }
+        let fd = try openRegular(file)
         defer { close(fd) }
-        var info = stat()
-        guard fstat(fd, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
-            throw BackupRestoreError.invalidBackup
-        }
         var header = [UInt8](repeating: 0, count: 16)
         guard read(fd, &header, header.count) == header.count, header == Array("SQLite format 3\0".utf8) else {
             throw BackupRestoreError.invalidBackup
         }
+    }
+
+    static func checkRegular(_ file: URL) throws {
+        close(try openRegular(file))
+    }
+
+    private static func openRegular(_ file: URL) throws -> Int32 {
+        let fd = open(file.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw BackupRestoreError.invalidBackup }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
+            close(fd)
+            throw BackupRestoreError.invalidBackup
+        }
+        return fd
     }
 
     static func createEmpty(_ file: URL) throws {

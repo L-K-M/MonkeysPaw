@@ -350,4 +350,29 @@ struct ServerBackupTests {
             }
         }
     }
+
+    @Test(arguments: ["non-sqlite", "truncated"])
+    func restoreReplacesADamagedStandaloneDatabaseAndRetainsItsBytes(kind: String) async throws {
+        try await withBackupDirectory { directory in
+            let file = directory.appendingPathComponent("healthy-backup.db")
+            let oldID = try await withBackupDatabase(directory) { database in
+                try await Fixture(database: database).seed()
+                let result = try await AdminCLITestFixture.run(["backup", file.path], dataDirectory: directory)
+                #expect(result.status == 0)
+                return try await MetaRepository(database: database).databaseID()
+            }
+            let live = directory.appendingPathComponent(ServerLimits.databaseFilename)
+            let damaged = kind == "truncated" ? Data(try Data(contentsOf: live).prefix(100)) : Data("damaged database".utf8)
+            try damaged.write(to: live)
+            let result = try await AdminCLITestFixture.run(["restore", file.path, "--json"], dataDirectory: directory)
+            let metadata = try result.value(BackupMetadata.self)
+            let previous = URL(fileURLWithPath: try #require(metadata.previousPath))
+            #expect(try Data(contentsOf: previous) == damaged)
+            #expect(metadata.databaseID != oldID.uuidString)
+            try await withBackupDatabase(directory) { (database) async throws -> Void in
+                #expect(try await Fixture(database: database).count("users") == 2)
+                #expect(try await MetaRepository(database: database).databaseID().uuidString == metadata.databaseID)
+            }
+        }
+    }
 }

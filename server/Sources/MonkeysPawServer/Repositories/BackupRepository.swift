@@ -41,6 +41,15 @@ struct BackupRepository: Sendable {
     }
 
     static func preparePrevious(_ file: URL) async throws {
+        try DatabaseFiles.checkRegular(file)
+        let hasJournal = try ["-wal", "-shm", "-journal"].contains {
+            try DatabaseFiles.occupied(URL(fileURLWithPath: file.path + $0))
+        }
+        // With no journal to recover, preserve even damaged bytes without opening SQLite.
+        if !hasJournal {
+            try DatabaseFiles.sync(file)
+            return
+        }
         try DatabaseFiles.checkHeader(file)
         try await connection(file, access: .readWrite) { sql in
             try await sql.raw("PRAGMA synchronous = FULL").run()

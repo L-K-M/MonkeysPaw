@@ -744,6 +744,9 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     clears frozen manifests and durably rotates the UUID before replacement. It
     checkpoints the old WAL and closes connections before swapping, retaining
     the previous database at `monkeyspaw.pre-restore-<UUID>.db` for recovery.
+    A regular old file without journal sidecars is retained directly, allowing
+    a damaged standalone database to be replaced. An unsafe or uncheckpointable
+    old journal aborts restore without discarding it.
     Plain output is the live database path; `--json` adds the new `database_id`
     and optional `previous_path`. Remove the recovery file when no longer needed.
     Live, newer-schema, corrupt and foreign inputs fail with static safe messages
