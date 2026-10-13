@@ -775,6 +775,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
+        mainMenu.addItem(makeLibraryFileMenu())
+
         // Leave targets unset so the responder chain finds the focused text view.
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
@@ -791,6 +793,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(saveLibraryPrompt), #selector(renameLibraryPrompt),
+             #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt):
+            return validateLibraryFileMenuItem(menuItem, in: NSApp.keyWindow)
+        case #selector(importFromMenu):
+            return libraryWindow?.presentation.imports?.canImport == true
+        case #selector(openLibraryFromMenu), #selector(showLibrary):
+            return libraryStatusModel?.libraryAvailable == true
+        case #selector(showPanel), #selector(showSetup), #selector(showSettings):
+            return true
+        default: return false
+        }
     }
 
     private func installStatusItem() {

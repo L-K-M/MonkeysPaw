@@ -3,12 +3,27 @@ import MonkeysPawCore
 enum LibraryEditorDialog: Equatable {
     case decision(EditorPendingDecision, status: EditorStatus)
     case conflict(EditorConflict, status: EditorStatus)
+    case fileCommand(LibraryFileCommandRequest)
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.decision(let left, let leftStatus), .decision(let right, let rightStatus)):
+            return left == right && leftStatus == rightStatus
+        case (.conflict(let left, let leftStatus), .conflict(let right, let rightStatus)):
+            return left == right && leftStatus == rightStatus
+        case (.fileCommand(let left), .fileCommand(let right)):
+            // Reopened forms must replace their native sheet and callback token.
+            return left.id == right.id && left == right
+        default: return false
+        }
+    }
 
     var title: String {
         switch self {
         case .decision: return "Save your edits?"
         case .conflict(let conflict, _):
             return conflict.kind == .deleted ? "The prompt was deleted on disk" : "The prompt changed on disk"
+        case .fileCommand(let request): return request.title
         }
     }
 
@@ -30,6 +45,7 @@ enum LibraryEditorDialog: Equatable {
             if let failure = conflict.failure { text += " " + EditorStrings.editingFailure(failure) }
             if let reason = conflict.readOnlyReason { text += " " + EditorStrings.readOnly(reason) }
             return text + failureMessage(status)
+        case .fileCommand(let request): return request.message
         }
     }
 
@@ -38,6 +54,16 @@ enum LibraryEditorDialog: Equatable {
         case .decision: return [.decision(.save), .decision(.discard), .decision(.cancel)]
         case .conflict(let conflict, _):
             return conflict.choices.map(LibraryEditorResponse.conflict) + [.dismissConflict]
+        case .fileCommand(let request): return request.responses
+        }
+    }
+
+    /// Form responses carry the user's text rather than the initial value.
+    func accepts(_ response: LibraryEditorResponse) -> Bool {
+        switch (self, response) {
+        case (.fileCommand(let request), .rename): return request.command == .rename
+        case (.fileCommand(let request), .move): return request.command == .move
+        default: return responses.contains(response)
         }
     }
 
@@ -52,6 +78,7 @@ enum LibraryEditorResponse: Equatable {
     case conflict(EditorConflictChoice)
     /// Native dismissal leaves Core's conflict and draft available for repair.
     case dismissConflict
+    case rename(String), move(String), delete, cancelFileCommand
 
     var title: String {
         switch self {
@@ -61,6 +88,10 @@ enum LibraryEditorResponse: Equatable {
         case .conflict(.keepMine): return "Keep Mine"
         case .conflict(.takeTheirs): return "Take Theirs"
         case .conflict(.saveAsCopy): return "Save Mine as Copy"
+        case .rename: return LibraryCommandStrings.renameButton
+        case .move: return LibraryCommandStrings.moveButton
+        case .delete: return LibraryCommandStrings.deleteButton
+        case .cancelFileCommand: return LibraryCommandStrings.cancel
         }
     }
 }
