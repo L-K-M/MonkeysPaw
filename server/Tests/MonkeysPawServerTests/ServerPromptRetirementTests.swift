@@ -6,6 +6,28 @@ import Testing
 
 @Suite(.serialized)
 struct ServerPromptRetirementTests {
+    @Test func successfulDeletePreservesTheOriginalHeadCreationTime() async throws {
+        try await withGroupFixture { fixture in
+            let user = try await fixture.user("creator")
+            let session = try await fixture.account.session(user)
+            _ = try await fixture.writePrompt(session: session.identity)
+            let original = try #require(await fixture.promptRepository.read { prompts, _, _, _ in
+                try await prompts.head(id: GroupTestFixture.livePrompt)
+            })
+            fixture.account.clock.advance(60)
+            let deletedAt = ServerTimestamp.string(fixture.account.clock.now())
+            #expect(deletedAt != original.createdAt)
+            let response = try await fixture.prompts.delete(id: original.id, query: .init(baseRev: 1), session: session.identity)
+            let tombstone = try #require(await fixture.promptRepository.read { prompts, _, _, _ in
+                try await prompts.head(id: original.id)
+            })
+            #expect(response.rev == 2 && tombstone.rev == 2)
+            #expect(tombstone.createdAt == original.createdAt && tombstone.createdBy == original.createdBy)
+            #expect(tombstone.content == original.content)
+            #expect(tombstone.updatedAt == deletedAt && tombstone.deletedAt == deletedAt)
+        }
+    }
+
     @Test(arguments: [SyncAPI.AccountKind.member, .admin], GroupTestRole.allCases)
     func tombstoneAndPurgedIDUseActualWriteAuthorityBeforeAnyDestination(kind: SyncAPI.AccountKind, role: GroupTestRole) async throws {
         try await withGroupFixture { fixture in
