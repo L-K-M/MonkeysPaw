@@ -297,7 +297,8 @@ risk, so it is contained by contract:
   - One invocation: `./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease`
     on every PR to prove JVM compatibility, lint and R8.
   - Only `setup-gradle` caches Gradle state, read-only outside main.
-    Uploads the debug APK as an artifact retained for three days.
+    Uploads the debug APK and, on failure, JVM test and lint reports as
+    artifacts retained for three days.
   - Dependabot: a `gradle` entry for `/android`, with HalloMiao's `androidx`
     and `kotlin`+`ksp` groups.
 - **Signing.** `android/app/debug.keystore` is checked in and signs both

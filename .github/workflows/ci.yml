@@ -256,6 +256,19 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 3
+      - name: Upload Android reports on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MonkeysPaw-android-reports
+          path: |
+            android/core/build/reports/tests/test/
+            android/core/build/test-results/test/*.xml
+            android/app/build/reports/tests/testDebugUnitTest/
+            android/app/build/test-results/testDebugUnitTest/*.xml
+            android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 3
 
   core-macos:
     name: Core on macOS
