@@ -25,6 +25,18 @@ public enum ServerLimits {
     static let bootstrapSecretFileMaximumBytes = 4 * 1_024
     static let deviceTokenEncodedBytes = 43
     static let deviceSeenUpdateInterval: TimeInterval = 5 * 60
+    static let loginFreeAttempts = 5
+    static let loginInitialLock: TimeInterval = 30
+    static let loginMaximumLock: TimeInterval = 15 * 60
+    static let loginDecayInterval: TimeInterval = 15 * 60
+    // Five doublings of 30 seconds reach the capped 15-minute delay.
+    static let loginMaximumFailures = loginFreeAttempts + 5
+    static let loginConcurrentRequests = 4
+    static let trustedProxyMaxEntries = 64
+    static let trustedProxyConfigurationMaxBytes = 4_096
+    static let forwardedForMaxBytes = 8_192
+    static let forwardedForMaxHops = 64
+    static let ipAddressMaxBytes = 45
     static let snapshotLifetimeSeconds = 15 * 60
     static let snapshotMaxBytes = 64 * 1_024 * 1_024
     static let snapshotTotalMaxBytes = 256 * 1_024 * 1_024

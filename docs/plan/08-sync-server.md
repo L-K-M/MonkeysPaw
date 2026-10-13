@@ -132,7 +132,7 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 | Method and path | Purpose |
 |---|---|
 | `GET /api/health` | Liveness and version; no auth (Docker healthcheck) |
-| `POST /api/v1/auth/login` `{username, password, device_name}` | `{device_token, user}`. Rate-limited (§8.5). |
+| `POST /api/v1/auth/login` `{username, password, device_name}` | `200 {device_token, user}`; 401 for bad credentials, 429 when backoff starts or either bucket is locked (§8.5). |
 | `POST /api/v1/auth/logout` | Revokes this device's token; `200 {}` |
 | `POST /api/v1/auth/register` `{invite_token, username, password, device_name}` | Consumes an invite; group invites join their group with its role, and account-only invites create an ungrouped account. Returns `{device_token, user}`. |
 | `POST /api/v1/auth/password` `{current_password, new_password}` | Change own password; revokes all other devices; `200 {}` (B9) |
@@ -246,7 +246,11 @@ semantic 422 issues. Every prompt `path`, including move, revision, conflict
 head and feed payloads, is nonempty and at most `Limits.maxPathBytes` (1,024
 decoded UTF-8 bytes) at the DTO boundary. Full path rules and normalization
 remain with `SyncPathValidator` (§8.4). Transport header/body limits are
-enforced by later server slices, not by an unbounded Foundation JSON encoder.
+enforced by later server slices, not by an unbounded Foundation JSON encoder. Account routes, including login, cap streamed request
+bodies at 2 MiB before decoding or credential work. Login returns the same
+401 envelope for unknown, disabled and wrong-password accounts. Its fifth
+failure and locked requests return 429 with `Retry-After`; neither response
+discloses which independent bucket caused the lock.
 
 ### 8.4 Server behaviour
 
@@ -385,12 +389,40 @@ enforced by later server slices, not by an unbounded Foundation JSON encoder.
     which routes to the GApplication `open` handler.
   - There is no open registration.
 - **Brute force.**
-  - Per account and per IP: after `LOGIN_FREE_ATTEMPTS = 5` failures,
-    exponential backoff up to `LOGIN_MAX_LOCK = 15 min`, persisted in
-    `login_attempts`.
+  - Independent canonical-username and canonical-IP buckets live in
+    `login_account_buckets` and `login_ip_buckets`, including unknown users.
+    Every failed credential check updates both in one transaction. Failures
+    one through four return 401. The fifth starts `LOGIN_INITIAL_LOCK = 30 s`
+    and returns 429; each failure after the previous lock expires doubles it
+    to `LOGIN_MAX_LOCK = 15 min`. Attempts while either bucket is locked do
+    no bcrypt work, do not extend locks, and return 429 with `Retry-After`
+    rounded up to integer seconds (1–900), using the longer remaining lock.
+  - A bucket decays to zero after `LOGIN_DECAY_INTERVAL = 15 min` of quiet
+    time measured from its last failure or lock expiry, whichever is later.
+    Locked attempts and successful logins do not advance the IP bucket's
+    clock. A successful login deletes only the account bucket, atomically
+    with device creation; it leaves every IP failure and lock intact. Expired
+    locks retain their failure step until decay. State survives restart;
+    clock rollback does not clear history or shorten existing locks.
+  - Each admitted request performs at most one cost-12 bcrypt verification.
+    A process admits at most `LOGIN_CONCURRENT_REQUESTS = 4` login attempts
+    and only one for a given account or IP at a time. Busy admission returns
+    429 with `Retry-After: 1`, unless a persisted lock requires a longer delay;
+    it does not queue or change persistent buckets.
+    Bcrypt stays outside the database writer; completion rechecks both locks
+    and the enabled account's verified hash before issuing a device token.
   - Volumetric limits sit at the reverse proxy.
-  - The client IP comes from `X-Forwarded-For` only when the peer is in
-    `MONKEYSPAW_TRUSTED_PROXIES`.
+  - `MONKEYSPAW_TRUSTED_PROXIES` is a comma-separated list of numeric IPv4/
+    IPv6 addresses or CIDRs, empty by default (no trusted peers). Invalid
+    configuration fails startup without echoing its values. Only an explicit
+    trusted socket peer enables `X-Forwarded-For`: combine repeated fields
+    in wire order, walk right to left through trusted hops, and use the first
+    untrusted address. Ignore any prefix left of that address. Untrusted
+    peers' headers are ignored. A missing, malformed trusted suffix or
+    oversized chain falls back to the socket peer. IPv6 spelling and
+    IPv4-mapped IPv6 normalize to one bucket key. Scoped addresses, hostnames,
+    ports, brackets and NUL are rejected. Configuration permits at most 64
+    entries/4096 bytes; forwarded chains at most 64 hops/8192 bytes.
 - **TLS.** Terminated by Caddy (`tls` profile, site address
   `MONKEYSPAW_PUBLIC_URL`) or the operator's proxy.
   - The server speaks plain HTTP on the compose network only.

@@ -26,19 +26,27 @@ struct SessionService: Sendable {
 
     /// Rechecking the verified hash prevents login racing a password reset.
     func issueSession(for verified: VerifiedAccount, deviceName: String) async throws -> IssuedSession {
-        guard (1...255).contains(deviceName.unicodeScalars.count) else { throw AccountError.malformedRequest }
-        let token = DeviceToken.generate()
         return try await repository.write { accounts, devices in
-            guard let current = try await accounts.user(id: verified.user.id), current.disabledAt == nil,
-                  current.passwordHash == verified.user.passwordHash else { throw AccountError.unauthorized }
-            let now = clock()
-            let id = try ServerTimestamp.id(at: now)
-            let timestamp = ServerTimestamp.string(now)
-            try await devices.insert(.init(id: id, userID: current.id, name: deviceName, tokenHash: token.hash,
-                                           createdAt: timestamp, lastSeenAt: timestamp, revokedAt: nil))
-            return IssuedSession(token: token, user: current.metadata,
-                                 identity: .init(userID: current.id, deviceID: id))
+            try await issueSession(for: verified, deviceName: deviceName, accounts: accounts, devices: devices)
         }
+    }
+
+    /// Login resets its account bucket in the same transaction as this insert.
+    func issueSession(
+        for verified: VerifiedAccount, deviceName: String,
+        accounts: AccountRepository.Transaction, devices: DeviceRepository
+    ) async throws -> IssuedSession {
+        guard (1...255).contains(deviceName.unicodeScalars.count) else { throw AccountError.malformedRequest }
+        guard let current = try await accounts.user(id: verified.user.id), current.disabledAt == nil,
+              current.passwordHash == verified.user.passwordHash else { throw AccountError.unauthorized }
+        let token = DeviceToken.generate()
+        let now = clock()
+        let id = try ServerTimestamp.id(at: now)
+        let timestamp = ServerTimestamp.string(now)
+        try await devices.insert(.init(id: id, userID: current.id, name: deviceName, tokenHash: token.hash,
+                                       createdAt: timestamp, lastSeenAt: timestamp, revokedAt: nil))
+        return IssuedSession(token: token, user: current.metadata,
+                             identity: .init(userID: current.id, deviceID: id))
     }
 
     func authenticate(token value: String) async throws -> SessionIdentity {

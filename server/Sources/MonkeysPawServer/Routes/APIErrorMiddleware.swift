@@ -10,7 +10,11 @@ struct APIErrorMiddleware: RouterMiddleware {
             return try await next(request, context)
         } catch {
             let code: SyncAPI.FailureCode
+            var retryAfter: SyncAPI.RetryAfter?
             switch error {
+            case LoginError.rateLimited(let retry):
+                code = .rateLimited
+                retryAfter = retry
             case AccountError.unauthorized: code = .unauthorized
             case AccountError.notFound: code = .notFound
             case AccountError.malformedRequest, is DecodingError: code = .malformedRequest
@@ -24,6 +28,7 @@ struct APIErrorMiddleware: RouterMiddleware {
             var response = try context.responseEncoder.encode(SyncAPI.ErrorResponse.failure(code), from: request, context: context)
             response.status = .init(code: code.httpStatus)
             if code == .unauthorized { response.headers[.wwwAuthenticate] = "Bearer" }
+            if let retryAfter { response.headers[.retryAfter] = retryAfter.headerValue }
             return response
         }
     }

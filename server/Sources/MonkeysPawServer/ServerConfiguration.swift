@@ -6,6 +6,7 @@ public struct ServerConfiguration: Sendable {
     let httpHost: String
     let version: String
     public let httpPort: Int
+    let trustedProxies: TrustedProxies
 
     /// Treats empty or whitespace-only environment values as unset before applying defaults.
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) throws {
@@ -15,6 +16,12 @@ public struct ServerConfiguration: Sendable {
 
         httpHost = environment["MONKEYSPAW_HTTP_HOST"] ?? ServerLimits.defaultHTTPHost
         version = environment["MONKEYSPAW_VERSION"] ?? AppIdentity.fallbackVersion
+
+        do {
+            trustedProxies = try TrustedProxies(configuration: environment["MONKEYSPAW_TRUSTED_PROXIES"] ?? "")
+        } catch {
+            throw ConfigurationError.invalidTrustedProxies
+        }
 
         guard let configuredPort = environment["MONKEYSPAW_HTTP_PORT"] else {
             httpPort = ServerLimits.defaultHTTPPort
@@ -30,9 +37,15 @@ public struct ServerConfiguration: Sendable {
 
     private enum ConfigurationError: Error, CustomStringConvertible {
         case invalidHTTPPort
+        case invalidTrustedProxies
 
         var description: String {
-            "MONKEYSPAW_HTTP_PORT must be an integer in \(ServerLimits.httpPortRange)."
+            switch self {
+            case .invalidHTTPPort:
+                return "MONKEYSPAW_HTTP_PORT must be an integer in \(ServerLimits.httpPortRange)."
+            case .invalidTrustedProxies:
+                return "MONKEYSPAW_TRUSTED_PROXIES must be a bounded comma-separated list of IP addresses or CIDRs."
+            }
         }
     }
 }

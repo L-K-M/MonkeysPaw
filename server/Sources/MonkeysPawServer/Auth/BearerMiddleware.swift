@@ -1,12 +1,17 @@
 import Hummingbird
 import MonkeysPawCore
+import NIOCore
 
 struct ServerRequestContext: RequestContext {
     var coreContext: CoreRequestContextStorage
     var session: SessionIdentity?
+    let remoteAddress: SocketAddress?
     var maxUploadSize: Int { SyncAPI.requestEnvelopeMaxBytes }
 
-    init(source: Source) { coreContext = .init(source: source) }
+    init(source: Source) {
+        coreContext = .init(source: source)
+        remoteAddress = source.channel.remoteAddress
+    }
 
     func authenticatedSession() throws -> SessionIdentity {
         guard let session else { throw AccountError.unauthorized }
