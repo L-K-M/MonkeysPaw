@@ -173,6 +173,11 @@ final class AssistantSettingsModelTests: XCTestCase {
         XCTAssertEqual(h.model.state.draft, before.draft)
         XCTAssertEqual(h.model.state.profiles, before.profiles)
         XCTAssertEqual(h.model.state.keyEdit, .replace)
+        h.provider.selectError = nil
+        h.model.selectProfile(ProviderProfileID())
+        XCTAssertEqual(h.model.state.error, .profileNotFound)
+        XCTAssertEqual(h.model.state.draft, before.draft)
+        XCTAssertEqual(h.model.state.selectedProfileID, profile.id)
     }
 
     func testDeletingNewInactiveAndActiveProfilesLeavesCoherentState() throws {
@@ -213,6 +218,7 @@ final class AssistantSettingsModelTests: XCTestCase {
             if tier == .environment { XCTAssertTrue(h.model.state.keyStorage.message.contains("read-only")) }
         }
         let h = try AssistantSettingsHarness(profiles: [profile], selected: profile.id, heldWork: true)
+        h.work.releaseNext()
         XCTAssertEqual(h.model.state.keyStorage, .loading)
         h.provider.tierError = ProviderSettingsError.secret(.locked)
         h.settle()
@@ -412,6 +418,7 @@ final class AssistantSettingsModelTests: XCTestCase {
         let profile = try AssistantSettingsHarness.profile()
         let h = try AssistantSettingsHarness(profiles: [profile], selected: profile.id,
             tiers: [profile.id: .file], heldWork: true)
+        h.work.releaseNext()
         h.model.addProfile()
         XCTAssertEqual(h.model.state.keyStorage, .none)
         h.settle()
@@ -605,10 +612,156 @@ final class AssistantSettingsModelTests: XCTestCase {
         XCTAssertNil(try provider.service.connection(for: draft.id).key)
     }
 
+    func testFailedRollbackForNewProfileReportsUnknownStorageInsteadOfNoKey() throws {
+        let h = try AssistantSettingsHarness()
+        let provider = ProviderHarness()
+        let model = AssistantSettingsModel(settings: provider.service, testing: h.testing,
+            work: h.work, mainThread: h.main)
+        model.addProfile()
+        let id = try XCTUnwrap(model.state.draft?.id)
+        model.setKeyInput(UUID().uuidString)
+        provider.files.memory.failNextWrite = true
+        provider.secrets.deleteError = SecretStoreError.deleteFailed
+        model.save()
+        XCTAssertEqual(model.state.error, .secretRollbackFailed)
+        XCTAssertTrue(model.state.isReadOnly)
+        XCTAssertTrue(model.state.isNewProfile)
+        XCTAssertEqual(model.state.keyEdit, .replace)
+        XCTAssertNotNil(provider.secrets.persisted[.provider(id)])
+        XCTAssertEqual(model.state.keyStorage, .failed(.secretRollbackFailed))
+    }
+
+    func testSavedKeyResetsDespiteNewerMetadataAndDestinationStillRequiresReentry() throws {
+        let h = try AssistantSettingsHarness()
+        let provider = ProviderHarness()
+        let model = AssistantSettingsModel(settings: provider.service, testing: h.testing,
+            work: h.work, mainThread: h.main)
+        model.addProfile()
+        model.setKeyInput(UUID().uuidString)
+        let reset = model.state.keyInputReset
+        h.work.isHeld = true
+        model.save()
+        model.setBaseURL("https://another.example")
+        model.renameProfile("Newer metadata")
+        h.settle()
+        XCTAssertEqual(model.state.draft?.baseURL, "https://another.example")
+        XCTAssertEqual(model.state.draft?.displayName, "Newer metadata")
+        XCTAssertEqual(model.state.keyEdit, .keep)
+        XCTAssertNotEqual(model.state.keyInputReset, reset)
+        model.save()
+        h.settle()
+        XCTAssertEqual(model.state.error, .keyRequiredForChangedDestination)
+        XCTAssertEqual(model.state.profiles.first?.baseURL.absoluteString, ProviderKind.anthropic.defaultBaseURL)
+    }
+
+    func testDraftDiagnosticsRedactCredentialsInInvalidStagedURL() throws {
+        let h = try AssistantSettingsHarness()
+        let sentinel = UUID().uuidString
+        h.model.addProfile()
+        h.model.setBaseURL("https://" + sentinel + "@example.com/?key=" + sentinel)
+        let draft = try XCTUnwrap(h.model.state.draft)
+        assertRedacted(draft, sentinel: sentinel)
+        assertRedacted(h.model.state, sentinel: sentinel)
+        assertRedacted(h.model, sentinel: sentinel)
+    }
+
+    func testInitializationAndRefreshReadEvenCachedSnapshotsOnBackgroundWork() throws {
+        let h = try AssistantSettingsHarness()
+        h.provider.onSnapshot = {
+            XCTAssertFalse(h.marker.isUI, "Snapshot locking can wait for a blocking secret read")
+        }
+        let model = h.marker.ui {
+            AssistantSettingsModel(settings: h.provider, testing: h.testing, work: h.work, mainThread: h.main)
+        }
+        model.refresh()
+        h.settle()
+        XCTAssertNil(model.state.operation)
+        XCTAssertTrue(model.state.profiles.isEmpty)
+    }
+
+    func testRefreshAndSecondModelLeaveUIResponsiveWhileSecretReadHoldsStoreLock() async throws {
+        let provider = ProviderHarness()
+        let draft = ProviderDraft(key: .replace(SecretValue(UUID().uuidString)))
+        try provider.service.save(draft)
+        let entered = expectation(description: "Secret read holds the provider lock")
+        var secretReads = 0
+        let secrets = ConnectionBlockingSecrets {
+            secretReads += 1
+            if secretReads == 1 { entered.fulfill() }
+        }
+        // Initial tier read plus one for each completed metadata load.
+        defer { for _ in 0..<3 { secrets.allowReturn.signal() } }
+        let settings = ProviderSettingsService(store: ProviderSettingsStore(files: provider.files), secrets: secrets)
+        let metadata = expectation(description: "Initial metadata read completed")
+        let loads = expectation(description: "Initial tier and both snapshot reads completed")
+        loads.expectedFulfillmentCount = 4
+        let tiers = expectation(description: "Both refreshed tiers completed")
+        tiers.expectedFulfillmentCount = 2
+        var jobs = 0
+        let work = ConnectionBackground {
+            jobs += 1 // Only this serial worker accesses the counter.
+            if jobs == 1 { metadata.fulfill() }
+            if jobs <= 4 { loads.fulfill() }
+            if jobs == 5 || jobs == 6 { tiers.fulfill() }
+        }
+        let main = ConnectionMainQueue()
+        let testing = AssistantSettingsTestingFake()
+        let first = AssistantSettingsModel(settings: settings, testing: testing, work: work, mainThread: main)
+        main.drain()
+        await fulfillment(of: [metadata], timeout: 2)
+        main.drain()
+        await fulfillment(of: [entered], timeout: 2)
+        XCTAssertEqual(first.state.keyStorage, .loading)
+
+        first.refresh()
+        let second = AssistantSettingsModel(settings: settings, testing: testing, work: work, mainThread: main)
+        main.drain()
+        XCTAssertEqual(first.state.operation, .loading)
+        XCTAssertEqual(second.state.operation, .loading)
+        var heartbeat = false
+        main.run { heartbeat = true }
+        main.drain()
+        XCTAssertTrue(heartbeat, "The UI keeps draining while background snapshot reads wait")
+
+        for _ in 0..<3 { secrets.allowReturn.signal() }
+        await fulfillment(of: [loads], timeout: 2)
+        main.drain()
+        await fulfillment(of: [tiers], timeout: 2)
+        main.drain()
+        XCTAssertNil(first.state.operation)
+        XCTAssertNil(second.state.operation)
+        XCTAssertEqual(first.state.draft?.id, draft.id)
+        XCTAssertEqual(second.state.draft?.id, draft.id)
+        XCTAssertTrue(testing.tests.isEmpty)
+    }
+
+    func testCompletionPublicationCanReenterSelectionWithoutRevivingOldTier() throws {
+        let h = try AssistantSettingsHarness()
+        h.model.addProfile()
+        h.model.setKeyInput("staged")
+        var selections = 0
+        h.model.onChange = { [weak model = h.model] in
+            guard let model, model.state.operation == nil,
+                  !model.state.profiles.isEmpty, model.state.draft != nil else { return }
+            selections += 1
+            model.selectProfile(nil)
+        }
+        h.model.save()
+        XCTAssertEqual(selections, 1)
+        XCTAssertEqual(h.model.state.profiles.count, 1)
+        XCTAssertNil(h.model.state.selectedProfileID)
+        XCTAssertNil(h.model.state.draft)
+        XCTAssertEqual(h.model.state.keyStorage, .none)
+        XCTAssertNil(h.model.state.operation)
+    }
+
     func testPublicInitializerTestsThroughA8WithoutSavingOrExposingKey() async throws {
-        let h = ConnectionHarness([.held])
+        let work = ConnectionQueuedWork()
+        let h = ConnectionHarness([.held], work: work)
         let model = AssistantSettingsModel(settings: h.provider.service, assistant: h.service,
-            work: ConnectionBackground(), mainThread: h.main)
+            work: work, mainThread: h.main)
+        h.main.drain()
+        work.drain()
         h.main.drain()
         model.addProfile(kind: .openaiCompatible)
         model.setModelID("manual")
@@ -622,6 +775,7 @@ final class AssistantSettingsModelTests: XCTestCase {
         }
         model.testConnection()
         h.main.drain()
+        work.drain()
         await h.transport.waitUntilSent()
         let queued = expectation(description: "A8 result queued")
         h.main.onEnqueue = { queued.fulfill() }

@@ -34,7 +34,8 @@ extension AssistantService: AssistantSettingsTesting {
 public final class AssistantSettingsModel: CustomStringConvertible,
     CustomDebugStringConvertible, CustomReflectable {
     /// Published metadata deliberately has no ProviderKeyEdit/SecretValue field.
-    public struct Draft: Equatable, Sendable {
+    public struct Draft: Equatable, Sendable, CustomStringConvertible,
+        CustomDebugStringConvertible, CustomReflectable {
         public let id: ProviderProfileID
         public let displayName: String
         public let kind: ProviderKind
@@ -55,6 +56,10 @@ public final class AssistantSettingsModel: CustomStringConvertible,
                 && lhs.baseURL.utf8.elementsEqual(rhs.baseURL.utf8)
                 && lhs.modelID.utf8.elementsEqual(rhs.modelID.utf8)
         }
+
+        public var description: String { "<assistant settings draft redacted>" }
+        public var debugDescription: String { description }
+        public var customMirror: Mirror { Mirror(self, children: ["draft": description]) }
     }
 
     public enum KeyEdit: Equatable, Sendable {
@@ -86,7 +91,7 @@ public final class AssistantSettingsModel: CustomStringConvertible,
     }
 
     public enum Operation: Equatable, Sendable {
-        case saving, selecting, deleting
+        case loading, saving, selecting, deleting
     }
 
     private enum KeyInputHandling { case preserve, reset }
@@ -155,34 +160,19 @@ public final class AssistantSettingsModel: CustomStringConvertible,
         self.testing = testing
         self.work = work
         self.mainThread = mainThread
-        // The provider snapshot is cached metadata; never resolve credentials here.
-        let snapshot = settings.snapshot
-        self.snapshot = snapshot
-        let selected = snapshot.settings.profiles.first { $0.id == snapshot.settings.selectedProfileID }
-        draft = selected.map(ProviderDraft.init(profile:))
-        picker = draft.map(AssistantModelPickerState.init(draft:))
-        error = snapshot.readOnlyError
-        if selected?.secretReference != nil {
-            keyStorage = snapshot.readOnlyError.map(KeyStorage.failed) ?? .loading
-        }
-        state = State(profiles: snapshot.settings.profiles,
-            selectedProfileID: snapshot.settings.selectedProfileID, draft: draft.map(Draft.init),
-            keyEdit: .keep, keyStorage: keyStorage, operation: nil, readOnlyError: snapshot.readOnlyError,
-            error: error, availableModels: [], testResult: nil, isTesting: false, keyInputReset: keyInputReset)
-        mainThread.run { [weak self] in self?.reloadStorage() }
+        // Even a cached snapshot's lock can wait for a native secret operation.
+        snapshot = ProviderSettingsSnapshot(settings: try! ProviderSettings(), readOnlyError: nil)
+        state = State(profiles: [], selectedProfileID: nil, draft: nil,
+            keyEdit: .keep, keyStorage: .none, operation: .loading, readOnlyError: nil,
+            error: nil, availableModels: [], testResult: nil, isTesting: false, keyInputReset: keyInputReset)
+        mainThread.run { [weak self] in self?.loadSettings() }
     }
 
     deinit { test?.cancel() }
 
     /// Discards staged edits and returns to the active saved profile.
     public func refresh() {
-        mainThread.run {
-            guard self.operation == nil else { return }
-            self.snapshot = self.settings.snapshot
-            self.error = self.snapshot.readOnlyError
-            self.useDraft(self.selectedDraft())
-            self.reloadStorage()
-        }
+        mainThread.run { self.loadSettings() }
     }
 
     public func addProfile(kind: ProviderKind = .anthropic) {
@@ -218,9 +208,21 @@ public final class AssistantSettingsModel: CustomStringConvertible,
             guard let draft = self.draft else { return }
             let revision = self.editRevision
             self.perform(.saving, edit: { try $0.save(draft) }) { success in
-                guard success, self.editRevision == revision else { return }
-                self.useDraft(self.snapshot.settings.profiles.first { $0.id == draft.id }
-                    .map(ProviderDraft.init(profile:)))
+                guard success else { return }
+                if self.editRevision == revision {
+                    self.useDraft(self.snapshot.settings.profiles.first { $0.id == draft.id }
+                        .map(ProviderDraft.init(profile:)))
+                    return
+                }
+                // A committed key must not remain a replacement that bypasses
+                // re-entry for a newer destination. Preserve newer key input.
+                guard var current = self.draft, current.id == draft.id,
+                      Self.sameKey(current.key, draft.key) else { return }
+                current.key = .keep
+                self.draft = current
+                self.editRevision = UUID()
+                self.keyInputReset = UUID()
+                self.picker?.update(draft: current)
             }
         }
     }
@@ -275,7 +277,7 @@ public final class AssistantSettingsModel: CustomStringConvertible,
 
     private func editDraft(_ edit: @escaping (inout ProviderDraft) -> Void, keyInput: KeyInputHandling = .preserve) {
         mainThread.run {
-            guard let current = self.draft else { return }
+            guard self.operation == nil || self.operation == .saving, let current = self.draft else { return }
             var next = current
             edit(&next)
             if keyInput == .reset { self.keyInputReset = UUID() }
@@ -298,6 +300,13 @@ public final class AssistantSettingsModel: CustomStringConvertible,
         case (.replace(let left), .replace(let right)):
             return left.withValue { value in right.withValue { value.utf8.elementsEqual($0.utf8) } }
         default: return false
+        }
+    }
+
+    private func loadSettings() {
+        perform(.loading, edit: { _ in }) { _ in
+            self.error = self.snapshot.readOnlyError
+            self.useDraft(self.selectedDraft())
         }
     }
 
@@ -349,14 +358,18 @@ public final class AssistantSettingsModel: CustomStringConvertible,
     private func reloadStorage() {
         let revision = UUID()
         storageRevision = revision
-        guard let id = draft?.id,
-              snapshot.settings.profiles.contains(where: { $0.id == id && $0.secretReference != nil }) else {
+        guard let id = draft?.id else {
             keyStorage = .none
             publish()
             return
         }
         if let error = snapshot.readOnlyError {
             keyStorage = .failed(error)
+            publish()
+            return
+        }
+        guard snapshot.settings.profiles.contains(where: { $0.id == id && $0.secretReference != nil }) else {
+            keyStorage = .none
             publish()
             return
         }

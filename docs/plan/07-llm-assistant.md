@@ -76,10 +76,13 @@ re-entry or Clear before it can be used.
   re-entry after a kind or origin change. Blank key input means Keep.
   Published state contains no key value, only its edit mode and saved tier;
   the file tier is explicitly labelled "unencrypted". Secret-tier reads and
-  persistence run on serial background work, with state and callbacks on
-  `MainThread`. Draft edits remain usable during Save and are not overwritten
-  by its older completion. Persistence intents cannot overlap. Refresh
-  discards staged edits and reloads the active saved profile. Test is the
+  persistence, including cached snapshot reads, run on serial background
+  work, with state and callbacks on `MainThread`. Draft edits remain usable
+  during Save and are not overwritten by its older completion. A committed
+  key edit resets even when newer metadata stays staged; newer key input is
+  retained. Failed secret compensation reports unknown key storage even
+  when no profile metadata committed. Persistence intents cannot overlap.
+  Refresh discards staged edits and reloads the active saved profile. Test is the
   only settings intent that sends a request; edits, selection, refresh,
   Save, Clear and deletion cancel and invalidate pending Test replies.
 - **Anthropic defaults.**

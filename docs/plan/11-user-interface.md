@@ -39,10 +39,12 @@ the Linux file tier says "unencrypted" and the environment tier says
 "read-only". The native secure field owns typed text and forwards it to the
 model; it clears when the draft changes profile or a key edit is committed
 or discarded. Model IDs remain editable after any listing failure. Views
-disable overlapping persistence commands while a save/select/delete is
-pending; metadata and key edits during Save remain staged. Closing the
-settings model cancels its Test. Native controls and composition follow in
-A13/A14; Core owns the behavior independently of either front end.
+show a loading state while the model reads the saved metadata off the UI
+thread. Profile commands cannot overlap loading or a save/select/delete;
+metadata/key inputs are disabled during load/select/delete and remain
+editable during Save. Closing the settings model cancels its Test. Native
+controls and composition follow in A13/A14; Core owns the behavior
+independently of either front end.
 
 Per OS:
 

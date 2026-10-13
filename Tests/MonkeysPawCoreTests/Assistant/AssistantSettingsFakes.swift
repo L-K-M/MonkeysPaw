@@ -19,7 +19,12 @@ final class AssistantSettingsWork: BackgroundWork {
 }
 
 final class AssistantSettingsProviderFake: AssistantSettingsProviding {
-    var snapshot: ProviderSettingsSnapshot
+    private var cached: ProviderSettingsSnapshot
+    var onSnapshot: (() -> Void)?
+    var snapshot: ProviderSettingsSnapshot {
+        get { onSnapshot?(); return cached }
+        set { cached = newValue }
+    }
     var tiers: [ProviderProfileID: SecretTier] = [:]
     var persistentTier = SecretTier.secretService
     var saveError: Error?
@@ -35,7 +40,7 @@ final class AssistantSettingsProviderFake: AssistantSettingsProviding {
 
     init(_ marker: EditingThreadMarker, profiles: [ProviderProfile], selected: ProviderProfileID?) throws {
         self.marker = marker
-        snapshot = ProviderSettingsSnapshot(settings: try ProviderSettings(profiles: profiles,
+        cached = ProviderSettingsSnapshot(settings: try ProviderSettings(profiles: profiles,
             selectedProfileID: selected), readOnlyError: nil)
     }
 
