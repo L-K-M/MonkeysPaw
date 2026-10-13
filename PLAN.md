@@ -40,6 +40,7 @@ stable: the file for `§N` starts with `N-`.
 | §18 | [Sources](docs/plan/18-sources.md) |
 | §19 | [M4 and M5 decisions](docs/plan/19-m4-m5-decisions.md) |
 | §20 | [M6 and M8 decisions](docs/plan/20-m6-m8-decisions.md) |
+| §21 | [M7 decisions](docs/plan/21-m7-decisions.md) |
 
 ## Editing rules
 
