@@ -223,6 +223,7 @@ final class LinuxSecretStoreTests: XCTestCase {
     }
 
     func testFailedFileCleanupRestoresThePreviousServiceValue() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         let tools = try toolsWithPaths()
         try installService(tools)
         let account = SecretAccount.provider(profile)
@@ -258,6 +259,7 @@ final class LinuxSecretStoreTests: XCTestCase {
     }
 
     func testFailedFileCleanupClearsANewServiceItemWhenThePreviousTierWasFile() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         let tools = try toolsWithPaths()
         let account = SecretAccount.provider(profile)
         try worker { try self.makeStore(tools).write(SecretValue("old-file-key"), account: account) }
