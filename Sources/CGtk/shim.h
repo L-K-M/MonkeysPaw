@@ -124,14 +124,107 @@ static inline void mp_clipboard_read_deliver(GObject *source, GAsyncResult *resu
 
 /* Call on the owning GTK thread. GTask returns once on its captured
  * thread-default context. The destroy notify releases Swift's callback box. */
-static inline void mp_clipboard_read_text(GtkWidget *owner, MPClipboardRead callback,
-                                          gpointer data, GDestroyNotify destroy) {
-    GdkClipboard *clipboard = gtk_widget_get_clipboard(owner);
+static inline void mp_clipboard_read_text_from_clipboard(GdkClipboard *clipboard, MPClipboardRead callback,
+                                                        gpointer data, GDestroyNotify destroy) {
     GTask *task = g_task_new(clipboard, NULL, mp_clipboard_read_deliver, NULL);
     MPClipboardReadBox *box = g_new(MPClipboardReadBox, 1);
     *box = (MPClipboardReadBox){callback, data, destroy};
     g_task_set_task_data(task, box, mp_clipboard_read_box_free);
     gdk_clipboard_read_text_async(clipboard, NULL, mp_clipboard_read_complete, task);
+}
+
+static inline void mp_clipboard_read_text(GtkWidget *owner, MPClipboardRead callback,
+                                          gpointer data, GDestroyNotify destroy) {
+    mp_clipboard_read_text_from_clipboard(gtk_widget_get_clipboard(owner), callback, data, destroy);
+}
+
+/* Fixed-arity access to the string provider's variadic constructor. Caller owns
+ * the reference; set_content takes its own, without first clearing the clipboard. */
+static inline GdkContentProvider *mp_clipboard_text_provider(const char *text) {
+    return gdk_content_provider_new_typed(G_TYPE_STRING, text);
+}
+
+typedef struct {
+    MPClipboardReadBox read;
+    GInputStream *stream;
+    char *buffer;
+    gsize limit;
+} MPClipboardSnapshotBox;
+
+static inline void mp_clipboard_snapshot_free(gpointer data) {
+    MPClipboardSnapshotBox *box = data;
+    g_clear_object(&box->stream);
+    g_free(box->buffer);
+    if (box->read.destroy) box->read.destroy(box->read.data);
+    g_free(box);
+}
+
+static inline void mp_clipboard_snapshot_deliver(GObject *source, GAsyncResult *result, gpointer data) {
+    GTask *task = G_TASK(result);
+    MPClipboardSnapshotBox *box = g_task_get_task_data(task);
+    char *text = g_task_propagate_pointer(task, NULL);
+    /* Unlike the base read, a readable empty string is a valid snapshot. */
+    box->read.callback(text, box->read.data);
+    g_free(text);
+}
+
+static inline void mp_clipboard_snapshot_read_complete(GObject *source, GAsyncResult *result, gpointer data) {
+    GTask *task = G_TASK(data);
+    MPClipboardSnapshotBox *box = g_task_get_task_data(task);
+    GError *error = NULL;
+    gsize count = 0;
+    gboolean ok = g_input_stream_read_all_finish(G_INPUT_STREAM(source), result, &count, &error);
+    /* Positive-length validation also rejects embedded NUL, which a string
+     * provider could only republish partially. Never decode truncated UTF-8. */
+    if (ok && count <= box->limit && g_utf8_validate(box->buffer, count, NULL)) {
+        box->buffer[count] = '\0';
+        g_task_return_pointer(task, g_steal_pointer(&box->buffer), g_free);
+    } else {
+        g_task_return_pointer(task, NULL, NULL);
+    }
+    g_clear_error(&error);
+    g_object_unref(task);
+}
+
+static inline void mp_clipboard_snapshot_open_complete(GObject *source, GAsyncResult *result, gpointer data) {
+    GTask *task = G_TASK(data);
+    MPClipboardSnapshotBox *box = g_task_get_task_data(task);
+    GError *error = NULL;
+    box->stream = gdk_clipboard_read_finish(GDK_CLIPBOARD(source), result, NULL, &error);
+    g_clear_error(&error);
+    if (!box->stream || g_cancellable_is_cancelled(g_task_get_cancellable(task))) {
+        g_task_return_pointer(task, NULL, NULL);
+        g_object_unref(task);
+        return;
+    }
+
+    /* Read at most limit + 1 bytes before any text allocation/decoding. The
+     * extra byte distinguishes exact-limit text from an oversized stream. */
+    box->buffer = g_malloc(box->limit + 1);
+    g_input_stream_read_all_async(box->stream, box->buffer, box->limit + 1,
+                                 G_PRIORITY_DEFAULT, g_task_get_cancellable(task),
+                                 mp_clipboard_snapshot_read_complete, task);
+}
+
+/* Call under the driver's captured thread-default context. GTask delivers one
+ * callback, followed by one destroy notify, including failure/cancellation.
+ * The native request retains its cancellable until all I/O callbacks drain. */
+static inline void mp_clipboard_snapshot_text(GdkClipboard *clipboard, gsize byte_limit,
+                                               GCancellable *cancellable, MPClipboardRead callback,
+                                               gpointer data, GDestroyNotify destroy) {
+    static const char *mime_types[] = {"text/plain;charset=utf-8", NULL};
+    GTask *task = g_task_new(clipboard, cancellable, mp_clipboard_snapshot_deliver, NULL);
+    MPClipboardSnapshotBox *box = g_new0(MPClipboardSnapshotBox, 1);
+    box->read = (MPClipboardReadBox){callback, data, destroy};
+    box->limit = byte_limit;
+    g_task_set_task_data(task, box, mp_clipboard_snapshot_free);
+    if (byte_limit >= G_MAXSSIZE) {
+        g_task_return_pointer(task, NULL, NULL);
+        g_object_unref(task);
+        return;
+    }
+    gdk_clipboard_read_async(clipboard, mime_types, G_PRIORITY_DEFAULT, cancellable,
+                            mp_clipboard_snapshot_open_complete, task);
 }
 
 static inline void mp_notify(GtkApplication *app, const char *title, const char *body) {
