@@ -27,8 +27,7 @@
             android:taskAffinity="ch.lkmc.monkeyspaw.fill" />
         <activity
             android:name=".entry.ProcessTextActivity"
-            android:exported="true"
-            android:label="@string/app_name">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.PROCESS_TEXT" />
                 <category android:name="android.intent.category.DEFAULT" />

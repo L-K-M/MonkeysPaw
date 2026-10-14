@@ -55,6 +55,7 @@ internal fun FillScreen(
             var expanded by remember { mutableStateOf(false) }
             Column {
                 Text(stringResource(R.string.fill_captured_field), style = MaterialTheme.typography.labelLarge)
+                if (capture.candidates.isEmpty()) Text(stringResource(R.string.fill_capture_no_field))
                 Box {
                     OutlinedButton(onClick = { expanded = true }, enabled = state.phase == FillPhase.EDITING) {
                         Text(capture.candidates.firstOrNull { it.name == capture.selectedField }?.label

@@ -386,7 +386,8 @@ internal class ProcessTextEntryTest : TemporaryFiles() {
         fun Element.attr(name: String) = getAttributeNS(namespace, name)
         val activity = children(manifest, "activity").single { it.attr("name") == ".entry.ProcessTextActivity" }
         assertEquals("true", activity.attr("exported"))
-        assertEquals("@string/app_name", activity.attr("label"))
+        assertFalse(activity.hasAttributeNS(namespace, "label"))
+        assertEquals("@string/app_name", children(manifest, "application").single().attr("label"))
         for (attribute in listOf("launchMode", "taskAffinity", "noHistory", "process", "allowTaskReparenting")) {
             assertFalse(activity.hasAttributeNS(namespace, attribute))
         }

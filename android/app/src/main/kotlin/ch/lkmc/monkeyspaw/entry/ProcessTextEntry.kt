@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.entry
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import ch.lkmc.monkeyspaw.core.ports.DeliveryMode
 import ch.lkmc.monkeyspaw.core.ports.TextDelivery
@@ -17,7 +18,7 @@ internal class ProcessTextEntry(
     private val copy: TextDelivery,
 ) : ViewModel() {
     private class Host(val owner: Any, val result: (String?) -> Unit)
-    private val models = ViewModelStore()
+    private var models = ViewModelStore()
     private val mutableForm = MutableStateFlow<FillViewModel?>(null)
     val form = mutableForm.asStateFlow()
     private var host: Host? = null
@@ -36,16 +37,15 @@ internal class ProcessTextEntry(
         acceptedText = null
         host?.result?.invoke(null)
         val previous = mutableForm.value
+        val previousModels = models
+        models = ViewModelStore()
         val next = if (request == null || request.source == CapturedTextRequest.Source.SHARE) null
             else createForm(request, epoch)
         // Publish the replacement before retiring the old form; its CLOSED reply cannot finish us.
         mutableForm.value = next
         previous?.endSession()
-        models.clear()
-        next?.let {
-            models.put("fill", it)
-            it.setForeground(foreground)
-        }
+        previousModels.clear()
+        next?.setForeground(foreground)
     }
 
     private fun createForm(request: CapturedTextRequest, epoch: Long): FillViewModel {
@@ -62,7 +62,13 @@ internal class ProcessTextEntry(
             // A reentrant new entry must not inherit the previous caller's accepted output.
             if (!closed && epoch == generation) acceptedText = text
         }
-        return createFill(session, endpoint)
+        return ViewModelProvider(models, object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass == FillViewModel::class.java)
+                @Suppress("UNCHECKED_CAST")
+                return createFill(session, endpoint) as T
+            }
+        })[FillViewModel::class.java]
     }
 
     /** Reapply a staged result after rotation, without another delivery or learning operation. */
