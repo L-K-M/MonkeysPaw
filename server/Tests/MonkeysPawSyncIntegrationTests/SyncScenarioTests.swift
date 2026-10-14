@@ -17,6 +17,7 @@ final class SyncScenarioTests: XCTestCase {
             do {
                 try await SyncServerHarness.run(scenario)
                 guard executed.insert(scenario.id).inserted else { throw ScenarioFailure.invalid("duplicate case execution") }
+                FileHandle.standardOutput.write(Data(("Executed sync scenario " + scenario.id + " against the real router.\n").utf8))
             } catch {
                 XCTFail((error as? ScenarioFailure)?.description ?? scenario.id + ": setup failed (" + String(describing: type(of: error)) + ")")
             }

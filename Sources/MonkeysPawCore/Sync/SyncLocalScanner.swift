@@ -189,6 +189,13 @@ enum SyncLocalScanner {
                 let favorite = SyncFavoriteInput.preferred(canonical.favorite, after: recorded?.favoriteInput)
                 try next.applyGroupFavorite(favorite, for: identity)
             }
+            if viewer, recorded == nil || recorded?.canonicalHash?.rawValue != canonical.canonicalHash
+                || recorded?.scope != location.scope || recorded?.path != RelativePath(wire.path) {
+                issues[localPath] = .forbidden
+                // Denial recovery must retain the original bytes before any
+                // group canonicalization can strip the user's local metadata.
+                continue
+            }
             // Until /move commits, the overlay still belongs to the old scope.
             // Keep extracted personal keys on disk for ingest after that ack.
             if !transferring && (externalAssignment || bytes != file.bytes
@@ -200,13 +207,7 @@ enum SyncLocalScanner {
             }
             let prompt = SyncLocalPrompt(file: file, identity: identity, scope: location.scope,
                 path: RelativePath(wire.path), canonical: canonical, origin: origin)
-            if viewer {
-                if recorded == nil || recorded?.canonicalHash?.rawValue != canonical.canonicalHash
-                    || recorded?.scope != prompt.scope || recorded?.path != prompt.path {
-                    issues[localPath] = .forbidden
-                }
-                continue
-            }
+            if viewer { continue }
             guard let recorded, recorded.rev > 0 else { changes.append(.create(prompt)); continue }
             if recorded.scope != prompt.scope { changes.append(.move(prompt, recorded: recorded)) }
             else if recorded.path != prompt.path { changes.append(.rename(prompt, recorded: recorded)) }

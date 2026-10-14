@@ -10,6 +10,8 @@ struct ScenarioRequestTrace {
     let status: Int
     let body: ScenarioValue?
     let localPaths: [String]
+    let pull: SyncAPI.PullResponse?
+    let responseBytes: Int
 }
 
 /// Every response starts at Hummingbird's real router. A rewrite can corrupt
@@ -19,16 +21,26 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [ScenarioRequestTrace] = []
     private var rewrites: [ScenarioRewrite] = []
-    private var hooks: [(method: String, path: String, run: () async throws -> Void)] = []
+    private var hooks: [(method: String, path: String, skip: Int, run: () async throws -> Void)] = []
+    private var afterHooks: [(method: String, path: String, run: () async throws -> Void)] = []
+    private var interruptions: [(method: String, path: String, phase: ScenarioInterruption)] = []
+    private var networkMode = ScenarioNetworkMode.online
     var library: ScenarioDisk?
 
     init(clients: [String: any TestClientProtocol]) { self.clients = clients }
     var traces: [ScenarioRequestTrace] { locked { recorded } }
-    var pendingRewrites: Int { locked { rewrites.count + hooks.count } }
+    var pendingRewrites: Int { locked { rewrites.count + hooks.count + afterHooks.count + interruptions.count } }
     func resetMetrics() { locked { recorded.removeAll() } }
+    func setNetworkMode(_ value: ScenarioNetworkMode) { locked { networkMode = value } }
     func rewrite(_ value: ScenarioRewrite) { locked { rewrites.append(value) } }
-    func before(method: HTTPMethod, path: String, run: @escaping () async throws -> Void) {
-        locked { hooks.append((method.rawValue, path, run)) }
+    func before(method: HTTPMethod, path: String, skip: Int = 0, run: @escaping () async throws -> Void) {
+        locked { hooks.append((method.rawValue, path, skip, run)) }
+    }
+    func after(method: HTTPMethod, path: String, run: @escaping () async throws -> Void) {
+        locked { afterHooks.append((method.rawValue, path, run)) }
+    }
+    func interrupt(method: HTTPMethod, path: String, phase: ScenarioInterruption) {
+        locked { interruptions.append((method.rawValue, path, phase)) }
     }
 
     func send(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
@@ -58,16 +70,33 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
             fields[field] = value
         }
         let body = bytes.map { ByteBuffer(bytes: $0) }
-        let safeBody = uri.hasPrefix("/api/v1/prompts/") ? try bytes.map { try JSONDecoder().decode(ScenarioValue.self, from: $0) } : nil
+        let safeBody = uri.hasPrefix("/api/v1/prompts/") || uri == "/api/v1/sync/pull"
+            ? try bytes.map { try JSONDecoder().decode(ScenarioValue.self, from: $0) } : nil
         let localPaths = try library?.listFiles().map(\.relativePath) ?? []
         guard let method = HTTPTypes.HTTPRequest.Method(rawValue: request.method.rawValue) else { throw HTTPTransportError.invalidRequest }
         let requestHeaders = fields
+        if locked({ networkMode }) == .offline || takeInterruption(method: request.method.rawValue, path: uri, phase: .beforeDispatch) {
+            locked { recorded.append(.init(method: request.method.rawValue, path: uri, status: 0, body: safeBody,
+                                          localPaths: localPaths, pull: nil, responseBytes: 0)) }
+            throw HTTPTransportError.networkFailure
+        }
         let response = try await withScenarioDeadline(request.deadline) {
             try await client.executeRequest(uri: uri, method: method, headers: requestHeaders, body: body)
         }
-        locked { recorded.append(.init(method: request.method.rawValue, path: uri, status: response.status.code, body: safeBody, localPaths: localPaths)) }
         guard response.body.readableBytes <= request.responseByteCap else { throw HTTPTransportError.responseTooLarge }
         var received = Data(response.body.readableBytesView)
+        let pull = uri == "/api/v1/sync/pull" && response.status == .ok
+            ? try JSONDecoder().decode(SyncAPI.PullResponse.self, from: received) : nil
+        locked { recorded.append(.init(method: request.method.rawValue, path: uri, status: response.status.code,
+            body: safeBody, localPaths: localPaths, pull: pull, responseBytes: received.count)) }
+        if let hook = takeAfterHook(method: request.method.rawValue, path: uri) {
+            guard response.status == .ok else { throw ScenarioFailure.invalid("after hook requires real success") }
+            try await hook()
+        }
+        if takeInterruption(method: request.method.rawValue, path: uri, phase: .afterCommit) {
+            guard response.status == .ok else { throw ScenarioFailure.invalid("acknowledgement loss requires real success") }
+            throw HTTPTransportError.networkFailure
+        }
         if let responseRewrite {
             guard response.status == .ok else { throw ScenarioFailure.invalid("response patch requires real success") }
             received = try JSONEncoder().encode(JSONDecoder().decode(ScenarioValue.self, from: received).patching(responseRewrite.patch))
@@ -89,7 +118,23 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     private func takeHook(method: String, path: String) -> (() async throws -> Void)? {
         locked {
             guard let index = hooks.firstIndex(where: { $0.method == method && $0.path == path }) else { return nil }
+            if hooks[index].skip > 0 { hooks[index].skip -= 1; return nil }
             return hooks.remove(at: index).run
+        }
+    }
+
+    private func takeAfterHook(method: String, path: String) -> (() async throws -> Void)? {
+        locked {
+            guard let index = afterHooks.firstIndex(where: { $0.method == method && $0.path == path }) else { return nil }
+            return afterHooks.remove(at: index).run
+        }
+    }
+
+    private func takeInterruption(method: String, path: String, phase: ScenarioInterruption) -> Bool {
+        locked {
+            guard let index = interruptions.firstIndex(where: { $0.method == method && $0.path == path && $0.phase == phase }) else { return false }
+            interruptions.remove(at: index)
+            return true
         }
     }
 

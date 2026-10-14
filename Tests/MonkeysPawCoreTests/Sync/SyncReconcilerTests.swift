@@ -260,6 +260,51 @@ final class SyncReconcilerTests: XCTestCase {
         XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(id)]?.rev, 2)
     }
 
+    func testUnchangedNormalSnapshotLeavesLaterLocalIntentForScanner() throws {
+        for intent in ["edit", "rename", "move", "delete"] {
+            let rig = try SyncApplyTestRig()
+            let acknowledged = try groupBytes("Acknowledged move")
+            _ = try baseline(rig, [record(id, "a.md", data: acknowledged, rev: 7, scope: team)])
+            let path: RelativePath = intent == "move" ? "private.md" : intent == "rename" ? "Groups/Team/b.md" : "Groups/Team/a.md"
+            if intent != "delete" {
+                try rig.files.write(intent == "edit" ? groupBytes("Queued edit") : acknowledged, at: path.string)
+            }
+            let pull = try collected([scope(), scope(team, mode: .snapshot,
+                items: [upsert(10, rev: 2, data: acknowledged)])])
+            defer { try? pull.discard() }
+            let plan = try reconcile(pull, rig)
+            guard plan.operations.isEmpty else { XCTFail("Snapshot replayed over local \(intent)"); continue }
+            let writes = rig.files.writeCount
+            XCTAssertEqual(try apply(plan, rig), .committed)
+            XCTAssertEqual(rig.files.writeCount, writes)
+            XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(id)]?.rev, 2)
+            XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(id)]?.canonicalHash, SyncHash(bytes: acknowledged))
+            let scan = try SyncScanTestSupport.scan(rig)
+            XCTAssertNil(scan.preparation)
+            XCTAssertEqual(scan.changes.count, 1)
+            switch (intent, try XCTUnwrap(scan.changes.first)) {
+            case ("edit", .update(_, let recorded)), ("rename", .rename(_, let recorded)),
+                 ("move", .move(_, let recorded)), ("delete", .delete(_, let recorded)):
+                XCTAssertEqual(recorded.rev, 2)
+            default: XCTFail("Lost local \(intent)")
+            }
+        }
+    }
+
+    func testUnchangedBaselineAfterRestoreStillRestoresMissingFile() throws {
+        let rig = try SyncApplyTestRig()
+        let acknowledged = bytes("Acknowledged")
+        _ = try baseline(rig, [record(id, "a.md", data: acknowledged, rev: 7)])
+        let pull = try collected([scope(mode: .snapshot, items: [upsert(10, rev: 2, data: acknowledged)])], database: restored)
+        defer { try? pull.discard() }
+        let plan = try reconcile(pull, rig)
+        XCTAssertEqual(plan.mode, .restore)
+        XCTAssertEqual(plan.operations.count, 1)
+        XCTAssertEqual(try apply(plan, rig), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), acknowledged)
+        XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(id)]?.rev, 2)
+    }
+
     func testRestoreDifferentContentAdoptsHeadAndQueuesFreshRepushWithoutOverwrite() throws {
         let rig = try SyncApplyTestRig()
         let local = bytes("Local before restore")
