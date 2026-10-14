@@ -4,8 +4,6 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Rule
@@ -16,45 +14,39 @@ class DtoConformanceTest {
     val temporary = TemporaryFolder()
 
     @Test
-    fun `completed families consume every valid and invalid case with canonical bytes`() {
+    fun `every contract consumes every valid and invalid case with canonical bytes`() {
         val corpus = Corpus.load()
-        val coverage = DtoRegistry.consumeCompleted(corpus)
-        assertEquals(DtoRegistry.pendingNames, coverage.pendingCases.keys)
-        assertEquals(coverage.completedCases * 2, coverage.completedFiles.size)
-        assertEquals(coverage.pendingCases.values.sumOf { it.size } * 2, coverage.pendingFiles.size)
+        val coverage = DtoRegistry.consumeAll(corpus)
+        assertEquals(coverage.cases * 2, coverage.files.size)
         assertEquals(corpus.cases(Category.DTO).flatMap { it.files }.map { it.relativePath }.toSet(),
-            coverage.completedFiles + coverage.pendingFiles)
-        assertFalse(DtoRegistry.isComplete)
-        assertFailsWith<CorpusException> { DtoRegistry.consumeAll(corpus) }
-        println("Typed K9 conformance: ${coverage.completedCases} cases (${coverage.validCases} valid, ${coverage.invalidCases} invalid), " +
-            "${coverage.completedFiles.size} files, ${DtoRegistry.completedNames.size} contracts.")
-        println("Pending K10: ${coverage.pendingCases.values.sumOf { it.size }} cases, ${coverage.pendingFiles.size} files, " +
-            "${coverage.pendingCases.size} contracts. DTO registry is INCOMPLETE.")
-        for ((name, cases) in coverage.pendingCases.toSortedMap()) println("Pending K10: $name (${cases.size} cases)")
+            coverage.files)
+        println("Typed DTO conformance: ${coverage.cases} cases (${coverage.validCases} valid, ${coverage.invalidCases} invalid), " +
+            "${coverage.files.size} files, ${DtoRegistry.entries.size} contracts; pending 0.")
     }
 
     @Test
     fun `case order does not affect complete corpus accounting`() {
         val corpus = Corpus.load()
-        val coverage = DtoRegistry.consumeCompleted(corpus, corpus.cases(Category.DTO).reversed())
+        val coverage = DtoRegistry.consumeAll(corpus, corpus.cases(Category.DTO).reversed())
         assertEquals(corpus.cases(Category.DTO).flatMap { it.files }.map { it.relativePath }.toSet(),
-            coverage.completedFiles + coverage.pendingFiles)
+            coverage.files)
     }
 
     @Test
-    fun `missing accepted rejected or pending family cannot pass coverage`() {
+    fun `missing accepted rejected or individual case cannot pass coverage`() {
         val corpus = Corpus.load()
         val cases = corpus.cases(Category.DTO)
         for (valid in listOf(true, false)) {
             val incomplete = cases.filterNot {
                 it.envelope["dto"].stringValue() == "HealthResponse" && it.expected["valid"].booleanValue() == valid
             }
-            assertFailsWith<CorpusException> { DtoRegistry.consumeCompleted(corpus, incomplete) }
+            assertFailsWith<CorpusException> { DtoRegistry.consumeAll(corpus, incomplete) }
         }
         val incomplete = cases.filterNot { it.envelope["dto"].stringValue() == "Prompt" }
-        assertFailsWith<CorpusException> { DtoRegistry.consumeCompleted(corpus, incomplete) }
+        assertFailsWith<CorpusException> { DtoRegistry.consumeAll(corpus, incomplete) }
         val omitted = cases.first { it.envelope["dto"].stringValue() == "LoginRequest" && it.expected["valid"].booleanValue() }
-        assertFailsWith<CorpusException> { DtoRegistry.consumeCompleted(corpus, cases - omitted) }
+        assertFailsWith<CorpusException> { DtoRegistry.consumeAll(corpus, cases - omitted) }
+        assertFailsWith<CorpusException> { DtoRegistry.consumeAll(corpus, cases + omitted) }
     }
 
     @Test
@@ -74,14 +66,27 @@ class DtoConformanceTest {
     }
 
     @Test
-    fun `pending and unknown registrations never act as decoding adapters`() {
+    fun `unknown registrations never act as decoding adapters`() {
         val corpus = Corpus.load()
         val validator = SchemaValidator.load(corpus.schemas)
         val fixture = corpus.cases(Category.DTO).first { it.envelope["dto"].stringValue() == "Prompt" }
-        assertTrue(DtoRegistry.entries["Prompt"] == DtoRegistration.PendingK10)
-        assertFailsWith<CorpusException> { DtoRegistry.checkCase(fixture, validator) }
         val envelope = JsonObject(fixture.envelope.toMutableMap().apply { put("dto", JsonPrimitive("UnknownDTO")) })
         assertFailsWith<CorpusException> { DtoRegistry.checkCase(fixture.copy(envelope = envelope), validator) }
-        assertFailsWith<CorpusException> { DtoRegistry.consumeCompleted(corpus, listOf(fixture.copy(envelope = envelope))) }
+        assertFailsWith<CorpusException> { DtoRegistry.consumeAll(corpus, listOf(fixture.copy(envelope = envelope))) }
+    }
+
+    @Test
+    fun `wrong HTTP status or Retry-After golden cannot pass`() {
+        val corpus = Corpus.load()
+        val validator = SchemaValidator.load(corpus.schemas)
+        for ((name, key, wrong) in listOf(Triple("ErrorResponse", "http_status", JsonPrimitive(200)),
+            Triple("RetryAfter", "header_value", JsonPrimitive("wrong")))) {
+            val fixture = corpus.cases(Category.DTO).first {
+                it.envelope["dto"].stringValue() == name && it.expected["valid"].booleanValue()
+            }
+            val expected = JsonObject(fixture.expected.toMutableMap().apply { put(key, wrong) })
+            val envelope = JsonObject(fixture.envelope.toMutableMap().apply { put("expected", expected) })
+            assertFailsWith<AssertionError> { DtoRegistry.checkCase(fixture.copy(envelope = envelope), validator) }
+        }
     }
 }

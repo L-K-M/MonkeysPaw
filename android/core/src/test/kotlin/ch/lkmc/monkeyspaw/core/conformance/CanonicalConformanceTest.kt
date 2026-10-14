@@ -16,7 +16,13 @@ import kotlinx.serialization.json.put
 
 internal class CanonicalConformanceTest {
     @Test fun everyCanonicalExpectationAndComparisonIsExecuted() {
-        val fixtures = Corpus.load().cases(Category.CANONICAL)
+        CanonicalFixtures.consume(Corpus.load())
+    }
+}
+
+internal object CanonicalFixtures {
+    fun consume(corpus: Corpus): Set<String> {
+        val fixtures = corpus.cases(Category.CANONICAL)
         var expectations = 0
         var comparisons = 0
         val consumed = mutableSetOf<String>()
@@ -80,6 +86,7 @@ internal class CanonicalConformanceTest {
         assertEquals(fixtures.flatMap { it.files }.map { it.relativePath }.toSet(), consumed)
         println("canonical: ${fixtures.size} cases / ${consumed.size} files; $expectations expectations; " +
             "$comparisons symmetric comparisons; pending 0.")
+        return consumed
     }
 
     private fun canonical(bytes: ByteArray, scope: CanonicalForm.Scope, filename: String): CanonicalForm =

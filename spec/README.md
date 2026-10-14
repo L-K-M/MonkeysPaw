@@ -1,52 +1,53 @@
 # Portable prompt content fixtures
 
-M2 has the Swift consumer in `PromptConformanceTests`, run from the repository
-root with `swift test --filter PromptConformanceTests`. M8 K2 adds the Kotlin
-test reader in `android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/`:
-run `android/gradlew -p android :core:test` from the repository root, or
-`./gradlew :core:test` from `android/`. Gradle supplies absolute fixture/schema
+The Swift `PromptConformanceTests` and Kotlin `EveryFixtureTest` both
+semantically consume every case and visible file in all nine categories.
+From the repository root:
+
+```sh
+swift test --filter PromptConformanceTests
+android/gradlew -p android --max-workers=2 :core:test
+# Run only the Kotlin full-corpus gate:
+android/gradlew -p android --max-workers=2 :core:test --tests '*EveryFixtureTest'
+# Android CI gate, including lint, R8 and both APKs:
+android/gradlew -p android --max-workers=2 :core:test testDebugUnitTest \
+    lintDebug assembleDebug assembleRelease
+```
+
+On the Paseo host use `/home/paseo/.local/bin/swift64` for Swift, and set
+`JAVA_HOME=/opt/java/openjdk`, `ANDROID_HOME=/home/paseo/Android/Sdk` and
+`MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/`
+for Gradle, which reads the Maven override from the environment.
+`--max-workers=2` limits Gradle parallelism on this shared host.
+From `android/`, the equivalent Kotlin command is
+`./gradlew --max-workers=2 :core:test`. Gradle supplies absolute fixture/schema
 paths from its root project and tracks both directories as test inputs;
-neither is copied into resources. K2 checks **structural accounting only**,
-including strict envelopes and exactly one reference to every visible file.
-Semantic consumption arrives per category in K3-K10, with the full conformance
-gate in K10. K2 does not establish M8 acceptance.
+neither is copied into resources or packaged in the app.
 
-K6 adds semantic path consumption in `PathFixturesTest`: every dynamically
-enumerated `paths` case checks normalized path/key bytes or the exact first
-issue and nullable segment. The structural inventory still covers all nine
-categories. Run the same `:core:test` command above for both gates.
+The Kotlin full gate reuses the category tests' semantic adapters. Content
+checks cover metadata, tokens, first-use fields, ordered issues, rendering,
+write eligibility and canonical YAML bytes. Canonical checks cover stored
+bytes/body, hashes, favourite extraction, warning order, typed refusals,
+idempotence and symmetric adoption. Import checks cover exact conversions,
+native copies, reports and refusals, without executing templates, tools,
+environment or file references. Path checks compare normalized path/key bytes
+or the exact first issue and nullable segment. Ranking checks compare path
+bytes and order, matched fields and scores with absolute `1e-12` tolerance;
+usage histories retain their last 1,024 events in recording order.
 
-K3 added reading checks; K4 added grammar, rendering and validation. K5
-completes `PromptConformanceTest` with all 16 canonical outputs and all 113
-write-eligibility checks. The four content categories now execute every
-expectation: 173 cases, 346 files and 918 expectation members, with nothing
-pending. `CanonicalConformanceTest` adds all 19 canonical cases (50 files),
-checking exact stored bytes/body, hashes, favourite extraction, warning order,
-typed refusals, idempotence and symmetric adoption. It executes all 83
-expectation members and 12 adoption comparisons in both directions.
-K8 adds `ImportConformanceTest`: all 14 import cases (28 files), 74 expectation
-members, 10 conversions, two native copies and two typed refusals. It checks
-exact source/body bytes and ordered mappings, preserved keys, presentation
-losses and warnings. As of K8, these six categories execute 206 cases,
-424 files and 1,075 expectation members, with nothing pending within them.
-The tests report current counts and reject unregistered expectations;
-no golden is changed to fit Kotlin. The remaining three categories, paths
-(K6, PR #127), ranking (K7) and DTOs (K9/K10), account for 810 cases and
-1,680 files outside this branch's semantic gate. K2's all-category structural
-gate remains mandatory; the full nine-category semantic gate belongs to K10.
-Pure import parity adds no Android import UI or template, tool, environment
-or file-reference execution.
+All 54 DTO contracts have typed codecs and accepted/rejected coverage. Every
+case checks decoding against the independent offline schema validator,
+including every `x-` rule. Accepted cases also compare canonical JSON bytes,
+error HTTP status and Retry-After header values. Constructed-invalid values
+fail encoding, including nested contracts and cross-field relations. No
+pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
-K7 adds semantic ranking consumption in `RankingFixturesTest`: all dynamically
-enumerated cases check exact path bytes and sorting, ordered matched fields,
-and scores with absolute `1e-12` tolerance. The 20 baseline cases plus 16
-Unicode compatibility cases currently cover 36 cases and 164 files. Usage
-histories retain their last 1,024 events in recording order. Run `:core:test`
-for ranking and the unchanged all-category structural gate.
-
-This corpus covers file content, search/ranking, import,
-sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
-their slice.
+At K10 completion, the corpus contains 1,032 cases and 2,168 visible files:
+format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
+paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
+489 invalid).
+These are reported counts, not fixed enumeration limits. LLM and sync-engine
+scenarios arrive with their implementations under the move-together rule.
 
 `fixtures/` contains exactly nine categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical` and `dto`. The

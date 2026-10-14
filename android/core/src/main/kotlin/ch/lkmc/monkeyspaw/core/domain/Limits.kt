@@ -12,6 +12,9 @@ object Limits {
     const val frecencyHalfLifeDays = 14.0
     const val frecencyCap = 32.0
     const val favoriteBoost = 1.5
+    const val syncPageItemCap = 200
+    const val revisionListCap = 200
+    const val maxRetryAfterSeconds = 15 * 60L
 
     const val llmBudgetNanos = 300_000_000_000L
     const val modelListTimeoutNanos = 15_000_000_000L
