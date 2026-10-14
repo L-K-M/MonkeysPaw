@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.ime
 
 import ch.lkmc.monkeyspaw.di.AppModule
+import ch.lkmc.monkeyspaw.data.AndroidClipboard
 import ch.lkmc.monkeyspaw.ui.fill.FillViewModel
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import java.io.File
@@ -42,6 +43,7 @@ internal class ImeBoundaryTest {
     }
 
     @Test fun `local graph constructor and provider closure cannot reach network secrets scheduling or logger`() {
+        app.resolve("ime").listFiles { file -> file.extension == "kt" }!!.forEach { validateLocal(it.readText()) }
         val providers = AppModule::class.java.declaredMethods.associateBy { it.returnType }
         val module = app.resolve("di/AppModule.kt").readText()
         val providerBodies = module.split("    @Provides").drop(1).associate { block ->
@@ -70,6 +72,8 @@ internal class ImeBoundaryTest {
         }
         visit(ImeLocalGraph::class.java)
         visit(ImeSessionController::class.java)
+        visit(ImeViewOwners::class.java)
+        visit(AndroidClipboard::class.java)
         visit(FillViewModel::class.java)
         visit(LibraryViewModel::class.java)
         assertTrue(reached.any { it.simpleName == "LibraryRepository" })

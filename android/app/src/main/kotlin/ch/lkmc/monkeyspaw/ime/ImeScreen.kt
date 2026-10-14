@@ -4,8 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
@@ -16,6 +15,7 @@ import ch.lkmc.monkeyspaw.ui.library.*
 
 /** Reuses picker/Fill rendering. The service supplies guarded intents, never target text. */
 @Composable
+@Suppress("ConfigurationScreenWidthHeight")
 internal fun ImeScreen(
     state: ImeUiState,
     library: LibraryUiState?,
@@ -33,9 +33,9 @@ internal fun ImeScreen(
     onRetry: () -> Unit,
 ) {
     Surface {
-        // Keep the target visible in landscape; the shared lists scroll at larger font scales.
-        val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
-        Column(Modifier.fillMaxWidth().height(windowHeight / 2)) {
+        // The IME window wraps this view. Size from display configuration, not its measured window.
+        val displayHeight = LocalConfiguration.current.screenHeightDp.dp
+        Column(Modifier.fillMaxWidth().height(displayHeight / 2)) {
             TextButton(onClick = onSwitch) { Text(stringResource(R.string.ime_switch_keyboard)) }
             if (state.switchUnavailable) Text(stringResource(R.string.ime_switch_unavailable), Modifier.padding(horizontal = 16.dp))
             if (state.password) {
