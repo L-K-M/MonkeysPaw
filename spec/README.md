@@ -59,8 +59,8 @@ M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
 category. L3 adds one Foundation transcript-escaping golden using the same
 decode contract. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
-diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,166
-files and 277 ordered actions, bringing the corpus to 1,536 cases and 5,512
+diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,169
+files and 278 ordered actions, bringing the corpus to 1,536 cases and 5,515
 visible files. Case shapes are below. These are reported counts, not fixed
 enumeration limits.
 Sync-engine scenarios arrive with their implementations under the
@@ -754,7 +754,7 @@ M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
 `EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
 `LlmConformanceTest` uses the same adapter. Both languages compare every
-expectation. The LLM corpus has 502 cases, 3,340 visible files and 27,465
+expectation. The LLM corpus has 502 cases, 3,343 visible files and 27,486
 expectation members, with zero pending cases. All ten categories stay
 registered. L3's transcript-escaping output is also a byte golden for both
 languages' session transcript helpers. Run
@@ -948,7 +948,7 @@ unread nested members, unsafe/duplicate references and invalid repeats.
 No UI, executor or editor selection-offset adapter is added in this slice.
 
 L4 adds the closed `kind: "exchange"` envelope; L6 extends it for OpenAI and
-capability state. Both semantic consumers execute all 75 cases and 480 ordered
+capability state. Both semantic consumers execute all 75 cases and 481 ordered
 actions through the production protocol clients and capability stores.
 The envelope has exactly `schema`, `category`, `kind`, `setup` and `actions`:
 
