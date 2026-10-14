@@ -10,6 +10,7 @@ import ch.lkmc.monkeyspaw.core.ports.SyncFileMode
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.core.syncapi.ExistingPrompt
 import ch.lkmc.monkeyspaw.core.syncapi.Role
+import java.nio.charset.CharacterCodingException
 import java.time.Instant
 
 internal sealed class SyncAdoptionDecision {
@@ -60,7 +61,8 @@ internal object SyncAdoption {
                   groups: Map<ULID, SyncGroupState>): SyncAdoptionDecision {
         val sent = intent.sentBytes
         if (intent.operation != SyncOperation.PUT || intent.baseRev != 0L || sent == null) throw SyncConflictPolicyError.InvalidIntent
-        val bytes = existing.content.encodeToByteArray(throwOnInvalidSequence = true)
+        val bytes = try { existing.content.encodeToByteArray(throwOnInvalidSequence = true) }
+        catch (_: CharacterCodingException) { throw SyncReconciliationError.InvalidPull }
         val remote = SyncReconciliationRemote(SyncIdentifiers.ulid(existing.id), intent.scope, intent.path,
             SyncLocalScanner.rooted(intent.path, intent.scope, groups), existing.rev, bytes, SyncHash.of(bytes), mode(intent.scope, groups))
         validate(remote, local.binding, groups)

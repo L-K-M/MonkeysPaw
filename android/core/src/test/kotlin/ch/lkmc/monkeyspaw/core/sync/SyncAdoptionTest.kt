@@ -437,6 +437,17 @@ class SyncAdoptionTest {
         }
     }
 
+    @Test fun pathTakenRejectsUnpairedSurrogateWithFixedProtocolError() {
+        val h = ScanHarness()
+        val bytes = ScanHarness.bytes(id = v.groupPrompt)
+        h.put(bytes)
+        val intent = SyncConflictIntent(v.groupPrompt, SyncOperation.PUT, 0, v.userScope, "a.md", bytes, bytes, 0)
+        val existing = ExistingPrompt(v.personal.rawValue, 7, "\uD800")
+        assertFailsWith<SyncReconciliationError.InvalidPull> { SyncAdoption.pathTaken(existing, intent, h.scan().snapshot, emptyMap()) }
+        assertContentEquals(bytes, h.files.read("a.md"))
+        assertNull(h.states.snapshot.value)
+    }
+
     private fun remote(h: ScanHarness, bytes: ByteArray = ScanHarness.bytes(), path: String = "a.md",
                        scope: SyncScopeKey = v.userScope, groups: Map<ULID, SyncGroupState> = emptyMap()): SyncReconciliationRemote {
         val stored = SyncLocalScanner.canonical(bytes, path, scope).bytes

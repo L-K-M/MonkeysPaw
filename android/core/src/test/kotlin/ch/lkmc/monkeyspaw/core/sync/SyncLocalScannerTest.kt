@@ -435,4 +435,42 @@ class SyncLocalScannerTest {
         assertEquals(1024, prompt.path.encodeToByteArray().size)
         assertEquals(1287, prompt.file.path.encodeToByteArray().size)
     }
+
+    @Test fun duplicateLiteralIDRepairPreservesEveryOtherPrivateByte() {
+        for (quote in listOf("", "'", "\"")) for (newline in listOf("\n", "\r\n")) {
+            val h = ScanHarness()
+            val old = v.personal.rawValue
+            val token = "id: $quote$old$quote"
+            val source = listOf("---", "# 🐾 雪 $old", "x-repeat: '$old'", "$token # preserve comment",
+                "x-list: [red, blue]", "---", "\uFEFFBody $old").joinToString(newline) + newline
+            h.put(source.encodeToByteArray(), "a.md")
+            h.put(source.encodeToByteArray(), "b.md")
+            val plan = assertNotNull(h.scan().preparation)
+            val expected = source.replace(token, "id: $quote${v.device.rawValue}$quote").encodeToByteArray()
+            assertContentEquals(expected, plan.edits.single().bytes)
+            assertEquals(SyncApplyOutcome.Committed, h.journal.apply(plan))
+            assertContentEquals(source.encodeToByteArray(), h.files.read("a.md"))
+            assertContentEquals(expected, h.files.read("b.md"))
+        }
+        val h = ScanHarness()
+        val source = "---\r\n{x-emoji: '🐾', id: '${v.personal.rawValue}', x-repeat: '${v.personal.rawValue}'} # flow\r\n---\r\nBody\r\n"
+        h.put(source.encodeToByteArray(), "a.md")
+        h.put(source.encodeToByteArray(), "b.md")
+        val plan = assertNotNull(h.scan().preparation)
+        assertContentEquals(source.replace("id: '${v.personal.rawValue}'", "id: '${v.device.rawValue}'").encodeToByteArray(), plan.edits.single().bytes)
+    }
+
+    @Test fun escapedAndBlockIDReplacementUsesCanonicalFallbackAndKeepsBody() {
+        for (spelling in listOf("\"${v.personal.rawValue.dropLast(1)}\\u0059\"", "|-\n  ${v.personal.rawValue}")) {
+            val source = "---\nid: $spelling\nx-extra: [red, blue]\n---\n\uFEFFBody\r\n"
+            val document = PromptCodec.parse(source, "a.md")
+            assertTrue(document.canRender)
+            val changed = PromptMutations.replacingIdentity(v.device, document, "a.md")
+            assertEquals(v.device, changed.frontMatter.id)
+            assertEquals(document.body, changed.body)
+            assertTrue(changed.source.startsWith("---\nid:"))
+            val extra = changed.preservedHeader!!.entries.first { PortableYaml.string(it.key) == "x-extra" }.value as YamlNode.Sequence
+            assertEquals(listOf("red", "blue"), extra.values.map(PortableYaml::string))
+        }
+    }
 }
