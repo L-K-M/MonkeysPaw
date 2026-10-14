@@ -89,6 +89,22 @@ internal class OpenAIClientTest {
         }
     }
 
+    @Test fun formatRejectionSplitsSwiftWhitespaceCharactersIncludingAttachedMarks() = runTest {
+        for ((separator, probes) in listOf(" \u0301" to true, "\u00A0\u0301" to true, "\t\u0301" to false)) {
+            val files = MemoryStore()
+            var calls = 0
+            val client = OpenAIClient(HttpTransport {
+                if (calls++ == 0) HttpResponse(400, body = AssistantJson.encode(mapOf("error" to
+                    mapOf("message" to "json_schema${separator}is not supported"))).toByteArray())
+                else completion()
+            }, ProviderStateStore(files), MonotonicClock { 1 }) { utc }
+            if (probes) assertIs<AssistantOutput.Artifact>(client.perform(request, connection()).output)
+            else assertEquals(AssistantError.ProviderFailure(400), assertFailsWith<AssistantError> { client.perform(request, connection()) })
+            assertEquals(if (probes) 2 else 1, calls)
+            assertEquals(if (probes) 1 else 0, files.writes.size)
+        }
+    }
+
     @Test fun onTimeValidatedResponseSurvivesParsingBeyondTheDeadline() = runTest {
         for (probes in listOf(0, 1)) {
             var now = 0L

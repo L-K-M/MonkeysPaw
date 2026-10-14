@@ -59,8 +59,8 @@ M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
 category. L3 adds one Foundation transcript-escaping golden using the same
 decode contract. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
-diff cases with 249 files, and L6 adds 26 OpenAI exchange cases with 1,147
-files and 274 ordered actions, bringing the corpus to 1,535 cases and 5,493
+diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,166
+files and 277 ordered actions, bringing the corpus to 1,536 cases and 5,512
 visible files. Case shapes are below. These are reported counts, not fixed
 enumeration limits.
 Sync-engine scenarios arrive with their implementations under the
@@ -754,7 +754,7 @@ M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
 `EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
 `LlmConformanceTest` uses the same adapter. Both languages compare every
-expectation. The LLM corpus has 501 cases, 3,321 visible files and 27,311
+expectation. The LLM corpus has 502 cases, 3,340 visible files and 27,465
 expectation members, with zero pending cases. All ten categories stay
 registered. L3's transcript-escaping output is also a byte golden for both
 languages' session transcript helpers. Run
@@ -948,7 +948,7 @@ unread nested members, unsafe/duplicate references and invalid repeats.
 No UI, executor or editor selection-offset adapter is added in this slice.
 
 L4 adds the closed `kind: "exchange"` envelope; L6 extends it for OpenAI and
-capability state. Both semantic consumers execute all 74 cases and 477 ordered
+capability state. Both semantic consumers execute all 75 cases and 480 ordered
 actions through the production protocol clients and capability stores.
 The envelope has exactly `schema`, `category`, `kind`, `setup` and `actions`:
 
@@ -1026,7 +1026,7 @@ map, both caps, absolute relative deadline and nullable raw body bytes.
 GET's body is null. No decoded-object equality substitutes for body comparison.
 The 143 Anthropic body goldens were captured through the unchanged Swift client
 at `a6fbb4b`; identical-input compatibility cases reuse those captured bytes.
-L6's 277 OpenAI POST body goldens, typed outputs and cache bytes were captured
+L6's 282 OpenAI POST body goldens, typed outputs and cache bytes were captured
 through the unchanged Swift `OpenAIClient` and `ProviderStateStore` at the
 integration base `a42a42c`. Swift consumers compare request and persisted state
 bytes directly, never Foundation re-serializations of those goldens.
@@ -1073,6 +1073,9 @@ stops, optional usage, model-name fallback, keyless local requests and escaped
 transcript/feedback use the same typed and byte checks. Direct client tests in
 both suites prove on-time output remains usable after parsing crosses the
 deadline and cache IO failures retain validated output and usage.
+Unicode rejection cases pin Swift Character whitespace splitting: a space or
+NBSP with an attached combining mark is dropped as one whitespace character;
+a tab and combining mark stay separate, so that message does not probe.
 
 The response families pin text after thinking, concatenated text blocks, every
 stop outcome before strict output parsing, malformed/empty envelopes, output

@@ -4,6 +4,8 @@ import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.ProviderStateStore
+import com.ibm.icu.lang.UCharacter
+import com.ibm.icu.text.BreakIterator
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.Locale
@@ -155,8 +157,7 @@ private object OpenAIFormatRejection {
         if (param != null && param !in formatParams) return false
         val code = text(error?.members?.get("code"))?.lowercase(Locale.ROOT)
         val raw = text(error?.members?.get("message")) ?: text(objectValue.members["error"]).orEmpty()
-        val message = raw.lowercase(Locale.ROOT).replace(Regex("[\"'`]"), "").replace(':', ' ')
-            .split(whitespace).filter { it.isNotEmpty() }.joinToString(" ")
+        val message = normalizeMessage(raw.lowercase(Locale.ROOT).replace(Regex("[\"'`]"), "").replace(':', ' '))
         if (listOf("invalid schema", "invalid json schema", "invalid json_schema", "schema keyword", "schema validation").any { it in message }) return false
         if (param in formatParams && code in setOf("unsupported_parameter", "unsupported_value", "unknown_parameter")) return true
         return listOf(format.rawValue, "response_format").any { subject ->
@@ -169,6 +170,25 @@ private object OpenAIFormatRejection {
     }
 
     private val formatParams = setOf("response_format", "response_format.type")
-    // Swift Character.isWhitespace uses Unicode White_Space, including NEL and NBSP.
-    private val whitespace = Regex("[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+")
+
+    private fun normalizeMessage(text: String): String {
+        val characters = BreakIterator.getCharacterInstance(Locale.ROOT)
+        characters.setText(text)
+        val result = StringBuilder()
+        var start = characters.first()
+        var end = characters.next()
+        var separated = false
+        while (end != BreakIterator.DONE) {
+            // Swift tests a Character's first scalar and drops its attached marks with it.
+            if (UCharacter.isUWhiteSpace(text.codePointAt(start))) separated = result.isNotEmpty()
+            else {
+                if (separated) result.append(' ')
+                result.append(text, start, end)
+                separated = false
+            }
+            start = end
+            end = characters.next()
+        }
+        return result.toString()
+    }
 }
