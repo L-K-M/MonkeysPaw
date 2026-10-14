@@ -26,6 +26,7 @@ import kotlin.test.*
 internal class EditorViewModelTest : TemporaryFiles() {
     private val dispatcher = StandardTestDispatcher()
     private val models = ViewModelStore()
+    private val applicationScope = CoroutineScope(SupervisorJob() + dispatcher)
     private val clock = Clock { Instant.parse("2026-10-14T00:00:00Z") }
     private lateinit var repository: LibraryRepository
     private var modelCount = 0
@@ -34,7 +35,7 @@ internal class EditorViewModelTest : TemporaryFiles() {
     fun setMain() { Dispatchers.setMain(dispatcher) }
 
     @AfterTest
-    fun clearModels() { models.clear(); Dispatchers.resetMain() }
+    fun clearModels() { models.clear(); applicationScope.cancel(); Dispatchers.resetMain() }
 
     private fun model(wrap: (PromptStore) -> PromptStore = { it },
         state: StateStore = AndroidStateStore(stateDir.toFile()),
@@ -42,7 +43,7 @@ internal class EditorViewModelTest : TemporaryFiles() {
         val prompts = AndroidPromptStore(libraryDir.toFile())
         val library = library(state, wrap(prompts))
         repository = LibraryRepository(library, EditingService(library), prompts, io)
-        return EditorViewModel(repository, worker, clock).also { models.put("editor-${modelCount++}", it) }
+        return EditorViewModel(repository, worker, clock, applicationScope).also { models.put("editor-${modelCount++}", it) }
     }
 
     private fun open(model: EditorViewModel, path: String = "a.md") {

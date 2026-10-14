@@ -73,6 +73,8 @@ internal data class EditorUiState(
     val history: EditorHistoryState = EditorHistoryState(),
     val historyMaintenanceFailed: Boolean = false,
     val provenanceMaintenanceFailed: Boolean = false,
+    val assistantAcceptanceOutcome: AssistantAcceptanceOutcome? = null,
+    val lastAssistantCopy: LibrarySelection? = null,
 ) {
     val isOpen: Boolean get() = relativePath != null
     val writing: Boolean get() = status == EditorStatus.SAVING || status == EditorStatus.COMMAND
