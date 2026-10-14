@@ -150,6 +150,39 @@
           "device": "b"
         },
         {
+          "action": "watch",
+          "device": "b",
+          "path": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "fire_timers",
+          "device": "b",
+          "delay_seconds": 3
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
           "action": "sync",
           "device": "b"
         },

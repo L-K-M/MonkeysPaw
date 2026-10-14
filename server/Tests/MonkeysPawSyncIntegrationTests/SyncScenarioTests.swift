@@ -66,6 +66,11 @@ final class SyncScenarioTests: XCTestCase {
         ] { XCTAssertThrowsError(try ScenarioDecoder.decodeStep(step)) }
     }
 
+    func testHTTPCheckpointsCompareExactUTF8Strings() {
+        XCTAssertNotEqual(ScenarioValue.string("Caf\u{e9}"), .string("Cafe\u{301}"))
+        XCTAssertNotEqual(ScenarioValue.object(["content": .string("Caf\u{e9}")]), .object(["content": .string("Cafe\u{301}")]))
+    }
+
     func testIncorrectExpectedBytesFailAfterRealRouterExecution() async throws {
         let original = try JSONDecoder().decode(ScenarioValue.self, from: Data(contentsOf: fixtures.appendingPathComponent("01-round-trip.json")))
         let changed = try original.patching([

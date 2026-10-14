@@ -303,6 +303,14 @@ final class ScenarioScheduler: Scheduler {
     private let lock = NSLock()
     private var work: [(Duration, () -> Void)] = []
     func after(_ delay: Duration, _ body: @escaping () -> Void) { lock.lock(); defer { lock.unlock() }; work.append((delay, body)) }
+
+    func fire(delay: Duration) {
+        lock.lock()
+        let ready = work.filter { $0.0 == delay }
+        work.removeAll { $0.0 == delay }
+        lock.unlock()
+        ready.forEach { $0.1() }
+    }
 }
 
 struct ScenarioMainThread: MainThread {

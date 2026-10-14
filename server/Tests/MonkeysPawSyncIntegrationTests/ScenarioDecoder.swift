@@ -10,6 +10,18 @@ enum ScenarioFailure: Error, CustomStringConvertible {
 enum ScenarioValue: Codable, Equatable, Sendable {
     case object([String: ScenarioValue]), array([ScenarioValue]), string(String), integer(Int64), bool(Bool), null
 
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.string(let left), .string(let right)): return left.utf8.elementsEqual(right.utf8)
+        case (.integer(let left), .integer(let right)): return left == right
+        case (.bool(let left), .bool(let right)): return left == right
+        case (.array(let left), .array(let right)): return left == right
+        case (.object(let left), .object(let right)): return left == right
+        case (.null, .null): return true
+        default: return false
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() { self = .null }
@@ -89,6 +101,8 @@ enum ScenarioStep {
     case move(device: String, source: String, destination: String)
     case symlink(device: String, path: String)
     case sync(String), restart(String), signOut(String), resetMetrics(String)
+    case watch(device: String, path: String)
+    case fireTimers(device: String, seconds: Int)
     case bindPrompt(device: String, path: String, name: String)
     case seedKeyed(device: String, path: String)
     case favorite(device: String, id: String, value: Bool)
@@ -109,8 +123,9 @@ struct ScenarioHTTP {
 }
 
 struct ScenarioRewrite {
+    enum Phase { case request, response }
     let device: String
-    let response: Bool
+    let phase: Phase
     let method: HTTPMethod
     let path: String
     let patch: [String: ScenarioValue]
@@ -184,6 +199,8 @@ enum ScenarioDecoder {
         case "restart": step = .restart(device)
         case "sign_out": step = .signOut(device)
         case "reset_metrics": step = .resetMetrics(device)
+        case "watch": step = .watch(device: device, path: try object.string("path"))
+        case "fire_timers": step = .fireTimers(device: device, seconds: try object.required("delay_seconds").integer())
         case "bind_prompt": step = .bindPrompt(device: device, path: try object.string("path"), name: try object.string("name"))
         case "seed_keyed": step = .seedKeyed(device: device, path: try object.string("path"))
         case "favorite": step = .favorite(device: device, id: try object.string("id"), value: try object.required("value").boolean())
@@ -207,7 +224,7 @@ enum ScenarioDecoder {
             let path = try object.string("path")
             let patch = try object.required("patch").object()
             guard !patch.isEmpty else { throw ScenarioFailure.invalid("empty network patch") }
-            step = .rewrite(.init(device: device, response: action == "rewrite_next_response", method: method, path: path, patch: patch))
+            step = .rewrite(.init(device: device, phase: action == "rewrite_next_response" ? .response : .request, method: method, path: path, patch: patch))
         case "expect":
             let fields = try object.required("expected").object()
             guard !fields.isEmpty, Set(fields.keys).isSubset(of: expectationKeys) else { throw ScenarioFailure.invalid("unknown or empty expectation") }
