@@ -52,6 +52,67 @@ cannot promise a sending text field.
 | Claude app | NOT RUN | NOT RUN | NOT RUN | |
 | Termux | NOT RUN | NOT RUN | NOT RUN | |
 
+## Text-selection entry checks (M9 N5): NOT RUN
+
+The selection toolbar's "Monkey's Paw" action hosts the same picker and
+Fill form in `ProcessTextActivity`. An editable selection offers Insert and
+Copy. Insert returns `RESULT_OK` with plain `EXTRA_PROCESS_TEXT` to the
+caller, without writing the clipboard. Read-only selections offer Copy;
+missing or mistyped read-only flags also use Copy only. Explicit Copy and
+Back leave `RESULT_CANCELED`, preserving the original selection. No activity
+is forwarded and no target app is launched.
+
+JVM tests use decoded extras and fake result/clipboard hosts to check input
+validation, field choice, lifecycle retirement and effect/learning order.
+They do not execute Intent/Bundle unparcelling, spans, Compose attachment,
+the selection toolbar or the caller's replacement behavior. No device or
+emulator was used for N5. Keep every physical check below NOT RUN until
+the owner records evidence on the final signed minified APK.
+
+| Host / editor | Editable Insert | Read-only Copy | Back / return | Status / details |
+|---|---|---|---|---|
+| Chrome editable web field | NOT RUN | n/a | NOT RUN | Record Chrome version and editor type |
+| Chrome page text | n/a | NOT RUN | NOT RUN | Record whether the action is offered |
+| App using native `EditText` | NOT RUN | NOT RUN | NOT RUN | Record app/version and editable/read-only widget configuration |
+| Supporting Compose host, foundation 1.9+ | NOT RUN | NOT RUN | NOT RUN | Record app/version, foundation version and text field or selection container |
+
+Use harmless test strings. For each supported host, select nonempty text,
+choose the action, pick a prompt and complete the shared Fill form. Verify
+literal braces, Unicode, whitespace and line breaks in the replacement or
+manual paste. Insert replaces exactly once and returns to the original
+caller with no clipboard write or submission. Editable Copy leaves the
+selection intact. Read-only Copy changes only the clipboard, with manual
+paste afterward. Back/Cancel from picker or form changes neither result,
+clipboard nor learning. Also check:
+
+- Multiple candidate fields: first multiline in body first-use order, else
+  first explicit/implicit text; switch and ignore capture, preserving edits
+  and restoring unedited defaults/remembered prefills.
+- Choice-only, builtin-only and fieldless prompts: no injected capture,
+  clear no-field message and explicit completion or cancel.
+- Rotation, background/resume and repeated entry: one retained form and
+  builtin snapshot; a new selection replaces the old session. Old callbacks
+  cannot return text or copy into the new session.
+- Process loss or "Don't keep activities": no saved capture/draft or replay;
+  return canceled when the original in-memory session is lost.
+- Invalid action/MIME, missing/empty/mistyped text, malformed Unicode and
+  text above the inclusive 256 KiB UTF-8 cap: cancel without partial capture,
+  field mutation, clipboard/result effect or learning.
+- Post-delivery storage failure: show the shared warning; Done keeps the
+  accepted result and never repeats Insert or Copy.
+
+Some hosts do not expose `ACTION_PROCESS_TEXT`, even for a nonempty
+selection. Record that cell as **UNSUPPORTED** with the app/version/editor
+and observed toolbar behavior. No selection normally offers no action;
+missing actions are unsupported coverage, not a passing replacement test.
+This entry supplements the keyboard and universal Copy flows.
+
+Record main commit, APK SHA-256, signing fingerprint/build type,
+device/model/API, keyboard/version, host app/version/editor type,
+scenario, expected/actual return behavior, tester/date and PASS/FAIL/NOT RUN
+or UNSUPPORTED. Keep prompt content, typed text and selections out of logs
+and collected evidence.
+
 ## Unicode runtime checks
 
 M8 K6 uses a pure JVM ICU4J dependency for NFC and Unicode Cc/Cf properties.

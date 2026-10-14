@@ -55,6 +55,7 @@
     <string name="fill_delivery_failed">Could not insert. Your fields are kept. You can copy instead.</string>
     <string name="fill_captured_field">Use captured text in</string>
     <string name="fill_ignore_capture">Ignore captured text</string>
+    <string name="fill_capture_no_field">This prompt has no text field for captured text.</string>
     <string name="fill_in_app">Fill in Monkey\'s Paw</string>
     <string name="fill_cancel">Cancel</string>
     <string name="fill_done">Done</string>
