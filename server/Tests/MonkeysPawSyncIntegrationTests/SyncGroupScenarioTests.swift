@@ -116,7 +116,7 @@ extension ScenarioRunner {
             }
             if let absent = fields.take("absent_ids") {
                 for id in try absent.array() {
-                    let id = try expand(id.string())
+                    let id = try SyncIdentifiers.ulid(expand(id.string())).rawValue
                     try check(!pull.scopes.flatMap(\.items).contains { value in
                         switch value {
                         case .upsert(_, let prompt): return prompt.id == id
