@@ -775,7 +775,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let library = LibraryService(library: files, data: data, clock: clock,
             entropy: SystemEntropy(), keyedStores: [values, usage])
         syncComposition = composeSync(library: library, files: files, data: data, main: libraryMain)
-        let availability = initialAvailability && syncComposition?.rootIssue == nil
+        let requiresRootRecovery = syncComposition.map {
+            $0.rootIssue != nil && ($0.accounts.hasConfiguredAccount || $0.states.requiresRootProof(for: libraryDirectory.path))
+        } ?? false
+        let availability = initialAvailability && !requiresRootRecovery
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: libraryMain)
         let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: libraryMain)
