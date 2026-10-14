@@ -41,5 +41,19 @@ final class ActionNameTests: XCTestCase {
         XCTAssertTrue(service.contains("Name=\(AppIdentity.linuxAppID)\n"))
         XCTAssertTrue(service.contains("Exec=/usr/bin/\(AppIdentity.binaryName) --gapplication-service\n"))
     }
+
+    func testPackagingRecommendsTheDocumentedX11FocusTools() throws {
+        let root = packagingDirectory.deletingLastPathComponent().deletingLastPathComponent()
+        let builder = try String(contentsOf: root.appendingPathComponent("packaging/build-deb.sh"), encoding: .utf8)
+        let ci = try String(contentsOf: root.appendingPathComponent(".github/workflows/ci.yml"), encoding: .utf8)
+        let guidance = try String(contentsOf: root.appendingPathComponent("docs/platform/linux.md"), encoding: .utf8)
+        let recommendations = "libsecret-tools, ydotool, xdotool, x11-utils"
+        XCTAssertTrue(builder.contains("Recommends: \(recommendations)\n"))
+        XCTAssertTrue(ci.contains("test \"$(dpkg-deb --field \"$deb\" Recommends)\" = '\(recommendations)'"))
+        XCTAssertTrue(guidance.contains("`xdotool` and `xprop` (`x11-utils` on Debian/Ubuntu)"))
+        XCTAssertTrue(builder.contains("DEPENDS=\"$DEPENDS, libglib2.0-bin\""), "gapplication must be available for both actions")
+        XCTAssertFalse(builder.contains("gsettings set"))
+        XCTAssertFalse(builder.contains("postinst"))
+    }
 }
 #endif

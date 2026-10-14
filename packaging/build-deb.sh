@@ -124,6 +124,7 @@ if [[ -z "$DEPENDS" ]]; then
     exit 1
 fi
 # gapplication is invoked by desktop shortcuts rather than linked into the ELF.
+# X11 focus capture also needs xprop from the recommended x11-utils package.
 DEPENDS="$DEPENDS, libglib2.0-bin"
 INSTALLED_SIZE="$(du -ks "$STAGE/usr" | cut -f1)"
 cat > "$STAGE/DEBIAN/control" <<CONTROL
@@ -133,7 +134,7 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Depends: $DEPENDS
-Recommends: libsecret-tools, ydotool, xdotool
+Recommends: libsecret-tools, ydotool, xdotool, x11-utils
 Installed-Size: $INSTALLED_SIZE
 Maintainer: L-K-M <noreply@lkmc.ch>
 Homepage: https://github.com/L-K-M/MonkeysPaw
