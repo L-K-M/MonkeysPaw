@@ -305,7 +305,8 @@ final class PortalHotkeyTests: XCTestCase {
             XCTAssertFalse(backend.isAttached)
             XCTAssertTrue(GTKTestSupport.spin { self.portal.closedPaths.count > closes })
             XCTAssertEqual(portal.calls.map(\.method), methods, "Removal must not start consent.")
-            portal.boundShortcuts = "[('\(remainingID)', {'trigger_description': <'Saved key'>})]"
+            // List still returns the removed action; the next Bind must omit it anyway.
+            portal.boundShortcuts = portal.restoredShortcuts
             var completions = 0
             backend.configure { completions += 1 }
             PortalSessionTestSupport.barrier(transport)
