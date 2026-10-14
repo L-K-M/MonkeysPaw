@@ -6,6 +6,12 @@ import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.EditingService
 import ch.lkmc.monkeyspaw.core.services.FillService
 import ch.lkmc.monkeyspaw.core.services.LibraryService
+import ch.lkmc.monkeyspaw.core.services.ProviderSettingsStore
+import ch.lkmc.monkeyspaw.core.services.ProviderSettingsService
+import ch.lkmc.monkeyspaw.core.services.ProviderStateStore
+import ch.lkmc.monkeyspaw.core.services.AssistantConnectionService
+import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
+import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
 import ch.lkmc.monkeyspaw.data.*
 import dagger.Module
 import dagger.Provides
@@ -125,4 +131,38 @@ internal object AppModule {
         @IoDispatcher io: CoroutineDispatcher): SecretStore =
         AndroidKeystoreSecretStore(DataStoreFactory.create(serializer = SecretsSerializer, scope = scope,
             produceFile = { File(context.filesDir, "datastore/secrets.json") }), AndroidKeystoreKeyProvider(context), io)
+
+    // Resolve provider services through Lazy on IO: the metadata store loads synchronously.
+    @Provides
+    @Singleton
+    fun providerSettingsStore(state: StateStore): ProviderSettingsStore = ProviderSettingsStore(state)
+
+    @Provides
+    @Singleton
+    fun providerSettings(store: ProviderSettingsStore, secrets: SecretStore,
+        @IoDispatcher io: CoroutineDispatcher): ProviderSettingsService = ProviderSettingsService(store, secrets, io)
+
+    @Provides
+    @Singleton
+    fun providerState(state: StateStore): ProviderStateStore = ProviderStateStore(state)
+
+    @Provides
+    @Singleton
+    fun anthropic(transport: HttpTransport, clock: MonotonicClock, utc: Clock): AnthropicClient =
+        AnthropicClient(transport, clock, utc::now)
+
+    @Provides
+    @Singleton
+    fun openAI(transport: HttpTransport, state: ProviderStateStore, clock: MonotonicClock, utc: Clock): OpenAIClient =
+        OpenAIClient(transport, state, clock, utc::now)
+
+    @Provides
+    @Singleton
+    fun assistantConnection(settings: ProviderSettingsService, anthropic: AnthropicClient,
+        openAI: OpenAIClient, clock: MonotonicClock, @IoDispatcher io: CoroutineDispatcher): AssistantConnectionService =
+        AssistantConnectionService(settings, anthropic, openAI, io, Dispatchers.Main.immediate, clock)
+
+    @Provides
+    @Singleton
+    fun providerChanges(): AssistantProviderChanges = AssistantProviderChanges()
 }
