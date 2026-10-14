@@ -789,15 +789,15 @@ class SyncAccountServiceTest {
 
     @Test fun inviteRegistrationSharesActivationAndReportsCommittedAccountOnLocalFailure() = runTest {
         val r = AccountHarness(testScheduler, backgroundScope)
-        val invite = SecretValue("C".repeat(42) + "A")
+        val invite = InviteLink("C".repeat(42) + "A", r.server)
         r.secrets.writeError = SecretStoreError.WriteFailed
-        val error = assertFailsWith<SyncAccountServiceError> { r.service.register(r.server, "person", r.password, invite, "Android") }
+        val error = assertFailsWith<SyncAccountServiceError> { r.service.register(invite, null, "person", r.password, "Android") }
         assertTrue(error.registrationCommitted)
         assertEquals(SyncRemoteRevocation.REVOKED, error.cleanup.remote)
         assertNull(r.h.accounts.loadAccount())
         r.secrets.writeError = null
-        assertTrue(r.service.register(r.server, "person", r.password, invite, "Android").enabled)
-        for (file in r.h.data.listFiles()) invite.withValue { assertFalse(r.h.data.text(file.relativePath).contains(it)) }
+        assertTrue(r.service.register(invite, null, "person", r.password, "Android").enabled)
+        for (file in r.h.data.listFiles()) invite.token.withValue { assertFalse(r.h.data.text(file.relativePath).contains(it)) }
     }
 
     @Test fun serviceSnapshotsAndErrorsHaveFixedRedactedDiagnostics() = runTest {
