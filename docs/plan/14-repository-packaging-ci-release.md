@@ -80,6 +80,14 @@ Rollout by milestone:
 - **Dependencies.** Desktop: Yams only. Server: Hummingbird,
   hummingbird-auth (bcrypt), hummingbird-fluent, fluent-sqlite-driver. All
   are pinned with `Package.resolved` committed.
+- **Sync suite ownership (E34).** Only the server package declares
+  `MonkeysPawSyncIntegrationTests`, with explicit Core, server-library and
+  HummingbirdTesting dependencies and Swift 5 test mode. Server production
+  and existing server tests remain Swift 6. The server dependency closure has
+  no GTK; the root package has no server products. Root Swift and Kotlin
+  conformance own ten content categories and explicitly delegate `sync/`.
+  The integration suite executes every sync fixture, including all variants,
+  against the real router; M10 ports the data contract and expectations.
 - **Seeds.** Edit the Markdown under `seed/`, then run
   `python3 scripts/generate-seeds.py` and commit the generated Core catalog
   alongside the sources. The standard-library-only generator excludes root
@@ -91,7 +99,8 @@ Rollout by milestone:
     `scripts/ci-changes.py` and a full-history checkout. The diff compares
     base and head through their merge base, with rename detection disabled
     so both the old and new paths contribute. Each build job requires
-    `changes` and its own true output; its name and steps stay unchanged.
+    `changes` and its own true output; its check name and commands stay unchanged.
+    The server test step label identifies both server and client sync scenarios.
     Android-only PRs run `android`; app Gradle version changes also run the
     `core-linux` and `deb` version checks. Pure documentation PRs run no
     build jobs.
@@ -132,7 +141,9 @@ Rollout by milestone:
     delivery on a Mac (§15 and `docs/platform/macos.md`).
   - Linux jobs run in the `swift:6.4-noble` container. The Linux Core test
     job is the portability gate.
-  - The existing server job builds/tests the server package, then runs
+  - The existing server job builds/tests the server package. Its single
+    `swift test --package-path server` invocation also executes the complete
+    sync corpus; no second full-suite command is added. It then runs
     `swift run --package-path server dump-schema` into a temporary directory.
     `diff -ru spec/schema "$schema_dir"` fails on any changed, missing or
     extra file, including the generated README and untracked files. The

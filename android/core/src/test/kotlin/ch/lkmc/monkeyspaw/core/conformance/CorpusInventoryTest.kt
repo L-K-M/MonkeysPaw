@@ -21,7 +21,7 @@ class CorpusInventoryTest {
     val temporary = TemporaryFolder()
 
     @Test
-    fun `inventory accounts for every visible fixture exactly once`() {
+    fun `inventory accounts for every owned visible fixture exactly once`() {
         val corpus = Corpus.load()
         assertEquals(10, Category.entries.size)
         assertEquals(Category.entries.toSet(), corpus.cases.map { it.category }.toSet())
@@ -87,6 +87,8 @@ class CorpusInventoryTest {
             rejects("missing ${category.directory}") { root -> deleteTree(root.resolve(category.directory)) }
         }
         rejects("visible file at root") { root -> Files.writeString(root.resolve("README.md"), "orphan") }
+        rejects("missing delegated sync") { root -> deleteTree(root.resolve("sync")) }
+        rejects("unknown delegated sync file") { root -> Files.writeString(root.resolve("sync/orphan.md"), "orphan") }
     }
 
     @Test
@@ -342,6 +344,7 @@ class CorpusInventoryTest {
 
     private fun visibleFiles(root: Path): Set<String> = Files.walk(root).use { paths ->
         paths.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) &&
+            !root.relativize(it).startsWith("sync") &&
             root.relativize(it).none { segment -> segment.toString().startsWith(".") }
         }.map { root.relativize(it).toString() }.toList().toSet()
     }
@@ -358,6 +361,7 @@ class CorpusInventoryTest {
     private val fixtureField = """{"name":"x","type":"choice","label":"X","description":null,"default":"a","options":[{"label":"A","value":"a"}],"optional":false,"remember":true,"implicit":false}"""
     private val issue = """{"code":"field.unused","severity":"warning"}"""
     private val syntheticFiles: Map<String, String> = mapOf(
+        "sync/delegated.json" to "{}",
         "format/tiny.json" to """{"schema":1,"category":"format","filename":"Tiny.md","expected":{"metadata":{"id":null,"title":"Tiny","description":null,"tags":[],"favorite":false,"private":false,"format":"1","declarations":[]},"body":"x","issues":[],"canonical":"x"}}""",
         "grammar/tiny.json" to """{"schema":1,"category":"grammar","filename":"Tiny.md","expected":{"tokens":[{"kind":"literal","text":"x"}],"names":[],"fields":[$fixtureField],"issues":[$issue]}}""",
         "render/tiny.json" to """{"schema":1,"category":"render","filename":"Tiny.md","expected":{"fields":[],"builtins":[],"issues":[],"result":{"text":"x"}}}""",
