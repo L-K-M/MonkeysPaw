@@ -28,9 +28,10 @@ public final class ShortcutService {
     private var retiredIDs = Set<UUID>()
     private var debouncing = Set<HotkeyAction>()
     private var replacing = Set<HotkeyAction>()
-    private var pendingConfiguration: (accelerators: [HotkeyAction: Accelerator], onFire: (HotkeyAction) -> Void)?
+    private var pendingConfiguration: (accelerators: [HotkeyAction: Accelerator]?,
+        done: (Result<Void, ShortcutRebindError>) -> Void, onFire: (HotkeyAction) -> Void)?
 
-    /// Inject settings to load Carbon choices and persist confirmed edits.
+    /// Inject settings for saved Carbon startup choices and confirmed edits.
     public init(backend: HotkeyBackend, scheduler: Scheduler, mainThread: MainThread,
                 settings: SettingsService? = nil) {
         self.backend = backend
@@ -53,24 +54,61 @@ public final class ShortcutService {
         mainThread.run { self.observers.removeValue(forKey: token) }
     }
 
-    /// Reentrant requests during replacement coalesce to the latest catalogue
-    /// and handler, applied after all replacements and their callbacks finish.
+    /// A supplied catalogue is exact, including absent/unbound actions. Omit it
+    /// to load injected Carbon choices at startup. Read-only startup may use
+    /// recovered defaults, reporting the settings error without saving them;
+    /// subsequent configuration preserves those registrations on error.
+    /// Reentrant requests coalesce to the latest catalogue and handler. A
+    /// superseded request completes with unavailable; the latest runs after
+    /// all replacements and their callbacks finish.
     public func configure(
-        _ accelerators: [HotkeyAction: Accelerator], onFire: @escaping (HotkeyAction) -> Void
+        _ accelerators: [HotkeyAction: Accelerator]? = nil,
+        done: @escaping (Result<Void, ShortcutRebindError>) -> Void = { _ in },
+        onFire: @escaping (HotkeyAction) -> Void
     ) {
         mainThread.run { [self] in
             guard self.replacing.isEmpty else {
-                self.pendingConfiguration = (accelerators, onFire)
+                let superseded = self.pendingConfiguration
+                self.pendingConfiguration = (accelerators, done, onFire)
+                superseded?.done(.failure(.unavailable))
                 return
             }
+            let snapshot = self.backend.mechanism == .carbon ? self.settings?.snapshot : nil
+            if let error = snapshot?.readOnlyError,
+               accelerators != nil || !self.ownedRegistrations.isEmpty {
+                done(.failure(.saveFailed(error)))
+                return
+            }
+            let catalogue: [HotkeyAction: Accelerator]
+            if let accelerators { catalogue = accelerators }
+            else if let snapshot {
+                catalogue = Dictionary(uniqueKeysWithValues: HotkeyAction.allCases.compactMap { action in
+                    snapshot.document.carbonShortcuts.accelerator(for: action).map { (action, $0) }
+                })
+            } else {
+                done(.failure(.unavailable))
+                return
+            }
+            if self.backend.mechanism == .carbon {
+                do {
+                    _ = try CarbonShortcutChoices(togglePicker: catalogue[.togglePicker], repeatLast: catalogue[.repeatLast])
+                } catch {
+                    done(.failure(error as? ShortcutRebindError ?? .unavailable))
+                    return
+                }
+            }
+
             self.onFire = onFire
+            var failure = snapshot?.readOnlyError.map { ShortcutRebindError.saveFailed($0) }
             for action in HotkeyAction.allCases {
-                let accelerator = self.backend.mechanism == .carbon && self.settings != nil
-                    ? self.settings?.snapshot.document.carbonShortcuts.accelerator(for: action)
-                    : accelerators[action]
-                self.install(action, accelerator: accelerator)
+                let accelerator = catalogue[action]
+                let registration = self.install(action, accelerator: accelerator)
+                if self.backend.mechanism == .carbon, failure == nil,
+                   !Self.confirmed(registration, accelerator: accelerator) { failure = .registrationFailed }
             }
             self.notifyObservers()
+            if let failure { done(.failure(failure)) }
+            else { done(.success(())) }
         }
     }
 
@@ -117,7 +155,7 @@ public final class ShortcutService {
                 self.replacing.remove(action)
                 if self.replacing.isEmpty, let pending = self.pendingConfiguration {
                     self.pendingConfiguration = nil
-                    self.configure(pending.accelerators, onFire: pending.onFire)
+                    self.configure(pending.accelerators, done: pending.done, onFire: pending.onFire)
                 }
             }
 

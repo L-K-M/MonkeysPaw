@@ -19,7 +19,7 @@ final class ShortcutActionTests: XCTestCase {
         }
 
         func configure() {
-            shortcuts.configure([:]) { [weak self] in self?.fires.append($0) }
+            shortcuts.configure { [weak self] in self?.fires.append($0) }
         }
 
         @discardableResult
@@ -51,6 +51,139 @@ final class ShortcutActionTests: XCTestCase {
         afterClear.configure()
         XCTAssertNil(afterClear.backend.registered[0].1)
         XCTAssertEqual(afterClear.backend.registered[1].1, try Accelerator("Cmd+Shift+R"))
+    }
+
+    func testExplicitCarbonCatalogueHonorsBoundRepeatAndClearedPickerWithoutChangingSavedChoices() throws {
+        let h = Harness()
+        h.configure()
+        let saved = h.settings.snapshot
+        var fires: [HotkeyAction] = []
+        let repeatKey = try Accelerator("Alt+F8")
+
+        h.shortcuts.configure([.repeatLast: repeatKey]) { fires.append($0) }
+
+        XCTAssertEqual(h.backend.registered.suffix(2).map(\.1), [nil, repeatKey])
+        XCTAssertEqual(h.shortcuts.registrations[.togglePicker]?.status, .unbound)
+        XCTAssertEqual(h.shortcuts.registrations[.repeatLast]?.status, .registered)
+        XCTAssertEqual(h.settings.snapshot, saved)
+        h.backend.fire(.togglePicker)
+        h.backend.fire(.repeatLast)
+        XCTAssertEqual(fires, [.repeatLast])
+
+        h.shortcuts.configure([:]) { fires.append($0) }
+        XCTAssertTrue(h.backend.registered.suffix(2).allSatisfy { $0.1 == nil })
+        h.backend.fire(.repeatLast)
+        XCTAssertEqual(fires, [.repeatLast])
+    }
+
+    func testCarbonConfigurationReportsUnhealthySettingsAndPreservesInstalledRecoveryBindings() throws {
+        for contents in ["{\"version\":99}", "{", nil] as [String?] {
+            let files = MemoryFileStore()
+            if let contents { try files.put(contents, at: "settings.json") }
+            else { files.onRead = { _ in throw FileStoreError.ioFailure } }
+            let h = Harness(files: files)
+            let error = try XCTUnwrap(h.settings.snapshot.readOnlyError)
+            var completions = 0
+            var failure: ShortcutRebindError?
+            let completed: (Result<Void, ShortcutRebindError>) -> Void = {
+                completions += 1
+                if case .failure(let error) = $0 { failure = error }
+            }
+
+            h.shortcuts.configure(done: completed) { h.fires.append($0) }
+
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(failure, .saveFailed(error))
+            XCTAssertEqual(h.backend.registered.map(\.1), [Accelerator.defaultBinding(for: .togglePicker), nil])
+            let previous = h.shortcuts.registrations
+            failure = nil
+            h.shortcuts.configure([.repeatLast: try Accelerator("Alt+R")], done: completed) { _ in
+                XCTFail("Rejected configuration replaced the callback")
+            }
+            XCTAssertEqual(completions, 2)
+            XCTAssertEqual(failure, .saveFailed(error))
+            XCTAssertEqual(h.shortcuts.registrations, previous)
+            XCTAssertEqual(h.backend.registered.count, 2)
+            XCTAssertTrue(h.backend.unregistered.isEmpty)
+            h.backend.fire()
+            XCTAssertEqual(h.fires, [.togglePicker])
+        }
+    }
+
+    func testInvalidExplicitCarbonCatalogueFailsBeforeNativeMutation() throws {
+        let h = Harness()
+        h.configure()
+        let previous = h.shortcuts.registrations
+        let invalid: [([HotkeyAction: Accelerator], ShortcutRebindError)] = [
+            ([.repeatLast: try Accelerator("Insert")], .unsupportedCarbonKey),
+            ([.repeatLast: try Accelerator("Cmd+Super+R")], .overlappingCommandModifiers),
+            ([.togglePicker: try Accelerator("Cmd+Plus"), .repeatLast: try Accelerator("Super+Shift+Equal")],
+             .collision(.togglePicker)),
+        ]
+        for (catalogue, expected) in invalid {
+            var failure: ShortcutRebindError?
+            var completions = 0
+            h.shortcuts.configure(catalogue, done: {
+                completions += 1
+                if case .failure(let error) = $0 { failure = error }
+            }) { _ in XCTFail("Invalid catalogue replaced the callback") }
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(failure, expected)
+            XCTAssertEqual(h.shortcuts.registrations, previous)
+        }
+        XCTAssertEqual(h.backend.registered.count, 2)
+        XCTAssertTrue(h.backend.unregistered.isEmpty)
+        h.backend.fire()
+        XCTAssertEqual(h.fires, [.togglePicker])
+    }
+
+    func testReentrantExplicitCarbonCataloguesCompleteOnceAndLastRequestOverridesSavedChoices() throws {
+        let h = Harness()
+        h.configure()
+        let latest: [HotkeyAction: Accelerator] = [.repeatLast: try Accelerator("Alt+F9")]
+        var supersededCompletions = 0
+        var latestCompletions = 0
+        var fires: [HotkeyAction] = []
+        h.backend.onRegister = {
+            h.backend.onRegister = nil
+            h.shortcuts.configure([:], done: { result in
+                supersededCompletions += 1
+                if case .failure(let error) = result { XCTAssertEqual(error, .unavailable) }
+                else { XCTFail("Superseded configuration reported success") }
+            }) { _ in XCTFail("Superseded callback fired") }
+            h.shortcuts.configure(latest, done: { result in
+                latestCompletions += 1
+                if case .failure = result { XCTFail("Latest configuration failed") }
+            }) { fires.append($0) }
+        }
+
+        _ = try h.set("Alt+E", for: .togglePicker)?.get()
+
+        XCTAssertEqual(supersededCompletions, 1)
+        XCTAssertEqual(latestCompletions, 1)
+        XCTAssertEqual(h.backend.registered.suffix(2).map(\.1), [nil, latest[.repeatLast]])
+        XCTAssertEqual(h.settings.snapshot.document.carbonShortcuts.togglePicker, try Accelerator("Alt+E"))
+        XCTAssertNil(h.settings.snapshot.document.carbonShortcuts.repeatLast)
+        h.backend.fire(.togglePicker)
+        h.backend.fire(.repeatLast)
+        XCTAssertEqual(fires, [.repeatLast])
+    }
+
+    func testCarbonConfigurationReportsNativeRegistrationFailure() {
+        let h = Harness()
+        h.backend.status = .failed
+        var completions = 0
+        var failure: ShortcutRebindError?
+
+        h.shortcuts.configure(done: {
+            completions += 1
+            if case .failure(let error) = $0 { failure = error }
+        }) { _ in XCTFail("Failed registration fired") }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(failure, .registrationFailed)
+        XCTAssertEqual(h.shortcuts.registrations[.togglePicker]?.status, .failed)
+        XCTAssertEqual(h.shortcuts.verification(for: .togglePicker), .notStarted)
     }
 
     func testClearingRepeatPreservesPickerRegistrationVerificationAndCallback() throws {
