@@ -20,6 +20,7 @@ final class RootedFileStore: FileStore, SyncFileOperations {
     private let trashRoot: URL
     private let rootLock = NSLock()
     private var rootIdentity: FileStamp?
+    private var syncBound = false
 
     init(root: URL, trashRoot: URL? = nil, syncDescriptor: @escaping (Int32) -> Int32 = Glibc.fsync) throws {
         guard root.isFileURL, root.path.hasPrefix("/") else { throw FileStoreError.invalidRoot }
@@ -75,6 +76,13 @@ final class RootedFileStore: FileStore, SyncFileOperations {
         try sanitized {
             guard try rootExists(parents: .existing) else { throw FileStoreError.notFound }
         }
+    }
+
+    /// Sync pins its live tree; ordinary FileStore callers may recreate roots.
+    func bindSyncRoot() {
+        rootLock.lock()
+        syncBound = true
+        rootLock.unlock()
     }
 
     func stamp(at path: String) throws -> FileStamp? {
@@ -246,11 +254,11 @@ final class RootedFileStore: FileStore, SyncFileOperations {
         var directory = URL(fileURLWithPath: "/", isDirectory: true)
         for part in Self.components(root.path) {
             directory.appendPathComponent(part, isDirectory: true)
-            if rootIdentity != nil, try attributes(at: directory) == nil { throw FileStoreError.notFound }
+            if syncBound, rootIdentity != nil, try attributes(at: directory) == nil { throw FileStoreError.notFound }
             guard try ensureDirectory(directory, parents: parents) else { return false }
         }
         let identity = try directoryStamp(at: root)
-        if let rootIdentity, identity != rootIdentity { throw FileStoreError.invalidRoot }
+        if syncBound, let rootIdentity, identity != rootIdentity { throw FileStoreError.invalidRoot }
         rootIdentity = identity
         return true
     }
@@ -593,6 +601,7 @@ final class RootedFileStore: FileStore, SyncFileOperations {
     }
 
     private func syncOperation<T>(_ work: () throws -> T) throws -> T {
+        bindSyncRoot()
         do { return try work() }
         catch let error as SyncFileOperationError { throw error }
         catch let error as FileStoreError {

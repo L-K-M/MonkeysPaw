@@ -191,6 +191,12 @@ final class LinuxEnvironment {
         var retired = false
         var drained = false
 
+        var needsDrain: Bool {
+            account?.state.isBusy == true || invite?.state.isBusy == true
+                || groups?.state.isBusy == true || conflict?.state.isBusy == true
+                || accounts.hasConfiguredServer || service.report.enabled
+        }
+
         init(service: SyncService, accounts: SyncAccountStore, accountService: SyncAccountService,
              access: GroupAccessService, scheduler: LinuxSyncScheduler) {
             self.service = service
@@ -279,7 +285,10 @@ final class LinuxEnvironment {
     var groupManagementModel: GroupManagementModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.groups }
     var conflictModel: ConflictModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.conflict }
     var syncService: SyncService? { libraryGraph.sync?.service }
-    var syncCompositionIssue: SyncBlockingIssue? { libraryGraph.sync == nil ? .recoveryRequired : nil }
+    var syncCompositionIssue: SyncBlockingIssue? {
+        guard let sync = libraryGraph.sync else { return .recoveryRequired }
+        return sync.access.snapshot.isBlocked ? .invalidState : nil
+    }
     private(set) var syncReplacementIssue: LibrarySwitchResult?
     private var syncReplacementTask: Task<Void, Never>?
     private let suppliedSyncTransport: HTTPTransporting?
@@ -812,7 +821,7 @@ final class LinuxEnvironment {
 
     private func approveQuit(afterDraining graph: LibraryGraph, approved: @escaping () -> Void) {
         guard let sync = graph.sync else { approved(); return }
-        if sync.account == nil, !sync.started, sync.service.retire() == .stopped {
+        if !sync.needsDrain, sync.service.retire() == .stopped {
             sync.retireModels()
             sync.drained = true
             approved()
@@ -1042,6 +1051,8 @@ final class LinuxEnvironment {
     private func makeSyncGraph(directory: URL, files: FileStore, library: LibraryService) -> SyncGraph? {
         guard let libraryOperations = files as? SyncFileOperations,
               let dataOperations = dataFiles as? SyncFileOperations else { return nil }
+        (files as? RootedFileStore)?.bindSyncRoot()
+        (dataFiles as? RootedFileStore)?.bindSyncRoot()
         let states = SyncStateStore(files: dataFiles, operations: dataOperations)
         let accounts = SyncAccountStore(files: dataFiles, operations: dataOperations)
         let timer = LinuxSyncScheduler(worker: backgroundWork, timer: suppliedSyncTimer)
@@ -1081,6 +1092,9 @@ final class LinuxEnvironment {
     private func startSync(in graph: LibraryGraph) {
         guard let sync = graph.sync, !sync.started, !sync.retired else { return }
         sync.started = true
+        // A healthy local-only primary has no account work to start. Opening
+        // Account still loads its models, and explicit login starts this engine.
+        guard sync.accounts.hasConfiguredServer || sync.access.snapshot.isBlocked else { return }
         prepareSyncModels(in: graph)
         // Account's initial loading publication must complete before startup.
         if sync.account?.state.isBusy == true { sync.startupRequested = true }
@@ -1150,7 +1164,7 @@ final class LinuxEnvironment {
         // Preserve the synchronous General port for idle, unstarted graphs.
         // An active account graph drains off UI, then repeats this same intent.
         if let sync = old.sync, !sync.drained {
-            if sync.account != nil || sync.started || sync.service.retire() != .stopped {
+            if sync.needsDrain || sync.service.retire() != .stopped {
                 beginSyncReplacement(old, directory: directory)
                 return .syncDraining
             }

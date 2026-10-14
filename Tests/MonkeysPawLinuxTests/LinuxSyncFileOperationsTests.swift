@@ -19,6 +19,7 @@ final class LinuxSyncFileOperationsTests: XCTestCase {
         trash = temporary.appendingPathComponent("Trash")
         store = try RootedFileStore(root: root, trashRoot: trash)
         try store.createRoot()
+        store.bindSyncRoot()
     }
 
     override func tearDown() { try? FileManager.default.removeItem(at: temporary) }

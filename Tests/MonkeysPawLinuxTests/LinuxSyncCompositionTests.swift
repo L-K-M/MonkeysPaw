@@ -301,7 +301,7 @@ final class LinuxSyncCompositionTests: XCTestCase {
     func testLostRootPreservesStateAndNeverSendsDeletes() throws {
         compose()
         try login()
-        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)))
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)), String(describing: environment.syncService?.report))
         let state = paths.dataDirectory.appendingPathComponent("sync/state.json")
         let before = try Data(contentsOf: state)
         try FileManager.default.moveItem(at: libraryRoot, to: tools.directory.appendingPathComponent("old-library"))
@@ -337,7 +337,8 @@ final class LinuxSyncCompositionTests: XCTestCase {
         var password = "transient-password-" + UUID().uuidString
         model.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
         XCTAssertTrue(password.isEmpty, "Login consumes secure input")
-        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy && model.state.enabled })
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy && model.state.enabled },
+            "Account result: " + String(describing: model.state.operation) + " / " + String(describing: model.state.error))
         XCTAssertEqual(model.state.secretTier, .file)
         XCTAssertTrue(model.state.secretStorageMessage.contains("unencrypted"))
     }
