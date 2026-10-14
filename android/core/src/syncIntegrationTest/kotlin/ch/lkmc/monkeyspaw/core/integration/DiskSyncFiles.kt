@@ -1,6 +1,9 @@
 package ch.lkmc.monkeyspaw.core.integration
 
 import ch.lkmc.monkeyspaw.core.domain.ranking.Utf8Order
+import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncHash
+import ch.lkmc.monkeyspaw.core.services.LibraryPath
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.data.RootedFileStore
 import java.nio.ByteBuffer
@@ -25,9 +28,12 @@ internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateSt
         private set
     var trashCount = 0
         private set
+    private val unsafeRetirements = mutableSetOf<String>()
+    val unprotectedTrashIDs: Set<String> get() = synchronized(lock) { unsafeRetirements.toSet() }
+    private val receipts = mutableMapOf<String, Pair<FileStamp?, SyncHash>>()
 
     init { privateDirectory(root); files.requireRoot() }
-    fun resetMetrics() = synchronized(lock) { writes = 0; trashCount = 0 }
+    fun resetMetrics() = synchronized(lock) { writes = 0; trashCount = 0; unsafeRetirements.clear() }
     override fun listFiles(): List<StoredFile> = synchronized(lock) { files.listFiles() }
     override fun stamp(path: String): FileStamp? = synchronized(lock) { files.stamp(path) }
     override fun read(path: String): ByteArray = synchronized(lock) { files.read(path) }
@@ -39,6 +45,16 @@ internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateSt
 
     // External fixture writes are independent of the engine's publication metrics.
     fun externalWrite(bytes: ByteArray, path: String) = synchronized(lock) { files.write(bytes, path) }
+    fun symlink(path: String, outside: Path) = synchronized(lock) {
+        val destination = files.syncPath(path, RootedFileStore.Parents.CREATE) ?: throw StoreError.InvalidPath
+        Files.createSymbolicLink(destination, outside)
+    }
+    // Test-only watcher adapter: match the real publication incarnation and reread its bytes.
+    fun ownsChange(path: String, stamp: FileStamp?, hash: SyncHash?): Boolean = synchronized(lock) {
+        val receipt = receipts[path] ?: return@synchronized false
+        receipt.first == stamp && receipt.second == hash && files.stamp(path) == stamp &&
+            SyncHash.of(files.read(path)) == hash
+    }
     fun mode(path: String): Set<java.nio.file.attribute.PosixFilePermission> = synchronized(lock) {
         Files.getPosixFilePermissions(regular(path), NOFOLLOW_LINKS)
     }
@@ -64,6 +80,7 @@ internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateSt
                 flushFile(path)
             }
             flushParents(path)
+            receipts[path] = files.stamp(path) to SyncHash.of(intended)
             SyncFilePublication(effect.displaced)
         }
 
@@ -76,6 +93,11 @@ internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateSt
         }
         override fun trash(path: String, expecting: SyncFileExpectation) = checked { effect ->
             effect.displaced = checkExpected(path, expecting) ?: throw StoreError.NotFound
+            val id = PromptCodec.parseFile(effect.displaced!!, LibraryPath.filename(path)).frontMatter.id?.rawValue
+            if (id != null && files.fullInventory().none { file -> file.relativePath != path &&
+                    PromptCodec.parseFile(files.read(file.relativePath), LibraryPath.filename(file.relativePath)).frontMatter.id?.rawValue == id }) {
+                unsafeRetirements.add(id)
+            }
             Files.delete(regular(path))
             effect.applied = true
             trashCount++
