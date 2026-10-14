@@ -332,14 +332,14 @@ internal class FillViewModelTest : TemporaryFiles() {
         model.setValue("keep", "remembered")
         model.setValue("fresh", "session only")
         clipboard.onWrite = {
-            assertEquals(FillPhase.COPYING, model.state.value.phase)
+            assertEquals(FillPhase.DELIVERING, model.state.value.phase)
             assertFalse(model.state.value.shouldFinish)
             assertTrue(core.values.rememberedValues(core.load("a.md").identity).isEmpty())
             assertTrue(core.usage.useEvents(core.load("a.md").identity).isEmpty())
         }
         model.copy()
         assertEquals(listOf("write"), events)
-        assertEquals(FillPhase.COPYING, model.state.value.phase)
+        assertEquals(FillPhase.DELIVERING, model.state.value.phase)
         assertFalse(model.state.value.shouldFinish)
         runCurrent()
         assertEquals(listOf("write", "remember", "usage"), events)
@@ -394,7 +394,7 @@ internal class FillViewModelTest : TemporaryFiles() {
         failRemember = true
         model.copy()
         runCurrent()
-        assertEquals(FillPhase.COPIED, model.state.value.phase)
+        assertEquals(FillPhase.DELIVERED, model.state.value.phase)
         assertEquals(listOf(FillWarning.REMEMBERED_VALUES_NOT_SAVED), model.state.value.warnings)
         assertFalse(model.state.value.shouldFinish)
         assertTrue(clipboard.text == "copied")
@@ -451,7 +451,7 @@ internal class FillViewModelTest : TemporaryFiles() {
         clipboard.onWrite = { Files.move(libraryDir, filesDir.resolve("unavailable")) }
         model.copy()
         runCurrent()
-        assertEquals(FillPhase.COPIED, model.state.value.phase)
+        assertEquals(FillPhase.DELIVERED, model.state.value.phase)
         assertEquals(listOf(FillWarning.REMEMBERED_VALUES_NOT_SAVED, FillWarning.USAGE_NOT_SAVED), model.state.value.warnings)
         model.copy()
         assertEquals(1, clipboard.writes)
@@ -474,7 +474,7 @@ internal class FillViewModelTest : TemporaryFiles() {
         model.copy()
         model.cancel()
         model.setValue("f", "later")
-        assertEquals(FillPhase.COPYING, model.state.value.phase)
+        assertEquals(FillPhase.DELIVERING, model.state.value.phase)
         runCurrent()
         assertTrue(clipboard.text == "captured")
         assertTrue(core.values.rememberedValues(core.load("a.md").identity)["f"] == "captured")
@@ -589,7 +589,7 @@ internal class FillViewModelTest : TemporaryFiles() {
         runCurrent()
         model.setValue("f", "copied")
         model.copy()
-        assertEquals(FillPhase.COPYING, model.state.value.phase)
+        assertEquals(FillPhase.DELIVERING, model.state.value.phase)
         assertEquals(1, worker.pending)
         models.clear()
         val retired = model.state.value
@@ -714,7 +714,7 @@ internal class FillViewModelTest : TemporaryFiles() {
         clipboard.events = events
     }
 
-    private fun model(): FillViewModel = FillViewModel(repository, fill).also { models.put("fill-${modelNumber++}", it) }
+    private fun model(): FillViewModel = FillViewModel(repository, fill, CopyTextDelivery(clipboard)).also { models.put("fill-${modelNumber++}", it) }
 
     private fun TestScope.openModel(path: String = "a.md"): FillViewModel = model().also {
         it.setForeground(true)

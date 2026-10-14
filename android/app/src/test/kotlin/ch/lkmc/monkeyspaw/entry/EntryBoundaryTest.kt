@@ -120,11 +120,12 @@ internal class EntryBoundaryTest {
     @Test
     fun `warm library requests use guarded activation and Copy or Back finishes without a target-app launch`() {
         val activity = root.resolve("FillActivity.kt").readText()
-        assertTrue(activity.contains("val requestedPath = FillRoute.read(intent).promptPath"))
+        assertTrue(activity.contains("val requestedPath = request.promptPath"))
         val repeated = activity.substringAfter("override fun onNewIntent(").substringBefore("override fun onCreate(")
         assertTrue(repeated.contains("super.onNewIntent(intent)"))
         assertTrue(repeated.contains("FillRoute.read(intent).promptPath?.let(fill::open)"))
-        assertFalse(Regex("\\b(?:setIntent|cancel|copy|finish)\\s*\\(").containsMatchIn(repeated))
+        assertFalse(Regex("\\b(?:cancel|copy|finish)\\s*\\(").containsMatchIn(repeated))
+        assertTrue(repeated.contains("setIntent(FillRoute(EntrySource.IME_HANDOFF, request.handoffToken).intent(this))"))
         assertTrue(activity.contains("BackHandler { fill.cancel() }"))
         assertTrue(activity.contains("if (it.shouldFinish) finish()"))
         assertFalse(Regex("\\b(?:startActivity|finishAndRemoveTask|setShowWhenLocked|requestDismissKeyguard)\\s*\\(")

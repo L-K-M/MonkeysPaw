@@ -7,6 +7,21 @@ import kotlin.test.*
 /** Test the intent policy without constructing Android's stub Intent/PendingIntent on the JVM. */
 internal class FillRouteTest {
     @Test
+    fun `only the handoff action accepts an opaque token and it never accepts a prompt path`() {
+        val token = "c7d23d7c-0fb5-4e48-bb0d-98c8442387b0"
+        assertEquals(FillRequest(EntrySource.IME_HANDOFF, handoffToken = token),
+            FillRoute.sanitize(EntrySource.IME_HANDOFF.action, "ignored.md", token))
+        for (source in EntrySource.entries.filter { it != EntrySource.IME_HANDOFF }) {
+            assertNull(FillRoute.sanitize(source.action, "a.md", token).handoffToken)
+        }
+        for (invalid in listOf("", "prompt content", "../a.md", token + "suffix")) {
+            assertEquals(FillRequest(EntrySource.IME_HANDOFF),
+                FillRoute.sanitize(EntrySource.IME_HANDOFF.action, "ignored.md", invalid))
+        }
+        assertNull(FillRoute.sanitize("unknown", "ignored.md", token).handoffToken)
+    }
+
+    @Test
     fun `every external route targets only FillActivity with reusable immutable activity tokens`() {
         for (source in listOf(EntrySource.TILE, EntrySource.SHORTCUT, EntrySource.WIDGET)) {
             val route = FillRoute(source)

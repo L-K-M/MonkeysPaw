@@ -21,6 +21,10 @@ insertion permission. Captured selection/share text and field overrides stay
 in memory; capture or preview never persists them. Normal successful delivery
 may remember only fields with `remember: true`. Never put capture in logs,
 saved state or navigation arguments ([§22 H7/H11](22-m9-m11-decisions.md)).
+An IME handoff Intent carries only an opaque one-use token. Prompt, values,
+capture and builtin snapshots stay in one process-local slot until consumed or
+cancelled; the receiving activity has only a Copy endpoint. Lost process memory
+restarts an empty Ephemeral Copy picker, never a former target or draft (§10.4).
 
 `SecretStore` reports `keychain`, `secretService`, `environment` or `file`
 to the UI without displaying a stored value. Effective reads follow D9;
