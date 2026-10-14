@@ -415,6 +415,11 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   `LibraryBrowserModel` hands open-prompt favourite toggles to `EditorModel`:
   dirty buffers stay unsaved, while clean buffers save through the editor's
   session. Unrelated prompts retain the `PromptFavoriteEditing` port.
+  With sync, group sections are keyed by group ID and show the committed name
+  and role badge. Group favourites use the account-bound personal overlay,
+  including for viewers and dirty open editors. The toggle never edits their
+  source, mode or history; sidebar counts and picker ranking refresh from the
+  same effective value. Private-scope favourites keep the file-key behavior.
 - **Edit · Preview · Fields · History.** Edit shows the raw file, front
   matter and body, with live validation from the same codec and validator as
   the picker. Fields lists the parsed fields read-only. Preview renders with
@@ -440,7 +445,13 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   changes on disk while you have unsaved edits, the conflict dialog opens at
   once: keep mine (save over theirs), take theirs (reload), or save mine as
   a copy. A deletion on disk offers keep mine (recreate), save mine as a
-  copy, or discard. A copy always takes an alternate name beside the original.
+  copy, or discard. Ordinary personal-file copies take an alternate name beside
+  the original. Committed sync changes are tagged: dirty text survives remote
+  rename, deletion and overwrite without automatic saving. Its explicit copy
+  goes to private `Conflicts/` with a fresh ID and typed origin (§9.6), as does
+  a group editor's copy. A sync deletion cannot recreate the retired identity.
+  A role downgrade or removal disables original mutations and Assistant
+  acceptance while retaining the draft and private-copy action (§20 E30/E36).
   A stale save opens the same dialog. Without unsaved
   edits the editor reloads silently. If an external writer replaces a newly
   created copy before verification, the editor reports a copy failure and

@@ -168,15 +168,15 @@ enum PromptRanking {
         let results = prompts.compactMap { prompt -> PromptSearchResult? in
             guard let match = prompt.content.match(parsed) else { return nil }
             let frecency = frecency(events: useEvents[prompt.entry.identity] ?? [], at: now)
-            let boost = prompt.entry.document.frontMatter.favorite ? Limits.favoriteBoost : 1
+            let boost = prompt.entry.favorite ? Limits.favoriteBoost : 1
             let score = parsed.isEmpty ? frecency : match.score * (1 + frecency) * boost
             return PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields)
         }
         return results.sorted { lhs, rhs in
             if lhs.score != rhs.score { return lhs.score > rhs.score }
             if parsed.isEmpty {
-                let leftFavorite = lhs.entry.document.frontMatter.favorite
-                let rightFavorite = rhs.entry.document.frontMatter.favorite
+                let leftFavorite = lhs.entry.favorite
+                let rightFavorite = rhs.entry.favorite
                 if leftFavorite != rightFavorite { return leftFavorite }
             }
             let leftTitle = lhs.entry.document.frontMatter.title

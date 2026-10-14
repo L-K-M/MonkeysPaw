@@ -11,15 +11,18 @@ public struct AssistantEditorSnapshot: Equatable, Sendable, CustomStringConverti
     public let session: PromptEditingSession
     public let stamp: FileStamp
     public let availability: AssistantEditorAvailability
+    public let accessGeneration: UInt64
 
     init(source: String, relativePath: RelativePath, revision: UInt64,
-         session: PromptEditingSession, stamp: FileStamp, availability: AssistantEditorAvailability = .available) {
+         session: PromptEditingSession, stamp: FileStamp, availability: AssistantEditorAvailability = .available,
+         accessGeneration: UInt64 = 0) {
         sourceBytes = Data(source.utf8)
         self.relativePath = relativePath
         self.revision = revision
         self.session = session
         self.stamp = stamp
         self.availability = availability
+        self.accessGeneration = accessGeneration
     }
 
     var source: String { String(decoding: sourceBytes, as: UTF8.self) }
@@ -34,6 +37,7 @@ public struct AssistantEditorSnapshot: Equatable, Sendable, CustomStringConverti
             return lhs.availability != .conflicted && rhs.availability != .conflicted
                 && lhs.sourceBytes == rhs.sourceBytes && lhs.relativePath == rhs.relativePath
                 && lhs.revision == rhs.revision && lhs.session == rhs.session && lhs.stamp == rhs.stamp
+                && lhs.accessGeneration == rhs.accessGeneration
         default: return false
         }
     }
@@ -63,6 +67,7 @@ public struct AssistantContext: Equatable, Sendable, CustomStringConvertible,
     func sameSession(as other: Self) -> Bool {
         libraryID == other.libraryID && Self.sameProfile(profile, other.profile)
             && editor?.session == other.editor?.session && access == other.access
+            && editor?.accessGeneration == other.editor?.accessGeneration
     }
 
     func matchesForAcceptance(_ other: Self) -> Bool {

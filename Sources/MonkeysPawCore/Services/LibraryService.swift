@@ -7,6 +7,11 @@ public final class LibraryService: PromptFavoriteEditing {
     private enum SaveMode {
         case replace(expectedStamp: FileStamp?)
         case createOnly
+
+        func identityHint(_ document: PromptDocument) -> PromptIdentity? {
+            if case .replace = self { return document.frontMatter.id.map(PromptIdentity.assigned) }
+            return nil
+        }
     }
 
     /// Suffix 1 is the plain path; 2 and above are "Name 2.md", "Name 3.md", ...
@@ -50,6 +55,12 @@ public final class LibraryService: PromptFavoriteEditing {
     private let lock = NSLock()
     // Held by a pending durable journal, not by an HTTP request or an await.
     private let syncWriteGate = SyncLibraryWriteGate()
+    private var groupAccess: GroupAccessService?
+    private var currentAccess = GroupAccessSnapshot.local
+    // UI reads must not wait on a worker's library I/O or reenter its lock.
+    private let accessLock = NSLock()
+    private var publishedAccess = GroupAccessSnapshot.local
+    private let accessObservers = ChangeObservers<PromptChangeOrigin>()
 
     public init(library: FileStore, data: FileStore, clock: WallClock, entropy: EntropySource,
                 keyedStores: [PromptKeyedStore] = []) {
@@ -86,6 +97,9 @@ public final class LibraryService: PromptFavoriteEditing {
     func saveForEditing(_ document: PromptDocument, at path: String,
                         expectedStamp: FileStamp?, provenance: PromptProvenance? = nil) throws -> PromptSaveOutcome {
         try locked {
+            if let reason = currentAccess.access(at: path, identity: document.frontMatter.id.map(PromptIdentity.assigned)).readOnlyReason {
+                return .readOnly(reason)
+            }
             let current = try readCurrent(at: path)
             if let expectedStamp {
                 guard let current else { return .deleted }
@@ -100,9 +114,24 @@ public final class LibraryService: PromptFavoriteEditing {
         }
     }
 
-    func createCopyForEditing(_ document: PromptDocument, near path: String) throws -> PromptSaveOutcome {
+    func createCopyForEditing(_ document: PromptDocument, near path: String,
+                              origin: PromptChangeOrigin = .external) throws -> PromptSaveOutcome {
         try locked {
-            let copy = try PromptCodec.removingIdentity(from: document)
+            var copy = try PromptCodec.removingIdentity(from: document)
+            let access = currentAccess.access(at: path, identity: document.frontMatter.id.map(PromptIdentity.assigned))
+            if origin == .sync || access != .local {
+                let folder: String
+                if case .group(let group) = access { folder = group.folder.string }
+                else { folder = "Personal" }
+                let copyPath = try SyncNaming.conflict(source: RelativePath(path), groupFolder: folder,
+                    device: "Local", at: clock.now(), occupiedPaths: try libraryEntries().map { RelativePath($0.relativePath) })
+                let marker = try SyncConflictMetadata.origin(in: document)
+                    ?? document.frontMatter.id.map(SyncPromptOrigin.conflictOf) ?? .rescued
+                let bytes = try SyncConflictMetadata.settingOrigin(marker,
+                    in: Data(try PromptCodec.write(copy).utf8), filename: LibraryPath.filename(copyPath.string))
+                copy = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(copyPath.string))
+                return try editingCommit { try createDocument(copy, near: copyPath.string, naming: .preferredPath) }
+            }
             return try editingCommit { try createDocument(copy, near: path, naming: .alternateOnly) }
         }
     }
@@ -115,6 +144,9 @@ public final class LibraryService: PromptFavoriteEditing {
             try prepared.permit.check()
             var current: LoadedFile?
             if let source {
+                guard source.accessGeneration == currentAccess.generation else {
+                    throw AssistantSaveRefusal.failed(.staleContext)
+                }
                 guard let loaded = try readCurrent(at: source.relativePath.string) else { return .deleted }
                 guard loaded.entry.stamp == source.stamp else { return .conflict(currentStamp: loaded.entry.stamp) }
                 if let reason = LoadedPrompt.readOnlyReason(for: loaded.entry.document) { return .readOnly(reason) }
@@ -122,6 +154,7 @@ public final class LibraryService: PromptFavoriteEditing {
             }
             if destination == .improve {
                 guard let source else { throw LibraryError.invalidPromptPath }
+                try requireMutation(at: source.relativePath.string, identity: current?.entry.identity)
                 return try editingCommit {
                     try saveDocument(prepared.content.document, at: source.relativePath.string,
                         mode: .replace(expectedStamp: source.stamp), prepared: prepared)
@@ -130,6 +163,9 @@ public final class LibraryService: PromptFavoriteEditing {
             guard let id = prepared.content.document.frontMatter.id else { throw LibraryError.previewMismatch }
             guard !(try libraryEntries()).contains(where: { $0.document.frontMatter.id == id }) else {
                 throw LibraryError.identityMismatch
+            }
+            if let source, destination != .privateCopy {
+                try requireMutation(at: source.relativePath.string, identity: current?.entry.identity)
             }
             let folder = destination == .privateCopy ? "" : (current?.entry.folder ?? "")
             let name = PromptCreation.relativePath(title: prepared.content.document.frontMatter.title, now: clock.now())
@@ -158,9 +194,12 @@ public final class LibraryService: PromptFavoriteEditing {
     /// Uses the held entry's stamp, including first-save identity migration and
     /// history. Never reload a stale entry and then overwrite the external edit.
     public func toggleFavorite(of entry: LibraryEntry) -> PromptFavoriteOutcome {
+        if accessSnapshot.access(at: entry.relativePath, identity: entry.identity) != .local {
+            return groupAccess?.toggleFavorite(of: entry) ?? .libraryFailure(.accessDenied)
+        }
         do {
             let saved = try locked {
-                let draft = try PromptCodec.settingFavorite(!entry.document.frontMatter.favorite,
+                let draft = try PromptCodec.settingFavorite(!entry.favorite,
                     in: entry.document, filename: LibraryPath.filename(entry.relativePath))
                 return try saveDocument(draft, at: entry.relativePath,
                                         mode: .replace(expectedStamp: entry.stamp))
@@ -214,6 +253,7 @@ public final class LibraryService: PromptFavoriteEditing {
     func createImported(_ draft: PromptDocument, at path: String) throws -> (path: String, reassigned: Bool, presentationLost: Bool) {
         try locked {
             try LibraryPath.validate(path)
+            try requireMutation(at: path)
             try ImportMapper.validate(draft)
             var document = draft
             var reassigned = false
@@ -241,6 +281,7 @@ public final class LibraryService: PromptFavoriteEditing {
             for _ in 0..<Limits.libraryCreateAttemptCap {
                 let candidate = try availablePath(for: path, startingSuffix: startingSuffix)
                 do {
+                    try requireMutation(at: candidate.path)
                     try files.create(bytes, at: candidate.path)
                     // Successful publication is the result. A later read can
                     // fail or see an external edit, but cannot undo this create.
@@ -261,6 +302,7 @@ public final class LibraryService: PromptFavoriteEditing {
                                expectedStamp: FileStamp? = nil) throws -> LibraryEntry {
         try locked {
             let loaded = try requireCurrent(at: path)
+            try requireMutation(at: path, identity: loaded.entry.identity)
             if let expectedStamp, expectedStamp != loaded.entry.stamp { throw LibraryError.conflict }
             guard loaded.entry.document.frontMatter.id == nil else { return loaded.entry }
             return try saveDocument(loaded.entry.document, at: path, mode: .replace(expectedStamp: loaded.entry.stamp))
@@ -330,6 +372,8 @@ public final class LibraryService: PromptFavoriteEditing {
     }
 
     private func moveFile(_ loaded: LoadedFile, to destination: String) throws -> MoveResult {
+        try requireMutation(at: loaded.entry.relativePath, identity: loaded.entry.identity)
+        try requireMutation(at: destination)
         try LibraryPath.validate(destination)
         let source = loaded.entry.relativePath
         if source.utf8.elementsEqual(destination.utf8) { return .moved(loaded.entry) }
@@ -376,6 +420,7 @@ public final class LibraryService: PromptFavoriteEditing {
 
     private func deleteFile(at path: String, expectedStamp: FileStamp?) throws {
         try LibraryPath.validate(path)
+        try requireMutation(at: path, identity: try readCurrent(at: path)?.entry.identity)
         if let expectedStamp {
             guard let currentStamp = try files.stamp(at: path) else { throw FileStoreError.notFound }
             guard expectedStamp == currentStamp else { throw LibraryError.conflict }
@@ -446,7 +491,9 @@ public final class LibraryService: PromptFavoriteEditing {
     private func command(at path: String, expectedStamp: FileStamp,
                          perform: (LoadedFile) throws -> PromptCommandOutcome) throws -> PromptCommandOutcome {
         try locked {
+            if let reason = currentAccess.access(at: path).readOnlyReason { return .readOnly(reason) }
             guard let loaded = try readCurrent(at: path) else { return .missing }
+            if let reason = loaded.entry.access.readOnlyReason { return .readOnly(reason) }
             guard loaded.entry.stamp == expectedStamp else { return .conflict(currentStamp: loaded.entry.stamp) }
             if let reason = LoadedPrompt.readOnlyReason(for: loaded.entry.document) { return .readOnly(reason) }
             return try perform(loaded)
@@ -464,6 +511,7 @@ public final class LibraryService: PromptFavoriteEditing {
     private func restoreDocument(_ revision: HistoryRevision, at path: String,
                                  expectedStamp: FileStamp?) throws -> LibraryEntry {
         try LibraryPath.validate(path)
+        try requireMutation(at: path, identity: revision.identity)
         switch revision.identity {
         case .local:
             guard PromptIdentity(path: path, id: nil) == revision.identity else {
@@ -516,6 +564,7 @@ public final class LibraryService: PromptFavoriteEditing {
                               creationSource: AssistantEditorSnapshot? = nil) throws -> LibraryEntry {
         try prepared?.permit.check()
         try LibraryPath.validate(path)
+        try requireMutation(at: path, identity: mode.identityHint(draft))
         _ = try PromptCodec.write(draft)
         let current: LoadedFile?
         switch mode {
@@ -529,6 +578,7 @@ public final class LibraryService: PromptFavoriteEditing {
         if let current, current.entry.document.isReadOnly {
             throw PromptWriteError.unsupportedFormat(current.entry.document.frontMatter.format)
         }
+        try requireMutation(at: path, identity: current?.entry.identity)
 
         let date = clock.now()
         var document = draft
@@ -627,7 +677,7 @@ public final class LibraryService: PromptFavoriteEditing {
         catch FileStoreError.notFound { throw LibraryError.conflict }
         guard try files.stamp(at: path) == stamp else { throw LibraryError.conflict }
         let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
-        return LoadedFile(bytes: bytes, entry: LibraryEntry(path: path, document: document, stamp: stamp))
+        return LoadedFile(bytes: bytes, entry: LibraryEntry(path: path, document: document, stamp: stamp).projecting(currentAccess))
     }
 
     private func requireCurrent(at path: String) throws -> LoadedFile {
@@ -662,6 +712,7 @@ public final class LibraryService: PromptFavoriteEditing {
         lock.lock()
         defer { lock.unlock() }
         try syncWriteGate.requireEditable()
+        guard !currentAccess.isBlocked else { throw LibraryError.syncUnavailable }
         do { return try work() }
         catch let error as CommittedMaintenanceFailure {
             throw error.provenance ? LibraryError.provenanceMaintenanceFailed : LibraryError.historyMaintenanceFailed
@@ -690,8 +741,10 @@ public final class LibraryService: PromptFavoriteEditing {
 
     func endSyncApply(_ id: UUID) {
         lock.lock()
-        defer { lock.unlock() }
         syncWriteGate.finish(id)
+        let finished = syncWriteGate.pendingPermit == nil && !syncWriteGate.hasUnreadableJournal
+        lock.unlock()
+        if finished { publishAccessChange(.sync) }
     }
 
     func replaceSyncApply(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
@@ -733,7 +786,7 @@ public final class LibraryService: PromptFavoriteEditing {
     /// No caller-supplied async/network closure enters this seam. Sync's only
     /// users perform a checked read, hash, publication or verification.
     /// The closure must not re-enter LibraryService's non-reentrant lock.
-    func withSyncLock<T>(_ work: (FileStore) throws -> T) throws -> T {
+    func withSyncLock<T>(_ work: (FileStore) throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
         return try work(files)
@@ -745,5 +798,48 @@ public final class LibraryService: PromptFavoriteEditing {
             throw LibraryError.recoveryRequired
         }
         return stores
+    }
+
+    var accessSnapshot: GroupAccessSnapshot {
+        accessLock.lock()
+        defer { accessLock.unlock() }
+        return publishedAccess
+    }
+
+    func bindGroupAccess(_ service: GroupAccessService) {
+        withSyncLock { _ in groupAccess = service }
+    }
+
+    func installAccessSnapshot(_ snapshot: GroupAccessSnapshot) -> Bool {
+        withSyncLock { _ in
+            guard currentAccess != snapshot else { return false }
+            currentAccess = snapshot
+            accessLock.lock()
+            publishedAccess = snapshot
+            accessLock.unlock()
+            return true
+        }
+    }
+
+    func observeAccess(_ observer: @escaping @Sendable (PromptChangeOrigin) -> Void) -> UUID {
+        accessObservers.add(observer)
+    }
+
+    func removeAccessObserver(_ id: UUID) { accessObservers.remove(id) }
+    func publishAccessChange(_ origin: PromptChangeOrigin) { accessObservers.publish(accessObservers.capture(), event: origin) }
+
+    func checkedFavoriteEntry(_ entry: LibraryEntry, generation: UInt64) throws -> LibraryEntry {
+        try locked {
+            guard currentAccess.generation == generation else { throw LibraryError.accessDenied }
+            let current = try requireCurrent(at: entry.relativePath).entry
+            guard current.identity == entry.identity, current.stamp == entry.stamp else { throw LibraryError.conflict }
+            return current
+        }
+    }
+
+    private func requireMutation(at path: String, identity: PromptIdentity? = nil) throws {
+        guard currentAccess.access(at: path, identity: identity).readOnlyReason == nil else {
+            throw LibraryError.accessDenied
+        }
     }
 }

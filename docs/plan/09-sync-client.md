@@ -342,6 +342,11 @@ instead of doubling.
   Invalid/future inputs fail rather than compare equal. This comparison
   never assigns an id and never substitutes for the stored-byte hash.
 - **Remembered values** are never synced.
+- **UI favourites** for group prompts edit only the account/root-bound state.
+  Viewers and dirty editors use the same intent. Access snapshots, browser
+  counts and picker ranking project that overlay without rewriting canonical
+  prompt bytes, history or file modes. Sign-out clears the projection; a new
+  account never inherits the previous account's favourites (§20 E17).
 
 ### 9.6 Conflicts and errors
 
