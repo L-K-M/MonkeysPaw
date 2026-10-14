@@ -2,6 +2,9 @@ package ch.lkmc.monkeyspaw.data
 
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.services.EditingService
+import ch.lkmc.monkeyspaw.core.services.FillService
+import ch.lkmc.monkeyspaw.core.ports.Clock
+import ch.lkmc.monkeyspaw.core.ports.Clipboard
 import ch.lkmc.monkeyspaw.core.services.LibraryService
 import ch.lkmc.monkeyspaw.di.AppModule
 import kotlinx.coroutines.CoroutineScope
@@ -22,7 +25,8 @@ internal class AppGraphTest {
         val methods = AppModule::class.java.declaredMethods
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
             AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, CoroutineScope::class.java,
-            AndroidSeedCatalog::class.java, SeedInstaller::class.java)) {
+            AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
+            AndroidClock::class.java, Clock::class.java, Clipboard::class.java)) {
             val provider = methods.single { it.returnType == type }
             assertNotNull(provider.getAnnotation(Singleton::class.java), "${type.simpleName} must be process-scoped")
         }
