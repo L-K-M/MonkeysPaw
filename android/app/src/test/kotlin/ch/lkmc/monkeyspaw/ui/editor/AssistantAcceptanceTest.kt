@@ -560,4 +560,25 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
             }
         }
     }
+
+    @Test fun `guard Save adopts its result before queued navigation changes the library selection`() = runTest {
+        val h = Harness(this)
+        h.configure("Original")
+        h.disk("Other prompt", "b.md")
+        h.editor.edit("Unsaved")
+        h.ready()
+        val selections = mutableListOf<LibrarySelection?>()
+        h.editor.onSelectionChanged = selections::add
+        val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
+        h.assistant.accept(h.editor, outcomes::add)
+        h.editor.open(LibrarySelection(PromptIdentity.at("b.md"), "b.md"))
+        h.decide(EditorDecision.SAVE)
+        h.settle()
+        assertEquals(AssistantAcceptanceConflict.ChangedBuffer, assertIs<AssistantAcceptanceOutcome.Conflict>(outcomes.single()).reason)
+        assertEquals("b.md", h.editor.state.value.relativePath)
+        assertEquals("Other prompt", h.editor.state.value.source)
+        assertEquals("b.md", selections.last()?.relativePath)
+        assertEquals("Unsaved", h.library.load("a.md").document.body)
+        assertFalse(h.exists("Candidate.md"))
+    }
 }

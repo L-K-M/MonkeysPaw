@@ -66,6 +66,7 @@ internal class EditorViewModel @Inject constructor(
     private var assistantSource: AssistantEditorSnapshot? = null
     private var assistantDecision: Long? = null
     private var adoptingAssistant = false
+    private var adoptingBaseline = false
 
     init {
         viewModelScope.launch {
@@ -396,6 +397,8 @@ internal class EditorViewModel @Inject constructor(
     }
 
     private fun drain() {
+        // Cancelling an assistant guard during Save must wait for baseline/selection adoption.
+        if (adoptingBaseline) return
         while (active && !state.value.writing && pending == null && requests.isNotEmpty()) {
             val next = requests.first()
             val action = next.decision.action
@@ -667,15 +670,19 @@ internal class EditorViewModel @Inject constructor(
     }
 
     private fun acceptBaseline(loaded: Baseline) {
-        baseline = loaded
-        revision++
-        validationJob?.cancel()
-        currentState = state.value.copy(relativePath = loaded.entry.relativePath,
-            selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
-            readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
-            conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
-            provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
-        applyProjection(loaded.projection)
+        val previous = adoptingBaseline
+        adoptingBaseline = true
+        try {
+            baseline = loaded
+            revision++
+            validationJob?.cancel()
+            currentState = state.value.copy(relativePath = loaded.entry.relativePath,
+                selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
+                readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
+                conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
+                provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
+            applyProjection(loaded.projection)
+        } finally { adoptingBaseline = previous }
     }
 
     private fun applyProjection(projection: EditorDocumentState) {
