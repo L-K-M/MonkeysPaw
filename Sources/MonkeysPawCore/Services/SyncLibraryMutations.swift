@@ -40,7 +40,7 @@ struct SyncIdentityTransition: Codable {
 }
 
 struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
-    enum Kind: String, Codable { case apply, adopt, repairDuplicate, rescue, trash, mode }
+    enum Kind: String, Codable { case apply, adopt, relocate, repairDuplicate, rescue, trash, mode }
     let id: UUID
     let kind: Kind
     let path: String
@@ -56,8 +56,8 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
     let heldIssue: SyncIssueCode?
     /// Also retained when raw forensic bytes cannot carry a front-matter marker.
     var copyOrigin: SyncPromptOrigin? = nil
-    /// A byte-distinct spelling of the same adoption path on a case-sensitive
-    /// filesystem. Its keyed state migrates when the exact server bytes publish.
+    /// Checked source for an alternate adoption spelling or a byte-exact local
+    /// relocation. Keyed state migrates before the checked source retires.
     var adoptingSource: SyncLibraryFile? = nil
 
     var description: String { "<sync library edit>" }
@@ -68,11 +68,16 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         try expected?.validate()
         try adoptingSource?.validate()
         if let source = adoptingSource {
-            guard kind == .adopt, expected == nil, RelativePath(source.path) != RelativePath(path),
-                  try SyncNaming.pathKey(RelativePath(source.path)) == SyncNaming.pathKey(RelativePath(path)),
+            let pathMatches = kind == .relocate ? true
+                : try SyncNaming.pathKey(RelativePath(source.path)) == SyncNaming.pathKey(RelativePath(path))
+            guard (kind == .adopt || kind == .relocate), expected == nil, RelativePath(source.path) != RelativePath(path),
+                  pathMatches,
                   retainedBytes == source.bytes, retainedSourcePath.map({ RelativePath($0) }) == RelativePath(source.path) else {
                 throw SyncError.invalidState
             }
+        }
+        if kind == .relocate {
+            guard let source = adoptingSource, bytes == source.bytes else { throw SyncError.invalidState }
         }
         if let expected, RelativePath(expected.path) != RelativePath(path) { throw SyncError.invalidState }
         if let retainedSourcePath { try FileStorePath.validate(retainedSourcePath) }

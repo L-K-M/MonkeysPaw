@@ -6,13 +6,15 @@ struct SyncPullCollector {
     private let files: FileStore
     private let userID: ULID
     private let now: () -> ContinuousClock.Instant
+    private let permit: SyncWorkPermit?
 
     init(client: SyncHTTPClient, files: FileStore, userID: ULID,
-         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }) {
+         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }, permit: SyncWorkPermit? = nil) {
         self.client = client
         self.files = files
         self.userID = userID
         self.now = now
+        self.permit = permit
     }
 
     func collect(_ initial: SyncAPI.PullRequest, deadline supplied: ContinuousClock.Instant? = nil) async throws -> SyncCollectedPull {
@@ -88,7 +90,8 @@ struct SyncPullCollector {
                     throw SyncPullCollectorError.noProgress(.stalledContinuation)
                 }
                 try check(deadline)
-                try staging.append(response)
+                if let permit { try permit.mutate { try staging.append(response) } }
+                else { try staging.append(response) }
                 try check(deadline)
                 if !response.scopes.contains(where: \.hasMore) {
                     removed.formUnion(initialKeys.subtracting(scopes.keys))
@@ -179,6 +182,7 @@ struct SyncPullCollector {
     }
 
     private func check(_ deadline: ContinuousClock.Instant) throws {
+        try permit?.check()
         if Task.isCancelled { throw SyncHTTPClientError.transport(.cancelled) }
         guard now() < deadline else { throw SyncPullCollectorError.noProgress(.collectionDeadline) }
     }

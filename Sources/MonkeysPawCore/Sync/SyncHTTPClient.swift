@@ -77,6 +77,11 @@ struct SyncHTTPClient: Sendable, CustomStringConvertible, CustomDebugStringConve
         self.credential = credential
     }
 
+    func permitting(_ permit: SyncWorkPermit) -> SyncHTTPClient {
+        SyncHTTPClient(server: server, transport: SyncPermittedTransport(transport: transport, permit: permit),
+            credential: credential)
+    }
+
     func login(_ request: SyncAPI.LoginRequest, deadline: ContinuousClock.Instant? = nil) async throws -> SyncAuthentication {
         let response: SyncAPI.AuthResponse = try await send(.post, "/api/v1/auth/login", body: encode(request),
                                                           authentication: .none, deadline: deadline)
