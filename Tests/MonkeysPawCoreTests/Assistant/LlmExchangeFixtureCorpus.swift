@@ -303,8 +303,11 @@ enum LlmExchangeFixtureCorpus {
             }
             let frame = frames[index]
             let headers = Dictionary(uniqueKeysWithValues: request.headers.map { ($0.key.lowercased(), $0.value) })
+            let sameHeaders = headers.count == frame.headers.count && frame.headers.allSatisfy { key, value in
+                headers[key].map { Array($0.utf8) == Array(value.utf8) } ?? false
+            }
             guard clock.elapsed == frame.sendMs, request.method.rawValue == frame.method,
-                  Array(request.url.absoluteString.utf8) == Array(frame.url.utf8), headers == frame.headers,
+                  Array(request.url.absoluteString.utf8) == Array(frame.url.utf8), sameHeaders,
                   request.requestByteCap == frame.requestCap, request.responseByteCap == frame.responseCap,
                   request.deadline == clock.origin.advanced(by: .milliseconds(frame.deadlineMs)),
                   request.body == frame.body else {

@@ -57,6 +57,16 @@ final class LlmExchangeConformanceTests: XCTestCase {
         }
     }
 
+    func testCanonicallyEqualHeaderValuesMustStillMatchUTF8Bytes() throws {
+        try withFixture { directory in
+            try change(directory, path: ["actions", "0", "profile", "key"]) { _ in .string("fixture-only-caf\u{00e9}") }
+            try change(directory, path: ["actions", "0", "exchanges", "0", "request", "headers", "x-api-key"]) {
+                _ in .string("fixture-only-cafe\u{0301}")
+            }
+            XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory))
+        }
+    }
+
     private func change(_ directory: URL, path: [String], transform: (LlmFixtureJSON) throws -> LlmFixtureJSON) throws {
         let url = directory.appendingPathComponent("anthropic-write-official-unset/case.json")
         func replacing(_ value: LlmFixtureJSON, path: ArraySlice<String>) throws -> LlmFixtureJSON {
