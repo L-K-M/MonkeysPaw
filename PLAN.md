@@ -42,6 +42,7 @@ stable: the file for `§N` starts with `N-`.
 | §20 | [M6, M8 and M11 decisions](docs/plan/20-m6-m8-decisions.md) |
 | §21 | [M7 decisions](docs/plan/21-m7-decisions.md) |
 | §22 | [M9 and M11 decisions](docs/plan/22-m9-m11-decisions.md) |
+| §23 | [M10 decisions](docs/plan/23-m10-decisions.md) |
 
 ## Editing rules
 

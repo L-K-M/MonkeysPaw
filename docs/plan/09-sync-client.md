@@ -42,6 +42,12 @@ deployment bases, without `/api/v1`; URL input normalization and transport
 policy belong to the sync client. Root identity uses an absolute lexical path,
 not a symlink-resolving filesystem lookup.
 
+Android composition supplies the exact lexical absolute
+`File(context.filesDir, "library").absolutePath` as that identity. Its private
+state root is `filesDir/state`, so sync records live under `filesDir/state/sync/`;
+settings and encrypted secrets retain their separate existing DataStores
+([§23 P2](23-m10-decisions.md)).
+
 ```
 version, server_url, user_id, library_root, database_id,
 cursors:   scope_key → cursor (opaque string),
