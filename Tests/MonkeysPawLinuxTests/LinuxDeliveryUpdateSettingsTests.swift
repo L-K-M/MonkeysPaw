@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -101,6 +102,7 @@ final class LinuxDeliveryUpdateSettingsTests: XCTestCase {
     }
 
     func testPreferenceWriteFailuresShowErrorsAndRestoreCommittedControls() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         let window = try showSettings()
         environment.settingsModel.markSetupPresented()
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: paths.configDirectory.path)
@@ -306,7 +308,9 @@ final class LinuxDeliveryUpdateSettingsTests: XCTestCase {
             XCTAssertEqual(try showSettings(), window)
         }
         drainUpdate()
-        XCTAssertEqual(transport.count, 0)
+        let requestURLs = transport.requests.map { $0.url.absoluteString }
+        let runner = ProcessInfo.processInfo.arguments.first ?? "unknown"
+        XCTAssertEqual(transport.count, 0, "Unexpected request URLs: \(requestURLs); runner: \(runner)")
         XCTAssertTrue(opened.isEmpty)
         XCTAssertFalse(tools.log.contains { $0.hasPrefix("set ") })
     }

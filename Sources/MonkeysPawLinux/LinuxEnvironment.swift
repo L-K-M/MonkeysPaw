@@ -394,7 +394,9 @@ final class LinuxEnvironment {
         suppliedClipboard = clipboard
         self.updateVersion = updateVersion
         suppliedReleasePage = releasePage
-        isRunningTests = ProcessInfo.processInfo.arguments.first?.hasSuffix(".xctest") == true
+        // Swift Build test executables do not carry the legacy .xctest suffix.
+        isRunningTests = NSClassFromString("XCTest.XCTestCase") != nil
+            || ProcessInfo.processInfo.arguments.first?.hasSuffix(".xctest") == true
             || environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
