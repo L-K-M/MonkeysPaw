@@ -6,6 +6,9 @@ import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
 import ch.lkmc.monkeyspaw.core.ports.SecretStore
 import ch.lkmc.monkeyspaw.core.services.EditingService
 import ch.lkmc.monkeyspaw.core.services.FillService
+import ch.lkmc.monkeyspaw.core.services.AssistantService
+import ch.lkmc.monkeyspaw.core.services.AssistantAccess
+import ch.lkmc.monkeyspaw.di.AssistantGraph
 import ch.lkmc.monkeyspaw.core.ports.Clock
 import ch.lkmc.monkeyspaw.core.ports.Clipboard
 import ch.lkmc.monkeyspaw.core.services.LibraryService
@@ -30,7 +33,8 @@ internal class AppGraphTest {
             AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, SecretStore::class.java,
             CoroutineScope::class.java, AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
             AndroidClock::class.java, Clock::class.java, Clipboard::class.java,
-            HttpTransport::class.java, MonotonicClock::class.java)) {
+            HttpTransport::class.java, MonotonicClock::class.java, AssistantService::class.java,
+            AssistantAccess::class.java, AssistantGraph::class.java)) {
             val provider = methods.single { it.returnType == type }
             assertNotNull(provider.getAnnotation(Singleton::class.java), "${type.simpleName} must be process-scoped")
         }
@@ -43,6 +47,20 @@ internal class AppGraphTest {
         assertFalse(module.contains("corruptionHandler"))
         assertTrue(source("MonkeysPawApplication.kt").contains("@HiltAndroidApp"))
         assertTrue(source("MainActivity.kt").contains("@AndroidEntryPoint"))
+    }
+
+    @Test
+    fun `assistant context and checked publication share one access authority and graph identity`() {
+        val methods = AppModule::class.java.declaredMethods
+        for (type in listOf(LibraryService::class.java, AssistantGraph::class.java)) {
+            assertTrue(methods.single { it.returnType == type }.parameterTypes.contains(AssistantAccess::class.java))
+        }
+        val service = methods.single { it.returnType == AssistantService::class.java }
+        assertTrue(service.parameterTypes.contains(MonotonicClock::class.java))
+        val module = source("di/AppModule.kt")
+        assertEquals(1, constructorCount(module, "AssistantService"))
+        assertEquals(1, constructorCount(module, "AssistantGraph"))
+        assertTrue(module.contains("AssistantAccess.LOCAL"))
     }
 
     @Test

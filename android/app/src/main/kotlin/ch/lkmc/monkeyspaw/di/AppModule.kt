@@ -10,6 +10,8 @@ import ch.lkmc.monkeyspaw.core.services.ProviderSettingsStore
 import ch.lkmc.monkeyspaw.core.services.ProviderSettingsService
 import ch.lkmc.monkeyspaw.core.services.ProviderStateStore
 import ch.lkmc.monkeyspaw.core.services.AssistantConnectionService
+import ch.lkmc.monkeyspaw.core.services.AssistantAccess
+import ch.lkmc.monkeyspaw.core.services.AssistantService
 import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
 import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
 import ch.lkmc.monkeyspaw.data.*
@@ -100,8 +102,13 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun library(prompts: PromptStore, state: StateStore, clock: Clock, entropy: Entropy): LibraryService =
-        LibraryService(prompts, state, clock, entropy)
+    fun library(prompts: PromptStore, state: StateStore, clock: Clock, entropy: Entropy,
+        access: AssistantAccess): LibraryService = LibraryService(prompts, state, clock, entropy, access)
+
+    // Z18 supplies live group roles through this same authority for context and publication.
+    @Provides
+    @Singleton
+    fun assistantAccess(): AssistantAccess = AssistantAccess.LOCAL
 
     @Provides
     @Singleton
@@ -166,6 +173,17 @@ internal object AppModule {
     fun assistantConnection(settings: ProviderSettingsService, anthropic: AnthropicClient,
         openAI: OpenAIClient, clock: MonotonicClock, @IoDispatcher io: CoroutineDispatcher): AssistantConnectionService =
         AssistantConnectionService(settings, anthropic, openAI, io, Dispatchers.Main.immediate, clock)
+
+    @Provides
+    @Singleton
+    fun assistantService(settings: ProviderSettingsService, anthropic: AnthropicClient, openAI: OpenAIClient,
+        @IoDispatcher io: CoroutineDispatcher, utc: Clock, entropy: Entropy, clock: MonotonicClock): AssistantService =
+        AssistantService(settings, anthropic, openAI, io, utc, entropy, clock)
+
+    @Provides
+    @Singleton
+    fun assistantGraph(service: AssistantService, access: AssistantAccess, clock: MonotonicClock): AssistantGraph =
+        AssistantGraph(service, access, clock)
 
     @Provides
     @Singleton
