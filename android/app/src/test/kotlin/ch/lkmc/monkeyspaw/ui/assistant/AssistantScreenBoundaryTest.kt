@@ -21,7 +21,7 @@ internal class AssistantScreenBoundaryTest {
         val activity = sources.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("private val assistantWrite: WriteViewModel by viewModels()"))
         assertTrue(activity.contains("assistantWrite.bind(editor)"))
-        assertTrue(activity.contains("onWrite = assistantWrite::open"))
+        assertTrue(activity.contains("onWrite = { assistantReview.close(); assistantWrite.open() }"))
         assertTrue(activity.contains("onBack = assistantWrite::close"))
         assertTrue(activity.contains("EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)"))
         val screens = listOf("WriteScreen.kt", "ArtifactControls.kt").map { sources.resolve("ui/assistant/$it").readText() }
@@ -42,5 +42,25 @@ internal class AssistantScreenBoundaryTest {
         assertTrue(strings.contains("name=\"assistant_write_disclosure\""))
         assertTrue(strings.contains("session transcript and feedback"))
         assertTrue(strings.contains("Open templates, Fill previews and remembered values are never sent by Write"))
+    }
+
+    @Test fun `Review exposes only completed routes and reuses issues effort and footer without saved content`() {
+        val activity = sources.resolve("MainActivity.kt").readText()
+        val screen = sources.resolve("ui/assistant/ReviewScreen.kt").readText()
+        assertTrue(activity.contains("private val assistantReview: ReviewViewModel by viewModels()"))
+        assertTrue(activity.contains("assistantReview.bind(editor)"))
+        assertTrue(activity.contains("reviewing.isOpen && reviewing.destination == ReviewDestination.FINDINGS"))
+        assertTrue(activity.contains("onReview = assistantReview::open"))
+        for (control in listOf("ArtifactIssues", "AssistantEffortControl", "AssistantFooter", "BackHandler(onBack = onBack)")) {
+            assertTrue(screen.contains(control), control)
+        }
+        assertFalse(Regex("\\b(?:LocalContext|LaunchedEffect|DisposableEffect|ViewModel|AssistantService|AssistantClient|HttpTransport|LibraryRepository|Dispatchers)\\b").containsMatchIn(screen))
+        assertFalse(Regex("Text\\(\"").containsMatchIn(screen))
+        assertFalse(screen.contains("onAccept"))
+        assertFalse(screen.contains("onImprove"))
+        val strings = root.resolve("res/values/assistant_strings.xml").readText()
+        assertTrue(strings.contains("Review sends the current template front matter and body"))
+        assertTrue(strings.contains("No findings."))
+        assertTrue(strings.contains("Quote does not match"))
     }
 }
