@@ -7,7 +7,7 @@ import ch.lkmc.monkeyspaw.core.ports.StoreError
 import ch.lkmc.monkeyspaw.core.ports.SyncFileFlushing
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Whole-map migration and private read/merge/write share the library graph's mutation boundary. */
+/** One store boundary serializes whole-map migration and private read/merge/write. */
 class ValuesStore internal constructor(private val files: StateStore, private val mutations: MutationBoundary) : PromptKeyedStore {
     private val syncWriteGates = SyncKeyedWriteGates()
     fun rememberedValues(identity: PromptIdentity): Map<String, String> = mutations.run {
@@ -34,7 +34,7 @@ class ValuesStore internal constructor(private val files: StateStore, private va
         if (payload.remove(key) != null) write(payload)
     }
 
-    /** Explicit Forget all is recovery: bypass unreadable/corrupt/future/over-cap state. */
+    /** Forget all bypasses rejected values state once sync recovery no longer owns the graph. */
     fun removeAll() = mutations.run { syncWriteGates.requireEditable(); write(emptyMap()) }
 
     override fun migrateKey(source: PromptIdentity, destination: PromptIdentity): KeyMigration = mutations.run {

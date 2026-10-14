@@ -21,9 +21,10 @@ class LibraryService(
 ) {
     internal val mutations = MutationBoundary()
     private val syncGate = SyncRecoveryGate()
-    val history = HistoryStore(state, MutationBoundary())
-    val usage = UsageStore(state, clock, MutationBoundary())
-    val values = ValuesStore(state, MutationBoundary())
+    // App callers use library, fill and index intents; keyed stores stay inside Core.
+    internal val history = HistoryStore(state, MutationBoundary())
+    internal val usage = UsageStore(state, clock, MutationBoundary())
+    internal val values = ValuesStore(state, MutationBoundary())
     val index = PromptIndex(this)
     private val keyedStores = listOf<PromptKeyedStore>(history, usage, values)
 
