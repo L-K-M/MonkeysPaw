@@ -295,9 +295,18 @@ constants.
   do not receive an HTTP exemption. URLs reject credentials, queries,
   fragments and unsafe deployment prefixes; every request is bound to the
   selected normalized deployment and its `/api/v1/` tree.
-  - An opt-in setting trusts user-installed CAs for self-signed LAN TLS.
-  - That setting lives in the OkHttp trust manager, because the network
-    security config is static.
+  - **Trust user-installed CAs** defaults off and belongs to one normalized
+    deployment, including scheme, effective port and prefix. The existing
+    settings DataStore stores only that server and trust selection. Selecting
+    another server or clearing the selection resets the option; a stale
+    trust intent for the old server is refused (§23 P6).
+  - The shared OkHttp driver revalidates the binding after native URL parsing.
+    An opted-in HTTPS request gets a separate native trust manager initialized
+    with AndroidCAStore's enabled system and user anchors, preserving chain
+    and hostname validation. Its TLS context and connection pool belong to
+    that request and are never reused for another deployment or policy.
+    Native trust discovery consumes the original deadline and cancellation
+    budget. The static network security config keeps system anchors only.
   - Assistant endpoints retain §7.1's separate policy: HTTP permits only
     literal `localhost`, canonical decimal IPv4 `127/8`, or IPv6 `::1`,
     without DNS classification. Sync's LAN and user-CA exceptions do not
