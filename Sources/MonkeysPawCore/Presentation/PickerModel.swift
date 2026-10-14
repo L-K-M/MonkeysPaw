@@ -11,6 +11,7 @@ public struct PickerResultRow: Equatable, Sendable {
     public let issues: [PromptIssue]
     public var hasIssues: Bool { !issues.isEmpty }
     public let canRender: Bool
+    public var access = PromptAccessState.local
 
     // Compare path bytes; this hand-written equality must list every stored property.
     public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -18,6 +19,7 @@ public struct PickerResultRow: Equatable, Sendable {
             && lhs.title == rhs.title && lhs.folder.utf8.elementsEqual(rhs.folder.utf8)
             && lhs.tags == rhs.tags && lhs.favorite == rhs.favorite
             && lhs.previewLine == rhs.previewLine && lhs.issues == rhs.issues && lhs.canRender == rhs.canRender
+            && lhs.access == rhs.access
     }
 }
 
@@ -381,8 +383,8 @@ public final class PickerModel: @unchecked Sendable {
             let front = entry.document.frontMatter
             return PickerResultRow(identity: entry.identity, relativePath: entry.relativePath,
                                    title: front.title, folder: entry.folder, tags: front.tags,
-                                   favorite: front.favorite, previewLine: front.description,
-                                   issues: entry.issues, canRender: entry.document.canRender)
+                                   favorite: entry.favorite, previewLine: front.description,
+                                   issues: entry.issues, canRender: entry.document.canRender, access: entry.access)
         }
         selectionIndex = previous.flatMap { path in
             matches.firstIndex { $0.relativePath.utf8.elementsEqual(path.utf8) }

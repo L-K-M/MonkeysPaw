@@ -11,8 +11,12 @@ public struct LibraryEntry: @unchecked Sendable {
     public let document: PromptDocument
     public var issues: [PromptIssue] { document.issues }
     public let stamp: FileStamp
+    public let access: PromptAccessState
+    public let favorite: Bool
+    public let accessGeneration: UInt64
 
-    init(path: String, document: PromptDocument, stamp: FileStamp) {
+    init(path: String, document: PromptDocument, stamp: FileStamp,
+         access: PromptAccessState = .local, favorite: Bool? = nil, accessGeneration: UInt64 = 0) {
         relativePath = path
         // A leading combining mark can extend the preceding slash grapheme.
         // Paths use slash scalars, independent of Character segmentation.
@@ -20,6 +24,15 @@ public struct LibraryEntry: @unchecked Sendable {
         identity = PromptIdentity(path: path, id: document.frontMatter.id)
         self.document = document
         self.stamp = stamp
+        self.access = access
+        self.favorite = favorite ?? document.frontMatter.favorite
+        self.accessGeneration = accessGeneration
+    }
+
+    func projecting(_ snapshot: GroupAccessSnapshot) -> LibraryEntry {
+        LibraryEntry(path: relativePath, document: document, stamp: stamp,
+            access: snapshot.access(at: relativePath, identity: identity), favorite: snapshot.favorite(for: self),
+            accessGeneration: snapshot.generation)
     }
 }
 
@@ -57,4 +70,6 @@ public enum LibraryError: String, Error, Sendable {
     case provenanceMaintenanceFailed
     case invalidProvenance
     case previewMismatch
+    case accessDenied
+    case syncUnavailable
 }

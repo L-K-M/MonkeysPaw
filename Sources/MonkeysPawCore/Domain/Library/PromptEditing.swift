@@ -24,6 +24,7 @@ public struct PromptEditingSession: Hashable, Sendable {
 }
 
 public enum PromptReadOnlyReason: Equatable, Sendable {
+    case groupViewer, groupUnavailable
     case unsupportedFormat(PromptFormatVersion)
     case invalidUTF8
     case sourceTooLarge
@@ -47,7 +48,7 @@ public struct LoadedPrompt: Sendable {
             readOnlyReason = .sourceTooLarge
         } else if let text = String(data: bytes, encoding: .utf8) {
             source = text
-            readOnlyReason = Self.readOnlyReason(for: entry.document)
+            readOnlyReason = Self.readOnlyReason(for: entry.document) ?? entry.access.readOnlyReason
         } else {
             source = nil
             readOnlyReason = .invalidUTF8
@@ -99,12 +100,14 @@ public enum PromptSaveOutcome: Sendable {
 
 public struct PromptExternalChange: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
-        case modified, deleted, recreated
+        case modified, deleted, recreated, accessChanged
     }
 
     public let kind: Kind
     /// Nil only for a deleted path.
     public let newStamp: FileStamp?
+    public var origin: PromptChangeOrigin = .external
+    public var renamedTo: LibraryPromptSelection? = nil
 }
 
 /// Captured with index publication, before callbacks can reenter or a newer
@@ -113,4 +116,6 @@ struct PromptIndexChange: Sendable {
     let changes: LibraryChangeSet
     let stamps: [RelativePath: FileStamp]
     let version: UInt64
+    var origin: PromptChangeOrigin = .external
+    var selections: [PromptIdentity: [LibraryPromptSelection]] = [:]
 }

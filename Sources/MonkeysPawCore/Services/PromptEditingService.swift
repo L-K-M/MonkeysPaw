@@ -28,6 +28,7 @@ public final class PromptEditingService: @unchecked Sendable {
         var savesInFlight = 0
         var deferredChanges: [PromptExternalChange] = []
         var committedStamps: [FileStamp] = []
+        var identity: PromptIdentity?
     }
 
     private struct LoadRead {
@@ -46,6 +47,9 @@ public final class PromptEditingService: @unchecked Sendable {
     private var sessions: [PromptEditingSession: Session] = [:]
     private var assistantSaves: [UUID: (session: PromptEditingSession?, permit: AssistantSavePermit)] = [:]
     private var indexObserver: UUID?
+    var accessSnapshot: GroupAccessSnapshot { library.accessSnapshot }
+
+    func toggleGroupFavorite(of entry: LibraryEntry) -> PromptFavoriteOutcome { library.toggleFavorite(of: entry) }
 
     public init(library: LibraryService, index: PromptIndex, work: BackgroundWork, main: MainThread) {
         self.library = library
@@ -62,24 +66,25 @@ public final class PromptEditingService: @unchecked Sendable {
     /// Binds a token to exact path bytes. Registration is quiet and does no I/O.
     /// A token created after deactivation immediately completes requests with
     /// failed(.library(.operationFailed)); previously live tokens stay retired.
-    public func beginSession(at path: String,
+    public func beginSession(at path: String, identity: PromptIdentity? = nil,
                              onExternalChange: @escaping (PromptExternalChange) -> Void = { _ in }) -> PromptEditingSession {
-        registerSession(at: path, stamp: nil, onExternalChange: onExternalChange)
+        registerSession(at: path, stamp: nil, identity: identity, onExternalChange: onExternalChange)
     }
 
     /// Copy adoption already has a checked, committed entry. Register that
     /// baseline immediately so notifications need not wait for an initial load.
     func beginSession(forCommitted entry: LibraryEntry,
                       onExternalChange: @escaping (PromptExternalChange) -> Void) -> PromptEditingSession {
-        registerSession(at: entry.relativePath, stamp: entry.stamp, onExternalChange: onExternalChange)
+        registerSession(at: entry.relativePath, stamp: entry.stamp, identity: entry.identity, onExternalChange: onExternalChange)
     }
 
-    private func registerSession(at path: String, stamp: FileStamp?,
+    private func registerSession(at path: String, stamp: FileStamp?, identity: PromptIdentity?,
                                  onExternalChange: @escaping (PromptExternalChange) -> Void) -> PromptEditingSession {
         locked {
             let token = PromptEditingSession(token: UUID(), isInactive: !isActive)
             guard isActive else { return token }
             var state = Session(path: path, onExternalChange: onExternalChange)
+            state.identity = identity
             if let stamp { state.file = .present(stamp); state.observedStamp = stamp }
             sessions[token] = state
             return token
@@ -130,6 +135,7 @@ public final class PromptEditingService: @unchecked Sendable {
                 let hasNewerPublication = state.indexVersion > read.indexVersion
                 switch read.outcome {
                 case .loaded(let loaded):
+                    state.identity = loaded.entry.identity
                     if !hasNewerPublication {
                         state.file = .present(loaded.stamp)
                         if state.observedStamp == nil { state.observedStamp = loaded.stamp }
@@ -185,11 +191,12 @@ public final class PromptEditingService: @unchecked Sendable {
     /// Uses exclusive create with bounded alternate names and a fresh identity.
     /// A copy does not change the original session's path, stamp or history.
     public func createCopy(_ source: String, near path: String, session: PromptEditingSession,
+                           origin: PromptChangeOrigin = .external,
                            completion: @escaping (PromptSaveOutcome) -> Void) {
         guard !session.isInactive else { return completion(.failed(.library(.operationFailed))) }
         submit(session, operation: { service, _ in
             service.writeSource(source, at: path) { document in
-                try service.library.createCopyForEditing(document, near: path)
+                try service.library.createCopyForEditing(document, near: path, origin: origin)
             }
         }, completion: { _, result in completion(result) })
     }
@@ -389,6 +396,7 @@ public final class PromptEditingService: @unchecked Sendable {
         locked {
             guard var state = sessions[session], !state.path.utf8.elementsEqual(entry.relativePath.utf8) else { return }
             state.path = entry.relativePath
+            state.identity = entry.identity
             state.file = file
             if case .present(let stamp) = file { state.observedStamp = stamp }
             else { state.observedStamp = nil }
@@ -471,7 +479,10 @@ public final class PromptEditingService: @unchecked Sendable {
     private func completeSave(_ result: PromptSaveOutcome, session: PromptEditingSession,
                               completion: (PromptSaveOutcome) -> Void) {
         let file: CommittedFile
-        if let entry = result.committedEntry { file = .present(entry.stamp) }
+        if let entry = result.committedEntry {
+            file = .present(entry.stamp)
+            locked { sessions[session]?.identity = entry.identity }
+        }
         else if case .deleted = result { file = .missing }
         else { file = .unchanged }
         completeWrite(file, session: session) { completion(result) }
@@ -513,6 +524,9 @@ public final class PromptEditingService: @unchecked Sendable {
     }
 
     private func indexChanged(_ change: PromptIndexChange) {
+        if change.origin == .access {
+            locked { assistantSaves.values.forEach { $0.permit.invalidate(.failed(.staleContext)) } }
+        }
         let paths = change.changes.created.union(change.changes.modified).union(change.changes.deleted)
         let watching = locked { sessions.compactMap { paths.contains(RelativePath($0.value.path)) ? $0.key : nil } }
         for session in watching {
@@ -527,8 +541,19 @@ public final class PromptEditingService: @unchecked Sendable {
                     .contains(RelativePath(state.path)) else { return nil }
             state.indexVersion = publication.version
             defer { sessions[session] = state }
+            if publication.origin == .favorite { return nil }
+            if publication.origin == .access {
+                return PromptExternalChange(kind: .accessChanged, newStamp: state.observedStamp, origin: .access)
+            }
+            var renamedTo: LibraryPromptSelection?
+            if publication.origin == .sync, publication.changes.deleted.contains(RelativePath(state.path)),
+               let identity = state.identity, let destinations = publication.selections[identity], destinations.count == 1,
+               let destination = destinations.first {
+                state.path = destination.relativePath.string
+                renamedTo = destination
+            }
             let stamp = publication.stamps[RelativePath(state.path)]
-            guard state.observedStamp != stamp else { return nil }
+            guard state.observedStamp != stamp || renamedTo != nil else { return nil }
             let previousStamp = state.observedStamp
             let kind: PromptExternalChange.Kind
             if stamp == nil { kind = .deleted }
@@ -536,7 +561,7 @@ public final class PromptEditingService: @unchecked Sendable {
             else if case .missing(let previous) = state.file, previous == state.observedStamp { kind = .recreated }
             else { kind = .modified }
             state.observedStamp = stamp
-            let change = PromptExternalChange(kind: kind, newStamp: stamp)
+            let change = PromptExternalChange(kind: kind, newStamp: stamp, origin: publication.origin, renamedTo: renamedTo)
             if case .unloaded = state.file {
                 state.pendingInitialChange = change
                 return nil
@@ -564,7 +589,9 @@ public final class PromptEditingService: @unchecked Sendable {
             }
             // A save outcome may have superseded the accepted state while this
             // notification waited. Reconcile it before calling into the editor.
-            state.file = change.newStamp.map(OpenFile.present) ?? .missing(previousStamp: state.observedStamp)
+            if change.kind != .accessChanged {
+                state.file = change.newStamp.map(OpenFile.present) ?? .missing(previousStamp: state.observedStamp)
+            }
             sessions[session] = state
             return state.onExternalChange
         }

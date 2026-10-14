@@ -25,12 +25,20 @@ public final class PromptIndex: @unchecked Sendable {
     private var version: UInt64 = 0
     private var pathVersions: [RelativePath: UInt64] = [:]
     private var compatibilityObserver: UUID?
+    private var accessObserver: UUID?
+    private var syncRefreshFailure: PromptEditingFailure?
+
+    public var lastSyncRefreshFailure: PromptEditingFailure? { locked { syncRefreshFailure } }
+    var accessSnapshot: GroupAccessSnapshot { service.accessSnapshot }
 
     public init(service: LibraryService, usage: UsageStore, clock: WallClock) {
         self.service = service
         self.usage = usage
         self.clock = clock
+        accessObserver = service.observeAccess { [weak self] origin in self?.accessChanged(origin) }
     }
+
+    deinit { if let accessObserver { service.removeAccessObserver(accessObserver) } }
 
     /// Successful rebuild/apply captures the latest subscribers at publication,
     /// then notifies on the caller's thread after unlocking. Failed publications
@@ -66,7 +74,7 @@ public final class PromptIndex: @unchecked Sendable {
 
     /// Publish a complete rebuild only after all library and usage reads succeed.
     /// Invalid content stays visible exactly as LibraryService.entries() allows.
-    public func rebuild() throws {
+    public func rebuild(origin: PromptChangeOrigin = .external) throws {
         let publication = try locked {
             var rebuilt = [RelativePath: PromptRanking.Input]()
             var events = [PromptIdentity: [Date]]()
@@ -81,7 +89,8 @@ public final class PromptIndex: @unchecked Sendable {
                                            deleted: oldPaths.subtracting(newPaths))
             prompts = rebuilt
             useEvents = events
-            return capturePublication(changes)
+            syncRefreshFailure = nil
+            return capturePublication(changes, origin: origin)
         }
         publish(publication)
     }
@@ -89,7 +98,7 @@ public final class PromptIndex: @unchecked Sendable {
     /// Apply a complete batch atomically in memory. Reload created/modified
     /// paths, silently dropping vanished files. Other I/O/conflict failures
     /// leave the last completed index intact and are reported to the caller.
-    public func apply(_ set: LibraryChangeSet) throws {
+    public func apply(_ set: LibraryChangeSet, origin: PromptChangeOrigin = .external) throws {
         let publication = try locked {
             var updated = prompts
             var events = useEvents
@@ -106,7 +115,7 @@ public final class PromptIndex: @unchecked Sendable {
             let identities = Set(updated.values.map { $0.entry.identity })
             prompts = updated
             useEvents = events.filter { identities.contains($0.key) }
-            return capturePublication(set)
+            return capturePublication(set, origin: origin)
         }
         publish(publication)
     }
@@ -147,7 +156,7 @@ public final class PromptIndex: @unchecked Sendable {
             if entry.identity != previous.identity, !prompts.values.contains(where: { $0.entry.identity == previous.identity }) {
                 useEvents[previous.identity] = nil
             }
-            return capturePublication(LibraryChangeSet(modified: [path]))
+            return capturePublication(LibraryChangeSet(modified: [path]), origin: .local)
         }
         if let publication { publish(publication) }
     }
@@ -188,20 +197,38 @@ public final class PromptIndex: @unchecked Sendable {
             for identity in previousIdentities where !prompts.values.contains(where: { $0.entry.identity == identity }) {
                 useEvents[identity] = nil
             }
-            return capturePublication(changes)
+            return capturePublication(changes, origin: .local)
         }
         if let publication { publish(publication) }
     }
 
     /// Called only with the index lock held. Payload and subscriber membership
     /// belong to this commit even if a callback makes another publication.
-    private func capturePublication(_ set: LibraryChangeSet) -> Publication {
+    private func capturePublication(_ set: LibraryChangeSet, origin: PromptChangeOrigin = .external) -> Publication {
         version &+= 1
         var stamps: [RelativePath: FileStamp] = [:]
         for path in set.created.union(set.modified).union(set.deleted) { pathVersions[path] = version }
         for path in set.created.union(set.modified) { stamps[path] = prompts[path]?.entry.stamp }
         return Publication(observers: observers.capture(), changeObservers: changeObservers.capture(),
-                           change: PromptIndexChange(changes: set, stamps: stamps, version: version))
+            change: PromptIndexChange(changes: set, stamps: stamps, version: version, origin: origin,
+                selections: Dictionary(grouping: prompts.values.map {
+                    LibraryPromptSelection(identity: $0.entry.identity, relativePath: RelativePath($0.entry.relativePath))
+                }, by: \.identity)))
+    }
+
+    private func accessChanged(_ origin: PromptChangeOrigin) {
+        if origin == .sync {
+            do { try rebuild(origin: .sync); return }
+            catch {
+                locked { syncRefreshFailure = .library(.operationFailed) }
+            }
+        }
+        let snapshot = service.accessSnapshot
+        let publication = locked { () -> Publication in
+            prompts = prompts.mapValues { PromptRanking.Input($0.entry.projecting(snapshot)) }
+            return capturePublication(LibraryChangeSet(modified: Set(prompts.keys)), origin: origin)
+        }
+        publish(publication)
     }
 
     private func publish(_ publication: Publication) {

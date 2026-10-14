@@ -147,7 +147,9 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     public func toggleFavorite() -> PromptFavoriteOutcome {
         guard isActive else { return .inactive }
         guard let entry = selectedEntry else { return .noSelection }
-        let outcome = editor?.toggleFavorite(of: entry) ?? favorites.toggleFavorite(of: entry)
+        let outcome = entry.access == .local
+            ? (editor?.toggleFavorite(of: entry) ?? favorites.toggleFavorite(of: entry))
+            : favorites.toggleFavorite(of: entry)
         if case .saved(let saved) = outcome {
             preferredSelection = LibraryPromptSelection(identity: saved.identity,
                 relativePath: RelativePath(saved.relativePath))
@@ -243,10 +245,21 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         var result = [LibraryBrowserSection(id: .all, title: "All", count: all.count, parent: nil, depth: 0),
             LibraryBrowserSection(id: .favourites, title: "Favourites", count: all.filter(\.favorite).count, parent: nil, depth: 0),
             LibraryBrowserSection(id: .recent, title: "Recent", count: recentCount, parent: nil, depth: 0)]
+        let groups = index.accessSnapshot.groups.values.sorted {
+            if !$0.name.utf8.elementsEqual($1.name.utf8) { return $0.name.utf8.lexicographicallyPrecedes($1.name.utf8) }
+            return $0.id.rawValue < $1.id.rawValue
+        }
+        for group in groups {
+            result.append(LibraryBrowserSection(id: .group(group.id), title: group.name,
+                count: all.filter { if case .group(let value) = $0.access { return value.id == group.id }; return false }.count,
+                parent: nil, depth: 0, role: group.role))
+        }
         var folders: [RelativePath: Int] = [:]
         var tags: [String: (title: String, count: Int)] = [:]
         for row in all {
-            for folder in Self.folderAncestors(row.relativePath) { folders[folder, default: 0] += 1 }
+            if row.access == .local {
+                for folder in Self.folderAncestors(row.relativePath) { folders[folder, default: 0] += 1 }
+            }
             var counted = Set<String>()
             for tag in row.tags {
                 let key = FuzzyText.normalize(tag)
@@ -278,6 +291,9 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         case .recent: return recentPaths.contains(row.relativePath)
         case .folder(let folder): return Self.folderAncestors(row.relativePath).contains(folder)
         case .tag(let tag): return row.tags.contains { FuzzyText.normalize($0) == tag }
+        case .group(let id):
+            if case .group(let group) = row.access { return group.id == id }
+            return false
         }
     }
 

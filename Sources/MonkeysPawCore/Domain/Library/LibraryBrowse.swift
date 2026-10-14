@@ -6,6 +6,7 @@ public enum LibrarySectionID: Hashable, Sendable {
     case folder(RelativePath)
     /// Normalized like the picker's exact #tag filter.
     case tag(String)
+    case group(ULID)
 }
 
 public struct LibraryBrowserSection: Equatable, Sendable {
@@ -14,6 +15,7 @@ public struct LibraryBrowserSection: Equatable, Sendable {
     public let count: Int
     public let parent: LibrarySectionID?
     public let depth: Int
+    public var role: AssistantGroupRole? = nil
 }
 
 /// Identity follows assigned prompts across renames. The path disambiguates
@@ -42,6 +44,7 @@ public struct LibraryBrowserRow: Equatable, Sendable {
     public let canRender: Bool
     public let stamp: FileStamp
     public let lastUsedAt: Date?
+    public let access: PromptAccessState
 
     init(_ entry: LibraryEntry, lastUsedAt: Date?) {
         let front = entry.document.frontMatter
@@ -49,13 +52,15 @@ public struct LibraryBrowserRow: Equatable, Sendable {
         title = front.title
         folder = RelativePath(entry.folder)
         tags = front.tags
-        favorite = front.favorite
+        favorite = entry.favorite
         previewLine = front.description
         issues = entry.issues
-        isReadOnly = entry.document.isReadOnly || issues.contains { $0.code == .invalidUTF8 || $0.code == .sourceTooLarge }
+        isReadOnly = entry.access.readOnlyReason != nil || entry.document.isReadOnly
+            || issues.contains { $0.code == .invalidUTF8 || $0.code == .sourceTooLarge }
         canRender = !entry.document.isReadOnly && !issues.contains { $0.severity == .error }
         stamp = entry.stamp
         self.lastUsedAt = lastUsedAt
+        access = entry.access
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -63,7 +68,7 @@ public struct LibraryBrowserRow: Equatable, Sendable {
             && lhs.folder == rhs.folder && lhs.tags == rhs.tags && lhs.favorite == rhs.favorite
             && lhs.previewLine == rhs.previewLine && lhs.issues == rhs.issues
             && lhs.isReadOnly == rhs.isReadOnly && lhs.canRender == rhs.canRender
-            && lhs.stamp == rhs.stamp && lhs.lastUsedAt == rhs.lastUsedAt
+            && lhs.stamp == rhs.stamp && lhs.lastUsedAt == rhs.lastUsedAt && lhs.access == rhs.access
     }
 }
 
