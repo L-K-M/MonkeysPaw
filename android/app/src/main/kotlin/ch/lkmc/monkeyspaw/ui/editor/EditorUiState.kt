@@ -62,6 +62,7 @@ internal data class EditorUiState(
     val validating: Boolean = false,
     val readOnlyReason: SourceReadOnlyReason? = null,
     val failure: EditorFailure? = null,
+    val saveIssues: List<PromptIssue> = emptyList(),
     val conflict: EditorConflict? = null,
     val pendingDecision: EditorPendingDecision? = null,
     val queuedActions: List<EditorAction> = emptyList(),

@@ -10,6 +10,7 @@
     <string name="editor_unsaved">Unsaved changes</string>
     <string name="editor_guard_help">Save your changes before continuing, discard them, or cancel to keep editing.</string>
     <string name="editor_read_only">This file is read-only. Its original bytes are kept.</string>
+    <string name="editor_read_only_failed">The submitted draft or destination is read-only. Your current draft is kept.</string>
     <string name="editor_path">Library path, including .md</string>
     <string name="editor_filename">Filename, including .md</string>
     <string name="editor_folder">Folder path (empty for root)</string>

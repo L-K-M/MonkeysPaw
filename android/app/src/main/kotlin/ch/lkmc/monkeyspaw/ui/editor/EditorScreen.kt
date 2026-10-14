@@ -57,6 +57,9 @@ internal fun EditorScreen(
         }
         state.failure?.let { failure -> item {
             Text(stringResource(failureString(failure)), color = MaterialTheme.colorScheme.error)
+            for (issue in state.saveIssues.filterNot { state.tab == EditorTab.EDIT && it in state.issues }) {
+                Text(issue.message, color = MaterialTheme.colorScheme.error)
+            }
             if (!state.isNew) TextButton(onClick = onReload, enabled = !state.writing) { Text(stringResource(R.string.editor_reload)) }
         } }
         if (state.conflict?.presentation == EditorConflictPresentation.BANNER) item {
@@ -215,7 +218,7 @@ private fun tabString(tab: EditorTab): Int = when (tab) {
 private fun failureString(failure: EditorFailure): Int = when (failure) {
     EditorFailure.DATA -> R.string.editor_data_failed
     EditorFailure.INVALID -> R.string.editor_invalid
-    EditorFailure.READ_ONLY -> R.string.editor_read_only
+    EditorFailure.READ_ONLY -> R.string.editor_read_only_failed
     EditorFailure.OCCUPIED -> R.string.editor_occupied
     EditorFailure.INVALID_PATH -> R.string.editor_invalid_path
     EditorFailure.IDENTITY -> R.string.editor_identity_failed

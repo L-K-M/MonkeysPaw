@@ -83,14 +83,14 @@ internal class EditorViewModel @Inject constructor(
         revision++
         mutableState.value = state.value.copy(source = source,
             dirty = state.value.isNew || source != baseline?.source, validating = true,
-            failure = null, status = if (state.value.writing) state.value.status else EditorStatus.READY)
+            failure = null, saveIssues = emptyList(), status = if (state.value.writing) state.value.status else EditorStatus.READY)
         validate()
     }
 
     fun setNewPath(path: String) {
         if (!active || !state.value.isNew || state.value.writing || state.value.relativePath == path) return
         revision++
-        mutableState.value = state.value.copy(relativePath = path, dirty = true, failure = null, validating = true)
+        mutableState.value = state.value.copy(relativePath = path, dirty = true, failure = null, saveIssues = emptyList(), validating = true)
         validate()
     }
 
@@ -121,7 +121,7 @@ internal class EditorViewModel @Inject constructor(
         val captured = snapshot() ?: return
         loadGeneration++
         loadJob?.cancel()
-        mutableState.value = state.value.copy(status = EditorStatus.SAVING, failure = null)
+        mutableState.value = state.value.copy(status = EditorStatus.SAVING, failure = null, saveIssues = emptyList())
         viewModelScope.launch {
             val completed = command(captured) { editing ->
                 if (captured.isNew) editing.create(captured.source, captured.relativePath)
@@ -203,10 +203,15 @@ internal class EditorViewModel @Inject constructor(
 
     private fun drain() {
         while (active && !state.value.writing && pending == null && requests.isNotEmpty()) {
-            val next = requests.removeFirst()
+            val next = requests.first()
             val action = next.decision.action
             // File commands remain attached to the session requested, even behind queued navigation.
-            if (isCommand(action) && next.session != session) continue
+            if (isCommand(action) && next.session != session) {
+                requests.removeFirst()
+                continue
+            }
+            if (state.value.status == EditorStatus.LOADING && isCommand(action)) break
+            requests.removeFirst()
             if (state.value.dirty) {
                 pending = next
                 mutableState.value = state.value.copy(pendingDecision = next.decision)
@@ -344,7 +349,7 @@ internal class EditorViewModel @Inject constructor(
             EditResult.Missing -> mutableState.value = state.value.copy(conflict = EditorConflict(deleted = true))
             EditResult.DestinationOccupied -> mutableState.value = state.value.copy(failure = EditorFailure.OCCUPIED)
             // The submitted draft may be older than the current live validation.
-            is EditResult.Invalid -> mutableState.value = state.value.copy(failure = EditorFailure.INVALID)
+            is EditResult.Invalid -> mutableState.value = state.value.copy(failure = EditorFailure.INVALID, saveIssues = result.issues)
             is EditResult.ReadOnly -> mutableState.value = state.value.copy(failure = EditorFailure.READ_ONLY)
             is EditResult.ForensicRestoreBlocked -> mutableState.value = state.value.copy(failure = EditorFailure.FORENSIC)
             is EditResult.Failed -> mutableState.value = state.value.copy(failure = failure(result.error))
@@ -387,7 +392,10 @@ internal class EditorViewModel @Inject constructor(
                 val loaded = load.prompt
                 if (purpose == LoadPurpose.REPLACE || purpose == LoadPurpose.RECONCILE && !state.value.dirty && state.value.conflict == null) {
                     // Own-commit reconciliation must not erase a committed maintenance warning.
-                    if (purpose != LoadPurpose.REPLACE && loaded.entry.stamp == state.value.stamp) return
+                    if (purpose != LoadPurpose.REPLACE && loaded.entry.stamp == state.value.stamp) {
+                        mutableState.value = state.value.copy(failure = null, saveIssues = emptyList())
+                        return
+                    }
                     val previous = state.value.selection
                     acceptBaseline(Baseline(loaded.entry, loaded.source, loaded.readOnlyReason, checkNotNull(observed.projection)))
                     if (previous != state.value.selection) onSelectionChanged?.invoke(state.value.selection)
@@ -447,7 +455,7 @@ internal class EditorViewModel @Inject constructor(
         mutableState.value = state.value.copy(relativePath = loaded.entry.relativePath,
             selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
             readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
-            conflict = null, failure = null, historyMaintenanceFailed = false)
+            conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false)
         applyProjection(loaded.projection)
     }
 

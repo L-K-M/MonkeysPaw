@@ -968,6 +968,88 @@ internal class EditorViewModelTest : TemporaryFiles() {
         bytesAre("body".encodeToByteArray())
     }
 
+    @Test
+    fun `writer-only size refusal keeps draft and exposes the submitted diagnostic`() = runTest {
+        val model = model()
+        model.createDraft()
+        model.edit("a".repeat(Limits.maxPromptBytes))
+        model.save()
+        runCurrent()
+        assertEquals(EditorFailure.INVALID, model.state.value.failure)
+        assertTrue(model.state.value.dirty)
+        assertEquals(listOf(PromptIssueCode.SOURCE_TOO_LARGE), model.state.value.saveIssues.map { it.code })
+        assertTrue(model.state.value.issues.isEmpty(), "Input validation was replaced by a writer diagnostic.")
+        assertTrue(repository.state.value.snapshot.prompts.isEmpty())
+        assertFalse(Files.exists(libraryDir.resolve("Untitled.md")))
+    }
+
+    @Test
+    fun `same stamp successful reconcile clears a transient read failure`() = runTest {
+        put(libraryDir.resolve("a.md"))
+        var failRead = false
+        val model = model(wrap = { prompts -> object : PromptStore by prompts {
+            override fun read(path: String): ByteArray {
+                if (failRead) throw StoreError.IOFailure
+                return prompts.read(path)
+            }
+        } })
+        open(model)
+        runCurrent()
+        val stamp = model.state.value.stamp
+        failRead = true
+        model.refresh()
+        runCurrent()
+        assertEquals(EditorFailure.DATA, model.state.value.failure)
+        failRead = false
+        model.refresh()
+        runCurrent()
+        assertEquals(stamp, model.state.value.stamp)
+        assertNull(model.state.value.failure)
+        sourceIs(model, "body")
+    }
+
+    @Test
+    fun `commands requested during initial load wait for its checked baseline`() = runTest {
+        put(libraryDir.resolve("a.md"))
+        val model = model()
+        open(model)
+        model.rename("loaded.md")
+        assertEquals(EditorStatus.LOADING, model.state.value.status)
+        assertEquals(listOf(EditorAction.Rename("loaded.md")), model.state.value.queuedActions)
+        assertNull(model.state.value.failure)
+        runCurrent()
+        assertEquals("loaded.md", model.state.value.relativePath)
+        bytesAre("body".encodeToByteArray(), "loaded.md")
+        assertFalse(Files.exists(libraryDir.resolve("a.md")))
+        assertNull(model.state.value.failure)
+    }
+
+    @Test
+    fun `a stale queued command cannot hold back navigation during a newer load`() = runTest {
+        put(libraryDir.resolve("a.md"))
+        put(libraryDir.resolve("b.md"))
+        val held = HeldDispatcher()
+        val model = model(io = held)
+        open(model)
+        runCurrent()
+        held.release()
+        runCurrent()
+        model.edit("Saved")
+        model.save()
+        model.open(LibrarySelection(PromptIdentity.at("b.md"), "b.md"))
+        model.delete()
+        model.close()
+        runCurrent()
+        held.release()
+        runCurrent()
+        assertFalse(model.state.value.isOpen, "A retired command blocked close behind a load.")
+        held.releaseAll()
+        runCurrent()
+        bytesAre("body".encodeToByteArray(), "b.md")
+        assertTrue(Files.exists(libraryDir.resolve("a.md")))
+        assertTrue(model.state.value.queuedActions.isEmpty())
+    }
+
     private class HeldDispatcher : CoroutineDispatcher() {
         private val tasks = ArrayDeque<Runnable>()
         override fun dispatch(context: CoroutineContext, block: Runnable) { tasks.addLast(block) }
