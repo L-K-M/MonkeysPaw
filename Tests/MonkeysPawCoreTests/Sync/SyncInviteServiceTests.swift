@@ -24,7 +24,7 @@ final class SyncInviteServiceTests: XCTestCase {
         var password = "unused"
         let result = try await rig.invites.accept(staged, as: .existingAccount, username: "", password: &password, deviceName: "")
         await rig.sync.settle()
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         XCTAssertNil(result.issue)
         XCTAssertEqual(result.snapshot.me?.groups.count, 1)
         let paths = rig.sync.transport.requests.dropFirst(requestsBefore).map { $0.url.path }
@@ -47,7 +47,7 @@ final class SyncInviteServiceTests: XCTestCase {
         }
         XCTAssertEqual(rig.sync.transport.requests.count, requestsBefore)
         XCTAssertEqual(rig.secrets.reads.count, reads)
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
     }
 
     func testChangedUserOrSameUserReauthenticationInvalidatesStagedInvite() async throws {
@@ -77,7 +77,7 @@ final class SyncInviteServiceTests: XCTestCase {
             await assertIssue(.accountChanged) {
                 try await rig.invites.accept(staged, as: mode, username: "person", password: &password, deviceName: "Desktop")
             }
-            XCTAssertEqual(password, "")
+            XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         }
         XCTAssertEqual(rig.sync.transport.requests.count, requestsBefore)
     }
@@ -92,7 +92,7 @@ final class SyncInviteServiceTests: XCTestCase {
         var password = rig.password
         let result = try await rig.invites.accept(staged, as: .newAccount, username: "person", password: &password, deviceName: "Desktop")
         await rig.sync.settle()
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         XCTAssertTrue(result.snapshot.enabled)
         XCTAssertEqual(result.snapshot.account?.identity.serverURL.host, "other.test")
         XCTAssertEqual(result.snapshot.account?.identity.userID, SyncTestValues.otherUser)
@@ -166,7 +166,7 @@ final class SyncInviteServiceTests: XCTestCase {
         let staged = try rig.invites.stage(rig.link.text)
         var password = rig.password
         let result = try await rig.invites.accept(staged, as: .newAccount, username: "person", password: &password, deviceName: "Desktop")
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         XCTAssertEqual(result.issue, .registrationIncomplete(.secret(.writeFailed)))
         XCTAssertEqual(result.cleanup.remote, .revoked)
         XCTAssertFalse(result.snapshot.enabled)

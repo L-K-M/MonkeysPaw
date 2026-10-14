@@ -8,7 +8,7 @@ final class InviteModelTests: XCTestCase {
         var input = try fake.link.text
         let fullLink = input
         model.stage(&input)
-        XCTAssertEqual(input, "")
+        XCTAssertTrue(input.isEmpty, "Invite input was not consumed")
         await settle(model, main)
         XCTAssertEqual(fake.stageCalls, 1)
         XCTAssertEqual(fake.acceptCalls, 0)
@@ -48,7 +48,7 @@ final class InviteModelTests: XCTestCase {
         await settle(model, main)
         var password = "sensitive-password"
         model.accept(as: .newAccount, username: "newperson", password: &password, deviceName: "Desktop")
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         await settle(model, main)
         XCTAssertEqual(fake.acceptCalls, 1)
         XCTAssertTrue(fake.password == SecretValue("sensitive-password"))
@@ -74,8 +74,8 @@ final class InviteModelTests: XCTestCase {
         model.create(groupID: SyncTestValues.group, role: .editor)
         model.copyCreatedLink()
         main.flush()
-        XCTAssertEqual(input, "")
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(input.isEmpty, "Invite input was not consumed")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         XCTAssertEqual(fake.createCalls, 1)
         XCTAssertEqual(fake.stageCalls, 0)
         XCTAssertEqual(fake.acceptCalls, 0)
@@ -113,8 +113,10 @@ final class InviteModelTests: XCTestCase {
         await waitCreate(fake)
         model.dismiss()
         main.flush()
+        XCTAssertTrue(model.state.isBusy, "Admitted work must remain visibly busy after close")
         await gate.open()
         await settle(model, main)
+        XCTAssertFalse(model.state.isBusy)
         XCTAssertNil(model.state.created)
         var input = try fake.link.text
         model.stage(&input)
@@ -127,6 +129,29 @@ final class InviteModelTests: XCTestCase {
         model.accept(as: .existingAccount, password: &password)
         await settle(model, main)
         XCTAssertEqual(fake.acceptCalls, 0)
+    }
+
+    func testReentrantCloseAtFirstPublicationCannotRestoreStageOrCreation() async throws {
+        for creating in [false, true] {
+            let queue = SyncPresentationMain()
+            let fake = InvitePresentationFake(main: queue)
+            let model = InviteModel(service: fake, mainThread: InviteReentrantMain(queue: queue))
+            var closed = false
+            model.onChange = { [weak model] in
+                guard !closed else { return }
+                closed = true
+                model?.dismiss()
+            }
+            if creating { model.create(groupID: SyncTestValues.group, role: .viewer) }
+            else { var input = try fake.link.text; model.stage(&input) }
+            await settle(model, queue)
+            XCTAssertTrue(closed)
+            XCTAssertNil(model.state.destination, "Closed view restored a staged invite")
+            XCTAssertNil(model.state.created, "Closed view restored a one-time link")
+            XCTAssertFalse(model.state.hasStagedInvite)
+            XCTAssertFalse(model.state.isBusy)
+            model.retire()
+        }
     }
 
     func testRetirementRejectsQueuedAndReplayedCompletionsAndInput() async throws {
@@ -144,8 +169,8 @@ final class InviteModelTests: XCTestCase {
         model.stage(&input)
         model.accept(as: .newAccount, password: &password)
         main.flush()
-        XCTAssertEqual(input, "")
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(input.isEmpty, "Invite input was not consumed")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         XCTAssertNil(model.state.destination)
         XCTAssertEqual(fake.stageCalls, 1)
         XCTAssertEqual(fake.acceptCalls, 0)
@@ -276,6 +301,15 @@ final class InviteModelTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(1))
         }
         XCTFail("Create was not admitted")
+    }
+}
+
+/// Native MainThread may run inline when already on UI, including close hooks.
+private struct InviteReentrantMain: MainThread {
+    let queue: SyncPresentationMain
+    func run(_ work: @escaping () -> Void) {
+        if queue.isUI { work() }
+        else { queue.run(work) }
     }
 }
 

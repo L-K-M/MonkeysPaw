@@ -72,7 +72,7 @@ final class SyncInviteIntegrationTests: XCTestCase {
                 password = SyncServerHarness.password
                 let registered = try await newInvites.accept(registerStage, as: .newAccount,
                     username: "newmember", password: &password, deviceName: "New")
-                XCTAssertEqual(password, "")
+                XCTAssertTrue(password.isEmpty, "Password input was not consumed")
                 XCTAssertTrue(registered.snapshot.enabled)
                 XCTAssertNil(registered.issue)
                 XCTAssertEqual(registered.snapshot.account?.username, "newmember")
@@ -148,7 +148,7 @@ final class SyncInviteIntegrationTests: XCTestCase {
         var password = SyncServerHarness.password
         _ = try await device.account.login(server: "https://" + server + ".test", username: user,
             password: &password, deviceName: device.name)
-        XCTAssertEqual(password, "")
+        XCTAssertTrue(password.isEmpty, "Password input was not consumed")
         try await device.settle()
     }
 
