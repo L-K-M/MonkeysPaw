@@ -56,6 +56,9 @@ internal class EditorViewModelTest : TemporaryFiles() {
     fun `create commits exact body and unknown metadata before publishing index and favourite`() = runTest {
         val model = model()
         model.createDraft("Notes/new.md")
+        assertNull(model.state.value.stamp)
+        assertNotNull(model.snapshot())
+        assertFalse(model.state.value.canCommand)
         val draft = "---\ntitle: Example\nfavorite: true\nmodel:\n  provider: custom\n  options: [one, two]\n---\n  Unicode e\u0301 {{x}}\r\n\r\n"
         model.edit(draft)
         model.save()
@@ -217,6 +220,7 @@ internal class EditorViewModelTest : TemporaryFiles() {
             assertEquals(fixture.second, model.state.value.readOnlyReason)
             assertFalse(model.state.value.canEdit)
             assertFalse(model.state.value.canSave)
+            assertFalse(model.state.value.canCommand)
             if (fixture.second != SourceReadOnlyReason.FUTURE_FORMAT) assertNull(model.state.value.source)
             val original = model.state.value.source
             model.edit("Replacement")
@@ -936,6 +940,25 @@ internal class EditorViewModelTest : TemporaryFiles() {
         bytesAre("External".encodeToByteArray(), "Dest/a.md")
         assertNotNull(model.state.value.conflict)
         assertFalse(model.state.value.canSave)
+        assertNull(model.state.value.stamp)
+        assertNotNull(model.snapshot())
+        assertFalse(model.state.value.canCommand)
+        val revision = HistoryRevision(checkNotNull(model.state.value.selection).identity,
+            "20261014T000000.000Z-000000.md", clock.now())
+        val commands: List<() -> Unit> = listOf(
+            { model.rename("renamed.md") }, { model.move("Other") },
+            { model.delete() }, { model.restore(revision) },
+        )
+        for (command in commands) {
+            command()
+            runCurrent()
+            assertEquals(EditorFailure.DATA, model.state.value.failure)
+            assertFalse(model.state.value.canCommand)
+            assertTrue(model.state.value.queuedActions.isEmpty())
+            assertEquals("Dest/a.md", model.state.value.relativePath)
+            assertFalse(Files.exists(libraryDir.resolve("a.md")))
+            bytesAre("External".encodeToByteArray(), "Dest/a.md")
+        }
         model.refresh()
         runCurrent()
         sourceIs(model, "Original")
@@ -1009,12 +1032,51 @@ internal class EditorViewModelTest : TemporaryFiles() {
     }
 
     @Test
+    fun `Open and Reload reject edits until their replacement baseline is accepted`() = runTest {
+        put(libraryDir.resolve("a.md"))
+        val held = HeldDispatcher()
+        val model = model(io = held)
+        open(model)
+        val opening = model.state.value
+        assertEquals(EditorStatus.LOADING, opening.status)
+        assertFalse(opening.canEdit)
+        model.edit("During Open")
+        assertEquals(opening, model.state.value)
+        runCurrent()
+        held.release()
+        runCurrent()
+        sourceIs(model, "body")
+        assertTrue(model.state.value.canEdit)
+        put(libraryDir.resolve("a.md"), "Reloaded".encodeToByteArray())
+        model.reload()
+        val reloading = model.state.value
+        val captured = checkNotNull(model.snapshot())
+        assertEquals(EditorStatus.LOADING, reloading.status)
+        assertFalse(reloading.canEdit)
+        model.edit("During Reload")
+        assertEquals(reloading, model.state.value)
+        assertEquals(captured, model.snapshot())
+        runCurrent()
+        held.releaseAll()
+        runCurrent()
+        sourceIs(model, "Reloaded")
+        assertFalse(model.state.value.dirty)
+        assertTrue(model.state.value.canEdit)
+        model.edit("After Reload")
+        sourceIs(model, "After Reload")
+        assertTrue(model.state.value.dirty)
+        bytesAre("Reloaded".encodeToByteArray())
+    }
+
+    @Test
     fun `commands requested during initial load wait for its checked baseline`() = runTest {
         put(libraryDir.resolve("a.md"))
         val model = model()
         open(model)
         model.rename("loaded.md")
         assertEquals(EditorStatus.LOADING, model.state.value.status)
+        assertFalse(model.state.value.canCommand)
+        assertNull(model.snapshot())
         assertEquals(listOf(EditorAction.Rename("loaded.md")), model.state.value.queuedActions)
         assertNull(model.state.value.failure)
         runCurrent()
@@ -1028,8 +1090,11 @@ internal class EditorViewModelTest : TemporaryFiles() {
     fun `a stale queued command cannot hold back navigation during a newer load`() = runTest {
         put(libraryDir.resolve("a.md"))
         put(libraryDir.resolve("b.md"))
+        var writes = 0
         val held = HeldDispatcher()
-        val model = model(io = held)
+        val model = model(io = held, wrap = { prompts -> object : PromptStore by prompts {
+            override fun write(bytes: ByteArray, path: String) { writes++; prompts.write(bytes, path) }
+        } })
         open(model)
         runCurrent()
         held.release()
@@ -1040,13 +1105,19 @@ internal class EditorViewModelTest : TemporaryFiles() {
         model.delete()
         model.close()
         runCurrent()
+        bytesAre("body".encodeToByteArray(), "a.md")
         held.release()
+        // FIFO navigation follows this save; only its queued load and old command retire.
+        val committed = bytes("a.md")
+        assertTrue(library().load("a.md").document.body == "Saved", "Queued navigation skipped its preceding save.")
+        assertEquals(1, writes)
         runCurrent()
         assertFalse(model.state.value.isOpen, "A retired command blocked close behind a load.")
         held.releaseAll()
         runCurrent()
         bytesAre("body".encodeToByteArray(), "b.md")
-        assertTrue(Files.exists(libraryDir.resolve("a.md")))
+        bytesAre(committed, "a.md")
+        assertEquals(1, writes)
         assertTrue(model.state.value.queuedActions.isEmpty())
     }
 
