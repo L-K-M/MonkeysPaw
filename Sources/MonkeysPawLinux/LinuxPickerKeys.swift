@@ -7,6 +7,7 @@ enum LinuxPickerKeys {
     enum Intent: Equatable {
         case moveUp, moveDown, edit, openLibrary, openSettings, escape
         case use(DeliveryMode)
+        case usePreferred
         case focusNext, focusPrevious, deliverPreferred
         case deliver(DeliveryMode)
     }
@@ -41,7 +42,7 @@ enum LinuxPickerKeys {
         }
         if state == .picker {
             switch modifiers {
-            case 0: return .use(.paste(.standard))
+            case 0: return .usePreferred
             case control: return .edit
             case control | shift: return .use(.paste(.terminal))
             case alt: return .use(.copyOnly)

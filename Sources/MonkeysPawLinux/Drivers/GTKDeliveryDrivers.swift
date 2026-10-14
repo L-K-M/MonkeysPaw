@@ -348,6 +348,11 @@ struct GTKNotifier: Notifier, LibraryAvailabilityNotifier {
         mp_notify(application, AppIdentity.displayName,
                   DeliveryStrings.pressPaste(chord: chord, session: session.currentSession()))
     }
+
+    func pressPaste(chord: PasteChord, reason: CopyReason, target: DeliveryTarget?) {
+        mp_notify(application, AppIdentity.displayName,
+                  DeliveryStrings.pressPaste(chord: chord, session: session.currentSession(), target: target))
+    }
 }
 
 struct GLibScheduler: Scheduler {

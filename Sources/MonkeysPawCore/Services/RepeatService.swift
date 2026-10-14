@@ -77,7 +77,7 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
                 work: BackgroundWork, main: MainThread,
                 canAccess: @escaping (LibraryEntry) -> Bool = { _ in true },
                 isOwnWindowActive: @escaping () -> Bool,
-                pasteChord: @escaping (DeliveryInvocation) -> PasteChord = { _ in .standard }) {
+                pasteChord: ((DeliveryInvocation) -> PasteChord)? = nil) {
         self.binding = binding
         self.store = store
         self.library = library
@@ -88,7 +88,7 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
         self.main = main
         self.canAccess = canAccess
         self.isOwnWindowActive = isOwnWindowActive
-        self.pasteChord = pasteChord
+        self.pasteChord = pasteChord ?? { delivery.preferredChord(for: $0) }
     }
 
     func addObserver(_ observer: @escaping @Sendable (RepeatAvailability) -> Void) -> UUID { observers.add(observer) }

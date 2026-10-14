@@ -72,6 +72,8 @@ public final class PickerModel: @unchecked Sendable {
     public private(set) var selectedPreview = PickerPreview.none
     public private(set) var state = State.closed
     public private(set) var fillModel: FillModel?
+    public var preferredMode: DeliveryMode { .paste(delivery.preferredChord) }
+    public var deliveryHint: String { delivery.hint(for: preferredMode) }
     public private(set) var requestedIntent: Intent?
     /// Survives reopening so delivery persistence failures remain visible;
     /// cleared when the next use starts.
@@ -127,7 +129,7 @@ public final class PickerModel: @unchecked Sendable {
         requestedIntent = nil
         state = .picker
         refresh(resetSelection: true)
-        delivery.show()
+        delivery.show { [weak self] in self?.onChange?() }
         onChange?()
     }
 
@@ -153,6 +155,8 @@ public final class PickerModel: @unchecked Sendable {
         updateSelectedPreview()
         onChange?()
     }
+
+    public func usePreferred() { use(mode: preferredMode) }
 
     public func use(mode: DeliveryMode) {
         guard state == .picker, !isResolvingBuiltins, let entry = selectedEntry else { return }

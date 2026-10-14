@@ -72,6 +72,7 @@ public final class DeliveryService {
     private let scheduler: Scheduler
     private let mainThread: MainThread
     private let failureCache: PasteFailureCache
+    private let linuxDefaultPasteChord: () -> PasteChord
     private var armedTarget: DeliveryTarget?
     private var presentationGeneration: UInt64 = 0
     private var pending: [() -> Void] = []
@@ -85,7 +86,8 @@ public final class DeliveryService {
         panel: PanelWindow, focus: FocusTracker, clipboard: Clipboard,
         injectors: [PasteInjector], notifier: Notifier, session: SessionProbe,
         scheduler: Scheduler, mainThread: MainThread, failureCache: PasteFailureCache,
-        clipboardRestore: ClipboardRestoreMode = .off
+        clipboardRestore: ClipboardRestoreMode = .off,
+        linuxDefaultPasteChord: @escaping () -> PasteChord = { .standard }
     ) {
         self.panel = panel
         self.focus = focus
@@ -98,6 +100,23 @@ public final class DeliveryService {
         self.mainThread = mainThread
         self.failureCache = failureCache
         clipboardRestoreMode = clipboardRestore
+        self.linuxDefaultPasteChord = linuxDefaultPasteChord
+    }
+
+    /// Read on the injected UI thread. The picker uses the captured target;
+    /// repeat uses its immutable current invocation instead of this target.
+    public var preferredChord: PasteChord {
+        TerminalPolicy.recommendedChord(for: armedTarget, session: session.currentSession(),
+                                        defaultChord: linuxDefaultPasteChord())
+    }
+
+    public func preferredChord(for invocation: DeliveryInvocation) -> PasteChord {
+        TerminalPolicy.recommendedChord(for: invocation.target, session: invocation.session,
+                                        defaultChord: linuxDefaultPasteChord())
+    }
+
+    func hint(for mode: DeliveryMode) -> String {
+        DeliveryStrings.hint(mode: mode, target: armedTarget, session: session.currentSession())
     }
 
     /// Composition forwards the committed D3 preference and shared settings
@@ -123,10 +142,11 @@ public final class DeliveryService {
     }
 
     /// §4.6: capture the hotkey's target before queuing panel presentation.
-    public func show() {
+    public func show(captured: @escaping () -> Void = {}) {
         mainThread.run {
             let generation = self.presentationGeneration
             self.armedTarget = self.focus.captureTarget()
+            captured()
             self.queue {
                 // Composition can retire a graph while this show is held
                 // behind focus restoration or a self-test.
@@ -441,7 +461,9 @@ public final class DeliveryService {
         guard let backend = remaining.first else {
             let reason = CopyReason.backendsFailed(failures)
             // SelfTestReport is the only output of diagnostic deliveries (§6.5).
-            if case .ladder = request.selection { notifier.pressPaste(chord: chord, reason: reason) }
+            if case .ladder = request.selection {
+                notifier.pressPaste(chord: chord, reason: reason, target: request.target)
+            }
             finish(request, outcome: .copiedOnly(reason), focus: focus)
             return
         }

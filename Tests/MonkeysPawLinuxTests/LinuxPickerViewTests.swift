@@ -47,6 +47,127 @@ final class LinuxPickerViewTests: XCTestCase {
         tools = nil
     }
 
+    func testTerminalPrimaryReturnReachesInjector() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try configureX11Target(windowClass: "Gnome-terminal")
+        try open()
+        XCTAssertTrue(hintText().contains("X11 terminal · Ctrl+Shift+V"))
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
+        XCTAssertEqual(tools.arguments.filter { $0 == ["getactivewindow"] }.count, 1)
+    }
+
+    func testTerminalPrimaryButtonAndRowActivationUseRecommendation() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try configureX11Target(windowClass: "kitty")
+        try open()
+        XCTAssertNotEqual(gtk_widget_activate(try widget("picker-use")), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        try open()
+        let row = try XCTUnwrap(gtk_list_box_get_row_at_index(mp_list_box(try widget("picker-results")), 0))
+        XCTAssertNotEqual(gtk_widget_activate(UnsafeMutableRawPointer(row).assumingMemoryBound(to: GtkWidget.self)), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        XCTAssertEqual(tools.arguments.filter { $0.first == "key" }, [
+            ["key", "--clearmodifiers", "ctrl+shift+v"], ["key", "--clearmodifiers", "ctrl+shift+v"],
+        ])
+    }
+
+    func testUnknownXtermUsesStandardAndExplicitTerminalWins() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try configureX11Target(windowClass: "XTerm")
+        try open()
+        XCTAssertTrue(hintText().contains("X11 target · Ctrl+V"))
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        try open()
+        XCTAssertTrue(sendKey(GDK_KEY_Return, modifiers: GdkModifierType(rawValue: GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue)))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        XCTAssertEqual(tools.arguments.filter { $0.first == "key" }, [
+            ["key", "--clearmodifiers", "ctrl+v"], ["key", "--clearmodifiers", "ctrl+shift+v"],
+        ])
+    }
+
+    func testSavedDefaultFillModeSurvivesPreferenceChangeAndMultilineReturnStaysNative() throws {
+        try files.write(Data("---\nfields:\n  detail: {type: multiline, default: Detail}\n---\n{{detail}}".utf8), at: "a.md")
+        try configureX11Target(windowClass: "Firefox", defaultChord: .terminal)
+        try open()
+        XCTAssertTrue(hintText().contains("X11 target · Ctrl+Shift+V"))
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        let fill = try XCTUnwrap(environment.pickerModel.fillModel)
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+        XCTAssertEqual(fill.preferredMode, .paste(.terminal))
+        environment.settingsModel.setLinuxDefaultPasteChord(.standard)
+        fill.setValue("First\nSecond", name: "detail")
+        XCTAssertTrue(hintText().contains("X11 target · Ctrl+Shift+V"))
+        XCTAssertFalse(sendKey(GDK_KEY_Return))
+        XCTAssertEqual(fill.state, .editing)
+        XCTAssertEqual(environment.pickerModel.state, .fill)
+        XCTAssertNotEqual(gtk_widget_activate(try widget("picker-use")), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
+    }
+
+    func testTerminalFillExplicitStandardAndCopyChoicesWin() throws {
+        try files.write(Data("---\nfields:\n  topic: {default: Topic}\n---\n{{topic}}".utf8), at: "a.md")
+        try configureX11Target(windowClass: "kitty")
+        try open()
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.deliverEnabled == true })
+        XCTAssertTrue(sendKey(GDK_KEY_Return, modifiers: GDK_CONTROL_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+v"])
+        try open()
+        XCTAssertTrue(sendKey(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        let fill = try XCTUnwrap(environment.pickerModel.fillModel)
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+        XCTAssertEqual(fill.preferredMode, .copyOnly)
+        XCTAssertTrue(hintText().contains("X11 terminal · Copy only"))
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(tools.arguments.filter { $0.first == "key" }.count, 1)
+    }
+
+    func testPreferredTerminalFallbackNotificationCarriesCapturedTargetAndChord() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        tools.environment["FAKE_PASTE_STATUS"] = "1"
+        try configureX11Target(windowClass: "Alacritty")
+        try open()
+        XCTAssertTrue(hintText().contains("X11 terminal · Ctrl+Shift+V"))
+        XCTAssertTrue(sendKey(GDK_KEY_Return))
+        XCTAssertTrue(GTKTestSupport.spin {
+            if case .done(.copiedOnly(.backendsFailed)) = self.environment.pickerModel.state { return true }
+            return false
+        })
+        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
+        XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+        XCTAssertEqual(notifications.notificationBodies.last, "Copied. Press Ctrl+Shift+V\nX11 terminal")
+    }
+
+    private func configureX11Target(windowClass: String, defaultChord: PasteChord = .standard) throws {
+        environment.shutdown()
+        tools.environment["XDG_SESSION_TYPE"] = "x11"
+        tools.environment["FAKE_WM_CLASS"] = "WM_CLASS(STRING) = \"instance\", \"\(windowClass)\""
+        try tools.install("xdotool", script: FakeLinuxTools.recordArguments + #"""
+
+            case "$1" in
+                getactivewindow) printf '12345\n' ;;
+                key) exit "${FAKE_PASTE_STATUS-0}" ;;
+                *) exit 1 ;;
+            esac
+            """#)
+        try tools.install("xprop", script: #"printf '%s\n' "$FAKE_WM_CLASS""#)
+        let config = try RootedFileStore(root: LinuxPaths(environment: tools.environment).configDirectory)
+        let settings = SettingsService(store: SettingsStore(files: config))
+        try settings.setLinuxDefaultPasteChord(defaultChord)
+        environment = LinuxEnvironment(application: application, environment: tools.environment)
+    }
+
+    private func hintText() -> String {
+        guard let label = try? widget("picker-hint") else { return "" }
+        return String(cString: gtk_label_get_text(mp_label(label)))
+    }
+
     func testQueryAndNativeRowSelectionDeliverFromTheLiveLibrary() throws {
         try files.write(Data("---\ntitle: Alpha\nfavorite: true\ntags: [code]\n---\nAlpha body".utf8), at: "a.md")
         try files.write(Data("Beta body".utf8), at: "b.md")

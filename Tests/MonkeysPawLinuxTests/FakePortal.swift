@@ -110,6 +110,7 @@ final class FakePortal {
     private var notificationOwner: guint = 0
     private var notificationsReady = false
     private(set) var notificationCount = 0
+    private(set) var notificationBodies: [String] = []
     private var secrets: [String: String] = [:]
     private(set) var secretMethods: [String] = []
     private var nameSubscription: guint = 0
@@ -370,7 +371,12 @@ final class FakePortal {
         if interface == "org.freedesktop.Notifications" {
             let body: String
             switch method {
-            case "Notify": notificationCount += 1; body = "(uint32 1,)"
+            case "Notify":
+                notificationCount += 1
+                let message = g_variant_get_child_value(parameters, 4)!
+                notificationBodies.append(String(cString: g_variant_get_string(message, nil)))
+                g_variant_unref(message)
+                body = "(uint32 1,)"
             case "GetCapabilities": body = "(['body'],)"
             case "GetServerInformation": body = "('Fixture', 'Fixture', '1', '1.2')"
             default: body = "()"

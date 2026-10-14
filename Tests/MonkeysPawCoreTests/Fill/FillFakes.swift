@@ -15,9 +15,10 @@ final class PromptFlowHarness {
     let picker: PickerModel
 
     init(mainMode: FakeCompletionMode = .immediate,
-         session: DesktopSession = .macOS, zone: TimeZone = TimeZone(secondsFromGMT: 0)!) {
+         session: DesktopSession = .macOS, zone: TimeZone = TimeZone(secondsFromGMT: 0)!,
+         linuxDefaultPasteChord: @escaping () -> PasteChord = { .standard }) {
         clock.date = Date(timeIntervalSince1970: 0)
-        delivery = DeliveryHarness(session: session)
+        delivery = DeliveryHarness(session: session, linuxDefaultPasteChord: linuxDefaultPasteChord)
         usage = UsageStore(files: data, clock: clock)
         values = ValuesStore(files: data)
         service = LibraryService(library: library, data: data, clock: clock,

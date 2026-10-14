@@ -128,4 +128,18 @@ public enum DeliveryStrings {
         if session == .macOS { return pressCommandV }
         return chord == .terminal ? pressControlShiftV : pressControlV
     }
+
+    static func hint(mode: DeliveryMode, target: DeliveryTarget?, session: DesktopSession) -> String {
+        let action: String
+        switch mode {
+        case .copyOnly: action = "Copy only"
+        case .paste(let chord):
+            action = session == .macOS ? "Cmd+V" : (chord == .terminal ? "Ctrl+Shift+V" : "Ctrl+V")
+        }
+        return TerminalPolicy.targetHint(for: target, session: session) + " · " + action
+    }
+
+    public static func pressPaste(chord: PasteChord, session: DesktopSession, target: DeliveryTarget?) -> String {
+        pressPaste(chord: chord, session: session) + "\n" + TerminalPolicy.targetHint(for: target, session: session)
+    }
 }

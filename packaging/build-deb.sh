@@ -133,7 +133,7 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Depends: $DEPENDS
-Recommends: libsecret-tools, ydotool, xdotool
+Recommends: libsecret-tools, ydotool, xdotool, x11-utils
 Installed-Size: $INSTALLED_SIZE
 Maintainer: L-K-M <noreply@lkmc.ch>
 Homepage: https://github.com/L-K-M/MonkeysPaw

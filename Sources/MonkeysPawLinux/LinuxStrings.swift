@@ -7,7 +7,7 @@ enum LinuxStrings {
     static let installShortcut = "Install the GNOME shortcut in Setup"
     static let shortcutFailed = "Could not install the GNOME shortcut. Bind: " + GnomeKeybindingInstaller.command
     static let pickerHint = "Return: use · Ctrl+Return: edit · Ctrl+L: library · Esc: close\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only"
-    static let fillHint = "Tab: next field · Return: deliver · Ctrl+Return: standard paste\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only · Esc: back"
+    static let fillHint = "Tab: next field · Return: deliver (multiline: newline) · Ctrl+Return: standard paste\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only · Esc: back"
     static let searchPrompts = "Search prompts"
     static let preview = "Preview"
     static let usePrompt = "Use"

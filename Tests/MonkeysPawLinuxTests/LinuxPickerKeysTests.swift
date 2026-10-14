@@ -20,7 +20,7 @@ final class LinuxPickerKeysTests: XCTestCase {
             XCTAssertEqual(route(key, modifiers: modifiers, state: .picker), expected)
         }
         for key in [GDK_KEY_Return, GDK_KEY_KP_Enter, GDK_KEY_ISO_Enter] {
-            XCTAssertEqual(route(key, state: .picker), .use(.paste(.standard)))
+            XCTAssertEqual(route(key, state: .picker), .usePreferred)
             XCTAssertEqual(route(key, modifiers: control, state: .picker), .edit)
             XCTAssertEqual(route(key, modifiers: control | shift, state: .picker), .use(.paste(.terminal)))
             XCTAssertEqual(route(key, modifiers: alt, state: .picker), .use(.copyOnly))
@@ -74,7 +74,7 @@ final class LinuxPickerKeysTests: XCTestCase {
                 XCTAssertNil(route(GDK_KEY_Return, modifiers: modifiers, state: state, kind: .text))
             }
         }
-        XCTAssertEqual(route(GDK_KEY_Return, modifiers: GDK_LOCK_MASK.rawValue, state: .picker), .use(.paste(.standard)))
+        XCTAssertEqual(route(GDK_KEY_Return, modifiers: GDK_LOCK_MASK.rawValue, state: .picker), .usePreferred)
         XCTAssertEqual(route(GDK_KEY_comma, modifiers: control | GDK_LOCK_MASK.rawValue, state: .picker), .openSettings)
         for modifiers in [UInt32(0), shift, control | shift, control | alt, GDK_SUPER_MASK.rawValue] {
             XCTAssertNil(route(GDK_KEY_comma, modifiers: modifiers, state: .picker))

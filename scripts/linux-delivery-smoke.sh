@@ -175,12 +175,13 @@ timeout "$smoke_test_timeout" env MONKEYSPAW_X11_SMOKE=1 "$smoke_swift" test --s
     --filter '^MonkeysPawLinuxTests\.LinuxFocusTrackerX11SmokeTests/testSkipsOurOwnWindow$'
 
 # Exercise the real picker key handler, then Core's settle and the xdotool
-# backend. Automatic terminal-class selection is scheduled for M7.
+# backend with an explicit Terminal choice. The capture assertion above also
+# proves XTerm stays outside the automatic alias list despite this custom binding.
 timeout "$smoke_call_timeout" xdotool key --clearmodifiers ctrl+a >/dev/null 2>&1
 timeout "$smoke_call_timeout" xdotool type --clearmodifiers --delay 0 'test' >/dev/null 2>&1
 timeout "$smoke_call_timeout" xdotool key --clearmodifiers ctrl+shift+Return >/dev/null 2>&1
 wait_for 'the exact library text in xterm through xdotool' delivery_received
-printf 'X11 toggle, terminal confirmation, compositor refocus and paste passed.\n'
+printf 'X11 toggle, explicit terminal chord, compositor refocus and paste passed.\n'
 
 # Also prove that a forwarded CLI diagnostic returns JSON to its own stdout,
 # while the original service remains resident. Readback must prove receipt.

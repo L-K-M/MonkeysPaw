@@ -159,7 +159,7 @@ final class LinuxPanel: PanelWindow {
             guard let self, !self.isDestroyed, let picker, self.picker === picker,
                   !self.isRendering, let position else { return }
             picker.selectResult(at: position)
-            picker.use(mode: .paste(.standard))
+            picker.usePreferred()
         }
 
         noMatchesBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
@@ -249,6 +249,7 @@ final class LinuxPanel: PanelWindow {
                        }), settingsButton] { gtk_box_append(mp_box(actions), button) }
         gtk_box_append(mp_box(content), actions)
         hint = GTK.label(LinuxStrings.pickerHint)
+        gtk_widget_set_name(hint, "picker-hint")
         gtk_box_append(mp_box(content), hint)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.pickerSession(session)))
         gtk_window_set_child(mp_window(window), content)
@@ -331,7 +332,8 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_visible(editButton, inFill ? 0 : 1)
         gtk_widget_set_sensitive(editButton, picker.selectionIndex == nil ? 0 : 1)
         gtk_widget_set_visible(libraryButton, inFill ? 0 : 1)
-        gtk_label_set_text(mp_label(hint), inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
+        let deliveryHint = picker.fillModel?.deliveryHint ?? picker.deliveryHint
+        gtk_label_set_text(mp_label(hint), deliveryHint + "\n" + (inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint))
     }
 
     private func renderStatus(_ picker: PickerModel) {
@@ -502,13 +504,14 @@ final class LinuxPanel: PanelWindow {
         guard !isDestroyed, let picker, !focusedHasPreedit else { return false }
         let kind = focusedControl.map { controls[$0].kind }
         guard let intent = LinuxPickerKeys.intent(for: key, modifiers: modifiers, state: picker.state, fieldKind: kind) else { return false }
-        if intent == .use(.paste(.standard)), let focus = gtk_window_get_focus(mp_window(window)), mp_is_button(focus) != 0 {
+        if intent == .usePreferred, let focus = gtk_window_get_focus(mp_window(window)), mp_is_button(focus) != 0 {
             return false // Native button activation must keep its own intent.
         }
         switch intent {
         case .moveUp: picker.moveSelection(.up)
         case .moveDown: picker.moveSelection(.down)
         case .use(let mode): picker.use(mode: mode)
+        case .usePreferred: picker.usePreferred()
         case .edit: picker.editSelected()
         case .openLibrary: picker.openLibrary()
         case .openSettings: openSettings?()
@@ -523,7 +526,11 @@ final class LinuxPanel: PanelWindow {
         return true
     }
 
-    private func usePreferred() { use(mode: picker?.fillModel?.preferredMode ?? .paste(.standard)) }
+    private func usePreferred() {
+        guard !isDestroyed, let picker else { return }
+        if picker.state == .fill, let fill = picker.fillModel { fill.deliver(mode: fill.preferredMode) }
+        else { picker.usePreferred() }
+    }
 
     private func use(mode: DeliveryMode) {
         guard !isDestroyed, let picker else { return }
