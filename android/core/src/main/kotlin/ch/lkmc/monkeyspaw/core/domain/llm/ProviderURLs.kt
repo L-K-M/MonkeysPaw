@@ -27,14 +27,16 @@ internal object ProviderURLs {
         if (authority.hasUserInfo) throw ProviderSettingsError.CredentialsInURL
         if (input.indexOfAny(charArrayOf('?', '#'), authorityEnd) >= 0) throw ProviderSettingsError.QueryOrFragmentInURL
         val host = authority.host.lowercase(Locale.ROOT).removeSuffix(".")
-        if (host.isEmpty() || '%' in host || host.any { it.code > 127 } || (authority.port != null && authority.port !in 1L..65535L)) {
+        if (host.isEmpty() || '%' in host || host.any { it.code > 127 } ||
+            (host.startsWith('[') && !isValidIPLiteral(host)) ||
+            (authority.rawPort.length > 1 && authority.port == null) ||
+            (authority.port != null && authority.port !in 1L..65535L)) {
             throw ProviderSettingsError.InvalidBaseURL
         }
         if (scheme == "http" && !isLoopback(host)) throw ProviderSettingsError.InsecureBaseURL
 
         val encodedPath = input.substring(authorityEnd)
-        // Foundation exposes an undecodable UTF-8 path as empty; invalid literal % is escaped.
-        var path = decodePercent(encodedPath).orEmpty()
+        var path = decodePercent(encodedPath) ?: throw ProviderSettingsError.InvalidBaseURL
         if ('\\' in path || "//" in path || path.hasControls() || path.split('/').any { it == "." || it == ".." } ||
             "%2f" in encodedPath.lowercase(Locale.ROOT)) {
             throw ProviderSettingsError.InvalidBaseURL
@@ -56,8 +58,7 @@ internal object ProviderURLs {
         val port = when {
             authority.port == (if (scheme == "https") 443L else 80L) -> ""
             authority.port != null -> ":${authority.port}"
-            authority.rawPort == ":" && !bracketed -> ""
-            else -> authority.rawPort
+            else -> ""
         }
         return "$scheme://$host$port${encode(path, pathCharacters)}"
     }
@@ -78,12 +79,45 @@ internal object ProviderURLs {
         if (rawPort.isNotEmpty() && (!rawPort.startsWith(':') || rawPort.drop(1).any { it !in '0'..'9' })) {
             throw ProviderSettingsError.InvalidBaseURL
         }
-        // Foundation keeps a numeric port lexeme when it overflows its 64-bit Int.
+        // Keep the lexeme to distinguish a missing port from numeric overflow.
         val port = rawPort.drop(1).takeIf { it.isNotEmpty() }?.toLongOrNull()
-        val host = decodePercent(rawHost)
+        // Foundation leaves bracketed IP literals raw, including percent escapes.
+        val host = (if (bracketed) rawHost else decodePercent(rawHost))
             ?: throw ProviderSettingsError.InvalidBaseURL
         return Authority(host, port, rawPort, '@' in raw)
     }
+
+    private fun isValidIPLiteral(host: String): Boolean {
+        if (!host.endsWith(']')) return false
+        val literal = host.substring(1, host.length - 1)
+        if (literal.startsWith('v')) {
+            val parts = literal.drop(1).split('.', limit = 2)
+            return parts.size == 2 && parts[0].isNotEmpty() && parts[0].all(::isHexDigit) &&
+                parts[1].isNotEmpty() && parts[1].all { it in hostCharacters || it == ':' }
+        }
+
+        val halves = literal.split("::")
+        if (halves.size > 2) return false
+        val groups = halves.flatMap { if (it.isEmpty()) emptyList() else it.split(':') }
+        var count = groups.size
+        for ((index, group) in groups.withIndex()) {
+            if ('.' in group) {
+                if (index != groups.lastIndex || literal.endsWith(':')) return false
+                val octets = group.split('.')
+                if (octets.size != 4 || octets.any { octet ->
+                    val value = octet.toIntOrNull()
+                    octet.isEmpty() || octet.length > 3 || octet.any { it !in '0'..'9' } ||
+                        value == null || value > 255 || value.toString() != octet
+                }) return false
+                count++ // An IPv4 tail occupies two IPv6 groups.
+            } else if (group.isEmpty() || group.length > 4 || !group.all(::isHexDigit)) {
+                return false
+            }
+        }
+        return if (halves.size == 2) count < 8 else count == 8
+    }
+
+    private fun isHexDigit(character: Char): Boolean = character in '0'..'9' || character in 'a'..'f'
 
     fun isLoopback(host: String): Boolean {
         if (host == "localhost") return true

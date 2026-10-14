@@ -9,6 +9,75 @@ import kotlin.test.assertTrue
 
 /** Port of Swift ProviderNormalizationTests; no shared provider-URL fixture exists yet. */
 class ProviderNormalizationTest {
+    @Test fun escapedIPLiteralSpellingsAreRejectedWithoutDecoding() {
+        for (kind in ProviderKind.entries) {
+            for (scheme in listOf("http", "https")) {
+                for (host in listOf("[::%31]", "[%3A%3A1]", "[v1.%66e]", "[::%2531]")) {
+                    assertError("$scheme://$host", kind, ProviderSettingsError.InvalidBaseURL)
+                }
+            }
+            for (input in listOf("https://[::%31]?q", "https://[%3A%3A1]#fragment")) {
+                assertError(input, kind, ProviderSettingsError.QueryOrFragmentInURL)
+            }
+            assertError("https://user@[::%31]", kind, ProviderSettingsError.CredentialsInURL)
+        }
+    }
+
+    @Test fun invalidBracketedHostsAreRejectedForBothSchemesAndKinds() {
+        val hosts = listOf("[]", "[!]", "[foo]", "[::g]", "[1:2:3]", "[1:2:3:4:5:6:7:8:9]",
+            "[1::2::3]", "[:::1]", "[12345::]", "[::ffff:999.0.0.1]",
+            "[::ffff:192.0.02.1]", "[192.0.2.1::]", "[1:2:3:4:5:6:7:8::]",
+            "[1:2:3:4:5:6::192.0.2.1]", "[v.fe]", "[vg.fe]", "[v1.]", "%5bfoo%5d")
+        for (kind in ProviderKind.entries) for (scheme in listOf("http", "https")) for (host in hosts) {
+            assertError("$scheme://$host", kind, ProviderSettingsError.InvalidBaseURL)
+        }
+    }
+
+    @Test fun overflowedPortLexemesAreRejectedForBothKinds() {
+        for (kind in ProviderKind.entries) for (host in listOf("example.com", "[::1]", "[v1.fe]")) {
+            for (port in listOf("0", "65536", "9223372036854775808", "18446744073709551616", "9".repeat(100))) {
+                assertError("https://$host:$port/gateway", kind, ProviderSettingsError.InvalidBaseURL)
+            }
+        }
+    }
+
+    @Test fun undecodablePercentEscapedPathsAreRejectedWithoutTruncation() {
+        for (kind in ProviderKind.entries) {
+            for (path in listOf("/%FF", "/gateway/a%FFb/models", "/%C3", "/%C0%AF", "/%ED%A0%80", "/%F4%90%80%80", "/%E2%82")) {
+                assertError("https://example.com$path", kind, ProviderSettingsError.InvalidBaseURL)
+            }
+        }
+    }
+
+    @Test fun validIPLiteralPortAndPathSpellingsRemainCanonical() {
+        val cases = listOf(
+            "https://[::]" to "https://[::]",
+            "https://[2001:DB8::1]:443/gateway" to "https://[2001:db8::1]/gateway",
+            "https://[1:2:3:4:5:6:7:8]:65535" to "https://[1:2:3:4:5:6:7:8]:65535",
+            "https://[1:2:3:4:5:6:7::]" to "https://[1:2:3:4:5:6:7::]",
+            "https://[::ffff:192.0.2.1]" to "https://[::ffff:192.0.2.1]",
+            "https://[1:2:3:4:5:6:192.0.2.1]" to "https://[1:2:3:4:5:6:192.0.2.1]",
+            "https://[v1.fe]" to "https://[v1.fe]",
+            "https://[vF.a:b]" to "https://[vf.a:b]",
+            "https://example.com:00000000000000000000000000000000000000000000001" to "https://example.com:1",
+            "https://example.com/%" to "https://example.com/%25",
+            "https://example.com/%ZZ" to "https://example.com/%25ZZ",
+            "https://example.com/caf%C3%A9" to "https://example.com/caf%C3%A9",
+        )
+        for (kind in ProviderKind.entries) {
+            assertNormalization(cases.map { (input, base) -> input to
+                if (kind == ProviderKind.OPENAI_COMPATIBLE && '/' !in base.drop(8)) "$base/v1" else base }, kind)
+        }
+    }
+
+    @Test fun emptyPortsNormalizeToTheAbsentPortForEveryHostKind() {
+        for (kind in ProviderKind.entries) {
+            assertNormalization(listOf("example.com", "[::1]", "[v1.fe]").map {
+                "https://$it:/gateway" to "https://$it/gateway"
+            }, kind)
+        }
+    }
+
     @Test fun anthropicBasesAndFullEndpointsReachAFixedPoint() {
         val cases = listOf(
             "https://api.anthropic.com" to "https://api.anthropic.com",
@@ -107,7 +176,6 @@ class ProviderNormalizationTest {
             "https://example.com:01" to "https://example.com:1",
             "https://example.com/models/messages/v1/v1" to "https://example.com",
             "https://example.com/%" to "https://example.com/%25",
-            "https://example.com/%FF" to "https://example.com",
             "https://example.com/[a]" to "https://example.com/%5Ba%5D",
             "https://example.com/a|b" to "https://example.com/a%7Cb",
             "https://example.com/a;b" to "https://example.com/a;b",
@@ -147,18 +215,14 @@ class ProviderNormalizationTest {
     }
 
     @Test fun foundationBracketedHostsAreCarriedWithoutJvmReinterpretation() {
-        // Foundation's domain envelope accepts these; the network driver owns actual receipt.
         assertNormalization(listOf(
             "https://[v1.fe]" to "https://[v1.fe]",
             "https://[vF.a:b]" to "https://[vf.a:b]",
-            "https://[::1]:" to "https://[::1]:",
-            "https://[v1.fe]:" to "https://[v1.fe]:",
-            "https://[::g]" to "https://[::g]",
-            "https://[::ffff:999.0.0.1]" to "https://[::ffff:999.0.0.1]",
-            "https://%5bfoo%5d" to "https://[foo]",
+            "https://[::1]:" to "https://[::1]",
+            "https://[v1.fe]:" to "https://[v1.fe]",
         ), ProviderKind.ANTHROPIC)
-        for (kind in ProviderKind.entries) for (host in listOf("[v1.fe]", "[foo]", "[::g]", "[::ffff:999.0.0.1]")) {
-            assertError("http://$host", kind, ProviderSettingsError.InsecureBaseURL)
+        for (kind in ProviderKind.entries) {
+            assertError("http://[v1.fe]", kind, ProviderSettingsError.InsecureBaseURL)
         }
     }
 

@@ -36,17 +36,25 @@ public struct ProviderSettings: Equatable, Sendable {
 
         var host = rawHost.lowercased()
         if host.hasSuffix(".") { host.removeLast() }
+        // Foundation leaves escapes inside IP literals raw; reject those
+        // rather than interpreting escapes as address digits or zone IDs.
         guard !host.isEmpty, !host.contains("%"),
               host.unicodeScalars.allSatisfy({ $0.isASCII }),
+              (!host.hasPrefix("[") || isValidIPLiteral(host)),
+              components.rangeOfPort.map({ $0.isEmpty || components.port != nil }) ?? true,
               components.port.map({ (1...65_535).contains($0) }) ?? true else {
             throw ProviderSettingsError.invalidBaseURL
         }
         guard scheme == "https" || isLoopback(host) else { throw ProviderSettingsError.insecureBaseURL }
         components.scheme = scheme
         components.host = host
-        if components.port == (scheme == "https" ? 443 : 80) { components.port = nil }
+        // Resetting a missing port also removes an empty IPv6 port's colon.
+        components.port = components.port == (scheme == "https" ? 443 : 80) ? nil : components.port
 
-        var path = components.path
+        // URLComponents.path silently returns empty for undecodable UTF-8.
+        guard var path = components.percentEncodedPath.removingPercentEncoding else {
+            throw ProviderSettingsError.invalidBaseURL
+        }
         guard !path.contains("\\"), !path.contains("//"),
               !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               !path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }),
@@ -72,6 +80,42 @@ public struct ProviderSettings: Equatable, Sendable {
         components.path = path
         guard let url = components.url else { throw ProviderSettingsError.invalidBaseURL }
         return url
+    }
+
+    private static func isValidIPLiteral(_ host: String) -> Bool {
+        guard host.hasSuffix("]") else { return false }
+        let literal = host.dropFirst().dropLast()
+        if literal.hasPrefix("v") {
+            let parts = literal.dropFirst().split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+            let allowed = "abcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:"
+            return parts.count == 2 && !parts[0].isEmpty && parts[0].utf8.allSatisfy(isHexDigit)
+                && !parts[1].isEmpty && parts[1].utf8.allSatisfy { allowed.utf8.contains($0) }
+        }
+
+        let halves = literal.split(separator: "::", omittingEmptySubsequences: false)
+        guard halves.count <= 2 else { return false }
+        let groups = halves.flatMap { $0.isEmpty ? [] : $0.split(separator: ":", omittingEmptySubsequences: false) }
+        var count = groups.count
+        for (index, group) in groups.enumerated() {
+            if group.contains(".") {
+                guard index == groups.count - 1, literal.last != ":" else { return false }
+                let octets = group.split(separator: ".", omittingEmptySubsequences: false)
+                guard octets.count == 4, octets.allSatisfy({ octet in
+                    guard !octet.isEmpty, octet.utf8.count <= 3,
+                          octet.utf8.allSatisfy({ (48...57).contains($0) }),
+                          let value = Int(octet), value <= 255 else { return false }
+                    return String(value) == octet
+                }) else { return false }
+                count += 1 // An IPv4 tail occupies two IPv6 groups.
+            } else if group.isEmpty || group.utf8.count > 4 || !group.utf8.allSatisfy(isHexDigit) {
+                return false
+            }
+        }
+        return halves.count == 2 ? count < 8 : count == 8
+    }
+
+    private static func isHexDigit(_ byte: UInt8) -> Bool {
+        (48...57).contains(byte) || (97...102).contains(byte)
     }
 
     // Shared with the transport after lowercasing and trimming a trailing dot.
