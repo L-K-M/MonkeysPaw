@@ -146,3 +146,39 @@ Do not put real credentials, sentinel contents, raw key material or platform
 exception bodies in this checklist or bug reports. Hardware that is
 unavailable remains a validation gap for K17/L20; an unchecked row does not
 satisfy milestone acceptance.
+
+## Android sync TLS and device-token checks (M10 Z6): NOT RUN
+
+Z6's JVM tests use MockWebServer, synthetic CAs and injected JVM AES-GCM keys.
+They prove request binding, opt-in isolation, caps and receipt cancellation,
+and device/provider ciphertext isolation. They do not exercise AndroidCAStore,
+AndroidKeyStore, a real user-installed CA or hardware backing. All native
+checks below remain NOT RUN. Repeat them through the final Z19/Z21 sync graph
+and Account controls on the signed minified release APK.
+
+Record commit, APK SHA-256, signer fingerprint, device/model/API, server and
+desktop versions, tester/date and sanitized results. Use synthetic credentials
+and a test CA; never record keys, tokens, certificate subject data, raw URLs
+with queries, response bodies or native exception bodies.
+
+| Check | Expected result | Status |
+|---|---|---|
+| System-trusted HTTPS with default and opted-in sync trust | Both requests succeed with normal hostname validation | NOT RUN |
+| User-CA-only HTTPS before and after explicit opt-in | Default refuses; explicit opt-in succeeds only for the selected deployment | NOT RUN |
+| Same CA on an assistant endpoint or a different sync server, port or deployment prefix | No inherited opt-in or bearer forwarding; wrong-bound requests fail before dispatch | NOT RUN |
+| Change server, switch back, disable the option and restart | A changed server starts with system trust; disabled trust survives restart | NOT RUN |
+| Untrusted, expired and wrong-host certificates while opted in | Typed body-free network failure, no HTTP request | NOT RUN |
+| Remove the installed test CA, then retry | Fresh trust discovery refuses the next request; no retained TLS session bypass | NOT RUN |
+| Same-server, cross-server and HTTPS-to-HTTP redirects | Typed redirect refusal; target receives no request or credentials | NOT RUN |
+| Cancel or expire during queued work, trust discovery, connect or body receipt | Prompt typed failure; no late dispatch and receipt closes | NOT RUN |
+| Permitted literal LAN HTTP versus private DNS or `.local` HTTP | Literal policy matches §23 P5 and Account warns; DNS names receive no exemption | NOT RUN |
+| Save provider credentials and two device accounts; restart, replace and clear one device account | Provider and other device remain usable; only encrypted tokens enter the secrets DataStore | NOT RUN |
+| Missing/inaccessible Keystore alias or tampered device ciphertext | Read/Save fail without key replacement; explicit device Clear preserves unrelated ciphertext | NOT RUN |
+| Persistence and diagnostic scan after sync failures and device cleanup | No raw/base64/percent/JSON token copies in settings, logs, jobs or temporary outputs | NOT RUN |
+
+The [network security guidance](https://developer.android.com/privacy-and-security/security-config)
+describes system trust defaults. Android's [CA-store implementation](https://android.googlesource.com/platform/prebuilts/fullsdk/sources/+/refs/heads/androidx-constraintlayout-release/android-35/com/android/org/conscrypt/TrustedCertificateKeyStoreSpi.java)
+and [trust-manager factory](https://android.googlesource.com/platform/prebuilts/fullsdk/sources/android-30/+/refs/heads/androidx-sharetarget-release/android/security/net/config/RootTrustManagerFactorySpi.java)
+support the explicit-store factory choice; source inspection and JVM results
+do not replace these device checks. Required missing device evidence keeps
+M10 acceptance open (§23 P20).
