@@ -100,6 +100,74 @@ class SyncReconcilerTest {
         }
     }
 
+    @Test fun unchangedZeroCursorSnapshotKeepsQueuedEdit() = assertUnchangedSnapshotIntent("edit")
+
+    @Test fun unchangedZeroCursorSnapshotKeepsLaterRename() = assertUnchangedSnapshotIntent("rename")
+
+    @Test fun unchangedZeroCursorSnapshotKeepsLaterMove() = assertUnchangedSnapshotIntent("move")
+
+    @Test fun unchangedZeroCursorSnapshotKeepsLaterDelete() = assertUnchangedSnapshotIntent("delete")
+
+    private fun assertUnchangedSnapshotIntent(intent: String) {
+        for (withTail in listOf(false, true)) {
+            val h = ReconciliationHarness()
+            val acknowledged = h.groupBytes("Acknowledged move")
+            val old = h.baseline(h.record(bytes = acknowledged, rev = 7, scope = team))
+            h.states.update(h.rig.binding) { old.copy(cursors = old.cursors + (team to SyncState.snapshotResetCursor)) }
+            val path = when (intent) {
+                "move" -> "private.md"
+                "rename" -> "Groups/Team/b.md"
+                else -> "Groups/Team/a.md"
+            }
+            val local = if (intent == "edit") h.groupBytes("Queued edit") else acknowledged
+            if (intent != "delete") h.put(local, path)
+            val pages = mutableListOf(listOf(h.scope(), h.scope(team, Mode.SNAPSHOT, head = 10,
+                items = listOf(h.upsert(10, rev = 2, bytes = acknowledged)))))
+            if (withTail) pages.add(listOf(h.scope(), h.scope(team, head = 11,
+                items = listOf(h.upsert(11, rev = 3, bytes = acknowledged)))))
+            h.collectedPages(*pages.toTypedArray()).use { pull ->
+                val plan = h.plan(pull)
+                assertEquals(SyncReconciliationPlan.Mode.NORMAL, plan.mode)
+                assertTrue(plan.operations.isEmpty(), "Snapshot replayed over local $intent (tail=$withTail)")
+                assertEquals(SyncApplyOutcome.Committed, h.apply(plan))
+                assertTrue(h.files.writes.isEmpty())
+                assertEquals(if (intent == "delete") emptyList() else listOf(path), h.files.listFiles().map { it.relativePath })
+                if (intent != "delete") assertContentEquals(local, h.files.read(path))
+                val revision = if (withTail) 3L else 2L
+                assertEquals(revision, h.states.snapshot.value?.prompts?.get(v.personalID)?.rev)
+                assertEquals(SyncHash.of(acknowledged), h.states.snapshot.value?.prompts?.get(v.personalID)?.canonicalHash)
+                assertEquals(pull.cursors, h.states.snapshot.value?.cursors)
+                val scan = ScanHarness(h.rig).scan(ids = emptyList())
+                assertNull(scan.preparation)
+                val change = scan.changes.single()
+                val recorded = when (intent) {
+                    "edit" -> assertIs<SyncLocalChange.Update>(change).recorded
+                    "rename" -> assertIs<SyncLocalChange.Rename>(change).recorded
+                    "move" -> assertIs<SyncLocalChange.Move>(change).recorded
+                    else -> assertIs<SyncLocalChange.Delete>(change).recorded
+                }
+                assertEquals(revision, recorded.rev)
+                assertEquals(team, recorded.scope)
+                assertEquals("a.md", recorded.path)
+            }
+        }
+    }
+
+    @Test fun unchangedBaselineAfterRestoreStillInstallsMissingFile() {
+        val h = ReconciliationHarness()
+        val acknowledged = h.bytes("Acknowledged")
+        h.baseline(h.record(bytes = acknowledged, rev = 7))
+        h.collected(h.scope(mode = Mode.SNAPSHOT, items = listOf(h.upsert(10, rev = 2, bytes = acknowledged))),
+            database = ReconciliationHarness.restored).use { pull ->
+            val plan = h.plan(pull)
+            assertEquals(SyncReconciliationPlan.Mode.RESTORE, plan.mode)
+            assertIs<SyncReconciliationOperation.Install>(plan.operations.single())
+            assertEquals(SyncApplyOutcome.Committed, h.apply(plan))
+            assertContentEquals(acknowledged, h.files.read("a.md"))
+            assertEquals(2, h.states.snapshot.value?.prompts?.get(v.personalID)?.rev)
+        }
+    }
+
     @Test fun normalSnapshotWithLowerDifferentRevisionPreservesDirtyVersion() {
         val h = ReconciliationHarness()
         h.baseline(h.record(body = "Baseline", rev = 99))

@@ -138,6 +138,11 @@ internal object SyncReconciler {
                         operations.add(SyncReconciliationOperation.LocalVisibility(remote))
                         continue
                     }
+                    // An unchanged acknowledged snapshot is a baseline, not a new
+                    // remote edit. Adopt its rev without replaying over later intent.
+                    if (mode == SyncReconciliationPlan.Mode.NORMAL && head.mode == Mode.SNAPSHOT &&
+                        previous != null && previous.rev > 0 && previous.scope == remote.scope &&
+                        previous.path == remote.path && previous.canonicalHash == remote.hash) continue
                     val occupants = files.byFoldedPath[folded(remote.libraryPath)].orEmpty()
                     if (occupants.size > 1) {
                         occupants.forEach { operations.add(SyncReconciliationOperation.PathClash(remote, it)) }
