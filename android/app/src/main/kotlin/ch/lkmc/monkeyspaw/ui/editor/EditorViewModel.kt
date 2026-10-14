@@ -343,7 +343,8 @@ internal class EditorViewModel @Inject constructor(
             }
             EditResult.Missing -> mutableState.value = state.value.copy(conflict = EditorConflict(deleted = true))
             EditResult.DestinationOccupied -> mutableState.value = state.value.copy(failure = EditorFailure.OCCUPIED)
-            is EditResult.Invalid -> mutableState.value = state.value.copy(failure = EditorFailure.INVALID, issues = result.issues)
+            // The submitted draft may be older than the current live validation.
+            is EditResult.Invalid -> mutableState.value = state.value.copy(failure = EditorFailure.INVALID)
             is EditResult.ReadOnly -> mutableState.value = state.value.copy(failure = EditorFailure.READ_ONLY)
             is EditResult.ForensicRestoreBlocked -> mutableState.value = state.value.copy(failure = EditorFailure.FORENSIC)
             is EditResult.Failed -> mutableState.value = state.value.copy(failure = failure(result.error))

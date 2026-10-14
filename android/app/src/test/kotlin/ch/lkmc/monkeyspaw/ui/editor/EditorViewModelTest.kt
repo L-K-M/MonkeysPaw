@@ -942,6 +942,32 @@ internal class EditorViewModelTest : TemporaryFiles() {
         assertNotNull(model.state.value.conflict)
     }
 
+    @Test
+    fun `late invalid save cannot replace live validation of a newer corrected draft`() = runTest {
+        put(libraryDir.resolve("a.md"))
+        val held = HeldDispatcher()
+        val model = model(io = held)
+        open(model)
+        runCurrent()
+        held.release()
+        runCurrent()
+        model.edit("{{unclosed")
+        runCurrent()
+        assertTrue(model.state.value.issues.any { it.code == PromptIssueCode.UNBALANCED_OPENER })
+        model.save()
+        runCurrent()
+        model.edit("Corrected {{name}}")
+        runCurrent()
+        assertTrue(model.state.value.issues.isEmpty())
+        held.release()
+        runCurrent()
+        sourceIs(model, "Corrected {{name}}")
+        assertTrue(model.state.value.issues.isEmpty(), "An older save replaced current validation.")
+        assertTrue(model.state.value.previewAvailable)
+        assertTrue(model.state.value.dirty)
+        bytesAre("body".encodeToByteArray())
+    }
+
     private class HeldDispatcher : CoroutineDispatcher() {
         private val tasks = ArrayDeque<Runnable>()
         override fun dispatch(context: CoroutineContext, block: Runnable) { tasks.addLast(block) }

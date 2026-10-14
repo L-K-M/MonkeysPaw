@@ -49,7 +49,7 @@
     <string name="editor_take_theirs">Take theirs</string>
     <string name="editor_review_conflict">Review conflict</string>
     <string name="editor_data_failed">Could not complete the operation. Your draft is kept. Try again.</string>
-    <string name="editor_invalid">Fix the validation errors before saving. Your draft is kept.</string>
+    <string name="editor_invalid">The submitted draft has validation errors. Your current draft is kept.</string>
     <string name="editor_occupied">The destination is occupied. Choose another path. Your draft is kept.</string>
     <string name="editor_invalid_path">Choose a relative Markdown path without hidden folders or underscore prefixes.</string>
     <string name="editor_identity_failed">The prompt identity or destination state conflicts. Your draft is kept.</string>
