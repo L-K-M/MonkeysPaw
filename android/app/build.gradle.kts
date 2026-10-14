@@ -182,6 +182,7 @@ dependencies {
     implementation(project(":core"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.savedstate)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
@@ -207,6 +208,9 @@ tasks.withType<Test>().configureEach {
     inputs.dir(generateSeedAssets.flatMap { it.seedDirectory }).withPropertyName("seedSources").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir(generateSeedAssets.flatMap { it.outputDirectory }).withPropertyName("seedAssets").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("monkeyspaw.appSources", graphSources.asFile.absolutePath)
+    val coreSources = rootProject.layout.projectDirectory.dir("core/src/main/kotlin")
+    systemProperty("monkeyspaw.coreSources", coreSources.asFile.absolutePath)
+    inputs.dir(coreSources).withPropertyName("imeCoreSources").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(graphSources.file("AndroidManifest.xml"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/di/AppModule.kt"),
         graphSources.file("res/xml/network_security_config.xml"),
@@ -221,4 +225,8 @@ tasks.withType<Test>().configureEach {
         .withPropertyName("fillBoundarySources").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/entry"), graphSources.dir("res"))
         .withPropertyName("entrySources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/ime"))
+        .withPropertyName("imeSources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/data"))
+        .withPropertyName("imeDriverSources").withPathSensitivity(PathSensitivity.RELATIVE)
 }
