@@ -24,6 +24,11 @@ public final class FillService: @unchecked Sendable {
     /// resolves as an empty string, so that builtin never blocks delivery.
     public func builtinSnapshot(for document: PromptDocument,
                                 completion: @escaping @Sendable (PromptBuiltinValues) -> Void) {
+        builtinSnapshot(for: document, moment: builtinMoment(), completion: completion)
+    }
+
+    /// Repeat fixes date/time at invocation even while source I/O is pending.
+    func builtinMoment() -> PromptBuiltinValues {
         lock.lock()
         let now = clock.now()
         let zone = timeZone()
@@ -38,12 +43,17 @@ public final class FillService: @unchecked Sendable {
         formatter.dateFormat = "HH:mm"
         let time = formatter.string(from: now)
 
+        return PromptBuiltinValues(date: date, time: time)
+    }
+
+    func builtinSnapshot(for document: PromptDocument, moment: PromptBuiltinValues,
+                         completion: @escaping @Sendable (PromptBuiltinValues) -> Void) {
         guard document.template.builtins.contains(.clipboard) else {
-            completion(PromptBuiltinValues(date: date, time: time))
+            completion(moment)
             return
         }
         clipboard.readText { text in
-            completion(PromptBuiltinValues(clipboard: text ?? "", date: date, time: time))
+            completion(PromptBuiltinValues(clipboard: text ?? "", date: moment.date, time: moment.time))
         }
     }
 

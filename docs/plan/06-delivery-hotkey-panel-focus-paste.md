@@ -151,8 +151,39 @@ Hotkey notes:
 - **Linux actions.**
   - `toggle` opens or closes the picker.
   - `repeat` re-delivers the last delivered prompt with the exact values
-    used. Every delivery records the prompt id and value set in
-    `usage.json`. With no prior delivery, repeat shows "Nothing to repeat".
+    used. With no prior delivery, repeat shows "Nothing to repeat". M7's
+    Core service uses the private version-1 `<data>/last-delivery.json`,
+    separate from frecency, with `LAST_DELIVERY_FILE_CAP_BYTES = 1 MiB` and
+    atomic 0600 replacement. It stores root/account binding, identity/path
+    hint, source fingerprint, an idless incarnation stamp, remembered fields,
+    session-only requirement and Copy intent. Full exact fields remain in
+    memory. No rendered text, template or builtin is persisted or logged.
+    A latest session-only marker prevents an older delivery reappearing after
+    restart; incomplete snapshots require reopening/review (§5.3, §12).
+  - Repeat resolves assigned IDs from the current library across moves, or
+    an idless path within the recorded root with the same incarnation. It
+    never assigns an ID. Changed sources/field definitions require review;
+    deleted, inaccessible or access-revoked sources block delivery. Date/time
+    are sampled once at invocation; clipboard is read once only if used.
+    Source/access/epoch checks run again after asynchronous work and inside
+    the delivery queue before writing and before paste injection.
+  - Completed user deliveries, including Copy, paste fallback and repeat,
+    update repeat state and usage once. Self-test, preview and cancellation
+    do not. Persistence failure is visible without undoing delivery. Repeat
+    preserves Copy intent; paste uses the current invocation's target/session
+    and current chord policy. The immutable invocation is captured before
+    file/builtin work without changing hidden picker drafts or its armed target.
+    Overlapping repeats are dropped. Native composition must supply a live
+    own Settings/Library window gate, including on Wayland.
+  - Forget values clears matching repeat state; Forget all, root/account
+    replacement and sign-out retire all repeat data and pending callbacks.
+    A tombstone is persisted before reporting a successful clear/retirement.
+    Failure reports unsuccessful clear and disables repeat until a durable
+    retry; composition must retain the binding rather than claim retirement.
+    A failed disk write cannot promise removal across restart. Revoked
+    continuations cannot start a paste or recreate cleared state; an event
+    already submitted to a native injector cannot be unsent. D12/D13 supply
+    native actions/hotkeys/UI, and D14 supplies the current terminal policy.
   - `selftest` runs §6.5.
 
 ### 6.2 Default hotkeys

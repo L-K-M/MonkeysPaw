@@ -3,6 +3,34 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testFieldlessInvocationKeepsOriginalArmedTargetDuringBuiltinRead() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("{{clipboard}}")
+        try h.open()
+        let captured = try XCTUnwrap(h.delivery.focus.target)
+        h.delivery.clipboard.readMode = .deferred
+        h.picker.use(mode: .paste(.standard))
+        h.delivery.focus.target = .macOS(processID: 99, bundleID: "later")
+        h.delivery.service.arm()
+        h.delivery.clipboard.completeRead("snapshot")
+        h.settle()
+        XCTAssertEqual(h.delivery.recorder.events.last(where: { if case .restore = $0 { return true }; return false }), .restore(captured))
+    }
+
+    func testRetiredFieldlessBuiltinCallbackCannotDeliverOrRecord() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{clipboard}}")
+        try h.open()
+        h.flow.delivery.clipboard.readMode = .deferred
+        h.picker.use(mode: .paste(.standard))
+        try h.service.retire()
+        h.flow.delivery.clipboard.completeRead("late content")
+        h.flow.settle()
+        XCTAssertNil(h.flow.delivery.clipboard.text)
+        XCTAssertNil(try h.store.load())
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+    }
+
     func testRequestedIntentIsConsumedOnceAcrossChangeNotifications() throws {
         let h = PromptFlowHarness()
         let entry = try h.put("Body")

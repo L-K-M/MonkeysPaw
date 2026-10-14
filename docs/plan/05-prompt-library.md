@@ -10,6 +10,7 @@
 | Logs | `<data>/logs/monkeyspaw.log` (§12) | no |
 | Usage (ranking, last delivery) | `<data>/usage/<identity-key>` (versioned JSON) | no |
 | Remembered values | `<data>/values.json`, `PRIVATE_FILE_MODE = 0600` | no |
+| Last delivery | `<data>/last-delivery.json`, version 1, mode 0600, 1 MiB cap | no |
 | Sync state | `<data>/sync/state.json` (§9.2) | no |
 | Portal restore token | `<data>/portal.json` (§6.3) | no |
 | API keys, device token | OS secret store | no |
@@ -429,7 +430,14 @@ uses the default. A failed remembered-state read exposes
 read-only format, missing required value, invalid choice, missing builtin),
 without throwing during editing; `render` preserves `PromptRenderer` errors.
 Delivered remember-fields are stored verbatim, including empty strings, so the
-user's last choice repeats. Non-remembered fields are not recorded.
+user's last choice repeats. Non-remembered fields are not persisted. M7 keeps
+the full exact delivered field set in memory for repeat, including empty and
+non-remembered values. Its separate `last-delivery.json` stores only remembered
+fields, root/account binding, identity/path hint, source fingerprint, an idless
+file-incarnation stamp, Copy intent and a session-only requirement. It contains
+no template, rendered text or builtin value. The latest session-only marker
+replaces an older record; after restart, an incomplete snapshot offers reopening
+instead of silently using defaults or the current `values.json` (§6.1, §21 G3).
 
 ### 5.4 Index, search, ranking
 
@@ -590,6 +598,13 @@ failed usage write retains any successful remember write. Failures do not
 cancel the user's delivery, but expose sanitized `rememberedValuesNotSaved` or
 `usageNotSaved` warnings. Successful usage persistence updates cached ranking
 before the picker refreshes. Models retain no logs of prompt text or values.
+M7 also records the separate repeat projection after completion, on serial
+background work, with a `lastDeliveryNotSaved` warning on failure. Epoch tickets
+captured before asynchronous work prevent a retired invocation from learning
+or restoring a cleared record. Repeat source load/validation is background work;
+Forget/retirement is a synchronous boundary that persists its tombstone before
+success. Picker Forget clears matching repeat state before values/drafts; Forget
+all and root/account replacement clear every record (§6.1, §21 G4/G5).
 Remembered-state reads and learning writes remain synchronous on the model's
 UI thread in this Core slice, matching the requested form/store API. The 1 MiB
 cap bounds values work; a slow filesystem may still delay UI callbacks. Worker

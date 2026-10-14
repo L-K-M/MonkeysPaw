@@ -36,13 +36,18 @@ public final class DeliveryService {
         let session: DesktopSession
         let selection: Selection
         let clipboardGeneration: UInt64
-        let done: (DeliveryOutcome) -> Void
+        let invocation: DeliveryInvocation?
+        let isValid: () -> Bool
+        let validate: (@escaping (Bool) -> Void) -> Void
+        let done: (DeliveryOutcome?) -> Void
         var didComplete = false
 
         init(
             text: String, mode: DeliveryMode, target: DeliveryTarget?,
             session: DesktopSession, selection: Selection, clipboardGeneration: UInt64,
-            done: @escaping (DeliveryOutcome) -> Void
+            invocation: DeliveryInvocation? = nil, isValid: @escaping () -> Bool = { true },
+            validate: @escaping (@escaping (Bool) -> Void) -> Void = { $0(true) },
+            done: @escaping (DeliveryOutcome?) -> Void
         ) {
             self.text = text
             self.mode = mode
@@ -50,6 +55,9 @@ public final class DeliveryService {
             self.session = session
             self.selection = selection
             self.clipboardGeneration = clipboardGeneration
+            self.invocation = invocation
+            self.isValid = isValid
+            self.validate = validate
             self.done = done
         }
     }
@@ -166,6 +174,38 @@ public final class DeliveryService {
         enqueue(text, mode: mode, done: done)
     }
 
+    /// Capture on the UI thread, before any async work. A repeat uses the
+    /// current target without changing the hidden picker's armed target/draft.
+    public func captureInvocation(source: DeliveryInvocationSource,
+                                  completion: @escaping (DeliveryInvocation) -> Void) {
+        mainThread.run {
+            let target = source == .picker ? self.armedTarget : self.focus.captureTarget()
+            completion(DeliveryInvocation(target: target, session: self.session.currentSession(),
+                owner: ObjectIdentifier(self), generation: self.presentationGeneration))
+        }
+    }
+
+    /// Nil means revoked before completion. Validation runs in the existing
+    /// queue before write/hide and again after settle/focus, before injection.
+    /// Its caller owns background source/access checks; isValid is a UI gate.
+    public func deliver(
+        _ text: String, mode: DeliveryMode, invocation: DeliveryInvocation,
+        isValid: @escaping () -> Bool = { true },
+        validate: @escaping (@escaping (Bool) -> Void) -> Void = { $0(true) },
+        done: @escaping (DeliveryOutcome?) -> Void
+    ) {
+        mainThread.run {
+            self.invalidateClipboardRestore()
+            let request = Request(text: text, mode: mode, target: invocation.target,
+                session: invocation.session, selection: .ladder, clipboardGeneration: self.clipboardGeneration,
+                invocation: invocation, isValid: isValid, validate: validate) { outcome in
+                    done(outcome)
+                    self.completeOperation()
+                }
+            self.queue { self.start(request) }
+        }
+    }
+
     /// Revoke queued picker window requests and their captured target before
     /// composition replaces the picker graph. Delivery queue slots are retained.
     /// A dismissal queued earlier is dropped with its panel hide, so composition
@@ -226,7 +266,9 @@ public final class DeliveryService {
     ) {
         mainThread.run {
             assert(self.operationState == .running, "Self-test must hold the operation queue")
-            self.start(self.request(text, mode: .paste(.standard), selection: .only(backend), done: done))
+            self.start(self.request(text, mode: .paste(.standard), selection: .only(backend)) {
+                if let outcome = $0 { done(outcome) }
+            })
         }
     }
 
@@ -237,7 +279,7 @@ public final class DeliveryService {
         mainThread.run {
             self.invalidateClipboardRestore()
             let request = self.request(text, mode: mode, selection: .ladder) { outcome in
-                done(outcome)
+                if let outcome { done(outcome) }
                 self.completeOperation()
             }
             self.queue { self.start(request) }
@@ -246,7 +288,7 @@ public final class DeliveryService {
 
     private func request(
         _ text: String, mode: DeliveryMode, selection: Selection,
-        done: @escaping (DeliveryOutcome) -> Void
+        done: @escaping (DeliveryOutcome?) -> Void
     ) -> Request {
         let target: DeliveryTarget?
         switch selection {
@@ -275,6 +317,7 @@ public final class DeliveryService {
     }
 
     private func start(_ request: Request) {
+        guard current(request) else { cancel(request); return }
         guard !isShutdown, clipboardRestoreMode == .previousText,
               case .ladder = request.selection, case .paste = request.mode,
               request.clipboardGeneration == clipboardGeneration,
@@ -326,6 +369,10 @@ public final class DeliveryService {
     }
 
     private func writeAndHide(_ request: Request) {
+        whileCurrent(request) { self.writeValidated(request) }
+    }
+
+    private func writeValidated(_ request: Request) {
         // Wayland needs the panel's selection serial before it loses focus.
         if let restoration = pendingClipboardRestore,
            restoration.generation == request.clipboardGeneration,
@@ -348,6 +395,7 @@ public final class DeliveryService {
     }
 
     private func restore(for request: Request) {
+        guard current(request) else { cancel(request); return }
         guard let target = request.target else {
             beginPaste(for: request, focus: .notCaptured)
             return
@@ -364,6 +412,10 @@ public final class DeliveryService {
     }
 
     private func beginPaste(for request: Request, focus: FocusConfirmation) {
+        whileCurrent(request) { self.pasteValidated(request, focus: focus) }
+    }
+
+    private func pasteValidated(_ request: Request, focus: FocusConfirmation) {
         guard case .paste(let chord) = request.mode else {
             if case .ladder = request.selection { notifier.copied() }
             finish(request, outcome: .copiedOnly(.requested), focus: focus)
@@ -382,6 +434,7 @@ public final class DeliveryService {
         _ remaining: ArraySlice<PasteBackend>, for request: Request,
         chord: PasteChord, focus: FocusConfirmation, failures: [BackendFailure]
     ) {
+        guard current(request) else { cancel(request); return }
         guard let backend = remaining.first else {
             let reason = CopyReason.backendsFailed(failures)
             // SelfTestReport is the only output of diagnostic deliveries (§6.5).
@@ -437,6 +490,7 @@ public final class DeliveryService {
     private func finish(_ request: Request, outcome: DeliveryOutcome, focus: FocusConfirmation) {
         // Every continuation entered through MainThread, including done.
         guard !request.didComplete else { return }
+        guard current(request) else { cancel(request); return }
         request.didComplete = true
         if case .ladder = request.selection {
             lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
@@ -444,6 +498,33 @@ public final class DeliveryService {
         if case .pasted = outcome { scheduleClipboardRestore(for: request) }
         else { discardClipboardRestore(for: request) }
         request.done(outcome)
+    }
+
+    private func current(_ request: Request) -> Bool {
+        guard !request.didComplete else { return false }
+        guard let invocation = request.invocation else { return true }
+        return !isShutdown && !invocation.isCancelled && invocation.owner == ObjectIdentifier(self)
+            && invocation.generation == presentationGeneration && request.isValid()
+    }
+
+    private func whileCurrent(_ request: Request, _ work: @escaping () -> Void) {
+        guard current(request) else { cancel(request); return }
+        var didValidate = false
+        request.validate { valid in
+            self.mainThread.run {
+                guard !didValidate, !request.didComplete else { return }
+                didValidate = true
+                guard valid, self.current(request) else { self.cancel(request); return }
+                work()
+            }
+        }
+    }
+
+    private func cancel(_ request: Request) {
+        guard !request.didComplete else { return }
+        request.didComplete = true
+        discardClipboardRestore(for: request)
+        request.done(nil)
     }
 
     private func scheduleClipboardRestore(for request: Request) {

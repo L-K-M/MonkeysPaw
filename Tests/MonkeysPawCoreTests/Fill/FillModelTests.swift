@@ -3,6 +3,35 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class FillModelTests: XCTestCase {
+    func testRepeatProjectionFailureRemainsVisibleAfterRealFillDelivery() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{field}}")
+        h.flow.data.onWrite = { if $0.hasPrefix("usage/") { h.flow.data.failNextWrite = true } }
+        try h.deliver(mode: .copyOnly, values: ["field": "exact"])
+        XCTAssertEqual(h.picker.fillModel?.state, .done(.copiedOnly(.requested)))
+        XCTAssertEqual(h.picker.persistenceWarnings, [.lastDeliveryNotSaved])
+        XCTAssertEqual(h.flow.delivery.clipboard.text, "exact")
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity).count, 1)
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testLateInjectorReplyAfterRetirementCannotRememberFillValues() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{field}}")
+        h.flow.delivery.injectors[.cgEvent]?.mode = .deferred
+        try h.open()
+        h.picker.use(mode: .paste(.standard))
+        let form = try XCTUnwrap(h.picker.fillModel)
+        form.setValue("late fields", name: "field")
+        form.deliver(mode: .paste(.standard))
+        h.flow.settle()
+        try h.service.retire()
+        h.flow.delivery.injectors[.cgEvent]?.complete([.sent, .sent])
+        XCTAssertEqual(try h.flow.values.rememberedValues(for: entry.identity), [:])
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+        XCTAssertNil(try h.store.load())
+    }
+
     func testNativeFocusKeepsTraversalInFieldOrderAndRejectsInvalidPositions() throws {
         let h = PromptFlowHarness()
         _ = try h.put("{{a}} {{b}} {{c}}")

@@ -71,6 +71,7 @@ enum LinuxStrings {
         case .rememberedValuesUnavailable: return rememberedValuesUnavailable
         case .rememberedValuesNotSaved: return rememberedValuesNotSaved
         case .usageNotSaved: return usageNotSaved
+        case .lastDeliveryNotSaved: return "Delivered, but repeat could not be saved."
         }
     }
 
