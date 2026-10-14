@@ -64,4 +64,9 @@ class LlmOutputDecoderTest {
             assertEquals("later", LlmOutputDecoder.artifact("[{\"ignored\":\uFEFF$token}]" + wire).title)
         }
     }
+
+    @Test fun unicode16ChoiceDefaultsUseSwiftCanonicalEquality() {
+        val wire = """{"title":"","description":"","tags":[],"fields":[{"name":"x","type":"choice","label":"","description":"","default":"\uD801\uDDD2\u0307","options":[{"label":"A","value":"\uD801\uDDC9"}],"optional":false,"remember":true}],"body":"{{x}}","notes":""}"""
+        assertEquals(emptyList(), LlmOutputDecoder.artifact(wire).issues)
+    }
 }

@@ -741,8 +741,8 @@ nullable/omitted fields and nested response secrecy.
 
 M11 L2 adds `llm/<case>/case.json`, dispatched by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmConformanceTest`. Both enumerate the entire category and
-compare every expectation. The initial corpus has 266 cases, 850 visible
-files and 2,596 expectation members, with zero pending LLM cases. All prior
+compare every expectation. The initial corpus has 267 cases, 853 visible
+files and 2,617 expectation members, with zero pending LLM cases. All prior
 categories stay registered; this does not complete any earlier pending DTO
 port. Run `swift test --filter 'PromptConformance|Llm|Assistant'` and the
 existing `:core:test` command. On the implementation host use `swift64` and
@@ -810,6 +810,9 @@ BOM-prefixed NSNumber fragments while scanning array preambles. These
 existing Swift behaviors are pinned explicitly, including decoded-key
 duplicates and review quote ranges. Core on macOS CI must verify the same
 Foundation behavior; this Linux capture does not establish Darwin parity.
+Choice-default comparison uses the existing pinned ICU normalizer, including
+Unicode 16 canonical pairs that JDK 21's normalizer does not equate. Shared
+fixtures pin the comparison and retain both original string spellings.
 
 Contracts are closed recursively. Every referenced visible file is consumed
 exactly once, with safe distinct basenames; missing files, orphans, symlinks,

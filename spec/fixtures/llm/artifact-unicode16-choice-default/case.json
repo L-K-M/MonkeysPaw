@@ -1,0 +1,42 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "artifact" : {
+        "body" : "{{x}}",
+        "description" : "",
+        "fields" : [
+          {
+            "default" : "𐗉",
+            "description" : "",
+            "label" : "X",
+            "name" : "x",
+            "optional" : false,
+            "options" : [
+              {
+                "label" : "A",
+                "value" : "𐗉"
+              }
+            ],
+            "remember" : true,
+            "type" : "choice"
+          }
+        ],
+        "notes" : "",
+        "tags" : [
+
+        ],
+        "title" : "Unicode 16"
+      },
+      "issues" : [
+
+      ]
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "schema" : 1,
+  "source" : "output.txt"
+}
