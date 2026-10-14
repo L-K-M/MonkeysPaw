@@ -11,6 +11,15 @@ public enum Limits {
     /// §6.3: 140 ms for Linux compositors to refocus after the panel hides.
     public static let settleDelayLinux: Duration = .milliseconds(140)
 
+    /// §6.3: opt-in previous-text capture must not delay delivery beyond 250 ms.
+    public static let clipboardSnapshotBudget: Duration = .milliseconds(250)
+
+    /// §6.3: previous clipboard text is capped at 1 MiB of UTF-8 bytes.
+    public static let clipboardSnapshotMaxBytes: Int = mebibyte
+
+    /// §6.3: restore only 750 ms after a backend reports the chord sent.
+    public static let clipboardRestoreDelay: Duration = .milliseconds(750)
+
     /// §6.3: wait up to 500 ms for Accessibility to confirm the paste target.
     public static let accessibilityFocusWait: Duration = .milliseconds(500)
 
@@ -131,6 +140,15 @@ public enum Limits {
 
     /// §7.1: one explicit model-list operation has a 15-second deadline.
     public static let modelListTimeout: Duration = .seconds(15)
+
+    /// §21 G16: one public release request, with no retries or redirects.
+    public static let updateRequestTimeout: Duration = .seconds(15)
+    public static let updateResponseCap: Int = mebibyte
+    public static let updateCheckInterval: TimeInterval = 24 * 60 * 60
+    public static let updateStateFileCap: Int = 4 * kibibyte
+    public static let releaseVersionMaxBytes: Int = 256
+    /// GitHub's minimum wait when a rate-limit response supplies no usable delay.
+    public static let updateRateLimitMinimumDelay: TimeInterval = 60
 
     /// §7.1: platform idle/resource timeouts never replace the monotonic deadline.
     public static let httpSessionTimeoutFloor: TimeInterval = 300

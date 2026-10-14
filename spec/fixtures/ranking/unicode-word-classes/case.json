@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "b",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "punctuation.md",
+      "path": "punctuation.md",
+      "uses": []
+    },
+    {
+      "source": "decimal.md",
+      "path": "decimal.md",
+      "uses": []
+    },
+    {
+      "source": "letter.md",
+      "path": "letter.md",
+      "uses": []
+    },
+    {
+      "source": "other-number.md",
+      "path": "other-number.md",
+      "uses": []
+    },
+    {
+      "source": "nonspacing.md",
+      "path": "nonspacing.md",
+      "uses": []
+    },
+    {
+      "source": "spacing.md",
+      "path": "spacing.md",
+      "uses": []
+    },
+    {
+      "source": "enclosing.md",
+      "path": "enclosing.md",
+      "uses": []
+    },
+    {
+      "source": "letter-number.md",
+      "path": "letter-number.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "punctuation.md",
+        "score": 3,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "decimal.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "letter.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "other-number.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "nonspacing.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "spacing.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "enclosing.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "letter-number.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

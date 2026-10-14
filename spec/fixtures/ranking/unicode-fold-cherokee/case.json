@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#Ꭰ #Ᏽ",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "upper.md",
+      "path": "upper.md",
+      "uses": []
+    },
+    {
+      "source": "lower.md",
+      "path": "lower.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "lower.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      },
+      {
+        "path": "upper.md",
+        "score": 1,
+        "matchedFields": [
+          "tags"
+        ]
+      }
+    ]
+  }
+}

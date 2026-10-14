@@ -9,6 +9,7 @@ final class LinuxEnvironment {
         case switched
         case deliveryInFlight
         case editorBusy
+        case outsideSandboxHome
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case persistenceFailed(SettingsError)
@@ -20,6 +21,7 @@ final class LinuxEnvironment {
             // Core has one busy outcome. Settings overrides this refusal's
             // copy locally without widening the shared folder port.
             case .editorBusy: return .deliveryInFlight
+            case .outsideSandboxHome: return .invalidTarget(.outsideSandboxHome)
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .persistenceFailed(let error): return .settingsNotSaved(error)
@@ -681,6 +683,7 @@ final class LinuxEnvironment {
               (try? SettingsDocument(libraryFolderPath: directory.path)) != nil else {
             throw FileStoreError.invalidRoot
         }
+        guard paths.supportsLibrary(at: directory) else { throw FileStoreError.outsideRoot }
         // The default keeps the canonicalizing root rule, so a default folder
         // linked into a synced directory still loads; a chosen root must not be a symlink.
         let isDefault = directory.standardizedFileURL.path.utf8
@@ -767,13 +770,15 @@ final class LinuxEnvironment {
     /// Nil selects the default. Drafts belong to the retired picker.
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
         guard !isShutDown else { return .libraryUnavailable(.ioFailure) }
+        let target = directory ?? defaultLibraryDirectory
+        // Refuse unsupported chooser/portal paths before touching the active graph.
+        guard paths.supportsLibrary(at: target) else { return .outsideSandboxHome }
         let old = libraryGraph
         if editorHasUnsavedWork(old.editor.state) { return .editorBusy }
         guard old.picker.state != .delivering else { return .deliveryInFlight }
         old.picker.dismiss()
         panel.hide(reason: "switch-library")
 
-        let target = directory ?? defaultLibraryDirectory
         let files: RootedFileStore
         do { files = try prepareLibraryFiles(at: target) }
         catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }

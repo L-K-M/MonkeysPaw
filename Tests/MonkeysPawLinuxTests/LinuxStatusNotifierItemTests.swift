@@ -115,8 +115,36 @@ final class LinuxStatusNotifierItemTests: XCTestCase {
         let registration = try XCTUnwrap(watcher.registrations.first)
         XCTAssertTrue(registration.sender.hasPrefix(":"))
         XCTAssertEqual(registration.service, FakeStatusNotifierWatcher.itemName)
+        XCTAssertEqual(try watcher.namesOwned(by: registration.sender), [registration.sender, FakeStatusNotifierWatcher.itemName])
+        XCTAssertFalse(watcher.hasOwner("org.kde.StatusNotifierItem-\(ProcessInfo.processInfo.processIdentifier)-1"))
         XCTAssertTrue(registration.noAutoStart)
         XCTAssertEqual(watcher.registrations.count, 1)
+    }
+
+    func testSecondItemCannotDisplaceSingletonAndCanRestartAfterStop() throws {
+        try start()
+        let originalSender = try XCTUnwrap(watcher.registrations.first?.sender)
+        let second = makeItem(address: address)
+        defer { second.stop() }
+        second.start()
+        drain()
+        XCTAssertFalse(second.isAvailable)
+        XCTAssertEqual(watcher.registrations.count, 1)
+        XCTAssertFalse(watcher.call(path: "/StatusNotifierItem", interface: "org.kde.StatusNotifierItem",
+                                   method: "Activate", body: "(0, 0)").failed)
+        XCTAssertTrue(GTKTestSupport.spin { self.toggles == 1 })
+
+        second.stop()
+        item.stop()
+        XCTAssertTrue(GTKTestSupport.spin { !self.watcher.hasOwner(originalSender) })
+        XCTAssertFalse(watcher.hasOwner(FakeStatusNotifierWatcher.itemName))
+        second.start()
+        XCTAssertTrue(GTKTestSupport.spin { second.isAvailable })
+        XCTAssertEqual(watcher.registrations.count, 2)
+        let replacementSender = try XCTUnwrap(watcher.registrations.last?.sender)
+        XCTAssertNotEqual(replacementSender, originalSender)
+        XCTAssertEqual(try watcher.namesOwned(by: replacementSender), [replacementSender, FakeStatusNotifierWatcher.itemName])
+        XCTAssertFalse(watcher.call(method: "AboutToShow", body: "(0,)").failed)
     }
 
     func testAbsentWatcherStaysUnavailableAndRegistersWhenItAppears() throws {

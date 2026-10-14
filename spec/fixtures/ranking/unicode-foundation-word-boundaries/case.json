@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "b",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "mark.md",
+      "path": "mark.md",
+      "uses": []
+    },
+    {
+      "source": "cyrillic.md",
+      "path": "cyrillic.md",
+      "uses": []
+    },
+    {
+      "source": "garay.md",
+      "path": "garay.md",
+      "uses": []
+    },
+    {
+      "source": "tangut.md",
+      "path": "tangut.md",
+      "uses": []
+    },
+    {
+      "source": "letter.md",
+      "path": "letter.md",
+      "uses": []
+    },
+    {
+      "source": "deseret.md",
+      "path": "deseret.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "letter.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "mark.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "cyrillic.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "deseret.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "garay.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "tangut.md",
+        "score": 1,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

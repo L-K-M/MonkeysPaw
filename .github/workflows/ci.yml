@@ -339,7 +339,9 @@ jobs:
               'org.gnome.Platform', '50', 'org.gnome.Sdk', 'monkeyspaw')
           assert set(manifest['finish-args']) == {
               '--share=ipc', '--share=network', '--socket=wayland', '--socket=fallback-x11',
-              '--filesystem=home', '--talk-name=org.freedesktop.secrets'}
+              '--filesystem=home', '--talk-name=org.freedesktop.secrets',
+              '--talk-name=org.kde.StatusNotifierWatcher'}
+          assert len(manifest['finish-args']) == 7
           assert manifest['build-options']['no-debuginfo'] is True
           assert manifest['build-options']['strip'] is False
           assert len(manifest['modules']) == 1
@@ -401,13 +403,17 @@ jobs:
           metadata = read(sys.argv[1])
           assert metadata['Application']['name'] == app_id
           assert metadata['Application']['command'] == 'monkeyspaw'
+          assert set(metadata['Context']) == {'shared', 'sockets', 'filesystems'}
           assert set(metadata['Context']['shared'].strip(';').split(';')) == {'ipc', 'network'}
           # Flatpak records --socket=fallback-x11 as x11 plus fallback-x11; the
           # runtime uses X11 only when no Wayland socket is available.
           assert set(metadata['Context']['sockets'].strip(';').split(';')) == {'wayland', 'x11', 'fallback-x11'}
           assert metadata['Context']['filesystems'] == 'home;'
           assert not metadata['Context'].get('devices')
-          assert dict(metadata['Session Bus Policy']) == {'org.freedesktop.secrets': 'talk'}
+          # Portals/app subnames remain filtered defaults, with no foreign
+          # ownership, host dconf, KGlobalAccel or host-spawn policy.
+          assert dict(metadata['Session Bus Policy']) == {
+              'org.freedesktop.secrets': 'talk', 'org.kde.StatusNotifierWatcher': 'talk'}
           assert not metadata.has_section('System Bus Policy')
           exports = Path(sys.argv[2])
           desktop = read(exports / 'applications' / (app_id + '.desktop'))
@@ -440,6 +446,8 @@ jobs:
           flatpak run --user --die-with-parent --command=sh "$APP_ID" -eu -c '
             command -v secret-tool
             command -v gsettings
+            test "$XDG_CONFIG_HOME" = "$HOME/.var/app/$FLATPAK_ID/config"
+            test "$XDG_DATA_HOME" = "$HOME/.var/app/$FLATPAK_ID/data"
             dependencies=$(ldd /app/bin/monkeyspaw)
             printf "%s\n" "$dependencies"
             case "$dependencies" in *"not found"*) exit 1 ;; esac

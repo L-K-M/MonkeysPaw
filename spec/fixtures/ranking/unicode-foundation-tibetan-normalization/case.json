@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "qཱཱིི",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "original.md",
+      "path": "original.md",
+      "uses": []
+    },
+    {
+      "source": "ordered.md",
+      "path": "ordered.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "ordered.md",
+        "score": 2.3157894736842106,
+        "matchedFields": [
+          "title"
+        ]
+      },
+      {
+        "path": "original.md",
+        "score": 2.3157894736842106,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}

@@ -24,10 +24,25 @@ pending. `CanonicalConformanceTest` adds all 19 canonical cases (50 files),
 checking exact stored bytes/body, hashes, favourite extraction, warning order,
 typed refusals, idempotence and symmetric adoption. It executes all 83
 expectation members and 12 adoption comparisons in both directions.
-The tests report dynamic counts and reject unregistered expectations;
-no golden is changed to fit Kotlin. Paths (K6), ranking (K7), import (K8)
-and DTOs (K9/K10) retain their semantic work. K2's all-category structural
+K8 adds `ImportConformanceTest`: all 14 import cases (28 files), 74 expectation
+members, 10 conversions, two native copies and two typed refusals. It checks
+exact source/body bytes and ordered mappings, preserved keys, presentation
+losses and warnings. As of K8, these six categories execute 206 cases,
+424 files and 1,075 expectation members, with nothing pending within them.
+The tests report current counts and reject unregistered expectations;
+no golden is changed to fit Kotlin. The remaining three categories, paths
+(K6, PR #127), ranking (K7) and DTOs (K9/K10), account for 810 cases and
+1,680 files outside this branch's semantic gate. K2's all-category structural
 gate remains mandatory; the full nine-category semantic gate belongs to K10.
+Pure import parity adds no Android import UI or template, tool, environment
+or file-reference execution.
+
+K7 adds semantic ranking consumption in `RankingFixturesTest`: all dynamically
+enumerated cases check exact path bytes and sorting, ordered matched fields,
+and scores with absolute `1e-12` tolerance. The 20 baseline cases plus 16
+Unicode compatibility cases currently cover 36 cases and 164 files. Usage
+histories retain their last 1,024 events in recording order. Run `:core:test`
+for ranking and the unchanged all-category structural gate.
 
 This corpus covers file content, search/ranking, import,
 sync paths, sync canonical form and sync wire DTOs. LLM fixtures arrive with
@@ -130,13 +145,39 @@ fields; filters alone use base match 1. Empty queries have no matched fields.
 Unicode case folding followed by NFC preserves accents (§5.4).
 
 Query separators are extended grapheme clusters whose first scalar has the
-Unicode `White_Space` property, including NBSP, as in Swift's
-[`Character.isWhitespace`](https://github.com/swiftlang/swift/blob/main/stdlib/public/core/CharacterProperties.swift).
+Unicode `White_Space` property, including NBSP. Swift reads stdlib
+`Unicode.Scalar.Properties.isWhitespace` and discards the whole cluster.
 Word-start boundaries follow scalars outside Unicode general categories
-`L*`, `M*`, `N*`, matching Foundation's
-[`CharacterSet.alphanumerics`](https://developer.apple.com/documentation/foundation/characterset/alphanumerics).
-The Kotlin consumer must preserve these classes, including marks and all
-number categories.
+`L*`, `M*`, `N*`, read from stdlib `Unicode.Scalar.Properties.generalCategory`,
+including marks and all number categories. These properties are pinned to
+Unicode 17: generated additions bridge supported Swift runtimes' Unicode 15/16 data, and
+private-use scalars are non-word on every platform. Changed Extend/SpacingMark/Prepend/Other
+scalars are projected to known representatives only while finding separator
+and standalone-`#` boundaries; the tokens retain their original scalars.
+Kotlin uses the pinned ICU4J 78.3 Unicode 17 properties and grapheme iterator.
+
+Search uses explicit full default Unicode 17 C/F folding followed by NFC
+(F6). Search and sync reuse the frozen mapping data but retain separate
+functions. NFC follows [Unicode 17 UAX #15](https://www.unicode.org/reports/tr15/tr15-57.html):
+recursive canonical decomposition, stable ordering by canonical combining
+class, then unblocked canonical composition with algorithmic Hangul. Swift's
+generated NFC tables and Kotlin's pinned ICU implementation agree on that
+definition. Foundation's fold/word tables vary between Darwin and corelibs;
+its NFC path can misorder Tibetan marks, drop expanding marks and overrun
+valid Hangul composition endpoints. None defines the search contract.
+Normalized tag keys compare exact scalars, avoiding implicit host-version
+normalization in Swift `String` equality. Original title/path tie-breaks
+continue to compare exact UTF-8 bytes.
+
+Regenerate Swift's attributed NFC/property data with
+`python3 scripts/generate-search-unicode.py --ucd-dir <directory>`; `--check`
+compares without writing. The generator verifies SHA-256 values for Unicode
+17 `UnicodeData.txt`, `DerivedNormalizationProps.txt`,
+`auxiliary/GraphemeBreakProperty.txt`, and Unicode 15's `UnicodeData.txt` and
+`auxiliary/GraphemeBreakProperty.txt` (save the latter two with `15` before
+`.txt`). No runtime download is used. The 16 added Unicode cases below are
+specification expectations; the historical `unicode-foundation-*` names now
+pin corrections to those platform quirks. All 20 baseline cases are unchanged.
 
 Ranking expectations are handwritten from §5.4, with no implementation
 output used to generate them. The cases pin the arithmetic as follows:
@@ -154,6 +195,22 @@ output used to generate them. The cases pin the arithmetic as follows:
 | `usage-recording-tail` | The first recent use is discarded, leaving 1,024 events aged 140 days, each `1/1024`: score 8. The control scores 10; retaining that first use would reverse the order with score 12. |
 | `unicode-canonical`, `unicode-case-expansion`, `accent-significant` | NFC-equivalent accents match; plain `e` does not match `é`. `Straße` folds to seven scalars: raw 15 over denominator 27 gives title score `20/9`. |
 | `no-match` | An unmatched ordinary query returns an empty list. |
+| `unicode-nbsp-terms` | Tokens and folds are `ab`, `cd`. Each exact two-scalar match has `W = C = 1`, raw 5, denominator 7. Title `20/7` and tag `10/7` average to `15/7`; missing `cd` rejects. |
+| `unicode-whitespace-grapheme` | NBSP + U+0301 is one discarded separator. Tokens/folds `ab`, `cd` give the same `15/7` title/tag average; no stray acute term remains. |
+| `unicode-word-classes` | Token/fold `b`: L/M/N predecessors (`q`, U+0301, U+0903, U+20DD, `1`, U+2173 after folding U+2163, U+00B2) give `m = 1, n = 2, W = C = 0`, title score `4 × (1/3) × (3/4) = 1`; `-` gives W = 1 and score 3. |
+| `unicode-supplementary-scores` | Token U+10428; U+10400 folds to U+10428. Exact one-scalar titles score 4; emoji + letter has `n = 2, W = 1`, score 3; `x` + letter has W = 0, score 1. |
+| `unicode-supplementary-byte-ties` | Filter token `#x` folds to tag `x`. All four matches score 1; original title bytes put `Same` first (paths U+E000 before U+10000), then title U+E000 before U+10000. |
+| `unicode-hash-grapheme` | The sole ordinary token/fold is `#` U+0301 `ab`, since marked `#` is not a filter. Exact four-scalar title has `W = 2, C = 3`, raw 11, denominator 15 and score `44/15`; the tag-only entry fails. |
+| `unicode-dotted-i` | Filter `#` U+0130 folds to `i` U+0307; it matches only the dotted tag, score 1. Plain `i` and U+0131 are distinct. |
+| `unicode-fold-cherokee` | Two filters U+13A0/U+13F5 fold to those uppercase scalars; U+AB70/U+13FD fold to the same values. Both entries score 1, `Lower` before `Upper` by original title bytes. |
+| `unicode-fold-cyrillic` | Ten filters U+1C80…U+1C89 fold to U+0432, 0434, 043E, 0441, 0442, 0442, 044A, 0463, A64B, 1C8A. Both entries satisfy every tag, score 1; `Full fold` precedes `Original`. |
+| `unicode-fold-latin` | Seven filters U+A7CB, A7CC, A7CE, A7D2, A7D4, A7DA, A7DC fold to U+0264, A7CD, A7CF, A7D3, A7D5, A7DB, 019B. Both entries score 1, `Full fold` before `Original`. |
+| `unicode-fold-supplementary` | Filters U+10D50/U+16EA0 fold to U+10D70/U+16EBB. Both entries score 1, `Full fold` before `Original`; each supplementary character counts as one scalar. |
+| `unicode-fold-mark-order` | Filter U+0391 0345 0300 folds to U+03B1 03B9 0300, then NFC U+03B1 1F76 (`αὶ`). Only `Ordered` matches, score 1; U+1F70 03B9 (`ὰι`) differs. Folding precedes NFC. |
+| `unicode-foundation-word-boundaries` | Token/fold `b`; predecessors U+1ACF (M), U+1C89→1C8A (L), U+10D50→10D70 (L), U+17000 (L), `q` (L), U+10400→10428 (L) all give W = 0, title score 1. Original title bytes order `letter`, `mark`, `cyrillic`, `deseret`, `garay`, `tangut`. |
+| `unicode-foundation-tibetan-normalization` | Ordinary token `q` U+0F73 twice decomposes and orders to `q` U+0F71 twice + U+0F72 twice (CCC 129 before 130). Both titles normalize identically: `m = n = 5, W = 1, C = 4`, raw 11, score `44/19`; original bytes put `ordered` first. |
+| `unicode-foundation-canonical-tags` | The single filter normalizes to `q` U+0F71 twice + U+0F72 twice. Both tags match the same scalar sequence, score 1; title `Ordered` precedes `Original`. |
+| `unicode-foundation-expanding-marks` | The single filter `q` + 33 U+0344 becomes `q` + 33 pairs U+0308/U+0301, all CCC 230, retaining stable pair order (67 scalars). `Full` and `Original` match, score 1 in that byte order; the 31-pair `Retained` tag fails. No buffer truncation occurs. |
 
 Metadata includes nullable `id`/`description`, `title`, `tags`, `favorite`,
 `private`, `format` and ordered field `declarations`. Format integers are

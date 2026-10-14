@@ -111,6 +111,8 @@ final class LinuxTrayStartupTests: XCTestCase {
         XCTAssertTrue(child.isRunning)
         XCTAssertTrue(watcher.hasOwner(name))
         let sender = try XCTUnwrap(watcher.registrations.first?.sender)
+        XCTAssertEqual(try watcher.namesOwned(by: sender), [sender, name])
+        XCTAssertFalse(watcher.hasOwner("org.kde.StatusNotifierItem-\(child.processIdentifier)-1"))
         XCTAssertFalse(watcher.call(method: "GetLayout", body: "(0, -1, @as [])", destination: name).failed)
         try quitFromTray(child)
         assertCleanExit(child)
@@ -153,7 +155,7 @@ final class LinuxTrayStartupTests: XCTestCase {
     }
 
     private func itemName(for child: Process) -> String {
-        "org.kde.StatusNotifierItem-\(child.processIdentifier)-1"
+        "ch.lkmc.monkeyspaw.StatusNotifierItem-\(child.processIdentifier)-1"
     }
 }
 #endif

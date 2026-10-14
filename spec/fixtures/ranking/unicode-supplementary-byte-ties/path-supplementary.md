@@ -1,0 +1,4 @@
+---
+title: "Same"
+tags: ["x"]
+---

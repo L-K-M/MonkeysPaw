@@ -65,7 +65,8 @@ final class LinuxStatusNotifierItem {
     private let onActivate: () -> Void
     // Release this name even when GIO supplies GTK's shared bus connection, so
     // the watcher can remove the item on stop without waiting for process exit.
-    private let serviceName = "org.kde.StatusNotifierItem-\(ProcessInfo.processInfo.processIdentifier)-1"
+    // Flatpak permits app-ID subnames without any foreign ownership grant.
+    private let serviceName = "\(AppIdentity.linuxAppID).StatusNotifierItem-\(ProcessInfo.processInfo.processIdentifier)-1"
     private var isRunning = false
     private var generation = 0
     private var entries: [StatusNotifierEntry] = []

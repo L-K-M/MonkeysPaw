@@ -1,0 +1,4 @@
+---
+title: "Ordered"
+tags: ["αὶ"]
+---
