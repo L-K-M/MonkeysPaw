@@ -11,8 +11,9 @@ enum SyncNaming {
     static func groupFolder(_ name: String, occupied: [String]) throws -> String {
         let stem = try component(name, fallback: "Group", maxBytes: Limits.syncPathSegmentMaxBytes)
         let keys = try Set(occupied.map { try pathKey(RelativePath($0)) })
-        // At most N occupied names can block these N+1 distinct candidates.
-        for number in 1...(keys.count + 1) {
+        // Shortening can make the bare stem equal a numbered candidate. N+1
+        // numbered candidates still guarantee a vacancy among N occupied keys.
+        for number in 1...(keys.count + 2) {
             let suffix = number == 1 ? "" : " (\(number))"
             let budget = Limits.syncPathSegmentMaxBytes - suffix.utf8.count
             let shortened = prefix(stem, maxBytes: budget)

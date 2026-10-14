@@ -27,6 +27,12 @@
   - A folder under `Groups/` that maps to no current group, or a file
     sitting loose directly under `Groups/`, is never pushed. It is rescued
     (§9.3, step 1) and removed.
+    If it carried a recorded identity, retire that cache entry and request a
+    fresh snapshot of its original scope with the API's reset cursor `0`.
+    Internal rescue is never inferred as a user deletion of the server head.
+    A delta collected before that reset cannot acknowledge it; recollect the
+    scope before completing the pass. Keeping the scope key in the reset
+    request also lets the server report a concurrent membership removal.
 - **Viewer groups are read-only.** Files are written with
   `READONLY_FILE_MODE = 0444` and the editor opens them read-only. When a
   role changes to or from `viewer`, existing files are re-moded and open

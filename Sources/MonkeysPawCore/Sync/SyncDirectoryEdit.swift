@@ -3,11 +3,11 @@ import Foundation
 /// A stable incarnation makes an empty folder's replay distinguishable from
 /// an unrelated directory created at the same spelling after interruption.
 struct SyncDirectoryEdit: Codable, CustomStringConvertible, CustomReflectable {
-    enum Kind: String, Codable { case rename, removeEmpty }
+    enum Kind: String, Codable { case reserve, rename, removeEmpty }
     let id: UUID
     let kind: Kind
     let source: RelativePath
-    let identity: FileStamp
+    let identity: FileStamp?
     let destination: RelativePath?
     let intermediate: RelativePath?
     let localFiles: [SyncLibraryFile]
@@ -21,7 +21,7 @@ struct SyncDirectoryEdit: Codable, CustomStringConvertible, CustomReflectable {
         id = try value.decode(UUID.self, forKey: .id)
         kind = try value.decode(Kind.self, forKey: .kind)
         source = RelativePath(try value.decode(String.self, forKey: .source))
-        identity = try value.decode(FileStamp.self, forKey: .identity)
+        identity = try value.decodeIfPresent(FileStamp.self, forKey: .identity)
         destination = try value.decodeIfPresent(String.self, forKey: .destination).map { RelativePath($0) }
         intermediate = try value.decodeIfPresent(String.self, forKey: .intermediate).map { RelativePath($0) }
         localFiles = try value.decodeIfPresent([SyncLibraryFile].self, forKey: .localFiles) ?? []
@@ -37,6 +37,17 @@ struct SyncDirectoryEdit: Codable, CustomStringConvertible, CustomReflectable {
         try value.encode(destination?.string, forKey: .destination)
         try value.encode(intermediate?.string, forKey: .intermediate)
         try value.encode(localFiles, forKey: .localFiles)
+    }
+
+    init(id: UUID = UUID(), reserving source: RelativePath) throws {
+        self.id = id
+        kind = .reserve
+        self.source = source
+        identity = nil
+        destination = nil
+        intermediate = nil
+        localFiles = []
+        try validate()
     }
 
     init(id: UUID = UUID(), removing source: RelativePath, identity: FileStamp) throws {
@@ -68,6 +79,13 @@ struct SyncDirectoryEdit: Codable, CustomStringConvertible, CustomReflectable {
         guard !parts.isEmpty, SyncPathCaseFold.fold(String(decoding: parts[0], as: UTF8.self)) == "groups" else {
             throw SyncError.invalidState
         }
+        if kind == .reserve {
+            guard parts.count == 2, source.string.hasPrefix("Groups/"), identity == nil,
+                  destination == nil, intermediate == nil, localFiles.isEmpty else { throw SyncError.invalidState }
+            try SyncIdentifiers.folder(String(decoding: parts[1], as: UTF8.self))
+            return
+        }
+        guard identity != nil else { throw SyncError.invalidState }
         if kind == .removeEmpty {
             guard destination == nil, intermediate == nil, localFiles.isEmpty, source.string != "Groups" else { throw SyncError.invalidState }
             return

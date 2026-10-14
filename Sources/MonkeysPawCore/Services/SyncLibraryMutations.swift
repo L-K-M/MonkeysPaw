@@ -208,6 +208,9 @@ final class SyncLibraryMutations {
     func apply(_ edit: SyncDirectoryEdit) throws -> SyncLibraryMutationOutcome {
         try edit.validate()
         return try library.withSyncLock { files in
+            if edit.kind == .reserve {
+                return try vacantDirectory(edit.source, files: files) ? .applied : .replanAsConflict
+            }
             if edit.kind == .removeEmpty {
                 let actual = try Self.directoryIdentities(operations)
                 guard let identity = actual[edit.source] else {
@@ -265,6 +268,9 @@ final class SyncLibraryMutations {
     func verify(_ edit: SyncDirectoryEdit) throws -> SyncLibraryMutationOutcome {
         try edit.validate()
         return try library.withSyncLock { files in
+            if edit.kind == .reserve {
+                return try vacantDirectory(edit.source, files: files) ? .applied : .replanAsConflict
+            }
             let directories = try Self.directoryIdentities(operations)
             if edit.kind == .removeEmpty {
                 return try directories[edit.source] == nil && files.stamp(at: edit.source.string) == nil ? .applied : .replanAsConflict
@@ -274,6 +280,14 @@ final class SyncLibraryMutations {
                   edit.intermediate.map({ directories[$0] == nil }) ?? true else { return .replanAsConflict }
             return .applied
         }
+    }
+
+    private func vacantDirectory(_ path: RelativePath, files: FileStore) throws -> Bool {
+        let key = try SyncNaming.pathKey(path)
+        let paths = try files.listFiles().map { RelativePath($0.relativePath) } + Array(Self.directoryIdentities(operations).keys)
+        guard try !paths.contains(where: { try SyncNaming.pathKey($0) == key }) else { return false }
+        // A link is omitted by listing but must still fail the direct probe.
+        return try files.stamp(at: path.string) == nil
     }
 
     private static func parent(of path: RelativePath) -> RelativePath? {
@@ -406,7 +420,7 @@ final class SyncLibraryMutations {
     }
 
     func canReplan(_ step: SyncDirectoryStep) throws -> Bool {
-        if step.completed || step.edit.kind == .removeEmpty { return true }
+        if step.completed || step.edit.kind != .rename { return true }
         guard try directoryIdentities()[step.edit.source] == step.edit.identity else { return false }
         let stores = try library.syncKeyedStores()
         for migration in step.migrations {
