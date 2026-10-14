@@ -97,6 +97,16 @@ internal class ImeTextDeliveryTest {
         }
     }
 
+    @Test fun `our foreground Fill editor cannot receive commits or Copy through the old IME endpoint`() {
+        val gateway = Gateway(TYPE_CLASS_TEXT).apply { inFillActivity = true }
+        val copy = Copy()
+        val endpoint = ImeTextDelivery(gateway, { true }, copy)
+        assertEquals(TextDeliveryResult.REFUSED, endpoint.deliver(DeliveryMode.IME_COMMIT, "ready"))
+        assertEquals(TextDeliveryResult.REFUSED, endpoint.deliver(DeliveryMode.COPY, "ready"))
+        assertTrue(gateway.calls.isEmpty())
+        assertEquals(0, copy.writes)
+    }
+
     @Test fun `latest multiline flags are checked and learning flag alone never changes permission`() {
         val gateway = Gateway(TYPE_CLASS_TEXT or TYPE_TEXT_FLAG_MULTI_LINE)
         val endpoint = ImeTextDelivery(gateway, { true }, Copy())
@@ -182,6 +192,7 @@ internal class ImeTextDeliveryTest {
 
     private class Gateway(var inputType: Int?) : ImeDeliveryGateway {
         var options = 0
+        var inFillActivity = false
         var result: Boolean? = true
         var throws = false
         var onCommit: () -> Unit = {}
@@ -199,10 +210,11 @@ internal class ImeTextDeliveryTest {
             if (throws) throw IllegalStateException("Unavailable")
             result
         }
-        override fun editor() = ImeEditor(inputType, options, connection)
+        override fun editor() = ImeEditor(inputType, options, connection, inFillActivity)
         override fun commitText(editor: ImeEditor, text: String, newCursorPosition: Int): Boolean? {
             attempts++
             assertTrue(editor.matches(editor()))
+            if (result == null) return null
             return connection?.commitText(text, newCursorPosition)
         }
     }

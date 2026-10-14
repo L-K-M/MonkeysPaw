@@ -134,6 +134,15 @@ Rules:
   continuing as flow B. The activity always uses Copy and never retains the
   old input connection.
 
+Before this explicit Search/Fill handoff, switch to the previous keyboard or
+open the system picker. If both are unavailable, keep the keyboard controls
+and switching instructions visible. A process-local foreground FillActivity
+guard gives its editors only Switch keyboard in our IME, so cancelling the
+picker cannot recursively hand off or insert into that activity. This guard
+reads no target package, field identity or text. An accepted Insert/Copy
+finishes permitted bookkeeping before switching; persistence warnings wait
+for Done, and a retired input session never switches a later target.
+
 IME activity handoff uses a one-use opaque token in a fresh explicit Intent.
 One process-local slot holds the opened prompt, field values, capture assignment,
 completed builtin snapshot and Normal/Ephemeral learning policy. No content,

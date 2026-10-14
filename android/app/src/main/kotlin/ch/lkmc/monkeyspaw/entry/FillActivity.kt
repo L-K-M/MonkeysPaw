@@ -15,6 +15,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
+import ch.lkmc.monkeyspaw.data.ImeActivityGuard
 import ch.lkmc.monkeyspaw.ui.fill.FillViewModel
 import ch.lkmc.monkeyspaw.ui.fill.FillViewModelFactory
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
@@ -29,6 +30,7 @@ import javax.inject.Inject
 class FillActivity : ComponentActivity() {
     @Inject internal lateinit var fillFactory: FillViewModelFactory
     @Inject internal lateinit var handoffs: FillHandoffStore
+    @Inject internal lateinit var imeActivityGuard: ImeActivityGuard
     private val fill: FillViewModel by viewModels { fillFactory }
     private val library: LibraryViewModel by viewModels()
     private val seedOffer: SeedOfferViewModel by viewModels()
@@ -40,12 +42,19 @@ class FillActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        imeActivityGuard.resume(this)
         fill.setForeground(true)
     }
 
     override fun onPause() {
+        imeActivityGuard.pause(this)
         fill.setForeground(false)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        imeActivityGuard.pause(this)
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

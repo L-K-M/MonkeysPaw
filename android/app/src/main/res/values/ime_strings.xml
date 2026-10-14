@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ime_search_in_app">Search in Monkey\'s Paw</string>
+    <string name="ime_fill_typing">Switch keyboards to type in Monkey\'s Paw.</string>
+    <string name="ime_copy_instead">Use Copy instead for this field.</string>
+    <string name="ime_handoff_failed">Could not open Monkey\'s Paw. Try again.</string>
+</resources>

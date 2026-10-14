@@ -6,11 +6,18 @@ import androidx.lifecycle.ViewModelStore
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.data.*
+import ch.lkmc.monkeyspaw.entry.FillHandoffLauncher
+import ch.lkmc.monkeyspaw.entry.FillHandoffStore
 import ch.lkmc.monkeyspaw.ui.fill.*
 import ch.lkmc.monkeyspaw.ui.library.LibraryContent
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.*
 import java.nio.file.Files
 import java.time.ZoneOffset
@@ -25,13 +32,25 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
     private var created = 0
     private var switches = 0
     private var switchResult = true
+    private var switchOutcome = ImeSwitchBack.Result.PREVIOUS
+    private var onSwitch: () -> Unit = {}
+    private val commits = mutableListOf<String>()
+    private var commitResult: Boolean? = true
+    private var onCommit: () -> Unit = {}
+    private val handoffs = FillHandoffStore()
+    private val launchedTokens = mutableListOf<String>()
+    private var launchThrows = false
+    private var onLaunch: () -> Unit = {}
+    private var observer: CoroutineScope? = null
     private lateinit var controller: ImeSessionController
     private lateinit var repository: LibraryRepository
     private lateinit var core: LibraryService
+    private lateinit var fillFactory: FillViewModelFactory
 
     @BeforeTest fun setMain() { Dispatchers.setMain(worker) }
     @AfterTest fun clear() {
         if (::controller.isInitialized) controller.destroy()
+        observer?.cancel()
         roots.forEach { it.destroy() }
         Dispatchers.resetMain()
     }
@@ -218,8 +237,9 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
         assertEquals(1, core.usage.useEvents(core.load("a.md").identity).size)
         assertTrue(form.state.value.shouldFinish)
         assertEquals(0, clipboard.reads)
-        assertEquals(0, switches) // N3 switches only on the explicit Switch keyboard action.
-        controller.backToPicker(epoch())
+        assertEquals(1, switches)
+        controller.hide()
+        controller.show(current)
         advanceUntilIdle()
         assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
     }
@@ -276,10 +296,302 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
         assertNotEquals(oldEpoch, epoch())
     }
 
+    @Test fun `fieldless row activation inserts once then learns before switching with no clipboard effects`() = runTest {
+        graph("ready")
+        show()
+        val identity = core.load("a.md").identity
+        val events = mutableListOf<String>()
+        onCommit = {
+            events += "commit"
+            assertTrue(core.usage.useEvents(identity).isEmpty())
+        }
+        onSwitch = {
+            events += "switch"
+            assertEquals(1, core.usage.useEvents(identity).size)
+        }
+        open()
+        val activeEpoch = epoch()
+        controller.insert(activeEpoch)
+        controller.copy(activeEpoch)
+        controller.fillChanged(activeEpoch)
+        advanceUntilIdle()
+        assertEquals(DeliveryMode.IME_COMMIT, models().fill.state.value.deliveryMode)
+        assertEquals(listOf("commit", "switch"), events)
+        assertEquals(1, commits.size)
+        assertTrue(commits.single() == "ready")
+        assertEquals(0, clipboard.reads)
+        assertEquals(0, clipboard.writes)
+        assertEquals(1, switches)
+    }
+
+    @Test fun `inline fields wait for explicit Insert and remember only after acceptance`() = runTest {
+        graph()
+        show()
+        open()
+        assertTrue(controller.state.value.insertEnabled)
+        val identity = core.load("a.md").identity
+        assertTrue(commits.isEmpty())
+        onCommit = {
+            assertTrue(core.values.rememberedValues(identity).isEmpty())
+            assertTrue(core.usage.useEvents(identity).isEmpty())
+        }
+        onSwitch = {
+            assertTrue(core.values.rememberedValues(identity)["text"] == "accepted")
+            assertEquals(1, core.usage.useEvents(identity).size)
+        }
+        controller.value(epoch(), "text", "accepted")
+        controller.insert(epoch())
+        controller.insert(epoch())
+        advanceUntilIdle()
+        assertEquals(1, commits.size)
+        assertEquals(0, clipboard.writes)
+        assertEquals(1, switches)
+    }
+
+    @Test fun `failed Insert has no learning or switch and explicit Copy completes learning before switch`() = runTest {
+        graph()
+        show()
+        open()
+        val identity = core.load("a.md").identity
+        commitResult = false
+        controller.insert(epoch())
+        controller.insert(epoch())
+        advanceUntilIdle()
+        assertEquals(FillFailure.DELIVERY, models().fill.state.value.failure)
+        assertFalse(controller.state.value.insertEnabled)
+        controller.value(epoch(), "text", "ready")
+        advanceUntilIdle()
+        assertFalse(controller.state.value.insertEnabled)
+        assertEquals(1, commits.size)
+        assertTrue(core.usage.useEvents(identity).isEmpty())
+        assertTrue(core.values.rememberedValues(identity).isEmpty())
+        assertEquals(0, clipboard.writes)
+        assertEquals(0, switches)
+        clipboard.onWrite = {
+            assertTrue(core.usage.useEvents(identity).isEmpty())
+            assertTrue(core.values.rememberedValues(identity).isEmpty())
+        }
+        onSwitch = {
+            assertEquals(1, core.usage.useEvents(identity).size)
+            assertTrue(core.values.rememberedValues(identity)["text"] == "ready")
+        }
+        controller.copy(epoch())
+        controller.copy(epoch())
+        advanceUntilIdle()
+        assertEquals(1, clipboard.writes)
+        assertEquals(1, commits.size)
+        assertEquals(1, switches)
+    }
+
+    @Test fun `final clipboard render with multiline in terminal offers Copy without commit or learning`() = runTest {
+        graph("{{clipboard}}")
+        current = ImeEditor(0x00080090, 0, Any())
+        show()
+        open()
+        assertFalse(models().fill.state.value.copyEnabled)
+        assertEquals(1, clipboard.reads)
+        clipboard.pending.single()("first\nsecond")
+        advanceUntilIdle()
+        assertEquals(FillFailure.DELIVERY, models().fill.state.value.failure)
+        assertFalse(controller.state.value.insertEnabled)
+        assertTrue(commits.isEmpty())
+        assertEquals(0, clipboard.writes)
+        assertEquals(0, switches)
+        assertTrue(core.usage.useEvents(core.load("a.md").identity).isEmpty())
+        controller.copy(epoch())
+        advanceUntilIdle()
+        assertTrue(clipboard.copied.single() == "first\nsecond")
+        assertEquals(1, switches)
+    }
+
+    @Test fun `ephemeral Insert has no remembered or usage writes and still switches once`() = runTest {
+        graph()
+        current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, Any())
+        show()
+        open()
+        controller.insert(epoch())
+        advanceUntilIdle()
+        assertEquals(1, commits.size)
+        assertEquals(1, switches)
+        assertEquals(0, clipboard.writes)
+        assertTrue(core.usage.useEvents(core.load("a.md").identity).isEmpty())
+        assertFalse(statePath.resolve("values.json").toFile().exists())
+    }
+
+    @Test fun `accepted Insert learning survives teardown and never switches another input session`() = runTest {
+        graph()
+        show()
+        open()
+        val identity = core.load("a.md").identity
+        val previous = models().fill
+        val oldEpoch = epoch()
+        onCommit = {
+            current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, Any())
+            controller.startInput(current)
+            controller.show(current)
+        }
+        controller.insert(oldEpoch)
+        controller.fillChanged(oldEpoch)
+        advanceUntilIdle()
+        assertEquals(1, commits.size)
+        assertEquals(FillPhase.CLOSED, previous.state.value.phase)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+        assertEquals(LearningPolicy.EPHEMERAL, models().fill.state.value.learningPolicy)
+        assertEquals(1, core.usage.useEvents(identity).size)
+        assertTrue(core.values.rememberedValues(identity)["text"] == "ready")
+        assertEquals(0, switches)
+    }
+
+    @Test fun `old endpoint rechecks changed connection and latest learning metadata before commit`() = runTest {
+        graph()
+        show()
+        open()
+        val previous = models().fill
+        current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, Any())
+        previous.insert()
+        advanceUntilIdle()
+        assertTrue(commits.isEmpty())
+        assertEquals(0, clipboard.writes)
+        assertEquals(0, switches)
+        assertEquals(FillPhase.CLOSED, previous.state.value.phase)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+    }
+
+    @Test fun `persistence warnings keep Done available and never replay accepted insertion`() = runTest {
+        graph()
+        show()
+        open()
+        Files.createDirectories(statePath.resolve("values.json"))
+        controller.insert(epoch())
+        advanceUntilIdle()
+        assertEquals(FillPhase.DELIVERED, models().fill.state.value.phase)
+        assertTrue(FillWarning.REMEMBERED_VALUES_NOT_SAVED in models().fill.state.value.warnings)
+        assertEquals(0, switches)
+        controller.insert(epoch())
+        controller.copy(epoch())
+        controller.backToPicker(epoch())
+        advanceUntilIdle()
+        assertEquals(1, commits.size)
+        assertEquals(0, clipboard.writes)
+        assertEquals(1, switches)
+    }
+
+    @Test fun `Search handoff switches before launch carries no endpoint and own Fill has no recursive picker`() = runTest {
+        graph()
+        show()
+        val oldEpoch = epoch()
+        switchOutcome = ImeSwitchBack.Result.PICKER
+        val events = mutableListOf<String>()
+        onSwitch = { events += "switch" }
+        onLaunch = { events += "launch" }
+        controller.handoff(oldEpoch)
+        controller.handoff(oldEpoch)
+        assertEquals(listOf("switch", "launch"), events)
+        val snapshot = handoffs.consume(launchedTokens.single())!!
+        assertNull(snapshot.form)
+        assertNull(handoffs.consume(launchedTokens.single()))
+        val activity = fillFactory.create(FillSession())
+        root().store.put("activity", activity)
+        fillFactory.restoreHandoff(activity, snapshot)
+        assertEquals(DeliveryMode.COPY, activity.state.value.deliveryMode)
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, Any(), inFillActivity = true)
+        controller.startInput(current)
+        controller.show(current)
+        controller.handoff(epoch())
+        controller.insert(epoch())
+        assertTrue(controller.state.value.inFillActivity)
+        assertNull(controller.state.value.models)
+        assertEquals(1, launchedTokens.size)
+        assertEquals(1, created)
+        assertEquals(0, clipboard.reads)
+        assertEquals(0, clipboard.writes)
+        assertTrue(commits.isEmpty())
+        controller.switch(epoch())
+        assertEquals(2, switches)
+    }
+
+    @Test fun `Fill handoff waits for builtin completion and preserves held values and ephemeral Copy policy`() = runTest {
+        graph("{{text}}/{{clipboard}}")
+        current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, Any())
+        show()
+        open()
+        controller.handoff(epoch())
+        assertEquals(0, switches)
+        assertTrue(launchedTokens.isEmpty())
+        clipboard.pending.single()("held")
+        advanceUntilIdle()
+        controller.value(epoch(), "text", "value")
+        controller.handoff(epoch())
+        val snapshot = handoffs.consume(launchedTokens.single())!!
+        assertEquals(LearningPolicy.EPHEMERAL, snapshot.learning)
+        val activity = fillFactory.create(FillSession())
+        root().store.put("activity", activity)
+        fillFactory.restoreHandoff(activity, snapshot)
+        activity.setForeground(true)
+        assertEquals(DeliveryMode.COPY, activity.state.value.deliveryMode)
+        assertTrue((activity.state.value.preview as FillPreview.Rendered).text == "value/held")
+        activity.insert()
+        activity.copy()
+        advanceUntilIdle()
+        assertTrue(clipboard.copied.single() == "value/held")
+        assertEquals(1, clipboard.reads)
+        assertEquals(1, switches)
+        assertTrue(commits.isEmpty())
+        assertTrue(core.usage.useEvents(core.load("a.md").identity).isEmpty())
+        assertFalse(statePath.resolve("values.json").toFile().exists())
+    }
+
+    @Test fun `unavailable picker retains the form and a failed activity launch clears its payload for retry`() = runTest {
+        graph()
+        show()
+        open()
+        switchResult = false
+        controller.handoff(epoch())
+        assertTrue(controller.state.value.switchUnavailable)
+        assertTrue(launchedTokens.isEmpty())
+        assertEquals(FillPhase.EDITING, models().fill.state.value.phase)
+        switchResult = true
+        launchThrows = true
+        controller.handoff(epoch())
+        assertTrue(controller.state.value.handoffFailed)
+        assertEquals(FillPhase.EDITING, models().fill.state.value.phase)
+        launchThrows = false
+        controller.handoff(epoch())
+        assertEquals(1, launchedTokens.size)
+        assertNotNull(handoffs.consume(launchedTokens.single()))
+        assertEquals(0, clipboard.writes)
+        assertTrue(commits.isEmpty())
+    }
+
+    @Test fun `successful handoff tolerates keyboard departure but a new target during switching cancels launch`() = runTest {
+        graph()
+        show()
+        open()
+        onSwitch = { controller.unbind() }
+        controller.handoff(epoch())
+        assertEquals(1, launchedTokens.size)
+        assertNotNull(handoffs.consume(launchedTokens.single()))
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, Any())
+        controller.startInput(current)
+        controller.show(current)
+        advanceUntilIdle()
+        onSwitch = {
+            current = ImeEditor(TYPE_CLASS_TEXT, 0, Any())
+            controller.startInput(current)
+            controller.show(current)
+        }
+        controller.handoff(epoch())
+        advanceUntilIdle()
+        assertEquals(1, launchedTokens.size)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+        assertTrue(commits.isEmpty())
+        assertEquals(0, clipboard.writes)
+    }
+
     private lateinit var libraryPath: java.nio.file.Path
     private lateinit var statePath: java.nio.file.Path
 
-    private suspend fun graph(body: String = "ready") {
+    private suspend fun graph(body: String = "---\nfields:\n  text:\n    default: ready\n---\n{{text}}") {
         val directory = temporary
         libraryPath = directory.resolve("library")
         statePath = directory.resolve("state")
@@ -291,18 +603,45 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
         core = library(prompts = prompts, state = AndroidStateStore(statePath.toFile()))
         repository = LibraryRepository(core, EditingService(core), prompts, worker)
         repository.refresh()
-        val fillFactory = FillViewModelFactory(repository, FillService(core, clipboard, { ZoneOffset.UTC }), CopyTextDelivery(clipboard))
+        fillFactory = FillViewModelFactory(repository, FillService(core, clipboard, { ZoneOffset.UTC }), CopyTextDelivery(clipboard))
         controller = ImeSessionController({ root, session ->
             created++
             val owner = root as Root
             val library = LibraryViewModel(repository, worker)
-            val fill = fillFactory.create(session, TextDelivery { mode, text ->
-                if (!session.isActive()) TextDeliveryResult.STALE else CopyTextDelivery(clipboard).deliver(mode, text)
-            })
+            val gateway = object : ImeDeliveryGateway {
+                override fun editor() = current
+                override fun commitText(editor: ImeEditor, text: String, newCursorPosition: Int): Boolean? {
+                    assertTrue(editor.matches(current))
+                    assertEquals(1, newCursorPosition)
+                    commits += text
+                    onCommit()
+                    return commitResult
+                }
+            }
+            val fill = fillFactory.create(session, ImeTextDelivery(gateway, session.isActive, CopyTextDelivery(clipboard)))
             owner.store.put("library", library)
             owner.store.put("fill", fill)
             ImeModels(library, fill)
-        }, { current }, { switches++; switchResult })
+        }, { current }, { isCurrent ->
+            if (!isCurrent()) ImeSwitchBack.Result.STALE else {
+                switches++
+                onSwitch()
+                if (switchResult) switchOutcome else ImeSwitchBack.Result.UNAVAILABLE
+            }
+        }, { handoff ->
+            FillHandoffLauncher(handoffs) { token ->
+                if (launchThrows) throw IllegalStateException("Unavailable")
+                launchedTokens += token
+                onLaunch()
+            }.open(handoff)
+        })
+        observer = CoroutineScope(SupervisorJob() + worker).also { scope ->
+            scope.launch {
+                controller.state.collectLatest { state ->
+                    state.models?.fill?.state?.collect { controller.fillChanged(state.generation) }
+                }
+            }
+        }
     }
 
     private fun root() = Root().also(roots::add)

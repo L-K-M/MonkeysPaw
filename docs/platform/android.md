@@ -432,3 +432,57 @@ and [trust-manager factory](https://android.googlesource.com/platform/prebuilts/
 support the explicit-store factory choice; source inspection and JVM results
 do not replace these device checks. Required missing device evidence keeps
 M10 acceptance open (§23 P20).
+
+## M9 IME insertion and switch-back: NOT RUN
+
+N4 adds JVM fake-gateway proof and a release build gate. These do not execute
+an Android input connection, keyboard history, Compose attachment or activity
+handoff. No device/emulator insertion result is claimed here. Use the final
+signed, shrunk release APK and keep M9 open until the required cells pass.
+
+Record each result with main commit, APK SHA-256, signer/build type, device
+model/API, previous keyboard/version/subtype, target app/version/editor type,
+scenario, expected/actual behavior, tester and date. Use harmless local test
+strings; collect no prompt content, typed text, selections or target context.
+
+| Environment | Previous keyboard | Chrome | ChatGPT | Claude | Termux | Details |
+|---|---|---|---|---|---|---|
+| Android 14 / API 34 | Gboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Android 14 / API 34 | Samsung Keyboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Android 15 / API 35 | Gboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Android 15 / API 35 | Samsung Keyboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Android 16 / API 36 | Gboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Android 16 / API 36 | Samsung Keyboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Below API 34, preferably 26/27 | Gboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+| Below API 34, preferably 26/27 | Samsung Keyboard | NOT RUN | NOT RUN | NOT RUN | NOT RUN | |
+
+For each cell, test fieldless tap and explicit Insert with default/remembered
+text and inline choices: exact text once, previous keyboard/subtype restored,
+no clipboard replacement on accepted Insert, no submission or execution.
+In real multiline composers, all supported line separators remain literal.
+In single-line fields and both Termux null-like modes, multiline renders
+offer explicit Copy and manual paste; single-line Termux Insert never sends
+Enter. A platform true return alone does not establish displayed insertion.
+
+Also record these cases for each OS/keyboard pair:
+
+- All four text/numeric password variants hide prompts; no render or
+  clipboard read. Missing connection/metadata and other classes offer Copy.
+- Cold/warm entry, used clipboard builtin sampled once after row activation,
+  duplicate taps, Back/cancel, hide/reopen, rotation/landscape and large fonts.
+- Change the input target or learning flag while form/clipboard/learning work
+  is pending: no old insertion, Copy or delayed switch in the new session.
+  Accepted bookkeeping finishes once; Ephemeral performs no value/usage writes.
+- Search/Fill handoff restores the completed snapshot and policy in a Copy
+  activity, with the prior typing keyboard or system picker shown first.
+  Cancel the picker and select our IME in the Fill editor: Switch keyboard
+  stays available; no recursive handoff or insertion into our own editor.
+- Previous-keyboard failure falls back to the picker; unavailable picker
+  leaves a visible Switch keyboard action and navigation-bar instructions.
+  API 26/27 uses the IME window token. If only 28–33 hardware is tested,
+  the legacy-device switch proof remains NOT RUN.
+- Failed commit offers explicit Copy without retrying commitText; accepted
+  persistence failure warns without replay and Done permits switching.
+
+Selection/share/setup and final milestone closure are later slices. Preserve
+the M8 and Unicode evidence above when adding their owner-run results.

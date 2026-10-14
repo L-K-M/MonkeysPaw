@@ -27,7 +27,7 @@ internal class ImeTextDelivery(
         val editor = gateway.editor()
         if (!isActive()) return TextDeliveryResult.STALE
         val policy = ImeInputPolicy.classify(editor.inputType, editor.imeOptions)
-        if (!policy.promptsAllowed) return TextDeliveryResult.REFUSED
+        if (!policy.promptsAllowed || editor.inFillActivity) return TextDeliveryResult.REFUSED
 
         if (mode == DeliveryMode.COPY) {
             val previous = attempt
