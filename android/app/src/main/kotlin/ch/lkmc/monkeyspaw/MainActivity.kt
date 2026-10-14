@@ -12,6 +12,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
+import ch.lkmc.monkeyspaw.data.AndroidKeyboardTileSetup
 import ch.lkmc.monkeyspaw.entry.FillActivity
 import ch.lkmc.monkeyspaw.entry.FillLauncher
 import ch.lkmc.monkeyspaw.ui.editor.EditorScreen
@@ -22,6 +23,10 @@ import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferScreen
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferUiState
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferViewModel
+import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupError
+import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupScreen
+import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupViewModel
+import ch.lkmc.monkeyspaw.ui.setup.SettingsScreen
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -29,6 +34,8 @@ class MainActivity : ComponentActivity() {
     private val seedOffer: SeedOfferViewModel by viewModels()
     private val library: LibraryViewModel by viewModels()
     private val editor: EditorViewModel by viewModels()
+    private val setup: KeyboardTileSetupViewModel by viewModels()
+    private val keyboardTileSetup by lazy { AndroidKeyboardTileSetup(this) }
     private val fillLauncher = FillLauncher { path ->
         startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
     }
@@ -36,6 +43,12 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         fillLauncher.resumed()
+        setup.resumed(keyboardTileSetup)
+    }
+
+    override fun onPause() {
+        setup.paused()
+        super.onPause()
     }
 
     override fun onStart() {
@@ -54,7 +67,16 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Scaffold { padding ->
                     val startup = seedOffer.state.collectAsStateWithLifecycle().value
-                    if (startup == SeedOfferUiState.Ready) {
+                    val setupState = setup.state.collectAsStateWithLifecycle().value
+                    if (setupState.loading || setupState.visible || setupState.error == KeyboardTileSetupError.LOAD) {
+                        KeyboardTileSetupScreen(state = setupState, onEnable = setup::enableKeyboard,
+                            onSelect = setup::selectKeyboard, onAddTile = setup::addTile,
+                            onCheckStatus = setup::checkStatus, onContinue = setup::continueStep,
+                            onSkip = setup::skip, onRetry = setup::retry, modifier = Modifier.padding(padding))
+                    } else if (setupState.settingsOpen) {
+                        SettingsScreen(onKeyboardTileSetup = setup::reopen, onBack = setup::closeSettings,
+                            modifier = Modifier.padding(padding))
+                    } else if (startup == SeedOfferUiState.Ready) {
                         val editing = editor.state.collectAsStateWithLifecycle().value
                         if (editing.isOpen) EditorScreen(
                             state = editing, onEdit = editor::edit, onNewPath = editor::setNewPath,
@@ -74,6 +96,7 @@ class MainActivity : ComponentActivity() {
                             onOpen = ::openFill,
                             onEdit = { editor.open(it) },
                             onCreate = { editor.createDraft() },
+                            onSettings = setup::openSettings,
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,
