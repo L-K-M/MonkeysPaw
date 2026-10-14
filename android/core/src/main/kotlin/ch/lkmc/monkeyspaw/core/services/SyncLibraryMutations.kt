@@ -198,11 +198,12 @@ internal class SyncLibraryMutations(private val library: LibraryService, private
     fun apply(edit: SyncDirectoryEdit): SyncLibraryMutationOutcome {
         edit.validate()
         return library.withSyncLock { files ->
+            val directories = try { directoryIdentitiesLocked() }
+            catch (_: LibraryError.Conflict) { return@withSyncLock SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT }
             if (edit.kind == SyncDirectoryEdit.Kind.RESERVE) {
-                return@withSyncLock if (vacantDirectory(edit.source, files)) SyncLibraryMutationOutcome.APPLIED
+                return@withSyncLock if (vacantDirectory(edit.source, files, directories)) SyncLibraryMutationOutcome.APPLIED
                     else SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT
             }
-            val directories = directoryIdentitiesLocked()
             if (edit.kind == SyncDirectoryEdit.Kind.REMOVE_EMPTY) {
                 val identity = directories[edit.source]
                 if (identity == null) {
@@ -262,9 +263,10 @@ internal class SyncLibraryMutations(private val library: LibraryService, private
     fun verify(edit: SyncDirectoryEdit): SyncLibraryMutationOutcome {
         edit.validate()
         return library.withSyncLock { files ->
-            val verified = if (edit.kind == SyncDirectoryEdit.Kind.RESERVE) vacantDirectory(edit.source, files)
+            val directories = try { directoryIdentitiesLocked() }
+            catch (_: LibraryError.Conflict) { return@withSyncLock SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT }
+            val verified = if (edit.kind == SyncDirectoryEdit.Kind.RESERVE) vacantDirectory(edit.source, files, directories)
             else {
-                val directories = directoryIdentitiesLocked()
                 if (edit.kind == SyncDirectoryEdit.Kind.REMOVE_EMPTY) directories[edit.source] == null && files.stamp(edit.source) == null
                 else directories[edit.destination] == edit.identity && directories[edit.source] == null &&
                     (edit.intermediate == null || directories[edit.intermediate] == null)
@@ -273,8 +275,8 @@ internal class SyncLibraryMutations(private val library: LibraryService, private
         }
     }
 
-    private fun vacantDirectory(path: String, files: PromptStore): Boolean {
-        val paths = operations.listFiles().map { it.relativePath } + directoryIdentitiesLocked().keys
+    private fun vacantDirectory(path: String, files: PromptStore, directories: Map<String, FileStamp>): Boolean {
+        val paths = operations.listFiles().map { it.relativePath } + directories.keys
         return paths.none { syncPathKey(it) == syncPathKey(path) } && files.stamp(path) == null
     }
 
@@ -348,7 +350,8 @@ internal class SyncLibraryMutations(private val library: LibraryService, private
 
     fun canReplan(step: SyncDirectoryStep): Boolean {
         if (step.completed || step.edit.kind != SyncDirectoryEdit.Kind.RENAME) return true
-        if (directoryIdentities()[step.edit.source] != step.edit.identity) return false
+        val directories = try { directoryIdentities() } catch (_: LibraryError.Conflict) { return false }
+        if (directories[step.edit.source] != step.edit.identity) return false
         val stores = library.syncKeyedStores()
         return step.migrations.all { migration -> stores.firstOrNull { it.syncKind == migration.store }
             ?.isSyncMigrationUnstarted(migration) == true }

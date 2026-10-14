@@ -10,6 +10,35 @@ import kotlin.test.*
 class SyncDirectoryJournalTest {
     private val v = SyncTestValues
 
+    @Test fun vanishedDirectoryWalksReplanApplyAndVerifyWithoutClaimingAReservation() {
+        for (kind in SyncDirectoryEdit.Kind.entries) for (code in listOf(SyncFileFailureCode.NOT_FOUND, SyncFileFailureCode.CHANGED)) {
+            val h = SyncJournalHarness()
+            h.libraryOperations.putDirectory("Groups/Team")
+            val edit = if (kind == SyncDirectoryEdit.Kind.RESERVE) SyncDirectoryEdit(kind, "Groups/New")
+                else SyncDirectoryEdit(kind, "Groups/Team", h.libraryOperations.directoryIdentity("Groups/Team"),
+                    if (kind == SyncDirectoryEdit.Kind.RENAME) "Groups/New" else null)
+            h.libraryOperations.onOperation = { if (it == "directories:Groups") throw SyncFileOperationError(code) }
+            assertEquals(SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT, h.mutations.apply(edit))
+            assertEquals(SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT, h.mutations.verify(edit))
+            assertEquals(SyncApplyOutcome.ReplanAsConflict(edit.id), h.journal.apply(h.plan(directories = listOf(edit))))
+            assertEquals(h.expected, h.states.snapshot.value)
+            assertFalse(h.libraryOperations.calls.any { it.startsWith("rename-directory:") || it.startsWith("remove-directory:") })
+            h.libraryOperations.onOperation = null
+            assertEquals(SyncApplyOutcome.Committed, h.journal.replay())
+        }
+    }
+
+    @Test fun incompleteDirectoryMigrationCannotReplanWhenTheSourceWalkVanishes() {
+        val (h, plan) = renameFixture()
+        val step = SyncDirectoryStep(plan.directories.single(), h.mutations.prepareMigrations(plan.directories.single()))
+        h.libraryOperations.onOperation = { if (it == "directories:Groups") throw SyncFileOperationError(SyncFileFailureCode.NOT_FOUND) }
+        assertFalse(h.mutations.canReplan(step))
+        val error = SyncFileOperationError(SyncFileFailureCode.NOT_FOUND, SyncFileMutationEffect.APPLIED)
+        h.libraryOperations.onOperation = { if (it == "directories:Groups") throw error }
+        assertSame(error, assertFailsWith<SyncFileOperationError> { h.mutations.apply(step.edit) })
+        assertSame(error, assertFailsWith<SyncFileOperationError> { h.mutations.verify(step.edit) })
+    }
+
     @Test fun caseOnlyRenameReplaysFromTheIntermediateAndMigratesIdlessKeysExactlyOnce() {
         val (h, plan) = renameFixture(caseOnly = true)
         val edit = plan.directories.single()
