@@ -194,7 +194,8 @@ class HistoryStore internal constructor(private val files: StateStore, private v
             originals.sortedWith { a, b ->
                 Utf8Order.compare(a.relativePath.encodeToByteArray(), b.relativePath.encodeToByteArray())
             }.map { file ->
-                val original = files.read(file.relativePath)
+                val original = try { files.read(file.relativePath) }
+                    catch (_: StoreError.NotFound) { throw LibraryError.Conflict }
                 if (files.stamp(file.relativePath) != file.stamp) throw LibraryError.Conflict
                 if (original.size > Limits.syncRecordMaxBytes) throw SyncError.InvalidState
                 val suffix = file.relativePath.removePrefix(prefix)

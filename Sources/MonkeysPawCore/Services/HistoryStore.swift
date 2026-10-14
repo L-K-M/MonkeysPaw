@@ -92,9 +92,14 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
 
     private func provenance(at path: String, bytes: Data) throws -> PromptProvenance? {
         guard try files.stamp(at: path) != nil else { return nil }
-        let record: ProvenanceRecord
-        do { record = try JSONDecoder().decode(ProvenanceRecord.self, from: files.read(at: path)) }
+        do { return try provenance(record: files.read(at: path), bytes: bytes) }
         catch let error as FileStoreError { throw error }
+        catch { throw LibraryError.invalidProvenance }
+    }
+
+    private func provenance(record data: Data, bytes: Data) throws -> PromptProvenance? {
+        let record: ProvenanceRecord
+        do { record = try JSONDecoder().decode(ProvenanceRecord.self, from: data) }
         catch { throw LibraryError.invalidProvenance }
         let formatter = provenanceFormatter()
         guard record.version == 1, record.origin == PromptProvenance.Origin.llm.rawValue,
@@ -207,13 +212,15 @@ final class HistoryStore: PromptKeyedStore, SyncKeyedStore {
             throw LibraryError.keyedStateConflict
         }
         return try originals.sorted { RelativePath($0.relativePath) < RelativePath($1.relativePath) }.map { file in
-            let original = try files.read(at: file.relativePath)
+            let original: Data
+            do { original = try files.read(at: file.relativePath) }
+            catch FileStoreError.notFound { throw LibraryError.conflict }
             guard try files.stamp(at: file.relativePath) == file.stamp else { throw LibraryError.conflict }
             guard original.count <= Limits.syncRecordMaxBytes else { throw SyncError.invalidState }
             let suffix = String(decoding: file.relativePath.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
             var replacement = original
             if suffix == "head.json", let bytes, let originalBytes,
-               try provenance(at: file.relativePath, bytes: originalBytes) != nil {
+               try provenance(record: original, bytes: originalBytes) != nil {
                 // Adoption changes the ID/representation of the same prompt.
                 // Rebind only attribution still bound to the original bytes;
                 // external edits never inherit it and revision hashes stay exact.

@@ -111,6 +111,59 @@ final class SyncKeyedMigrationTests: XCTestCase {
         XCTAssertEqual(try files.read(at: to), bytes)
     }
 
+    func testHistoryPreflightTreatsADeletedListedFileAsConflictBeforePublication() throws {
+        let files = MemoryFileStore()
+        let store = HistoryStore(files: files)
+        let source = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        let destination = PromptIdentity.assigned(SyncTestValues.groupPrompt)
+        let path = "history/" + (try source.storageKey) + "/revision.md"
+        let target = "history/" + (try destination.storageKey) + "/revision.md"
+        try files.writePrivate(Data("old".utf8), at: path)
+        files.onRead = { current in
+            guard current == path else { return }
+            files.onRead = nil
+            try files.delete(at: path)
+        }
+        let writes = files.writeCount
+
+        XCTAssertThrowsError(try store.prepareSyncMigration(from: source, to: destination,
+                                                           rebindingHeadTo: nil, originalBytes: nil)) {
+            XCTAssertEqual($0 as? LibraryError, .conflict)
+        }
+        XCTAssertEqual(files.writeCount, writes)
+        XCTAssertNil(try files.stamp(at: target))
+        XCTAssertTrue(try store.prepareSyncMigration(from: source, to: destination,
+                                                    rebindingHeadTo: nil, originalBytes: nil).isEmpty)
+    }
+
+    func testHistoryAdoptionRebindsCapturedHeadProvenanceWithoutASecondRead() throws {
+        let files = MemoryFileStore()
+        let store = HistoryStore(files: files)
+        let source = PromptIdentity.assigned(SyncTestValues.personalPrompt)
+        let destination = PromptIdentity.assigned(SyncTestValues.groupPrompt)
+        let original = Data("old bytes".utf8)
+        let replacement = Data("server bytes".utf8)
+        let metadata = PromptProvenance(timestamp: Date(timeIntervalSince1970: 1.234),
+                                        providerHost: "example.test", model: "model", usage: nil)
+        try store.setHeadProvenance(metadata, for: source, bytes: original)
+        let path = "history/" + (try source.storageKey) + "/head.json"
+        var reads = 0
+        files.onRead = { current in
+            guard current == path else { return }
+            reads += 1
+            if reads == 2 { try files.delete(at: path) }
+        }
+        let writes = files.writeCount
+
+        let migration = try XCTUnwrap(store.prepareSyncMigration(from: source, to: destination,
+            rebindingHeadTo: replacement, originalBytes: original).first)
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(files.writeCount, writes)
+        guard case .file(let move) = migration.change else { return XCTFail("Expected a history file migration") }
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: move.destinationBytes) as? [String: Any])
+        XCTAssertEqual(record["contentSHA256"] as? String, SHA256.hexDigest(replacement))
+    }
+
     func testUsageMigrationRejectsAChangedDestinationAndKeepsCache() throws {
         let files = MemoryFileStore()
         let store = UsageStore(files: files, clock: LibraryClock())

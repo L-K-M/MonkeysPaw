@@ -136,7 +136,9 @@ class SyncLibraryMutationsTest {
             return h to publication(h, old)
         }
         val (initial, initialEdit) = rig()
-        initial.mutations.apply(initialEdit, SyncLibraryMutations.Attempt.FIRST)
+        assertEquals(SyncLibraryMutationOutcome.APPLIED,
+            initial.mutations.apply(initialEdit, SyncLibraryMutations.Attempt.FIRST).outcome)
+        assertTrue(initial.operations.calls.isNotEmpty())
         for (cut in 1..initial.operations.calls.size) {
             val (h, edit) = rig()
             h.operations.failAt = cut

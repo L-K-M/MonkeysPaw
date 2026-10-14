@@ -190,6 +190,21 @@ class SyncKeyedMigrationTest {
         assertTrue(h.state.isPrivate("$target/nested/opaque.bin"))
     }
 
+    @Test fun historyPreflightTreatsADeletedListedFileAsConflictBeforePublication() {
+        val h = ServiceHarness()
+        val from = PromptIdentity.at("a.md")
+        val path = "history/${from.storageKey}/revision.md"
+        val target = "history/${v.personalID.storageKey}/revision.md"
+        h.state.put("old", path)
+        h.state.onRead = { if (it == path) { h.state.onRead = null; h.state.delete(path) } }
+        val writes = h.state.writes.size
+
+        assertFailsWith<LibraryError.Conflict> { h.history.sync.prepareSyncMigration(from, v.personalID) }
+        assertEquals(writes, h.state.writes.size)
+        assertNull(h.state.stamp(target))
+        assertTrue(h.history.sync.prepareSyncMigration(from, v.personalID).isEmpty())
+    }
+
     @Test fun historyPreflightDetectsIncarnationChangesAndOversizedBytes() {
         val h = ServiceHarness()
         val from = PromptIdentity.at("a.md")
