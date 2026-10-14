@@ -105,15 +105,25 @@ fields.**
 
 Rules:
 
-- **Read `EditorInfo.inputType` before committing.**
-  - Multi-line text goes in only when `TYPE_TEXT_FLAG_MULTI_LINE` is set.
-  - For single-line fields and `TYPE_NULL` (terminals such as Termux), only a
-    single-line result is committed. Otherwise the picker offers "Copy
-    instead".
-  - Enter is never sent: in a chat composer it submits, and in a terminal it
-    executes.
-- **Password fields** get no prompts.
-- **A null `InputConnection`** falls back to copy.
+- **Classify metadata before opening a prompt and recheck before delivery**
+  ([§22 H4/H5](22-m9-m11-decisions.md)). Mask class and variation separately;
+  apply these rows in order:
+
+  | Condition | Decision |
+  |---|---|
+  | Text password, visible-password or web-password; numeric password | Hide prompts and offer Switch keyboard, with no render, capture, clipboard or delivery effects. Password variations match only their corresponding class. |
+  | Retired session, changed target or changed connection | Cancel the old attempt without delivery, learning or switch-back. |
+  | Invalid/future prompt, unresolved builtin or invalid field value | Block delivery. |
+  | Missing `EditorInfo` or connection, with a valid render | Offer explicit Copy. |
+  | Non-password text class with `TYPE_TEXT_FLAG_MULTI_LINE` | Allow single- and multi-line Insert. |
+  | Text without that flag, or masked class zero | Allow single-line Insert; multi-line offers Copy. `TYPE_TEXT_FLAG_IME_MULTI_LINE` alone grants no multi-line permission. Class zero includes `TYPE_NULL` and `0x00080090`. |
+  | Other classes, including number, phone, date/time and unknown | Offer Copy without coercing the result. |
+
+  Multi-line detection checks the final render, including fields and builtins,
+  for LF, CR, CRLF, VT, FF, NEL, U+2028 and U+2029. Preserve the text exactly.
+  Insert uses one `commitText(result, 1)` only; never send Enter, key events or
+  an editor action. Action flags never change this decision. A failed commit
+  offers explicit Copy while the session remains active, with no automatic retry.
 - **Free-text fields** open the fill form ("Fill in Monkey's Paw"),
   continuing as flow B.
 
@@ -133,10 +143,19 @@ Rules:
 **C. Text-selection action (`ACTION_PROCESS_TEXT`).**
 
 - The user selects text, then picks "Monkey's Paw" from the selection
-  toolbar. The selection is offered as the value of one field: the first
-  `multiline` field by default, and the user can switch.
+  toolbar. Capture uses effective fields in body first-use order: the first
+  `multiline`, else the first explicit or implicit text field. Choices and
+  builtins never receive capture; a fieldless prompt has no assignment.
+  The user can switch fields or ignore capture. User edits override capture,
+  which overrides remembered/default prefills; moving capture restores an
+  unedited field's prior prefill. A new prompt recomputes the assignment;
+  any retained edits belong to that prompt's in-memory form.
 - If the field is editable, the result replaces the selection in place
   (`EXTRA_PROCESS_TEXT`). Otherwise it is copied.
+- Validate the action, exact `text/plain` MIME and nonempty `CharSequence`.
+  Missing or mistyped `EXTRA_PROCESS_TEXT_READONLY` means read-only; only
+  Boolean false permits a replacement result. Explicit Copy or cancel leaves
+  the caller's selection unchanged ([§22 H8](22-m9-m11-decisions.md)).
 - Coverage: Chrome (including editable web fields), `EditText` apps, and
   Compose apps on foundation ≥ 1.9. It needs a non-empty selection, so it is
   a bonus path, never the primary one.
@@ -144,6 +163,14 @@ Rules:
 **D. Share target (`ACTION_SEND`).** Shared text either fills a field of a
 chosen prompt (then flow B), or is saved as a new prompt. It is input
 capture only, with no way back to the sending field.
+
+Both capture flows strip spans to a plain-text snapshot, retain whitespace,
+braces and line breaks, and reject malformed Unicode or text above the
+inclusive `Limits.capturedTextCapBytes` UTF-8 bound (256 KiB), without
+truncation. A share accepts only `ACTION_SEND` and exact `text/plain`;
+HTML, subject, stream and URI payloads are ignored. Field assignment follows
+flow C and rendering remains single-pass. Creating a prompt starts an unsaved
+body draft; only explicit Save persists it ([§22 H7/H9](22-m9-m11-decisions.md)).
 
 **Onboarding** (first run, one screen per step, each skippable):
 

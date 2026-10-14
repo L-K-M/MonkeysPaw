@@ -11,8 +11,15 @@
 | Injection surface | Keystrokes are injected only right after a user hotkey and a pick. D-Bus actions are on the session bus (same user). GNOME keybinding writes touch only rows named `Monkey's Paw:`. |
 | LLM output | Treated as data: parsed, validated, diffed, applied only on Accept. Never executed. |
 | Transport | §7.1 rules for LLM providers. The sync client refuses redirects and requires HTTPS except on loopback and private ranges. |
-| Android keyboard | Picker-only: it reads the field only to choose single- or multi-line insertion, never stores or sends what is typed, and offers no prompts in password fields. The system warning at enable time is explained beforehand. |
+| Android keyboard | Picker-only: reads only `inputType`, `imeOptions` and connection readiness, never target text. Offers no prompts in text/visible/web or numeric password fields. The system warning at enable time is explained beforehand. |
 | Android secrets | AES-256-GCM key in AndroidKeyStore (StrongBox when available); nothing in plain SharedPreferences. |
+
+`IME_FLAG_NO_PERSONALIZED_LEARNING` selects Ephemeral bookkeeping: no usage
+or remembered-value writes, including an activity handoff. It does not change
+insertion permission. Captured selection/share text and field overrides stay
+in memory; capture or preview never persists them. Normal successful delivery
+may remember only fields with `remember: true`. Never put capture in logs,
+saved state or navigation arguments ([§22 H7/H11](22-m9-m11-decisions.md)).
 
 `SecretStore` reports `keychain`, `secretService`, `environment` or `file`
 to the UI without displaying a stored value. Effective reads follow D9;

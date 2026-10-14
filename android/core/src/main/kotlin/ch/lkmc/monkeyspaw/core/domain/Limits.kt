@@ -4,6 +4,7 @@ package ch.lkmc.monkeyspaw.core.domain
 object Limits {
     const val maxPromptBytes = 256 * 1024
     const val importFileCapBytes = 256 * 1024
+    const val capturedTextCapBytes = 256 * 1024
     const val promptFormatVersion = 1
     const val ulidEntropyBytes = 10
     const val historyCapPerPrompt = 50
