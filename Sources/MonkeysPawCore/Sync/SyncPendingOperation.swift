@@ -99,6 +99,8 @@ final class SyncPendingOperationStore {
 
     var snapshot: SyncStoreSnapshot<SyncPendingOperation> { persistence.snapshot }
 
+    func recoverForAccountTransition() throws -> SyncPendingOperation? { try persistence.recover() }
+
     func save(_ pending: SyncPendingOperation) throws {
         try persistence.update { old in
             guard old == nil else { throw SyncError.invalidState }
