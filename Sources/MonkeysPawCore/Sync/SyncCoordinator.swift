@@ -134,6 +134,7 @@ final class SyncCoordinator {
     private let journal: SyncApplyJournal
     private let pending: SyncPendingOperationStore
     private let collector: SyncPullCollector
+    private let client: SyncHTTPClient
     private let push: SyncPushEngine
     private let device: String
     private let freshID: () throws -> ULID
@@ -157,6 +158,7 @@ final class SyncCoordinator {
         self.date = date
         self.now = now
         let client = client.permitting(permit)
+        self.client = client
         collector = SyncPullCollector(client: client, files: files, userID: binding.account.userID, now: now, permit: permit)
         push = try SyncPushEngine(binding: binding, client: client, states: states, pending: pending,
             mutations: mutations, journal: journal, ownership: { try accounts.binding(for: binding.root) },
@@ -171,7 +173,7 @@ final class SyncCoordinator {
             try permit.validate(record.nextState.binding)
             try requireCommit(journal.replay(permit: permit))
         }
-        let resumed = try await push.resume(availability: .available, accessGeneration: accessGeneration)
+        let resumed = try await performingPush { try await self.push.resume(availability: .available, accessGeneration: self.accessGeneration) }
         try permit.check()
         if try pending.load(for: permit.binding) != nil { throw SyncCoordinatorError.recoveryRequired }
         var result = SyncPassResult()
@@ -258,7 +260,9 @@ final class SyncCoordinator {
             phase(.pushing)
             for change in finalScan.changes {
                 try permit.check()
-                let outcome = try await push.push(change, availability: .available, accessGeneration: accessGeneration)
+                let outcome = try await performingPush {
+                    try await self.push.push(change, availability: .available, accessGeneration: self.accessGeneration)
+                }
                 try permit.check()
                 switch outcome {
                 case .acknowledged: result.counts.pushed += 1
@@ -308,7 +312,7 @@ final class SyncCoordinator {
             try permit.validate(record.nextState.binding)
             try requireCommit(journal.replay(permit: permit))
         }
-        _ = try await push.resume(availability: .available, accessGeneration: accessGeneration)
+        _ = try await performingPush { try await self.push.resume(availability: .available, accessGeneration: self.accessGeneration) }
         try permit.check()
         guard journal.pending == nil, try pending.load(for: permit.binding) == nil else {
             throw SyncCoordinatorError.recoveryRequired
@@ -316,6 +320,51 @@ final class SyncCoordinator {
     }
 
     private func ownership() throws -> SyncLibraryBinding? { try accounts.binding(for: permit.binding.root) }
+
+    private func performingPush(_ operation: () async throws -> SyncPushResult) async throws -> SyncPushResult {
+        do { return try await operation() }
+        catch SyncReconciliationError.requiresPolicy {
+            for _ in 0..<Limits.syncPreparationLimit {
+                guard let head = push.policyHead else { throw SyncCoordinatorError.recoveryRequired }
+                try permit.check()
+                var state = try currentState()
+                if case .group(let id) = head.scope, state?.groups[id] == nil {
+                    // /me supplies authoritative membership without reconciling
+                    // a new pull over the still-pending sent-version baseline.
+                    let me = try await client.me()
+                    guard me.user.id == permit.binding.account.userID.rawValue,
+                          me.groups.contains(where: { $0.groupID == id.rawValue }) else {
+                        throw SyncCoordinatorError.recoveryRequired
+                    }
+                    let local = try snapshot(state)
+                    let inventory = try SyncGroupFolders.inventory(binding: permit.binding, availability: .available,
+                        heldPaths: local.heldPaths, mutations: mutations)
+                    try commit(SyncGroupFolders.update(me.groups, state: state, ownership: ownership(),
+                        inventory: inventory, mutations: mutations))
+                    state = try currentState()
+                }
+                guard let state else { throw SyncCoordinatorError.recoveryRequired }
+                let local = try snapshot(state)
+                let path = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups)
+                let remote = SyncReconciliationRemote(id: head.id, scope: head.scope, path: head.path,
+                    libraryPath: path, rev: head.rev, bytes: head.bytes, hash: head.hash,
+                    mode: try SyncGroupFolders.mode(for: head.scope, groups: state.groups))
+                let key = try SyncNaming.pathKey(path)
+                let targets = try local.files.filter { try SyncNaming.pathKey(RelativePath($0.path)) == key }
+                let target = targets.first { RelativePath($0.path) != path || $0.identityKey != head.id.rawValue
+                    || local.heldPaths.contains(RelativePath($0.path)) }
+                if let target {
+                    let plan = SyncReconciliationPlan(mode: .normal, expectedState: state, nextState: state,
+                        operations: [], occupiedPaths: Set(local.files.map { RelativePath($0.path) }),
+                        localIdentities: try Set(local.files.map { try $0.identity }))
+                    try relocate(target, remote: remote, plan: plan, local: local)
+                }
+                do { return try await push.resume(availability: .available, accessGeneration: accessGeneration) }
+                catch SyncReconciliationError.requiresPolicy { continue }
+            }
+            throw SyncCoordinatorError.noProgress
+        }
+    }
 
     private func retryable(_ change: SyncLocalChange, state: SyncState?) throws -> Bool {
         let identity: PromptIdentity

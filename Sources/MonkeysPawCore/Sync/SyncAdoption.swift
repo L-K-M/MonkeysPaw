@@ -162,14 +162,17 @@ enum SyncAdoption {
                 transition: SyncIdentityTransition(from: identity, to: destination), mode: remote.mode, kind: .adopt,
                 markerIssue: markers.issue))
         } else {
-            // A case-insensitive filesystem may resolve the alternate spelling
-            // to the source. Y9 must temporarily relocate it before replanning.
-            guard try mutations.read(at: remote.libraryPath) == nil else { throw SyncReconciliationError.requiresPolicy }
-            edits.append(try mutations.publication(remote.bytes, at: remote.libraryPath, expecting: nil,
-                transition: SyncIdentityTransition(from: identity == destination ? nil : identity, to: destination),
+            let alias = try mutations.read(at: remote.libraryPath)
+            guard alias == nil || (alias?.stamp == source.stamp && alias?.bytes == source.bytes) else {
+                throw SyncReconciliationError.requiresPolicy
+            }
+            // The matching incarnation proves both spellings resolve to one
+            // file. Replace that entry and never trash its old alias afterward.
+            edits.append(try mutations.publication(remote.bytes, at: remote.libraryPath, expecting: alias,
+                transition: SyncIdentityTransition(from: identity == destination && alias == nil ? nil : identity, to: destination),
                 mode: remote.mode, kind: .adopt, markerIssue: markers.issue,
-                adoptingSource: identity == destination ? nil : source))
-            edits.append(try mutations.trash(source))
+                adoptingSource: identity == destination && alias == nil ? nil : source))
+            if alias == nil { edits.append(try mutations.trash(source)) }
         }
         try next.validate()
         return SyncApplyPlan(expectedState: state, nextState: next, edits: edits)
