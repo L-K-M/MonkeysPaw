@@ -89,6 +89,28 @@ final class DeliveryServiceTests: XCTestCase {
         XCTAssertNil(h.service.lastDelivery)
         XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
 
+    func testDeliveryFromPreferredPublicationWaitsForPanelShow() {
+        for mode: FakeCompletionMode in [.immediate, .deferred] {
+            let h = DeliveryHarness(session: .otherX11)
+            let target = DeliveryTarget.linux(session: .otherX11, x11WindowClass: "kitty")
+            h.focus.target = target
+            h.main.mode = mode
+            h.service.show {
+                h.deliver(mode: .paste(h.service.preferredChord))
+            }
+            h.main.drain()
+            XCTAssertEqual(h.recorder.events, [
+                .capture, .show, .write("test"), .hideForDelivery, .wait(Limits.settleDelayLinux),
+            ])
+            h.settle()
+            h.main.drain()
+            XCTAssertEqual(h.recorder.events, [
+                .capture, .show, .write("test"), .hideForDelivery, .wait(Limits.settleDelayLinux),
+                .restore(target), .paste(.xdotool, .terminal), .done(.pasted(.xdotool)),
+            ])
+        }
+    }
+
     func testTerminalPreferredChordUsesArmedTargetAndPreservesDeliveryOrder() throws {
         let h = DeliveryHarness(session: .otherX11)
         let target = DeliveryTarget.linux(session: .otherX11, x11WindowClass: "kitty")

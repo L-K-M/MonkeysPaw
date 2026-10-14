@@ -146,7 +146,6 @@ public final class DeliveryService {
         mainThread.run {
             let generation = self.presentationGeneration
             self.armedTarget = self.focus.captureTarget()
-            captured()
             self.queue {
                 // Composition can retire a graph while this show is held
                 // behind focus restoration or a self-test.
@@ -155,6 +154,9 @@ public final class DeliveryService {
                     return
                 }
                 self.panel.show()
+                // Observers may enqueue delivery; keep publication inside the
+                // show slot so clipboard/hide cannot run ahead of presentation.
+                captured()
                 self.completeOperation()
             }
         }
