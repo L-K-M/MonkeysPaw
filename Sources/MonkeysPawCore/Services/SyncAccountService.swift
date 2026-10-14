@@ -277,6 +277,81 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         return result
     }
 
+    /// One admission covers the mutation, authoritative /me and member reload.
+    /// A rejected or uncertain mutation is never retried by this service.
+    func manageGroups(_ command: SyncGroupCommand, expectedAccount: SyncAccount) async throws -> SyncGroupResult {
+        try enter()
+        defer { leave() }
+        guard snapshot.account == expectedAccount else { throw GroupManagementIssue.accountChanged }
+        let current = try session()
+        guard snapshot.enabled, current.account == expectedAccount else { throw SyncAccountServiceError(issue: .signedOut) }
+        var result = SyncGroupResult(snapshot: snapshot, selectedGroupID: command.groupID)
+        defer { sync.syncNow() }
+        do {
+            switch command {
+            case .refresh: break
+            case .create(let name):
+                let group = try await current.client.createGroup(.init(name: name))
+                result.selectedGroupID = try SyncIdentifiers.ulid(group.id)
+            case .rename(let id, let name):
+                let group = try await current.client.renameGroup(id: id, request: .init(name: name))
+                guard group.id == id.rawValue else { throw SyncAccountServiceError(issue: .invalidAccount) }
+            case .delete(let id):
+                try await current.client.deleteGroup(id: id)
+                result.selectedGroupID = nil
+            case .setRole(let group, let user, let role):
+                let member = try await current.client.upsertMember(groupID: group, userID: user, request: .init(role: role))
+                guard member.userID == user.rawValue, member.role == role else { throw SyncAccountServiceError(issue: .invalidAccount) }
+            case .removeMember(let group, let user):
+                try await current.client.removeMember(groupID: group, userID: user)
+            case .createInvite(let group, let role):
+                let issued = try await current.client.createInvite(groupID: group, request: .init(role: role))
+                guard issued.target == .group(groupID: group.rawValue, role: role) else { throw SyncAccountServiceError(issue: .invalidAccount) }
+                let link = try SyncInviteLink(server: current.client.server, token: issued.token)
+                result.createdInvite = SyncInviteCreation(link: link.text, expiresAt: issued.expiresAt,
+                    target: issued.target, account: expectedAccount)
+            }
+            result.changeConfirmed = command.isMutation
+        } catch { result.issue = GroupManagementIssue(await inviteFailure(error)) }
+
+        // Never retain stale roles if a committed or denied operation's /me fails.
+        locked { cached.me = nil }
+        if snapshot.enabled {
+            do {
+                let me = try await current.client.me()
+                let device = try Self.validate(me, userID: expectedAccount.identity.userID)
+                guard device.id == expectedAccount.deviceID.rawValue else { throw SyncAccountServiceError(issue: .tokenBindingMismatch) }
+                locked { cached.me = me }
+            } catch {
+                let issue = AccountIssue(await inviteFailure(error).issue)
+                if result.issue == nil {
+                    result.issue = result.changeConfirmed ? .refreshIncomplete(issue) : .account(issue)
+                }
+            }
+        }
+        result.snapshot = snapshot
+        guard let selected = result.selectedGroupID,
+              result.snapshot.me?.groups.contains(where: { $0.groupID == selected.rawValue }) == true else {
+            result.selectedGroupID = nil
+            result.createdInvite = nil
+            return result
+        }
+        do {
+            result.members = try await current.client.members(groupID: selected).members
+        } catch {
+            let failure = await inviteFailure(error)
+            if result.issue == nil { result.issue = .membersUnavailable(AccountIssue(failure.issue)) }
+            // A concurrent removal invalidates selected access, even after /me.
+            if failure.issue == .http(.notFound) || !snapshot.enabled {
+                result.selectedGroupID = nil
+                result.createdInvite = nil
+                locked { cached.me = nil }
+            }
+            result.snapshot = snapshot
+        }
+        return result
+    }
+
     /// No connection, or an inactive one, means no secret lookup or HTTP. Raw
     /// environment overrides still have to prove the stored user AND device via
     /// /me; they cannot authorize a server/user transition during startup.
