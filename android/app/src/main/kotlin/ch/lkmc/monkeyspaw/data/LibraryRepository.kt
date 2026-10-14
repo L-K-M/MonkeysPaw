@@ -27,7 +27,7 @@ internal class LibraryRepository(
     private val mutex = Mutex()
     private var rootPrepared = false
     private var indexLoaded = false
-    private val mutableState = MutableStateFlow(LibraryState(LibrarySnapshot(0, emptyList()), refreshing = true))
+    private val mutableState = MutableStateFlow(LibraryState(LibrarySnapshot(0, emptyList())))
     val state: StateFlow<LibraryState> = mutableState.asStateFlow()
 
     /** Startup/foreground rescan stages a complete index; failure retains the last good snapshot. */
@@ -43,6 +43,8 @@ internal class LibraryRepository(
                 if (error is CancellationException) throw error
                 mutableState.value.copy(refreshing = false, error = sanitized(error))
                     .also { mutableState.value = it }
+            } finally {
+                mutableState.value = mutableState.value.copy(refreshing = false)
             }
         }
     }

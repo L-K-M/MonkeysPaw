@@ -188,11 +188,12 @@ constants.
     direct file access for many small files (a1 §7).
   - An opt-in "export / mirror to folder" through a persisted document-tree
     grant is deferred.
-- **Local state.** The sync state, remembered values, usage, and the Keystore
-  ciphertexts mirror §5.1 and §9.2 in `filesDir` and DataStore.
+- **Local state.** M8 uses `filesDir/state/` for remembered values, usage and
+  history, separate from the library and `filesDir/datastore/`. DataStore
+  holds only versioned settings and seed progress (§20 F11). M10 owns sync
+  state and Keystore ciphertexts under the §9.2 contract.
 - **Backups.** The manifest sets `android:allowBackup="false"` and nothing
-  else. There is no settings-only backup, because DataStore also holds
-  remembered values and Keystore ciphertexts.
+  else. There is no settings-only backup or backup exception (§20 F11).
   - Auto Backup would otherwise upload the library and the remembered values
     to Google Drive.
   - A restored Keystore ciphertext cannot be decrypted anyway.

@@ -12,7 +12,9 @@ import kotlin.test.*
 
 /** Android components cannot be constructed on the stub JVM; validate their shared graph's wiring. */
 internal class AppGraphTest {
-    private val sources = File(checkNotNull(System.getProperty("monkeyspaw.appSources")))
+    private val sources = File(checkNotNull(System.getProperty("monkeyspaw.appSources")) {
+        "monkeyspaw.appSources is injected by the Gradle test task; run via ./gradlew testDebugUnitTest"
+    })
     private val androidNamespace = "http://schemas.android.com/apk/res/android"
 
     @Test
@@ -25,17 +27,49 @@ internal class AppGraphTest {
         }
         val module = source("di/AppModule.kt")
         assertTrue(module.contains("@InstallIn(SingletonComponent::class)"))
-        assertEquals(1, Regex("LibraryService\\(").findAll(module).count())
-        assertEquals(1, Regex("DataStoreFactory.create\\(").findAll(module).count())
+        assertEquals(1, constructorCount(module, "LibraryService"))
+        assertEquals(1, constructorCount(module, "DataStoreFactory.create"))
         assertFalse(module.contains("corruptionHandler"))
         assertTrue(source("MonkeysPawApplication.kt").contains("@HiltAndroidApp"))
         assertTrue(source("MainActivity.kt").contains("@AndroidEntryPoint"))
     }
 
     @Test
+    fun `graph roots are disjoint library state and settings trees`() {
+        val module = source("di/AppModule.kt")
+        assertTrue(module.contains("AndroidPromptStore(File(context.filesDir, \"library\"))"))
+        assertTrue(module.contains("AndroidStateStore(File(context.filesDir, \"state\"))"))
+        assertTrue(module.contains("File(context.filesDir, \"datastore/settings.json\")"))
+    }
+
+    @Test
+    fun `graph source guard counts exact constructors rather than similarly named types`() {
+        assertEquals(1, constructorCount("LibraryService( MemoLibraryService(", "LibraryService"))
+        assertEquals(1, constructorCount("DataStoreFactory.create( OtherDataStoreFactory.create( DataStoreFactoryXcreate(",
+            "DataStoreFactory.create"))
+    }
+
+    @Test
     fun `manifest disables backups and permits only local M8 entry components in one process`() {
         val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
         val document = factory.newDocumentBuilder().parse(File(sources, "AndroidManifest.xml"))
+        validateManifest(document)
+    }
+
+    @Test
+    fun `manifest guard rejects an exported activity alias`() {
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val document = factory.newDocumentBuilder().parse(File(sources, "AndroidManifest.xml"))
+        val alias = document.createElement("activity-alias").apply {
+            setAttributeNS(androidNamespace, "android:name", ".UnexpectedAlias")
+            setAttributeNS(androidNamespace, "android:targetActivity", ".MainActivity")
+            setAttributeNS(androidNamespace, "android:exported", "true")
+        }
+        document.getElementsByTagName("application").item(0).appendChild(alias)
+        assertFailsWith<AssertionError> { validateManifest(document) }
+    }
+
+    private fun validateManifest(document: org.w3c.dom.Document) {
         val application = document.getElementsByTagName("application").item(0) as org.w3c.dom.Element
         assertEquals("false", application.getAttributeNS(androidNamespace, "allowBackup"))
         assertEquals(".MonkeysPawApplication", application.getAttributeNS(androidNamespace, "name"))
@@ -46,7 +80,7 @@ internal class AppGraphTest {
         for (index in 0 until elements.length) {
             val element = elements.item(index) as org.w3c.dom.Element
             assertFalse(element.hasAttributeNS(androidNamespace, "process"))
-            if (element.tagName in setOf("activity", "service", "receiver", "provider")) {
+            if (element.tagName in setOf("activity", "activity-alias", "service", "receiver", "provider")) {
                 assertTrue(element.getAttributeNS(androidNamespace, "name") in allowed)
             }
             if (element.tagName in setOf("uses-permission", "permission")) {
@@ -54,6 +88,8 @@ internal class AppGraphTest {
             }
         }
     }
+
+    private fun constructorCount(source: String, name: String) = Regex("\\b${Regex.escape(name)}\\(").findAll(source).count()
 
     private fun source(path: String) = File(sources, "kotlin/ch/lkmc/monkeyspaw/$path").readText()
 }

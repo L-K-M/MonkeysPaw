@@ -15,6 +15,7 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.security.SecureRandom
 import java.time.Instant
+import java.util.logging.Logger
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
@@ -36,7 +37,10 @@ internal object AppModule {
     @Provides
     @Singleton
     @ApplicationScope
-    fun applicationScope(@IoDispatcher io: CoroutineDispatcher): CoroutineScope = CoroutineScope(SupervisorJob() + io)
+    fun applicationScope(@IoDispatcher io: CoroutineDispatcher): CoroutineScope =
+        CoroutineScope(SupervisorJob() + io + CoroutineExceptionHandler { _, _ ->
+            Logger.getLogger("MonkeysPaw").severe("Application background operation failed.")
+        })
 
     @Provides
     @Singleton
@@ -47,7 +51,7 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun state(@ApplicationContext context: Context): StateStore = AndroidStateStore(context.filesDir)
+    fun state(@ApplicationContext context: Context): StateStore = AndroidStateStore(File(context.filesDir, "state"))
 
     @Provides
     @Singleton

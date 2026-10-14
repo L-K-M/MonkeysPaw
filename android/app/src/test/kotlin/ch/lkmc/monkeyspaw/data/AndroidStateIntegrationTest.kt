@@ -19,9 +19,9 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
         library.index.recordUse(created.identity)
         val saved = library.save(document("Edited body\n"), created.relativePath, created.stamp).entry
         val identity = saved.identity.storageKey
-        assertTrue(Files.exists(filesDir.resolve("values.json")))
-        assertTrue(Files.exists(filesDir.resolve("usage/$identity")))
-        assertTrue(Files.isDirectory(filesDir.resolve("history/$identity")))
+        assertTrue(Files.exists(stateDir.resolve("values.json")))
+        assertTrue(Files.exists(stateDir.resolve("usage/$identity")))
+        assertTrue(Files.isDirectory(stateDir.resolve("history/$identity")))
         assertFalse(Files.exists(libraryDir.resolve("values.json")))
         val restarted = library()
         assertEquals(created.identity, restarted.load(created.relativePath).identity)
@@ -65,7 +65,7 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
     @Test
     fun `failed history flush prevents prompt replacement`() {
         put(libraryDir.resolve("p.md"))
-        val state = AndroidStateStore(filesDir.toFile(), object : AtomicPublication() {
+        val state = AndroidStateStore(stateDir.toFile(), object : AtomicPublication() {
             override fun flush(channel: FileChannel) { throw IOException("disk failure") }
         })
         val library = library(state)
@@ -82,12 +82,12 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
         val initial = library()
         val identity = initial.create(document("Body"), "p.md").entry.identity
         initial.values.record(identity, mapOf("name" to "old"))
-        val original = Files.readAllBytes(filesDir.resolve("values.json"))
-        val state = AndroidStateStore(filesDir.toFile(), object : AtomicPublication() {
+        val original = Files.readAllBytes(stateDir.resolve("values.json"))
+        val state = AndroidStateStore(stateDir.toFile(), object : AtomicPublication() {
             override fun replace(temporary: Path, destination: Path) { throw IOException("disk failure") }
         })
         assertFailsWith<StoreError.IOFailure> { library(state).values.record(identity, mapOf("name" to "new")) }
-        assertContentEquals(original, Files.readAllBytes(filesDir.resolve("values.json")))
+        assertContentEquals(original, Files.readAllBytes(stateDir.resolve("values.json")))
         assertEquals(mapOf("name" to "old"), library().values.rememberedValues(identity))
         initial.values.record(identity, mapOf("name" to "new"))
         assertEquals(mapOf("name" to "new"), library().values.rememberedValues(identity))
@@ -103,13 +103,15 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
         val local = library.load("p.md").identity
         library.values.record(local, mapOf("name" to "old"))
         library.usage.recordUse(local)
-        val state = AndroidStateStore(filesDir.toFile())
+        val state = AndroidStateStore(stateDir.toFile())
         state.create(byteArrayOf(1), "history/${local.storageKey}/_sidecar")
         val before = state.listFiles().associate { it.relativePath to state.read(it.relativePath).toList() }
+        val promptBefore = Files.readAllBytes(libraryDir.resolve("p.md"))
         val result = EditingService(library).save("new body", "p.md", library.load("p.md").stamp)
         assertIs<EditResult.Failed>(result)
         val after = state.listFiles().associate { it.relativePath to state.read(it.relativePath).toList() }
         assertEquals(before, after)
+        assertContentEquals(promptBefore, Files.readAllBytes(libraryDir.resolve("p.md")))
         assertEquals(local, library().load("p.md").identity)
         assertTrue(library().history.revisions(local).isEmpty())
         assertEquals(mapOf("name" to "old"), library().values.rememberedValues(local))
@@ -135,15 +137,15 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
         for (bytes in listOf("broken".encodeToByteArray(), byteArrayOf(-1),
             "{\"version\":2,\"values\":{}}".encodeToByteArray(),
             "{\"version\":1,\"values\":[]}".encodeToByteArray())) {
-            put(filesDir.resolve("values.json"), bytes)
+            put(stateDir.resolve("values.json"), bytes)
             val library = library()
             assertFailsWith<LibraryError.OperationFailed> { library.values.rememberedValues(identity) }
             assertFailsWith<LibraryError.OperationFailed> { library.values.record(identity, mapOf("x" to "new")) }
-            assertContentEquals(bytes, Files.readAllBytes(filesDir.resolve("values.json")))
+            assertContentEquals(bytes, Files.readAllBytes(stateDir.resolve("values.json")))
             assertFailsWith<LibraryError.OperationFailed> { library().values.rememberedValues(identity) }
         }
         for (source in listOf("broken", "{\"version\":2,\"events\":[]}", "{\"version\":1,\"events\":[\"bad\"]}")) {
-            val path = filesDir.resolve("usage/${identity.storageKey}")
+            val path = stateDir.resolve("usage/${identity.storageKey}")
             put(path, source.encodeToByteArray())
             assertFailsWith<LibraryError.OperationFailed> { library().usage.recordUse(identity) }
             assertEquals(source, Files.readString(path))
@@ -153,11 +155,11 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
     @Test
     fun `explicit Forget all is the only reset of rejected remembered values`() {
         val identity = PromptIdentity.at("p.md")
-        put(filesDir.resolve("values.json"), "{\"version\":9,\"values\":{}}".encodeToByteArray())
+        put(stateDir.resolve("values.json"), "{\"version\":9,\"values\":{}}".encodeToByteArray())
         val library = library()
         assertFailsWith<LibraryError.OperationFailed> { library.values.remove(identity) }
         library.values.removeAll()
-        assertEquals("{\"values\":{},\"version\":1}", Files.readString(filesDir.resolve("values.json")))
+        assertEquals("{\"values\":{},\"version\":1}", Files.readString(stateDir.resolve("values.json")))
         assertTrue(library().values.rememberedValues(identity).isEmpty())
     }
 
@@ -166,7 +168,7 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
         put(libraryDir.resolve("p.md"), "raw body\r\n".encodeToByteArray())
         val library = library()
         val local = library.load("p.md").identity
-        val state = AndroidStateStore(filesDir.toFile())
+        val state = AndroidStateStore(stateDir.toFile())
         state.create(byteArrayOf(1, -1), "history/${local.storageKey}/_sidecar")
         state.create(byteArrayOf(2), "history/${local.storageKey}/.sidecar")
         library.values.record(local, mapOf("name" to "remembered"))

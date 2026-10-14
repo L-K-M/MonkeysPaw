@@ -14,8 +14,9 @@ internal open class TemporaryFiles {
     protected val temporary: Path = Files.createTempDirectory("monkeyspaw-k12-")
     protected val filesDir: Path = temporary.resolve("files")
     protected val libraryDir: Path = filesDir.resolve("library")
+    protected val stateDir: Path = filesDir.resolve("state")
 
-    protected fun library(state: StateStore = AndroidStateStore(filesDir.toFile()),
+    protected fun library(state: StateStore = AndroidStateStore(stateDir.toFile()),
         prompts: PromptStore = AndroidPromptStore(libraryDir.toFile())): LibraryService {
         var draw = 0
         return LibraryService(prompts, state, Clock { Instant.parse("2026-10-14T00:00:00Z") },
@@ -29,6 +30,7 @@ internal open class TemporaryFiles {
 
     @AfterTest
     fun removeTemporaryFiles() {
+        if (!Files.exists(temporary)) return
         // Files.walk does not follow fixture symlinks.
         Files.walk(temporary).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
     }

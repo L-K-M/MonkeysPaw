@@ -28,12 +28,91 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
             "\uE000.md", "\uD800\uDC00.md")
         paths.forEach { put(libraryDir.resolve(it)) }
         val store = AndroidPromptStore(libraryDir.toFile())
+        // §5.1 reserves exact-case root README.md; nested README.md remains a prompt.
         assertEquals(listOf(".visible.md", "Conflicts/p.md", "Groups/p.md", "nested/README.md", "readme.md",
             "\uE000.md", "\uD800\uDC00.md"), store.listFiles().map { it.relativePath })
-        val state = AndroidStateStore(filesDir.toFile())
+        val state = AndroidStateStore(stateDir.toFile())
         state.create(byteArrayOf(1), "history/key/_unknown")
         state.create(byteArrayOf(2), "history/key/.unknown")
         assertTrue(state.listFiles().map { it.relativePath }.containsAll(listOf("history/key/_unknown", "history/key/.unknown")))
+    }
+
+    @Test
+    fun `state and library scans never include files from sibling storage trees`() {
+        val prompts = AndroidPromptStore(libraryDir.toFile())
+        val state = AndroidStateStore(stateDir.toFile())
+        prompts.create(byteArrayOf(1), "p.md")
+        state.create(byteArrayOf(2), "history/key/revision.md")
+        state.create(byteArrayOf(3), "history/key/.sidecar")
+        state.create(byteArrayOf(4), "usage/key")
+        state.writePrivate(byteArrayOf(5), "values.json")
+        put(filesDir.resolve("datastore/settings.json"))
+        put(filesDir.resolve("datastore/foreign.md"))
+        assertEquals(listOf("p.md"), prompts.listFiles().map { it.relativePath })
+        assertEquals(listOf("history/key/.sidecar", "history/key/revision.md", "usage/key", "values.json"),
+            state.listFiles().map { it.relativePath })
+        assertContentEquals(byteArrayOf(5), state.read("values.json"))
+    }
+
+    @Test
+    fun `crash orphaned staging files never become state entries or hide valid names`() {
+        val state = AndroidStateStore(stateDir.toFile())
+        for (path in listOf(".monkeyspaw-orphan.tmp", "history/key/.monkeyspaw-orphan.tmp",
+            "history/key/.sidecar", ".monkeyspaw-prompt.md", ".monkeyspaw-folder.tmp/sidecar")) {
+            put(stateDir.resolve(path))
+        }
+        val outside = temporary.resolve("outside")
+        put(outside)
+        Files.createSymbolicLink(stateDir.resolve(".monkeyspaw-link.tmp"), outside)
+        assertEquals(listOf(".monkeyspaw-folder.tmp/sidecar", ".monkeyspaw-prompt.md", "history/key/.sidecar"),
+            state.listFiles().map { it.relativePath })
+        assertEquals("body", Files.readString(outside))
+
+        put(libraryDir.resolve(".monkeyspaw-prompt.md"))
+        put(libraryDir.resolve(".monkeyspaw-orphan.tmp"))
+        assertEquals(listOf(".monkeyspaw-prompt.md"),
+            AndroidPromptStore(libraryDir.toFile()).listFiles().map { it.relativePath })
+    }
+
+    @Test
+    fun `a state staging cleanup failure cannot expose an orphan or fail the commit`() {
+        val state = AndroidStateStore(stateDir.toFile(), object : AtomicPublication() {
+            override fun removeTemporary(temporary: Path) { throw IOException("cleanup failed") }
+        })
+        state.create("committed".encodeToByteArray(), "history/key/revision")
+        assertEquals("committed", state.read("history/key/revision").decodeToString())
+        assertEquals(listOf("history/key/revision"), state.listFiles().map { it.relativePath })
+    }
+
+    @Test
+    fun `delete syncs only its parent directory after removing a prompt or state file`() {
+        for (scan in RootedFileStore.Scan.entries) {
+            val root = temporary.resolve(scan.name)
+            val leaf = root.resolve("nested/p.md")
+            put(leaf)
+            val synced = mutableListOf<Path>()
+            val publication = object : AtomicPublication() {
+                override fun syncDirectory(directory: Path) {
+                    assertFalse(Files.exists(leaf), "Directory sync must follow unlink")
+                    synced.add(directory)
+                    super.syncDirectory(directory)
+                }
+            }
+            val store = RootedFileStore(root.toFile(), scan, publication)
+            store.delete("nested/p.md")
+            assertEquals(listOf(leaf.parent), synced)
+            assertNull(store.stamp("nested/p.md"))
+        }
+    }
+
+    @Test
+    fun `unsupported directory sync cannot misreport a completed delete`() {
+        put(stateDir.resolve("history/key/revision"))
+        val state = AndroidStateStore(stateDir.toFile(), object : AtomicPublication() {
+            override fun syncDirectory(directory: Path) { throw IOException("unsupported directory fsync") }
+        })
+        state.delete("history/key/revision")
+        assertNull(state.stamp("history/key/revision"))
     }
 
     @Test
@@ -264,11 +343,11 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
                 super.replace(temporary, destination)
             }
         }
-        val state = AndroidStateStore(filesDir.toFile(), publication)
+        val state = AndroidStateStore(stateDir.toFile(), publication)
         state.writePrivate("private".encodeToByteArray(), "values.json")
-        assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(filesDir.resolve("values.json")))
+        assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(stateDir.resolve("values.json")))
         assertEquals("private", state.read("values.json").decodeToString())
-        assertOnlyLeaf(filesDir, "values.json")
+        assertOnlyLeaf(stateDir, "values.json")
     }
 
     @Test
@@ -279,6 +358,7 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
         val modified = Files.getLastModifiedTime(path)
         val original = store.stamp("p.md")
         assertEquals(original, AndroidPromptStore(libraryDir.toFile()).stamp("p.md"))
+        // The stamp includes nanosecond ctime as well as inode, so inode reuse does not skip coverage.
         repeat(20) {
             store.delete("p.md")
             store.create(byteArrayOf(1), "p.md")

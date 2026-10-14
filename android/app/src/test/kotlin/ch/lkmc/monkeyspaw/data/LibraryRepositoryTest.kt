@@ -4,6 +4,8 @@ import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.core.ports.PromptStore
 import ch.lkmc.monkeyspaw.core.ports.StoredFile
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
 import java.util.concurrent.Executors
 import kotlin.test.*
@@ -111,12 +113,74 @@ internal class LibraryRepositoryTest : TemporaryFiles() {
                 assertIs<EditResult.Saved>(editing.create("Body", "p.md")).commit.entry.identity
             }
             val snapshot = repository.state.value.snapshot
-            put(filesDir.resolve("usage/${identity.storageKey}"), "{\"version\":9,\"events\":[]}".encodeToByteArray())
+            put(stateDir.resolve("usage/${identity.storageKey}"), "{\"version\":9,\"events\":[]}".encodeToByteArray())
             put(libraryDir.resolve("new.md"))
             val failed = repository.refresh()
             assertNotNull(failed.error)
             assertEquals(snapshot, failed.snapshot)
             assertFalse(failed.refreshing)
+        }
+    }
+
+    @Test
+    fun `cancelled refresh clears its flag preserves the index and allows another refresh`() = runBlocking {
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { worker ->
+            val prompts = AndroidPromptStore(libraryDir.toFile())
+            var cancelNextScan = false
+            val cancellable = object : PromptStore by prompts {
+                override fun listFiles(): List<StoredFile> {
+                    if (cancelNextScan) throw CancellationException("Cancelled scan")
+                    return prompts.listFiles()
+                }
+            }
+            val library = library(prompts = cancellable)
+            val repository = LibraryRepository(library, EditingService(library), prompts, worker)
+            repository.withLibrary { _, editing -> editing.create("Body", "p.md") }
+            val snapshot = repository.state.value.snapshot
+            cancelNextScan = true
+            assertFailsWith<CancellationException> { repository.refresh() }
+            assertFalse(repository.state.value.refreshing)
+            assertNull(repository.state.value.error)
+            assertEquals(snapshot, repository.state.value.snapshot)
+            assertEquals(snapshot, library.index.snapshot())
+            cancelNextScan = false
+            assertFalse(repository.refresh().refreshing)
+            assertEquals(listOf("p.md"), repository.state.value.snapshot.prompts.map { it.entry.relativePath })
+        }
+    }
+
+    @Test
+    fun `cancellation before IO starts cannot leave a refresh flag set`() = runTest {
+        val repository = repository(StandardTestDispatcher(testScheduler))
+        val refresh = launch(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+        refresh.cancelAndJoin()
+        assertFalse(repository.state.value.refreshing)
+        assertEquals(0L, repository.state.value.snapshot.version)
+        assertFalse(Files.exists(filesDir))
+    }
+
+    @Test
+    fun `an unexpected failure escaping refresh still clears its flag and preserves the index`() = runBlocking {
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { worker ->
+            val prompts = AndroidPromptStore(libraryDir.toFile())
+            var failNextScan = false
+            val failing = object : PromptStore by prompts {
+                override fun listFiles(): List<StoredFile> {
+                    if (failNextScan) throw AssertionError("Unexpected scan failure")
+                    return prompts.listFiles()
+                }
+            }
+            val library = library(prompts = failing)
+            val repository = LibraryRepository(library, EditingService(library), prompts, worker)
+            repository.withLibrary { _, editing -> editing.create("Body", "p.md") }
+            val snapshot = repository.state.value.snapshot
+            failNextScan = true
+            assertFailsWith<AssertionError> { repository.refresh() }
+            assertFalse(repository.state.value.refreshing)
+            assertEquals(snapshot, repository.state.value.snapshot)
+            assertEquals(snapshot, library.index.snapshot())
+            failNextScan = false
+            assertFalse(repository.refresh().refreshing)
         }
     }
 

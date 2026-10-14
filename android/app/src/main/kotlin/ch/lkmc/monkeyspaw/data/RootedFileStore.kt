@@ -27,6 +27,10 @@ internal open class AtomicPublication {
     open fun unlink(path: Path) {
         Files.delete(path)
     }
+
+    open fun syncDirectory(directory: Path) {
+        FileChannel.open(directory, StandardOpenOption.READ).use { it.force(true) }
+    }
 }
 
 /**
@@ -108,6 +112,7 @@ internal class RootedFileStore(
         val destination = locate(path, Parents.EXISTING) ?: throw StoreError.NotFound
         requireRegular(attributes(destination) ?: throw StoreError.NotFound)
         Files.delete(destination)
+        syncDirectory(destination.parent)
     }
 
     override fun move(source: String, destination: String) = sanitized {
@@ -154,7 +159,7 @@ internal class RootedFileStore(
 
     private fun syncDirectory(directory: Path) {
         // Best effort, like Swift: some filesystems reject directory fsync.
-        try { FileChannel.open(directory, StandardOpenOption.READ).use { it.force(true) } }
+        try { publication.syncDirectory(directory) }
         catch (_: Exception) { }
     }
 
@@ -224,6 +229,8 @@ internal class RootedFileStore(
                         collect(child, "$path/", result)
                     }
                     attributes.isRegularFile -> {
+                        // A crash can leave staged bytes; keep other dot files and sidecars eligible.
+                        if (name.startsWith(".monkeyspaw-") && name.endsWith(".tmp")) continue
                         if (scan == Scan.LIBRARY && (!name.endsWith(".md") || path == "README.md")) continue
                         StorePath.validate(path)
                         result += StoredFile(path, fileStamp(child))
