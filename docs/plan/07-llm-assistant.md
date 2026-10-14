@@ -237,6 +237,11 @@ How each provider is asked for the schema:
     Failed identity-reset writes keep the observed profile at schema mode
     until a reset or validated capability can be published. Model listing
     does not need this cache.
+    Android maps the logical `provider-settings.json` and `provider-state.json`
+    records to namespaced `provider-settings` and `provider-state` entries in
+    its single settings DataStore through the `StateStore` port (§10.6).
+    Both platforms retain the version-1 JSON shapes and unknown members;
+    Android's platform driver owns the record mapping.
   - A schema test pins the schema, so a 400 caused by our own schema is
     caught in CI rather than mistaken for a missing capability.
 

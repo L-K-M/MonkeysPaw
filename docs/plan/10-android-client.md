@@ -190,8 +190,13 @@ constants.
     grant is deferred.
 - **Local state.** M8 uses `filesDir/state/` for remembered values, usage and
   history, separate from the library and `filesDir/datastore/`. DataStore
-  holds only versioned settings and seed progress (§20 F11). M10 owns sync
-  state and Keystore ciphertexts under the §9.2 contract.
+  holds versioned settings and seed progress (§20 F11). From M11 it also
+  holds provider metadata and capability state (§7, §22 J8) as namespaced
+  `provider-settings` and `provider-state` records: the `StateStore` driver
+  maps the logical `.json` paths to these atomic records, preserving the
+  desktop version-1 JSON shapes and unknown members. Encrypted credentials
+  use a separate singleton secrets DataStore. M10 owns sync state under the
+  §9.2 contract.
 - **Backups.** The manifest sets `android:allowBackup="false"` and nothing
   else. There is no settings-only backup or backup exception (§20 F11).
   - Auto Backup would otherwise upload the library and the remembered values
