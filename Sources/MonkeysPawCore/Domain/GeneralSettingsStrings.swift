@@ -16,6 +16,9 @@ public enum GeneralSettingsStrings {
             case .notDirectory: return "Choose a directory for your library."
             case .unreadable: return "Check that you have permission to read your library folder."
             case .symlink: return "Choose your library folder directly instead of a symbolic link."
+            case .outsideSandboxHome:
+                return "Flatpak supports library folders in your home directory. Choose a home folder directly, "
+                    + "or use the native app for a library outside home. Your current library is unchanged."
             case .rejectedByStore:
                 return "Your library folder could not be opened safely. Choose another folder or check its permissions."
             }

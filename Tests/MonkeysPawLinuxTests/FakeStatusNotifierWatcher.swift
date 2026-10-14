@@ -40,7 +40,7 @@ final class FakeStatusNotifierWatcher {
         var done = false
     }
 
-    static let itemName = "org.kde.StatusNotifierItem-\(ProcessInfo.processInfo.processIdentifier)-1"
+    static let itemName = "ch.lkmc.monkeyspaw.StatusNotifierItem-\(ProcessInfo.processInfo.processIdentifier)-1"
     private(set) var registrations: [Registration] = []
     private(set) var signals: [Signal] = []
     private(set) var hasName = false
@@ -167,6 +167,25 @@ final class FakeStatusNotifierWatcher {
         let child = g_variant_get_child_value(value, 0)!
         defer { g_variant_unref(child) }
         return g_variant_get_boolean(child) != 0
+    }
+
+    func namesOwned(by peer: String) throws -> Set<String> {
+        let result = call(path: "/org/freedesktop/DBus", interface: "org.freedesktop.DBus", method: "ListNames",
+                          body: "()", destination: "org.freedesktop.DBus")
+        let names = g_variant_get_child_value(try XCTUnwrap(result.value), 0)!
+        defer { g_variant_unref(names) }
+        var owned: Set<String> = []
+        for index in 0..<g_variant_n_children(names) {
+            let name = g_variant_get_child_value(names, index)!
+            defer { g_variant_unref(name) }
+            let spelling = String(cString: g_variant_get_string(name, nil))
+            let reply = call(path: "/org/freedesktop/DBus", interface: "org.freedesktop.DBus", method: "GetNameOwner",
+                             body: "('\(spelling)',)", destination: "org.freedesktop.DBus")
+            let owner = g_variant_get_child_value(try XCTUnwrap(reply.value), 0)!
+            defer { g_variant_unref(owner) }
+            if String(cString: g_variant_get_string(owner, nil)) == peer { owned.insert(spelling) }
+        }
+        return owned
     }
 
     static func variant(_ text: String) -> OpaquePointer {

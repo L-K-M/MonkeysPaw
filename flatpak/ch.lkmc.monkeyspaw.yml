@@ -18,9 +18,10 @@ finish-args:
   # This grants read/write access to the whole home, not just the library.
   - --filesystem=home
   - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher # Optional tray registration
   # Portals and the app's own bus namespace use Flatpak's filtered defaults.
   # No host dconf, unrestricted bus, host-spawn or native injection access.
-  # D2 adds the precise optional tray permission with its ownership change.
+  # The tray owns only a subname of ch.lkmc.monkeyspaw, allowed by default.
 modules:
   - name: monkeyspaw
     only-arches: [x86_64]

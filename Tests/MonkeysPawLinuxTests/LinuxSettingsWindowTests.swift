@@ -205,6 +205,122 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertEqual(try config.read(at: "settings.json"), future)
     }
 
+    func testSandboxExternalFolderRefusalPreservesGraphAndLiveWatcher() throws {
+        tools.environment["FLATPAK_ID"] = AppIdentity.linuxAppID
+        paths = LinuxPaths(environment: tools.environment)
+        compose()
+        let window = try showSettings()
+        let homeLibrary = try library("Home Library", prompt: "Home prompt")
+        try choose(homeLibrary.path, in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.activeLibraryPath == homeLibrary.path })
+        let picker = environment.pickerModel
+        let browser = environment.libraryBrowserModel
+        let editor = environment.editorModel
+        let imports = environment.libraryImportState
+        picker.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isVisible })
+        let config = try RootedFileStore(root: paths.configDirectory)
+        let saved = try config.read(at: "settings.json")
+        let external = try FakeLinuxTools()
+        let externalFiles = try RootedFileStore(root: external.directory)
+        try externalFiles.write(Data("External prompt".utf8), at: "external.md")
+        let alias = tools.directory.appendingPathComponent("External Alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: external.directory)
+        let chooseButton = try settingsWidget("settings-choose-folder", in: window)
+
+        for path in [external.directory.path, "/run/user/1000/doc/fixture/library", alias.path] {
+            try choose(path, in: window)
+            XCTAssertTrue(GTKTestSupport.spin {
+                gtk_widget_get_sensitive(chooseButton) != 0
+                    && self.environment.generalSettingsModel.state.lastSwitchMessage == .invalidTarget(.outsideSandboxHome)
+            })
+            let message = try settingsWidget("settings-library-message", in: window)
+            XCTAssertEqual(labelText(message), GeneralSettingsStrings.message(for: .invalidTarget(.outsideSandboxHome)))
+            XCTAssertNotEqual(gtk_widget_get_visible(message), 0)
+            XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, homeLibrary.path)
+            XCTAssertTrue(environment.pickerModel === picker)
+            XCTAssertTrue(environment.libraryBrowserModel === browser)
+            XCTAssertTrue(environment.editorModel === editor)
+            XCTAssertTrue(environment.libraryImportState === imports)
+            XCTAssertEqual(picker.state, .picker)
+            XCTAssertTrue(environment.panel.isVisible)
+            XCTAssertEqual(environment.settingsModel.libraryFolderPath, homeLibrary.path)
+            XCTAssertEqual(try config.read(at: "settings.json"), saved)
+        }
+        try RootedFileStore(root: homeLibrary).write(Data("Still watched".utf8), at: "later.md")
+        XCTAssertTrue(GTKTestSupport.spin { picker.results.map(\.relativePath) == ["later.md", "prompt.md"] })
+
+        let count = chooser.requests.count
+        try click("settings-choose-folder", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.chooser.requests.count == count + 1 })
+        chooser.requests.last?.done(nil)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(chooseButton) != 0 })
+        XCTAssertTrue(environment.pickerModel === picker)
+        XCTAssertEqual(try config.read(at: "settings.json"), saved)
+
+        try click("settings-use-default", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.activeLibraryPath == self.defaultFolder.path })
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+    }
+
+    func testSandboxEnvironmentUsesPrivateSettingsWithoutImportingNativeState() throws {
+        let nativeConfig = try RootedFileStore(root: paths.configDirectory)
+        let native = SettingsService(store: SettingsStore(files: nativeConfig))
+        let nativeLibrary = try library("Native Library", prompt: "Native prompt")
+        try native.setLibraryFolder(nativeLibrary.path)
+        try native.markSetupPresented()
+        let saved = try nativeConfig.read(at: "settings.json")
+        try LinuxFirstRunState(paths: paths).recordPresentation()
+
+        tools.environment["FLATPAK_ID"] = AppIdentity.linuxAppID
+        paths = LinuxPaths(environment: tools.environment)
+        compose()
+        let expectedConfig = tools.directory.appendingPathComponent(".var/app/ch.lkmc.monkeyspaw/config/monkeyspaw")
+        XCTAssertEqual(paths.configDirectory.path, expectedConfig.path)
+        XCTAssertEqual(paths.dataDirectory.path, tools.directory.appendingPathComponent(".var/app/ch.lkmc.monkeyspaw/data/monkeyspaw").path)
+        let window = try showSettings()
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(labelText(try settingsWidget("settings-library-path", in: window)), defaultFolder.path)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        XCTAssertTrue(environment.settingsModel.needsSetupPresentation)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: expectedConfig.appendingPathComponent("setup-shown").path))
+        environment.settingsModel.markSetupPresented()
+        let isolated = try RootedFileStore(root: expectedConfig)
+        XCTAssertNotEqual(try isolated.read(at: "settings.json"), saved)
+        XCTAssertEqual(try nativeConfig.read(at: "settings.json"), saved)
+    }
+
+    func testSandboxStartupRefusesSavedExternalLibrary() throws {
+        let external = try FakeLinuxTools()
+        let externalFiles = try RootedFileStore(root: external.directory)
+        try externalFiles.write(Data("External prompt".utf8), at: "external.md")
+        tools.environment["FLATPAK_ID"] = AppIdentity.linuxAppID
+        paths = LinuxPaths(environment: tools.environment)
+        let config = try RootedFileStore(root: paths.configDirectory)
+        try SettingsService(store: SettingsStore(files: config)).setLibraryFolder(external.directory.path)
+        let saved = try config.read(at: "settings.json")
+        compose()
+        _ = try showSettings()
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(environment.pickerModel.results.isEmpty)
+        XCTAssertEqual(try config.read(at: "settings.json"), saved)
+        XCTAssertEqual(try externalFiles.read(at: "external.md"), Data("External prompt".utf8))
+        XCTAssertEqual(environment.switchLibrary(to: nil), .switched)
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+    }
+
+    func testNativeChooserStillAcceptsOutsideHomeLibrary() throws {
+        let external = try FakeLinuxTools()
+        try RootedFileStore(root: external.directory).write(Data("External prompt".utf8), at: "external.md")
+        let window = try showSettings()
+        try choose(external.directory.path, in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.activeLibraryPath == external.directory.path })
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(environment.settingsModel.libraryFolderPath, external.directory.path)
+    }
+
     func testCancelledChooserRestoresChooseWithoutChangingTheLibrary() throws {
         let window = try showSettings()
         let count = chooser.requests.count
@@ -303,6 +419,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let cases: [(LinuxEnvironment.LibrarySwitchResult, LibrarySwitchOutcome)] = [
             (.switched, .switched),
             (.deliveryInFlight, .deliveryInFlight),
+            (.outsideSandboxHome, .invalidTarget(.outsideSandboxHome)),
             (.invalidTarget(.outsideRoot), .invalidTarget(.rejectedByStore(.outsideRoot))),
             (.libraryUnavailable(.notFound), .libraryUnavailable(.notFound)),
             (.persistenceFailed(.writeFailed(.ioFailure)), .settingsNotSaved(.writeFailed(.ioFailure))),

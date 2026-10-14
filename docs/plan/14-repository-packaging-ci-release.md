@@ -271,12 +271,34 @@ Rollout by milestone:
   - `--share=network` (LLM, sync)
   - `--socket=wayland --socket=fallback-x11`
   - `--talk-name=org.freedesktop.secrets`
+  - `--talk-name=org.kde.StatusNotifierWatcher` (optional tray)
   - `--filesystem=home` (read/write access to the whole home for a user-chosen library)
 
   Portal/manual shortcuts use the filtered session bus; there are no host
-  dconf grants, unrestricted buses, host-spawn or native injection grants
-  (M7 G19). The optional tray permission lands with its app-namespace
-  ownership change. Runtime tool availability does not permit host settings writes.
+  dconf grants, unrestricted buses, KGlobalAccel, host-spawn or native
+  injection grants (M7 G19). The tray owns only
+  `ch.lkmc.monkeyspaw.StatusNotifierItem-<pid>-1`, on a dedicated connection
+  when a session-bus address is available; stop releases the name and exports.
+  A second item cannot displace the owner. Runtime tool availability does
+  not permit host settings writes. CI checks the exact manifest and installed
+  permission sets, including the absence of foreign-name ownership grants.
+
+  Sandbox config/data use `~/.var/app/ch.lkmc.monkeyspaw/{config,data}/monkeyspaw`,
+  including when XDG overrides are absent or point to native roots. Native
+  state and file-backed secrets are not imported. The default remains
+  `Documents/MonkeysPaw` under home; an outside-home XDG Documents setting
+  falls back to `~/Documents`. A sandbox library must be under home both
+  as selected and after resolving existing symlinks. Document-portal paths
+  and external folders are refused before changing the active graph, picker,
+  watcher or saved choice, with a typed folder error and home/native guidance
+  (M7 G20). A filesystem override does not remove this home-only boundary.
+  Native installations retain their existing folder behavior.
+
+  Use one active install route per user. Native and Flatpak share the same
+  D-Bus identity, so a host action may activate whichever installation is
+  registered. Quit the other route before testing; no second identity or
+  automatic takeover is provided. Portals handle dialogs, URIs, notifications,
+  shortcut and delivery consent; sandbox delivery remains portal -> copy.
 
   CI asserts that `secret-tool` and `gsettings` exist in the runtime.
   Documented limits:
