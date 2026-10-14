@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.data
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.ports.*
+import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.StandardTestDispatcher
 import mockwebserver3.MockResponse
@@ -192,6 +193,19 @@ internal class OkHttpHttpTransportTest {
         val server = server()
         assertEquals(HttpTransportError.InvalidRequest, errorOf { transport.send(request(server, body = byteArrayOf())) })
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun `sync policy validates the bound server and refuses user CA trust until its factory exists`() = runBlocking {
+        val server = server()
+        val bound = SyncServerURL(server.url("/").toString().trimEnd('/'))
+        val other = server()
+        fun sync(url: String, trust: SyncTLSTrust = SyncTLSTrust.SYSTEM) = HttpRequest(url, HttpMethod.GET,
+            deadlineNanos = clock.nowNanos() + MILLISECONDS.toNanos(3000), urlPolicy = HttpUrlPolicy.Sync(bound, trust))
+        assertEquals(HttpTransportError.ServerMismatch, errorOf { transport.send(sync(other.url("/api/v1/me").toString())) })
+        assertEquals(HttpTransportError.InvalidRequest,
+            errorOf { transport.send(sync(server.url("/api/v1/me").toString(), SyncTLSTrust.SYSTEM_AND_USER)) })
+        assertEquals(0, server.requestCount)
+        assertEquals(0, other.requestCount)
     }
 
     @Test fun `normalized localhost spelling uses the literal loopback policy`() = runBlocking {

@@ -15,7 +15,13 @@ internal data class SyncAccountIdentity(val serverURL: String, val userID: ULID)
     init {
         val valid = try {
             val url = URI(serverURL)
-            val host = url.host.orEmpty()
+            // URI's DNS grammar omits Foundation-valid reg-names such as my_host.
+            val host = url.host ?: url.rawAuthority.orEmpty().substringBefore(':').takeIf { name ->
+                name.isNotEmpty() && name.all { it in "abcdefghijklmnopqrstuvwxyz0123456789-_." }
+            }.orEmpty()
+            val port = if (url.host != null || ':' !in url.rawAuthority.orEmpty()) url.port else {
+                url.rawAuthority.substringAfter(':').toIntOrNull() ?: -2
+            }
             val path = url.path.orEmpty()
             serverURL.isNotEmpty() && '\\' !in serverURL &&
                 serverURL.none { it.isWhitespace() || Character.isSpaceChar(it) } &&
@@ -23,8 +29,8 @@ internal data class SyncAccountIdentity(val serverURL: String, val userID: ULID)
                 host == host.lowercase(java.util.Locale.ROOT) && !host.endsWith('.') &&
                 host.all { it.code < 128 } && '%' !in host &&
                 url.rawUserInfo == null && url.rawQuery == null && url.rawFragment == null &&
-                (url.port == -1 || url.port in 1..65535) && url.port != (if (url.scheme == "https") 443 else 80) &&
-                url.rawAuthority == host + (if (url.port == -1) "" else ":${url.port}") &&
+                (port == -1 || port in 1..65535) && port != (if (url.scheme == "https") 443 else 80) &&
+                url.rawAuthority == host + (if (port == -1) "" else ":$port") &&
                 (path.isEmpty() || path.startsWith('/') && !path.endsWith('/')) &&
                 '\\' !in path && "//" !in path && !path.codePoints().anyMatch(UnicodeText::isControlOrFormat) &&
                 path.split('/').none { it == "." || it == ".." } &&

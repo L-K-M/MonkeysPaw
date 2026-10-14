@@ -283,8 +283,12 @@ constants.
   - There is no push channel; FCM does not fit a self-hosted server.
 - **Network.** HTTPS by default. The network security config permits
   cleartext so that LAN servers work. The client allows `http://` only for
-  loopback, private-network, and `.local` hosts, and warns there too, the
-  same rule as desktop (§8.5).
+  `localhost`, canonical literal IPv4 `127/8` or RFC1918 ranges, IPv6 `::1`
+  or ULA, and warns there too, the same rule as desktop (§8.5, §23 P5).
+  DNS names (including `.local`), link-local, CGNAT and IPv4-mapped IPv6
+  do not receive an HTTP exemption. URLs reject credentials, queries,
+  fragments and unsafe deployment prefixes; every request is bound to the
+  selected normalized deployment and its `/api/v1/` tree.
   - An opt-in setting trusts user-installed CAs for self-signed LAN TLS.
   - That setting lives in the OkHttp trust manager, because the network
     security config is static.

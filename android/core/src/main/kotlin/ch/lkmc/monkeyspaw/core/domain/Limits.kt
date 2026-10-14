@@ -26,6 +26,7 @@ object Limits {
     const val syncAccountVersion = 1
     const val syncBindingVersion = 1
     const val syncRecordMaxBytes = 16 * 1024 * 1024
+    const val syncRequestTimeoutNanos = 60_000_000_000L
 
     const val llmBudgetNanos = 300_000_000_000L
     const val modelListTimeoutNanos = 15_000_000_000L
