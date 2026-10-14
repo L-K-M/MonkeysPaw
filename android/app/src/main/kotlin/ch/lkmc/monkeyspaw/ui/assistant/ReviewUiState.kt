@@ -6,7 +6,7 @@ import ch.lkmc.monkeyspaw.core.services.AssistantPhase
 import ch.lkmc.monkeyspaw.core.services.AssistantState
 
 internal enum class ReviewUnavailable { PROVIDER, LIBRARY, ACCESS, BUSY, CONFLICT, SOURCE, READ_ONLY, INVALID, PRIVATE, VALIDATING }
-internal enum class ReviewDestination { FINDINGS, EDITOR }
+internal enum class ReviewDestination { FINDINGS, EDITOR, IMPROVE }
 
 /** In-memory route and selection state; L19 continues the same review session for Improve. */
 internal data class ReviewUiState(
@@ -22,6 +22,7 @@ internal data class ReviewUiState(
     val canReview: Boolean = false,
     val canRetry: Boolean = false,
     val canSelectFindings: Boolean = false,
+    val canImproveWithThese: Boolean = false,
 ) {
     val isWorking: Boolean get() = assistant?.phase == AssistantPhase.WORKING
     override fun toString(): String = "<assistant review state redacted>"

@@ -28,6 +28,7 @@ internal class ReviewViewModel @Inject constructor(
     private var editor: EditorViewModel? = null
     private var resolvedGraph: AssistantGraph? = null
     private var binding: AssistantSessionBinding? = null
+    private var improving: ImproveViewModel? = null
     private var reviewed: AssistantEditorSnapshot? = null
     private var editorSession: Long? = null
     private var loading: Job? = null
@@ -44,6 +45,7 @@ internal class ReviewViewModel @Inject constructor(
     fun open() {
         if (!alive) return
         if (state.value.isOpen) {
+            if (improving != null) return
             mutableState.value = state.value.copy(destination = ReviewDestination.FINDINGS)
             publish()
             return
@@ -125,6 +127,18 @@ internal class ReviewViewModel @Inject constructor(
         publish()
     }
 
+    /** Continue this review's session, including its exact-source selection and transcript. */
+    fun openImprove(model: ImproveViewModel) {
+        publish()
+        if (!state.value.isOpen || state.value.unavailable != null || state.value.isWorking) return
+        val connected = binding ?: return
+        connected.editor.clearReviewQuote()
+        improving = model
+        mutableState.value = state.value.copy(destination = ReviewDestination.IMPROVE)
+        model.openReview(connected, state.value.effort, onClose = ::close,
+            onCommitted = { editorSession = connected.editor.assistantSnapshot?.session })
+    }
+
     /** This is a subroute of the same review, so returning keeps its bounded selected findings. */
     fun showQuote(index: Int) {
         publish()
@@ -154,6 +168,9 @@ internal class ReviewViewModel @Inject constructor(
         observing = null
         val previous = binding
         binding = null
+        val improvement = improving
+        improving = null
+        improvement?.ownerClosed()
         previous?.deactivate()
         reviewed = null
         editorSession = null
@@ -189,7 +206,9 @@ internal class ReviewViewModel @Inject constructor(
         val issues = if (result.review != null) result.issues else editorState.issues
         mutableState.value = state.value.copy(assistant = result, localIssues = issues,
             unavailable = unavailable, canReview = unavailable == null && !working,
-            canRetry = unavailable == null && connected.session.canRetry, canSelectFindings = canSelect)
+            canRetry = unavailable == null && connected.session.canRetry, canSelectFindings = canSelect,
+            canImproveWithThese = canSelect && result.selectedFindings.isNotEmpty())
+        improving?.contextChanged()
     }
 
     override fun onCleared() {
