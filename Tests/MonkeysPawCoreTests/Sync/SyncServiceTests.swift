@@ -200,6 +200,92 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(restarted.transport.requests.filter { $0.method == .get || $0.method == .delete }.count, 0)
     }
 
+    func testUnchangedSnapshotRestoresInternallyRescuedOccupantWithoutDelete() throws {
+        let rig = try SyncServiceRig()
+        let id = SyncTestValues.personalPrompt
+        let bytes = SyncScanTestSupport.bytes("Accessible private head", id: id)
+        let state = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "old", SyncScanTestSupport.team: "group-old"],
+            groups: SyncScanTestSupport.groups(role: .viewer), prompts: [.assigned(id): SyncScanTestSupport.record(bytes)])
+        try rig.base.states.update(for: rig.base.binding) { $0 = state }
+        try rig.base.files.write(bytes, at: "Groups/Team/occupied.md")
+        let occupant = try XCTUnwrap(rig.base.mutations.read(at: "Groups/Team/occupied.md"))
+        let inventory = try SyncGroupFolders.inventory(binding: rig.base.binding, availability: .available, mutations: rig.base.mutations)
+        let rescue = try SyncGroupFolders.rescueOccupant(occupant, state: state, ownership: nil,
+            inventory: inventory, at: rig.clock.now(), freshID: { SyncTestValues.device }, mutations: rig.base.mutations)
+        XCTAssertEqual(try rig.journal.apply(rescue), .committed)
+        let current = try XCTUnwrap(rig.base.states.load(for: rig.base.binding))
+        XCTAssertEqual(current.cursors[SyncScanTestSupport.personal], "0")
+        let personal = SyncAPI.SyncScope(identity: .user(userID: SyncTestValues.user.rawValue), mode: .snapshot,
+            head: 3, cursor: "private-next", hasMore: false, items: [.upsert(seq: 3,
+                prompt: .init(id: id.rawValue, rev: 3, path: "a.md", content: String(decoding: bytes, as: UTF8.self)))])
+        let group = SyncAPI.SyncScope(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .viewer),
+            mode: .delta, head: 3, cursor: "group-next", hasMore: false, items: [])
+        let staging = SyncPullStaging(files: MemoryFileStore())
+        try staging.append(.init(databaseID: SyncTestValues.uuid.uuidString.lowercased(), scopes: [personal, group], removed: []))
+        let pull = SyncCollectedPull(databaseID: SyncTestValues.uuid, scopes: [
+            SyncScanTestSupport.personal: .init(page: personal, snapshotHead: 3, firstPage: 0),
+            SyncScanTestSupport.team: .init(page: group, snapshotHead: nil, firstPage: 0)], removed: [], staging: staging)
+        defer { try? pull.discard() }
+        let local = SyncReconciliationSnapshot(binding: rig.base.binding, files: try rig.base.mutations.listedFiles())
+        let plan = try SyncReconciler.plan(pull, state: current, local: local)
+        XCTAssertEqual(try rig.journal.apply(SyncReconciler.application(plan, mutations: rig.base.mutations)), .committed)
+        let scan = try SyncScanTestSupport.scan(rig.base)
+        XCTAssertFalse(scan.changes.contains { if case .delete(let key, _) = $0 { return key == .assigned(id) }; return false })
+        XCTAssertEqual(try rig.base.files.read(at: "a.md"), bytes)
+        XCTAssertEqual(try rig.base.files.listFiles().count, 2)
+    }
+
+    func testViewerHeadCollisionRecollectsRescuedOriginalBeforePush() async throws {
+        let rig = try SyncServiceRig()
+        let groupID = SyncTestValues.groupPrompt
+        let privateID = SyncTestValues.personalPrompt
+        let groupBytes = try CanonicalForm.group(SyncScanTestSupport.bytes("Group", id: groupID), filename: "a.md").bytes
+        let privateBytes = SyncScanTestSupport.bytes("Private", id: privateID)
+        let state = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "old", SyncScanTestSupport.team: "group-old"],
+            groups: SyncScanTestSupport.groups(role: .viewer), prompts: [
+                .assigned(groupID): SyncScanTestSupport.record(groupBytes, scope: SyncScanTestSupport.team),
+                .assigned(privateID): SyncScanTestSupport.record(privateBytes)])
+        try rig.base.states.update(for: rig.base.binding) { $0 = state }
+        try rig.base.files.write(groupBytes, at: "moved.md")
+        try rig.base.files.write(privateBytes, at: "a.md")
+        let group = SyncAPI.SyncScope(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .viewer),
+            mode: .delta, head: 3, cursor: "group", hasMore: false, items: [])
+        let race = SyncStopProbe()
+        rig.transport.handler = { _, request in
+            if request.method == .post {
+                let pull = try JSONDecoder().decode(SyncAPI.PullRequest.self, from: XCTUnwrap(request.body))
+                if pull.cursors[SyncScanTestSupport.personal.rawValue] == "0" {
+                    return try SyncServiceRig.pull(items: [.upsert(seq: 3, prompt: .init(id: privateID.rawValue,
+                        rev: 3, path: "a.md", content: String(decoding: privateBytes, as: UTF8.self)))], groups: [group])
+                }
+                return try SyncServiceRig.pull(mode: .delta, groups: [group])
+            }
+            if request.method == .get {
+                XCTAssertTrue(request.url.path.hasSuffix("/prompts/" + groupID.rawValue))
+                if race.once() { try rig.base.files.move(from: "a.md", to: "Groups/Team/a.md") }
+                return try SyncServiceRig.http(SyncAPI.Prompt(id: groupID.rawValue, rev: 3,
+                    scope: .group(groupID: SyncTestValues.group.rawValue), path: "a.md", content: String(decoding: groupBytes, as: UTF8.self)))
+            }
+            XCTAssertEqual(request.method, .put)
+            XCTAssertEqual(try rig.base.files.read(at: "a.md"), privateBytes)
+            XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/a.md"), groupBytes)
+            let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: XCTUnwrap(request.body))
+            XCTAssertEqual(put.scope, .user)
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 1, seq: 4))
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertNil(rig.service.report.blockingIssue)
+        XCTAssertEqual(try rig.base.files.read(at: "a.md"), privateBytes)
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/a.md"), groupBytes)
+        XCTAssertEqual(try rig.base.files.listFiles().count, 4)
+        XCTAssertEqual(rig.base.states.snapshot.value?.prompts.count, 4)
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .delete }.count, 0)
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .post }.count, 2)
+    }
+
     func testRemovedGroupInstallsAccessibleMoveBeforeRescue() async throws {
         let rig = try SyncServiceRig()
         let bytes = SyncScanTestSupport.bytes("Moved", id: SyncTestValues.groupPrompt)
