@@ -46,7 +46,7 @@ internal object LlmFixtureConsumer {
             } else {
                 val sourceName = envelope["source"].stringValue()
                 val sourceBytes = bytes(sourceName)
-                var output = if (sourceName.endsWith(".bin")) sourceBytes.decodeToString() else strictUtf8(sourceBytes)
+                var output = if (sourceName.endsWith(".bin")) swiftReplacementUtf8(sourceBytes) else strictUtf8(sourceBytes)
                 envelope["prefix"]?.objectValue()?.let { prefix ->
                     val text = strictUtf8(bytes(prefix["source"].stringValue()))
                     output = expanded(text, prefix["repeat"].integerValue().intValueExact(), Limits.responseCap + 1) + output

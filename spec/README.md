@@ -741,8 +741,8 @@ nullable/omitted fields and nested response secrecy.
 
 M11 L2 adds `llm/<case>/case.json`, dispatched by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmConformanceTest`. Both enumerate the entire category and
-compare every expectation. The initial corpus has 267 cases, 853 visible
-files and 2,617 expectation members, with zero pending LLM cases. All prior
+compare every expectation. The initial corpus has 285 cases, 908 visible
+files and 2,794 expectation members, with zero pending LLM cases. All prior
 categories stay registered; this does not complete any earlier pending DTO
 port. Run `swift test --filter 'PromptConformance|Llm|Assistant'` and the
 existing `:core:test` command. On the implementation host use `swift64` and
@@ -764,7 +764,7 @@ output to 2 MiB + 1 and reviewed source to 256 KiB + 1. These are fixture
 construction limits, allowing compact cases immediately beyond production's
 2 MiB and 256 KiB caps. Production caps remain unchanged. `.txt` and `.md`
 references require strict UTF-8. Raw `.bin` inputs reach recovery after the
-String API's replacement decoding, allowing malformed bytes to exercise the
+Swift String API's maximal-subpart replacement decoding on both sides, allowing malformed bytes to exercise the
 reference rather than fail inventory prevalidation.
 
 Every decode expectation requires these three members:
@@ -810,6 +810,12 @@ BOM-prefixed NSNumber fragments while scanning array preambles. These
 existing Swift behaviors are pinned explicitly, including decoded-key
 duplicates and review quote ranges. Core on macOS CI must verify the same
 Foundation behavior; this Linux capture does not establish Darwin parity.
+Raw byte cases also pin truncated/interrupted sequences, overlong forms,
+stray continuations, surrogate encodings, out-of-range scalars and valid
+supplementary scalars, including issue offsets and review ranges after
+repair. The Kotlin fixture adapter mirrors Swift replacement; production
+output decoding still accepts scalar Strings. Selected-object and
+object-containing array fixtures separately pin finite/overflow numbers.
 Choice-default comparison uses the existing pinned ICU normalizer, including
 Unicode 16 canonical pairs that JDK 21's normalizer does not equate. Shared
 fixtures pin the comparison and retain both original string spellings.
