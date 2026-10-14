@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.data
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.ports.HttpTransport
 import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
+import ch.lkmc.monkeyspaw.core.ports.SecretStore
 import ch.lkmc.monkeyspaw.core.services.EditingService
 import ch.lkmc.monkeyspaw.core.services.FillService
 import ch.lkmc.monkeyspaw.core.ports.Clock
@@ -26,8 +27,8 @@ internal class AppGraphTest {
     fun `one singleton provider owns every mutable library service and DataStore`() {
         val methods = AppModule::class.java.declaredMethods
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
-            AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, CoroutineScope::class.java,
-            AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
+            AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, SecretStore::class.java,
+            CoroutineScope::class.java, AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
             AndroidClock::class.java, Clock::class.java, Clipboard::class.java,
             HttpTransport::class.java, MonotonicClock::class.java)) {
             val provider = methods.single { it.returnType == type }
@@ -36,7 +37,8 @@ internal class AppGraphTest {
         val module = source("di/AppModule.kt")
         assertTrue(module.contains("@InstallIn(SingletonComponent::class)"))
         assertEquals(1, constructorCount(module, "LibraryService"))
-        assertEquals(1, constructorCount(module, "DataStoreFactory.create"))
+        assertEquals(2, constructorCount(module, "DataStoreFactory.create"))
+        assertEquals(1, constructorCount(module, "AndroidKeystoreSecretStore"))
         assertFalse(module.contains("corruptionHandler"))
         assertTrue(source("MonkeysPawApplication.kt").contains("@HiltAndroidApp"))
         assertTrue(source("MainActivity.kt").contains("@AndroidEntryPoint"))
@@ -48,6 +50,7 @@ internal class AppGraphTest {
         assertTrue(module.contains("AndroidPromptStore(File(context.filesDir, \"library\"))"))
         assertTrue(module.contains("AndroidStateStore(File(context.filesDir, \"state\"))"))
         assertTrue(module.contains("File(context.filesDir, \"datastore/settings.json\")"))
+        assertTrue(module.contains("File(context.filesDir, \"datastore/secrets.json\")"))
     }
 
     @Test

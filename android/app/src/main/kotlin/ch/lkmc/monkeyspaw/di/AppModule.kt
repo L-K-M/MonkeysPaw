@@ -115,4 +115,11 @@ internal object AppModule {
     @Singleton
     fun seedInstaller(repository: LibraryRepository, settings: AndroidSettingsStore, catalog: AndroidSeedCatalog,
         @IoDispatcher io: CoroutineDispatcher): SeedInstaller = SeedInstaller(repository, settings, catalog, io)
+
+    @Provides
+    @Singleton
+    fun secrets(@ApplicationContext context: Context, @ApplicationScope scope: CoroutineScope,
+        @IoDispatcher io: CoroutineDispatcher): SecretStore =
+        AndroidKeystoreSecretStore(DataStoreFactory.create(serializer = SecretsSerializer, scope = scope,
+            produceFile = { File(context.filesDir, "datastore/secrets.json") }), AndroidKeystoreKeyProvider(context), io)
 }
