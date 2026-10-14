@@ -278,6 +278,49 @@ final class OpenAIClientTests: XCTestCase {
         }
     }
 
+    func testMalformedUnusedRejectionValuesNeverProbe() async throws {
+        for body in [
+            #"{"error":{"message":"json_schema is not supported"},"unused":[1,]}"#,
+            #"{"error":{"message":"json_schema is not supported",}}"#,
+            #"{"error":{"message":"json_schema is not supported"},"unused":1e400}"#,
+            #"{"error":{"message":"json_schema is not supported"},"unused":"\uD800"}"#
+        ] {
+            try await assertFailure(.providerFailure(statusCode: 400), response: HTTPResponse(statusCode: 400, body: Data(body.utf8)))
+        }
+    }
+
+    func testRejectionMessagesResolveDuplicateKeysLastInBothOrders() async throws {
+        try await assertFailure(.providerFailure(statusCode: 400), response: HTTPResponse(statusCode: 400,
+            body: Data(#"{"error":{"message":"json_schema is not supported","message":"bad request"}}"#.utf8)))
+        let transport = OpenAIStubTransport(replies: [.response(HTTPResponse(statusCode: 400,
+            body: Data(#"{"error":{"message":"bad request","message":"json_schema is not supported"}}"#.utf8))),
+            .response(try completion())])
+        _ = try await client(transport).perform(writeRequest, using: connection())
+        let requests = await transport.snapshot()
+        XCTAssertEqual(try requests.map(formatType), ["json_schema", "json_object"])
+    }
+
+    func testDuplicateMemberCannotHideAnUnrepresentableRejectionNumber() async throws {
+        // Foundation can discard the overflow before converting it to NSNumber.
+        let body = Data(#"{"error":{"message":"json_schema is not supported"},"unused":1e400,"unused":0}"#.utf8)
+        try await assertFailure(.providerFailure(statusCode: 400), response: HTTPResponse(statusCode: 400, body: body))
+    }
+
+    func testRejectionDocumentBOMAndEnvelopeDepthRemainSupported() async throws {
+        for depth in [33, 511] {
+            let body = "\u{FEFF}{\"error\":\"json_schema is not supported\",\"unused\":"
+                + String(repeating: "[", count: depth) + "0" + String(repeating: "]", count: depth) + "}"
+            let transport = OpenAIStubTransport(replies: [.response(HTTPResponse(statusCode: 400, body: Data(body.utf8))),
+                .response(try completion())])
+            _ = try await client(transport).perform(writeRequest, using: connection())
+            let requests = await transport.snapshot()
+            XCTAssertEqual(try requests.map(formatType), ["json_schema", "json_object"])
+        }
+        let body = "{\"error\":\"json_schema is not supported\",\"unused\":"
+            + String(repeating: "[", count: 512) + "0" + String(repeating: "]", count: 512) + "}"
+        try await assertFailure(.providerFailure(statusCode: 400), response: HTTPResponse(statusCode: 400, body: Data(body.utf8)))
+    }
+
     func testAllProbesShareOneDeadlineAndRemainInsideTheBudget() async throws {
         let clock = OpenAIManualClock()
         let transport = OpenAIStubTransport(replies: [.response(try unsupported(.jsonSchema)),

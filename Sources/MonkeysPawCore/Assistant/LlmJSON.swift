@@ -1,7 +1,7 @@
 import Foundation
 
-/// A parsed value retains strict types and rejects duplicate keys before a
-/// dictionary or Codable decoder can silently choose one of their values.
+/// Parsed values retain strict types. Artifact output rejects duplicate keys
+/// before a dictionary or Codable decoder can silently choose a value.
 indirect enum LlmJSONValue {
     case object([String: LlmJSONValue])
     case array([LlmJSONValue])
@@ -110,12 +110,18 @@ enum LlmJSONRecovery {
 }
 
 struct LlmJSONParser {
+    enum Mode { case output, serialization }
     private let bytes: [UInt8]
+    private let mode: Mode
     private var position = 0
 
-    init(bytes: [UInt8], position: Int = 0) {
+    init(bytes: [UInt8], position: Int = 0, mode: Mode = .output) {
         self.bytes = bytes
+        self.mode = mode
         self.position = position
+        if mode == .serialization, position == 0, bytes.starts(with: [0xEF, 0xBB, 0xBF]) {
+            self.position = 3
+        }
     }
 
     mutating func parse() throws -> LlmJSONValue {
@@ -135,7 +141,8 @@ struct LlmJSONParser {
         guard position < bytes.count else { throw AssistantError.invalidOutput }
         // Depth counts enclosing containers; a scalar at the cap opens none.
         if bytes[position] == 123 || bytes[position] == 91 {
-            guard depth < Limits.llmJSONNestingCap else { throw AssistantError.invalidOutput }
+            let cap = mode == .output ? Limits.llmJSONNestingCap : Limits.assistantEnvelopeNestingCap
+            guard depth < cap else { throw AssistantError.invalidOutput }
         }
         switch bytes[position] {
         case 123:
@@ -146,7 +153,7 @@ struct LlmJSONParser {
             repeat {
                 whitespace()
                 let key = try string()
-                guard properties[key] == nil else { throw AssistantError.invalidOutput }
+                if mode == .output, properties[key] != nil { throw AssistantError.invalidOutput }
                 whitespace()
                 guard consume(58) else { throw AssistantError.invalidOutput }
                 properties[key] = try value(depth: depth + 1)
@@ -173,6 +180,13 @@ struct LlmJSONParser {
             let start = position
             while position < bytes.count, ![9, 10, 13, 32, 44, 93, 125].contains(bytes[position]) {
                 position += 1
+            }
+            if mode == .serialization {
+                let token = String(decoding: bytes[start..<position], as: UTF8.self)
+                guard Double(token)?.isFinite == true,
+                      token.range(of: #"\A-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z"#,
+                                  options: .regularExpression) != nil else { throw AssistantError.invalidOutput }
+                return .number
             }
             guard position > start,
                   (try? JSONSerialization.jsonObject(with: Data(bytes[start..<position]),

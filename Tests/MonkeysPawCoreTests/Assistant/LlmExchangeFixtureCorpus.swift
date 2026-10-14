@@ -12,7 +12,10 @@ enum LlmExchangeFixtureCorpus {
             done.signal()
         }
         done.wait()
-        return try result.value!.get()
+        do { return try result.value!.get() }
+        catch LlmFixtureCorpus.Failure.mismatch(let field) {
+            throw LlmFixtureCorpus.Failure.mismatch("\(directory.lastPathComponent): \(field)")
+        }
     }
 
     private static func run(_ root: [String: LlmFixtureJSON], at directory: URL) async throws -> (files: [String], expectations: Int) {
@@ -49,7 +52,7 @@ enum LlmExchangeFixtureCorpus {
             try stateFiles.memory.write(bytes(initialState, extensions: [".json", ".bin"]), at: "provider-state.json")
         }
         let providerState = ProviderStateStore(files: stateFiles)
-        for item in actions {
+        for (actionIndex, item) in actions.enumerated() {
             let action = try item.object
             try keys(action, ["profile", "intent", "budgetMs", "exchanges", "expected"])
             let profile = try member(action, "profile").object
@@ -147,7 +150,7 @@ enum LlmExchangeFixtureCorpus {
             guard OpenAIResponseFormat(rawValue: try member(cache, "format").string) != nil else { throw invalid }
             let cacheWrites = try nonnegative(member(cache, "writes"))
             let clock = ExchangeClock(origin: origin, utc: utc)
-            let transport = ExchangeTransport(frames: frames, clock: clock)
+            let transport = ExchangeTransport(frames: frames, clock: clock, actionIndex: actionIndex)
             let client: AssistantClient
             switch provider {
             case .anthropic: client = AnthropicClient(transport: transport, clock: clock.clock)
@@ -313,14 +316,17 @@ enum LlmExchangeFixtureCorpus {
     private actor ExchangeTransport: HTTPTransporting {
         let frames: [ExchangeFrame]
         let clock: ExchangeClock
+        let actionIndex: Int
         private(set) var count = 0
         private(set) var violation: Error?
-        init(frames: [ExchangeFrame], clock: ExchangeClock) { self.frames = frames; self.clock = clock }
+        init(frames: [ExchangeFrame], clock: ExchangeClock, actionIndex: Int) {
+            self.frames = frames; self.clock = clock; self.actionIndex = actionIndex
+        }
         func send(_ request: HTTPRequest) async throws -> HTTPResponse {
             let index = count
             count += 1
             guard index < frames.count else {
-                let failure = mismatch("unexpected automatic request")
+                let failure = mismatch("action \(actionIndex + 1), request \(index + 1): unexpected automatic request")
                 violation = failure
                 throw failure
             }
@@ -334,7 +340,7 @@ enum LlmExchangeFixtureCorpus {
                   request.requestByteCap == frame.requestCap, request.responseByteCap == frame.responseCap,
                   request.deadline == clock.origin.advanced(by: .milliseconds(frame.deadlineMs)),
                   request.body == frame.body else {
-                let failure = mismatch("raw HTTP request")
+                let failure = mismatch("action \(actionIndex + 1), request \(index + 1): raw HTTP request")
                 violation = failure
                 throw failure
             }

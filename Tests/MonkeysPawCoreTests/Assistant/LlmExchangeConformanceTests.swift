@@ -57,6 +57,26 @@ final class LlmExchangeConformanceTests: XCTestCase {
         }
     }
 
+    func testTransportMismatchesNameCaseActionAndRequest() throws {
+        let name = "openai-ladder-none"
+        for (field, requestIndex) in [("raw HTTP request", 1), ("unexpected automatic request", 3)] {
+            try withFixture(name: name) { directory in
+                if requestIndex == 1 {
+                    try change(directory, name: name, path: ["actions", "0", "exchanges", "0", "request", "deadlineMs"]) {
+                        _ in .integer(299_999)
+                    }
+                } else {
+                    try change(directory, name: name, path: ["actions", "0", "exchanges"]) { .array(Array(try $0.array.dropLast())) }
+                    try change(directory, name: name, path: ["actions", "0", "expected", "requestCount"]) { _ in .integer(2) }
+                }
+                XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory)) { error in
+                    guard case LlmFixtureCorpus.Failure.mismatch(let message) = error else { return XCTFail("Expected mismatch") }
+                    XCTAssertEqual(message, "\(name): exchange: action 1, request \(requestIndex): \(field)")
+                }
+            }
+        }
+    }
+
     func testCanonicallyEqualHeaderValuesMustStillMatchUTF8Bytes() throws {
         try withFixture { directory in
             try change(directory, path: ["actions", "0", "profile", "key"]) { _ in .string("fixture-only-caf\u{00e9}") }

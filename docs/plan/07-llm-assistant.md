@@ -231,6 +231,9 @@ How each provider is asked for the schema:
     then one with no `response_format`. Generic 400s and invalid schemas or
     unsupported schema keywords fail without a probe. At most two downgrades
     share the original monotonic 300-second deadline.
+    Error bodies use the same eager UTF-8 JSON validation on every platform,
+    including unused values, finite numbers and paired Unicode surrogates.
+    The last duplicate member wins; at most 512 containers may be open.
   - Persist the lower format only after its response passes stop checks,
     recovery and strict validation. A failed probe leaves the capability
     unchanged. `<config>/provider-state.json`, beside provider settings, is a
