@@ -2,11 +2,16 @@ package ch.lkmc.monkeyspaw.data
 
 import androidx.datastore.core.CorruptionException
 import androidx.datastore.core.DataStoreFactory
+import androidx.datastore.core.Serializer
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import ch.lkmc.monkeyspaw.core.ports.SyncTLSTrust
+import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import kotlinx.coroutines.*
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.OutputStream
+import java.nio.file.Files
 import kotlin.test.*
 
 internal class AndroidSettingsStoreTest : TemporaryFiles() {
@@ -82,10 +87,139 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
         } finally { scope.coroutineContext.job.cancelAndJoin() }
     }
 
-    private suspend fun withStore(work: suspend (AndroidSettingsStore) -> Unit) {
+    @Test
+    fun `sync trust reopens bound to one normalized deployment and defaults elsewhere`() = runBlocking {
+        val selected = SyncServerURL("HTTPS://SYNC.EXAMPLE.:443/paw/api/v1/")
+        withStore { store ->
+            assertNull(store.read().syncTls)
+            store.selectSyncServer(selected)
+            assertEquals(SyncTLSTrust.SYSTEM, store.read().syncTls!!.trust)
+            store.setSyncTlsTrust(selected, SyncTLSTrust.SYSTEM_AND_USER)
+        }
+        withStore { store ->
+            val option = store.read().syncTls!!
+            assertEquals("https://sync.example/paw", option.server.baseURL)
+            assertEquals(SyncTLSTrust.SYSTEM_AND_USER, option.trustFor(SyncServerURL("https://sync.example/paw")))
+            for (url in listOf("https://other.example/paw", "https://sync.example:444/paw", "https://sync.example/other",
+                "http://localhost/paw")) assertEquals(SyncTLSTrust.SYSTEM, option.trustFor(SyncServerURL(url)))
+            store.selectSyncServer(SyncServerURL("https://sync.example/paw/api/v1"))
+            assertEquals(option, store.read().syncTls)
+            assertEquals("<sync TLS settings>", option.toString())
+        }
+        val raw = Files.readString(filesDir.resolve("datastore/settings.json"))
+        assertTrue(raw.contains("\"syncTls\":{\"serverURL\":\"https://sync.example/paw\",\"trust\":\"SYSTEM_AND_USER\"}"))
+        assertFalse(raw.contains("certificate"))
+    }
+
+    @Test
+    fun `server changes and clearing reset trust while stale opt ins cannot change the selected server`() = runBlocking {
+        val first = SyncServerURL("https://sync.example/paw")
+        val second = SyncServerURL("https://sync.example/other")
+        withStore { store ->
+            store.selectSyncServer(first)
+            store.setSyncTlsTrust(first, SyncTLSTrust.SYSTEM_AND_USER)
+            store.selectSyncServer(second)
+            assertEquals(SyncTlsSettings(second), store.read().syncTls)
+            val bytes = Files.readAllBytes(filesDir.resolve("datastore/settings.json"))
+            val error = assertFailsWith<SyncTlsSettingsError> { store.setSyncTlsTrust(first, SyncTLSTrust.SYSTEM_AND_USER) }
+            assertSame(SyncTlsSettingsError.ServerChanged, error)
+            assertNull(error.cause)
+            assertContentEquals(bytes, Files.readAllBytes(filesDir.resolve("datastore/settings.json")))
+            store.selectSyncServer(first)
+            assertEquals(SyncTLSTrust.SYSTEM, store.read().syncTls!!.trust)
+            store.setSyncTlsTrust(first, SyncTLSTrust.SYSTEM_AND_USER)
+            store.setSyncTlsTrust(first, SyncTLSTrust.SYSTEM)
+            assertEquals(SyncTLSTrust.SYSTEM, store.read().syncTls!!.trust)
+            store.selectSyncServer(null)
+            assertNull(store.read().syncTls)
+            assertFailsWith<SyncTlsSettingsError> { store.setSyncTlsTrust(first, SyncTLSTrust.SYSTEM_AND_USER) }
+        }
+        withStore { assertNull(it.read().syncTls) }
+    }
+
+    @Test
+    fun `sync option writes preserve provider payloads and seed progress under concurrent updates`() = runBlocking {
+        val server = SyncServerURL("https://sync.example")
+        val records = mapOf("provider-settings" to SettingsRecord("provider metadata", "stamp-one"),
+            "provider-state" to SettingsRecord("capability state", "stamp-two"))
+        withStore { store ->
+            store.selectSyncServer(server)
+            coroutineScope {
+                val seed = async { repeat(20) { store.setSeedProgress(SeedProgress.COMPLETE) } }
+                val providers = async { repeat(20) { store.updateRecords { records } } }
+                val tls = async { repeat(20) { store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER) } }
+                awaitAll(seed, providers, tls)
+            }
+        }
+        withStore { store ->
+            assertEquals(records, store.read().records)
+            assertEquals(SeedProgress.COMPLETE, store.read().seedProgress)
+            assertEquals(SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER), store.read().syncTls)
+            store.updateRecords { it - "provider-state" }
+            assertEquals(SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER), store.read().syncTls)
+            store.selectSyncServer(null)
+            assertEquals(records - "provider-state", store.read().records)
+            assertEquals(SeedProgress.COMPLETE, store.read().seedProgress)
+        }
+    }
+
+    @Test
+    fun `invalid trust records fail closed without resetting or overwriting settings`() = runBlocking {
+        val path = filesDir.resolve("datastore/settings.json")
+        val server = SyncServerURL("https://sync.example")
+        for (option in listOf("null", "[]", "{}", "{\"serverURL\":\"https://sync.example\",\"trust\":true}",
+            "{\"serverURL\":7,\"trust\":\"SYSTEM\"}", "{\"serverURL\":\"https://sync.example\",\"trust\":\"TRUST_ALL\"}",
+            "{\"serverURL\":\"https://sync.example\",\"trust\":\"SYSTEM\",\"extra\":true}",
+            "{\"serverURL\":\"HTTPS://SYNC.EXAMPLE/api/v1\",\"trust\":\"SYSTEM_AND_USER\"}",
+            "{\"serverURL\":\"https://user:secret@sync.example\",\"trust\":\"SYSTEM_AND_USER\"}")) {
+            val bytes = "{\"version\":1,\"seedProgress\":\"COMPLETE\",\"syncTls\":$option}".encodeToByteArray()
+            put(path, bytes)
+            withStore { store ->
+                assertNull(assertFailsWith<androidx.datastore.core.CorruptionException> { store.read() }.cause)
+                assertFailsWith<androidx.datastore.core.CorruptionException> { store.selectSyncServer(server) }
+                assertFailsWith<androidx.datastore.core.CorruptionException> { store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM) }
+                assertFailsWith<androidx.datastore.core.CorruptionException> { store.updateRecords { emptyMap() } }
+            }
+            assertContentEquals(bytes, Files.readAllBytes(path))
+        }
+    }
+
+    @Test
+    fun `failed trust publication preserves the binding and unrelated provider settings after restart`() = runBlocking {
+        val server = SyncServerURL("https://sync.example/paw")
+        var fail = false
+        val serializer = object : Serializer<AndroidSettings> by SettingsSerializer {
+            override suspend fun writeTo(t: AndroidSettings, output: OutputStream) {
+                SettingsSerializer.writeTo(t, output)
+                if (fail) throw IOException("synthetic publication failure")
+            }
+        }
+        val records = mapOf("provider-settings" to SettingsRecord("provider metadata", "stamp"))
+        withStore(serializer) { store ->
+            store.setSeedProgress(SeedProgress.DECLINED)
+            store.updateRecords { records }
+            store.selectSyncServer(server)
+            store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER)
+            val prior = store.read()
+            val bytes = Files.readAllBytes(filesDir.resolve("datastore/settings.json"))
+            fail = true
+            assertFailsWith<StoreError.IOFailure> { store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM) }
+            assertFailsWith<StoreError.IOFailure> { store.selectSyncServer(SyncServerURL("https://other.example")) }
+            assertFailsWith<StoreError.IOFailure> { store.selectSyncServer(null) }
+            assertEquals(prior, store.read())
+            assertContentEquals(bytes, Files.readAllBytes(filesDir.resolve("datastore/settings.json")))
+        }
+        withStore { store ->
+            assertEquals(records, store.read().records)
+            assertEquals(SeedProgress.DECLINED, store.read().seedProgress)
+            assertEquals(SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER), store.read().syncTls)
+        }
+    }
+
+    private suspend fun withStore(serializer: Serializer<AndroidSettings> = SettingsSerializer, work: suspend (AndroidSettingsStore) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
-            val store = DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
+            val store = DataStoreFactory.create(serializer = serializer, scope = scope,
                 produceFile = { filesDir.resolve("datastore/settings.json").toFile() })
             work(AndroidSettingsStore(store))
         } finally { scope.coroutineContext.job.cancelAndJoin() }

@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import ch.lkmc.monkeyspaw.core.ports.SyncTLSTrust
+import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -17,8 +19,18 @@ internal enum class SeedProgress { NOT_OFFERED, DECLINED, INSTALLING, COMPLETE }
 
 internal data class SettingsRecord(val payload: String, val stamp: String)
 
+internal data class SyncTlsSettings(val server: SyncServerURL, val trust: SyncTLSTrust = SyncTLSTrust.SYSTEM) {
+    fun trustFor(server: SyncServerURL): SyncTLSTrust = if (this.server == server) trust else SyncTLSTrust.SYSTEM
+    override fun toString(): String = "<sync TLS settings>"
+}
+
+internal sealed class SyncTlsSettingsError private constructor(code: String) : Exception(code, null, false, true) {
+    data object ServerChanged : SyncTlsSettingsError("syncServerChanged")
+    final override fun toString(): String = message.orEmpty()
+}
+
 internal data class AndroidSettings(val seedProgress: SeedProgress = SeedProgress.NOT_OFFERED,
-    val records: Map<String, SettingsRecord> = emptyMap())
+    val records: Map<String, SettingsRecord> = emptyMap(), val syncTls: SyncTlsSettings? = null)
 
 /** Settings only. Prompt bytes, history, usage and remembered values never enter DataStore. */
 internal class AndroidSettingsStore(private val store: DataStore<AndroidSettings>) {
@@ -30,6 +42,21 @@ internal class AndroidSettingsStore(private val store: DataStore<AndroidSettings
         store.updateData { it.copy(seedProgress = progress) }
     } catch (error: Exception) { throw sanitized(error) }
 
+    /** Z19/Z21 select the normalized server before accepting an explicit trust change. */
+    suspend fun selectSyncServer(server: SyncServerURL?): AndroidSettings = try {
+        store.updateData { current ->
+            current.copy(syncTls = if (server == null) null else
+                current.syncTls?.takeIf { it.server == server } ?: SyncTlsSettings(server))
+        }
+    } catch (error: Exception) { throw sanitized(error) }
+
+    suspend fun setSyncTlsTrust(server: SyncServerURL, trust: SyncTLSTrust): AndroidSettings = try {
+        store.updateData { current ->
+            val selected = current.syncTls?.takeIf { it.server == server } ?: throw SyncTlsSettingsError.ServerChanged
+            current.copy(syncTls = selected.copy(trust = trust))
+        }
+    } catch (error: Exception) { throw sanitized(error) }
+
     /** The synchronous StateStore bridge calls these only from background IO. */
     suspend fun updateRecords(change: (Map<String, SettingsRecord>) -> Map<String, SettingsRecord>) {
         try { store.updateData { it.copy(records = change(it.records).toMap()) } }
@@ -39,6 +66,7 @@ internal class AndroidSettingsStore(private val store: DataStore<AndroidSettings
     private fun sanitized(error: Throwable): Throwable = when (error) {
         is CancellationException -> error
         is StoreError -> error
+        is SyncTlsSettingsError -> error
         is CorruptionException -> CorruptionException("Settings are unreadable or use an unsupported version.")
         else -> StoreError.IOFailure
     }
@@ -56,7 +84,7 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
             val root = Json.parseToJsonElement(text) as? JsonObject
                 ?: throw IllegalArgumentException()
             if (!root.keys.containsAll(setOf("version", "seedProgress")) ||
-                root.keys.any { it !in setOf("version", "seedProgress", "records") } || root["version"] != JsonPrimitive(1)) {
+                root.keys.any { it !in setOf("version", "seedProgress", "records", "syncTls") } || root["version"] != JsonPrimitive(1)) {
                 throw IllegalArgumentException()
             }
             val progress = root["seedProgress"] as? JsonPrimitive ?: throw IllegalArgumentException()
@@ -75,7 +103,17 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
                     SettingsRecord(payload.content, stamp.content)
                 }
             }
-            AndroidSettings(SeedProgress.valueOf(progress.content), records)
+            val syncTls = if ("syncTls" !in root) null else {
+                val option = root["syncTls"] as? JsonObject ?: throw IllegalArgumentException()
+                if (option.keys != setOf("serverURL", "trust")) throw IllegalArgumentException()
+                val url = option["serverURL"] as? JsonPrimitive ?: throw IllegalArgumentException()
+                val trust = option["trust"] as? JsonPrimitive ?: throw IllegalArgumentException()
+                if (!url.isString || !trust.isString) throw IllegalArgumentException()
+                val server = SyncServerURL(url.content)
+                if (server.baseURL != url.content) throw IllegalArgumentException()
+                SyncTlsSettings(server, SyncTLSTrust.valueOf(trust.content))
+            }
+            AndroidSettings(SeedProgress.valueOf(progress.content), records, syncTls)
         } catch (_: Exception) {
             throw CorruptionException("Settings are unreadable or use an unsupported version.")
         }
@@ -111,6 +149,10 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
         if (t.records.isNotEmpty()) fields["records"] = JsonObject(t.records.mapValues { (_, record) ->
             JsonObject(mapOf("payload" to JsonPrimitive(record.payload), "stamp" to JsonPrimitive(record.stamp)))
         })
+        t.syncTls?.let { option ->
+            fields["syncTls"] = JsonObject(mapOf("serverURL" to JsonPrimitive(option.server.baseURL),
+                "trust" to JsonPrimitive(option.trust.name)))
+        }
         output.write(JsonObject(fields).toString().encodeToByteArray(throwOnInvalidSequence = true))
     }
 }

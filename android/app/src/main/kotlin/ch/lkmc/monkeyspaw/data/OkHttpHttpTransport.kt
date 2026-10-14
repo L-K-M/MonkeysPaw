@@ -17,14 +17,22 @@ import java.util.Locale
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit.NANOSECONDS
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** Shared Android network driver. M10 can add its URL policy here without a second HTTP stack. */
+/** Native CA discovery stays injected so the same driver can run in the JVM sync harness. */
+internal fun interface SyncTlsTrustFactory {
+    fun create(): X509TrustManager
+}
+
+/** Shared Android network driver; user anchors are selected only by a deployment-bound sync request. */
 internal class OkHttpHttpTransport(
     private val clock: MonotonicClock,
     private val scope: CoroutineScope,
     dispatcher: Dispatcher = Dispatcher(),
+    private val syncTlsTrust: SyncTlsTrustFactory = SyncTlsTrustFactory { throw HttpTransportError.NetworkFailure },
 ) : HttpTransport {
     private val client = OkHttpClient.Builder()
         .dispatcher(dispatcher)
@@ -58,7 +66,7 @@ internal class OkHttpHttpTransport(
     override suspend fun send(request: HttpRequest): HttpResponse {
         val url = validatedURL(request)
         val receipt = Receipt(request, clock)
-        val call = try {
+        val nativeRequest = try {
             val body = request.body?.let(::OneShotBody) ?: when (request.method) {
                 HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH -> OneShotBody(byteArrayOf())
                 else -> null
@@ -67,20 +75,30 @@ internal class OkHttpHttpTransport(
                 // Core already rejects controls; its contract permits non-ASCII values.
                 request.headers.forEach { (name, value) -> addUnsafeNonAscii(name, value) }
             }.build()
-            client.newCall(Request.Builder().url(url).headers(headers)
-                .method(request.method.rawValue, body).tag(Receipt::class.java, receipt).build())
+            Request.Builder().url(url).headers(headers)
+                .method(request.method.rawValue, body).tag(Receipt::class.java, receipt).build()
         } catch (_: IllegalArgumentException) {
             throw HttpTransportError.InvalidRequest
         }
 
         try {
             return suspendCancellableCoroutine { continuation ->
-                receipt.start(call, continuation)
+                receipt.start(continuation)
                 continuation.invokeOnCancellation { receipt.fail(HttpTransportError.Cancelled) }
                 val worker = scope.launch {
                     try {
                         receipt.checkActive()
-                        call.executeAsync().use { response -> receipt.read(response) }
+                        val selected = clientFor(request, url)
+                        try {
+                            // Native trust discovery consumes this same deadline and may finish after cancellation.
+                            receipt.checkActive()
+                            val call = selected.newCall(nativeRequest)
+                            receipt.attach(call)
+                            receipt.checkActive()
+                            call.executeAsync().use { response -> receipt.read(response) }
+                        } finally {
+                            if (selected !== client) selected.connectionPool.evictAll()
+                        }
                     } catch (_: CancellationException) {
                         receipt.fail(HttpTransportError.Cancelled)
                     } catch (_: Exception) {
@@ -108,11 +126,12 @@ internal class OkHttpHttpTransport(
             }) {
             throw HttpTransportError.InvalidURL
         }
-        when (request.urlPolicy) {
+        val validated = when (val policy = request.urlPolicy) {
             HttpUrlPolicy.ASSISTANT -> try {
                 // Validate with Core before OkHttp can normalize deceptive host/path spellings.
                 // Queries belong to model-list requests, never the provider's base URL.
                 ProviderSettings.normalizeBaseURL(raw.substringBefore('?'), ProviderKind.ANTHROPIC)
+                raw
             } catch (error: ProviderSettingsError) {
                 throw when (error) {
                     ProviderSettingsError.CredentialsInURL -> HttpTransportError.CredentialsInURL
@@ -120,15 +139,23 @@ internal class OkHttpHttpTransport(
                     else -> HttpTransportError.InvalidURL
                 }
             }
-            // Z6 adds the sync TLS trust factory; until then only system trust is honoured.
-            is HttpUrlPolicy.Sync -> {
-                val policy = request.urlPolicy as HttpUrlPolicy.Sync
-                if (policy.trust != SyncTLSTrust.SYSTEM) throw HttpTransportError.InvalidRequest
-                policy.server.validatedRequestURL(raw)
-            }
+            is HttpUrlPolicy.Sync -> policy.server.validatedRequestURL(raw)
         }
-        val url = raw.toHttpUrlOrNull() ?: throw HttpTransportError.InvalidURL
-        return url.newBuilder().host(url.host.removeSuffix(".")).build()
+        val url = validated.toHttpUrlOrNull() ?: throw HttpTransportError.InvalidURL
+        val normalized = url.newBuilder().host(url.host.removeSuffix(".")).build()
+        // OkHttp's own parsing must retain the exact scheme/host/port/deployment binding.
+        (request.urlPolicy as? HttpUrlPolicy.Sync)?.server?.validatedRequestURL(normalized.toString())
+        return normalized
+    }
+
+    private fun clientFor(request: HttpRequest, url: HttpUrl): OkHttpClient {
+        val policy = request.urlPolicy as? HttpUrlPolicy.Sync ?: return client
+        if (!url.isHttps || policy.trust == SyncTLSTrust.SYSTEM) return client
+        val manager = syncTlsTrust.create()
+        val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(manager), null) }
+        // A fresh TLS context and pool prevent sessions/coalesced connections from carrying an opt-in elsewhere.
+        return client.newBuilder().sslSocketFactory(tls.socketFactory, manager)
+            .connectionPool(ConnectionPool()).build()
     }
 
     private class OneShotBody(private val bytes: ByteArray) : RequestBody() {
@@ -147,12 +174,21 @@ internal class OkHttpHttpTransport(
         var wireStatus: Int? = null
         val failure: HttpTransportError? get() = synchronized(lock) { result?.exceptionOrNull() as? HttpTransportError }
 
-        fun start(call: Call, continuation: CancellableContinuation<HttpResponse>) {
+        fun start(continuation: CancellableContinuation<HttpResponse>) {
             synchronized(lock) {
-                this.call = call
                 this.continuation = continuation
                 val remaining = request.deadlineNanos - clock.nowNanos()
                 timer = deadlines.schedule({ fail(HttpTransportError.DeadlineExceeded) }, maxOf(0, remaining), NANOSECONDS)
+            }
+        }
+
+        fun attach(call: Call) {
+            val accepted = synchronized(lock) {
+                if (result != null) false else { this.call = call; true }
+            }
+            if (!accepted) {
+                call.cancel()
+                throw failure ?: HttpTransportError.Cancelled
             }
         }
 

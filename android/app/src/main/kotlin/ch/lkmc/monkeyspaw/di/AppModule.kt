@@ -78,7 +78,7 @@ internal object AppModule {
     @Provides
     @Singleton
     fun httpTransport(clock: MonotonicClock, @ApplicationScope scope: CoroutineScope): HttpTransport =
-        OkHttpHttpTransport(clock, scope)
+        OkHttpHttpTransport(clock, scope, syncTlsTrust = AndroidSyncTlsTrust())
 
     @Provides
     @Singleton

@@ -391,6 +391,103 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
         }
     }
 
+    @Test
+    fun `device account factories isolate tokens from providers and preserve other accounts through replacement and Clear`() = runBlocking {
+        val id = UUID.randomUUID()
+        val device = SecretAccount.device(id)
+        val provider = SecretAccount("provider", id.toString())
+        val otherDevice = SecretAccount.device(UUID.randomUUID())
+        val keys = TestKeys()
+        val token = sentinel()
+        val providerKey = sentinel()
+        val otherToken = sentinel()
+        withStore(keys) { data, store ->
+            assertNotEquals(provider, device)
+            store.write(providerKey, provider)
+            store.write(token, device)
+            store.write(otherToken, otherDevice)
+            val preserved = data.data.first().entries.filterKeys { it != device.rawValue }
+            val replacement = sentinel()
+            store.write(replacement, device)
+            assertSecret(replacement, store.read(device, SecretReadSource.PERSISTED))
+            assertEquals(preserved, data.data.first().entries.filterKeys { it != device.rawValue })
+            for (value in listOf(token, replacement, providerKey, otherToken)) assertNoPlaintext(value, keys.key!!)
+            store.delete(device)
+            store.delete(device)
+            assertEquals(preserved, data.data.first().entries)
+        }
+        withStore(keys) { _, store ->
+            assertNull(store.read(device, SecretReadSource.EFFECTIVE))
+            assertSecret(providerKey, store.read(provider, SecretReadSource.PERSISTED))
+            assertSecret(otherToken, store.read(otherDevice, SecretReadSource.PERSISTED))
+        }
+        assertEquals(0, keys.replacements)
+    }
+
+    @Test
+    fun `missing device alias fails without regenerating and device cleanup preserves provider ciphertext`() = runBlocking {
+        val device = SecretAccount.device(UUID.randomUUID())
+        val keys = TestKeys()
+        val originalKey = keys.key
+        val providerKey = sentinel()
+        withStore(keys) { _, store ->
+            store.write(providerKey, first)
+            store.write(sentinel(), device)
+        }
+        val bytes = Files.readAllBytes(path)
+        keys.key = null
+        withStore(keys) { data, store ->
+            val retained = data.data.first().entries.getValue(first.rawValue)
+            assertError(SecretStoreError.Unavailable) { store.read(device, SecretReadSource.PERSISTED) }
+            assertError(SecretStoreError.Unavailable) { store.write(sentinel(), device) }
+            assertContentEquals(bytes, Files.readAllBytes(path))
+            store.delete(device)
+            assertEquals(mapOf(first.rawValue to retained), data.data.first().entries)
+            assertError(SecretStoreError.Unavailable) { store.write(sentinel(), device) }
+            assertEquals(0, keys.creates)
+            assertEquals(0, keys.replacements)
+        }
+        keys.key = originalKey
+        withStore(keys) { _, store ->
+            assertSecret(providerKey, store.read(first, SecretReadSource.PERSISTED))
+            assertNull(store.read(device, SecretReadSource.PERSISTED))
+        }
+    }
+
+    @Test
+    fun `tampered device token fails before replacement and clearing it leaves the provider usable after restart`() = runBlocking {
+        val device = SecretAccount.device(UUID.randomUUID())
+        val keys = TestKeys()
+        val providerKey = sentinel()
+        val token = sentinel()
+        withStore(keys) { data, store ->
+            store.write(providerKey, first)
+            store.write(token, device)
+            val records = data.data.first().entries
+            val original = records.getValue(device.rawValue)
+            val tag = Base64.getDecoder().decode(original.ciphertext).apply {
+                this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte()
+            }
+            // A device/provider swap must also reject under the exact namespaced-account AAD.
+            for (tampered in listOf(original.copy(ciphertext = Base64.getEncoder().encodeToString(tag)), records.getValue(first.rawValue))) {
+                data.updateData { SecretRecords(records + (device.rawValue to tampered)) }
+                val bytes = Files.readAllBytes(path)
+                assertError(SecretStoreError.ReadFailed) { store.read(device, SecretReadSource.EFFECTIVE) }
+                assertError(SecretStoreError.WriteFailed) { store.write(sentinel(), device) }
+                assertContentEquals(bytes, Files.readAllBytes(path))
+                assertSecret(providerKey, store.read(first, SecretReadSource.PERSISTED))
+                store.delete(device)
+                assertEquals(mapOf(first.rawValue to records.getValue(first.rawValue)), data.data.first().entries)
+            }
+            assertNoPlaintext(token, keys.key!!)
+            assertNoPlaintext(providerKey, keys.key!!)
+        }
+        withStore(keys) { _, store ->
+            assertSecret(providerKey, store.read(first, SecretReadSource.PERSISTED))
+            assertNull(store.read(device, SecretReadSource.PERSISTED))
+        }
+    }
+
     private suspend fun withStore(keys: TestKeys, serializer: Serializer<SecretRecords> = SecretsSerializer,
         io: CoroutineDispatcher = Dispatchers.IO, work: suspend (DataStore<SecretRecords>, AndroidKeystoreSecretStore) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + io)

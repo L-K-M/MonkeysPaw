@@ -3,6 +3,8 @@ package ch.lkmc.monkeyspaw.data
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
+import ch.lkmc.monkeyspaw.core.syncapi.ErrorResponse
+import ch.lkmc.monkeyspaw.core.syncapi.FailureCode
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.StandardTestDispatcher
 import mockwebserver3.MockResponse
@@ -10,6 +12,7 @@ import mockwebserver3.MockWebServer
 import mockwebserver3.SocketEffect
 import mockwebserver3.SocketHandler
 import okhttp3.Dispatcher
+import okhttp3.Protocol
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import okio.Buffer
@@ -21,6 +24,8 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.security.KeyStore
+import java.security.cert.X509Certificate
+import javax.net.ssl.X509TrustManager
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.LinkedBlockingQueue
@@ -195,16 +200,17 @@ internal class OkHttpHttpTransportTest {
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun `sync policy validates the bound server and refuses user CA trust until its factory exists`() = runBlocking {
+    @Test fun `sync policy validates the bound server and permits its explicit trust choice`() = runBlocking {
         val server = server()
         val bound = SyncServerURL(server.url("/").toString().trimEnd('/'))
         val other = server()
         fun sync(url: String, trust: SyncTLSTrust = SyncTLSTrust.SYSTEM) = HttpRequest(url, HttpMethod.GET,
             deadlineNanos = clock.nowNanos() + MILLISECONDS.toNanos(3000), urlPolicy = HttpUrlPolicy.Sync(bound, trust))
         assertEquals(HttpTransportError.ServerMismatch, errorOf { transport.send(sync(other.url("/api/v1/me").toString())) })
-        assertEquals(HttpTransportError.InvalidRequest,
-            errorOf { transport.send(sync(server.url("/api/v1/me").toString(), SyncTLSTrust.SYSTEM_AND_USER)) })
-        assertEquals(0, server.requestCount)
+        server.enqueue(MockResponse.Builder().body("{}").build())
+        assertContentEquals("{}".encodeToByteArray(),
+            transport.send(sync(server.url("/api/v1/me").toString(), SyncTLSTrust.SYSTEM_AND_USER)).body)
+        assertEquals(1, server.requestCount)
         assertEquals(0, other.requestCount)
     }
 
@@ -517,6 +523,284 @@ internal class OkHttpHttpTransportTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun `user anchors reach only opted in sync and never assistant default trust or a wrong deployment`() = runBlocking {
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+        val source = tlsServer(leaf, ca)
+        val other = tlsServer(leaf, ca)
+        val bound = SyncServerURL(source.url("/paw/").toString())
+        val creates = AtomicInteger()
+        val checks = AtomicInteger()
+        val manager = trustFactory(ca).create()
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, SyncTlsTrustFactory {
+            creates.incrementAndGet()
+            object : X509TrustManager by manager {
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                    checks.incrementAndGet()
+                    manager.checkServerTrusted(chain, authType)
+                }
+            }
+        })
+        source.enqueue(MockResponse.Builder().body("{}").build())
+        val canonical = "HTTPS://LOCALHOST.:${source.port}/paw/api/v1/%6De?after_id=one"
+        assertContentEquals("{}".encodeToByteArray(), driver.send(syncRequest(source, url = canonical, bound = bound)).body)
+        val observed = source.takeRequest(2, SECONDS)!!
+        assertEquals("/paw/api/v1/me?after_id=one", observed.target)
+        assertEquals("Bearer synthetic-device-token", observed.headers["Authorization"])
+        assertEquals(1, creates.get())
+        assertTrue(checks.get() > 0)
+        val priorChecks = checks.get()
+
+        assertEquals(HttpTransportError.NetworkFailure, errorOf { driver.send(request(source, path = "/v1/models")) })
+        assertEquals(HttpTransportError.NetworkFailure,
+            errorOf { driver.send(syncRequest(source, bound = bound, path = "/paw/api/v1/me", trust = SyncTLSTrust.SYSTEM)) })
+        for (url in listOf(other.url("/paw/api/v1/me").toString(), source.url("/other/api/v1/me").toString(),
+            source.url("/paw/api/v10/me").toString(), source.url("/paw/api/v1/../outside").toString(),
+            source.url("/paw/api/v1/me").toString().replace("localhost", "127.0.0.1"))) {
+            assertEquals(HttpTransportError.ServerMismatch, errorOf { driver.send(syncRequest(source, url = url, bound = bound)) })
+        }
+        // A new server's default choice also cannot reuse the previously accepted TLS connection.
+        assertEquals(HttpTransportError.NetworkFailure,
+            errorOf { driver.send(syncRequest(other, trust = SyncTLSTrust.SYSTEM)) })
+        assertEquals(1, creates.get())
+        assertEquals(priorChecks, checks.get())
+        assertFailsWith<HttpTransportError.RequestTooLarge> {
+            HttpRequest(bound.apiURL + "/auth/logout", HttpMethod.POST, body = "{}".encodeToByteArray(),
+                requestByteCap = 1, deadlineNanos = clock.nowNanos() + SECONDS.toNanos(3),
+                urlPolicy = HttpUrlPolicy.Sync(bound, SyncTLSTrust.SYSTEM_AND_USER))
+        }
+        assertEquals(1, source.requestCount)
+        assertEquals(0, other.requestCount)
+    }
+
+    @Test fun `native trust factory keeps both anchor sets and every opted in request owns its connection`() = runBlocking {
+        val system = HeldCertificate.Builder().certificateAuthority(0).build()
+        val user = HeldCertificate.Builder().certificateAuthority(0).build()
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(system, user))
+        for (ca in listOf(system, user)) {
+            val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+            val source = tlsServer(leaf, ca)
+            repeat(2) {
+                source.enqueue(MockResponse.Builder().body("{}").build())
+                assertContentEquals("{}".encodeToByteArray(), driver.send(syncRequest(source)).body)
+            }
+            assertNotEquals(source.takeRequest(2, SECONDS)!!.connectionIndex, source.takeRequest(2, SECONDS)!!.connectionIndex)
+            assertEquals(2, source.requestCount)
+        }
+    }
+
+    @Test fun `removing a user anchor is observed on the next sync request without retaining its TLS session`() = runBlocking {
+        val system = HeldCertificate.Builder().certificateAuthority(0).build()
+        val user = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(user).build()
+        val source = tlsServer(leaf, user)
+        var anchors = arrayOf(system, user)
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, AndroidSyncTlsTrust {
+            KeyStore.getInstance("JKS").apply {
+                load(null)
+                anchors.forEachIndexed { index, anchor -> setCertificateEntry("anchor-$index", anchor.certificate) }
+            }
+        })
+        source.enqueue(MockResponse.Builder().body("{}").build())
+        driver.send(syncRequest(source))
+        anchors = arrayOf(system)
+        assertEquals(HttpTransportError.NetworkFailure, errorOf { driver.send(syncRequest(source)) })
+        assertEquals(1, source.requestCount)
+    }
+
+    @Test fun `sync opt in still rejects untrusted expired and wrong hostname certificates`() = runBlocking {
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val otherCa = HeldCertificate.Builder().certificateAuthority(0).build()
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(ca))
+        val leaves = listOf(
+            HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(otherCa).build() to otherCa,
+            HeldCertificate.Builder().addSubjectAlternativeName("wrong.invalid").signedBy(ca).build() to ca,
+            HeldCertificate.Builder().addSubjectAlternativeName("localhost").validityInterval(0, 1).signedBy(ca).build() to ca,
+        )
+        for ((leaf, root) in leaves) {
+            val source = tlsServer(leaf, root)
+            val error = errorOf { driver.send(syncRequest(source)) }
+            assertEquals(HttpTransportError.NetworkFailure, error)
+            assertNull(error.cause)
+            assertTrue(error.suppressed.isEmpty())
+            assertEquals(0, source.requestCount)
+        }
+        val broken = AndroidSyncTlsTrust { throw IOException("synthetic certificate diagnostic") }
+        val error = assertFailsWith<HttpTransportError> { broken.create() }
+        assertSame(HttpTransportError.NetworkFailure, error)
+        assertFalse(error.stackTraceToString().contains("synthetic certificate diagnostic"))
+    }
+
+    @Test fun `opted in sync refuses redirects to the same server another server or HTTP without forwarding credentials`() = runBlocking {
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+        val source = tlsServer(leaf, ca)
+        val target = tlsServer(leaf, ca)
+        val plaintext = server()
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(ca))
+        var count = 0
+        for (method in listOf(HttpMethod.GET, HttpMethod.POST)) {
+            for (status in listOf(300, 301, 302, 303, 304, 305, 306, 307, 308, 310, 399)) {
+                for (location in listOf(null, source.url("/api/v1/other").toString(), target.url("/api/v1/me").toString(),
+                    plaintext.url("/api/v1/me").toString(), "http://[invalid")) {
+                    val response = MockResponse.Builder().code(status).body(syncError())
+                    if (location != null) response.addHeader("Location", location)
+                    source.enqueue(response.build())
+                    assertEquals(HttpTransportError.RedirectRefused, errorOf { driver.send(syncRequest(source, method = method)) })
+                    assertEquals(++count, source.requestCount)
+                }
+            }
+        }
+        assertEquals(110, source.requestCount)
+        assertEquals(0, target.requestCount)
+        assertEquals(0, plaintext.requestCount)
+    }
+
+    @Test fun `sync envelopes preserve exact decoded caps duplicate Retry After and one attempt statuses`() = runBlocking {
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+        val source = tlsServer(leaf, ca)
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(ca))
+        val body = syncError()
+        var count = 0
+        for (builder in listOf(MockResponse.Builder().body(body), MockResponse.Builder().chunkedBody(body, 3),
+            MockResponse.Builder().body(body).removeHeader("Content-Length").addHeader("Connection", "close")
+                .onResponseEnd(SocketEffect.CloseSocket()))) {
+            source.enqueue(builder.code(500).build())
+            assertContentEquals(body.encodeToByteArray(), driver.send(syncRequest(source, cap = body.length)).body)
+            assertEquals(++count, source.requestCount)
+        }
+        source.enqueue(MockResponse.Builder().body(body).build())
+        assertEquals(HttpTransportError.ResponseTooLarge, errorOf { driver.send(syncRequest(source, cap = body.length - 1)) })
+        count++
+        val compressed = Buffer()
+        val large = body + " ".repeat(Limits.responseCap)
+        GzipSink(compressed).buffer().use { it.writeUtf8(large) }
+        source.enqueue(MockResponse.Builder().body(compressed.clone()).addHeader("Content-Encoding", "gzip").build())
+        assertContentEquals(large.encodeToByteArray(), driver.send(syncRequest(source, cap = Limits.syncResponseCap)).body)
+        count++
+        source.enqueue(MockResponse.Builder().body(compressed).addHeader("Content-Encoding", "gzip").build())
+        assertEquals(HttpTransportError.ResponseTooLarge, errorOf { driver.send(syncRequest(source)) })
+        count++
+        source.enqueue(MockResponse.Builder().code(429).body(syncError(FailureCode.RATE_LIMITED))
+            .addHeader("Retry-After", "2").addHeader("retry-after", "3").build())
+        assertEquals("2, 3", driver.send(syncRequest(source)).headers["retry-after"])
+        count++
+        for ((status, header) in listOf(401 to "WWW-Authenticate", 407 to "Proxy-Authenticate", 408 to "Retry-After",
+            421 to "Retry-After", 503 to "Retry-After")) {
+            source.enqueue(MockResponse.Builder().code(status).body(body)
+                .addHeader(header, if (status in listOf(401, 407)) "Basic realm=\"test\"" else "0").build())
+            val response = driver.send(syncRequest(source, method = HttpMethod.POST))
+            assertEquals(status, response.statusCode)
+            assertContentEquals(body.encodeToByteArray(), response.body)
+            assertEquals(++count, source.requestCount)
+        }
+        assertEquals(count, source.requestCount)
+    }
+
+    @Test fun `sync caps deadlines and cancellation close opted in receipts`() = runBlocking {
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+        val source = tlsServer(leaf, ca)
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(ca))
+        for (fixture in listOf("advertised", "chunked", "deadline", "cancel")) {
+            val closed = CountDownLatch(1)
+            source.enqueue(when (fixture) {
+                "advertised" -> stalled(closed, "65")
+                "chunked" -> chunkedOversize(closed, syncError().padEnd(65))
+                else -> stalled(closed)
+            })
+            val outcome = CompletableDeferred<HttpTransportError>()
+            val caller = launch { outcome.complete(errorOf { driver.send(syncRequest(source, cap = 64,
+                budgetMillis = if (fixture == "deadline") 500 else 3000)) }) }
+            assertNotNull(withContext(Dispatchers.IO) { source.takeRequest(2, SECONDS) })
+            if (fixture == "cancel") caller.cancel()
+            assertEquals(when (fixture) {
+                "deadline" -> HttpTransportError.DeadlineExceeded
+                "cancel" -> HttpTransportError.Cancelled
+                else -> HttpTransportError.ResponseTooLarge
+            }, withTimeout(2000) { outcome.await() })
+            assertTrue(closed.await(2, SECONDS), "Receipt was not closed for $fixture")
+            caller.join()
+        }
+        assertEquals(4, source.requestCount)
+    }
+
+    @Test fun `opted in sync clients share dispatcher admission and queued expiry never sends`() = runBlocking {
+        dispatcher.maxRequests = 1
+        dispatcher.maxRequestsPerHost = 1
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+        val source = tlsServer(leaf, ca)
+        val queued = tlsServer(leaf, ca)
+        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(ca))
+        val closed = CountDownLatch(1)
+        source.enqueue(stalled(closed).newBuilder().headersDelay(3, SECONDS).build())
+        val outcome = CompletableDeferred<HttpTransportError>()
+        val first = launch { outcome.complete(errorOf { driver.send(syncRequest(source)) }) }
+        assertNotNull(withContext(Dispatchers.IO) { source.takeRequest(2, SECONDS) })
+        assertEquals(HttpTransportError.DeadlineExceeded, errorOf { driver.send(syncRequest(queued, budgetMillis = 200)) })
+        assertEquals(0, queued.requestCount)
+        first.cancel()
+        assertEquals(HttpTransportError.Cancelled, outcome.await())
+        first.join()
+        withTimeout(2000) { scope.coroutineContext.job.children.toList().joinAll() }
+        assertEquals(0, queued.requestCount)
+        assertEquals(1, source.requestCount)
+    }
+
+    @Test fun `trust discovery consumes the deadline and cannot dispatch after expiry or cancellation`() = runBlocking {
+        val ca = HeldCertificate.Builder().certificateAuthority(0).build()
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
+        val source = tlsServer(leaf, ca)
+        val manager = trustFactory(ca).create()
+        for (cancel in listOf(false, true)) {
+            val started = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val driver = OkHttpHttpTransport(clock, scope, dispatcher, SyncTlsTrustFactory {
+                started.countDown()
+                check(release.await(3, SECONDS))
+                manager
+            })
+            val outcome = CompletableDeferred<HttpTransportError>()
+            val caller = launch { outcome.complete(errorOf { driver.send(syncRequest(source, budgetMillis = if (cancel) 3000 else 200)) }) }
+            try {
+                assertTrue(withContext(Dispatchers.IO) { started.await(2, SECONDS) })
+                if (cancel) caller.cancel()
+                assertEquals(if (cancel) HttpTransportError.Cancelled else HttpTransportError.DeadlineExceeded,
+                    withTimeout(2000) { outcome.await() })
+                caller.join()
+            } finally { release.countDown() }
+            withTimeout(2000) { scope.coroutineContext.job.children.toList().joinAll() }
+            assertEquals(0, source.requestCount)
+        }
+    }
+
+    private fun syncRequest(server: MockWebServer, method: HttpMethod = HttpMethod.GET, path: String = "/api/v1/me",
+        url: String = server.url(path).toString(), bound: SyncServerURL = SyncServerURL(server.url("/").toString()),
+        trust: SyncTLSTrust = SyncTLSTrust.SYSTEM_AND_USER, cap: Int = Limits.responseCap, budgetMillis: Long = 3000): HttpRequest =
+        HttpRequest(url, method, mapOf("Authorization" to "Bearer synthetic-device-token", "Accept" to "application/json"),
+            body = if (method == HttpMethod.POST) "{}".encodeToByteArray() else null,
+            responseByteCap = cap, deadlineNanos = clock.nowNanos() + MILLISECONDS.toNanos(budgetMillis),
+            urlPolicy = HttpUrlPolicy.Sync(bound, trust))
+
+    private fun syncError(code: FailureCode = FailureCode.INTERNAL_ERROR): String =
+        ErrorResponse.codec.encode(ErrorResponse.Failure(code)).decodeToString()
+
+    private fun trustFactory(vararg anchors: HeldCertificate): AndroidSyncTlsTrust = AndroidSyncTlsTrust {
+        KeyStore.getInstance("JKS").apply {
+            load(null)
+            anchors.forEachIndexed { index, anchor -> setCertificateEntry("anchor-$index", anchor.certificate) }
+        }
+    }
+
+    private fun tlsServer(leaf: HeldCertificate, ca: HeldCertificate): MockWebServer = MockWebServer().also {
+        servers += it
+        it.protocols = listOf(Protocol.HTTP_1_1) // Socket-handler closure assertions need an HTTP/1 receipt.
+        it.useHttps(HandshakeCertificates.Builder().heldCertificate(leaf, ca.certificate).build().sslSocketFactory())
+        it.start()
+    }
+
     private fun server(): MockWebServer = MockWebServer().also { servers += it; it.start() }
 
     private fun request(server: MockWebServer, method: HttpMethod = HttpMethod.GET, path: String = "/",
@@ -541,11 +825,11 @@ internal class OkHttpHttpTransportTest {
             }
         }).build()
 
-    private fun chunkedOversize(closed: CountDownLatch): MockResponse = MockResponse.Builder()
+    private fun chunkedOversize(closed: CountDownLatch, body: String = "a".repeat(64) + "b"): MockResponse = MockResponse.Builder()
         .addHeader("Transfer-Encoding", "chunked").removeHeader("Content-Length")
         .socketHandler(object : SocketHandler {
             override fun handle(socket: Socket) {
-                socket.sink.buffer().apply { writeUtf8("40\r\n${"a".repeat(64)}\r\n1\r\nb\r\n"); flush() }
+                socket.sink.buffer().apply { writeUtf8("40\r\n${body.take(64)}\r\n1\r\n${body.drop(64)}\r\n"); flush() }
                 observeClose(socket, closed)
             }
         }).build()

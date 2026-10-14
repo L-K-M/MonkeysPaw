@@ -39,6 +39,7 @@ internal class AppGraphTest {
         assertEquals(1, constructorCount(module, "LibraryService"))
         assertEquals(2, constructorCount(module, "DataStoreFactory.create"))
         assertEquals(1, constructorCount(module, "AndroidKeystoreSecretStore"))
+        assertTrue(module.contains("OkHttpHttpTransport(clock, scope, syncTlsTrust = AndroidSyncTlsTrust())"))
         assertFalse(module.contains("corruptionHandler"))
         assertTrue(source("MonkeysPawApplication.kt").contains("@HiltAndroidApp"))
         assertTrue(source("MainActivity.kt").contains("@AndroidEntryPoint"))
