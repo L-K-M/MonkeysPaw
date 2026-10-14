@@ -15,6 +15,13 @@ internal object PromptMutations {
             document.frontMatter.copy(id = id), filename)
     }
 
+    /** Sync duplicate repair/adoption explicitly replaces identity; ordinary saves keep their guard. */
+    fun replacingIdentity(id: ULID, document: PromptDocument, filename: String): PromptDocument {
+        PromptCodec.write(document)
+        return setting("id", YamlNode.Scalar(id.rawValue, YamlTag.STR), document,
+            document.frontMatter.copy(id = id), filename)
+    }
+
     fun favorite(value: Boolean, document: PromptDocument, filename: String): PromptDocument {
         PromptCodec.write(document)
         return setting("favorite", YamlNode.Scalar(value.toString(), YamlTag.BOOL), document,
