@@ -4,10 +4,10 @@ import Foundation
 import MonkeysPawCore
 
 /// Vervellum's owned-name/lowest-free-slot mechanism, with checked writes.
-/// Run at user launch, never from a package's root postinst (§6.1).
+/// Run only from explicit Setup, never from startup or postinst (§6.1).
 struct GnomeKeybindingInstaller {
-    static let command = "gapplication action \(AppIdentity.linuxAppID) toggle"
-    static let bindingName = "Monkey's Paw: toggle"
+    static let command = command(for: .togglePicker)
+    static let bindingName = bindingName(for: .togglePicker)
     static let listSchema = "org.gnome.settings-daemon.plugins.media-keys"
     static let itemSchema = listSchema + ".custom-keybinding"
     static let basePath = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/"
@@ -16,39 +16,84 @@ struct GnomeKeybindingInstaller {
 
     init(runner: LinuxToolRunner) { self.runner = runner }
 
+    static func command(for action: HotkeyAction) -> String {
+        "gapplication action \(AppIdentity.linuxAppID) \(actionName(for: action))"
+    }
+
+    static func bindingName(for action: HotkeyAction) -> String {
+        "Monkey's Paw: \(actionName(for: action))"
+    }
+
+    private static func actionName(for action: HotkeyAction) -> String {
+        switch action {
+        case .togglePicker: return "toggle"
+        case .repeatLast: return "repeat"
+        }
+    }
+
+    private struct Row: Equatable {
+        let name: String
+        let command: String
+        let binding: String
+        var isEmpty: Bool { name.isEmpty && command.isEmpty && binding.isEmpty }
+    }
+
+    private func row(at path: String, deadline: ContinuousClock.Instant) -> Row? {
+        let schema = Self.itemSchema + ":" + path
+        guard let rawName = run(["get", schema, "name"], deadline: deadline), let name = Self.string(in: rawName),
+              let rawCommand = run(["get", schema, "command"], deadline: deadline), let command = Self.string(in: rawCommand),
+              let rawBinding = run(["get", schema, "binding"], deadline: deadline), let binding = Self.string(in: rawBinding) else {
+            return nil
+        }
+        return Row(name: name, command: command, binding: binding)
+    }
+
     /// An existing complete row is the installation record. Preserve a binding
-    /// the user changed in GNOME Settings rather than resetting it each launch.
-    func install(accelerator: Accelerator) -> String? {
-        guard let schemas = run(["list-schemas"]),
+    /// the user changed in GNOME Settings rather than resetting it on Setup retry.
+    func install(action: HotkeyAction = .togglePicker, accelerator: Accelerator,
+                 deadline: ContinuousClock.Instant = ContinuousClock.now.advanced(by: Limits.portalConsentTimeout)) -> String? {
+        guard let schemas = run(["list-schemas"], deadline: deadline),
               schemas.split(separator: "\n").contains(Substring(Self.listSchema)),
-              let raw = run(["get", Self.listSchema, "custom-keybindings"]),
+              let raw = run(["get", Self.listSchema, "custom-keybindings"], deadline: deadline),
               let paths = Self.paths(in: raw) else { return nil }
 
+        let command = Self.command(for: action)
+        let name = Self.bindingName(for: action)
+        var ownedBinding: String?
         for path in paths {
-            let schema = Self.itemSchema + ":" + path
-            guard let rawName = run(["get", schema, "name"]),
-                  let name = Self.string(in: rawName) else { return nil }
-            guard name == Self.bindingName else { continue }
-
-            guard let rawBinding = run(["get", schema, "binding"]),
-                  let binding = Self.string(in: rawBinding),
-                  let rawCommand = run(["get", schema, "command"]),
-                  Self.string(in: rawCommand) == Self.command else { return nil }
-            return binding
+            guard let existing = row(at: path, deadline: deadline) else { return nil }
+            guard existing.name == name || existing.command == command else { continue }
+            guard existing.name == name, existing.command == command, ownedBinding == nil else { return nil }
+            ownedBinding = existing.binding
         }
+        if let ownedBinding { return ownedBinding }
 
         guard let binding = try? accelerator.gtkAccelerator() else { return nil }
         var index = 0
-        while paths.contains(Self.basePath + "custom\(index)/") { index += 1 }
-        let slot = Self.basePath + "custom\(index)/"
+        var slot: String
+        while true {
+            slot = Self.basePath + "custom\(index)/"
+            index += 1
+            guard !paths.contains(slot) else { continue }
+            // Removing a list entry leaves its dconf fields behind. Never claim
+            // a dormant foreign or edited row just because it is unpublished.
+            guard let candidate = row(at: slot, deadline: deadline) else { return nil }
+            if candidate.isEmpty { break }
+        }
         let schema = Self.itemSchema + ":" + slot
 
         // Publish only after every field was written. A failed read/write is
         // never interpreted as an empty list that could erase other bindings.
-        guard run(["set", schema, "command", Self.quote(Self.command)]) != nil,
-              run(["set", schema, "binding", Self.quote(binding)]) != nil,
-              run(["set", schema, "name", Self.quote(Self.bindingName)]) != nil,
-              run(["set", Self.listSchema, "custom-keybindings", Self.encode(paths + [slot])]) != nil else {
+        guard let latest = run(["get", Self.listSchema, "custom-keybindings"], deadline: deadline),
+              Self.paths(in: latest) == paths,
+              row(at: slot, deadline: deadline)?.isEmpty == true,
+              run(["set", schema, "command", Self.quote(command)], deadline: deadline) != nil,
+              run(["set", schema, "binding", Self.quote(binding)], deadline: deadline) != nil,
+              run(["set", schema, "name", Self.quote(name)], deadline: deadline) != nil,
+              row(at: slot, deadline: deadline) == Row(name: name, command: command, binding: binding),
+              let beforePublish = run(["get", Self.listSchema, "custom-keybindings"], deadline: deadline),
+              Self.paths(in: beforePublish) == paths,
+              run(["set", Self.listSchema, "custom-keybindings", Self.encode(paths + [slot])], deadline: deadline) != nil else {
             return nil
         }
         return binding
@@ -66,35 +111,28 @@ struct GnomeKeybindingInstaller {
             return .unavailable
         }
         var retired = Set<String>()
+        var rows: [String: Row] = [:]
         for path in paths {
-            let schema = Self.itemSchema + ":" + path
-            guard let rawName = read(["get", schema, "name"]), let name = Self.string(in: rawName),
-                  let rawCommand = read(["get", schema, "command"]), let command = Self.string(in: rawCommand),
-                  let rawBinding = read(["get", schema, "binding"]), let binding = Self.string(in: rawBinding) else {
-                return .unavailable
-            }
-            guard name == Self.bindingName || command == Self.command else { continue }
-            guard !binding.isEmpty else { continue }
-            guard name == Self.bindingName, command == Self.command, binding == defaultBinding else {
+            guard let row = row(at: path, deadline: deadline) else { return .unavailable }
+            rows[path] = row
+            guard HotkeyAction.allCases.contains(where: {
+                row.name == Self.bindingName(for: $0) || row.command == Self.command(for: $0)
+            }) else { continue }
+            guard !row.binding.isEmpty else { continue }
+            // Every repeat key was user-assigned; none is a retireable default.
+            guard row.name == Self.bindingName, row.command == Self.command, row.binding == defaultBinding else {
                 return .editedBinding
             }
             retired.insert(path)
         }
         guard !retired.isEmpty else { return .ready }
-        // Recheck the list and candidates before publishing. Separate CLI calls
-        // cannot prevent an edit after the final checks.
+        // Recheck every row, including repeat becoming active, before publishing.
+        // Separate CLI calls cannot prevent an edit after the final checks.
         guard let latest = read(["get", Self.listSchema, "custom-keybindings"]),
               Self.paths(in: latest) == paths else { return .unavailable }
-        for path in paths where retired.contains(path) {
-            let schema = Self.itemSchema + ":" + path
-            guard let rawName = read(["get", schema, "name"]), let name = Self.string(in: rawName),
-                  let rawCommand = read(["get", schema, "command"]), let command = Self.string(in: rawCommand),
-                  let rawBinding = read(["get", schema, "binding"]), let binding = Self.string(in: rawBinding) else {
-                return .unavailable
-            }
-            guard name == Self.bindingName, command == Self.command, binding == defaultBinding else {
-                return .editedBinding
-            }
+        for path in paths {
+            guard let current = row(at: path, deadline: deadline) else { return .unavailable }
+            guard current == rows[path] else { return .editedBinding }
         }
         guard read(["set", Self.listSchema, "custom-keybindings", Self.encode(paths.filter { !retired.contains($0) })]) != nil else {
             return .unavailable

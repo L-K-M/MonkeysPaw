@@ -5,7 +5,16 @@ import Foundation
 /// Linux-only copy; delivery notifications use Core's DeliveryStrings.
 enum LinuxStrings {
     static let installShortcut = "Install the GNOME shortcut in Setup"
-    static let shortcutFailed = "Could not install the GNOME shortcut. Bind: " + GnomeKeybindingInstaller.command
+    static let shortcutFailed = shortcutFailed(for: .togglePicker)
+
+    static func installShortcut(for action: HotkeyAction) -> String {
+        action == .togglePicker ? installShortcut : "Install the GNOME repeat shortcut in Setup"
+    }
+
+    static func shortcutFailed(for action: HotkeyAction) -> String {
+        "Could not install the GNOME shortcut. Bind: " + GnomeKeybindingInstaller.command(for: action)
+    }
+
     static let pickerHint = "Return: use · Ctrl+Return: edit · Ctrl+L: library · Esc: close\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only"
     static let fillHint = "Tab: next field · Return: deliver · Ctrl+Return: standard paste\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only · Esc: back"
     static let searchPrompts = "Search prompts"
@@ -175,7 +184,7 @@ enum LinuxStrings {
     static let shortcutAllow = "Allow a global shortcut in Setup; you choose the keys"
     static let shortcutSessionLost = "Shortcut session closed. Allow the shortcut again in Setup"
     static let shortcutCancelled = "Shortcut consent cancelled or denied. Use Setup to try again"
-    static let shortcutMigrationBlocked = "Disable the existing Monkey's Paw toggle binding in GNOME Settings, then retry in Setup"
+    static let shortcutMigrationBlocked = "Disable the existing Monkey's Paw toggle or repeat binding in GNOME Settings, then retry in Setup"
     static let shortcutMigrationFailed = "Could not inspect or retire the old GNOME binding. Check GNOME Settings, then retry in Setup"
     static let configureShortcuts = "Change in system settings"
     static let allow = "Allow"

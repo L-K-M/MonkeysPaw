@@ -227,7 +227,7 @@ jobs:
           test "$(dpkg-deb --field "$deb" Section)" = utils
           test "$(dpkg-deb --field "$deb" Priority)" = optional
           test "$(dpkg-deb --field "$deb" Maintainer)" = 'L-K-M <noreply@lkmc.ch>'
-          test "$(dpkg-deb --field "$deb" Recommends)" = 'libsecret-tools, ydotool, xdotool'
+          test "$(dpkg-deb --field "$deb" Recommends)" = 'libsecret-tools, ydotool, xdotool, x11-utils'
           test "$(dpkg-deb --field "$deb" Installed-Size)" -gt 0
           test -n "$(dpkg-deb --field "$deb" Description)"
           depends="$(dpkg-deb --field "$deb" Depends)"
