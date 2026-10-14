@@ -183,6 +183,11 @@ Save semantics:
   fields, format`, then preserved keys in their original order. The writer
   emits an ordered Yams `Node.mapping`, not an encoder with sorted keys, and a
   round-trip test pins the order.
+- Unicode writing is enabled. U+00A0 stays literal, including inside
+  double-quoted scalars; an input `\_` escape does not imply an output `\_`.
+  Double-quoted NEL, LS and PS use `\N`, `\L` and `\P`; controls, BOM,
+  noncharacters and supplementary scalars follow libyaml's short escapes and
+  uppercase hexadecimal escapes.
 - ULIDs come from one generator in Core (`Domain/ULID.swift`), used by
   `LibraryService`, the later sync client, and the server. The body is written byte-for-byte as edited, including indentation
   and trailing newlines (Copywraith #159 lesson).
@@ -809,7 +814,7 @@ reversal throw `keyedStateConflict`, surfaced by `LibraryService` as
   |---|---|
   | Valid `.md` | Copy the complete UTF-8 source as-is, including front matter comments. An absent id stays absent until first save (§5.2). |
   | Dotprompt Picoschema `name: string[, description]` | `fields.name.type: text`; `name?` maps to `optional: true`. |
-  | Dotprompt Picoschema `name(enum[, description]): [strings]` | A `choice` field with those option values. |
+  | Dotprompt Picoschema `name(enum[, description]): [strings]` | A `choice` field with those option values. A string value such as `formal, casual` is preserved and reports `invalidOptions`; it is not split into options. |
   | Dotprompt string declarations, including JSON Schema `type: object` / `properties` | `text`, or `choice` for a nonempty string enum; keep string defaults and descriptions. `input.default` supplies a fallback default. An `input` without a supported `schema` reports `unsupportedInput` at `input.schema`; absent `input` is silent. |
   | Prompty v1 keyed or list `inputs` with `type: string` | The same text/choice mapping; keep defaults and descriptions. `required: false` maps to `optional: true`; omitted `required` or `required: true` stays required. A string input-local `sample`, otherwise top-level `sample.<name>`, supplies a fallback default. Valid explicit defaults, including empty strings, take precedence. |
   | Prompty `sample` without an input declaration for a body placeholder | Make its implicit text field explicit with the string sample as its default; do not override unsupported declared inputs or map unused samples. |

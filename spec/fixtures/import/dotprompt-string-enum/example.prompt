@@ -1,0 +1,12 @@
+---
+input:
+  schema:
+    tone(enum): formal, casual
+    mood?(enum, Mood): "calm, bright"
+    voice(enum): [formal, casual]
+  default:
+    tone: casual
+    mood: calm
+    voice: casual
+---
+{{tone}} {{mood}} {{voice}}

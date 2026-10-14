@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "expected": {
+    "metadata": {
+      "id": null,
+      "title": "Example",
+      "description": "a\u0000\u0007\b\t\n\u000b\f\r\u001b\"\\\u0085\u00a0\u2028\u2029\u0001\u007f\u0080\u009f\ufeff\ufffe\uffff\ud83d\udc3e",
+      "tags": [],
+      "favorite": false,
+      "private": false,
+      "format": "1",
+      "declarations": []
+    },
+    "body": "  Exact body\n",
+    "issues": [],
+    "canonical": "---\ndescription: \"a\\0\\a\\b\\t\\n\\v\\f\\r\\e\\\"\\\\\\N\u00a0\\L\\P\\x01\\x7F\\x80\\x9F\\uFEFF\\uFFFE\\uFFFF\\U0001F43E\"\nplain_nbsp: left\u00a0right\n? \"key\u00a0\\n\"\n: \"value\u00a0\\n\"\n---\n  Exact body\n"
+  }
+}
