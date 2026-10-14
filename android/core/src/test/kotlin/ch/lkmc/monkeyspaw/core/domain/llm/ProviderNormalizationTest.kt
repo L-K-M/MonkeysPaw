@@ -90,7 +90,7 @@ class ProviderNormalizationTest {
             "https://example.com/%2E/v1", "https://example.com/v1%2Fmessages", "https://example.com/a%2fb",
             "https://example.com/a\\b", "https://example.com/a%5Cb", "https://example.com/a//b", "https://example.com/a%0Ab",
             "https://example.com/a%00b", "https://example.com/a\nb", "https://example.com/a\u200db", "https://example.com/a%C2%ADb",
-            "https://café.example", "https://[::1%25lo]", "https://[::g]",
+            "https://café.example", "https://[::1%25lo]",
         )
         for (kind in ProviderKind.entries) for (input in cases) assertError(input, kind, ProviderSettingsError.InvalidBaseURL)
     }
@@ -132,6 +132,36 @@ class ProviderNormalizationTest {
         }
     }
 
+    @Test fun malformedAuthoritiesMatchSwiftRefusalsAndErrorOrdering() {
+        for (kind in ProviderKind.entries) {
+            for (input in listOf("https://user@", "https://@", "https://user@:0", "https://a[b]", "https://a]b",
+                "https://a%3ab", "https://foo%40bar", "https://foo%3fbar", "https://foo%23bar", "https://foo%5dbar",
+                "https://bad host", "https://%2f127.0.0.1", "https://foo@example.com:bad")) {
+                assertError(input, kind, ProviderSettingsError.InvalidBaseURL)
+            }
+            for (input in listOf("https://example.com:0?q", "https://example.com:65536?q", "https://a%3ab?q", "https://foo%40bar?q")) {
+                assertError(input, kind, ProviderSettingsError.QueryOrFragmentInURL)
+            }
+            assertError("https://foo@example.com:0", kind, ProviderSettingsError.CredentialsInURL)
+        }
+    }
+
+    @Test fun foundationBracketedHostsAreCarriedWithoutJvmReinterpretation() {
+        // Foundation's domain envelope accepts these; the network driver owns actual receipt.
+        assertNormalization(listOf(
+            "https://[v1.fe]" to "https://[v1.fe]",
+            "https://[vF.a:b]" to "https://[vf.a:b]",
+            "https://[::1]:" to "https://[::1]:",
+            "https://[v1.fe]:" to "https://[v1.fe]:",
+            "https://[::g]" to "https://[::g]",
+            "https://[::ffff:999.0.0.1]" to "https://[::ffff:999.0.0.1]",
+            "https://%5bfoo%5d" to "https://[foo]",
+        ), ProviderKind.ANTHROPIC)
+        for (kind in ProviderKind.entries) for (host in listOf("[v1.fe]", "[foo]", "[::g]", "[::ffff:999.0.0.1]")) {
+            assertError("http://$host", kind, ProviderSettingsError.InsecureBaseURL)
+        }
+    }
+
     @Test fun credentialOriginsIncludeSchemeAndEffectivePortButNotPathOrModel() {
         fun profile(base: String, model: String = "manual") = ProviderProfile(ProviderProfileID(), "Name", ProviderKind.ANTHROPIC, base, model)
         assertEquals("https://example.com:443", profile("HTTPS://EXAMPLE.COM.:443/gateway/v1/messages").credentialOrigin)
@@ -145,17 +175,17 @@ class ProviderNormalizationTest {
     private fun assertNormalization(cases: List<Pair<String, String>>, kind: ProviderKind) {
         for ((input, expected) in cases) {
             val normalized = ProviderSettings.normalizeBaseURL(input, kind)
-            assertEquals(expected, normalized.toASCIIString(), input)
+            assertEquals(expected, normalized, input)
             assertEquals(normalized, ProviderSettings.normalizeBaseURL(expected, kind), input)
             val profile = ProviderProfile(ProviderProfileID(), "Custom", kind, input, "manual")
             val connection = ProviderConnection(profile.id, kind, profile.baseURL, profile.modelID, null)
             val completion = if (kind == ProviderKind.ANTHROPIC) "/v1/messages" else "/chat/completions"
             val models = if (kind == ProviderKind.ANTHROPIC) "/v1/models" else "/models"
-            assertEquals(expected + completion, profile.completionURL.toASCIIString(), input)
-            assertEquals(expected + models, profile.modelsURL.toASCIIString(), input)
+            assertEquals(expected + completion, profile.completionURL, input)
+            assertEquals(expected + models, profile.modelsURL, input)
             assertEquals(profile.completionURL, connection.completionURL, input)
             assertEquals(profile.modelsURL, connection.modelsURL, input)
-            assertTrue("%2f" !in profile.completionURL.toASCIIString().lowercase(Locale.ROOT), input)
+            assertTrue("%2f" !in profile.completionURL.lowercase(Locale.ROOT), input)
         }
     }
 

@@ -70,7 +70,9 @@ android/app    ch.lkmc.monkeyspaw
   action, output and body-free error values. `ports` owns suspend
   `HttpTransport` and `SecretStore`, plus an injected nanosecond monotonic
   clock. Request construction validates headers and byte caps before a driver
-  can consume them. Only `app/data` implements networking and Keystore access;
+  can consume them. URL values are canonical strings so JVM URI parsing cannot
+  reinterpret or reject Foundation's authority spellings. Only `app/data`
+  implements networking and Keystore access;
   Core has no network client, Android, AndroidX or DI dependency. L7/L8 supply
   shared drivers if M10 has not already supplied them
   ([§20 J1/J2](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).

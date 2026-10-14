@@ -1,6 +1,5 @@
 package ch.lkmc.monkeyspaw.core.domain.llm
 
-import java.net.URI
 import java.util.Locale
 import java.util.UUID
 
@@ -30,12 +29,12 @@ data class ProviderProfile private constructor(
     val id: ProviderProfileID,
     val displayName: String,
     val kind: ProviderKind,
-    val baseURL: URI,
+    val baseURL: String,
     val modelID: String,
     val secretReference: SecretAccount?,
 ) {
-    val completionURL: URI get() = baseURL.endpoint(kind, ProviderEndpoint.COMPLETION)
-    val modelsURL: URI get() = baseURL.endpoint(kind, ProviderEndpoint.MODELS)
+    val completionURL: String get() = baseURL.endpoint(kind, ProviderEndpoint.COMPLETION)
+    val modelsURL: String get() = baseURL.endpoint(kind, ProviderEndpoint.MODELS)
     val cacheKey: ProviderCacheKey get() = ProviderCacheKey(id, kind, baseURL, modelID)
     val credentialOrigin: String get() = ProviderSettings.credentialOrigin(baseURL)
 
@@ -54,7 +53,7 @@ data class ProviderProfile private constructor(
     }
 }
 
-data class ProviderCacheKey(val profileID: ProviderProfileID, val kind: ProviderKind, val baseURL: URI, val modelID: String) {
+data class ProviderCacheKey(val profileID: ProviderProfileID, val kind: ProviderKind, val baseURL: String, val modelID: String) {
     override fun toString(): String = "<provider cache key>"
 }
 
@@ -82,7 +81,7 @@ data class ProviderDraft(
     val key: ProviderKeyEdit = ProviderKeyEdit.Keep,
 ) {
     constructor(profile: ProviderProfile) : this(profile.id, profile.kind, profile.displayName,
-        profile.baseURL.toASCIIString(), profile.modelID)
+        profile.baseURL, profile.modelID)
 
     override fun toString(): String = "<provider draft redacted>"
 }
@@ -95,22 +94,22 @@ data class ModelDescriptor(val id: String, val displayName: String? = null) {
 class ProviderConnection internal constructor(
     val profileID: ProviderProfileID,
     val kind: ProviderKind,
-    val baseURL: URI,
+    val baseURL: String,
     val modelID: String,
     val key: SecretValue?,
 ) {
-    val completionURL: URI get() = baseURL.endpoint(kind, ProviderEndpoint.COMPLETION)
-    val modelsURL: URI get() = baseURL.endpoint(kind, ProviderEndpoint.MODELS)
+    val completionURL: String get() = baseURL.endpoint(kind, ProviderEndpoint.COMPLETION)
+    val modelsURL: String get() = baseURL.endpoint(kind, ProviderEndpoint.MODELS)
 
     override fun toString(): String = "<provider connection redacted>"
 }
 
 internal enum class ProviderEndpoint { COMPLETION, MODELS }
 
-internal fun URI.endpoint(kind: ProviderKind, endpoint: ProviderEndpoint): URI = URI(toASCIIString() + when (kind) {
+internal fun String.endpoint(kind: ProviderKind, endpoint: ProviderEndpoint): String = this + when (kind) {
     ProviderKind.ANTHROPIC -> if (endpoint == ProviderEndpoint.MODELS) "/v1/models" else "/v1/messages"
     ProviderKind.OPENAI_COMPATIBLE -> if (endpoint == ProviderEndpoint.MODELS) "/models" else "/chat/completions"
-})
+}
 
 sealed class ProviderSettingsError private constructor(code: String) : Exception(code, null, false, true) {
     data class FutureVersion(val version: Int) : ProviderSettingsError("futureVersion")

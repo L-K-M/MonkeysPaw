@@ -2,7 +2,6 @@ package ch.lkmc.monkeyspaw.core.ports
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.hasControls
-import java.net.URI
 import java.util.Collections
 import java.util.Locale
 
@@ -13,7 +12,7 @@ enum class HttpUrlPolicy { ASSISTANT }
 
 /** No client objects. Caps/header validation finish before any adapter sees a request. */
 class HttpRequest(
-    val url: URI,
+    val url: String,
     val method: HttpMethod,
     headers: Map<String, String> = emptyMap(),
     body: ByteArray? = null,

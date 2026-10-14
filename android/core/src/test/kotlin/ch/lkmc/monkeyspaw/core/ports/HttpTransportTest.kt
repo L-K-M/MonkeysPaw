@@ -1,7 +1,6 @@
 package ch.lkmc.monkeyspaw.core.ports
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
-import java.net.URI
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -54,7 +53,7 @@ class HttpTransportTest {
             "X-Text" to "café", "!#$%&'*+-.^_`|~0123456789AZaz" to "value")
         val clock = MonotonicClock { Long.MAX_VALUE - 10 }
         val deadline = clock.nowNanos() + Limits.llmBudgetNanos
-        val request = HttpRequest(URI("https://example.com/v1/messages"), HttpMethod.POST, headers, byteArrayOf(1, 2, 3),
+        val request = HttpRequest("https://example.com/v1/messages", HttpMethod.POST, headers, byteArrayOf(1, 2, 3),
             requestByteCap = 3, responseByteCap = Limits.syncResponseCap, deadlineNanos = deadline)
         val response = CountingTransport().send(request)
         assertEquals(headers, request.headers)
@@ -93,7 +92,7 @@ class HttpTransportTest {
 
     private fun request(headers: Map<String, String> = emptyMap(), body: ByteArray? = null,
                         requestByteCap: Int = Limits.httpRequestCap, responseByteCap: Int = Limits.responseCap): HttpRequest =
-        HttpRequest(URI("https://example.com"), HttpMethod.POST, headers, body, requestByteCap, responseByteCap, deadlineNanos = 1L)
+        HttpRequest("https://example.com", HttpMethod.POST, headers, body, requestByteCap, responseByteCap, deadlineNanos = 1L)
 
     private class CountingTransport : HttpTransport {
         var calls = 0

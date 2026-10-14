@@ -1,7 +1,5 @@
 package ch.lkmc.monkeyspaw.core.domain.llm
 
-import java.net.URI
-
 @ConsistentCopyVisibility
 data class ProviderSettings private constructor(val profiles: List<ProviderProfile>, val selectedProfileID: ProviderProfileID?) {
     val version: Int get() = currentVersion
@@ -18,13 +16,13 @@ data class ProviderSettings private constructor(val profiles: List<ProviderProfi
             return ProviderSettings(snapshot, selectedProfileID)
         }
 
-        fun normalizeBaseURL(input: String, kind: ProviderKind): URI = ProviderURLs.normalize(input, kind)
+        fun normalizeBaseURL(input: String, kind: ProviderKind): String = ProviderURLs.normalize(input, kind)
 
         /** Literal classification only; callers supply a lowercase host with one trailing dot removed. */
         fun isLoopbackHost(host: String): Boolean = ProviderURLs.isLoopback(host)
 
         /** Normalized scheme, host and effective port, excluding the path/model. */
-        fun credentialOrigin(baseURL: URI): String = ProviderURLs.credentialOrigin(baseURL)
+        fun credentialOrigin(baseURL: String): String = ProviderURLs.credentialOrigin(baseURL)
     }
 }
 

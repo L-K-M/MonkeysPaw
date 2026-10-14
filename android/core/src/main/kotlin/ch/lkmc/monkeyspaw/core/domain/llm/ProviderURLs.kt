@@ -1,21 +1,19 @@
 package ch.lkmc.monkeyspaw.core.domain.llm
 
 import java.io.ByteArrayOutputStream
-import java.net.URI
-import java.net.URISyntaxException
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 import java.util.Locale
 
-/** URI.host rejects some Foundation host spellings; parse authority without DNS. */
+/** Canonical URL strings preserve Foundation spellings that java.net.URI cannot represent. */
 internal object ProviderURLs {
-    private data class Authority(val host: String, val port: Int?)
+    private data class Authority(val host: String, val port: Long?, val rawPort: String, val hasUserInfo: Boolean)
     private const val hex = "0123456789ABCDEF"
     private const val hostCharacters = "abcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;="
     private const val pathCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:@/"
 
-    fun normalize(raw: String, kind: ProviderKind): URI {
+    fun normalize(raw: String, kind: ProviderKind): String {
         val input = raw.trimProviderWhitespace()
         if (input.isEmpty() || '\\' in input || input.hasControls()) throw ProviderSettingsError.InvalidBaseURL
         val schemeEnd = input.indexOf("://")
@@ -26,8 +24,13 @@ internal object ProviderURLs {
         val start = schemeEnd + 3
         val authorityEnd = input.indexOfAny(charArrayOf('/', '?', '#'), start).let { if (it < 0) input.length else it }
         val authority = authority(input.substring(start, authorityEnd))
+        if (authority.hasUserInfo) throw ProviderSettingsError.CredentialsInURL
         if (input.indexOfAny(charArrayOf('?', '#'), authorityEnd) >= 0) throw ProviderSettingsError.QueryOrFragmentInURL
-        if (scheme == "http" && !isLoopback(authority.host)) throw ProviderSettingsError.InsecureBaseURL
+        val host = authority.host.lowercase(Locale.ROOT).removeSuffix(".")
+        if (host.isEmpty() || '%' in host || host.any { it.code > 127 } || (authority.port != null && authority.port !in 1L..65535L)) {
+            throw ProviderSettingsError.InvalidBaseURL
+        }
+        if (scheme == "http" && !isLoopback(host)) throw ProviderSettingsError.InsecureBaseURL
 
         val encodedPath = input.substring(authorityEnd)
         // Foundation exposes an undecodable UTF-8 path as empty; invalid literal % is escaped.
@@ -46,42 +49,40 @@ internal object ProviderURLs {
             path = path.dropLast(suffix.length)
         }
         if (kind == ProviderKind.OPENAI_COMPATIBLE && path.isEmpty()) path = "/v1"
-        val port = authority.port?.takeUnless { it == if (scheme == "https") 443 else 80 }
-        val host = if (authority.host.startsWith('[')) authority.host else encode(authority.host, hostCharacters)
-        return try {
-            URI("$scheme://$host${port?.let { ":$it" }.orEmpty()}${encode(path, pathCharacters)}")
-        } catch (_: URISyntaxException) {
-            throw ProviderSettingsError.InvalidBaseURL
+        val bracketed = host.startsWith('[') && host.endsWith(']')
+        val hostValue = if (bracketed) host.substring(1, host.length - 1) else host
+        val allowed = if (bracketed) hostCharacters + ":" else hostCharacters
+        if (hostValue.any { it !in allowed }) throw ProviderSettingsError.InvalidBaseURL
+        val port = when {
+            authority.port == (if (scheme == "https") 443L else 80L) -> ""
+            authority.port != null -> ":${authority.port}"
+            authority.rawPort == ":" && !bracketed -> ""
+            else -> authority.rawPort
         }
+        return "$scheme://$host$port${encode(path, pathCharacters)}"
     }
 
     private fun authority(raw: String): Authority {
         if (raw.isEmpty()) throw ProviderSettingsError.InvalidBaseURL
-        if ('@' in raw) throw ProviderSettingsError.CredentialsInURL
-        val hostEnd = if (raw.startsWith('[')) {
-            raw.indexOf(']').let { if (it < 0) throw ProviderSettingsError.InvalidBaseURL else it + 1 }
-        } else raw.indexOf(':').let { if (it < 0) raw.length else it }
-        val rawPort = raw.substring(hostEnd)
+        val hostAndPort = raw.substringAfterLast('@')
+        val hostEnd = if (hostAndPort.startsWith('[')) {
+            hostAndPort.indexOf(']').let { if (it < 0) throw ProviderSettingsError.InvalidBaseURL else it + 1 }
+        } else hostAndPort.indexOf(':').let { if (it < 0) hostAndPort.length else it }
+        val rawHost = hostAndPort.substring(0, hostEnd)
+        if (rawHost.isEmpty()) throw ProviderSettingsError.InvalidBaseURL
+        val bracketed = rawHost.startsWith('[') && rawHost.endsWith(']')
+        val rawHostValue = if (bracketed) rawHost.substring(1, rawHost.length - 1) else rawHost
+        val allowed = hostCharacters + "ABCDEFGHIJKLMNOPQRSTUVWXYZ%" + if (bracketed) ":" else ""
+        if (rawHostValue.any { it.code < 128 && it !in allowed }) throw ProviderSettingsError.InvalidBaseURL
+        val rawPort = hostAndPort.substring(hostEnd)
         if (rawPort.isNotEmpty() && (!rawPort.startsWith(':') || rawPort.drop(1).any { it !in '0'..'9' })) {
             throw ProviderSettingsError.InvalidBaseURL
         }
-        val port = rawPort.drop(1).takeIf { it.isNotEmpty() }?.let {
-            it.toIntOrNull()?.takeIf { number -> number in 1..65535 } ?: throw ProviderSettingsError.InvalidBaseURL
-        }
-        var host = decodePercent(raw.substring(0, hostEnd))?.lowercase(Locale.ROOT)
+        // Foundation keeps a numeric port lexeme when it overflows its 64-bit Int.
+        val port = rawPort.drop(1).takeIf { it.isNotEmpty() }?.toLongOrNull()
+        val host = decodePercent(rawHost)
             ?: throw ProviderSettingsError.InvalidBaseURL
-        if (host.endsWith('.')) host = host.dropLast(1)
-        if (host.isEmpty() || '%' in host || host.any { it.code > 127 } || host.hasControls()) {
-            throw ProviderSettingsError.InvalidBaseURL
-        }
-        if (host.startsWith('[')) {
-            try {
-                if (URI("http://$host").host == null) throw ProviderSettingsError.InvalidBaseURL
-            } catch (_: URISyntaxException) {
-                throw ProviderSettingsError.InvalidBaseURL
-            }
-        }
-        return Authority(host, port)
+        return Authority(host, port, rawPort, '@' in raw)
     }
 
     fun isLoopback(host: String): Boolean {
@@ -106,9 +107,10 @@ internal object ProviderURLs {
         }
     }
 
-    fun credentialOrigin(url: URI): String {
-        val authority = authority(url.rawAuthority ?: throw ProviderSettingsError.InvalidBaseURL)
-        return "${url.scheme}://${authority.host}:${authority.port ?: if (url.scheme == "https") 443 else 80}"
+    fun credentialOrigin(url: String): String {
+        val scheme = url.substringBefore("://")
+        val authority = authority(url.substringAfter("://").substringBefore('/'))
+        return "$scheme://${authority.host}:${authority.port ?: if (scheme == "https") 443 else 80}"
     }
 
     private fun decodePercent(value: String): String? {

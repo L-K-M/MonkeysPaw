@@ -9,7 +9,6 @@ import ch.lkmc.monkeyspaw.core.ports.HttpTransportError
 import ch.lkmc.monkeyspaw.core.ports.SecretStore
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.net.URI
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -86,7 +85,7 @@ class AssistantValuesTest {
         val profile = profile()
         val draft = ProviderDraft(profile)
         assertEquals(profile.id, draft.id)
-        assertEquals(profile.baseURL.toASCIIString(), draft.baseURL)
+        assertEquals(profile.baseURL, draft.baseURL)
         assertEquals(ProviderKeyEdit.Keep, draft.key)
         assertEquals("Edited", draft.copy(displayName = "Edited").displayName)
     }
@@ -95,7 +94,7 @@ class AssistantValuesTest {
         val sentinel = "runtime-${ProviderProfileID().rawValue}"
         val secret = SecretValue(sentinel)
         val draft = ProviderDraft(displayName = sentinel, baseURL = "https://example.com?key=$sentinel", key = ProviderKeyEdit.Replace(secret))
-        val connection = ProviderConnection(draft.id, draft.kind, URI("https://example.com"), sentinel, secret)
+        val connection = ProviderConnection(draft.id, draft.kind, "https://example.com", sentinel, secret)
         val field = LlmArtifact.Field(sentinel, FieldKind.TEXT, sentinel, sentinel, sentinel, listOf(FieldOption(sentinel, sentinel)), false, true)
         val artifact = LlmArtifact(sentinel, sentinel, listOf(sentinel), listOf(field), sentinel, sentinel)
         val finding = LlmReview.Finding(LlmRubricCriterion.CLARITY, LlmReviewSeverity.HIGH, sentinel, sentinel, sentinel, LlmReview.QuoteMatch.Unmatched)
@@ -106,7 +105,7 @@ class AssistantValuesTest {
         val values: List<Any> = listOf(secret, StoredSecret(secret, SecretTier.KEYSTORE), draft, draft.key, connection, field, artifact, finding, review,
             ModelDescriptor(sentinel, sentinel), AssistantModelPage(listOf(ModelDescriptor(sentinel)), true, sentinel, sentinel),
             ConnectionTestResult.Ok(listOf(ModelDescriptor(sentinel))), message,
-            HttpRequest(URI("https://example.com?key=$sentinel"), HttpMethod.POST, mapOf("Authorization" to sentinel), sentinel.toByteArray(), deadlineNanos = 1L),
+            HttpRequest("https://example.com?key=$sentinel", HttpMethod.POST, mapOf("Authorization" to sentinel), sentinel.toByteArray(), deadlineNanos = 1L),
             HttpResponse(500, mapOf("error" to sentinel), sentinel.toByteArray())) + actions + outputs +
             actions.map { AssistantRequest(it, transcript = listOf(message), feedback = sentinel) } + outputs.map { AssistantResponse(it) }
         for (value in values) assertFalse(sentinel in value.toString(), value.javaClass.simpleName)
