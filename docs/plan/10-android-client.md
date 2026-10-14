@@ -255,8 +255,8 @@ risk, so it is contained by contract:
   `EveryFixtureTest` (`core` JVM tests) both run every case and visible file
   in all nine current categories: format, grammar, render, validation,
   canonical, paths, ranking, import and DTOs. Import and all 54 wire DTOs,
-  including admin contracts, are parity requirements without Android
-  import, Account or admin UI. CI fails if either side diverges. Future
+  including admin contracts, are parity requirements even though Android
+  has no import, Account or admin UI. CI fails if either side diverges. Future
   LLM and sync-engine fixtures land with both consumers under the
   move-together rule.
 - **Wire contract.** SyncAPI DTOs are defined once in Swift (`SyncAPI`).

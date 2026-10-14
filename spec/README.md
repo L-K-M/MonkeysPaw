@@ -10,13 +10,16 @@ android/gradlew -p android --max-workers=2 :core:test
 # Run only the Kotlin full-corpus gate:
 android/gradlew -p android --max-workers=2 :core:test --tests '*EveryFixtureTest'
 # Android CI gate, including lint, R8 and both APKs:
-android/gradlew -p android --max-workers=2 :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+android/gradlew -p android --max-workers=2 :core:test testDebugUnitTest \
+    lintDebug assembleDebug assembleRelease
 ```
 
 On the Paseo host use `/home/paseo/.local/bin/swift64` for Swift, and set
 `JAVA_HOME=/opt/java/openjdk`, `ANDROID_HOME=/home/paseo/Android/Sdk` and
 `MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/`
-for Gradle. From `android/`, the equivalent Kotlin command is
+for Gradle, which reads the Maven override from the environment.
+`--max-workers=2` limits Gradle parallelism on this shared host.
+From `android/`, the equivalent Kotlin command is
 `./gradlew --max-workers=2 :core:test`. Gradle supplies absolute fixture/schema
 paths from its root project and tracks both directories as test inputs;
 neither is copied into resources or packaged in the app.
@@ -39,9 +42,10 @@ error HTTP status and Retry-After header values. Constructed-invalid values
 fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
-The current corpus contains 1,032 cases and 2,168 visible files: format 16/32,
-grammar 22/44, render 22/44, validation 113/226, canonical 19/50, paths 141/282,
-ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid, 489 invalid).
+At K10 completion, the corpus contains 1,032 cases and 2,168 visible files:
+format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
+paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
+489 invalid).
 These are reported counts, not fixed enumeration limits. LLM and sync-engine
 scenarios arrive with their implementations under the move-together rule.
 
