@@ -49,10 +49,12 @@ Hotkey notes:
     confirmed registrations, restoring the previous action after native or save
     failure and reporting any failed recovery. Replacing or clearing one action
     preserves the other action and its verification. Restart loads both choices.
-  The M7 Core contract precedes driver activation. GNOME/manual drivers declare
+  The M7 Core contract precedes driver activation. Portal and native KDE
+  consume both action declarations, including nil suggestions, and report
+  saved system bindings independently (D9/D10). GNOME/manual drivers declare
   both actions independently; repeat stays unbound until a key is explicitly
-  assigned. Portal and KDE two-action support follows in D9/D10. Native
-  Settings/composition and the Linux desktop repeat entry follow in D12/D13.
+  assigned (D11). Native Settings/composition and the Linux desktop repeat
+  entry follow in D12/D13.
 - **GNOME keybinding.** The custom keybinding row is named
   `Monkey's Paw: <action>`, so installation recognizes it without resetting
   your key. Installation runs from the explicit Setup hotkey action, never
@@ -121,25 +123,29 @@ Hotkey notes:
 - **Plasma selection and handoff (M1d).** Native KDE Wayland/X11 probes the
   public GlobalShortcuts `version`; v1 and later are supported. No desktop
   version guessing. Startup and diagnostics never Create/List/Bind/configure
-  a portal session or open settings. A saved native `toggle`, including a
+  a portal session or open settings. A saved native `toggle` or `repeat`, including a
   custom, unbound, multi-chord or alternative assignment, remains native
   until you choose **Attach shortcut portal** in Setup. A fresh supported
   path offers portal attachment; absent capability retains native behavior.
   **Use native KDE shortcut** remains an explicit Setup action even after
   verification. Flatpak retains its portal-only driver and host instructions.
-  - Both drivers use component `ch.lkmc.monkeyspaw`, action `toggle`.
+  - Both drivers use component `ch.lkmc.monkeyspaw`, actions `toggle` and `repeat`.
     KDE CreateSession.loadActions can make saved actions present before Bind;
     Bind.setActions can delete omitted actions. Inspect all component contexts
     and action names before creation, then again before Bind. Unknown actions
-    or non-default contexts block the single-toggle handoff without mutation.
+    or non-default contexts block the handoff without mutation.
     Read complete `a(ai)` assignments, never reconstruct them from legacy
     `ai` fields or localized portal descriptions. Autoloading must preserve
-    the exact daemon assignment across Create and Bind; recheck it. Native
+    both exact daemon assignments across Create and Bind; recheck them. Bind's
+    actual catalogue must contain every saved owned action, even if its callback
+    is undeclared or a declaration changes while the parent window exports. Native
     multi-chord/alternative values never become preferred_trigger strings.
     Saved portal actions from List omit preferred_trigger, including unbound
-    actions. Only a new action gets the default suggestion. No foreign-key
+    actions. Only a new picker gets a portal suggestion; repeat has no default.
+    A native nil declaration supplies no suggestion and loads the daemon's
+    saved assignment. No foreign-key
     stealing, destructive unregister/cleanUp or NoAutoloading.
-  - Gate native callbacks before acknowledged SetInactive, then create/list/
+  - Gate both native callbacks before acknowledging each SetInactive, then create/list/
     bind once on the retained portal connection. Gate portal callbacks and
     tokens before acknowledged Close, then reactivate native. Two-second IPC
     and cleanup bounds remain; explicit Setup has a total 60-second consent
@@ -149,9 +155,11 @@ Hotkey notes:
     never authorizes native activation. Denial/cancellation installs no
     fallback. This slice deliberately leaves a suspended native action
     inactive after a failed handoff; choose the explicit native action to
-    resume after verified cleanup. Persistent keys survive every cleanup.
-  - One composite registration id survives selection changes. Only events
-    from the effective mechanism/revision may toggle or verify. Reject
+    resume after verified cleanup. Removing one callback never reactivates a
+    suspended peer; removing both only retires presence. Persistent keys survive
+    every cleanup.
+  - Each action's composite registration id survives selection changes. Only events
+    from the effective mechanism/revision may invoke or verify that action. Reject
     duplicate events and obsolete tokens; manual/cold GApplication toggles
     remain usable and never verify either mechanism. Verification is tied
     to the current mechanism so a handoff requires a real new activation.
@@ -168,6 +176,8 @@ Hotkey notes:
     gives System Settings guidance without another Bind. v2 ConfigureShortcuts
     is ordinary no-output IPC. Retain native window leases and activation
     tokens through their bounded interaction, invalidating late continuations.
+    Both actions share the retained session. An old incomplete catalogue expands
+    only through explicit acknowledged Close and a fresh full Bind, for v1 and v2.
 - **Linux actions.**
   - `toggle` opens or closes the picker.
   - `repeat` re-delivers the last delivered prompt with the exact values
