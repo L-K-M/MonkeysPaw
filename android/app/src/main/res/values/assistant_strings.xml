@@ -1,5 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="assistant_improve_title">Improve prompt</string>
+    <string name="assistant_improve_send">Improve</string>
+    <string name="assistant_improve_copy">Improve a private copy</string>
+    <string name="assistant_improve_copy_help">You have viewer access. Accept creates a new private prompt in your library root with a fresh identity.</string>
+    <string name="assistant_improve_selected">Improve with these</string>
+    <string name="assistant_improve_instruction">Improvement instruction</string>
+    <string name="assistant_improve_help">Use an instruction, selected review findings, or both. Tap Improve, then check the diff before accepting.</string>
+    <string name="assistant_improve_findings">Selected review findings</string>
+    <string name="assistant_improve_no_findings">No current findings selected. Improve will use your instruction alone.</string>
+    <string name="assistant_improve_invalid">Fix the editor validation errors before improving it.</string>
+    <string name="assistant_improve_disclosure">Improve sends the current template front matter and body, your instruction and selected findings to the provider shown below when you tap Improve. Explicit retries send the current template and instruction, current findings, session transcript and feedback. Fill previews and remembered values are never sent. Private templates cannot be improved. Providers see what you send. No telemetry.</string>
+    <string name="assistant_improve_retry_help">Retry sends a fresh template and current instruction with the session transcript and feedback, using the last sent effort. Selected findings are reused only while their source is unchanged.</string>
+    <string name="assistant_diff_title">Merged diff</string>
+    <string name="assistant_diff_help">Front matter and body compare separately. Both sides remain available by scrolling horizontally. ↵ marks LF; ␍↵ marks CRLF.</string>
+    <string name="assistant_diff_current">Current</string>
+    <string name="assistant_diff_candidate">Candidate</string>
+    <string name="assistant_diff_front_matter">Front matter</string>
+    <string name="assistant_diff_body">Body</string>
+    <string name="assistant_diff_no_newline">no newline</string>
+    <string name="assistant_diff_warning">Placeholder change</string>
     <string name="assistant_review_title">Review prompt</string>
     <string name="assistant_review_send">Review</string>
     <string name="assistant_review_disclosure">Review sends the current template front matter and body to the provider shown below when you tap Review. Explicit retries send the current template, session transcript and feedback. Fill previews and remembered values are never sent. Private templates cannot be reviewed. Providers see what you send. No telemetry.</string>

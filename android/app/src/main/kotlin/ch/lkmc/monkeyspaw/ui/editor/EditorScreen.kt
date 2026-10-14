@@ -35,6 +35,7 @@ internal fun EditorScreen(
     onDecision: (Long, EditorDecision) -> Unit,
     onConflict: (EditorConflictChoice) -> Unit,
     onReview: (() -> Unit)? = null,
+    onImprove: (() -> Unit)? = null,
     onClearQuote: () -> Unit,
     modifier: Modifier = Modifier,
     backLabel: Int = R.string.editor_back,
@@ -54,6 +55,7 @@ internal fun EditorScreen(
             if (state.writing || state.status == EditorStatus.LOADING) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.readOnlyReason != null) Text(stringResource(R.string.editor_read_only))
             if (onReview != null) TextButton(onClick = onReview) { Text(stringResource(R.string.assistant_review_title)) }
+            if (onImprove != null) TextButton(onClick = onImprove) { Text(stringResource(R.string.assistant_improve_title)) }
         }
         if (state.isNew) item {
             OutlinedTextField(value = state.relativePath.orEmpty(), onValueChange = onNewPath,

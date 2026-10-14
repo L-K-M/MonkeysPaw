@@ -24,6 +24,8 @@ import ch.lkmc.monkeyspaw.ui.assistant.WriteViewModel
 import ch.lkmc.monkeyspaw.ui.assistant.ReviewScreen
 import ch.lkmc.monkeyspaw.ui.assistant.ReviewViewModel
 import ch.lkmc.monkeyspaw.ui.assistant.ReviewDestination
+import ch.lkmc.monkeyspaw.ui.assistant.ImproveScreen
+import ch.lkmc.monkeyspaw.ui.assistant.ImproveViewModel
 import ch.lkmc.monkeyspaw.ui.library.LibraryScreen
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
@@ -50,6 +52,7 @@ class MainActivity : ComponentActivity() {
     private val assistantSettings: AssistantSettingsViewModel by viewModels()
     private val assistantWrite: WriteViewModel by viewModels()
     private val assistantReview: ReviewViewModel by viewModels()
+    private val assistantImprove: ImproveViewModel by viewModels()
     private val fillLauncher = FillLauncher { path ->
         startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
     }
@@ -84,6 +87,7 @@ class MainActivity : ComponentActivity() {
         editor.onSelectionChanged = library::selectFromEditor
         assistantWrite.bind(editor)
         assistantReview.bind(editor)
+        assistantImprove.bind(editor)
         enableEdgeToEdge()
 
         setContent {
@@ -104,10 +108,22 @@ class MainActivity : ComponentActivity() {
                         val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
                         val writing = assistantWrite.state.collectAsStateWithLifecycle().value
                         val reviewing = assistantReview.state.collectAsStateWithLifecycle().value
-                        if (reviewing.isOpen && reviewing.destination == ReviewDestination.FINDINGS) {
+                        val improving = assistantImprove.state.collectAsStateWithLifecycle().value
+                        if (improving.isOpen) {
+                            ImproveScreen(state = improving, onInstruction = assistantImprove::editInstruction,
+                                onEffort = assistantImprove::setEffort, onImprove = assistantImprove::improve,
+                                onFeedback = assistantImprove::editFeedback, onRetry = assistantImprove::retryWithFeedback,
+                                onShowDiff = assistantImprove::showDiff, onAccept = assistantImprove::accept,
+                                onReject = assistantImprove::reject, onCancel = assistantImprove::cancel,
+                                onBack = assistantImprove::close, onReload = assistantImprove::reload,
+                                onSettings = { assistantImprove.close(); assistantSettings.open() },
+                                modifier = Modifier.padding(padding))
+                            EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)
+                        } else if (reviewing.isOpen && reviewing.destination == ReviewDestination.FINDINGS) {
                             ReviewScreen(state = reviewing, onReview = assistantReview::review,
                                 onEffort = assistantReview::setEffort, onFinding = assistantReview::toggleFinding,
                                 onQuote = assistantReview::showQuote, onFeedback = assistantReview::editFeedback,
+                                onImprove = { assistantReview.openImprove(assistantImprove) },
                                 onRetry = assistantReview::retryWithFeedback, onCancel = assistantReview::cancel,
                                 onBack = assistantReview::close, onReload = assistantReview::reload,
                                 onSettings = { assistantReview.close(); assistantSettings.open() },
@@ -142,6 +158,7 @@ class MainActivity : ComponentActivity() {
                             onRevision = { editor.selectRevision(it.revision) }, onRestore = { editor.restore(it.revision) },
                             onDecision = editor::resolveDecision, onConflict = editor::resolveConflict,
                             onReview = assistantReview::open, onClearQuote = editor::clearReviewQuote,
+                            onImprove = { if (reviewing.isOpen) assistantReview.openImprove(assistantImprove) else assistantImprove.open() },
                             modifier = Modifier.padding(padding),
                         ) else LibraryScreen(
                             state = library.state.collectAsStateWithLifecycle().value,
@@ -151,11 +168,11 @@ class MainActivity : ComponentActivity() {
                             onRefresh = library::refresh, modifier = Modifier.padding(padding),
                             // A row tap delivers (Fill); editing is an explicit action on the selection.
                             onOpen = ::openFill,
-                            onEdit = { assistantReview.close(); editor.open(it) },
-                            onCreate = { assistantReview.close(); editor.createDraft() },
+                            onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) },
+                            onCreate = { assistantImprove.close(); assistantReview.close(); editor.createDraft() },
                             onSettings = setup::openSettings,
                             onAssistantSettings = assistantSettings::open,
-                            onWrite = { assistantReview.close(); assistantWrite.open() },
+                            onWrite = { assistantImprove.close(); assistantReview.close(); assistantWrite.open() },
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,

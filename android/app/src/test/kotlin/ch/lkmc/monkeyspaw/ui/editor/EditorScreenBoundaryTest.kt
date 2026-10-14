@@ -36,7 +36,7 @@ internal class EditorScreenBoundaryTest {
         assertTrue(screen.contains("selected.canRestore && state.canCommand"))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("editor.onSelectionChanged = library::selectFromEditor"))
-        assertTrue(activity.contains("onEdit = { assistantReview.close(); editor.open(it) }"))
+        assertTrue(activity.contains("onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) }"))
         assertTrue(activity.contains("if (editing.isOpen) EditorScreen("))
         assertTrue(activity.contains("editor::resolveDecision"))
         assertTrue(activity.contains("editor.refresh()"))
