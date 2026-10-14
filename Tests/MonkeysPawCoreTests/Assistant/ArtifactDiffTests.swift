@@ -5,6 +5,17 @@ import XCTest
 final class ArtifactDiffTests: XCTestCase {
     private let id = ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PD")!
 
+    func testByteComparisonReconstructsExactHeadersBodiesAndUnicode() throws {
+        let old = Data("---\r\n# keep comment\r\ntitle: 'Exact'\r\nx-extra: true\r\n---\r\nCaf\u{e9}\r\n{{old}}".utf8)
+        let new = Data("---\ntitle: Exact\nx-extra: true\n---\nCafe\u{301}\n{{new}}\n".utf8)
+        let diff = try ArtifactDiff.compare(originalBytes: old, candidateBytes: new)
+        XCTAssertEqual(project(diff.frontMatter + diff.body, excluding: .added), old)
+        XCTAssertEqual(project(diff.frontMatter + diff.body, excluding: .removed), new)
+        XCTAssertTrue(diff.frontMatter.contains { $0.kind == .removed && $0.text.contains("# keep comment") })
+        XCTAssertEqual(diff.placeholderWarnings, [.renamed(from: "old", to: "new")])
+        XCTAssertThrowsError(try ArtifactDiff.compare(originalBytes: Data([0xff]), candidateBytes: new))
+    }
+
     func testSeparateComparisonsReconstructFinalCanonicalCandidate() throws {
         let initial = try ready(ArtifactMerge.write(artifact("Old {{topic}}\r\n"), id: id))
         let source = initial.document.source.replacingOccurrences(of: "title: Research", with: "# discarded comment\ntitle: Research")
