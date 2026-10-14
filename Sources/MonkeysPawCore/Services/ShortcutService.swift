@@ -28,6 +28,7 @@ public final class ShortcutService {
     private var retiredIDs = Set<UUID>()
     private var debouncing = Set<HotkeyAction>()
     private var replacing = Set<HotkeyAction>()
+    private var pendingConfiguration: (accelerators: [HotkeyAction: Accelerator], onFire: (HotkeyAction) -> Void)?
 
     /// Inject settings to load Carbon choices and persist confirmed edits.
     public init(backend: HotkeyBackend, scheduler: Scheduler, mainThread: MainThread,
@@ -52,11 +53,16 @@ public final class ShortcutService {
         mainThread.run { self.observers.removeValue(forKey: token) }
     }
 
+    /// Reentrant requests during replacement coalesce to the latest catalogue
+    /// and handler, applied after all replacements and their callbacks finish.
     public func configure(
         _ accelerators: [HotkeyAction: Accelerator], onFire: @escaping (HotkeyAction) -> Void
     ) {
         mainThread.run { [self] in
-            guard self.replacing.isEmpty else { return }
+            guard self.replacing.isEmpty else {
+                self.pendingConfiguration = (accelerators, onFire)
+                return
+            }
             self.onFire = onFire
             for action in HotkeyAction.allCases {
                 let accelerator = self.backend.mechanism == .carbon && self.settings != nil
@@ -107,7 +113,13 @@ public final class ShortcutService {
                 done(.failure(.unavailable))
                 return
             }
-            defer { self.replacing.remove(action) }
+            defer {
+                self.replacing.remove(action)
+                if self.replacing.isEmpty, let pending = self.pendingConfiguration {
+                    self.pendingConfiguration = nil
+                    self.configure(pending.accelerators, onFire: pending.onFire)
+                }
+            }
 
             if let error = self.settings?.snapshot.readOnlyError {
                 done(.failure(.saveFailed(error)))

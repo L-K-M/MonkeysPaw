@@ -7,6 +7,7 @@ final class FakeHotkeyBackend: HotkeyBackend {
     var status: RegistrationStatus = .registered
     var detail = "Registered by the system"
     var registrationOutcomes: [RegistrationStatus] = []
+    var onRegister: (() -> Void)?
     private(set) var registered: [(HotkeyAction, Accelerator?)] = []
     private(set) var unregistered: [HotkeyRegistration] = []
     private(set) var callbacks: [HotkeyAction: () -> Void] = [:]
@@ -21,6 +22,7 @@ final class FakeHotkeyBackend: HotkeyBackend {
             : (registrationOutcomes.isEmpty ? status : registrationOutcomes.removeFirst())
         let registration = HotkeyRegistration(mechanism: mechanism, status: outcome, detail: detail)
         currentRegistrations[action] = registration
+        onRegister?()
         return registration
     }
 

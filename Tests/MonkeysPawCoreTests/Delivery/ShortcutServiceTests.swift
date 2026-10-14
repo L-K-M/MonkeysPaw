@@ -2,6 +2,108 @@ import MonkeysPawCore
 import XCTest
 
 final class ShortcutServiceTests: XCTestCase {
+    func testReentrantConfigurationFromReplacementCompletionIsApplied() throws {
+        for mode in [FakeCompletionMode.immediate, .deferred] {
+            let h = DeliveryHarness()
+            h.main.mode = mode
+            let backend = FakeHotkeyBackend()
+            backend.mechanism = .carbon
+            let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+            var oldFires: [HotkeyAction] = []
+            var newFires: [HotkeyAction] = []
+            service.configure([.togglePicker: try Accelerator("Alt+P")]) { oldFires.append($0) }
+            h.main.drain()
+            let next: [HotkeyAction: Accelerator] = [.togglePicker: try Accelerator("Alt+F8"), .repeatLast: try Accelerator("Alt+F9")]
+            var completions = 0
+
+            service.setPickerAccelerator("Alt+E") { result in
+                completions += 1
+                if case .failure = result { XCTFail("Replacement failed") }
+                service.configure(next) { newFires.append($0) }
+            }
+            h.main.drain()
+
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(backend.registered.suffix(2).map(\.1), [next[.togglePicker], next[.repeatLast]])
+            backend.fire()
+            backend.fire(.repeatLast)
+            h.main.drain()
+            XCTAssertTrue(oldFires.isEmpty)
+            XCTAssertEqual(newFires, [.togglePicker, .repeatLast])
+        }
+    }
+
+    func testConfigurationsDuringNativeReplacementCoalesceToLastRequest() throws {
+        let h = DeliveryHarness()
+        let backend = FakeHotkeyBackend()
+        backend.mechanism = .carbon
+        let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+        var oldFires = 0
+        var supersededFires = 0
+        var latestFires: [HotkeyAction] = []
+        service.configure([.togglePicker: try Accelerator("Alt+P")]) { _ in oldFires += 1 }
+        let superseded: [HotkeyAction: Accelerator] = [.togglePicker: try Accelerator("Alt+F7")]
+        let latest: [HotkeyAction: Accelerator] = [.togglePicker: try Accelerator("Alt+F8"), .repeatLast: try Accelerator("Alt+F9")]
+        let registrations = backend.registered.count
+        backend.onRegister = {
+            backend.onRegister = nil
+            service.configure(superseded) { _ in supersededFires += 1 }
+            service.configure(latest) { latestFires.append($0) }
+            XCTAssertEqual(backend.registered.count, registrations + 1)
+        }
+        var completions = 0
+
+        service.setPickerAccelerator("Alt+E") { result in
+            completions += 1
+            if case .failure = result { XCTFail("Replacement failed") }
+        }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(backend.registered.count, registrations + 3)
+        XCTAssertEqual(backend.registered.suffix(2).map(\.1), [latest[.togglePicker], latest[.repeatLast]])
+        backend.fire()
+        backend.fire(.repeatLast)
+        XCTAssertEqual(oldFires, 0)
+        XCTAssertEqual(supersededFires, 0)
+        XCTAssertEqual(latestFires, [.togglePicker, .repeatLast])
+    }
+
+    func testReentrantConfigurationFromObserverAndRejectedReplacementIsApplied() throws {
+        for reject in [false, true] {
+            let h = DeliveryHarness()
+            let backend = FakeHotkeyBackend()
+            backend.mechanism = .carbon
+            let service = ShortcutService(backend: backend, scheduler: h.scheduler, mainThread: h.main)
+            var oldFires = 0
+            var newFires = 0
+            service.configure([.togglePicker: try Accelerator("Alt+P"), .repeatLast: try Accelerator("Alt+R")]) { _ in oldFires += 1 }
+            let next: [HotkeyAction: Accelerator] = [.togglePicker: try Accelerator("Alt+F8")]
+            var requested = false
+            if !reject {
+                service.addObserver {
+                    guard !requested else { return }
+                    requested = true
+                    service.configure(next) { _ in newFires += 1 }
+                }
+            }
+            var completions = 0
+
+            service.setPickerAccelerator(reject ? "Alt+R" : "Alt+E") { result in
+                completions += 1
+                if reject {
+                    XCTAssertEqual(result, .failure(.collision(.repeatLast)))
+                    service.configure(next) { _ in newFires += 1 }
+                } else if case .failure = result { XCTFail("Replacement failed") }
+            }
+
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(backend.registered.suffix(2).map(\.1), [next[.togglePicker], nil])
+            backend.fire()
+            XCTAssertEqual(oldFires, 0)
+            XCTAssertEqual(newFires, 1)
+        }
+    }
+
     func testUnboundRepeatStillHasABackendCallbackCatalogueEntry() throws {
         let h = DeliveryHarness()
         let backend = FakeHotkeyBackend()
@@ -48,6 +150,9 @@ final class ShortcutServiceTests: XCTestCase {
 
         service.setPickerAccelerator("Alt+F8") { result = $0 }
 
+        XCTAssertEqual(backend.registered.count, 4)
+        XCTAssertEqual(backend.unregistered.count, 2)
+        XCTAssertTrue(backend.registrationOutcomes.isEmpty)
         XCTAssertEqual(result, .failure(.registrationFailed))
         XCTAssertEqual(service.registrations[.togglePicker]?.status, .registered)
         XCTAssertEqual(backend.registered.last?.1, previous)

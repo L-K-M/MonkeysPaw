@@ -40,6 +40,8 @@ Hotkey notes:
     accelerator for deliberately unbound repeat. Nil never selects a default.
     Registration identities, verification, debounce and replacement lifetimes
     are independent per action. Refresh only reads facts and never starts consent.
+    A whole-catalogue apply during a replacement coalesces to the latest request
+    and activation handler, applied after all in-flight replacements finish.
   - Carbon choices are persisted in version-1 settings as `carbonShortcuts`:
     `togglePicker` defaults to `Ctrl+Alt+P`, `repeatLast` to null. Null explicitly
     clears either action; omission uses that action's default. Validate Carbon
