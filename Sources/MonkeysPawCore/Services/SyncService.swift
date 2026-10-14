@@ -254,6 +254,17 @@ public final class SyncService {
         }
     }
 
+    /// Sign-out retires authentication even if local journal cleanup fails.
+    /// Deferred graph recovery must never retry HTTP with this credential.
+    func stopAccountSession() {
+        locked {
+            current.enabled = false
+            _ = stopWork()
+            session = nil
+            coordinator = nil
+        }
+    }
+
     func requireSignIn() {
         locked {
             current.enabled = false
