@@ -2,6 +2,26 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncApplyJournalTests: XCTestCase {
+    func testRecordRejectsRenameWithoutPreparedDirectorySteps() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.files.put("{{name}}", at: "Groups/Old/f.md")
+        let file = try XCTUnwrap(rig.mutations.read(at: "Groups/Old/f.md"))
+        try rig.values.record(identity: file.identity, values: ["name": "keep"])
+        let rename = try SyncDirectoryEdit(renaming: "Groups/Old",
+            identity: XCTUnwrap(rig.libraryOperations.directoryIdentity(at: "Groups/Old")),
+            to: "Groups/New", localFiles: [file])
+        let plan = SyncApplyPlan(expectedState: nil, nextState: try SyncState(binding: rig.binding),
+            edits: [], directories: [rename])
+        XCTAssertThrowsError(try SyncApplyRecord(plan: plan, steps: [])) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        let migrations = try rig.mutations.prepareMigrations(for: rename)
+        XCTAssertFalse(migrations.isEmpty)
+        let record = try SyncApplyRecord(plan: plan, steps: [],
+            directorySteps: [SyncDirectoryStep(edit: rename, migrations: migrations)])
+        XCTAssertEqual(record.directorySteps.first?.migrations.count, migrations.count)
+    }
+
     func testPreparationKeyedConflictKeepsTypedErrorAndReleasesPermit() throws {
         let fixture = try preparedAdoption()
         let rig = fixture.rig

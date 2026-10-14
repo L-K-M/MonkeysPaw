@@ -191,14 +191,19 @@ final class SyncLibraryMutations {
     private static func directoryIdentities(_ operations: SyncFileOperations) throws -> [RelativePath: FileStamp] {
         var result: [RelativePath: FileStamp] = [:]
         var parents: [RelativePath?] = [nil]
-        while let parent = parents.popLast() {
-            for child in try operations.directories(at: parent) {
-                try FileStorePath.validate(child.string)
-                guard Self.parent(of: child) == parent, result[child] == nil,
-                      let identity = try operations.directoryIdentity(at: child) else { throw LibraryError.conflict }
-                result[child] = identity
-                parents.append(child)
+        do {
+            while let parent = parents.popLast() {
+                for child in try operations.directories(at: parent) {
+                    try FileStorePath.validate(child.string)
+                    guard Self.parent(of: child) == parent, result[child] == nil else { throw SyncError.invalidState }
+                    guard let identity = try operations.directoryIdentity(at: child) else { throw LibraryError.conflict }
+                    result[child] = identity
+                    parents.append(child)
+                }
             }
+        } catch let error as SyncFileOperationError where error.effect == .unchanged
+            && (error.code == .notFound || error.code == .changed) {
+            throw LibraryError.conflict
         }
         return result
     }
@@ -208,12 +213,14 @@ final class SyncLibraryMutations {
     func apply(_ edit: SyncDirectoryEdit) throws -> SyncLibraryMutationOutcome {
         try edit.validate()
         return try library.withSyncLock { files in
+            let directories: [RelativePath: FileStamp]
+            do { directories = try Self.directoryIdentities(operations) }
+            catch LibraryError.conflict { return .replanAsConflict }
             if edit.kind == .reserve {
-                return try vacantDirectory(edit.source, files: files) ? .applied : .replanAsConflict
+                return try vacantDirectory(edit.source, files: files, directories: directories) ? .applied : .replanAsConflict
             }
             if edit.kind == .removeEmpty {
-                let actual = try Self.directoryIdentities(operations)
-                guard let identity = actual[edit.source] else {
+                guard let identity = directories[edit.source] else {
                     guard try files.stamp(at: edit.source.string) == nil else { return .replanAsConflict }
                     try flushSurvivingParents(of: edit.source)
                     return .applied
@@ -227,7 +234,6 @@ final class SyncLibraryMutations {
             }
             guard let destination = edit.destination else { throw SyncError.invalidState }
             let positions = [edit.source] + (edit.intermediate.map { [$0] } ?? []) + [destination]
-            let directories = try Self.directoryIdentities(operations)
             let matches = positions.filter { directories[$0] == edit.identity }
             guard matches.count == 1, let current = matches.first else { return .replanAsConflict }
             // Refuse any second incarnation, even if it is an empty directory.
@@ -268,10 +274,12 @@ final class SyncLibraryMutations {
     func verify(_ edit: SyncDirectoryEdit) throws -> SyncLibraryMutationOutcome {
         try edit.validate()
         return try library.withSyncLock { files in
+            let directories: [RelativePath: FileStamp]
+            do { directories = try Self.directoryIdentities(operations) }
+            catch LibraryError.conflict { return .replanAsConflict }
             if edit.kind == .reserve {
-                return try vacantDirectory(edit.source, files: files) ? .applied : .replanAsConflict
+                return try vacantDirectory(edit.source, files: files, directories: directories) ? .applied : .replanAsConflict
             }
-            let directories = try Self.directoryIdentities(operations)
             if edit.kind == .removeEmpty {
                 return try directories[edit.source] == nil && files.stamp(at: edit.source.string) == nil ? .applied : .replanAsConflict
             }
@@ -282,9 +290,9 @@ final class SyncLibraryMutations {
         }
     }
 
-    private func vacantDirectory(_ path: RelativePath, files: FileStore) throws -> Bool {
+    private func vacantDirectory(_ path: RelativePath, files: FileStore, directories: [RelativePath: FileStamp]) throws -> Bool {
         let key = try SyncNaming.pathKey(path)
-        let paths = try files.listFiles().map { RelativePath($0.relativePath) } + Array(Self.directoryIdentities(operations).keys)
+        let paths = try files.listFiles().map { RelativePath($0.relativePath) } + Array(directories.keys)
         guard try !paths.contains(where: { try SyncNaming.pathKey($0) == key }) else { return false }
         // A link is omitted by listing but must still fail the direct probe.
         return try files.stamp(at: path.string) == nil
@@ -421,7 +429,10 @@ final class SyncLibraryMutations {
 
     func canReplan(_ step: SyncDirectoryStep) throws -> Bool {
         if step.completed || step.edit.kind != .rename { return true }
-        guard try directoryIdentities()[step.edit.source] == step.edit.identity else { return false }
+        let directories: [RelativePath: FileStamp]
+        do { directories = try directoryIdentities() }
+        catch LibraryError.conflict { return false }
+        guard directories[step.edit.source] == step.edit.identity else { return false }
         let stores = try library.syncKeyedStores()
         for migration in step.migrations {
             guard let store = stores.first(where: { $0.syncKind == migration.store }),

@@ -14,6 +14,7 @@ final class MemorySyncFileOperations: SyncFileOperations {
     /// Applies to each publication until explicitly cleared.
     var racingBytesAfterCheck: Data?
     var onOperation: ((String) -> Void)?
+    var directoryListing: ((RelativePath?) throws -> [RelativePath])?
     private(set) var operationCount = 0
     private(set) var flushCount = 0
     private(set) var flushedFiles: [RelativePath] = []
@@ -171,6 +172,7 @@ final class MemorySyncFileOperations: SyncFileOperations {
     func directories(at path: RelativePath?) throws -> [RelativePath] {
         try checkpoint("directories:" + (path?.string ?? "/"))
         if let path { try fileStoreOperation { try FileStorePath.validate(path.string) } }
+        if let directoryListing { return try directoryListing(path) }
         return try allDirectories().filter { parent(of: $0) == path }.sorted()
     }
 

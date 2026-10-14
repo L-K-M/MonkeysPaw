@@ -53,12 +53,13 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
     var customMirror: Mirror { Mirror(self, children: ["journal": description]) }
 
     init(plan: SyncApplyPlan, steps: [SyncApplyStep], directorySteps: [SyncDirectoryStep]? = nil) throws {
+        guard directorySteps != nil || plan.directories.isEmpty else { throw SyncError.invalidState }
         version = Limits.syncApplyJournalVersion
         id = plan.id
         expectedState = plan.expectedState
         nextState = plan.nextState
         self.steps = steps
-        self.directorySteps = directorySteps ?? plan.directories.map { SyncDirectoryStep(edit: $0) }
+        self.directorySteps = directorySteps ?? []
         bindingChange = plan.bindingChange
         try validate()
     }
