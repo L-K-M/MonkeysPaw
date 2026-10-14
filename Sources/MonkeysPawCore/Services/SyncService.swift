@@ -301,7 +301,7 @@ public final class SyncService {
                     current.retrying = true
                     retry(after: nil)
                     publish()
-                } else if pass.rerun || pass.counts.fileErrors == 0 {
+                } else if triggered || pass.rerun || pass.counts.fileErrors == 0 {
                     automaticReruns = pass.rerun && !triggered ? automaticReruns + 1 : 0
                     launch()
                 }

@@ -525,9 +525,16 @@ final class SyncCoordinator {
                 phase(.scanning)
                 let decision = try SyncAdoption.match(remote, local: local, groups: plan.nextState.groups)
                 switch decision {
-                case .adopt, .conflict:
-                    try commit(SyncAdoption.application(decision, state: plan.expectedState, local: local,
-                        groups: plan.nextState.groups, device: device, at: date(), freshID: freshID, mutations: mutations))
+                case .adopt(_, let occupant), .conflict(_, let occupant):
+                    let preparation: SyncApplyPlan
+                    do {
+                        preparation = try SyncAdoption.application(decision, state: plan.expectedState, local: local,
+                            groups: plan.nextState.groups, device: device, at: date(), freshID: freshID, mutations: mutations)
+                    } catch SyncReconciliationError.requiresPolicy {
+                        try relocate(occupant, remote: remote, plan: plan, local: local)
+                        return true
+                    }
+                    try commit(preparation)
                 case .clash(_, let occupant): try relocate(occupant, remote: remote, plan: plan, local: local)
                 case .held(let path):
                     guard let occupant = local.files.first(where: { RelativePath($0.path) == path }) else {
