@@ -51,14 +51,14 @@ fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
 K10 established nine categories with 1,032 cases and 2,168 visible files:
-format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
-paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
+format 17/34, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
+paths 141/282, ranking 36/164, import 15/30 and DTOs 649/1,298 (160 valid,
 489 invalid).
 M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
 category. L3 adds one Foundation transcript-escaping golden using the same
 decode contract. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
-diff cases with 249 files, bringing the corpus to 1,507 cases and 4,342 visible
+diff cases with 249 files, bringing the corpus to 1,509 cases and 4,346 visible
 files. Case shapes are below. These are reported counts, not fixed enumeration
 limits.
 Sync-engine scenarios arrive with their implementations under the
