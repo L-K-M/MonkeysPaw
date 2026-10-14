@@ -72,6 +72,31 @@ final class LinuxPortalCompositionTests: XCTestCase {
         XCTAssertNotEqual(row(.hotkey)?.status, .ok)
     }
 
+    func testRepeatSetupBindsBothActionsAndOnlyPortalActivationVerifiesRepeat() throws {
+        portal.boundShortcuts = "[('toggle', {'trigger_description': <'Alt+P'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
+        start()
+        environment.setupModel.fix(.hotkey, action: .repeatLast)
+        let model = environment.shortcutsSettingsModel
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.registrationStatus == .registered })
+        let bind = try XCTUnwrap(portal.calls.first { $0.method == "BindShortcuts" })
+        XCTAssertEqual(portal.shortcuts(bind).map(\.id), ["toggle", "repeat"])
+        XCTAssertNil(portal.shortcuts(bind).first { $0.id == "repeat" }?.properties["preferred_trigger"])
+        model.beginVerification(.repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.verification == .waiting })
+        environment.activateRepeat()
+        XCTAssertTrue(GTKTestSupport.spin { environment.repeatModel?.result == .nothingToRepeat })
+        XCTAssertEqual(model.repeatLast.verification, .waiting)
+        XCTAssertEqual(model.togglePicker.verification, .notStarted)
+        let session = try XCTUnwrap(portal.sessionOwners.keys.first { $0.hasSuffix(PortalHotkeyBackend.sessionToken) })
+        portal.emit(member: "Activated", body: "(objectpath '\(session)', 'repeat', uint64 1, {'activation_token': <'repeat-fixture'>})")
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.verification == .verified })
+        XCTAssertEqual(model.togglePicker.verification, .notStarted)
+        model.performPlatformChange(for: .repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { portal.ordinaryCalls.contains { $0.method == "ConfigureShortcuts" } })
+        XCTAssertEqual(portal.calls.filter { $0.method == "BindShortcuts" }.count, 1)
+        XCTAssertEqual(model.repeatLast.binding, .reported("Alt+R"))
+    }
+
     func testSelfTestDoesNotStartConsentAndReportsPerBackendFailure() {
         var report: SelfTestReport?
         environment.runSelfTest { report = $0 }

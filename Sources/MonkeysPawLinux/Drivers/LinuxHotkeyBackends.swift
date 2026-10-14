@@ -14,6 +14,7 @@ protocol LinuxHotkeyBackend: AnyObject, HotkeyBackend {
     func configure(for action: HotkeyAction, done: @escaping () -> Void)
     func configureNative(done: @escaping () -> Void)
     func consumeActivationToken() -> String?
+    func consumeActivationToken(for action: HotkeyAction) -> String?
     func shutdown()
 }
 
@@ -28,6 +29,9 @@ extension LinuxHotkeyBackend {
     }
     func configureNative(done: @escaping () -> Void) { configure(done: done) }
     func consumeActivationToken() -> String? { nil }
+    func consumeActivationToken(for action: HotkeyAction) -> String? {
+        action == .togglePicker ? consumeActivationToken() : nil
+    }
     func shutdown() { unregister(currentRegistration) }
 }
 

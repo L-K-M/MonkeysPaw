@@ -13,6 +13,7 @@ final class LinuxEnvironment {
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case persistenceFailed(SettingsError)
+        case repeatInvalidationFailed
 
         var settingsOutcome: LibrarySwitchOutcome {
             switch self {
@@ -25,6 +26,7 @@ final class LinuxEnvironment {
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .persistenceFailed(let error): return .settingsNotSaved(error)
+            case .repeatInvalidationFailed: return .libraryUnavailable(.ioFailure)
             }
         }
     }
@@ -101,6 +103,10 @@ final class LinuxEnvironment {
         let importModel: ImportModel
         let imports: LinuxLibraryImportState
         let callbacks: LibraryCallbacks
+        let repeatService: RepeatService?
+        let repeatModel: RepeatModel?
+        var repeatWindow: LinuxRepeatWindow?
+        var presentedRepeatResult: RepeatResult?
         let initializationError: FileStoreError?
         var started = false
         var warningLogged = false
@@ -113,7 +119,8 @@ final class LinuxEnvironment {
              index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel, browser: LibraryBrowserModel,
              editing: PromptEditingService, editor: EditorModel,
              importModel: ImportModel, imports: LinuxLibraryImportState,
-             callbacks: LibraryCallbacks, initializationError: FileStoreError?) {
+             callbacks: LibraryCallbacks, repeatService: RepeatService?, repeatModel: RepeatModel?,
+             initializationError: FileStoreError?) {
             self.directory = directory
             self.files = files
             self.library = library
@@ -126,10 +133,16 @@ final class LinuxEnvironment {
             self.importModel = importModel
             self.imports = imports
             self.callbacks = callbacks
+            self.repeatService = repeatService
+            self.repeatModel = repeatModel
             self.initializationError = initializationError
         }
 
         func stop() {
+            repeatModel?.deactivate()
+            repeatService?.cancel()
+            repeatWindow?.tearDown()
+            repeatWindow = nil
             imports.deactivate()
             assistant?.deactivate()
             assistant = nil
@@ -155,7 +168,7 @@ final class LinuxEnvironment {
         }
     }
 
-    private enum ToggleOrigin { case shortcut, manual }
+    private enum ActionOrigin { case shortcut, manual }
     private enum TrayEntry: Int32 {
         case picker = 1, library, settings, setup, quit
     }
@@ -188,6 +201,7 @@ final class LinuxEnvironment {
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application)
     var pickerModel: PickerModel { libraryGraph.picker }
+    var repeatModel: RepeatModel? { libraryGraph.repeatModel }
     var libraryBrowserModel: LibraryBrowserModel { libraryGraph.browser }
     var editorModel: EditorModel { libraryGraph.editor }
     var importModel: ImportModel { libraryGraph.importModel }
@@ -265,19 +279,31 @@ final class LinuxEnvironment {
     private lazy var clock = SystemClock()
     private lazy var values = ValuesStore(files: dataFiles)
     private lazy var usage = UsageStore(files: dataFiles, clock: clock)
+    private lazy var lastDelivery = LastDeliveryStore(files: dataFiles)
     private lazy var clipboard: Clipboard = suppliedClipboard ?? GTKClipboard(owner: panel.clipboardOwner)
     private lazy var fill = FillService(values: values, clipboard: clipboard, clock: clock,
         timeZone: { TimeZone.current })
     private lazy var notifier = GTKNotifier(application: application, session: session)
-    private lazy var delivery = DeliveryService(
-        panel: panel, focus: focusTracker ?? LinuxFocusTracker(session: session, runner: runner),
-        clipboard: clipboard,
-        injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
-        notifier: notifier, session: session,
-        scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache(),
-        linuxDefaultPasteChord: { [weak self] in
-            self?.settingsModel.deliveryPreferences.linuxDefaultPasteChord ?? .standard
-        })
+    private var currentDelivery: DeliveryService?
+    private var deliverySettingsObserver: UUID?
+    private lazy var delivery: DeliveryService = {
+        let preferences = settingsModel.state
+        let service = DeliveryService(
+            panel: panel, focus: focusTracker ?? LinuxFocusTracker(session: session, runner: runner),
+            clipboard: clipboard,
+            injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
+            notifier: notifier, session: session,
+            scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache(),
+            clipboardRestore: preferences.isReadOnly ? .off : preferences.document.delivery.clipboardRestore,
+            linuxDefaultPasteChord: { [weak self] in
+                self?.settingsModel.deliveryPreferences.linuxDefaultPasteChord ?? .standard
+            })
+        currentDelivery = service
+        deliverySettingsObserver = settingsModel.addObserver { [weak service] snapshot, _ in
+            service?.setClipboardRestore(snapshot.isReadOnly ? .off : snapshot.document.delivery.clipboardRestore)
+        }
+        return service
+    }()
     private lazy var selfTest = SelfTest(
         target: GTKSelfTestTarget(application: application), delivery: delivery,
         session: session, scheduler: scheduler, mainThread: mainThread)
@@ -383,8 +409,10 @@ final class LinuxEnvironment {
             result[action] = Accelerator.defaultBinding(for: action)
         }
         shortcuts.configure(bindings) { [weak self] action in
-            guard action == .togglePicker else { return }
-            self?.togglePicker(origin: .shortcut)
+            switch action {
+            case .togglePicker: self?.togglePicker(origin: .shortcut)
+            case .repeatLast: self?.repeatLast(origin: .shortcut)
+            }
         }
     }
 
@@ -448,6 +476,57 @@ final class LinuxEnvironment {
         } else {
             LinuxPickerTrace.record("toggle.dispatched", "reason=backend-handled")
         }
+    }
+
+    func activateRepeat() {
+        guard !isShutDown else { return }
+        // GNOME/manual may route their own compositor command. Portal/KDE
+        // decline fire(), so a direct action never supplies activation proof.
+        if !hotkey.fire(.repeatLast) { repeatLast(origin: .manual) }
+    }
+
+    private func repeatLast(origin: ActionOrigin) {
+        guard !isShutDown else { return }
+        startLibrary()
+        let graph = libraryGraph
+        guard graph.picker.state != .delivering, !graph.picker.isResolvingBuiltins,
+              graph.picker.fillModel?.state != .delivering else { return }
+        guard let model = graph.repeatModel else {
+            mp_notify(application, LinuxStrings.repeatLast, LinuxStrings.repeatMessage(.unavailable(.invalidBinding)))
+            return
+        }
+        guard model.state == .idle else { return }
+        // Consume only this action's token without raising a window before
+        // RepeatService captures the current external target.
+        var token = origin == .shortcut ? hotkey.consumeActivationToken(for: .repeatLast) : nil
+        graph.repeatModel?.onChange = { [weak self, weak graph] in
+            guard let self, let graph, !self.isShutDown,
+                  self.currentLibraryGraph === graph, let model = graph.repeatModel else { return }
+            if model.state == .repeating { graph.presentedRepeatResult = nil }
+            guard model.state == .idle, let result = model.result,
+                  graph.presentedRepeatResult != result else { return }
+            graph.presentedRepeatResult = result
+            let activationToken = token
+            token = nil
+            guard LinuxStrings.repeatMessage(result) != nil else { return }
+            if graph.repeatWindow == nil {
+                graph.repeatWindow = LinuxRepeatWindow(application: self.application, model: model,
+                    openPrompt: { [weak self, weak graph] reference in
+                        guard let self, let graph, self.currentLibraryGraph === graph,
+                              graph.callbacks.isActive else { return }
+                        self.handle(.edit(identity: reference.identity, relativePath: reference.relativePath), in: graph)
+                    })
+            }
+            graph.repeatWindow?.showResult(activationToken: activationToken)
+        }
+        model.repeatLast()
+    }
+
+    private var isOwnWindowActive: Bool {
+        guard let window = gtk_application_get_active_window(application),
+              gtk_widget_get_visible(mp_window_widget(window)) != 0,
+              gtk_window_is_active(window) != 0 else { return false }
+        return mp_window_widget(window) != panel.clipboardOwner
     }
 
     func presentFromLauncher(source: StaticString = "direct") {
@@ -652,7 +731,7 @@ final class LinuxEnvironment {
         currentOnboardingWindow?.show()
     }
 
-    private func togglePicker(origin: ToggleOrigin = .manual) {
+    private func togglePicker(origin: ActionOrigin = .manual) {
         LinuxPickerTrace.record("toggle.dispatch", "origin=\(origin) shutdown=\(isShutDown)")
         guard !isShutDown else { return }
         startLibrary()
@@ -665,7 +744,7 @@ final class LinuxEnvironment {
         } else {
             LinuxPickerTrace.record("picker.open.request", "reason=toggle")
             panel.cancelPendingBlur()
-            panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken() : nil)
+            panel.useActivationToken(origin == .shortcut ? hotkey.consumeActivationToken(for: .togglePicker) : nil)
             pickerModel.open()
         }
     }
@@ -709,7 +788,17 @@ final class LinuxEnvironment {
             clock: clock, entropy: SystemEntropy(), keyedStores: [values, usage])
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let callbacks = LibraryCallbacks(main: mainThread)
-        let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks)
+        let repeatService = (try? RepeatBinding(root: directory.path)).map { binding in
+            RepeatService(binding: binding, store: lastDelivery, library: library, index: index,
+                fill: fill, delivery: delivery, work: backgroundWork, main: mainThread,
+                canAccess: { [weak self, weak callbacks] _ in
+                    guard let graph = self?.currentLibraryGraph, graph.callbacks === callbacks else { return false }
+                    return graph.callbacks.isActive && graph.picker.libraryAvailable
+                }, isOwnWindowActive: { [weak self] in self?.isOwnWindowActive ?? true },
+                pasteChord: { [weak self] _ in self?.settingsModel.deliveryPreferences.linuxDefaultPasteChord ?? .standard })
+        }
+        let repeatModel = repeatService.map { RepeatModel(service: $0, main: mainThread) }
+        let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks, repeatService: repeatService)
         let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: callbacks)
         // EditorModel guards retired publications itself; its .inactive guard
         // completions must still reach callers after the graph stops.
@@ -739,6 +828,7 @@ final class LinuxEnvironment {
         let graph = LibraryGraph(directory: directory, files: files, library: library,
             index: index, watcher: watcher, picker: picker, browser: browser, editing: editing, editor: editor,
             importModel: importModel, imports: imports, callbacks: callbacks,
+            repeatService: repeatService, repeatModel: repeatModel,
             initializationError: initializationError)
         let service = assistantService
         let main = mainThread
@@ -778,13 +868,31 @@ final class LinuxEnvironment {
         guard paths.supportsLibrary(at: target) else { return .outsideSandboxHome }
         let old = libraryGraph
         if editorHasUnsavedWork(old.editor.state) { return .editorBusy }
-        guard old.picker.state != .delivering else { return .deliveryInFlight }
+        guard old.picker.state != .delivering, old.picker.fillModel?.state != .delivering else { return .deliveryInFlight }
         old.picker.dismiss()
         panel.hide(reason: "switch-library")
 
         let files: RootedFileStore
         do { files = try prepareLibraryFiles(at: target) }
         catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }
+
+        // A failed tombstone keeps the binding and graph, with repeat disabled
+        // until a durable retry. No late record may write into the replacement.
+        do {
+            if let repeatService = old.repeatService { try repeatService.retire() }
+            else {
+                // An invalid initial root has no repeat binding. Recovery still
+                // tombstones the shared store before an older valid root returns.
+                let retirement = RepeatService(binding: try RepeatBinding(root: target.path), store: lastDelivery,
+                    library: old.library, index: old.index, fill: fill, delivery: delivery,
+                    work: backgroundWork, main: mainThread, isOwnWindowActive: { true })
+                try retirement.retire()
+            }
+        }
+        catch {
+            mp_notify(application, LinuxStrings.repeatLast, LinuxStrings.repeatMessage(.unavailable(.invalidationFailed)))
+            return .repeatInvalidationFailed
+        }
 
         // The reused panel was hidden directly above. Revoke old requests held
         // by Setup or focus restoration before retiring their graph.
@@ -948,6 +1056,10 @@ final class LinuxEnvironment {
         currentSettingsWindow?.hide()
         currentLibraryWindow?.tearDown()
         currentLibraryGraph?.stop()
+        currentDelivery?.invalidatePendingPresentation()
+        currentDelivery?.shutdown()
+        if let deliverySettingsObserver { settingsModel.removeObserver(deliverySettingsObserver) }
+        deliverySettingsObserver = nil
         hotkey.shutdown()
         remoteDesktop.shutdown()
         portal.shutdown()

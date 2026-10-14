@@ -216,7 +216,12 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         configure(until: ContinuousClock.now.advanced(by: Limits.portalConsentTimeout), done: done)
     }
 
-    func configure(until deadline: ContinuousClock.Instant, done: @escaping () -> Void) {
+    func configure(for action: HotkeyAction, done: @escaping () -> Void) {
+        configure(until: ContinuousClock.now.advanced(by: Limits.portalConsentTimeout), for: action, done: done)
+    }
+
+    func configure(until deadline: ContinuousClock.Instant, for action: HotkeyAction = .togglePicker,
+                   done: @escaping () -> Void) {
         guard selection != .stopped, !configuring, !onFire.isEmpty else { done(); return }
         switch selection {
         case .probing:
@@ -226,10 +231,10 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 guard let self else { return }
                 self.configuring = false
                 self.configurationDone = nil
-                self.configure(until: deadline, done: done)
+                self.configure(until: deadline, for: action, done: done)
             }
         case .fallback:
-            fallback.configure(done: done)
+            fallback.configure(for: action, done: done)
         case .portal(let version):
             configuring = true
             configurationDone = done

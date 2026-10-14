@@ -79,7 +79,8 @@ final class KDEPortalHotkeyTests: XCTestCase {
         backend.register(.repeatLast, accelerator: nil) { [weak self] in
             guard let self else { return }
             self.repeatFires += 1
-            self.repeatTokens.append(self.backend.consumeActivationToken(for: .repeatLast))
+            let live: LinuxHotkeyBackend = self.backend
+            self.repeatTokens.append(live.consumeActivationToken(for: .repeatLast))
         }
     }
 

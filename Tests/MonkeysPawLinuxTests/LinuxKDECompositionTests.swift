@@ -65,6 +65,55 @@ final class LinuxKDECompositionTests: XCTestCase {
         XCTAssertTrue(tools.arguments.isEmpty)
     }
 
+    func testRepeatUsesIndependentNativeProofAndSurvivesPortalHandoffAndSettingsReopen() throws {
+        service.actionNames = ["toggle", "repeat"]
+        service.additionalKeys["repeat"] = "@a(ai) [([134217810],)]"
+        portal.boundShortcuts = "[('toggle', {'trigger_description': <'Ctrl+Alt+P'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
+        start()
+        let model = environment.shortcutsSettingsModel
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.registrationStatus == .registered })
+        let id = try XCTUnwrap(model.repeatLast.registration?.id)
+        model.beginVerification(.repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.verification == .waiting })
+        environment.activateRepeat()
+        XCTAssertTrue(GTKTestSupport.spin { environment.repeatModel?.result == .nothingToRepeat })
+        XCTAssertEqual(model.repeatLast.verification, .waiting)
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 1)")
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.verification == .verified })
+        XCTAssertEqual(model.togglePicker.verification, .notStarted)
+        environment.setupModel.fix(.hotkey, action: .repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.registration?.mechanism == .globalShortcutsPortal
+            && model.repeatLast.registrationStatus == .registered })
+        XCTAssertEqual(model.repeatLast.registration?.id, id)
+        XCTAssertEqual(model.repeatLast.verification, .notStarted)
+        model.beginVerification(.repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.verification == .waiting })
+        environment.activateRepeat()
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 2)")
+        var drained = false
+        GTK.onMainLoop { drained = true }
+        XCTAssertTrue(GTKTestSupport.spin { drained })
+        XCTAssertEqual(model.repeatLast.verification, .waiting)
+        let session = try XCTUnwrap(portal.sessionOwners.keys.first)
+        portal.emit(member: "Activated", body: "(objectpath '\(session)', 'repeat', uint64 42, @a{sv} {})")
+        XCTAssertTrue(GTKTestSupport.spin { model.repeatLast.verification == .verified })
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(application), let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.settings
+        })
+        let window = try XCTUnwrap(gtk_application_get_active_window(application))
+        let label = try settingsWidget("settings-repeat-binding", in: mp_window_widget(window))
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(label))), "Saved KDE choice")
+        gtk_window_close(window)
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(mp_window_widget(window)) != 0 })
+        XCTAssertEqual(model.repeatLast.registration?.id, id)
+        XCTAssertEqual(model.repeatLast.verification, .verified)
+        XCTAssertEqual(service.additionalKeys["repeat"], "@a(ai) [([134217810],)]")
+        XCTAssertTrue(service.removedActions.isEmpty)
+    }
+
     func testKDEX11AlsoSelectsTheNativeDriver() {
         tools.environment["XDG_SESSION_TYPE"] = "x11"
         environment.shutdown()

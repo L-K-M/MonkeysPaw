@@ -215,13 +215,14 @@ final class PortalHotkeyTests: XCTestCase {
 
     func testBothActionTokensSurviveMainLoopHopAndChangesUpdateEachBinding() throws {
         portal.boundShortcuts = "[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
+        let live: LinuxHotkeyBackend = backend
         let service = ShortcutService(backend: backend, scheduler: GLibScheduler(), mainThread: GLibMainThread())
         var events: [HotkeyAction] = []
         var correctTokens = 0
         service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { action in
             events.append(action)
             let expected = action == .togglePicker ? "picker-fixture" : "repeat-fixture"
-            if self.backend.consumeActivationToken(for: action) == expected { correctTokens += 1 }
+            if live.consumeActivationToken(for: action) == expected { correctTokens += 1 }
         }
         PortalSessionTestSupport.barrier(transport)
         configure()
@@ -239,8 +240,8 @@ final class PortalHotkeyTests: XCTestCase {
         PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(events, [.togglePicker, .repeatLast])
         XCTAssertEqual(correctTokens, 2)
-        XCTAssertTrue(backend.consumeActivationToken(for: .togglePicker) == nil)
-        XCTAssertTrue(backend.consumeActivationToken(for: .repeatLast) == nil)
+        XCTAssertTrue(live.consumeActivationToken(for: .togglePicker) == nil)
+        XCTAssertTrue(live.consumeActivationToken(for: .repeatLast) == nil)
         portal.emit(member: "ShortcutsChanged", body: "(objectpath '\(handle)', [('toggle', {'trigger_description': <'Alt+P'>}), ('repeat', {'trigger_description': <'Super+R'>})])")
         PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(backend.registration(for: .togglePicker).detail, "Alt+P")
@@ -254,6 +255,23 @@ final class PortalHotkeyTests: XCTestCase {
         portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 18, @a{sv} {})")
         PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(events.count, 2)
+    }
+
+    func testRepeatConfigurationDuringProbeCannotInstallTheGnomePickerShortcut() throws {
+        portal.versions[PortalInterface.globalShortcuts.rawValue] = 0
+        let fallback = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())
+        let pending = makeBackend(fallback: fallback)
+        defer { pending.shutdown() }
+        _ = pending.register(.togglePicker, accelerator: Accelerator.defaultBinding(for: .togglePicker)) {}
+        _ = pending.register(.repeatLast, accelerator: nil) {}
+        var completed = 0
+        pending.configure(for: .repeatLast) { completed += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { completed != 0 })
+        XCTAssertEqual(completed, 1)
+        XCTAssertEqual(pending.registration(for: .repeatLast).mechanism, .gnomeCustomKeybinding)
+        XCTAssertEqual(pending.registration(for: .repeatLast).status, .unbound)
+        XCTAssertNotEqual(pending.registration(for: .togglePicker).status, .registered)
+        XCTAssertFalse(tools.arguments.contains { $0.first == "set" })
     }
 
     func testUnregisterBoundActionRetiresSessionAndReleasesCallback() throws {

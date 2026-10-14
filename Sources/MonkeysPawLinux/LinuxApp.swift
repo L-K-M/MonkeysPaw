@@ -7,6 +7,7 @@ import MonkeysPawCore
 /// Desktop action identifiers must match GSimpleAction names exactly.
 enum ActionName: String {
     case toggle
+    case `repeat`
     case selftest
     case settings
     case library
@@ -107,6 +108,7 @@ public enum MonkeysPawLinuxApp {
         g_action_map_add_action(mp_action_map(application), mp_action(toggle))
         g_object_unref(UnsafeMutableRawPointer(toggle))
 
+        installRepeatAction(application: application, environment: environment)
         installSettingsAction(application: application, environment: environment)
         installLibraryAction(application: application, environment: environment)
 
@@ -215,6 +217,16 @@ public enum MonkeysPawLinuxApp {
         }
         LinuxPickerTrace.record("application.exit", "status=\(status)")
         return status
+    }
+
+    static func installRepeatAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment) {
+        let action = g_simple_action_new(ActionName.repeat.rawValue, nil)!
+        GTK.onActionActivated(UnsafeMutableRawPointer(action)) { [weak environment] in
+            LinuxPickerTrace.record("activation", "source=action.repeat")
+            environment?.activateRepeat()
+        }
+        g_action_map_add_action(mp_action_map(application), mp_action(action))
+        g_object_unref(UnsafeMutableRawPointer(action))
     }
 
     static func installSettingsAction(application: UnsafeMutablePointer<GtkApplication>, environment: LinuxEnvironment) {

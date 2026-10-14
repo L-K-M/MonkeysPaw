@@ -45,8 +45,7 @@ final class LinuxSetupProbe: SetupProbe {
 
     func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) {
         mainThread.run {
-            // D9–D11 supply action-aware native configuration, after this adapter.
-            guard action == .togglePicker || (kind != .hotkey && kind != .kde) else { done(); return }
+            let registration = self.hotkey.registration(for: action)
             switch kind {
             case .ydotool:
                 self.showInstructions(LinuxStrings.ydotoolFix)
@@ -54,17 +53,20 @@ final class LinuxSetupProbe: SetupProbe {
                 // or prompt text enter a URL or diagnostics.
                 gtk_show_uri(nil, LinuxStrings.ydotoolDocs, 0)
             case .hotkey:
-                if self.hotkey.currentRegistration.configuration == .systemSettings,
+                if registration.configuration == .systemSettings,
                    self.kdeStatus() != .notApplicable { self.showInstructions(SetupStrings.kdeShortcut) }
-                if self.hotkey.mechanism == .manual {
-                    self.showInstructions(GnomeKeybindingInstaller.command)
+                if registration.mechanism == .manual
+                    || (registration.mechanism == .gnomeCustomKeybinding && registration.status == .unbound) {
+                    // No repeat key is invented. Unbound GNOME uses the desktop's
+                    // explicit custom-key assignment, with this action's command.
+                    self.showInstructions(GnomeKeybindingInstaller.command(for: action))
                 } else {
-                    self.hotkey.configure(done: done)
+                    self.hotkey.configure(for: action, done: done)
                     return
                 }
             case .kde:
                 self.showInstructions(SetupStrings.kdeShortcut)
-                if self.hotkey.mechanism == .kglobalaccel || self.hotkey.currentRegistration.alternativeConfiguration == .nativeFallback {
+                if registration.mechanism == .kglobalaccel || registration.alternativeConfiguration == .nativeFallback {
                     self.hotkey.configureNative(done: done)
                     return
                 }
