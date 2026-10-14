@@ -11,6 +11,7 @@ final class MemoryFileStore: FileStore {
     private var files = [Data: File]()
     private var generation = 0
     var directories = Set<RelativePath>()
+    var directoryIdentities: [RelativePath: FileStamp] = [:]
     var failNextWrite = false
     var failWriteNumber: Int?
     private(set) var writeCount = 0

@@ -5,12 +5,32 @@ struct SyncApplyPlan {
     let expectedState: SyncState?
     let nextState: SyncState
     let edits: [SyncLibraryEdit]
+    let directories: [SyncDirectoryEdit]
+    let bindingChange: SyncBindingChange?
 
-    init(id: UUID = UUID(), expectedState: SyncState?, nextState: SyncState, edits: [SyncLibraryEdit]) {
+    init(id: UUID = UUID(), expectedState: SyncState?, nextState: SyncState, edits: [SyncLibraryEdit],
+         directories: [SyncDirectoryEdit] = [], bindingChange: SyncBindingChange? = nil) {
         self.id = id
         self.expectedState = expectedState
         self.nextState = nextState
         self.edits = edits
+        self.directories = directories
+        self.bindingChange = bindingChange
+    }
+}
+
+/// Independent ownership and upload holds commit inside the same recovery gate
+/// as folder changes. Y11 enables a new account only after this plan commits.
+struct SyncBindingChange: Codable {
+    let expected: SyncLibraryBinding?
+    let next: SyncLibraryBinding
+
+    private enum CodingKeys: String, CodingKey { case expected, next }
+
+    func encode(to encoder: Encoder) throws {
+        var value = encoder.container(keyedBy: CodingKeys.self)
+        try value.encode(expected, forKey: .expected)
+        try value.encode(next, forKey: .next)
     }
 }
 
@@ -27,19 +47,23 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
     let expectedState: SyncState?
     let nextState: SyncState
     var steps: [SyncApplyStep]
+    var directorySteps: [SyncDirectoryStep]
+    let bindingChange: SyncBindingChange?
     var description: String { "<sync apply journal>" }
     var customMirror: Mirror { Mirror(self, children: ["journal": description]) }
 
-    init(plan: SyncApplyPlan, steps: [SyncApplyStep]) throws {
+    init(plan: SyncApplyPlan, steps: [SyncApplyStep], directorySteps: [SyncDirectoryStep]? = nil) throws {
         version = Limits.syncApplyJournalVersion
         id = plan.id
         expectedState = plan.expectedState
         nextState = plan.nextState
         self.steps = steps
+        self.directorySteps = directorySteps ?? plan.directories.map { SyncDirectoryStep(edit: $0) }
+        bindingChange = plan.bindingChange
         try validate()
     }
 
-    private enum CodingKeys: String, CodingKey { case version, id, expectedState, nextState, steps }
+    private enum CodingKeys: String, CodingKey { case version, id, expectedState, nextState, steps, directorySteps, bindingChange }
 
     init(from decoder: Decoder) throws {
         let value = try decoder.container(keyedBy: CodingKeys.self)
@@ -48,6 +72,8 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
         expectedState = try value.decodeIfPresent(SyncState.self, forKey: .expectedState)
         nextState = try value.decode(SyncState.self, forKey: .nextState)
         steps = try value.decode([SyncApplyStep].self, forKey: .steps)
+        directorySteps = try value.decodeIfPresent([SyncDirectoryStep].self, forKey: .directorySteps) ?? []
+        bindingChange = try value.decodeIfPresent(SyncBindingChange.self, forKey: .bindingChange)
         try validate()
     }
 
@@ -60,6 +86,8 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
         try value.encode(expectedState, forKey: .expectedState)
         try value.encode(nextState, forKey: .nextState)
         try value.encode(steps, forKey: .steps)
+        try value.encode(directorySteps, forKey: .directorySteps)
+        try value.encode(bindingChange, forKey: .bindingChange)
     }
 
     func validate() throws {
@@ -69,6 +97,25 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
         guard expectedState == nil || expectedState?.binding == nextState.binding,
               Set(steps.map { $0.edit.id }).count == steps.count,
               Set(steps.map { RelativePath($0.edit.path) }).count == steps.count else { throw SyncError.invalidState }
+        let operationIDs = steps.map { $0.edit.id } + directorySteps.map { $0.edit.id }
+        guard Set(operationIDs).count == operationIDs.count,
+              Set(directorySteps.map { $0.edit.source }).count == directorySteps.count else { throw SyncError.invalidState }
+        if let change = bindingChange {
+            try change.expected?.validate()
+            try change.next.validate()
+            guard change.next.root == nextState.binding.root,
+                  change.expected == nil || (change.expected?.root == nextState.binding.root
+                    && change.expected?.owner == nextState.binding.account) else { throw SyncError.bindingMismatch }
+        }
+        for step in directorySteps {
+            try step.edit.validate()
+            guard !step.completed || step.started else { throw SyncError.invalidState }
+            let transitions = try step.edit.identityTransitions()
+            for migration in step.migrations {
+                try migration.validate()
+                guard transitions.contains(where: { matches(migration, transition: $0) }) else { throw SyncError.invalidState }
+            }
+        }
         for step in steps {
             try step.edit.validate()
             guard step.edit.kind != .repairDuplicate || step.migrations.isEmpty else { throw SyncError.invalidState }
@@ -77,23 +124,21 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
                 try migration.validate()
                 guard let transition = step.edit.transition, let source = transition.source,
                       source != transition.destination else { throw SyncError.invalidState }
-                switch migration.change {
-                case .file(let move):
-                    if migration.store == .usage {
-                        guard move.source == "usage/" + source, move.destination == "usage/" + transition.destination else {
-                            throw SyncError.invalidState
-                        }
-                    } else {
-                        let from = "history/" + source + "/"
-                        let to = "history/" + transition.destination + "/"
-                        guard move.source.utf8.starts(with: from.utf8), move.destination.utf8.starts(with: to.utf8),
-                              move.source.utf8.dropFirst(from.utf8.count).elementsEqual(
-                                move.destination.utf8.dropFirst(to.utf8.count)) else { throw SyncError.invalidState }
-                    }
-                case .values(let from, let to, _):
-                    guard from == source, to == transition.destination else { throw SyncError.invalidState }
-                }
+                guard matches(migration, transition: transition) else { throw SyncError.invalidState }
             }
+        }
+    }
+
+    private func matches(_ migration: SyncKeyedMigration, transition: SyncIdentityTransition) -> Bool {
+        guard let source = transition.source, source != transition.destination else { return false }
+        switch migration.change {
+        case .file(let move):
+            if migration.store == .usage { return move.source == "usage/" + source && move.destination == "usage/" + transition.destination }
+            let from = "history/" + source + "/"
+            let to = "history/" + transition.destination + "/"
+            return move.source.utf8.starts(with: from.utf8) && move.destination.utf8.starts(with: to.utf8)
+                && move.source.utf8.dropFirst(from.utf8.count).elementsEqual(move.destination.utf8.dropFirst(to.utf8.count))
+        case .values(let from, let to, _): return from == source && to == transition.destination
         }
     }
 }
@@ -117,15 +162,17 @@ final class SyncApplyJournal {
     private let operations: SyncFileOperations
     private let mutations: SyncLibraryMutations
     private let states: SyncStateStore
+    private let accounts: SyncAccountStore?
     private let persistence: SyncPersistence<SyncApplyRecord>
     private let lock = NSLock()
 
     init(files: FileStore, operations: SyncFileOperations,
-         mutations: SyncLibraryMutations, states: SyncStateStore) throws {
+         mutations: SyncLibraryMutations, states: SyncStateStore, accounts: SyncAccountStore? = nil) throws {
         self.files = files
         self.operations = operations
         self.mutations = mutations
         self.states = states
+        self.accounts = accounts
         persistence = SyncPersistence(files: files, operations: operations,
             path: "sync/apply.json", version: Limits.syncApplyJournalVersion)
         do {
@@ -153,13 +200,22 @@ final class SyncApplyJournal {
         guard try states.load(for: plan.nextState.binding) == plan.expectedState else {
             return .replanAsConflict(operationID: plan.id)
         }
+        if let change = plan.bindingChange {
+            guard let accounts else { throw SyncError.invalidState }
+            guard try accounts.binding(for: change.next.root) == change.expected else {
+                return .replanAsConflict(operationID: plan.id)
+            }
+        }
         try mutations.begin(plan.id, nextState: plan.nextState)
         do {
             let steps = try plan.edits.map { edit in
                 try edit.validate()
                 return SyncApplyStep(edit: edit, migrations: try mutations.prepareMigrations(for: edit))
             }
-            let record = try SyncApplyRecord(plan: plan, steps: steps)
+            let directories = try plan.directories.map {
+                SyncDirectoryStep(edit: $0, migrations: try mutations.prepareMigrations(for: $0))
+            }
+            let record = try SyncApplyRecord(plan: plan, steps: steps, directorySteps: directories)
             try persistence.update { current in
                 guard current == nil else { throw SyncError.invalidState }
                 return record
@@ -197,17 +253,27 @@ final class SyncApplyJournal {
         defer { lock.unlock() }
         guard let previous = try persistence.load(), previous.id != plan.id,
               previous.nextState.binding == plan.nextState.binding else { throw SyncError.invalidState }
-        guard try previous.steps.allSatisfy({ try mutations.canReplan($0) }) else {
+        guard try previous.steps.allSatisfy({ try mutations.canReplan($0) }),
+              try previous.directorySteps.allSatisfy({ try mutations.canReplan($0) }) else {
             throw LibraryError.recoveryRequired
         }
         guard try states.load(for: plan.nextState.binding) == plan.expectedState else {
             return .replanAsConflict(operationID: plan.id)
         }
+        if let change = plan.bindingChange {
+            guard let accounts else { throw SyncError.invalidState }
+            guard try accounts.binding(for: change.next.root) == change.expected else {
+                return .replanAsConflict(operationID: plan.id)
+            }
+        }
         let steps = try plan.edits.map { edit in
             try edit.validate()
             return SyncApplyStep(edit: edit, migrations: try mutations.prepareMigrations(for: edit))
         }
-        let replacement = try SyncApplyRecord(plan: plan, steps: steps)
+        let directories = try plan.directories.map {
+            SyncDirectoryStep(edit: $0, migrations: try mutations.prepareMigrations(for: $0))
+        }
+        let replacement = try SyncApplyRecord(plan: plan, steps: steps, directorySteps: directories)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -232,6 +298,14 @@ final class SyncApplyJournal {
         var stateCommitted = false
 
         do {
+            if let change = record.bindingChange {
+                guard let accounts else { throw SyncError.invalidState }
+                let actual = try accounts.binding(for: change.next.root)
+                guard actual == change.expected || actual == change.next else {
+                    return .replanAsConflict(operationID: record.id)
+                }
+            }
+            if let conflict = try runDirectories(&record, kind: .rename) { return conflict }
             for index in record.steps.indices {
                 let step = record.steps[index]
                 try retain(step.edit, binding: record.nextState.binding)
@@ -278,6 +352,19 @@ final class SyncApplyJournal {
                     return .replanAsConflict(operationID: step.edit.id)
                 }
             }
+            if let conflict = try runDirectories(&record, kind: .removeEmpty) { return conflict }
+            for step in record.directorySteps {
+                if case .replanAsConflict = try mutations.verify(step.edit) {
+                    return .replanAsConflict(operationID: step.edit.id)
+                }
+            }
+            if let change = record.bindingChange {
+                guard let accounts else { throw SyncError.invalidState }
+                try accounts.updateBinding(for: change.next.root) { actual in
+                    guard actual == change.expected || actual == change.next else { throw StateCommitFailure.changed }
+                    return change.next
+                }
+            }
             let empty = try SyncState(binding: binding)
             try states.update(for: binding) { state in
                 guard state == record.expectedState || state == record.nextState
@@ -313,6 +400,23 @@ final class SyncApplyJournal {
         }
         mutations.resume(permit.id, nextState: permit.nextState)
         mutations.finish(permit.id)
+    }
+
+    private func runDirectories(_ record: inout SyncApplyRecord, kind: SyncDirectoryEdit.Kind) throws -> SyncApplyOutcome? {
+        for index in record.directorySteps.indices where record.directorySteps[index].edit.kind == kind {
+            let edit = record.directorySteps[index].edit
+            if !record.directorySteps[index].started {
+                record.directorySteps[index].started = true
+                try save(record)
+            }
+            if case .replanAsConflict = try mutations.apply(edit) { return .replanAsConflict(operationID: edit.id) }
+            for migration in record.directorySteps[index].migrations {
+                try mutations.migrate(migration, operations: operations)
+            }
+            record.directorySteps[index].completed = true
+            try save(record)
+        }
+        return nil
     }
 
     private func save(_ record: SyncApplyRecord) throws {
