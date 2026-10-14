@@ -15,6 +15,16 @@
 | Android | `:core` JVM tests with fakes, including the `sync/*.json` scenarios and the §13.1 suite against the real server in CI. App JVM tests for ViewModels, the IME `inputType` decision table, and the entry activities' intent handling. No emulator job (HalloMiao decision). |
 | End-to-end, manual | A per-release checklist in `docs/platform/`: macOS (Safari, Chrome, Terminal, full-screen Space), GNOME Wayland, KDE Wayland, X11, Android (Chrome, ChatGPT, Claude, Termux; Gboard and Samsung Keyboard). Run the §6.5 self-test plus a browser chat box and a terminal. Two devices and two users syncing a group prompt, one of them a phone. |
 
+M9's input policy and capture tests use plain metadata and text on the JVM,
+without Robolectric or framework objects. Pin every ordered H4 row, all four
+password variants, mixed class/variation/flag bits, `0x00080090`, learning
+opt-out and irrelevant action flags. Check every H5 line separator in final
+body/field/builtin output. Capture tests pin body first-use order, implicit
+fields, choices/builtins/no-field, moving/ignoring overrides and edit
+precedence, literal single-pass rendering, read-only defaults, malformed
+Unicode and UTF-8 byte boundaries. Real Intent parsing, span stripping and
+IME commit behavior still require owner-run device checks (§22 H12).
+
 Schema regression tests distinguish numeric 0/1 from literal true/false,
 retain exact Int64 bounds, distinguish `number` from `integer`, and reject
 malformed JSON and `type`/`required` values in the test validator. Timestamp
