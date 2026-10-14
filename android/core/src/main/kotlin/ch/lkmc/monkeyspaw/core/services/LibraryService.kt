@@ -2,10 +2,12 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.Limits
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncState
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.ranking.Utf8Order
 import ch.lkmc.monkeyspaw.core.ports.*
+import java.util.UUID
 
 /**
  * One local graph per pair of roots. All synchronous operations belong on an IO worker.
@@ -19,18 +21,24 @@ class LibraryService(
     private val entropy: Entropy,
 ) {
     internal val mutations = MutationBoundary()
-    val history = HistoryStore(state, mutations)
-    val usage = UsageStore(state, clock, mutations)
-    val values = ValuesStore(state, mutations)
+    private val syncGate = SyncRecoveryGate()
+    val history = HistoryStore(state, MutationBoundary())
+    val usage = UsageStore(state, clock, MutationBoundary())
+    val values = ValuesStore(state, MutationBoundary())
     val index = PromptIndex(this)
     private val keyedStores = listOf<PromptKeyedStore>(history, usage, values)
 
-    init { usage.onRecord = index::acceptUsage }
+    init {
+        syncKeyedStores().forEach { it.bindSyncWriteGate(syncGate) }
+        usage.onRecord = { identity, events ->
+            mutations.run { index.acceptUsage(identity, usage.cachedEvents(identity) ?: events) }
+        }
+    }
 
     private class LoadedFile(val bytes: ByteArray, val entry: LibraryEntry)
     private enum class SaveMode { REPLACE, CREATE }
 
-    fun entries(): List<LibraryEntry> = mutations.run {
+    fun entries(): List<LibraryEntry> = locked {
         prompts.listFiles().filter { LibraryPath.isPrompt(it.relativePath) }.sortedWith { a, b ->
             Utf8Order.compare(a.relativePath.encodeToByteArray(), b.relativePath.encodeToByteArray())
         }.map { file ->
@@ -40,42 +48,42 @@ class LibraryService(
         }
     }
 
-    fun load(path: String): LibraryEntry = mutations.run { requireCurrent(path).entry }
+    fun load(path: String): LibraryEntry = locked { requireCurrent(path).entry }
 
-    fun loadForEditing(path: String): LoadedPrompt = mutations.run {
+    fun loadForEditing(path: String): LoadedPrompt = locked {
         val loaded = requireCurrent(path)
         LoadedPrompt(loaded.bytes, loaded.entry)
     }
 
     /** Null explicitly permits replacement/recreation; normal editing supplies the load stamp. */
     fun save(document: PromptDocument, path: String, expectedStamp: FileStamp? = null,
-             provenance: PromptProvenance? = null): LibrarySaveResult = mutations.run {
+             provenance: PromptProvenance? = null): LibrarySaveResult = locked {
         saveDocument(document, path, SaveMode.REPLACE, expectedStamp, provenance).also { index.acceptCommitted(it.entry, path) }
     }
 
     /** Exclusive create never reads or snapshots an occupied prompt destination. */
-    fun create(document: PromptDocument, path: String, provenance: PromptProvenance? = null): LibrarySaveResult = mutations.run {
+    fun create(document: PromptDocument, path: String, provenance: PromptProvenance? = null): LibrarySaveResult = locked {
         saveDocument(document, path, SaveMode.CREATE, null, provenance).also { index.acceptCommitted(it.entry, path) }
     }
 
-    fun assignIdentity(path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = mutations.run {
+    fun assignIdentity(path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = locked {
         val loaded = requireCurrent(path)
         if (expectedStamp != null && expectedStamp != loaded.entry.stamp) throw LibraryError.Conflict
-        if (loaded.entry.document.frontMatter.id != null) return@run LibrarySaveResult(loaded.entry)
+        if (loaded.entry.document.frontMatter.id != null) return@locked LibrarySaveResult(loaded.entry)
         save(loaded.entry.document, path, loaded.entry.stamp)
     }
 
-    fun toggleFavorite(entry: LibraryEntry): LibrarySaveResult = mutations.run {
+    fun toggleFavorite(entry: LibraryEntry): LibrarySaveResult = locked {
         val document = PromptMutations.favorite(!entry.document.frontMatter.favorite, entry.document,
             LibraryPath.filename(entry.relativePath))
         save(document, entry.relativePath, entry.stamp)
     }
 
-    fun move(source: String, destination: String, expectedStamp: FileStamp? = null): LibraryMoveResult = mutations.run {
+    fun move(source: String, destination: String, expectedStamp: FileStamp? = null): LibraryMoveResult = locked {
         LibraryPath.validate(destination)
         val loaded = requireCurrent(source)
         if (expectedStamp != null && loaded.entry.stamp != expectedStamp) throw LibraryError.Conflict
-        if (source == destination) return@run LibraryMoveResult.Moved(loaded.entry)
+        if (source == destination) return@locked LibraryMoveResult.Moved(loaded.entry)
         if (!isAvailable(destination)) throw LibraryError.DestinationOccupied
         val targetIdentity = PromptIdentity.at(destination, loaded.entry.document.frontMatter.id)
         val migrated = mutableListOf<PromptKeyedStore>()
@@ -92,7 +100,7 @@ class LibraryService(
         val current = checkedLoad(destination)
         if (current is PromptLoadResult.Loaded && current.prompt.sourceBytes.contentEquals(loaded.bytes)) {
             index.acceptCommitted(current.prompt.entry, source)
-            return@run LibraryMoveResult.Moved(current.prompt.entry)
+            return@locked LibraryMoveResult.Moved(current.prompt.entry)
         }
         // Publication succeeded; a destination read/replacement failure cannot move state back.
         val baseline = LibraryEntry(destination, PromptCodec.parseFile(loaded.bytes, LibraryPath.filename(destination)), loaded.entry.stamp)
@@ -101,7 +109,7 @@ class LibraryService(
     }
 
     /** Retain history, usage and values so a deleted identity can be restored. */
-    fun delete(path: String, expectedStamp: FileStamp? = null) = mutations.run {
+    fun delete(path: String, expectedStamp: FileStamp? = null) = locked {
         LibraryPath.validate(path)
         if (expectedStamp != null) {
             val stamp = prompts.stamp(path) ?: throw StoreError.NotFound
@@ -112,17 +120,17 @@ class LibraryService(
     }
 
     /** Exact content binding prevents an external replacement inheriting the previous head's origin. */
-    fun provenance(path: String, expectedStamp: FileStamp? = null): PromptProvenance? = mutations.run {
+    fun provenance(path: String, expectedStamp: FileStamp? = null): PromptProvenance? = locked {
         val loaded = requireCurrent(path)
         if (expectedStamp != null && loaded.entry.stamp != expectedStamp) throw LibraryError.Conflict
         history.headProvenance(loaded.entry.identity, loaded.bytes)
     }
 
-    fun provenance(revision: HistoryRevision): PromptProvenance? = mutations.run {
+    fun provenance(revision: HistoryRevision): PromptProvenance? = locked {
         history.provenance(revision, history.read(revision))
     }
 
-    fun restore(revision: HistoryRevision, path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = mutations.run {
+    fun restore(revision: HistoryRevision, path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = locked {
         LibraryPath.validate(path)
         when (val identity = revision.identity) {
             is PromptIdentity.Local -> if (PromptIdentity.at(path) != identity) throw LibraryError.IdentityMismatch
@@ -140,7 +148,7 @@ class LibraryService(
         val provenance = try { history.provenance(revision, bytes) }
         catch (_: LibraryError.InvalidProvenance) {
             // Readable revision bytes still restore; retain the committed result and both warnings.
-            return@run save(document, path, expectedStamp).copy(provenanceMaintenanceFailed = true)
+            return@locked save(document, path, expectedStamp).copy(provenanceMaintenanceFailed = true)
         }
         save(document, path, expectedStamp, provenance)
     }
@@ -238,4 +246,24 @@ class LibraryService(
         }
         if (!recovered) throw LibraryError.RecoveryRequired
     }
+
+    private fun <T> locked(work: () -> T): T = mutations.run {
+        syncGate.requireEditable()
+        work()
+    }
+
+    /** Only checked synchronous file work enters here; journal/state/keyed IO stays outside. */
+    internal fun <T> withSyncLock(work: (PromptStore) -> T): T = mutations.run { work(prompts) }
+    internal fun beginSyncApply(id: UUID, nextState: SyncState) =
+        mutations.run { syncGate.begin(id, nextState) }
+    internal fun endSyncApply(id: UUID) = mutations.run { syncGate.finish(id) }
+    internal fun replaceSyncApply(previous: UUID, next: UUID, nextState: SyncState) =
+        mutations.run { syncGate.replace(previous, next, nextState) }
+    internal fun resumeSyncApply(id: UUID, nextState: SyncState) =
+        mutations.run { syncGate.resume(id, nextState) }
+    internal fun blockSyncApplyForRecovery() = mutations.run { syncGate.blockForRecovery() }
+    internal fun finishEmptySyncRecovery() = mutations.run { syncGate.finishEmptyRecovery() }
+    internal val pendingSyncApplyPermit: SyncRecoveryGate.Permit? get() = mutations.run { syncGate.pendingPermit }
+    internal val hasUnreadableSyncJournal: Boolean get() = mutations.run { syncGate.hasUnreadableJournal }
+    internal fun syncKeyedStores(): List<SyncKeyedStore> = listOf(history.sync, usage.sync, values.sync)
 }
