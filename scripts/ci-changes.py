@@ -26,6 +26,9 @@ FILES = {
     "Package.resolved": SWIFT_JOBS,
     # Android's JVM conformance test reads the frozen Swift table directly.
     "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL_JOBS,
+    # The Kotlin snapshot checks prompt bytes; core-linux checks generated source bytes too.
+    "android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/llm/AssistantPrompts.generated.kt":
+        frozenset({"android", "core-linux"}),
     # This is a check-version.py input, despite its Markdown extension.
     "README.md": frozenset({"core-linux", "deb"}),
     # The version checker also reads the committed Android literals.
@@ -46,7 +49,8 @@ FILES = {
     "scripts/package-android.sh": frozenset({"core-linux", "android"}),
     "scripts/release.sh": ALL_JOBS,
     "scripts/generate-seeds.py": SWIFT_JOBS,
-    "scripts/generate-assistant-prompts.py": SWIFT_JOBS,
+    "scripts/generate-assistant-prompts.py": ALL_JOBS,
+    "scripts/tests/test_generate_assistant_prompts.py": frozenset({"core-linux"}),
     "scripts/generate-kotlin-sync-fold.py": frozenset({"android"}),
     "scripts/backup.sh": SERVER_JOBS | {"deb"},
     # unittest discovery in core-linux also executes the compose script.
@@ -70,7 +74,7 @@ PREFIXES = (
     (".github/actions/", ALL_JOBS),
     ("Sources/MonkeysPawCore/", SWIFT_JOBS),
     ("Tests/MonkeysPawCoreTests/", SWIFT_JOBS),
-    ("Assistant/Prompts/", SWIFT_JOBS),
+    ("Assistant/Prompts/", ALL_JOBS),
     ("spec/", ALL_JOBS),
     ("seed/", ALL_JOBS),
     ("Sources/CGtk/", LINUX_SOURCE_JOBS),

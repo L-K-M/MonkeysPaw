@@ -51,8 +51,9 @@ format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
 paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 489 invalid).
 M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
-category, bringing the corpus to 1,319 cases and 3,083 visible files. Case
-shapes are below. These are reported counts, not fixed enumeration limits.
+category. L3 adds one Foundation transcript-escaping golden using the same
+decode contract, bringing the corpus to 1,320 cases and 3,087 visible files.
+Case shapes are below. These are reported counts, not fixed enumeration limits.
 Sync-engine scenarios arrive with their implementations under the
 move-together rule.
 
@@ -744,9 +745,11 @@ M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
 `EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
 `LlmConformanceTest` uses the same adapter. Both languages compare every
-expectation. The LLM corpus has 287 cases, 915 visible files and 2,819
+expectation. The LLM corpus has 288 cases, 919 visible files and 2,825
 expectation members, with zero pending cases. All ten categories stay
-registered. Run `swift test --filter 'PromptConformance|Llm|Assistant'` and the
+registered. L3's transcript-escaping output is also a byte golden for both
+languages' session transcript helpers. Run
+`swift test --filter 'PromptConformance|Llm|Assistant'` and the
 existing `:core:test` command. On the implementation host use `swift64` and
 the configured display/private-bus wrapper in AGENTS.md.
 

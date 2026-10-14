@@ -1,0 +1,20 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "review" : {
+        "findings" : [
+
+        ],
+        "summary" : "\/\b\f\u0000\u001f\r\n\t  é é 😀"
+      }
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "review",
+  "reviewedSource" : "prompt.md",
+  "schema" : 1,
+  "source" : "output.txt"
+}
