@@ -43,6 +43,14 @@ final class FakeKGlobalAccel {
 
         var signature: String { String(cString: g_variant_get_type_string(parameters)) }
 
+        var actionName: String? {
+            guard ["doRegister", "shortcutKeys", "setShortcutKeys", "setInactive"].contains(method) else { return nil }
+            let fields = g_variant_get_child_value(parameters, 0)!
+            let action = g_variant_get_child_value(fields, 1)!
+            defer { g_variant_unref(fields); g_variant_unref(action) }
+            return String(cString: g_variant_get_string(action, nil))
+        }
+
         func text(_ index: Int) -> String {
             let value = g_variant_get_child_value(parameters, UInt(index))!
             defer { g_variant_unref(value) }
@@ -70,10 +78,12 @@ final class FakeKGlobalAccel {
     var additionalKeys: [String: String] = [:]
     var contexts = ["default"]
     var events: ((String) -> Void)?
-    private(set) var portalPresent = false
+    private(set) var portalPresentActions = Set<String>()
+    var portalPresent: Bool { !portalPresentActions.isEmpty }
     private(set) var removedActions: [String] = []
     private(set) var calls: [Call] = []
-    private(set) var present = false
+    private(set) var presentActions = Set<String>()
+    var present: Bool { !presentActions.isEmpty }
     private(set) var registered = false
     private(set) var hasName = false
     private var connection: OpaquePointer?
@@ -161,9 +171,10 @@ final class FakeKGlobalAccel {
             member, value, nil)
     }
 
-    func change(_ keys: String) {
-        savedKeys = keys
-        emit("yourShortcutsChanged", body: "(['ch.lkmc.monkeyspaw', 'toggle', 'Monkey’s Paw', 'Open picker'], \(keys))",
+    func change(_ keys: String, action: String = "toggle") {
+        if action == "toggle" { savedKeys = keys }
+        else { additionalKeys[action] = keys }
+        emit("yourShortcutsChanged", body: "(['ch.lkmc.monkeyspaw', '\(action)', 'Monkey’s Paw', 'Action'], \(keys))",
              path: "/kglobalaccel")
     }
 
@@ -189,7 +200,7 @@ final class FakeKGlobalAccel {
         case "getComponent": value = "(objectpath '\(Self.componentPath)',)"
         case "getShortcutContexts": value = "(\(contexts),)"
         case "shortcutNames": value = "(\(actionNames),)"
-        case "shortcutKeys", "setShortcutKeys": value = "(\(savedKeys),)"
+        case "shortcutKeys", "setShortcutKeys": value = "(\(keys(for: call.actionName ?? "toggle")),)"
         case "globalShortcutAvailable":
             value = shortcutAvailable(Self.queryKey(call)) ? "(true,)" : "(false,)"
         case "globalShortcutsByKey":
@@ -223,12 +234,16 @@ final class FakeKGlobalAccel {
         case "doRegister":
             registered = true
             componentExists = true
-            if !actionNames.contains("toggle") { actionNames.append("toggle") }
+            if let action = call.actionName, !actionNames.contains(action) {
+                actionNames.append(action)
+                if action != "toggle" { additionalKeys[action] = "@a(ai) []" }
+            }
         case "setShortcutKeys":
             let flags = g_variant_get_child_value(parameters, 2)!
             defer { g_variant_unref(flags) }
-            if g_variant_get_uint32(flags) & 2 != 0 { present = true }
-        case "setInactive": present = false
+            if g_variant_get_uint32(flags) & 2 != 0, let action = call.actionName { presentActions.insert(action) }
+        case "setInactive":
+            if let action = call.actionName { presentActions.remove(action) }
         default: break
         }
         if !heldMethods.contains(method) { reply(call) }
@@ -238,7 +253,7 @@ final class FakeKGlobalAccel {
     // chords, but the daemon reloads the complete saved a(ai) assignment.
     func portalCreate() {
         events?("portal.CreateSession")
-        portalPresent = componentExists && !actionNames.isEmpty
+        portalPresentActions = componentExists ? Set(actionNames) : []
     }
 
     func portalBind(_ supplied: [String], preferred: String?) {
@@ -246,25 +261,30 @@ final class FakeKGlobalAccel {
         let omitted = actionNames.filter { !supplied.contains($0) }
         removedActions += omitted
         omitted.forEach { additionalKeys.removeValue(forKey: $0) }
+        if omitted.contains("toggle") { savedKeys = "@a(ai) []" }
         if !actionNames.contains("toggle"), preferred == "CTRL+ALT+p", shortcutAvailable([201326672]) {
             savedKeys = "@a(ai) [([201326672],)]"
         }
         actionNames = supplied
         componentExists = true
-        portalPresent = true
+        portalPresentActions = Set(supplied)
     }
 
     func portalClose() {
         events?("portal.Close")
-        portalPresent = false
+        portalPresentActions.removeAll()
     }
 
     static func variant(_ literal: String) -> OpaquePointer {
         g_variant_parse(nil, literal, nil, nil, nil)!
     }
 
-    private var holders: [Holder] {
-        let value = g_variant_ref_sink(Self.variant(savedKeys))!
+    func keys(for action: String) -> String {
+        action == "toggle" ? savedKeys : additionalKeys[action] ?? "@a(ai) []"
+    }
+
+    private func holder(for action: String) -> Holder {
+        let value = g_variant_ref_sink(Self.variant(keys(for: action)))!
         defer { g_variant_unref(value) }
         let keys = (0..<g_variant_n_children(value)).map { index -> [Int32] in
             let sequence = g_variant_get_child_value(value, index)!
@@ -272,10 +292,12 @@ final class FakeKGlobalAccel {
             defer { g_variant_unref(sequence); g_variant_unref(array) }
             return Self.readChords(array)
         }
-        return [Holder(component: "ch.lkmc.monkeyspaw", action: "toggle", keys: keys)] + foreignHolders
+        return Holder(component: "ch.lkmc.monkeyspaw", action: action, keys: keys)
     }
 
-    var hasBinding: Bool { holders.first!.keys.contains { $0.contains { $0 != 0 } } }
+    private var holders: [Holder] { actionNames.map { holder(for: $0) } + foreignHolders }
+    var hasBinding: Bool { hasBinding(for: "toggle") }
+    func hasBinding(for action: String) -> Bool { holder(for: action).keys.contains { $0.contains { $0 != 0 } } }
 
     // The component argument restricts our context, rather than excluding our
     // action. Every configured key, including our own, makes availability false.

@@ -392,7 +392,7 @@ final class PortalHotkeyTests: XCTestCase {
 
     func testDuplicateBeforeBindAcknowledgementStillSendsOnlyOneBind() throws {
         try registerBoth()
-        backend.beforeBind = { _, done in done(true); done(true) }
+        backend.beforeBind = { _, _, done in done(true); done(true) }
         configure()
         XCTAssertEqual(portal.calls.map(\.method), ["CreateSession", "ListShortcuts", "BindShortcuts"])
         XCTAssertEqual(portal.shortcuts(try XCTUnwrap(portal.calls.last)).map(\.id), ["toggle", "repeat"])

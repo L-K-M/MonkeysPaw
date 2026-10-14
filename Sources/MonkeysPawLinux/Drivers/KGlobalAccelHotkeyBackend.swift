@@ -3,7 +3,7 @@ import CGtk
 import Foundation
 import MonkeysPawCore
 
-/// One native resident action, owned by the default GLib loop. The KDE daemon
+/// Native resident actions, owned by the default GLib loop. The KDE daemon
 /// owns persistent key choices; this driver owns presence and release callbacks.
 final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     let unboundActions = UnboundHotkeyActions()
@@ -14,10 +14,10 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     struct Snapshot: Equatable {
         let owner: String
         let actions: [String: [String]]
-        let keys: KGlobalAccelKeys?
+        let keys: [HotkeyAction: KGlobalAccelKeys]
         var supportsHandoff: Bool {
             actions.keys.allSatisfy { $0 == "default" }
-                && actions.values.joined().allSatisfy { $0 == ActionName.toggle.rawValue }
+                && actions.values.joined().allSatisfy { KGlobalAccelWire.action(for: $0) != nil }
         }
     }
     private enum OwnerAcquisition { case existing, started }
@@ -30,6 +30,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         let cancellable = g_cancellable_new()!
         var timer: guint = 0
         var completions: [() -> Void]
+        var checked = Set<HotkeyAction>()
         init(budget: Duration, operation: Operation = .refresh, inspection: Inspection = .setup, done: (() -> Void)?) {
             self.operation = operation
             self.inspection = inspection
@@ -66,8 +67,10 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     let mechanism = HotkeyMechanism.kglobalaccel
     var onChange: (() -> Void)?
-    private(set) var currentRegistration = HotkeyRegistration(mechanism: .kglobalaccel,
-        status: .needsAction, detail: LinuxStrings.kdeRegistering)
+    var currentRegistration: HotkeyRegistration { registration(for: .togglePicker) }
+    private var registrations: [HotkeyAction: HotkeyRegistration] = [
+        .togglePicker: HotkeyRegistration(mechanism: .kglobalaccel, status: .needsAction, detail: LinuxStrings.kdeRegistering),
+    ]
     private let busAddress: String?
     private let budget: Duration
     private var connection: OpaquePointer?
@@ -75,21 +78,22 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     private var ownerSubscription: guint = 0
     private var subscriptions: [guint] = []
     private var ownerName: String?
-    private var registeredOwner: String?
-    private var inactiveOwner: String?
+    private var registeredOwners: [HotkeyAction: String] = [:]
+    private var inactiveOwners: [HotkeyAction: String] = [:]
+    private var activeActions = Set<HotkeyAction>()
     private var componentPath: String?
     private var work: Work?
     private var state = State.idle
     private var generation = 0 {
         didSet { activationRevision = UUID() }
     }
-    private var keysRevision = 0
-    private var assigned = KGlobalAccelKeys(sequences: [])
-    private var suggestion = KGlobalAccelKeys(sequences: [])
-    private var onFire: (() -> Void)?
+    private var keysRevision: [HotkeyAction: Int] = [:]
+    private var assigned: [HotkeyAction: KGlobalAccelKeys] = [:]
+    private var suggestions: [HotkeyAction: KGlobalAccelKeys] = [:]
+    private var onFire: [HotkeyAction: () -> Void] = [:]
     private var snapshot: Snapshot?
     private var suspensionAcknowledged = false
-    private var lastRelease: Int64?
+    private var lastRelease: [HotkeyAction: Int64] = [:]
 
     /// Read all contexts/actions and full keys, without registering an action.
     /// A concurrent native refresh finishes first, still within its own bound.
@@ -112,24 +116,34 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         guard state != .stopped else { done(false); return }
         generation += 1
         removeSubscriptions()
+        activeActions.removeAll()
         state = .idle
         finish()
         guard state != .stopped else { done(false); return }
         suspensionAcknowledged = false
-        guard let registeredOwner = registeredOwner ?? inactiveOwner else { done(true); return }
+        let owners = registeredOwners.merging(inactiveOwners) { registered, _ in registered }
+        guard !owners.isEmpty else { done(true); return }
         let work = Work(budget: budget, operation: .suspension, done: { [weak self] in
             done(self?.suspensionAcknowledged == true)
         })
         self.work = work
         armTimer(work)
-        call(work, destination: registeredOwner, path: KGlobalAccelWire.root,
+        suspendActions(work, owners: owners, actions: HotkeyAction.allCases.filter { owners[$0] != nil })
+    }
+
+    private func suspendActions(_ work: Work, owners: [HotkeyAction: String], actions: [HotkeyAction]) {
+        guard let action = actions.first else {
+            suspensionAcknowledged = true
+            finish()
+            return
+        }
+        call(work, destination: owners[action] ?? "", path: KGlobalAccelWire.root,
              interface: KGlobalAccelWire.interface, method: "setInactive",
-             parameters: KGlobalAccelWire.tuple([KGlobalAccelWire.action()])) { [weak self] reply in
+             parameters: KGlobalAccelWire.tuple([KGlobalAccelWire.action(action)])) { [weak self] reply in
             guard let self, KGlobalAccelWire.hasType(reply, "()") else { self?.fail(LinuxStrings.kdeUnavailable); return }
-            self.registeredOwner = nil
-            self.inactiveOwner = nil
-            self.suspensionAcknowledged = true
-            self.finish()
+            self.registeredOwners.removeValue(forKey: action)
+            self.inactiveOwners.removeValue(forKey: action)
+            self.suspendActions(work, owners: owners, actions: Array(actions.dropFirst()))
         }
     }
 
@@ -147,36 +161,33 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         guard state != .stopped else {
             return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
         }
-        guard action == .togglePicker, let accelerator else {
-            if action == .togglePicker {
-                unregister(currentRegistration)
-                guard state != .stopped else {
-                    return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
-                }
-                suggestion = KGlobalAccelKeys(sequences: [])
-            }
-            let registration = unboundActions.registration(for: action, mechanism: mechanism)
-            if action == .togglePicker { currentRegistration = registration }
-            return registration
-        }
-        unboundActions.retire(action)
-        if self.onFire != nil { unregister(currentRegistration) }
+        if self.onFire[action] != nil { unregister(registration(for: action)) }
         guard state != .stopped else {
             return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
         }
-        self.onFire = onFire
-        suggestion = KGlobalAccelWire.translate(accelerator)
-        currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
+        unboundActions.retire(action)
+        self.onFire[action] = onFire
+        // Repeat has no app-owned default; nil supplies no suggestion for either action.
+        suggestions[action] = action == .togglePicker ? accelerator.map(KGlobalAccelWire.translate) : nil
+        registrations[action] = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
             detail: LinuxStrings.kdeRegistering, configuration: .systemSettings)
-        begin(.registration)
-        return currentRegistration
+        if let work {
+            if work.operation == .inspection || work.operation == .suspension {
+                work.completions.append { [weak self] in self?.configure {} }
+            }
+        } else { begin(.registration) }
+        return registration(for: action)
+    }
+
+    func registration(for action: HotkeyAction) -> HotkeyRegistration {
+        registrations[action] ?? unboundActions.registration(for: action, mechanism: mechanism)
     }
 
     func configure(done: @escaping () -> Void) {
         precondition(Thread.isMainThread)
-        guard state != .stopped, onFire != nil else { done(); return }
+        guard state != .stopped, !onFire.isEmpty else { done(); return }
         if let work { work.completions.append(done); return }
-        begin(state == .ready ? .refresh : .registration, done: done)
+        begin(state == .ready && Set(onFire.keys).isSubset(of: activeActions) ? .refresh : .registration, done: done)
     }
 
     // GApplication/manual toggles must never verify a native release binding.
@@ -186,22 +197,25 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         precondition(Thread.isMainThread)
         guard state != .stopped else { return }
         if unboundActions.unregister(registration) { return }
-        guard currentRegistration.id == registration.id else { return }
-        onFire = nil
-        suggestion = KGlobalAccelKeys(sequences: [])
-        generation += 1
-        deactivate()
-        removeSubscriptions()
-        state = .idle
+        guard let action = registrations.first(where: { $0.value.id == registration.id })?.key,
+              onFire.removeValue(forKey: action) != nil else { return }
+        suggestions.removeValue(forKey: action)
+        deactivate(action)
+        // Removing a callback from a suspended catalogue must not reactivate its peer.
+        let resume = !onFire.isEmpty && (!activeActions.isEmpty || (state == .loading && work?.operation == .registration))
+        state = resume ? .ready : .idle
+        if onFire.isEmpty { generation += 1; removeSubscriptions() }
+        publish(action, .unbound, SetupStrings.unboundShortcut, configuration: .unavailable)
         finish()
+        if state != .stopped, resume { configure {} }
     }
 
     func shutdown() {
         precondition(Thread.isMainThread)
         guard state != .stopped else { return }
         state = .stopped
-        onFire = nil
-        suggestion = KGlobalAccelKeys(sequences: [])
+        onFire.removeAll()
+        suggestions.removeAll()
         generation += 1
         deactivate()
         removeSubscriptions()
@@ -220,16 +234,16 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
             return
         }
         state = .loading
-        lastRelease = nil
-        publish(.needsAction, LinuxStrings.kdeRegistering)
         if operation == .refresh {
-            readKeys(work) { [weak self] in self?.checkAssignment(work) }
+            refreshActions(work)
+            return
+        }
+        if ownerName != nil, componentPath != nil {
+            registerAction(work)
             return
         }
         generation += 1
         removeSubscriptions()
-        ownerName = nil
-        componentPath = nil
         if connection != nil { acquireOwner(work) } else { connect(work) }
     }
 
@@ -302,7 +316,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
                 let name = g_dbus_error_get_remote_error(error)
                 defer { if let name { g_free(name) } }
                 if name.map({ String(cString: $0) }) == "org.kde.kglobalaccel.NoSuchComponent", let owner = self.ownerName {
-                    self.snapshot = Snapshot(owner: owner, actions: [:], keys: nil)
+                    self.snapshot = Snapshot(owner: owner, actions: [:], keys: [:])
                     self.finish()
                 } else { self.fail(LinuxStrings.kdeUnavailable) }
             }) { [weak self] reply in
@@ -323,16 +337,9 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     private func inspectNames(_ work: Work, path: String, contexts: [String], actions: [String: [String]]) {
         guard let context = contexts.first else {
-            let finish: (KGlobalAccelKeys?) -> Void = { [weak self] keys in
-                guard let self, let owner = self.ownerName else { return }
-                self.snapshot = Snapshot(owner: owner, actions: actions, keys: keys)
-                self.finish()
-            }
-            guard actions.values.joined().contains(ActionName.toggle.rawValue) else { finish(nil); return }
-            nativeCall(work, "shortcutKeys", KGlobalAccelWire.tuple([KGlobalAccelWire.action()])) { [weak self] reply in
-                guard let keys = KGlobalAccelWire.replyKeys(reply) else { self?.fail(LinuxStrings.kdeUnavailable); return }
-                finish(keys)
-            }
+            inspectKeys(work, actions: actions, remaining: HotkeyAction.allCases.filter {
+                actions.values.joined().contains(KGlobalAccelWire.actionName($0))
+            }, keys: [:], revisions: keysRevision)
             return
         }
         call(work, destination: ownerName ?? "", path: path, interface: KGlobalAccelWire.componentInterface,
@@ -342,6 +349,27 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
                 actions[context] = names.sorted()
                 self.inspectNames(work, path: path, contexts: Array(contexts.dropFirst()), actions: actions)
             }
+    }
+
+    private func inspectKeys(_ work: Work, actions: [String: [String]], remaining: [HotkeyAction],
+                             keys: [HotkeyAction: KGlobalAccelKeys], revisions: [HotkeyAction: Int]) {
+        guard let action = remaining.first else {
+            // A live edit during a multi-action read invalidates the whole snapshot.
+            guard revisions == keysRevision else {
+                inspectComponent(work)
+                return
+            }
+            guard let owner = ownerName else { fail(LinuxStrings.kdeUnavailable); return }
+            snapshot = Snapshot(owner: owner, actions: actions, keys: keys)
+            finish()
+            return
+        }
+        nativeCall(work, "shortcutKeys", KGlobalAccelWire.tuple([KGlobalAccelWire.action(action)])) { [weak self] reply in
+            guard let self, let assignment = KGlobalAccelWire.replyKeys(reply) else { self?.fail(LinuxStrings.kdeUnavailable); return }
+            var keys = keys
+            keys[action] = assignment
+            self.inspectKeys(work, actions: actions, remaining: Array(remaining.dropFirst()), keys: keys, revisions: revisions)
+        }
     }
 
     private func startService(_ work: Work) {
@@ -357,9 +385,16 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func registerAction(_ work: Work) {
+        guard let action = HotkeyAction.allCases.first(where: { onFire[$0] != nil && !activeActions.contains($0) }) else {
+            refreshActions(work)
+            return
+        }
+        publish(action, .needsAction, LinuxStrings.kdeRegistering)
         // Track the sent mutation, even if its reply is cancelled/times out.
         // Ordered SetInactive on this same connection undoes only our presence.
-        nativeCall(work, "doRegister", KGlobalAccelWire.tuple([KGlobalAccelWire.action()])) { [weak self] reply in
+        guard self.work === work, state != .stopped else { return }
+        registeredOwners[action] = ownerName
+        nativeCall(work, "doRegister", KGlobalAccelWire.tuple([KGlobalAccelWire.action(action)])) { [weak self] reply in
             guard let self else { return }
             guard KGlobalAccelWire.hasType(reply, "()") else { self.fail(LinuxStrings.kdeUnavailable); return }
             self.nativeCall(work, "getComponent", KGlobalAccelWire.tuple([g_variant_new_string(AppIdentity.linuxAppID)])) { [weak self] reply in
@@ -370,64 +405,84 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
                 let path = String(cString: g_variant_get_string(value, nil))
                 guard path != "/", path.utf8.count <= Limits.maxPathBytes else { self.fail(LinuxStrings.kdeUnavailable); return }
                 self.componentPath = path
-                self.observeAction()
-                self.readKeys(work) { [weak self] in self?.activateSavedKeys(work) }
+                if self.subscriptions.isEmpty { self.observeAction() }
+                self.readKeys(work, action: action) { [weak self] in self?.activateSavedKeys(work, action: action) }
             }
         }
     }
 
-    private func readKeys(_ work: Work, done: @escaping () -> Void) {
-        let revision = keysRevision
-        nativeCall(work, "shortcutKeys", KGlobalAccelWire.tuple([KGlobalAccelWire.action()])) { [weak self] reply in
+    private func readKeys(_ work: Work, action: HotkeyAction, done: @escaping () -> Void) {
+        let revision = keysRevision[action]
+        nativeCall(work, "shortcutKeys", KGlobalAccelWire.tuple([KGlobalAccelWire.action(action)])) { [weak self] reply in
             guard let self else { return }
             guard let keys = KGlobalAccelWire.replyKeys(reply) else { self.fail(LinuxStrings.kdeUnavailable); return }
-            if self.keysRevision == revision { self.assigned = keys }
+            if self.keysRevision[action] == revision { self.assigned[action] = keys }
             done()
         }
     }
 
-    private func activateSavedKeys(_ work: Work) {
-        let revision = keysRevision
-        nativeCall(work, "setShortcutKeys", KGlobalAccelWire.setter(assigned, .present)) { [weak self] reply in
+    private func activateSavedKeys(_ work: Work, action: HotkeyAction) {
+        let revision = keysRevision[action]
+        nativeCall(work, "setShortcutKeys", KGlobalAccelWire.setter(assigned[action] ?? KGlobalAccelKeys(sequences: []), .present, for: action)) { [weak self] reply in
             guard let self else { return }
             guard let keys = KGlobalAccelWire.replyKeys(reply) else { self.fail(LinuxStrings.kdeUnavailable); return }
-            if self.keysRevision == revision { self.assigned = keys }
+            self.activeActions.insert(action)
+            if self.keysRevision[action] == revision { self.assigned[action] = keys }
+            guard let suggestion = self.suggestions[action] else {
+                self.checkAssignment(work, action: action)
+                return
+            }
             // Defaults do nothing until System Settings explicitly resets/assigns
             // them. Load active keys first so a fresh action stays unbound.
-            self.nativeCall(work, "setShortcutKeys", KGlobalAccelWire.setter(self.suggestion, .defaultSuggestion)) { [weak self] reply in
+            self.nativeCall(work, "setShortcutKeys", KGlobalAccelWire.setter(suggestion, .defaultSuggestion, for: action)) { [weak self] reply in
                 guard let self else { return }
                 guard KGlobalAccelWire.replyKeys(reply) != nil else { self.fail(LinuxStrings.kdeUnavailable); return }
-                self.checkAssignment(work)
+                self.checkAssignment(work, action: action)
             }
         }
     }
 
-    private func checkAssignment(_ work: Work) {
-        let revision = keysRevision
+    private func refreshActions(_ work: Work) {
+        guard self.work === work, state != .stopped else { return }
+        if !Set(onFire.keys).isSubset(of: activeActions) {
+            registerAction(work)
+            return
+        }
+        guard let action = HotkeyAction.allCases.first(where: { onFire[$0] != nil && !work.checked.contains($0) }) else {
+            state = .ready
+            finish()
+            return
+        }
+        readKeys(work, action: action) { [weak self] in self?.checkAssignment(work, action: action) }
+    }
+
+    private func checkAssignment(_ work: Work, action: HotkeyAction) {
+        let revision = keysRevision[action]
+        let assigned = assigned[action] ?? KGlobalAccelKeys(sequences: [])
         let done: (Bool) -> Void = { [weak self] available in
             guard let self else { return }
             // A live edit wins over a read/probe already in flight, within the
             // original total deadline. Never publish stale readiness.
-            guard self.keysRevision == revision else { self.checkAssignment(work); return }
-            self.state = .ready
-            if self.assigned.bound.isEmpty {
-                self.publish(.unbound, available ? LinuxStrings.kdeAssign : LinuxStrings.kdeDefaultConflict)
+            guard self.keysRevision[action] == revision else { self.checkAssignment(work, action: action); return }
+            work.checked.insert(action)
+            if assigned.bound.isEmpty {
+                self.publish(action, .unbound, available ? LinuxStrings.kdeAssign : LinuxStrings.kdeDefaultConflict)
             } else if !available {
                 // A conflict supersedes earlier ShortcutService verification.
-                self.publish(.failed, self.assigned.detail + ". " + LinuxStrings.kdeConflict)
+                self.publish(action, .failed, assigned.detail + ". " + LinuxStrings.kdeConflict)
             } else {
-                self.publish(.registered, self.assigned.detail)
+                self.publish(action, .registered, assigned.detail)
             }
-            self.finish()
+            self.refreshActions(work)
         }
         if assigned.bound.isEmpty {
-            checkAvailability(suggestion.bound, index: 0, work: work, done: done)
+            checkAvailability(suggestions[action]?.bound ?? [], index: 0, work: work, done: done)
         } else {
-            checkHolders(assigned.bound, index: 0, work: work, done: done)
+            checkHolders(assigned.bound, index: 0, work: work, action: action, done: done)
         }
     }
 
-    private func checkHolders(_ keys: [[Int32]], index: Int, work: Work, done: @escaping (Bool) -> Void) {
+    private func checkHolders(_ keys: [[Int32]], index: Int, work: Work, action: HotkeyAction, done: @escaping (Bool) -> Void) {
         // Availability includes our own action. Enumerate all three match modes
         // for each complete sequence to find foreign exact/shadowing holders.
         let modes = KGlobalAccelWire.MatchType.allCases
@@ -435,9 +490,9 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         nativeCall(work, "globalShortcutsByKey",
             KGlobalAccelWire.holderQuery(keys[index / modes.count], modes[index % modes.count])) { [weak self] reply in
             guard let self else { return }
-            guard let foreign = KGlobalAccelWire.hasForeignHolder(reply) else { self.fail(LinuxStrings.kdeUnavailable); return }
+            guard let foreign = KGlobalAccelWire.hasForeignHolder(reply, for: action) else { self.fail(LinuxStrings.kdeUnavailable); return }
             guard !foreign else { done(false); return }
-            self.checkHolders(keys, index: index + 1, work: work, done: done)
+            self.checkHolders(keys, index: index + 1, work: work, action: action, done: done)
         }
     }
 
@@ -470,7 +525,6 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         guard self.work === work, state != .stopped else { return }
         guard ContinuousClock.now < work.deadline else { fail(LinuxStrings.kdeTimedOut); return }
         guard let connection, !destination.isEmpty else { fail(LinuxStrings.kdeUnavailable); return }
-        if method == "doRegister" { registeredOwner = ownerName }
         g_dbus_connection_call(connection, destination, path, interface, method, parameters, nil,
             G_DBUS_CALL_FLAGS_NO_AUTO_START, Self.milliseconds(work.deadline), work.cancellable,
             { source, result, data in
@@ -508,42 +562,46 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     private func signal(_ member: String, path: String, parameters: OpaquePointer) {
         if member == "globalShortcutReleased" {
-            guard path == componentPath, state == .ready, currentRegistration.status == .registered,
+            guard path == componentPath, state == .ready || state == .loading,
                   KGlobalAccelWire.hasType(parameters, "(ssx)") else { return }
             let component = g_variant_get_child_value(parameters, 0)!
             let action = g_variant_get_child_value(parameters, 1)!
             let timestamp = g_variant_get_child_value(parameters, 2)!
             defer { g_variant_unref(component); g_variant_unref(action); g_variant_unref(timestamp) }
             guard String(cString: g_variant_get_string(component, nil)) == AppIdentity.linuxAppID,
-                  String(cString: g_variant_get_string(action, nil)) == ActionName.toggle.rawValue else { return }
+                  let ownedAction = KGlobalAccelWire.action(for: String(cString: g_variant_get_string(action, nil))),
+                  registeredOwners[ownedAction] != nil, registration(for: ownedAction).status == .registered else { return }
             let stamp = Int64(g_variant_get_int64(timestamp)) // KDE uses x, not the portal's t.
-            guard lastRelease != stamp else { return }
-            lastRelease = stamp
-            onFire?()
+            guard lastRelease[ownedAction].map({ stamp > $0 }) ?? true else { return }
+            lastRelease[ownedAction] = stamp
+            onFire[ownedAction]?()
             return
         }
         guard member == "yourShortcutsChanged", path == KGlobalAccelWire.root,
-              registeredOwner != nil, KGlobalAccelWire.hasType(parameters, "(asa(ai))") else { return }
+              !registeredOwners.isEmpty, KGlobalAccelWire.hasType(parameters, "(asa(ai))") else { return }
         let action = g_variant_get_child_value(parameters, 0)!
         let keys = g_variant_get_child_value(parameters, 1)!
         defer { g_variant_unref(action); g_variant_unref(keys) }
         guard let fields = KGlobalAccelWire.strings(action), fields[0] == AppIdentity.linuxAppID,
-              fields[1] == ActionName.toggle.rawValue, let assignment = KGlobalAccelWire.keys(keys) else { return }
-        assigned = assignment
-        keysRevision += 1
+              let ownedAction = KGlobalAccelWire.action(for: fields[1]), onFire[ownedAction] != nil,
+              let assignment = KGlobalAccelWire.keys(keys) else { return }
+        assigned[ownedAction] = assignment
+        keysRevision[ownedAction, default: 0] += 1
+        work?.checked.remove(ownedAction)
+        publish(ownedAction, .needsAction, LinuxStrings.kdeRegistering)
+        guard state != .stopped else { return }
         if work == nil {
             // The signal already supplies the keys; probe only their holders
             // (or availability of the default suggestion while unbound).
             let work = Work(budget: budget, done: nil)
             self.work = work
             state = .loading
-            publish(.needsAction, LinuxStrings.kdeRegistering)
-            work.timer = GTK.after(budget.timeInterval) { [weak self, weak work] in
-                guard let self, let work, self.work === work else { return }
-                work.timer = 0
-                self.fail(LinuxStrings.kdeTimedOut)
-            }
-            checkAssignment(work)
+            // Other actions retain their readiness while this assignment is checked.
+            work.checked = Set(onFire.keys).subtracting([ownedAction])
+            armTimer(work)
+            checkAssignment(work, action: ownedAction)
+        } else if let work, work.operation == .inspection {
+            work.completions.append { [weak self] in self?.configure {} }
         }
     }
 
@@ -573,10 +631,12 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func lost() {
-        guard state != .stopped, onFire != nil || work != nil else { return }
+        guard state != .stopped, !onFire.isEmpty || work != nil || ownerName != nil else { return }
         // The old owner is dying or gone. Never call or auto-start it in cleanup.
-        registeredOwner = nil
-        inactiveOwner = nil
+        registeredOwners.removeAll()
+        inactiveOwners.removeAll()
+        activeActions.removeAll()
+        lastRelease.removeAll()
         // Inspection is read-only, but owner loss must still invalidate a
         // previously active native registration and its queued releases.
         state = .failed
@@ -609,8 +669,16 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func publish(_ status: RegistrationStatus, _ detail: String) {
-        currentRegistration = HotkeyRegistration(id: currentRegistration.id, mechanism: mechanism,
-            status: status, detail: detail, configuration: .systemSettings)
+        for action in HotkeyAction.allCases where onFire[action] != nil || registrations[action] != nil {
+            guard state != .stopped else { return }
+            publish(action, status, detail)
+        }
+    }
+
+    private func publish(_ action: HotkeyAction, _ status: RegistrationStatus, _ detail: String,
+                         configuration: HotkeyConfiguration = .systemSettings) {
+        registrations[action] = HotkeyRegistration(id: registration(for: action).id, mechanism: mechanism,
+            status: status, detail: detail, configuration: configuration)
         onChange?()
     }
 
@@ -625,13 +693,17 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func deactivate() {
-        guard let connection, let registeredOwner else { return }
-        self.registeredOwner = nil
+        for action in HotkeyAction.allCases { deactivate(action) }
+    }
+
+    private func deactivate(_ action: HotkeyAction) {
+        activeActions.remove(action)
+        guard let connection, let registeredOwner = registeredOwners.removeValue(forKey: action) else { return }
         // Fire-and-forget exit/failure cleanup cannot authorize a handoff.
         // A reusable driver must acknowledge this owner again in suspend().
-        inactiveOwner = registeredOwner
+        inactiveOwners[action] = registeredOwner
         g_dbus_connection_call(connection, registeredOwner, KGlobalAccelWire.root, KGlobalAccelWire.interface,
-            "setInactive", KGlobalAccelWire.tuple([KGlobalAccelWire.action()]), nil,
+            "setInactive", KGlobalAccelWire.tuple([KGlobalAccelWire.action(action)]), nil,
             G_DBUS_CALL_FLAGS_NO_AUTO_START, Self.milliseconds(ContinuousClock.now.advanced(by: budget)), nil, nil, nil)
     }
 

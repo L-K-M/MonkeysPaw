@@ -12,8 +12,11 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     var mechanism: HotkeyMechanism { currentRegistration.mechanism }
     private(set) var activationRevision: UUID? = UUID()
     var onChange: (() -> Void)?
-    private(set) var currentRegistration = HotkeyRegistration(mechanism: .globalShortcutsPortal,
-        status: .needsAction, detail: LinuxStrings.kdeRegistering)
+    var currentRegistration: HotkeyRegistration { registration(for: .togglePicker) }
+    private var registrations: [HotkeyAction: HotkeyRegistration] = [
+        .togglePicker: HotkeyRegistration(mechanism: .globalShortcutsPortal,
+            status: .needsAction, detail: LinuxStrings.kdeRegistering),
+    ]
 
     private let native: KGlobalAccelHotkeyBackend
     private let portal: PortalHotkeyBackend
@@ -27,12 +30,12 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     private var operation = 0
     private var timer: guint = 0
     private var completion: (() -> Void)?
-    private var onFire: (() -> Void)?
-    private var accelerator: Accelerator?
+    private var onFire: [HotkeyAction: () -> Void] = [:]
+    private var accelerators: [HotkeyAction: Accelerator] = [:]
     private var baseline: KGlobalAccelHotkeyBackend.Snapshot?
-    private var nativeLease = UUID()
-    private var portalLease = UUID()
-    private var tokenRevision: UUID?
+    private var nativeLeases: [HotkeyAction: UUID] = [:]
+    private var portalLeases: [HotkeyAction: UUID] = [:]
+    private var tokenRevisions: [HotkeyAction: UUID] = [:]
     private var storageDetail: String?
 
     init(native: KGlobalAccelHotkeyBackend, portal: PortalHotkeyBackend,
@@ -45,12 +48,14 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
         self.consentBudget = consentBudget
         native.onChange = { [weak self] in self?.nativeChanged() }
         portal.onChange = { [weak self] in self?.portalChanged() }
-        portal.beforeBind = { [weak self] previous, done in
+        portal.beforeBind = { [weak self] previous, supplied, done in
             guard let self else { done(false); return }
             let operation = self.operation
             self.native.inspect(.setup) { [weak self] snapshot in
                 guard let self, self.operation == operation, self.phase == .busy else { done(false); return }
-                let safe = previous.allSatisfy { $0.id == ActionName.toggle.rawValue }
+                let catalogue = Set(supplied.compactMap { KGlobalAccelWire.action(for: $0.id) })
+                let safe = previous.allSatisfy { KGlobalAccelWire.action(for: $0.id) != nil }
+                    && self.baseline.map { Set($0.keys.keys).isSubset(of: catalogue) } == true
                     && self.preservesBaseline(snapshot)
                 if !safe { self.storageDetail = LinuxStrings.kdeHandoffBlocked }
                 done(safe)
@@ -63,27 +68,37 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
-        guard action == .togglePicker, let accelerator else {
-            if action == .togglePicker {
-                unregister(currentRegistration)
-                self.accelerator = nil
-            }
-            guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
-            let registration = unboundActions.registration(for: action, mechanism: mechanism)
-            if action == .togglePicker { currentRegistration = registration }
-            return registration
-        }
+        if self.onFire[action] != nil { unregister(registration(for: action)) }
+        guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         unboundActions.retire(action)
-        self.onFire = onFire
-        self.accelerator = accelerator
+        self.onFire[action] = onFire
+        accelerators[action] = accelerator
+        registrations[action] = HotkeyRegistration(id: registrations[action]?.id ?? UUID(), mechanism: mechanism,
+            status: .needsAction, detail: LinuxStrings.kdeRegistering)
         let lease = UUID()
-        portalLease = lease
+        portalLeases[action] = lease
         _ = portal.register(action, accelerator: accelerator) { [weak self] in
-            guard let self, self.portalLease == lease, self.effective == .portal else { return }
-            self.tokenRevision = self.activationRevision
-            self.onFire?()
+            guard let self, self.portalLeases[action] == lease, self.effective == .portal else { return }
+            self.tokenRevisions[action] = self.activationRevision
+            self.onFire[action]?()
         }
         guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+        if self.onFire.count > 1 {
+            if effective == .native { registerNativeAction(action) }
+            else if effective == .portal { portalChanged() }
+            else if phase == .idle { publishPortalOffer() }
+            return registration(for: action)
+        }
+        startSelection()
+        return registration(for: action)
+    }
+
+    func registration(for action: HotkeyAction) -> HotkeyRegistration {
+        registrations[action] ?? unboundActions.registration(for: action,
+            mechanism: registrations[.togglePicker]?.mechanism ?? .globalShortcutsPortal)
+    }
+
+    private func startSelection() {
         operation += 1
         let operation = operation
         phase = .busy
@@ -108,7 +123,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
                     self.native.inspect { [weak self] snapshot in
                         guard let self, self.operation == operation, self.phase != .stopped else { return }
                         // Even unbound native rows are deliberate saved choices.
-                        if self.version == nil || snapshot == nil || snapshot?.keys != nil {
+                        if self.version == nil || snapshot == nil || snapshot?.keys.isEmpty == false {
                             self.choice = .native
                             self.activateNative()
                         } else {
@@ -119,19 +134,19 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
                     }
                 }
             }
-        return currentRegistration
     }
 
     func configure(done: @escaping () -> Void) {
-        guard phase == .idle, onFire != nil else { done(); return }
+        guard phase == .idle, !onFire.isEmpty else { done(); return }
         if version == nil, choice == .native { native.configure(done: done); return }
-        if effective == .portal, portal.isAttached {
+        if effective == .portal, portal.hasCompleteCatalogue {
             // v1 Bind opened settings already. Never Bind again on this session.
             if version == 1 { done(); return }
             portal.configure(done: done)
             return
         }
         begin(done)
+        if effective == .portal { select(.none) }
         let operation = operation
         let deadline = ContinuousClock.now.advanced(by: consentBudget)
         portal.quiesce { [weak self] safe in
@@ -179,7 +194,10 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
         portal.configure(until: deadline) { [weak self] in
             guard let self, self.operation == operation, self.phase == .busy else { return }
             let result = self.portal.currentRegistration
-            guard result.status == .registered || result.status == .unbound else {
+            guard self.onFire.keys.allSatisfy({
+                let status = self.portal.registration(for: $0).status
+                return status == .registered || status == .unbound
+            }) else {
                 self.failClosed(self.storageDetail ?? result.detail)
                 return
             }
@@ -198,7 +216,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     func configureNative(done: @escaping () -> Void) { useNative(done: done) }
 
     func useNative(done: @escaping () -> Void) {
-        guard phase == .idle, onFire != nil else { done(); return }
+        guard phase == .idle, !onFire.isEmpty else { done(); return }
         let wasNative = effective == .native
         begin(done)
         select(.none)
@@ -226,7 +244,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
         guard let snapshot, snapshot.supportsHandoff, let baseline, snapshot.owner == baseline.owner else { return false }
         // A new action may appear on Bind. Existing assignments must survive
         // byte-for-byte, including empty alternatives and trailing zero chords.
-        return baseline.keys == nil || snapshot.keys == baseline.keys
+        return baseline.keys.allSatisfy { snapshot.keys[$0.key] == $0.value }
     }
 
     private func activateNative() {
@@ -241,25 +259,32 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func registerNative() {
-        guard let accelerator else { finish(); return }
         let operation = operation
-        let lease = UUID()
-        nativeLease = lease
         select(.native)
-        _ = native.register(.togglePicker, accelerator: accelerator) { [weak self] in
-            guard let self, self.nativeLease == lease, self.effective == .native else { return }
-            self.onFire?()
+        for action in HotkeyAction.allCases where onFire[action] != nil && nativeLeases[action] == nil {
+            guard phase == .busy, self.operation == operation else { return }
+            registerNativeAction(action)
         }
         native.configure { [weak self] in
-            guard let self, self.operation == operation, self.phase == .busy, self.nativeLease == lease else { return }
+            guard let self, self.operation == operation, self.phase == .busy else { return }
             self.phase = .idle
             self.nativeChanged()
             self.finish()
         }
     }
 
+    private func registerNativeAction(_ action: HotkeyAction) {
+        let lease = UUID()
+        nativeLeases[action] = lease
+        _ = native.register(action, accelerator: accelerators[action]) { [weak self] in
+            guard let self, self.nativeLeases[action] == lease, self.effective == .native else { return }
+            self.onFire[action]?()
+        }
+    }
+
     private func nativeChanged() {
-        if effective == .portal, native.currentRegistration.status == .failed {
+        if effective == .portal, native.currentRegistration.status == .failed
+            || onFire.keys.contains(where: { native.registration(for: $0).status == .failed }) {
             // KGlobalAccel loss also invalidates the portal's shared component.
             // Gate now; let the native driver's current callback finish before
             // beginning acknowledged cleanup on either connection.
@@ -274,29 +299,36 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             return
         }
         guard effective == .native else { return }
-        let registration = native.currentRegistration
-        publish(registration, configuration: version == nil ? .systemSettings : .attachPortal)
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            guard effective == .native else { return }
+            publish(action, native.registration(for: action), configuration: version == nil ? .systemSettings : .attachPortal)
+        }
     }
 
     private func portalChanged() {
         guard effective == .portal else { return }
-        publish(portal.currentRegistration, configuration: .systemSettings)
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            guard effective == .portal else { return }
+            publish(action, portal.registration(for: action), configuration: .systemSettings)
+        }
     }
 
     private func publishPortalOffer() {
-        publish(HotkeyRegistration(mechanism: .globalShortcutsPortal,
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            guard phase != .stopped else { return }
+            publish(action, HotkeyRegistration(mechanism: .globalShortcutsPortal,
             status: version == nil ? .failed : .needsAction,
             detail: version == nil ? LinuxStrings.kdePortalUnavailable : LinuxStrings.shortcutAllow),
             configuration: .attachPortal)
+        }
     }
 
-    private func publish(_ registration: HotkeyRegistration, configuration: HotkeyConfiguration) {
-        if currentRegistration.mechanism != registration.mechanism
-            || currentRegistration.status != registration.status || currentRegistration.detail != registration.detail {
-            activationRevision = UUID()
-            tokenRevision = nil
+    private func publish(_ action: HotkeyAction, _ registration: HotkeyRegistration, configuration: HotkeyConfiguration) {
+        let previous = self.registration(for: action)
+        if previous.mechanism != registration.mechanism || previous.status != registration.status || previous.detail != registration.detail {
+            tokenRevisions.removeValue(forKey: action)
         }
-        currentRegistration = HotkeyRegistration(id: currentRegistration.id, mechanism: registration.mechanism,
+        registrations[action] = HotkeyRegistration(id: self.registration(for: action).id, mechanism: registration.mechanism,
             status: storageDetail == nil ? registration.status : .failed,
             detail: storageDetail ?? registration.detail, configuration: configuration,
             alternativeConfiguration: .nativeFallback)
@@ -306,8 +338,8 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     private func select(_ effective: Effective) {
         self.effective = effective
         activationRevision = UUID()
-        tokenRevision = nil
-        _ = portal.consumeActivationToken()
+        tokenRevisions.removeAll()
+        for action in HotkeyAction.allCases { _ = portal.consumeActivationToken(for: action) }
     }
 
     private func begin(_ done: @escaping () -> Void) {
@@ -328,8 +360,11 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func publishFailure(_ detail: String) {
-        currentRegistration = HotkeyRegistration(id: currentRegistration.id, mechanism: mechanism,
-            status: .failed, detail: detail, configuration: .attachPortal, alternativeConfiguration: .nativeFallback)
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            guard phase != .stopped else { return }
+            registrations[action] = HotkeyRegistration(id: registration(for: action).id, mechanism: mechanism,
+                status: .failed, detail: detail, configuration: .attachPortal, alternativeConfiguration: .nativeFallback)
+        }
         onChange?()
     }
 
@@ -358,9 +393,13 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func consumeActivationToken() -> String? {
-        guard effective == .portal, tokenRevision == activationRevision else { return nil }
-        tokenRevision = nil
-        return portal.consumeActivationToken()
+        consumeActivationToken(for: .togglePicker)
+    }
+
+    func consumeActivationToken(for action: HotkeyAction) -> String? {
+        guard effective == .portal, tokenRevisions[action] == activationRevision else { return nil }
+        tokenRevisions.removeValue(forKey: action)
+        return portal.consumeActivationToken(for: action)
     }
 
     func fire(_ action: HotkeyAction) -> Bool { false }
@@ -368,23 +407,30 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     func unregister(_ registration: HotkeyRegistration) {
         guard phase != .stopped else { return }
         if unboundActions.unregister(registration) { return }
-        guard registration.id == currentRegistration.id else { return }
-        onFire = nil
-        accelerator = nil
+        guard let action = registrations.first(where: { $0.value.id == registration.id })?.key,
+              onFire.removeValue(forKey: action) != nil else { return }
+        accelerators.removeValue(forKey: action)
+        nativeLeases.removeValue(forKey: action)
+        portalLeases.removeValue(forKey: action)
+        tokenRevisions.removeValue(forKey: action)
+        native.unregister(native.registration(for: action))
+        guard phase != .stopped else { return }
+        portal.unregister(portal.registration(for: action))
+        guard phase != .stopped else { return }
+        registrations[action] = HotkeyRegistration(id: registration.id, mechanism: mechanism,
+            status: .unbound, detail: SetupStrings.unboundShortcut, configuration: .unavailable)
+        guard onFire.isEmpty else { return }
         operation += 1
         select(.none)
         phase = .idle
-        native.unregister(native.currentRegistration)
-        guard phase != .stopped else { return }
-        portal.quiesce { _ in }
         finish()
     }
 
     func shutdown() {
         guard phase != .stopped else { return }
         phase = .stopped
-        onFire = nil
-        accelerator = nil
+        onFire.removeAll()
+        accelerators.removeAll()
         operation += 1
         select(.none)
         onChange = nil

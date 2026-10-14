@@ -56,7 +56,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private var cleanupWaiters: [(Bool) -> Void] = []
     private var lastActivation: [HotkeyAction: UInt64] = [:]
     /// KDE rechecks owned daemon state after List and immediately before Bind.
-    var beforeBind: (([PortalShortcut], @escaping (Bool) -> Void) -> Void)?
+    var beforeBind: (([PortalShortcut], [PortalShortcut], @escaping (Bool) -> Void) -> Void)?
 
     /// Invalidate all callbacks/leases first, then wait for Session.Close.
     /// A failed Create may have loaded native actions without returning a handle.
@@ -193,6 +193,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     var isAttached: Bool { sessionHandle != nil && bindAttempted }
+    var hasCompleteCatalogue: Bool { isAttached && Set(onFire.keys).isSubset(of: sessionActions) }
 
     /// A KDE retry rechecks capability without attaching a session. The caller
     /// has already acknowledged old-session cleanup before invoking this seam.
@@ -371,7 +372,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             }
             // A Wayland export may finish much later than List. Recheck the
             // shared KDE component after that wait, immediately before Bind.
-            if let beforeBind = self.beforeBind { beforeBind(previous, send) }
+            if let beforeBind = self.beforeBind { beforeBind(previous, shortcuts, send) }
             else { send(true) }
         }
     }

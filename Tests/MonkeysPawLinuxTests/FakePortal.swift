@@ -42,6 +42,14 @@ final class FakePortal {
 
         var signature: String { String(cString: g_variant_get_type_string(parameters)) }
 
+        func text(_ index: Int) -> String {
+            let value = g_variant_get_child_value(parameters, UInt(index))!
+            defer { g_variant_unref(value) }
+            let raw = g_variant_print(value, 1)!
+            defer { g_free(raw) }
+            return String(cString: raw)
+        }
+
         func option(_ name: String) -> OpaquePointer? {
             for index in 0..<g_variant_n_children(parameters) {
                 let child = g_variant_get_child_value(parameters, index)!
@@ -339,7 +347,7 @@ final class FakePortal {
             return "(uint32 0, {'session_handle': <'\(session)'>})"
         case "ListShortcuts":
             if let kde, kde.componentExists {
-                let actions = kde.actionNames.map { "('\($0)', {'trigger_description': <'\(kde.hasBinding ? "Saved KDE choice" : "")'>})" }
+                let actions = kde.actionNames.map { "('\($0)', {'trigger_description': <'\(kde.hasBinding(for: $0) ? "Saved KDE choice" : "")'>})" }
                 return "(uint32 0, {'shortcuts': <@a(sa{sv}) [\(actions.joined(separator: ","))]>})"
             }
             return "(uint32 0, {'shortcuts': <\(restoredShortcuts)>})"
@@ -360,7 +368,8 @@ final class FakePortal {
                     return String(cString: g_variant_get_string(id, nil))
                 }
                 kde.portalBind(ids, preferred: preferred)
-                return "(uint32 0, {'shortcuts': <[('toggle', {'trigger_description': <'\(kde.hasBinding ? "Saved KDE choice" : "")'>})]>})"
+                let result = ids.map { "('\($0)', {'trigger_description': <'\(kde.hasBinding(for: $0) ? "Saved KDE choice" : "")'>})" }
+                return "(uint32 0, {'shortcuts': <@a(sa{sv}) [\(result.joined(separator: ","))]>})"
             }
             return "(uint32 0, {'shortcuts': <\(boundShortcuts)>})"
         case "Start":

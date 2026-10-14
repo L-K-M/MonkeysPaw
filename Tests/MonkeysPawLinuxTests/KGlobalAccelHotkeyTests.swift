@@ -64,7 +64,187 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         let value = g_variant_get_child_value(call.parameters, 1)!
         let expected = g_variant_ref_sink(FakeKGlobalAccel.variant(literal))!
         defer { g_variant_unref(value); g_variant_unref(expected) }
-        XCTAssertNotEqual(g_variant_equal(UnsafeRawPointer(value), UnsafeRawPointer(expected)), 0, file: file, line: line)
+        XCTAssertNotEqual(g_variant_equal(UnsafeRawPointer(value), UnsafeRawPointer(expected)), 0,
+                          "\(call.actionName ?? "unknown"): \(call.text(1)) != \(literal)", file: file, line: line)
+    }
+
+    func testBothSavedActionsDeclareWithoutSuggestionsAndKeepIndependentCallbacks() throws {
+        service.actionNames = ["toggle", "repeat"]
+        service.savedKeys = "@a(ai) [(@ai [],), ([67108939, 67108931, 0, 0],), ([268435536],)]"
+        service.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start()
+        let picker = backend.currentRegistration.id
+        var repeats = 0
+        let repeatAction = backend.register(.repeatLast, accelerator: nil) { repeats += 1 }
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.backend.currentRegistration.status == .registered
+                && self.backend.registration(for: .repeatLast).status == .registered
+        })
+        XCTAssertEqual(service.presentActions, ["toggle", "repeat"])
+        XCTAssertEqual(backend.currentRegistration.id, picker)
+        XCTAssertNotEqual(picker, repeatAction.id)
+        XCTAssertEqual(backend.registration(for: .repeatLast).detail, "Ctrl+E")
+        for action in ["toggle", "repeat"] {
+            let active = try XCTUnwrap(service.calls.first {
+                $0.method == "setShortcutKeys" && $0.actionName == action && $0.text(2) == "uint32 2"
+            })
+            assertKeys(active, service.keys(for: action))
+        }
+        XCTAssertFalse(service.calls.contains { $0.method == "setShortcutKeys" && $0.actionName == "repeat" && $0.text(2) == "uint32 8" })
+        for action in ["toggle", "repeat", "toggle", "repeat"] {
+            service.emit(body: "('ch.lkmc.monkeyspaw', '\(action)', int64 42)")
+        }
+        configure()
+        XCTAssertEqual(fires, 1)
+        XCTAssertEqual(repeats, 1)
+        backend.unregister(repeatAction)
+        XCTAssertTrue(GTKTestSupport.spin { self.service.presentActions == ["toggle"] })
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 43)")
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'toggle', int64 43)")
+        configure()
+        XCTAssertEqual(fires, 2)
+        XCTAssertEqual(repeats, 1)
+        XCTAssertEqual(service.additionalKeys["repeat"], "@a(ai) [([67108933],)]")
+    }
+
+    func testWireRoundTripPreservesEmptyAlternativesAndTrailingZeros() throws {
+        let literal = "@a(ai) [(@ai [],), ([67108939, 67108931, 0, 0],), ([268435536],)]"
+        let value = g_variant_ref_sink(FakeKGlobalAccel.variant(literal))!
+        defer { g_variant_unref(value) }
+        let keys = try XCTUnwrap(KGlobalAccelWire.keys(value))
+        XCTAssertEqual(keys.sequences, [[], [67108939, 67108931, 0, 0], [268435536]])
+        let encoded = g_variant_ref_sink(KGlobalAccelWire.encode(keys))!
+        defer { g_variant_unref(encoded) }
+        XCTAssertNotEqual(g_variant_equal(UnsafeRawPointer(value), UnsafeRawPointer(encoded)), 0)
+        backend = KGlobalAccelHotkeyBackend(busAddress: address)
+        service.savedKeys = literal
+        var snapshot: KGlobalAccelHotkeyBackend.Snapshot?
+        var done = false
+        backend.inspect { snapshot = $0; done = true }
+        XCTAssertTrue(GTKTestSupport.spin { done })
+        XCTAssertEqual(snapshot?.keys[.togglePicker], keys)
+    }
+
+    func testBothActionsPreserveCustomUnboundAndMultiChordDaemonAssignments() throws {
+        let choices = ["@a(ai) [([67108933],)]", "@a(ai) [(@ai [],), ([0, 0, 0, 0],)]",
+                       "@a(ai) [(@ai [],), ([67108939, 67108931, 0, 0],), ([268435536],)]"]
+        for (index, pickerKeys) in choices.enumerated() {
+            let repeatKeys = choices[(index + 1) % choices.count]
+            service.actionNames = ["toggle", "repeat"]
+            service.savedKeys = pickerKeys
+            service.additionalKeys["repeat"] = repeatKeys
+            let calls = service.calls.count
+            backend = KGlobalAccelHotkeyBackend(busAddress: address)
+            let picker = backend.register(.togglePicker, accelerator: nil) { [weak self] in self?.fires += 1 }
+            let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("No release was sent") }
+            configure()
+            XCTAssertEqual(backend.currentRegistration.id, picker.id)
+            XCTAssertEqual(backend.registration(for: .repeatLast).id, repeatAction.id)
+            for action in HotkeyAction.allCases {
+                let name = action == .togglePicker ? "toggle" : "repeat"
+                let setter = try XCTUnwrap(service.calls.dropFirst(calls).first { $0.method == "setShortcutKeys" && $0.actionName == name })
+                assertKeys(setter, service.keys(for: name))
+                XCTAssertEqual(backend.registration(for: action).status, service.hasBinding(for: name) ? .registered : .unbound)
+            }
+            XCTAssertFalse(service.calls.dropFirst(calls).contains { $0.method == "setShortcutKeys" && $0.text(2) != "uint32 2" })
+            backend.shutdown()
+            XCTAssertTrue(GTKTestSupport.spin { self.service.presentActions.isEmpty })
+            XCTAssertEqual(service.savedKeys, pickerKeys)
+            XCTAssertEqual(service.keys(for: "repeat"), repeatKeys)
+        }
+    }
+
+    func testRepeatEditsWinOverStaleReadAndProbeWithoutChangingPicker() throws {
+        service.actionNames = ["toggle", "repeat"]
+        service.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start()
+        var repeats = 0
+        _ = backend.register(.repeatLast, accelerator: nil) { repeats += 1 }
+        configure()
+        let picker = backend.currentRegistration
+        let revision = backend.activationRevision
+        let setters = service.calls.filter { $0.method == "setShortcutKeys" }.count
+        service.heldMethods = ["shortcutKeys"]
+        var completions = 0
+        backend.configure { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "shortcutKeys" && self.service.calls.last?.actionName == "toggle" })
+        service.reply(try XCTUnwrap(service.calls.last))
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "shortcutKeys" && self.service.calls.last?.actionName == "repeat" })
+        let staleRead = try XCTUnwrap(service.calls.last)
+        service.change("@a(ai) []", action: "repeat")
+        service.reply(staleRead, body: "(@a(ai) [([67108933],)],)")
+        XCTAssertTrue(GTKTestSupport.spin { completions == 1 })
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(backend.activationRevision, revision)
+
+        service.heldMethods = ["globalShortcutsByKey"]
+        service.change("@a(ai) [([67108934],)]", action: "repeat")
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "globalShortcutsByKey" && self.service.calls.last?.text(0) == "([67108934],)" })
+        let staleProbe = try XCTUnwrap(service.calls.last)
+        service.change("@a(ai) []", action: "repeat")
+        service.heldMethods.removeAll()
+        let foreign = FakeKGlobalAccel.Holder(component: "foreign", action: "other", keys: [[67108934]])
+        service.reply(staleProbe, body: "(@a(ssssssaiai) [\(foreign.literal)],)")
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.registration(for: .repeatLast).status == .unbound })
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" }.count, setters)
+        XCTAssertEqual(completions, 1)
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 42)")
+        service.emit()
+        barrier()
+        XCTAssertEqual(repeats, 0)
+        XCTAssertEqual(fires, 1)
+    }
+
+    func testSuspensionRequiresAcknowledgementForBothActionsAndKeepsKeys() throws {
+        service.actionNames = ["toggle", "repeat"]
+        service.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start()
+        _ = backend.register(.repeatLast, accelerator: nil) { XCTFail("Suspended repeat fired") }
+        configure()
+        service.heldMethods = ["setInactive"]
+        var results: [Bool] = []
+        backend.suspend { results.append($0) }
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "setInactive" && self.service.calls.last?.actionName == "toggle" })
+        service.emit()
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 42)")
+        service.reply(try XCTUnwrap(service.calls.last))
+        XCTAssertTrue(GTKTestSupport.spin { self.service.calls.last?.method == "setInactive" && self.service.calls.last?.actionName == "repeat" })
+        XCTAssertTrue(results.isEmpty)
+        service.reply(try XCTUnwrap(service.calls.last))
+        XCTAssertTrue(GTKTestSupport.spin { results == [true] })
+        XCTAssertEqual(fires, 0)
+        XCTAssertTrue(service.presentActions.isEmpty)
+        XCTAssertEqual(service.savedKeys, "@a(ai) [([201326672],)]")
+        XCTAssertEqual(service.keys(for: "repeat"), "@a(ai) [([67108933],)]")
+    }
+
+    func testNativeDuplicatesAndOldReleasesStayRejectedAcrossRefreshAndCallbackReplacement() throws {
+        service.actionNames = ["toggle", "repeat"]
+        service.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start()
+        var repeats = 0
+        let oldRepeat = backend.register(.repeatLast, accelerator: nil) { repeats += 1 }
+        configure()
+        service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 42)")
+        configure()
+        XCTAssertEqual(repeats, 1)
+        let picker = backend.currentRegistration
+        let revision = backend.activationRevision
+        backend.unregister(oldRepeat)
+        let replacement = backend.register(.repeatLast, accelerator: nil) { repeats += 1 }
+        configure()
+        backend.unregister(oldRepeat)
+        XCTAssertNotEqual(oldRepeat.id, replacement.id)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(backend.activationRevision, revision)
+        for stamp in [42, 41, 43, 42] {
+            service.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 \(stamp))")
+        }
+        configure()
+        XCTAssertEqual(repeats, 2)
+        XCTAssertEqual(service.presentActions, ["toggle", "repeat"])
     }
 
     func testOwnSavedAndLiveBindingsStayRegisteredAndFire() {
@@ -122,23 +302,20 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(fires, 0)
     }
 
-    func testClearRetiresNativePresenceAndCannotReconfigureAnOldSuggestion() throws {
+    func testNilDeclarationLoadsSavedBindingWithoutAReplacementDefault() {
         start()
         ready()
-        let revision = backend.activationRevision
-        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared binding fired") }
-        XCTAssertEqual(cleared.status, .unbound)
-        XCTAssertNotEqual(backend.activationRevision, revision)
-        XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
-        let calls = service.calls.count
-        var completions = 0
-        backend.configure { completions += 1 }
+        let saved = service.savedKeys
+        let defaults = service.calls.filter { $0.method == "setShortcutKeys" && $0.text(2) == "uint32 8" }.count
+        let declared = backend.register(.togglePicker, accelerator: nil) { [weak self] in self?.fires += 1 }
+        ready()
+        XCTAssertEqual(backend.currentRegistration.id, declared.id)
+        XCTAssertEqual(service.savedKeys, saved)
+        XCTAssertTrue(service.present)
+        configure()
+        XCTAssertEqual(service.calls.filter { $0.method == "setShortcutKeys" && $0.text(2) == "uint32 8" }.count, defaults)
         service.emit()
-
-        XCTAssertEqual(completions, 1)
-        XCTAssertEqual(service.calls.count, calls)
-        XCTAssertEqual(backend.currentRegistration, cleared)
-        XCTAssertEqual(fires, 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
     }
 
     func testShutdownFromPendingCompletionPreventsReplacementFromRestartingNativeBackend() throws {
@@ -163,7 +340,7 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         }
     }
 
-    func testFirstBindingRotatesRevisionAndRepeatedClearStartsNoNativeWork() throws {
+    func testFirstBindingRotatesRevisionAndRepeatedUnregisterStartsNoNativeWork() throws {
         backend = KGlobalAccelHotkeyBackend(busAddress: address)
         let revision = backend.activationRevision
         let picker = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {
@@ -175,7 +352,8 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
         let methods = service.calls.map(\.method)
 
-        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        backend.unregister(picker)
+        let cleared = backend.currentRegistration
         var completions = 0
         backend.configure { completions += 1 }
 
@@ -211,14 +389,6 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(calls[5...7].map { $0.text(1) }, ["(0,)", "(1,)", "(2,)"])
         XCTAssertEqual(backend.currentRegistration.detail, "Ctrl+Alt+P")
         XCTAssertEqual(backend.currentRegistration.configuration, .systemSettings)
-        let repeatRegistration = backend.register(.repeatLast, accelerator: try Accelerator("Alt+R")) { XCTFail("Repeat must stay unbound") }
-        XCTAssertEqual(repeatRegistration.status, .unbound)
-        XCTAssertEqual(backend.registration(for: .repeatLast), repeatRegistration)
-        XCTAssertEqual(backend.register(.repeatLast, accelerator: nil) { XCTFail("Unbound repeat") }, repeatRegistration)
-        XCTAssertNotEqual(repeatRegistration.id, id)
-        XCTAssertEqual(service.calls.count, calls.count)
-        backend.unregister(repeatRegistration)
-        XCTAssertTrue(service.present)
         service.emit()
         XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
         XCTAssertEqual(backend.currentRegistration.id, id)
