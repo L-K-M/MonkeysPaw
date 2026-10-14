@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 
 /// The Linux composition root: only this type assembles platform drivers.
@@ -293,6 +294,7 @@ final class LinuxEnvironment {
     private var syncReplacementTask: Task<Void, Never>?
     private let suppliedSyncTransport: HTTPTransporting?
     private let suppliedSyncTimer: Scheduler?
+    private let syncDataFlush: (Int32) -> Int32
 
     private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
@@ -381,7 +383,7 @@ final class LinuxEnvironment {
             return try SeedService(library: self.libraryGraph.library).seedIfEmpty()
         })
     private lazy var dataFiles: FileStore = {
-        do { return try RootedFileStore(root: paths.dataDirectory) }
+        do { return try RootedFileStore(root: paths.dataDirectory, syncDescriptor: syncDataFlush) }
         catch {
             log.write(.warning, "App data unavailable; remembered values and usage cannot be saved")
             return UnavailableFileStore()
@@ -462,6 +464,7 @@ final class LinuxEnvironment {
          backgroundWork: BackgroundWork? = nil,
          assistantTransport: HTTPTransporting? = nil,
          syncTransport: HTTPTransporting? = nil,
+         syncDataFlush: @escaping (Int32) -> Int32 = Glibc.fsync,
          clipboard: Clipboard? = nil,
          updateVersion: String? = LinuxEnvironment.packagedVersion,
          releasePage: ReleasePageOpening? = nil,
@@ -480,6 +483,7 @@ final class LinuxEnvironment {
         suppliedAssistantTransport = assistantTransport
         suppliedSyncTransport = syncTransport
         suppliedSyncTimer = scheduler
+        self.syncDataFlush = syncDataFlush
         suppliedClipboard = clipboard
         self.updateVersion = updateVersion
         suppliedReleasePage = releasePage
@@ -1309,6 +1313,10 @@ final class LinuxEnvironment {
         do {
             try graph.index.apply(changes)
             scheduleSync(changes, in: graph)
+        } catch let error as LibraryError where error == .recoveryRequired || error == .syncUnavailable {
+            // Journal completion refreshes the index after releasing its gate.
+            // A blocked ordinary read is not evidence that the root was lost.
+            return
         } catch {
             // Warn after the outcome is known: the warning latches once, and a
             // failed rebuild must log its typed reason rather than a generic one.
@@ -1316,6 +1324,8 @@ final class LinuxEnvironment {
                 try graph.index.rebuild()
                 scheduleSync(changes, in: graph)
                 warnAboutLibrary(graph)
+            } catch let error as LibraryError where error == .recoveryRequired || error == .syncUnavailable {
+                return
             } catch {
                 degradeLibrary(graph, error as? FileStoreError)
             }

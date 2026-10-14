@@ -298,6 +298,33 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertEqual(transport.requests.count, count)
     }
 
+    func testWatcherReadDuringJournalDoesNotRetireAHealthyRoot() throws {
+        let raw = LinuxSyncTestWatcher()
+        let blocked = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        compose(watcher: raw, flush: { descriptor in
+            let path = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/fd/\(descriptor)")
+            if path?.hasSuffix("/sync/apply.json") == true, !blocked.value {
+                blocked.set()
+                // The timeout also releases a failing pre-fix UI publication.
+                _ = release.wait(timeout: .now() + .seconds(2))
+            }
+            return Glibc.fsync(descriptor)
+        })
+        defer { release.signal() }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { blocked.value })
+        raw.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .created)))
+        waitForGLib(.milliseconds(400))
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(raw.stopCount, 0)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)), String(describing: environment.syncService?.report))
+        XCTAssertNil(environment.syncService?.report.blockingIssue)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.results.contains { $0.relativePath == "a.md" } })
+        try files().requireRoot()
+    }
+
     func testLostRootPreservesStateAndNeverSendsDeletes() throws {
         compose()
         try login()
@@ -325,9 +352,11 @@ final class LinuxSyncCompositionTests: XCTestCase {
     private static func deviceVariable(_ id: UUID) -> String {
         "MONKEYSPAW_DEVICE_" + id.uuidString.replacingOccurrences(of: "-", with: "") + "_TOKEN"
     }
-    private func compose(timer: Scheduler? = nil) {
+    private func compose(timer: Scheduler? = nil, watcher: FileStoreWatcher? = nil,
+                         flush: @escaping (Int32) -> Int32 = Glibc.fsync) {
+        let factory: ((URL) throws -> FileStoreWatcher)? = watcher.map { raw in { _ in raw } }
         environment = LinuxEnvironment(application: application, environment: tools.environment,
-            scheduler: timer, syncTransport: transport)
+            scheduler: timer, libraryWatcherFactory: factory, syncTransport: transport, syncDataFlush: flush)
         // Exercise the primary's watcher/index startup before account intents.
         _ = environment.libraryStatusModel
     }
@@ -388,6 +417,14 @@ private final class LinuxSyncTestFlag: @unchecked Sendable {
     private var stored = false
     var value: Bool { lock.lock(); defer { lock.unlock() }; return stored }
     func set() { lock.lock(); stored = true; lock.unlock() }
+}
+
+private final class LinuxSyncTestWatcher: FileStoreWatcher {
+    private var callback: (@Sendable (FileStoreWatchEvent) -> Void)?
+    private(set) var stopCount = 0
+    func start(_ callback: @escaping @Sendable (FileStoreWatchEvent) -> Void) { self.callback = callback }
+    func stop() { stopCount += 1 }
+    func emit(_ event: FileStoreWatchEvent) { callback?(event) }
 }
 
 private final class LinuxSyncTestTimer: Scheduler {
