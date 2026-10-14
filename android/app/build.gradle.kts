@@ -1,6 +1,11 @@
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 android {
@@ -63,6 +68,22 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.datastore)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+}
+
+val graphSources = layout.projectDirectory.dir("src/main")
+tasks.withType<Test>().configureEach {
+    systemProperty("monkeyspaw.appSources", graphSources.asFile.absolutePath)
+    inputs.files(graphSources.file("AndroidManifest.xml"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/di/AppModule.kt"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/MonkeysPawApplication.kt"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/MainActivity.kt"))
+        .withPropertyName("appGraphSources").withPathSensitivity(PathSensitivity.RELATIVE)
 }

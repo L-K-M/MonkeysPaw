@@ -14,8 +14,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import ch.lkmc.monkeyspaw.core.AppIdentity
+import ch.lkmc.monkeyspaw.data.LibraryRepository
+import androidx.lifecycle.lifecycleScope
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject internal lateinit var library: LibraryRepository
+
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch { library.refresh() }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = AppIdentity.displayName
