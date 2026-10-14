@@ -89,9 +89,14 @@ internal class OkHttpHttpTransport(
                 }
                 worker.invokeOnCompletion { if (it != null) receipt.fail(HttpTransportError.Cancelled) }
             }
+        } catch (failure: HttpTransportError) {
+            // An exceptional resume can arrive before cancellation but run after the caller cancels.
+            if (failure != HttpTransportError.Cancelled && currentCoroutineContext().isActive) throw failure
+            throw CancellationException(failure.message, failure)
         } catch (_: CancellationException) {
-            // Prompt coroutine cancellation must not replace a cap failure already observed.
-            throw receipt.failure ?: HttpTransportError.Cancelled
+            // L1/Swift require typed cancellation. Keep it as a cause so cancelled launches stay cancelled.
+            val failure = receipt.failure ?: HttpTransportError.Cancelled
+            throw CancellationException(failure.message, failure)
         }
     }
 

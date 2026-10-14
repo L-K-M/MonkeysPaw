@@ -16,9 +16,12 @@ import okio.GzipSink
 import okio.Socket
 import okio.buffer
 import java.io.IOException
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.nio.file.Files
 import java.security.KeyStore
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.concurrent.TimeUnit.SECONDS
@@ -324,6 +327,62 @@ internal class OkHttpHttpTransportTest {
         job.join()
     }
 
+    @Test fun `caller cancellation never escapes a launch as an unhandled failure`() = runBlocking {
+        val unhandled = ConcurrentLinkedQueue<Throwable>()
+        val callerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, error -> unhandled.add(error) })
+        val closed = CountDownLatch(1)
+        val server = server()
+        server.enqueue(stalled(closed))
+        try {
+            val caller = callerScope.launch { transport.send(request(server)) }
+            withContext(Dispatchers.IO) { assertNotNull(server.takeRequest(2, SECONDS)) }
+            caller.cancelAndJoin()
+            assertTrue(closed.await(2, SECONDS))
+            assertTrue(unhandled.isEmpty(), "Unhandled failures: $unhandled")
+        } finally { callerScope.cancel() }
+    }
+
+    @Test fun `close observer does not report a read timeout as peer closure`() {
+        val closed = CountDownLatch(1)
+        val observed = CountDownLatch(1)
+        val server = server()
+        server.enqueue(MockResponse.Builder().socketHandler(object : SocketHandler {
+            override fun handle(socket: Socket) {
+                socket.sink.flush()
+                observeClose(socket, closed)
+                observed.countDown()
+            }
+        }).build())
+        java.net.Socket(server.hostName, server.port).use { peer ->
+            peer.getOutputStream().write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n".encodeToByteArray())
+            assertTrue(observed.await(6, SECONDS), "Close observer did not finish")
+            assertFalse(closed.await(0, SECONDS), "An open peer was reported closed")
+        }
+    }
+
+    @Test fun `adapter work cancellation keeps its typed cause without cancelling the caller scope`() = runBlocking {
+        val io = StandardTestDispatcher()
+        val waitingScope = CoroutineScope(SupervisorJob() + io)
+        val server = server()
+        try {
+            val driver = OkHttpHttpTransport(clock, waitingScope, dispatcher)
+            val outcome = CompletableDeferred<CancellationException>()
+            val caller = launch(start = CoroutineStart.UNDISPATCHED) {
+                try { driver.send(request(server)) }
+                catch (cancelled: CancellationException) { outcome.complete(cancelled); throw cancelled }
+            }
+            waitingScope.cancel()
+            io.scheduler.runCurrent()
+            val cancelled = withTimeout(2000) { outcome.await() }
+            assertSame(HttpTransportError.Cancelled, cancelled.cause)
+            caller.join()
+            assertTrue(caller.isCancelled)
+            assertTrue(currentCoroutineContext().isActive)
+            assertEquals(0, server.requestCount)
+        } finally { waitingScope.cancel() }
+    }
+
     @Test fun `dispatcher queue consumes the same deadline and expired call never sends`() = runBlocking {
         dispatcher.maxRequests = 1
         dispatcher.maxRequestsPerHost = 1
@@ -359,29 +418,43 @@ internal class OkHttpHttpTransportTest {
         } finally { waitingScope.cancel() }
     }
 
-    @Test fun `observed cap failure wins over cancellation before result dispatcher runs`() = runBlocking {
-        for (advertised in listOf(true, false)) {
+    @Test fun `observed receipt failure survives later cancellation without an unhandled exception`() = runBlocking {
+        val cases = listOf("advertised" to HttpTransportError.ResponseTooLarge,
+            "chunked" to HttpTransportError.ResponseTooLarge,
+            "deadline" to HttpTransportError.DeadlineExceeded,
+            "redirect" to HttpTransportError.RedirectRefused)
+        for ((fixture, expected) in cases) {
             val work = LinkedBlockingQueue<Runnable>()
             val ui = object : CoroutineDispatcher() {
                 override fun dispatch(context: CoroutineContext, block: Runnable) { work.add(block) }
             }
             val closed = CountDownLatch(1)
             val server = server()
-            server.enqueue(if (advertised) stalled(closed, "65") else chunkedOversize(closed))
-            val outcome = CompletableDeferred<HttpTransportError>()
-            val callerScope = CoroutineScope(SupervisorJob() + ui)
+            server.enqueue(when (fixture) {
+                "advertised" -> stalled(closed, "65")
+                "chunked" -> chunkedOversize(closed)
+                "redirect" -> stalled(closed).newBuilder().code(302).build()
+                else -> stalled(closed)
+            })
+            val outcome = CompletableDeferred<Exception>()
+            val unhandled = ConcurrentLinkedQueue<Throwable>()
+            val callerScope = CoroutineScope(SupervisorJob() + ui +
+                CoroutineExceptionHandler { _, error -> unhandled.add(error) })
             val caller = callerScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                outcome.complete(errorOf { transport.send(request(server, cap = 64, budgetMillis = 500)) })
+                try { transport.send(request(server, cap = 64, budgetMillis = 500)) }
+                catch (error: Exception) { outcome.complete(error); throw error }
             }
             try {
-                // Peer closure and queued completion follow the committed cap failure.
+                // Hold the committed failure until the deadline passes and the caller cancels.
                 assertTrue(closed.await(2, SECONDS))
                 val resume = assertNotNull(work.poll(2, SECONDS))
                 delay(550) // Resume only after the original deadline, with a later caller cancel.
                 caller.cancel()
                 resume.run()
-                assertEquals(HttpTransportError.ResponseTooLarge, withTimeout(2000) { outcome.await() })
+                val cancelled = assertIs<CancellationException>(withTimeout(2000) { outcome.await() })
+                assertSame(expected, cancelled.cause)
                 caller.join()
+                assertTrue(unhandled.isEmpty(), "Unhandled failures for $fixture: $unhandled")
             } finally {
                 callerScope.cancel()
                 while (true) (work.poll() ?: break).run()
@@ -442,13 +515,14 @@ internal class OkHttpHttpTransportTest {
 
     private suspend fun errorOf(operation: suspend () -> Any): HttpTransportError {
         try { operation() } catch (error: HttpTransportError) { return error }
+        catch (cancelled: CancellationException) { return cancelled.cause as? HttpTransportError ?: throw cancelled }
         fail("Expected a typed transport error")
     }
 
     private fun stalled(closed: CountDownLatch, length: String = "64"): MockResponse = MockResponse.Builder()
         .setHeader("Content-Length", length).socketHandler(object : SocketHandler {
             override fun handle(socket: Socket) {
-                socket.sink.flush()
+                socket.sink.flush() // MockWebServer 5.5.0 writes the response head before this handler.
                 observeClose(socket, closed)
             }
         }).build()
@@ -466,6 +540,8 @@ internal class OkHttpHttpTransportTest {
         socket.source.timeout().timeout(4, SECONDS)
         try {
             if (socket.source.read(Buffer(), 1) == -1L) closed.countDown()
-        } catch (_: IOException) { closed.countDown() }
+        } catch (_: SocketTimeoutException) {
+            // A read timeout proves no peer closure was observed.
+        } catch (_: SocketException) { closed.countDown() }
     }
 }

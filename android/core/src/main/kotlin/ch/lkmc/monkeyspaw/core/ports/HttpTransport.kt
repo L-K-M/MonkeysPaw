@@ -80,7 +80,9 @@ sealed class HttpTransportError private constructor(code: String) : Exception(co
  * Keep normal TLS validation; enforce selected caps before/during decoded body accumulation,
  * including advertised lengths, and retain an observed cap failure after cancellation.
  * The absolute monotonic deadline covers queue/connect/body and cancellation closes receipt.
- * Throw only body-free HttpTransportError; protocol clients interpret bounded error responses.
+ * Failures contain only body-free HttpTransportError; protocol clients interpret bounded errors.
+ * Coroutine cancellation carries the first observed HttpTransportError as CancellationException's
+ * cause (Cancelled when cancellation won), preserving the typed outcome and structured concurrency.
  */
 fun interface HttpTransport {
     suspend fun send(request: HttpRequest): HttpResponse
