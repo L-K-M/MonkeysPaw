@@ -880,4 +880,30 @@ class SyncAccountServiceTest {
         assertTrue(r.puts.isEmpty())
         assertTrue(r.h.engine.reports.value.counts.fileErrors > 0)
     }
+
+    @Test fun activationReplayRefreshesLibraryVersionWithoutSchedulingAPush() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        r.login()
+        r.h.seed()
+        val state = r.h.states.load(r.binding)!!
+        val file = r.h.rig.mutations.read("a.md")!!
+        val edit = r.h.rig.replacement(file, "recovered")
+        val next = state.copy(prompts = mapOf(SyncTestValues.personalID to
+            SyncPromptState(SyncTestValues.userScope, "a.md", 2, edit.hash)))
+        var failed = false
+        r.h.rig.dataOperations.onOperation = { op -> if (op == "file:sync/state.json" && !failed) {
+            failed = true
+            throw StoreError.IOFailure
+        } }
+        assertFailsWith<SyncError> { r.h.rig.journal.apply(SyncApplyPlan(state, next, listOf(edit))) }
+        assertNotNull(r.h.rig.journal.pending)
+        val version = r.h.engine.libraryVersion.value
+        r.h.rig.dataOperations.onOperation = null
+        r.login()
+        assertNull(r.h.rig.journal.pending)
+        assertTrue(r.h.engine.libraryVersion.value > version, "Recovered file publication must refresh library observers")
+        assertTrue(r.puts.isEmpty())
+        assertEquals(0, r.h.pulls)
+        assertContentEquals(SyncJournalHarness.source("recovered").encodeToByteArray(), r.h.files.read("a.md"))
+    }
 }

@@ -255,7 +255,9 @@ class SyncEngine internal constructor(
         drain()
         val resume = lock.withLock {
             requireStoppedGraph(binding.root)
+            val recovering = graph.journal.pending != null || graph.mutations.pendingPermit != null || graph.mutations.hasUnreadableJournal
             requireAccountCommit(graph.journal.replay())
+            if (recovering) mutableLibraryVersion.value++
             val owned = graph.accounts.binding(binding.root)
             val inventory = SyncGroupFolders.inventory(binding, SyncReconciliationSnapshot.Availability.AVAILABLE,
                 mutations = graph.mutations)
