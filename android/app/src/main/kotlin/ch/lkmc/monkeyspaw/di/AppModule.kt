@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStoreFactory
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.EditingService
+import ch.lkmc.monkeyspaw.core.services.FillService
 import ch.lkmc.monkeyspaw.core.services.LibraryService
 import ch.lkmc.monkeyspaw.data.*
 import dagger.Module
@@ -14,7 +15,6 @@ import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.*
 import java.io.File
 import java.security.SecureRandom
-import java.time.Instant
 import java.util.logging.Logger
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -55,7 +55,20 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun clock(): Clock = Clock { Instant.now() }
+    fun androidClock(): AndroidClock = AndroidClock()
+
+    @Provides
+    @Singleton
+    fun clock(clock: AndroidClock): Clock = clock
+
+    @Provides
+    @Singleton
+    fun clipboard(@ApplicationContext context: Context): Clipboard = AndroidClipboard(context)
+
+    @Provides
+    @Singleton
+    fun fill(library: LibraryService, clipboard: Clipboard, clock: AndroidClock): FillService =
+        FillService(library, clipboard, clock::zone)
 
     @Provides
     @Singleton

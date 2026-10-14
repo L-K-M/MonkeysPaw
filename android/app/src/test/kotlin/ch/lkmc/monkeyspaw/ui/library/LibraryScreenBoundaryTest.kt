@@ -26,7 +26,7 @@ internal class LibraryScreenBoundaryTest {
     @Test
     fun `library exposes completed controls and Ready routes to the browser with a foreground rescan`() {
         val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
-        val unfinished = Regex("\\b(?:Account|Groups?|Conflicts?|FillScreen|EditorScreen|onCopy|onEdit|onFill)\\b", RegexOption.IGNORE_CASE)
+        val unfinished = Regex("\\b(?:Account|Groups?|Conflicts?|EditorScreen|onEdit)\\b", RegexOption.IGNORE_CASE)
         assertFalse(unfinished.containsMatchIn(screen))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("if (startup == SeedOfferUiState.Ready)"))
@@ -40,7 +40,9 @@ internal class LibraryScreenBoundaryTest {
 
     private fun validateView(source: String) {
         val imports = Regex("(?m)^import (.+)$").findAll(source).map { it.groupValues[1] }
-        assertTrue(imports.all { it.startsWith("androidx.compose.") || it == "ch.lkmc.monkeyspaw.R" })
+        assertTrue(imports.all { it.startsWith("androidx.compose.") || it == "ch.lkmc.monkeyspaw.R" ||
+            it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
+                "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview") })
         val forbidden = Regex("\\b(?:File|Files|Path|Context|LocalContext|Clipboard|LibraryRepository|LibraryService|EditingService|SeedInstaller|DataStore|Dispatchers|viewModelScope|LaunchedEffect|HttpTransport|URL|InputStream|OutputStream)\\b")
         assertFalse(forbidden.containsMatchIn(source))
     }
