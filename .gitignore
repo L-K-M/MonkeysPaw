@@ -27,3 +27,6 @@ xcuserdata/
 *.keystore
 *.jks
 !/android/app/debug.keystore
+# Python bytecode written when the script tests run.
+__pycache__/
+*.pyc
