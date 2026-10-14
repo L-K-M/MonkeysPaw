@@ -13,6 +13,23 @@ import kotlinx.coroutines.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantSessionTest {
+    @Test fun footerSupportsEveryValidatedHostSpellingWithoutReparsingWithJavaURI() = runTest {
+        val h = AssistantHarness(this)
+        h.configure()
+        val profile = checkNotNull(h.context.profile)
+        for ((base, host) in listOf(
+            "https://custom_host.example:8443/v1" to "custom_host.example",
+            "https://[v1.fe80::a]:8443/v1" to "[v1.fe80::a]",
+            "https://[::1]:8443/v1" to "[::1]",
+        )) {
+            h.context = h.context.copy(profile = ProviderProfile(profile.id, profile.displayName, profile.kind, base, profile.modelID))
+            val session = AssistantSession(h.service, backgroundScope, { h.context }, h.monotonic)
+            assertEquals(host, session.state.value.providerHost)
+            session.deactivate()
+        }
+        h.session.deactivate()
+    }
+
     @Test fun explicitWriteMovesThroughDraftToReadyWithUsageElapsedAndPreflightedIdentity() = runTest {
         val h = AssistantHarness(this)
         h.configure()

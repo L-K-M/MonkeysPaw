@@ -8,7 +8,6 @@ import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.llm.messages
 import ch.lkmc.monkeyspaw.core.llm.transcriptMessage
 import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
-import java.net.URI
 import java.util.Collections
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -318,8 +317,14 @@ class AssistantSession(
     }
 
     private fun footer(state: AssistantState): AssistantState = state.copy(
-        providerHost = context.profile?.baseURL?.let { URI(it).host }, modelID = context.profile?.modelID,
+        providerHost = providerHost(), modelID = context.profile?.modelID,
         mutationAccess = context.access.mutationAccess)
+
+    private fun providerHost(): String? {
+        // Validated URLs include Foundation spellings java.net.URI cannot represent.
+        val authority = context.profile?.baseURL?.substringAfter("://")?.substringBefore('/') ?: return null
+        return if (authority.startsWith('[')) authority.substringBefore(']') + "]" else authority.substringBefore(':')
+    }
 
     private fun publish(state: AssistantState) {
         mutableState.value = state.copy(issues = state.issues.immutableCopy(), transcript = state.transcript.immutableCopy())
