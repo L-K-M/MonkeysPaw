@@ -44,6 +44,32 @@ internal class ImeBoundaryTest {
 
     @Test fun `local graph constructor and provider closure cannot reach network secrets scheduling or logger`() {
         app.resolve("ime").listFiles { file -> file.extension == "kt" }!!.forEach { validateGraphSource(it.readText()) }
+        val reached = graphClosure(ImeLocalGraph::class.java, ImeSessionController::class.java,
+            ImeViewOwners::class.java, AndroidClipboard::class.java, FillViewModel::class.java, LibraryViewModel::class.java)
+        assertTrue(reached.any { it.simpleName == "LibraryRepository" })
+        assertTrue(reached.any { it.simpleName == "FillService" })
+        assertTrue(reached.any { it.simpleName == "Clipboard" })
+        assertTrue(reached.any { it.simpleName == "AndroidSettingsStore" })
+        assertFalse(reached.any { it.simpleName == "CoroutineScope" })
+        val graph = app.resolve("ime/ImeLocalGraph.kt").readText()
+        assertTrue(graph.contains("if (!session.isActive()) TextDeliveryResult.STALE else copy.deliver(mode, text)"))
+        assertTrue(graph.contains("ViewModelProvider(owner, factory)"))
+    }
+
+    @Test fun `graph guard rejects inherited network access without project source`() {
+        val error = assertFailsWith<AssertionError> { graphClosure(InheritedConnection::class.java) }
+        assertEquals("URLConnection", error.message?.substringBefore('.'))
+    }
+
+    @Test fun `graph guard rejects inherited secret interfaces without project source`() {
+        val error = assertFailsWith<AssertionError> { graphClosure(InheritedSecret::class.java) }
+        assertEquals("SecretStore", error.message?.substringBefore('.'))
+    }
+
+    private abstract class InheritedConnection : javax.net.ssl.HttpsURLConnection(null)
+    private interface InheritedSecret : ch.lkmc.monkeyspaw.core.ports.SecretStore
+
+    private fun graphClosure(vararg roots: Class<*>): Set<Class<*>> {
         val providers = AppModule::class.java.declaredMethods.associateBy { it.returnType }
         val module = app.resolve("di/AppModule.kt").readText()
         val providerBodies = module.split("    @Provides").drop(1).associate { block ->
@@ -65,25 +91,15 @@ internal class ImeBoundaryTest {
             }
             type.declaredConstructors.filter { it.getAnnotation(Inject::class.java) != null }
                 .flatMap { it.parameterTypes.toList() }.forEach(::visit)
+            type.superclass?.let(::visit)
+            type.interfaces.forEach(::visit)
             if (!type.name.startsWith("ch.lkmc.monkeyspaw.")) return
             classSources[type.name.substringBefore('$')]?.forEach(::validateGraphSource)
             type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .forEach { visit(it.type) }
         }
-        visit(ImeLocalGraph::class.java)
-        visit(ImeSessionController::class.java)
-        visit(ImeViewOwners::class.java)
-        visit(AndroidClipboard::class.java)
-        visit(FillViewModel::class.java)
-        visit(LibraryViewModel::class.java)
-        assertTrue(reached.any { it.simpleName == "LibraryRepository" })
-        assertTrue(reached.any { it.simpleName == "FillService" })
-        assertTrue(reached.any { it.simpleName == "Clipboard" })
-        assertTrue(reached.any { it.simpleName == "AndroidSettingsStore" })
-        assertFalse(reached.any { it.simpleName == "CoroutineScope" })
-        val graph = app.resolve("ime/ImeLocalGraph.kt").readText()
-        assertTrue(graph.contains("if (!session.isActive()) TextDeliveryResult.STALE else copy.deliver(mode, text)"))
-        assertTrue(graph.contains("ViewModelProvider(owner, factory)"))
+        roots.forEach(::visit)
+        return reached
     }
 
     @Test fun `privacy source guard detects network construction reads logs and scheduling`() {
@@ -122,7 +138,7 @@ internal class ImeBoundaryTest {
     @Test fun `password screen branches before reused controls and inline hosts request no software keyboard or own IME inset`() {
         val screen = app.resolve("ime/ImeScreen.kt").readText()
         validateLocal(screen)
-        assertTrue(screen.indexOf("if (state.password)") < screen.indexOf("FillScreen(fill,"))
+        assertPasswordBranch(screen)
         assertTrue(screen.contains("mode = LibraryMode.IME_PICKER"))
         assertFalse(screen.contains("OutlinedTextField"))
         assertFalse(Regex("\\b(?:LocalContext|File|LibraryRepository|Clipboard)\\b").containsMatchIn(screen))
@@ -131,6 +147,16 @@ internal class ImeBoundaryTest {
         assertTrue(library.contains("favoriteEnabled = mode == LibraryMode.BROWSER"))
         val fill = app.resolve("ui/fill/FillScreen.kt").readText()
         assertTrue(fill.contains("if (state.input == FillInput.INLINE) it else it.imePadding()"))
+    }
+
+    @Test fun `password branch guard rejects a disabled password gate`() {
+        val screen = app.resolve("ime/ImeScreen.kt").readText()
+        assertFailsWith<AssertionError> { assertPasswordBranch(screen.replace("if (state.password)", "if (false)")) }
+    }
+
+    private fun assertPasswordBranch(screen: String) {
+        val password = screen.indexOf("if (state.password)")
+        assertTrue(password >= 0 && password < screen.indexOf("FillScreen(fill,"))
     }
 
     private fun validateLocal(source: String) {

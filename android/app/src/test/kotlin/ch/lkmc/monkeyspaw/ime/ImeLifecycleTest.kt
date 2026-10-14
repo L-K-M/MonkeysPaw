@@ -6,6 +6,9 @@ import kotlin.test.*
 
 /** Exercises production transitions with fake framework effects; Compose attachment needs a device. */
 internal class ImeLifecycleTest {
+    private val sources = File(checkNotNull(System.getProperty("monkeyspaw.appSources")))
+        .resolve("kotlin/ch/lkmc/monkeyspaw/ime")
+
     @Test fun `created root starts and resumes only when shown and pauses and stops on hide`() {
         val events = mutableListOf<Any>()
         val lifecycle = ImeViewLifecycle({ events += it }, { events += "clear" }, { events += "dispose" })
@@ -38,17 +41,31 @@ internal class ImeLifecycleTest {
     }
 
     @Test fun `owner attaches and restores null before create and all trees precede content and attachment`() {
-        val root = File(checkNotNull(System.getProperty("monkeyspaw.appSources"))).resolve("kotlin/ch/lkmc/monkeyspaw/ime")
-        val owners = root.resolve("ImeViewOwners.kt").readText()
-        val initialization = owners.substringAfter("    init {\n        savedState.performAttach()")
-        assertTrue(initialization.indexOf("savedState.performRestore(null)") < initialization.indexOf("transitions = ImeViewLifecycle"))
+        assertOwnerWiring(sources.resolve("ImeViewOwners.kt").readText(), sources.resolve("MonkeysPawImeService.kt").readText())
+    }
+
+    @Test fun `owner wiring guard rejects missing attach restore install or content`() {
+        val owners = sources.resolve("ImeViewOwners.kt").readText()
+        val service = sources.resolve("MonkeysPawImeService.kt").readText()
+        for (step in listOf("savedState.performAttach()", "savedState.performRestore(null)")) {
+            assertFailsWith<AssertionError>(step) { assertOwnerWiring(owners.replace(step, ""), service) }
+        }
+        assertFailsWith<AssertionError>("owners.install(view)") {
+            assertOwnerWiring(owners, service.replace("owners.install(view)", ""))
+        }
+        val withoutContent = service.removeRange(service.indexOf("        view.setContent {"), service.indexOf("        return view"))
+        assertFailsWith<AssertionError>("view.setContent") { assertOwnerWiring(owners, withoutContent) }
+    }
+
+    private fun assertOwnerWiring(owners: String, service: String) {
+        assertBefore(owners, "savedState.performAttach()", "savedState.performRestore(null)")
+        assertBefore(owners, "savedState.performRestore(null)", "transitions = ImeViewLifecycle")
         for (owner in listOf("Lifecycle", "ViewModelStore", "SavedStateRegistry")) {
             assertTrue(owners.contains("view.setViewTree${owner}Owner(this)"))
         }
         assertFalse(Regex("\\b(?:performSave|SavedStateHandle|rememberSaveable)\\b").containsMatchIn(owners))
-        val service = root.resolve("MonkeysPawImeService.kt").readText()
-        assertTrue(service.indexOf("owners.install(view)") < service.indexOf("view.setContent"))
-        assertTrue(service.indexOf("view.setContent") < service.indexOf("return view"))
+        assertBefore(service, "owners.install(view)", "view.setContent")
+        assertBefore(service, "view.setContent", "return view")
         assertTrue(service.contains("ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed"))
         assertTrue(service.contains("ImeViewOwners(view::disposeComposition)"))
         assertTrue(service.contains("view.setParentCompositionContext(view.createLifecycleAwareWindowRecomposer(lifecycle = owners.lifecycle))"))
@@ -57,5 +74,10 @@ internal class ImeLifecycleTest {
             "onFinishInput" to "sessions.finishInput()", "onDestroy" to "sessions.destroy()")) {
             assertTrue(service.substringAfter("override fun $callback(").substringBefore("\n    }").contains(effect))
         }
+    }
+
+    private fun assertBefore(source: String, first: String, next: String) {
+        val position = source.indexOf(first)
+        assertTrue(position >= 0 && source.indexOf(next) > position, "$first must precede $next")
     }
 }
