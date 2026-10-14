@@ -178,11 +178,14 @@ internal object SyncLocalScanner {
             val transferring = recorded?.scope?.let { it != location.scope } == true
             // An acknowledged baseline stays unchanged until the push commits; only creates use the current path.
             val pending = SyncPromptState(recorded?.scope ?: location.scope, recorded?.path ?: wire.path,
-                recorded?.rev ?: 0, recorded?.canonicalHash, if (transferring) recorded.origin else origin, recorded?.lastError)
+                recorded?.rev ?: 0, recorded?.canonicalHash, if (transferring) recorded.origin else origin, recorded?.lastError,
+                recorded?.favoriteInput)
             if (!duplicate && stateSource != identity) migrate(prompts, favorites, stateSource, identity)
             prompts[identity] = pending
             if (location.scope is SyncScopeKey.Group && pending.scope is SyncScopeKey.Group) {
-                canonical.favorite?.let { if (it) favorites[identity] = true else favorites.remove(identity) }
+                SyncFavoriteInput.preferred(canonical.favorite, recorded?.favoriteInput)?.let {
+                    if (it) favorites[identity] = true else favorites.remove(identity)
+                }
             }
             if (viewer && (recorded == null || recorded.canonicalHash?.rawValue != canonical.canonicalHash ||
                     recorded.scope != location.scope || recorded.path != wire.path)) {
@@ -191,6 +194,8 @@ internal object SyncLocalScanner {
                 // canonicalization can strip the user's local metadata.
                 continue
             }
+            // Clear consumed intent only when this pass can install/confirm canonical bytes.
+            if (!transferring) prompts[identity] = pending.copy(favoriteInput = null)
             // Preserve personal keys on disk until a scope transfer acknowledges their new owner.
             if (!transferring && (externalAssignment || !bytes.contentEquals(file.bytes) ||
                     location.scope is SyncScopeKey.Group && !canonical.bytes.contentEquals(file.bytes))) {
@@ -251,7 +256,7 @@ internal object SyncLocalScanner {
             val error = SyncPromptError(issue, SyncInputFingerprint(file?.bytes ?: byteArrayOf(), location.path,
                 location.scope, accessGeneration, SyncOperation.PUT))
             prompts[key] = SyncPromptState(existing?.scope ?: location.scope,
-                existing?.path ?: location.path, existing?.rev ?: 0, existing?.canonicalHash, existing?.origin, error)
+                existing?.path ?: location.path, existing?.rev ?: 0, existing?.canonicalHash, existing?.origin, error, existing?.favoriteInput)
         }
         val next = old.copy(prompts = prompts, favorites = favorites)
         val preparation = if (edits.isEmpty() && next == old) null else SyncApplyPlan(state, next, edits)

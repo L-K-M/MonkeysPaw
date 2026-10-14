@@ -420,7 +420,7 @@ internal class SyncCoordinator(
             val issue = SyncPromptError(SyncIssueCode.PathClash, SyncInputFingerprint(file.bytes, location.path,
                 location.scope, accessGeneration, SyncOperation.PUT))
             next = next.copy(prompts = next.prompts + (file.identity to SyncPromptState(record?.scope ?: location.scope,
-                record?.path ?: location.path, record?.rev ?: 0, record?.canonicalHash, record?.origin, issue)))
+                record?.path ?: location.path, record?.rev ?: 0, record?.canonicalHash, record?.origin, issue, record?.favoriteInput)))
             val diagnostics = SyncApplyPlan(plan.expectedState, next, emptyList())
             if (changed(diagnostics)) commit(diagnostics)
             throw SyncCoordinatorError.FileErrors(errorDetails(next))

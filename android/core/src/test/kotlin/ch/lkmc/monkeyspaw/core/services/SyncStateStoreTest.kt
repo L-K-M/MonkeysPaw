@@ -12,6 +12,29 @@ class SyncStateStoreTest {
     private val path = "sync/state.json"
     private val v = SyncTestValues
 
+    @Test fun favoriteInputRetainsNullPresenceRejectsInvalidTypesAndClearsWithoutResurrection() {
+        val files = MemoryStore()
+        val store = SyncStateStore(files, SyncFlushes())
+        val original = v.state()
+        for (value in listOf(true, false, null)) {
+            val record = original.prompts.getValue(v.groupID).copy(favoriteInput = SyncFavoriteInput(value))
+            val state = original.copy(prompts = original.prompts + (v.groupID to record))
+            store.update(state.binding) { state }
+            assertEquals(state, SyncStateStore(files, SyncFlushes()).load(state.binding))
+            store.update(state.binding) { it.copy(prompts = it.prompts + (v.groupID to record.copy(favoriteInput = null))) }
+            val encoded = v.raw(files, path).required("prompts").objectValue().required(v.groupPrompt.rawValue).objectValue()
+            assertEquals(WireValue.Null, encoded.required("favorite_input"))
+        }
+        assertFailsWith<SyncError.InvalidState> { original.prompts.getValue(v.personalID).copy(favoriteInput = SyncFavoriteInput(null)) }
+        for (invalid in listOf(syncObject(), syncObject("value" to wireString("true")), wireBoolean(false))) {
+            val raw = SyncStateJson.codec.encode(original).edit("prompts") { prompts ->
+                prompts.edit(v.groupPrompt.rawValue) { it.setting("favorite_input", invalid) }
+            }
+            files.put(syncDocumentBytes(raw), path)
+            assertFailsWith<SyncError.CorruptFile> { SyncStateStore(files, SyncFlushes()).load(original.binding) }
+        }
+    }
+
     @Test fun versionOneRoundTripRestartAndCheckedPrivatePublication() {
         val files = MemoryStore()
         val flushes = SyncFlushes()

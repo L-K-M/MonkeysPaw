@@ -18,7 +18,8 @@ internal fun SyncGroupFolders.rescueOccupant(file: SyncLibraryFile, state: SyncS
     val record = next.prompts[file.identity]
     if (record != null && record.rev > 0) {
         // Keep identity and overlay; a snapshot must restore this internal retirement before push.
-        next = next.copy(prompts = next.prompts + (file.identity to SyncPromptState(record.scope, record.path, 0, origin = record.origin)),
+        next = next.copy(prompts = next.prompts + (file.identity to SyncPromptState(record.scope, record.path, 0,
+            origin = record.origin, favoriteInput = record.favoriteInput)),
             cursors = next.cursors + (record.scope to SyncState.snapshotResetCursor))
     }
     return SyncApplyPlan(state, next, result.edits,

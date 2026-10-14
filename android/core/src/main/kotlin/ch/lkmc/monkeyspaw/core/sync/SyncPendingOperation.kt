@@ -106,22 +106,8 @@ internal object SyncPendingOperationJson {
             } ?: WireValue.Null), "recorded" to (value.recorded?.let(::prompt) ?: WireValue.Null))
     }
 
-    private fun prompt(value: SyncObject): SyncPromptState = WireObject(value).let { o ->
-        SyncPromptState(SyncScopeKey.parse(o.string("scope_key")), o.string("path"), o.long("rev"),
-            value.optional("canonical_hash")?.stringValue()?.let(::SyncHash),
-            value.optional("origin")?.objectValue()?.let(SyncStateJson::origin),
-            value.optional("last_error")?.objectValue()?.let {
-                SyncPromptError(SyncIssueCode.parse(WireObject(it).string("code")), fingerprint(it.required("fingerprint").objectValue()))
-            })
-    }
-
-    private fun prompt(value: SyncPromptState): SyncObject = syncObject(
-        "scope_key" to wireString(value.scope.rawValue), "path" to wireString(value.path), "rev" to wireLong(value.rev),
-        "canonical_hash" to wireNullable(value.canonicalHash?.rawValue),
-        "origin" to (value.origin?.let(SyncStateJson::origin) ?: WireValue.Null),
-        "last_error" to (value.lastError?.let {
-            syncObject("code" to wireString(it.code.rawValue), "fingerprint" to fingerprint(it.fingerprint))
-        } ?: WireValue.Null))
+    private fun prompt(value: SyncObject): SyncPromptState = SyncStateJson.prompt(value)
+    private fun prompt(value: SyncPromptState): SyncObject = SyncStateJson.prompt(value)
 
     private fun fingerprint(value: SyncObject): SyncInputFingerprint = WireObject(value).let {
         SyncInputFingerprint(SyncHash(it.string("content_hash")), SyncHash(it.string("path_hash")),

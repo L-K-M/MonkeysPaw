@@ -87,6 +87,24 @@ class SyncPushEngineTest {
         assertEquals(retainedInventories.first(), retainedInventories.last(), "Retained inventories must not grow per file")
     }
 
+    @Test fun acknowledgementRetainsNewerFavoriteIntentWhenRawSourceChangesDuringHTTP() = runTest {
+        val h = PushHarness().seed(3, groups = true, scope = v.groupScope)
+        val path = "Groups/Team/a.md"
+        h.files.put(ScanHarness.bytes("Sent"), path)
+        val change = h.candidate()
+        h.files.put(ScanHarness.bytes("Sent", extra = "favorite: true\n"), path)
+        h.states.update(h.binding) { it.copy(prompts = it.prompts +
+            (v.personalID to h.record.copy(favoriteInput = SyncFavoriteInput(true)))) }
+        val fresh = ScanHarness.bytes("Saved during HTTP", extra = "favorite: true\n")
+        val transport = PushTransport { h.files.put(fresh, path); ack(4) }
+        assertEquals(SyncPushResult.ACKNOWLEDGED, h.engine(transport).push(change, available))
+        assertEquals(SyncFavoriteInput(true), h.record.favoriteInput)
+        assertFalse(h.state.favorites[v.personalID] == true)
+        assertIs<SyncLocalChange.Update>(h.candidate())
+        assertFalse(h.state.favorites[v.personalID] == true)
+        assertNull(h.record.favoriteInput)
+    }
+
     @Test fun rereadsFreshBytesAndFlushesExactPrivateRequestBeforeHTTPWithoutAdvancingCursors() = runTest {
         val h = PushHarness().seed()
         val change = h.candidate()

@@ -126,13 +126,14 @@ internal object SyncAdoption {
             edits.add(copy.edit)
         }
         val form = SyncLocalScanner.canonical(source.bytes, remote.path, remote.scope)
+        val favorite = SyncFavoriteInput.preferred(form.favorite, state?.prompts?.get(identity)?.favoriteInput)
         next = SyncLocalScanner.migrating(next, identity, destination)
         val markers = SyncConflictMetadata.ingest(remote.bytes, LibraryPath.filename(remote.path), remote.scope.pathScope)
         val error = markers.issue?.let { SyncPromptError(it, SyncInputFingerprint(remote.bytes, remote.path, remote.scope, 0, SyncOperation.PUT)) }
         // Drop a group favourite before moving its baseline to private scope, keeping the immutable state valid.
         next = next.copy(prompts = next.prompts + (destination to SyncPromptState(remote.scope, remote.path, remote.rev,
             remote.hash, markers.origin, error)), favorites = if (remote.scope is SyncScopeKey.User) next.favorites - destination else next.favorites)
-        if (remote.scope is SyncScopeKey.Group) next = next.applyGroupFavorite(form.favorite, destination)
+        if (remote.scope is SyncScopeKey.Group) next = next.applyGroupFavorite(favorite, destination)
 
         if (source.path == remote.libraryPath) {
             edits.add(mutations.publication(remote.bytes, remote.libraryPath, source, SyncIdentityTransition(identity, destination),
@@ -164,7 +165,7 @@ internal object SyncAdoption {
         val error = SyncPromptError(SyncIssueCode.LocalVisibility,
             SyncInputFingerprint(remote.bytes, remote.path, remote.scope, accessGeneration, SyncOperation.PUT))
         next = next.copy(prompts = next.prompts + (identity to SyncPromptState(previous?.scope ?: remote.scope,
-            previous?.path ?: remote.path, previous?.rev ?: 0, previous?.canonicalHash, previous?.origin, error)))
+            previous?.path ?: remote.path, previous?.rev ?: 0, previous?.canonicalHash, previous?.origin, error, previous?.favoriteInput)))
         return SyncApplyPlan(state, next, emptyList())
     }
 

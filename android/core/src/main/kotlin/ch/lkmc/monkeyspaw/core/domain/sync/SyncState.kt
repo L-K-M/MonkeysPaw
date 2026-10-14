@@ -53,6 +53,14 @@ internal data class SyncGroupState(val name: String, val folder: String, val rol
     }
 }
 
+/** Suppress an unchanged raw key after a newer personal favourite intent. Null means absent. */
+internal data class SyncFavoriteInput(val value: Boolean?) {
+    companion object {
+        fun preferred(favorite: Boolean?, after: SyncFavoriteInput?): Boolean? =
+            if (after != null && after.value == favorite) null else favorite
+    }
+}
+
 internal data class SyncPromptState(
     val scope: SyncScopeKey,
     val path: String,
@@ -60,10 +68,12 @@ internal data class SyncPromptState(
     val canonicalHash: SyncHash? = null,
     val origin: SyncPromptOrigin? = null,
     val lastError: SyncPromptError? = null,
+    val favoriteInput: SyncFavoriteInput? = null,
 ) {
     init {
         if (rev < 0 || (rev == 0L) != (canonicalHash == null) ||
-            origin != null && scope !is SyncScopeKey.User) throw SyncError.InvalidState
+            origin != null && scope !is SyncScopeKey.User ||
+            favoriteInput != null && scope !is SyncScopeKey.Group) throw SyncError.InvalidState
         syncValidated {
             if (rev == 0L) StorePath.validate(path)
             else if (SyncPathValidator.validate(path, scope.pathScope).path != path) throw SyncError.InvalidState
