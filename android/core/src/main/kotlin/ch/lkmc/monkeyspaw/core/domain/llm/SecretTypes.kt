@@ -1,6 +1,6 @@
 package ch.lkmc.monkeyspaw.core.domain.llm
 
-/** Storage tier only; a driver must separately establish StrongBox/hardware backing. */
+/** AndroidKeyStore encryption, with no plaintext fallback. This tier alone does not prove hardware backing. */
 enum class SecretTier(val rawValue: String) { KEYSTORE("keystore") }
 
 data class SecretAccount(val namespace: String, val name: String) {
