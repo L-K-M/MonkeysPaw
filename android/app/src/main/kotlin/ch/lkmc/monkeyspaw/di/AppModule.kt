@@ -83,4 +83,14 @@ internal object AppModule {
     fun settings(@ApplicationContext context: Context, @ApplicationScope scope: CoroutineScope): AndroidSettingsStore =
         AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
             produceFile = { File(context.filesDir, "datastore/settings.json") }))
+
+    @Provides
+    @Singleton
+    fun seedCatalog(@ApplicationContext context: Context): AndroidSeedCatalog =
+        AndroidSeedCatalog { path -> context.assets.open(path).use { it.readBytes() } }
+
+    @Provides
+    @Singleton
+    fun seedInstaller(repository: LibraryRepository, settings: AndroidSettingsStore, catalog: AndroidSeedCatalog,
+        @IoDispatcher io: CoroutineDispatcher): SeedInstaller = SeedInstaller(repository, settings, catalog, io)
 }

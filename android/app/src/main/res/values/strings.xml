@@ -1,4 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Monkey\'s Paw</string>
+    <string name="local_library_title">Local library</string>
+    <string name="library_loading">Loading your library…</string>
+    <string name="seeds_offer_title">Add starter prompts?</string>
+    <string name="seeds_offer_help">Start with ten prompts for coding and writing, or begin with an empty library.</string>
+    <string name="seeds_accept">Add starter prompts</string>
+    <string name="seeds_decline">Start empty</string>
+    <string name="seeds_installing">Adding starter prompts…</string>
+    <string name="library_load_failed">Could not load your library or save your choice. Try again.</string>
+    <string name="seeds_failed">Could not finish adding starter prompts. Any prompts already added are kept.</string>
+    <string name="retry">Try again</string>
+    <string name="continue_to_library">Continue</string>
+    <plurals name="local_prompt_count">
+        <item quantity="one">Your library has %d prompt file.</item>
+        <item quantity="other">Your library has %d prompt files.</item>
+    </plurals>
+    <plurals name="seeds_added_count">
+        <item quantity="one">Added %d starter prompt.</item>
+        <item quantity="other">Added %d starter prompts.</item>
+    </plurals>
 </resources>

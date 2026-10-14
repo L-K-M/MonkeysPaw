@@ -1,4 +1,15 @@
+import groovy.json.JsonOutput
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.util.zip.ZipFile
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.Test
 
 plugins {
@@ -6,6 +17,95 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+}
+
+@CacheableTask
+abstract class GenerateSeedAssets : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val seedDirectory: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val source = seedDirectory.get().asFile.toPath()
+        val paths = Files.walk(source).use { files ->
+            files.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) }.map { source.relativize(it).joinToString("/") }
+                .filter { path ->
+                    val parts = path.split('/')
+                    path != "README.md" && path.endsWith(".md") && parts.none { it.startsWith('_') } &&
+                        parts.dropLast(1).none { it.startsWith('.') }
+                }.toList().sortedWith { a, b ->
+                    // The Swift catalog sorts unsigned UTF-8, independent of locale or UTF-16.
+                    val left = a.toByteArray(Charsets.UTF_8)
+                    val right = b.toByteArray(Charsets.UTF_8)
+                    var order = 0
+                    for (index in 0 until minOf(left.size, right.size)) {
+                        order = (left[index].toInt() and 255).compareTo(right[index].toInt() and 255)
+                        if (order != 0) break
+                    }
+                    if (order == 0) left.size.compareTo(right.size) else order
+                }
+        }
+        check(paths.isNotEmpty()) { "No eligible seed prompts found." }
+        val output = outputDirectory.get().asFile
+        check(!output.exists() || output.deleteRecursively()) { "Could not clear generated seed assets." }
+        val seeds = output.resolve("seeds").apply { mkdirs() }
+        for (path in paths) {
+            val destination = seeds.resolve(path)
+            destination.parentFile.mkdirs()
+            Files.copy(source.resolve(path), destination.toPath())
+        }
+        seeds.resolve("catalog.json").writeText(
+            JsonOutput.toJson(linkedMapOf("version" to 1, "paths" to paths)) + "\n", Charsets.UTF_8)
+    }
+}
+
+/** Assembly gates check the actual APK, including release resource shrinking. */
+abstract class VerifySeedApkAssets : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val generatedAssets: DirectoryProperty
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val apkDirectory: DirectoryProperty
+
+    @TaskAction
+    fun verify() {
+        val root = generatedAssets.get().asFile.resolve("seeds")
+        val expected = root.walkTopDown().filter { it.isFile }.associate { it.relativeTo(root).invariantSeparatorsPath to it.readBytes() }
+        val apk = apkDirectory.get().asFile.listFiles { file -> file.extension == "apk" }?.singleOrNull()
+            ?: error("Expected one assembled APK.")
+        ZipFile(apk).use { zip ->
+            val entries = zip.entries().asSequence().filter { !it.isDirectory && it.name.startsWith("assets/seeds/") }.toList()
+            check(entries.map { it.name.removePrefix("assets/seeds/") }.sorted() == expected.keys.sorted()) {
+                "APK seed membership differs from generated assets."
+            }
+            for (entry in entries) {
+                check(zip.getInputStream(entry).use { it.readBytes() }.contentEquals(expected.getValue(entry.name.removePrefix("assets/seeds/")))) {
+                    "APK seed bytes differ from generated assets."
+                }
+            }
+        }
+    }
+}
+
+val generateSeedAssets = tasks.register<GenerateSeedAssets>("generateSeedAssets") {
+    seedDirectory.set(rootProject.layout.projectDirectory.dir("../seed"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/seedAssets"))
+}
+
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(generateSeedAssets, GenerateSeedAssets::outputDirectory)
+    val name = variant.name.replaceFirstChar { it.uppercaseChar() }
+    val verification = tasks.register<VerifySeedApkAssets>("verify${name}SeedAssets") {
+        generatedAssets.set(generateSeedAssets.flatMap { it.outputDirectory })
+        apkDirectory.set(layout.buildDirectory.dir("outputs/apk/${variant.name}"))
+    }
+    tasks.matching { it.name == "assemble$name" }.configureEach { finalizedBy(verification) }
 }
 
 android {
@@ -65,6 +165,7 @@ kotlin {
 dependencies {
     implementation(project(":core"))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
@@ -80,6 +181,11 @@ dependencies {
 
 val graphSources = layout.projectDirectory.dir("src/main")
 tasks.withType<Test>().configureEach {
+    dependsOn(generateSeedAssets)
+    systemProperty("monkeyspaw.seedSources", generateSeedAssets.get().seedDirectory.get().asFile.absolutePath)
+    systemProperty("monkeyspaw.seedAssets", generateSeedAssets.get().outputDirectory.get().asFile.absolutePath)
+    inputs.dir(generateSeedAssets.flatMap { it.seedDirectory }).withPropertyName("seedSources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(generateSeedAssets.flatMap { it.outputDirectory }).withPropertyName("seedAssets").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("monkeyspaw.appSources", graphSources.asFile.absolutePath)
     inputs.files(graphSources.file("AndroidManifest.xml"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/di/AppModule.kt"),
