@@ -158,6 +158,22 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         XCTAssertTrue(probe.fixes.isEmpty)
     }
 
+    func testFakeUnboundDeclarationsPreservePickerCallbackUntilPickerIsCleared() throws {
+        let backend = SettingsHotkeyBackend()
+        var fires = 0
+        let picker = backend.register(.togglePicker, accelerator: try Accelerator("Alt+P")) { fires += 1 }
+        let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Unbound repeat fired") }
+        backend.unregister(repeatAction)
+        backend.fire?()
+        XCTAssertEqual(fires, 1)
+
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertNotEqual(cleared.id, repeatAction.id)
+        XCTAssertNotEqual(cleared.id, picker.id)
+        XCTAssertNil(backend.fire)
+    }
+
     private func refresh(_ mechanism: HotkeyMechanism, status: RegistrationStatus, detail: String,
                          configuration: HotkeyConfiguration? = nil) throws {
         backend.registration = HotkeyRegistration(mechanism: mechanism, status: status, detail: detail, configuration: configuration)
@@ -177,12 +193,17 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
     var fire: (() -> Void)?
     let unboundRepeat = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
         detail: SetupStrings.unboundShortcut, configuration: .unavailable)
+    let unboundPicker = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
+        detail: SetupStrings.unboundShortcut, configuration: .unavailable)
     func register(_ action: HotkeyAction, accelerator: Accelerator?, onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker, accelerator != nil else { return unboundRepeat }
+        guard action == .togglePicker else { return unboundRepeat }
+        guard accelerator != nil else { fire = nil; return unboundPicker }
         fire = onFire
         return registration
     }
-    func unregister(_ registration: HotkeyRegistration) {}
+    func unregister(_ registration: HotkeyRegistration) {
+        if registration.id == self.registration.id { fire = nil }
+    }
 }
 
 private final class SettingsSetupProbe: SetupProbe {

@@ -92,6 +92,103 @@ final class PortalHotkeyTests: XCTestCase {
         XCTAssertEqual(backend.currentRegistration, picker)
     }
 
+    func testStoppedPortalRejectsAllDeclarationsWithoutCallsOrRetainedCallbacks() throws {
+        try register()
+        configure()
+        backend.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { !self.portal.closedPaths.isEmpty })
+        PortalSessionTestSupport.barrier(transport)
+        let stopped = backend.currentRegistration
+        let revision = backend.activationRevision
+        let methods = portal.calls.map(\.method)
+        let closes = portal.closedPaths
+        let properties = portal.propertyCalls.filter { $0.interface == "org.freedesktop.portal.GlobalShortcuts" }.count
+        backend.unregister(stopped)
+        for action in HotkeyAction.allCases {
+            for accelerator in [nil, try Accelerator("Alt+R")] as [Accelerator?] {
+                weak var callbackOwner: NSObject?
+                do {
+                    let owner = NSObject()
+                    callbackOwner = owner
+                    XCTAssertEqual(backend.register(action, accelerator: accelerator) { _ = owner.description }, stopped)
+                }
+                XCTAssertNil(callbackOwner)
+            }
+        }
+        var completions = 0
+        backend.configure { completions += 1 }
+        backend.prepareAttachment { XCTAssertNil($0); completions += 1 }
+        backend.quiesce { XCTAssertFalse($0); completions += 1 }
+        backend.shutdown()
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 3)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(portal.calls.map(\.method), methods)
+        XCTAssertEqual(portal.closedPaths, closes)
+        XCTAssertEqual(portal.propertyCalls.filter { $0.interface == "org.freedesktop.portal.GlobalShortcuts" }.count, properties)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testStoppedQuiesceDoesNotRetryFailedSessionClose() throws {
+        try register()
+        configure()
+        portal.closeError = true
+        backend.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { !self.portal.closedPaths.isEmpty })
+        PortalSessionTestSupport.barrier(transport)
+        let closes = portal.closedPaths
+        var completions = 0
+
+        backend.quiesce { XCTAssertFalse($0); completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(portal.closedPaths, closes)
+    }
+
+    func testClearClosesSessionAndPreventsOldBindingFromReconfiguration() throws {
+        try register()
+        configure()
+        let revision = backend.activationRevision
+        let handle = try session()
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared binding fired") }
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertNotEqual(backend.activationRevision, revision)
+        XCTAssertTrue(GTKTestSupport.spin { self.portal.closedPaths.contains(handle) })
+        PortalSessionTestSupport.barrier(transport)
+        let methods = portal.calls.map(\.method)
+        var completions = 0
+        backend.configure { completions += 1 }
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'toggle', uint64 1, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(backend.currentRegistration, cleared)
+        XCTAssertEqual(portal.calls.map(\.method), methods)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testShutdownFromPendingCompletionPreventsClearFromRetainingPortalCallback() throws {
+        try register()
+        var completions = 0
+        backend.configure { self.backend.shutdown(); completions += 1 }
+        weak var callbackOwner: NSObject?
+        do {
+            let owner = NSObject()
+            callbackOwner = owner
+            _ = backend.register(.togglePicker, accelerator: nil) { _ = owner.description }
+        }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertNil(callbackOwner)
+        let stopped = backend.currentRegistration
+        backend.configure { completions += 1 }
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+    }
+
     func testQuietProbeThenBindingUsesStableTokenSameConnectionAndActualTrigger() throws {
         try register()
         XCTAssertTrue(portal.calls.isEmpty)

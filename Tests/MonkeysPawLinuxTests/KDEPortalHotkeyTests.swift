@@ -96,6 +96,7 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertEqual(repeatAction.status, .unbound)
         XCTAssertNotEqual(repeatAction.id, picker.id)
         XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+        XCTAssertEqual(backend.currentRegistration, picker)
         backend.unregister(repeatAction)
         XCTAssertEqual(backend.currentRegistration, picker)
         XCTAssertEqual(daemon.calls.count, calls)
@@ -103,6 +104,83 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertTrue(daemon.present)
         daemon.emit()
         XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
+    }
+
+    func testStoppedCompositeRejectsAllDeclarationsAndUnregisterCannotRestartIt() throws {
+        start()
+        backend.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        PortalSessionTestSupport.barrier(transport)
+        let stopped = backend.currentRegistration
+        let revision = backend.activationRevision
+        let nativeCalls = daemon.calls.count
+        let portalCalls = service.calls.count
+        let propertyCalls = service.propertyCalls.filter { $0.interface == "org.freedesktop.portal.GlobalShortcuts" }.count
+        backend.unregister(stopped)
+        for action in HotkeyAction.allCases {
+            for accelerator in [nil, try Accelerator("Alt+R")] as [Accelerator?] {
+                weak var callbackOwner: NSObject?
+                do {
+                    let owner = NSObject()
+                    callbackOwner = owner
+                    XCTAssertEqual(backend.register(action, accelerator: accelerator) { _ = owner.description }, stopped)
+                }
+                XCTAssertNil(callbackOwner)
+            }
+        }
+        var completions = 0
+        backend.configure { completions += 1 }
+        backend.useNative { completions += 1 }
+        backend.shutdown()
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(daemon.calls.count, nativeCalls)
+        XCTAssertEqual(service.calls.count, portalCalls)
+        XCTAssertEqual(service.propertyCalls.filter { $0.interface == "org.freedesktop.portal.GlobalShortcuts" }.count, propertyCalls)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testClearCannotRestoreNativeOrPortalPickerThroughConfiguration() {
+        start()
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared picker fired") }
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        PortalSessionTestSupport.barrier(transport)
+        let nativeCalls = daemon.calls.count
+        let portalCalls = service.calls.count
+        var completions = 0
+        backend.configure { completions += 1 }
+        backend.useNative { completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, cleared)
+        XCTAssertEqual(daemon.calls.count, nativeCalls)
+        XCTAssertEqual(service.calls.count, portalCalls)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testShutdownFromPendingCompletionPreventsClearFromRetainingCompositeCallback() {
+        start()
+        var completions = 0
+        backend.configure { self.backend.shutdown(); completions += 1 }
+        weak var callbackOwner: NSObject?
+        do {
+            let owner = NSObject()
+            callbackOwner = owner
+            _ = backend.register(.togglePicker, accelerator: nil) { _ = owner.description }
+        }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertNil(callbackOwner)
+        let stopped = backend.currentRegistration
+        backend.configure { completions += 1 }
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
     }
 
     func testLiveRegistrationAfterUnboundDeclarationStillTearsDownUsingInitialSnapshot() throws {

@@ -62,13 +62,17 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
 
     func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
+        guard phase != .stopped else { return currentRegistration }
         guard action == .togglePicker, let accelerator else {
-            if action == .togglePicker { unregister(currentRegistration) }
+            if action == .togglePicker {
+                unregister(currentRegistration)
+                self.accelerator = nil
+            }
+            guard phase != .stopped else { return currentRegistration }
             let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
-        guard phase != .stopped else { return currentRegistration }
         unboundActions.retire(action)
         self.onFire = onFire
         self.accelerator = accelerator
@@ -79,6 +83,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             self.tokenRevision = self.activationRevision
             self.onFire?()
         }
+        guard phase != .stopped else { return currentRegistration }
         operation += 1
         let operation = operation
         phase = .busy
@@ -361,25 +366,32 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     func fire(_ action: HotkeyAction) -> Bool { false }
 
     func unregister(_ registration: HotkeyRegistration) {
+        guard phase != .stopped else { return }
         if unboundActions.unregister(registration) { return }
         guard registration.id == currentRegistration.id else { return }
         onFire = nil
+        accelerator = nil
         operation += 1
         select(.none)
-        native.unregister(native.currentRegistration)
-        portal.quiesce { _ in }
         phase = .idle
+        native.unregister(native.currentRegistration)
+        guard phase != .stopped else { return }
+        portal.quiesce { _ in }
         finish()
     }
 
     func shutdown() {
         unboundActions.clearCallbacks()
         guard phase != .stopped else { return }
-        unregister(currentRegistration)
         phase = .stopped
+        onFire = nil
+        accelerator = nil
+        operation += 1
+        select(.none)
+        onChange = nil
         native.shutdown()
         portal.shutdown()
-        onChange = nil
+        finish()
     }
 }
 #endif

@@ -20,6 +20,7 @@ final class GnomeKeybindingTests: XCTestCase {
             XCTAssertNotEqual(repeatAction.id, picker.id)
             XCTAssertEqual(repeatAction.status, .unbound)
             XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+            XCTAssertEqual(backend.currentRegistration, picker)
             XCTAssertFalse(backend.fire(.repeatLast))
             backend.unregister(repeatAction)
             XCTAssertEqual(backend.currentRegistration, picker)
