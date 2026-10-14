@@ -16,6 +16,7 @@ import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.nanoseconds
 
@@ -154,7 +155,13 @@ internal class SyncHTTPClient(
                 responseByteCap = if (codec === PullResponse.codec) Limits.syncResponseCap else Limits.responseCap,
                 deadlineNanos = deadline, urlPolicy = HttpUrlPolicy.Sync(server, trust))
             checkActive(deadline)
-            val response = transport.send(request)
+            val response = try { transport.send(request) }
+            catch (error: CancellationException) {
+                // A timeout scope can replace cancellation causes; surface its recorded failure first.
+                val failure = generateSequence<Throwable>(error) { it.cause }.filterIsInstance<HttpTransportError>().firstOrNull()
+                if (failure != null && failure != HttpTransportError.Cancelled) throw failure
+                throw error
+            }
             checkActive(deadline)
             if (response.bodyByteCount > request.responseByteCap) throw HttpTransportError.ResponseTooLarge
             if (response.statusCode in 300..399) throw HttpTransportError.RedirectRefused
@@ -173,10 +180,20 @@ internal class SyncHTTPClient(
             checkActive(deadline)
             decoded
         } ?: throw HttpTransportError.DeadlineExceeded
-    } catch (error: SyncHTTPClientError) { throw error }
-    catch (error: HttpTransportError) { throw SyncHTTPClientError.Transport(error) }
-    catch (_: CancellationException) { throw SyncHTTPClientError.Transport(HttpTransportError.Cancelled) }
-    catch (_: Exception) { throw SyncHTTPClientError.Transport(HttpTransportError.NetworkFailure) }
+    } catch (error: CancellationException) { throw error }
+    catch (error: HttpTransportError) {
+        // A queued failure can resume after caller cancellation; retain its cause without failing the launch.
+        if (error == HttpTransportError.Cancelled || !currentCoroutineContext().isActive) {
+            throw CancellationException(error.message, error)
+        }
+        throw SyncHTTPClientError.Transport(error)
+    } catch (error: SyncHTTPClientError) {
+        if (!currentCoroutineContext().isActive) throw CancellationException("Sync HTTP cancelled.", error)
+        throw error
+    } catch (_: Exception) {
+        currentCoroutineContext().ensureActive()
+        throw SyncHTTPClientError.Transport(HttpTransportError.NetworkFailure)
+    }
 
     private fun <T> decodes(bytes: ByteArray, codec: WireCodec<T>): Boolean = try { codec.decode(bytes); true }
     catch (_: IllegalArgumentException) { false }

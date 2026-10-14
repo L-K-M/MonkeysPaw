@@ -6,6 +6,7 @@ import ch.lkmc.monkeyspaw.core.domain.llm.SecretValue
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import java.util.Base64
 import java.util.UUID
@@ -275,7 +276,7 @@ class SyncHTTPClientTest {
         assertTransport(HttpTransportError.DeadlineExceeded) {
             SyncHTTPClient(server, expired, credential, MonotonicClock { now }).me()
         }
-        var failure: SyncHTTPClientError? = null
+        var failure: CancellationException? = null
         var released = false
         val child = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
@@ -283,44 +284,110 @@ class SyncHTTPClientTest {
                     try { awaitCancellation() }
                     finally { released = true }
                 }).me()
-            } catch (error: SyncHTTPClientError) { failure = error }
+            } catch (error: CancellationException) { failure = error; throw error }
         }
         child.cancelAndJoin()
         assertTrue(released)
-        assertEquals(HttpTransportError.Cancelled, assertIs<SyncHTTPClientError.Transport>(failure).error)
+        assertNotNull(failure)
 
-        var lateFailure: SyncHTTPClientError? = null
+        var lateFailure: CancellationException? = null
         val late = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 client(HttpTransport {
                     currentCoroutineContext().cancel()
                     HttpResponse(200, body = MeResponse.codec.encode(me))
                 }).me()
-            } catch (error: SyncHTTPClientError) { lateFailure = error }
+            } catch (error: CancellationException) { lateFailure = error; throw error }
         }
         late.join()
-        assertEquals(HttpTransportError.Cancelled, assertIs<SyncHTTPClientError.Transport>(lateFailure).error)
+        assertNotNull(lateFailure)
     }
 
     @Test fun anAlreadyCancelledIntentDoesNotDispatch() = runTest {
         val transport = RecordingTransport()
-        var captured: SyncHTTPClientError? = null
+        var captured: CancellationException? = null
         launch(start = CoroutineStart.UNDISPATCHED) {
             currentCoroutineContext().cancel()
             try { client(transport).me() }
-            catch (error: SyncHTTPClientError) { captured = error }
+            catch (error: CancellationException) { captured = error; throw error }
         }.join()
-        assertEquals(HttpTransportError.Cancelled, assertIs<SyncHTTPClientError.Transport>(captured).error)
+        assertNotNull(captured)
         assertTrue(transport.requests.isEmpty())
+    }
+
+    @Test fun outerScopeCancellationIsNotATransportFailureOrAnUnhandledLaunchFailure() = runTest {
+        val unhandled = mutableListOf<Throwable>()
+        val callerScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler) +
+            CoroutineExceptionHandler { _, error -> unhandled.add(error) })
+        val outcome = CompletableDeferred<Exception>()
+        var requests = 0
+        var released = false
+        val caller = callerScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                client(HttpTransport {
+                    requests++
+                    try { awaitCancellation() }
+                    finally { released = true }
+                }).me()
+            } catch (error: Exception) { outcome.complete(error); throw error }
+        }
+        try {
+            callerScope.cancel()
+            caller.join()
+            assertTrue(unhandled.isEmpty(), "Unhandled failures: $unhandled")
+            assertIs<CancellationException>(outcome.await())
+            assertTrue(caller.isCancelled)
+            assertTrue(released)
+            assertEquals(1, requests)
+            assertTrue(currentCoroutineContext().isActive)
+        } finally { callerScope.cancel() }
+    }
+
+    @Test fun recordedCapAndDeadlineFailuresSurviveLaterCancellationWithoutAnUnhandledFailure() = runTest {
+        for (expected in listOf(HttpTransportError.ResponseTooLarge, HttpTransportError.DeadlineExceeded)) {
+            for (failure in listOf(expected, CancellationException(expected.message, expected))) {
+                val unhandled = mutableListOf<Throwable>()
+                val callerScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler) +
+                    CoroutineExceptionHandler { _, error -> unhandled.add(error) })
+                val receipt = CompletableDeferred<CancellableContinuation<HttpResponse>>()
+                val outcome = CompletableDeferred<Exception>()
+                var requests = 0
+                val caller = callerScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        client(HttpTransport {
+                            requests++
+                            suspendCancellableCoroutine { receipt.complete(it) }
+                        }).me()
+                    } catch (error: Exception) { outcome.complete(error); throw error }
+                }
+                try {
+                    // Queue the recorded failure, then cancel before its exceptional resume runs.
+                    receipt.await().resumeWith(Result.failure(failure))
+                    caller.cancelAndJoin()
+                    assertTrue(unhandled.isEmpty(), "Unhandled failures for $expected: $unhandled")
+                    val cancelled = assertIs<CancellationException>(outcome.await())
+                    val causes = generateSequence<Throwable>(cancelled) { it.cause }.toList()
+                    assertSame(expected, causes.filterIsInstance<HttpTransportError>().firstOrNull(),
+                        "Recorded ${failure.javaClass.simpleName}: $causes")
+                    assertEquals(1, requests)
+                } finally { callerScope.cancel() }
+            }
+        }
     }
 
     @Test fun typedTransportFailuresAndCancellationRemainSanitizedWithoutRetries() = runTest {
         val failures = listOf(HttpTransportError.InvalidRequest, HttpTransportError.InvalidURL, HttpTransportError.InsecureURL,
             HttpTransportError.CredentialsInURL, HttpTransportError.ServerMismatch, HttpTransportError.RedirectRefused,
             HttpTransportError.RequestTooLarge, HttpTransportError.ResponseTooLarge, HttpTransportError.DeadlineExceeded,
-            HttpTransportError.Cancelled, HttpTransportError.InvalidResponse, HttpTransportError.NetworkFailure)
+            HttpTransportError.InvalidResponse, HttpTransportError.NetworkFailure)
         for (error in failures) assertTransport(error) { client(HttpTransport { throw error }).me() }
-        assertTransport(HttpTransportError.Cancelled) { client(HttpTransport { throw CancellationException("synthetic detail") }).me() }
+        assertSame(HttpTransportError.Cancelled, assertFailsWith<CancellationException> {
+            client(HttpTransport { throw HttpTransportError.Cancelled }).me()
+        }.cause)
+        val cancelled = CancellationException("synthetic caller cancellation")
+        val propagated = assertFailsWith<CancellationException> { client(HttpTransport { throw cancelled }).me() }
+        // Coroutine debug stack recovery may copy the exception and retain the original as its cause.
+        assertTrue(generateSequence<Throwable>(propagated) { it.cause }.any { it === cancelled })
         assertTransport(HttpTransportError.NetworkFailure) { client(HttpTransport { throw IllegalStateException("synthetic detail") }).me() }
     }
 
