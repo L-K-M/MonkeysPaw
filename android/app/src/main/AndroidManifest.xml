@@ -63,6 +63,18 @@
                 android:resource="@xml/shortcuts" />
         </activity>
         <service
+            android:name=".ime.MonkeysPawImeService"
+            android:exported="true"
+            android:label="@string/ime_label"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+        <service
             android:name=".entry.PromptTileService"
             android:exported="true"
             android:icon="@drawable/ic_insert_prompt"

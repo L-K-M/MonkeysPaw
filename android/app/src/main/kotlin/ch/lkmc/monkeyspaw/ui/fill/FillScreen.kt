@@ -26,7 +26,8 @@ internal fun FillScreen(
     onCapturedField: (String?) -> Unit = {},
     onFillInApp: (() -> Unit)? = null,
 ) {
-    LazyColumn(modifier.fillMaxSize().imePadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val content = modifier.fillMaxSize().let { if (state.input == FillInput.INLINE) it else it.imePadding() }
+    LazyColumn(content.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text(state.title.ifEmpty { stringResource(R.string.fill_title) }, style = MaterialTheme.typography.headlineMedium)
             state.description?.let { Text(it) }
