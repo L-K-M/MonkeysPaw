@@ -227,9 +227,14 @@ extension SyncGroupFolders {
     private static func removalPlan(state: SyncState?, next: SyncState, ownership: SyncLibraryBinding?,
                                     nextOwnership: SyncLibraryBinding, folders: Set<RelativePath>,
                                     inventory: SyncGroupFolderInventory, edits: [SyncLibraryEdit]) throws -> SyncApplyPlan {
-        let keys = try Set(folders.map(SyncNaming.pathKey))
         let paths = try inventory.directories.keys.filter { path in
-            try keys.contains(SyncNaming.pathKey(path)) || folders.contains { try contains(path, in: $0) }
+            try folders.contains { folder in
+                // Stray root spellings must not retire the canonical Groups tree.
+                guard let root = path.string.utf8.split(separator: 47).first,
+                      let folderRoot = folder.string.utf8.split(separator: 47).first,
+                      root.elementsEqual(folderRoot) else { return false }
+                return try SyncNaming.pathKey(path) == SyncNaming.pathKey(folder) || contains(path, in: folder)
+            }
         }
             .sorted { $0.string.utf8.count == $1.string.utf8.count ? $1 < $0 : $0.string.utf8.count > $1.string.utf8.count }
         let directories = try paths.map { try SyncDirectoryEdit(removing: $0, identity: inventory.directories[$0]!) }
