@@ -16,11 +16,42 @@ import kotlin.test.*
 
 internal class AndroidSettingsStoreTest : TemporaryFiles() {
     @Test
-    fun `only versioned seed progress is serialized`() = runBlocking {
+    fun `only versioned seed and setup decisions are serialized`() = runBlocking {
         val output = ByteArrayOutputStream()
         SettingsSerializer.writeTo(AndroidSettings(SeedProgress.INSTALLING), output)
-        assertEquals("{\"seedProgress\":\"INSTALLING\",\"version\":1}", output.toString(Charsets.UTF_8))
+        assertEquals("{\"seedProgress\":\"INSTALLING\",\"version\":1,\"keyboardTileSetup\":{\"version\":1," +
+            "\"enableKeyboard\":\"PENDING\",\"selectKeyboard\":\"PENDING\",\"addTile\":\"PENDING\"}}", output.toString(Charsets.UTF_8))
         assertEquals(AndroidSettings(SeedProgress.INSTALLING), SettingsSerializer.readFrom(ByteArrayInputStream(output.toByteArray())))
+    }
+
+    @Test
+    fun `M8 settings upgrade retains every seed state and offers setup only until resolved`() = runBlocking {
+        val path = filesDir.resolve("datastore/settings.json")
+        val resolved = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.COMPLETE)
+        for (seed in SeedProgress.entries) {
+            val original = "{\"version\":1,\"seedProgress\":\"${seed.name}\"}".encodeToByteArray()
+            put(path, original)
+            withStore { store ->
+                assertEquals(AndroidSettings(seed), store.read())
+                assertContentEquals(original, java.nio.file.Files.readAllBytes(path))
+                store.setKeyboardTileSetup(resolved)
+                assertEquals(seed, store.read().seedProgress)
+            }
+            withStore { assertEquals(AndroidSettings(seed, keyboardTileSetup = resolved), it.read()) }
+        }
+    }
+
+    @Test
+    fun `atomic setup and seed updates preserve one another`() = runBlocking {
+        val resolved = KeyboardTileSetupProgress(SetupDecision.SKIPPED, SetupDecision.COMPLETE, SetupDecision.SKIPPED)
+        withStore { store ->
+            coroutineScope {
+                (1..20).flatMap { listOf(async { store.setSeedProgress(SeedProgress.COMPLETE) },
+                    async { store.setKeyboardTileSetup(resolved) }) }.awaitAll()
+            }
+            assertEquals(AndroidSettings(SeedProgress.COMPLETE, keyboardTileSetup = resolved), store.read())
+        }
+        withStore { assertEquals(AndroidSettings(SeedProgress.COMPLETE, keyboardTileSetup = resolved), it.read()) }
     }
 
     @Test
@@ -59,6 +90,7 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
         val path = filesDir.resolve("datastore/settings.json")
         for (bytes in listOf(byteArrayOf(-1), "bad".encodeToByteArray(),
             "{\"version\":2,\"seedProgress\":\"COMPLETE\"}".encodeToByteArray(),
+            "{\"version\":3,\"seedProgress\":\"COMPLETE\"}".encodeToByteArray(),
             "{\"version\":\"1\",\"seedProgress\":\"COMPLETE\"}".encodeToByteArray(),
             "{\"version\":1,\"seedProgress\":7}".encodeToByteArray(),
             "{\"version\":1,\"seedProgress\":\"UNKNOWN\"}".encodeToByteArray(),
@@ -71,6 +103,21 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
             }
             assertContentEquals(bytes, java.nio.file.Files.readAllBytes(path))
             withStore { assertFailsWith<CorruptionException> { it.read() } }
+            assertContentEquals(bytes, java.nio.file.Files.readAllBytes(path))
+        }
+        val output = ByteArrayOutputStream()
+        SettingsSerializer.writeTo(AndroidSettings(), output)
+        val valid = output.toString(Charsets.UTF_8)
+        for (invalid in listOf(valid.replace("\"version\":1", "\"version\":2"),
+            valid.replace("\"enableKeyboard\":\"PENDING\"", "\"enableKeyboard\":false"),
+            valid.replace("\"enableKeyboard\":\"PENDING\"", "\"enableKeyboard\":\"FOREIGN_ID\""),
+            valid.replace("\"addTile\":\"PENDING\"", "\"addTile\":\"PENDING\",\"keyboardId\":\"private\""))) {
+            val bytes = invalid.encodeToByteArray()
+            put(path, bytes)
+            withStore { store ->
+                assertFailsWith<CorruptionException> { store.read() }
+                assertFailsWith<CorruptionException> { store.setKeyboardTileSetup(KeyboardTileSetupProgress()) }
+            }
             assertContentEquals(bytes, java.nio.file.Files.readAllBytes(path))
         }
     }
