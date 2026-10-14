@@ -15,6 +15,22 @@ android {
         versionName = "0.1.0"
     }
 
+    // Packaging keeps the committed numeric version/code and injects the tag suffix.
+    providers.gradleProperty("releaseVersion").orNull?.let { value ->
+        val number = "(?:0|[1-9][0-9]*)"
+        val identifier = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*"
+        require(Regex("$number\\.$number\\.$number(?:-$identifier)?").matches(value)) {
+            "releaseVersion must be X.Y.Z[-prerelease], without a v prefix or build metadata"
+        }
+        require(value.substringAfter('-', "").split('.').none {
+            it.length > 1 && it.all { character -> character in '0'..'9' } && it.startsWith('0')
+        }) { "releaseVersion numeric prerelease identifiers cannot have leading zeroes" }
+        require(value.substringBefore('-') == defaultConfig.versionName) {
+            "releaseVersion must agree with the committed numeric versionName"
+        }
+        defaultConfig.versionName = value
+    }
+
     signingConfigs {
         // Public sideload signer for both variants; see docs/decisions/0001.
         getByName("debug") {

@@ -14,6 +14,39 @@ import re
 import sys
 
 
+ANDROID_MAX_VERSION_CODE = 2_147_483_647
+
+
+def numeric_version(value):
+    number = r"(?:0|[1-9][0-9]*)"
+    if not re.fullmatch(rf"{number}\.{number}\.{number}", value):
+        raise ValueError("Committed versions must be numeric X.Y.Z without leading zeroes")
+    return value
+
+
+def android_version_declarations(text):
+    """Read the two committed literals, retaining their spans for the bump hook."""
+    declarations = []
+    for key, literal in (("versionName", r'"(?P<value>[^"\r\n]*)"'),
+                         ("versionCode", r"(?P<value>[1-9][0-9]*)")):
+        lines = list(re.finditer(rf"(?m)^[ \t]*{key}[ \t]*=[^\r\n]*", text))
+        if len(lines) != 1:
+            raise ValueError(f"Android must declare exactly one {key}")
+        declaration = re.fullmatch(
+            rf"[ \t]*{key}[ \t]*=[ \t]*{literal}[ \t]*(?://[^\r\n]*)?", lines[0][0])
+        if declaration is None:
+            raise ValueError(f"Android {key} must be a single literal")
+        start, end = declaration.span("value")
+        declarations.append((declaration["value"], lines[0].start() + start,
+                             lines[0].start() + end))
+
+    numeric_version(declarations[0][0])
+    code = declarations[1][0]
+    if len(code) > 10 or int(code) > ANDROID_MAX_VERSION_CODE:
+        raise ValueError("Android versionCode exceeds the positive Int range")
+    return declarations
+
+
 def app_version(value):
     version = value.removeprefix("v")
     number = r"(?:0|[1-9][0-9]*)"
@@ -51,7 +84,11 @@ def check_versions(root, tag=None, quiet=False):
     if len(markers) != 1 or not versions or set(versions) != {markers[0]}:
         raise ValueError("MARKETING_VERSION and the single README version marker must agree")
 
-    app_version(markers[0])
+    numeric_version(markers[0])
+    gradle = (root / "android/app/build.gradle.kts").read_text()
+    android_name, _ = android_version_declarations(gradle)
+    if android_name[0] != markers[0]:
+        raise ValueError("Android versionName and the committed desktop version must agree")
     if tag is not None:
         if not tag.startswith("v"):
             raise ValueError("Release tag must start with v")
@@ -74,7 +111,7 @@ def check_versions(root, tag=None, quiet=False):
             raise ValueError(f"Deb version mapping failed for {tag}")
 
     if not quiet:
-        print(f"==> Committed version {markers[0]} and tag-to-deb mapping agree")
+        print(f"==> Desktop/Android version {markers[0]} and tag-to-deb mapping agree")
     return markers[0]
 
 

@@ -5,7 +5,8 @@
 # The tag supplies CI's release version; MARKETING_VERSION and the README marker
 # keep local builds in step. See docs/plan/14-repository-packaging-ci-release.md.
 #
-# Usage: scripts/release.sh [X.Y[.Z]] [--push]
+# Usage: scripts/release.sh [X.Y.Z] [--push] | --check
+# --check reports engine configuration only; it does not exercise the hook.
 # Shared engine: https://github.com/L-K-M/release-tool (this stub only sets config).
 set -euo pipefail
 
@@ -13,6 +14,7 @@ export RELEASE_APP_NAME="MonkeysPaw"
 export RELEASE_KIND="xcode"
 export RELEASE_XCODE_PROJECT="MonkeysPaw.xcodeproj"
 export RELEASE_XCODE_SCHEME="MonkeysPaw"
+export RELEASE_POST_BUMP="scripts/sync-android-version.sh"
 export RELEASE_CI_NOTE="CI (release.yml, from M2) publishes the GitHub Release for the tag once configured."
 export RELEASE_INVOKED_AS="scripts/release.sh"
 
