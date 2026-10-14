@@ -22,6 +22,7 @@ internal class MutationBoundary {
 
 internal fun sanitized(error: Exception): Exception = when (error) {
     is InterruptedException -> error.also { Thread.currentThread().interrupt() }
+    StoreError.RecoveryRequired -> LibraryError.RecoveryRequired
     is StoreError, is LibraryError, is PromptWriteError, is ULIDGenerationError,
     is CancellationException -> error
     else -> LibraryError.OperationFailed

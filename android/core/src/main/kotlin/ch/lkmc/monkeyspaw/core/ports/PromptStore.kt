@@ -18,7 +18,10 @@ interface PromptStore {
     /** Exclusive publication: any occupied leaf throws AlreadyExists without reading or replacing it. */
     fun create(bytes: ByteArray, path: String)
     fun delete(path: String)
-    /** Move a regular file, creating parents; an occupied destination is never replaced. */
+    /**
+     * Move a regular file, creating parents; an occupied destination is never replaced.
+     * A failed rollback of partial publication throws RecoveryRequired.
+     */
     fun move(source: String, destination: String)
 }
 
@@ -39,6 +42,7 @@ sealed class StoreError private constructor(message: String) : Exception(message
     object NotRegularFile : StoreError("File is not a regular file.")
     object AlreadyExists : StoreError("Destination is occupied.")
     object IOFailure : StoreError("File operation failed.")
+    object RecoveryRequired : StoreError("File move rollback failed. Reload and recover before retrying.")
 
     final override fun toString(): String = message.orEmpty()
 }

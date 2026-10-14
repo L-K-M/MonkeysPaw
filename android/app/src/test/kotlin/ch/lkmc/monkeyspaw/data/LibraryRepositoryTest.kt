@@ -1,6 +1,8 @@
 package ch.lkmc.monkeyspaw.data
 
 import ch.lkmc.monkeyspaw.core.services.*
+import ch.lkmc.monkeyspaw.core.ports.PromptStore
+import ch.lkmc.monkeyspaw.core.ports.StoredFile
 import kotlinx.coroutines.*
 import java.nio.file.Files
 import java.util.concurrent.Executors
@@ -73,6 +75,30 @@ internal class LibraryRepositoryTest : TemporaryFiles() {
             val failed = repository.refresh()
             assertNotNull(failed.error)
             assertEquals(snapshot, failed.snapshot)
+            assertFalse(Files.exists(libraryDir))
+        }
+    }
+
+    @Test
+    fun `a root removed between readiness check and scan cannot erase either index publication`() = runBlocking {
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { worker ->
+            val prompts = AndroidPromptStore(libraryDir.toFile())
+            var removeOnScan = false
+            val disappearing = object : PromptStore by prompts {
+                override fun listFiles(): List<StoredFile> {
+                    if (removeOnScan) Files.move(libraryDir, filesDir.resolve("old-library"))
+                    return prompts.listFiles()
+                }
+            }
+            val library = library(prompts = disappearing)
+            val repository = LibraryRepository(library, EditingService(library), prompts, worker)
+            repository.withLibrary { _, editing -> editing.create("Body", "p.md") }
+            val snapshot = repository.state.value.snapshot
+            removeOnScan = true
+            val failed = repository.refresh()
+            assertNotNull(failed.error)
+            assertEquals(snapshot, failed.snapshot)
+            assertEquals(snapshot, library.index.snapshot())
             assertFalse(Files.exists(libraryDir))
         }
     }

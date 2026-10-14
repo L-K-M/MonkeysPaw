@@ -201,6 +201,20 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
     }
 
     @Test
+    fun `failed source unlink removes the published link without losing the source`() {
+        put(libraryDir.resolve("p.md"))
+        val store = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
+            override fun unlink(path: Path) {
+                if (path == libraryDir.resolve("p.md")) throw IOException("source unlink failed")
+                super.unlink(path)
+            }
+        })
+        assertFailsWith<StoreError.IOFailure> { store.move("p.md", "new.md") }
+        assertEquals("body", store.read("p.md").decodeToString())
+        assertNull(store.stamp("new.md"))
+    }
+
+    @Test
     fun `failed flush preserves old bytes and leaves no new or temporary file`() {
         put(libraryDir.resolve("p.md"))
         val publication = object : AtomicPublication() {

@@ -23,6 +23,10 @@ internal open class AtomicPublication {
     open fun removeTemporary(temporary: Path) {
         Files.deleteIfExists(temporary)
     }
+
+    open fun unlink(path: Path) {
+        Files.delete(path)
+    }
 }
 
 /**
@@ -41,17 +45,26 @@ internal class RootedFileStore(
     private val requestedRoot = root.toPath()
     // Resolve trusted system aliases once, off the UI thread, then recheck canonical ancestors.
     private val root: Path by lazy { canonicalRoot() }
+    @Volatile private var rootPrepared = false
 
-    fun prepareRoot() = sanitized { rootExists(Parents.CREATE); Unit }
+    fun prepareRoot() = sanitized {
+        rootExists(Parents.CREATE)
+        rootPrepared = true
+    }
 
     fun requireRoot() = sanitized {
         if (!rootExists(Parents.EXISTING)) throw StoreError.NotFound
     }
 
     override fun listFiles(): List<StoredFile> = sanitized {
-        if (!rootExists(Parents.EXISTING)) return@sanitized emptyList()
+        if (!rootExists(Parents.EXISTING)) {
+            if (rootPrepared) throw StoreError.NotFound
+            return@sanitized emptyList()
+        }
         val result = mutableListOf<StoredFile>()
         collect(root, "", result)
+        // Fail before Core commits its rebuilt index, including loss during directory traversal.
+        if (rootPrepared) requireRoot()
         result.sortedWith { a, b -> comparePaths(a.relativePath, b.relativePath) }
     }
 
@@ -104,12 +117,14 @@ internal class RootedFileStore(
         requireRegular(attributes(from) ?: throw StoreError.NotFound)
         val to = locate(destination, Parents.CREATE) ?: throw StoreError.InvalidRoot
         if (attributes(to) != null) throw StoreError.AlreadyExists
-        // Files.move(ATOMIC_MOVE) may replace an occupied destination. link is exclusive.
+        // ATOMIC_MOVE may replace an occupied leaf, so publish with an exclusive link.
+        // A crash before unlink can leave both names for manual recovery.
         publication.create(from, to)
         try {
-            Files.delete(from)
+            publication.unlink(from)
         } catch (error: Exception) {
-            Files.delete(to)
+            try { publication.unlink(to) }
+            catch (_: Exception) { throw StoreError.RecoveryRequired }
             throw error
         }
         syncDirectory(from.parent)
@@ -117,6 +132,7 @@ internal class RootedFileStore(
     }
 
     private fun stage(bytes: ByteArray, destination: Path, publish: (Path) -> Unit) {
+        // Every file is app-private; ordinary prompt/state writes deliberately use 0600 too.
         val permissions = PosixFilePermissions.fromString("rw-------")
         val temporary = Files.createTempFile(destination.parent, ".monkeyspaw-", ".tmp",
             PosixFilePermissions.asFileAttribute(permissions))

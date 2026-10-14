@@ -116,6 +116,20 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
     }
 
     @Test
+    fun `failed move and failed link rollback explicitly require recovery`() {
+        put(libraryDir.resolve("p.md"))
+        val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
+            override fun unlink(path: Path) { throw IOException("unlink failed") }
+        })
+        val library = library(prompts = prompts)
+        val loaded = library.load("p.md")
+        val result = assertIs<EditResult.Failed>(EditingService(library).move("p.md", "nested", loaded.stamp))
+        assertEquals("body", Files.readString(libraryDir.resolve("p.md")))
+        assertEquals("body", Files.readString(libraryDir.resolve("nested/p.md")))
+        assertSame(LibraryError.RecoveryRequired, result.error)
+    }
+
+    @Test
     fun `corrupt and future state never silently resets or overwrites`() {
         val identity = PromptIdentity.at("p.md")
         for (bytes in listOf("broken".encodeToByteArray(), byteArrayOf(-1),
