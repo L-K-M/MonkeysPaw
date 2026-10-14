@@ -12,10 +12,10 @@ import java.util.UUID
 
 internal sealed class SyncPullCollectorError private constructor() : Exception("Sync collection failed.", null, false, true) {
     enum class Reason { SNAPSHOT_EXPIRED, DATABASE_CHANGED, STALLED_CONTINUATION, COLLECTION_DEADLINE }
-    class NoProgress(val reason: Reason) : SyncPullCollectorError()
+    data class NoProgress(val reason: Reason) : SyncPullCollectorError()
     data object InvalidRequest : SyncPullCollectorError()
     data object InvalidResponse : SyncPullCollectorError()
-    class StagingFailed(val error: StoreError) : SyncPullCollectorError()
+    data class StagingFailed(val error: StoreError) : SyncPullCollectorError()
 
     final override fun toString(): String = "<sync collection error redacted>"
 }
@@ -110,6 +110,7 @@ internal class SyncPullStaging(private val files: StateStore) {
             catch (error: SyncPullCollectorError.StagingFailed) {
                 if (error.error != StoreError.NotFound) failure = error
             }
+            catch (_: Throwable) { failure = SyncPullCollectorError.StagingFailed(StoreError.IOFailure) }
         }
         if (failure != null) throw failure
         discarded = true

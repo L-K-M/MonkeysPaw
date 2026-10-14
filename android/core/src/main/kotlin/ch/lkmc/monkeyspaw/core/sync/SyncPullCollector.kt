@@ -114,8 +114,9 @@ internal class SyncPullCollector(
                 }
                 request = PullRequest(response.databaseID, cursors)
             }
-        } catch (error: Exception) {
-            staging.discard()
+        } catch (error: Throwable) {
+            // Keep the primary outcome (especially cancellation/auth) while attempting every owned deletion.
+            try { staging.discard() } catch (_: Throwable) { /* Engine startup sweeps private orphans. */ }
             throw error
         }
     }

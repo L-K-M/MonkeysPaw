@@ -16,6 +16,36 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class SyncPullCollectorTest {
+    @Test fun discardAttemptsEveryPageWhenADriverThrowsThrowable() = runTest {
+        val files = MemoryStore()
+        val staging = SyncPullStaging(files)
+        repeat(3) { staging.append(response(personal(Mode.SNAPSHOT, 0, "0"))) }
+        val paths = staged(files)
+        val attempted = mutableListOf<String>()
+        files.onDelete = { path ->
+            attempted.add(path)
+            if (path == paths.first()) throw AssertionError("Synthetic driver failure")
+        }
+        assertEquals(SyncPullCollectorError.StagingFailed(StoreError.IOFailure),
+            assertFailsWith<SyncPullCollectorError.StagingFailed> { staging.discard() })
+        assertEquals(paths.toSet(), attempted.toSet())
+        files.onDelete = null
+        staging.discard()
+        assertTrue(staged(files).isEmpty())
+    }
+
+    @Test fun collectionThrowableStillDiscardsOwnedStagesAndErrorsHaveValueEquality() = runTest {
+        val files = MemoryStore()
+        val transport = script(response(personal(Mode.SNAPSHOT, head = 10, cursor = "advanced", more = true)),
+            response(personal(Mode.SNAPSHOT, head = 10, cursor = "done")))
+        var writes = 0
+        files.onWrite = { if (it.startsWith("sync/pull-") && ++writes == 2) throw AssertionError("Synthetic publication failure") }
+        assertFailsWith<AssertionError> { collector(transport, files).collect(PullRequest(null, emptyMap())) }
+        assertTrue(staged(files).isEmpty())
+        assertEquals(SyncPullCollectorError.NoProgress(SyncPullCollectorError.Reason.COLLECTION_DEADLINE),
+            SyncPullCollectorError.NoProgress(SyncPullCollectorError.Reason.COLLECTION_DEADLINE))
+    }
+
     @Test fun splitMoveRetainsSourceScopesAndExactOpaqueCursors() = runTest {
         val transport = script(
             response(personal(head = 10, cursor = "advanced user", items = listOf(FeedItem.MoveOut(10, prompt.rawValue))),
