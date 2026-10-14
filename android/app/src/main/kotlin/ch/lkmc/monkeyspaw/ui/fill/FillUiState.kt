@@ -3,16 +3,22 @@ package ch.lkmc.monkeyspaw.ui.fill
 import ch.lkmc.monkeyspaw.core.domain.format.PromptField
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssue
 import ch.lkmc.monkeyspaw.core.services.FillPreview
+import ch.lkmc.monkeyspaw.core.ports.DeliveryMode
+import ch.lkmc.monkeyspaw.core.ports.LearningPolicy
 
 internal data class FillFieldState(val field: PromptField, val value: String)
 
-internal enum class FillPhase { PICKING, LOADING, EDITING, COPYING, COPIED, FAILED, CLOSED }
-internal enum class FillFailure { LOAD, SNAPSHOT, CLIPBOARD }
+internal enum class FillPhase { PICKING, LOADING, EDITING, DELIVERING, DELIVERED, FAILED, CLOSED }
+internal enum class FillFailure { LOAD, SNAPSHOT, CLIPBOARD, DELIVERY }
 internal enum class FillWarning { REMEMBERED_VALUES_UNAVAILABLE, REMEMBERED_VALUES_NOT_SAVED, USAGE_NOT_SAVED }
 
 internal data class FillUiState(
     val phase: FillPhase = FillPhase.PICKING,
     val foreground: Boolean = false,
+    val deliveryMode: DeliveryMode = DeliveryMode.COPY,
+    val learningPolicy: LearningPolicy = LearningPolicy.NORMAL,
+    val input: FillInput = FillInput.EDITABLE,
+    val capturedText: CapturedTextFieldChoice? = null,
     val title: String = "",
     val description: String? = null,
     val fields: List<FillFieldState> = emptyList(),
@@ -27,6 +33,6 @@ internal data class FillUiState(
     val values: Map<String, String> get() = fields.associate { it.field.name to it.value }
     val copyEnabled: Boolean get() = phase == FillPhase.EDITING && foreground && builtinsResolved &&
         canRender && preview is FillPreview.Rendered
-    val cancelEnabled: Boolean get() = phase != FillPhase.COPYING && phase != FillPhase.CLOSED
-    val shouldFinish: Boolean get() = phase == FillPhase.CLOSED || (phase == FillPhase.COPIED && warnings.isEmpty())
+    val cancelEnabled: Boolean get() = phase != FillPhase.DELIVERING && phase != FillPhase.CLOSED
+    val shouldFinish: Boolean get() = phase == FillPhase.CLOSED || (phase == FillPhase.DELIVERED && warnings.isEmpty())
 }

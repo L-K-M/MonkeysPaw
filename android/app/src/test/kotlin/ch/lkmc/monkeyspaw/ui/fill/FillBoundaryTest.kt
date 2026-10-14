@@ -10,6 +10,27 @@ internal class FillBoundaryTest {
     private val root = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
 
     @Test
+    fun `handoff route carries only an opaque token and retained model avoids consuming it after rotation`() {
+        val route = root.resolve("entry/FillRoute.kt").readText()
+        assertEquals(1, Regex("\\bputExtra\\(").findAll(route).count())
+        assertTrue(route.contains("putExtra(handoffTokenExtra, handoffToken)"))
+        val activity = root.resolve("entry/FillActivity.kt").readText()
+        assertTrue(activity.contains("by viewModels { fillFactory }"))
+        assertTrue(activity.contains("!fill.handoffInitialized"))
+        assertTrue(activity.contains("requestedPath != null && !fill.handoffInitialized"))
+        assertTrue(activity.contains("request.handoffToken?.let(handoffs::consume)"))
+        assertTrue(activity.contains("fillFactory.restoreHandoff"))
+        val factory = root.resolve("ui/fill/FillViewModelFactory.kt").readText()
+        assertTrue(factory.contains("ViewModelProvider.Factory"))
+        val owned = listOf("ui/fill/FillViewModel.kt", "ui/fill/FillViewModelFactory.kt", "ui/fill/FillSession.kt",
+            "entry/FillHandoffStore.kt", "entry/FillHandoffLauncher.kt")
+        for (path in owned) {
+            assertFalse(Regex("\\b(?:SavedStateHandle|rememberSaveable|Parcelable|Serializable|InputConnection|Logger|Log)\\b")
+                .containsMatchIn(root.resolve(path).readText()))
+        }
+    }
+
+    @Test
     fun `library activation opens the registered private Fill entry and the entry owns Back and finish`() {
         val main = root.resolve("MainActivity.kt").readText()
         assertTrue(main.contains("onOpen = ::openFill"))
@@ -20,8 +41,10 @@ internal class FillBoundaryTest {
         assertTrue(library.contains("onOpen(row.selection)"))
         val activity = root.resolve("entry/FillActivity.kt").readText()
         assertTrue(activity.contains("@AndroidEntryPoint"))
-        assertTrue(activity.contains("LibraryScreen("))
-        assertTrue(activity.contains("FillScreen("))
+        assertTrue(activity.contains("FillRouteContent("))
+        val route = root.resolve("entry/FillRoute.kt").readText()
+        assertTrue(route.contains("LibraryScreen("))
+        assertTrue(route.contains("FillScreen("))
         assertTrue(activity.contains("BackHandler { fill.cancel() }"))
         assertTrue(activity.contains("if (it.shouldFinish) finish()"))
         assertTrue(activity.contains("fill.setForeground(true)"))
@@ -38,11 +61,11 @@ internal class FillBoundaryTest {
     }
 
     @Test
-    fun `ViewModel uses only Core copy and repository learning and screen has no work or drivers`() {
+    fun `ViewModel uses only Core delivery and repository learning and screen has no work or drivers`() {
         val model = root.resolve("ui/fill/FillViewModel.kt").readText()
         assertFalse(Regex("\\b(?:ClipboardManager|AndroidClipboard|AndroidClock|Context|File|writeText|readText|Toast)\\b")
             .containsMatchIn(model))
-        assertTrue(model.contains("fill.copy("))
+        assertTrue(model.contains("fill.deliver("))
         assertTrue(model.contains("repository.withLibrary"))
         val screen = root.resolve("ui/fill/FillScreen.kt").readText()
         assertFalse(Regex("\\b(?:LocalContext|Clipboard|FillService|viewModelScope|LaunchedEffect|Dispatchers|File)\\b")

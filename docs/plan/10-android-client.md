@@ -124,8 +124,23 @@ Rules:
   Insert uses one `commitText(result, 1)` only; never send Enter, key events or
   an editor action. Action flags never change this decision. A failed commit
   offers explicit Copy while the session remains active, with no automatic retry.
-- **Free-text fields** open the fill form ("Fill in Monkey's Paw"),
-  continuing as flow B.
+- **Inline Fill** reuses the form's preview, choices and existing text
+  values without opening software text input. A fieldless row activation is
+  an explicit Insert request; a form with fields waits for Insert or Copy.
+- **Free-text fields**, editing a prefill and software search open the
+  existing fill activity ("Fill in Monkey's Paw" / "Search in Monkey's Paw"),
+  continuing as flow B. The activity always uses Copy and never retains the
+  old input connection.
+
+IME activity handoff uses a one-use opaque token in a fresh explicit Intent.
+One process-local slot holds the opened prompt, field values, capture assignment,
+completed builtin snapshot and Normal/Ephemeral learning policy. No content,
+delivery endpoint or session callback enters the Intent or saved state.
+Failed or abandoned launches clear the slot; consumption drops it, and a
+retained ViewModel keeps the adopted form through configuration changes.
+If process loss removes the token's payload, the activity opens a fresh Copy
+picker with Ephemeral bookkeeping and no previous fields or capture. A pending
+builtin read must complete in its original active session before form handoff.
 
 **B. Fill form → clipboard. The universal lane: works in every app.**
 
@@ -211,7 +226,7 @@ Both can return later as opt-in extras.
 | Screen | Content |
 |---|---|
 | Library | search; filters for All, Favourites, Recent, Conflicts, folders, groups, tags; sync status |
-| Fill | one control per field (text, multi-line, choice), live preview, Copy (and Insert when opened from the IME or the selection action) |
+| Fill | one control per field (text, multi-line, choice), live preview, capture field chooser/ignore when applicable; Copy in activities and activity handoff, Insert and explicit Copy in the IME or editable selection action. IME text values are displayed without software text input; editing opens the Copy activity. |
 | Editor | front matter fields + body, live validation; read-only for `viewer` groups; history and restore |
 | Assistant | write, review, improve with diff and accept (M11) |
 | Settings | Account (server, sign-in, devices, groups and roles, accept an invite); Assistant provider; Keyboard and tile setup; Library (forget remembered values) |
