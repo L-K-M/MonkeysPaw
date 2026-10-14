@@ -16,7 +16,7 @@ internal class ImeBoundaryTest {
     private val app = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
     private val core = File(checkNotNull(System.getProperty("monkeyspaw.coreSources")))
     private val namespace = "http://schemas.android.com/apk/res/android"
-    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|Assistant\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|Logger|Log|Timber|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b")
+    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|Logger|Log|Timber|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b")
 
     @Test fun `IME is exported only behind system binding permission with exact filter and metadata in one process`() {
         val manifest = xml("AndroidManifest.xml")
@@ -43,7 +43,7 @@ internal class ImeBoundaryTest {
     }
 
     @Test fun `local graph constructor and provider closure cannot reach network secrets scheduling or logger`() {
-        app.resolve("ime").listFiles { file -> file.extension == "kt" }!!.forEach { validateLocal(it.readText()) }
+        app.resolve("ime").listFiles { file -> file.extension == "kt" }!!.forEach { validateGraphSource(it.readText()) }
         val providers = AppModule::class.java.declaredMethods.associateBy { it.returnType }
         val module = app.resolve("di/AppModule.kt").readText()
         val providerBodies = module.split("    @Provides").drop(1).associate { block ->
@@ -60,13 +60,13 @@ internal class ImeBoundaryTest {
             if (!reached.add(type)) return
             assertFalse(forbidden.containsMatchIn(type.simpleName), type.simpleName)
             providers[type]?.let { provider ->
-                validateLocal(providerBodies.getValue(provider.name))
+                validateGraphSource(providerBodies.getValue(provider.name))
                 provider.parameterTypes.forEach(::visit)
             }
             type.declaredConstructors.filter { it.getAnnotation(Inject::class.java) != null }
                 .flatMap { it.parameterTypes.toList() }.forEach(::visit)
             if (!type.name.startsWith("ch.lkmc.monkeyspaw.")) return
-            classSources[type.name.substringBefore('$')]?.forEach(::validateLocal)
+            classSources[type.name.substringBefore('$')]?.forEach(::validateGraphSource)
             type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .forEach { visit(it.type) }
         }
@@ -79,6 +79,7 @@ internal class ImeBoundaryTest {
         assertTrue(reached.any { it.simpleName == "LibraryRepository" })
         assertTrue(reached.any { it.simpleName == "FillService" })
         assertTrue(reached.any { it.simpleName == "Clipboard" })
+        assertTrue(reached.any { it.simpleName == "AndroidSettingsStore" })
         assertFalse(reached.any { it.simpleName == "CoroutineScope" })
         val graph = app.resolve("ime/ImeLocalGraph.kt").readText()
         assertTrue(graph.contains("if (!session.isActive()) TextDeliveryResult.STALE else copy.deliver(mode, text)"))
@@ -88,9 +89,17 @@ internal class ImeBoundaryTest {
     @Test fun `privacy source guard detects network construction reads logs and scheduling`() {
         for (code in listOf("HttpTransport", "OkHttpClient()", "SyncEngine()", "AssistantClient()", "SecretStore",
             "WorkManager.getInstance()", "Logger.getLogger()", "Log.d()", "getSurroundingText()", "getExtractedText()",
-            "getSelectedText()", "SavedStateHandle", "rememberSaveable")) {
-            assertFailsWith<AssertionError> { validateLocal(code) }
+            "getSelectedText()", "SavedStateHandle", "rememberSaveable", "AssistantTokenUsageClient()",
+            "AssistantTokenUsage(Logger.getLogger())", "@ApplicationScope scope", "AppModule.applicationScope(io)")) {
+            assertFailsWith<AssertionError> { validateGraphSource(code) }
         }
+    }
+
+    @Test fun `history token counters remain an immutable value with no assistant behavior`() {
+        val source = core.resolve("ch/lkmc/monkeyspaw/core/domain/llm/AssistantTypes.kt").readText()
+        // Pin the entire bodyless declaration before allowing its name in local history codecs.
+        assertTrue(source.contains("\ndata class AssistantTokenUsage(val inputTokens: Long, val outputTokens: Long)\n\ndata class AssistantResponse("))
+        validateGraphSource("AssistantTokenUsage(1L, 2L)")
     }
 
     @Test fun `application startup only warms local index and service reads only allowed metadata without extracted UI`() {
@@ -126,6 +135,11 @@ internal class ImeBoundaryTest {
 
     private fun validateLocal(source: String) {
         assertFalse(forbidden.containsMatchIn(source), forbidden.find(source)?.value)
+    }
+
+    private fun validateGraphSource(source: String) {
+        validateLocal(source)
+        assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(source), "Application scope")
     }
 
     private fun xml(path: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }

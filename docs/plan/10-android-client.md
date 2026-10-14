@@ -248,6 +248,8 @@ constants.
 - **Local state.** M8 uses `filesDir/state/` for remembered values, usage and
   history, separate from the library and `filesDir/datastore/`. DataStore
   holds versioned settings and seed progress in `settings.json` (§20 F11).
+  Its singleton DataStore owns a supervised IO scope with no exception
+  diagnostics, so IME state access does not obtain the application scope.
   The existing `StateStore` driver maps logical `provider-settings.json` and
   `provider-state.json` to the namespaced `provider-settings`/`provider-state`
   entries in that same settings DataStore (§22 J8). Each entry preserves the
