@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.integration
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
+import ch.lkmc.monkeyspaw.core.sync.SyncApplyJson
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
 import java.nio.file.Path
@@ -111,14 +112,30 @@ internal object ScenarioDeviceWorker {
                         (checkpoint == "before_state_directory_flush" && operation == "before_directory_flush" && path == "sync" && stateWritten))) pause()
                 }
                 try {
+                    val journal = if (checkpoint == "none") {
+                        scenarioCheck(device.data.stamp("sync/apply.json") != null, "recovery requires the killed journal")
+                        SyncApplyJson.codec.decode(WireJson.parse(device.data.read("sync/apply.json")) as WireValue.ObjectValue)
+                    } else null
+                    val beforeReplay = if (checkpoint == "replay") device.states.loadForAccountTransition() else null
+                    if (checkpoint == "replay") scenarioCheck(device.data.stamp("sync/apply.json") == null, "second replay requires recovered journal")
                     val result = device.account.startup()
                     scenarioCheck(result.enabled && result.cleanup.isComplete, "worker account activation")
+                    if (journal != null) {
+                        // Startup prepares the old graph locally before enabling foreground propagation.
+                        scenarioCheck(device.data.stamp("sync/apply.json") == null && device.states.loadForAccountTransition() == journal.nextState,
+                            "startup did not commit the exact killed journal intent")
+                        scenarioCheck(transport.traces.none { it.method == "PUT" || it.path == "/api/v1/sync/pull" },
+                            "journal replay must precede fresh pull and push")
+                        for (step in journal.steps.filter { it.edit.copyID != null }) scenarioCheck(
+                            device.files.read(step.edit.path).contentEquals(step.edit.bytes!!), "local replay changed stable losing copy")
+                    }
                     if (checkpoint == "replay") device.engine.recoverJournal()
                     else device.engine.setExecutionMode(SyncExecutionMode.FOREGROUND)
                     device.settle()
                     scenarioCheck(device.engine.reports.value.blockingIssue == null && device.data.stamp("sync/apply.json") == null,
                         "worker recovery incomplete")
-                    if (checkpoint == "replay") scenarioCheck(transport.traces.none { it.method == "PUT" }, "second replay repeated PUT")
+                    if (checkpoint == "replay") scenarioCheck(transport.traces.none { it.method == "PUT" || it.path == "/api/v1/sync/pull" } &&
+                        device.files.writes == 0 && device.states.loadForAccountTransition() == beforeReplay, "second replay changed local intent or repeated HTTP")
                 } finally { device.stop(); transport.close() }
             }
             print("complete\n"); System.out.flush()

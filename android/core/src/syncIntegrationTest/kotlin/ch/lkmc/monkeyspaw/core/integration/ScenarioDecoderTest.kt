@@ -116,6 +116,25 @@ class ScenarioDecoderTest {
         }
         assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(advance.patching(mapOf("/seconds" to wireLong(0)))) }
     }
+    @Test fun serverBindingsAndCrashExpectationsCannotBypassTheClosedLanguage() {
+        for (action in listOf("advance_server", "retention", "server_expect", "backup")) {
+            val scenario = SyncScenarioCorpus.load(directory).second.first { scenario -> scenario.steps.any { it.action == action } }
+            val step = scenario.steps.first { it.action == action }
+            val value = WireValue.ObjectValue(step.fields + mapOf("action" to wireString(action), "device" to wireString(step.device),
+                "bind" to wireString("unused")))
+            assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(value) }
+        }
+        for (action in listOf("kill_client", "resume_client")) {
+            val scenario = SyncScenarioCorpus.load(directory).second.first { scenario -> scenario.steps.any { it.action == action } }
+            val step = scenario.steps.first { it.action == action }
+            val value = WireValue.ObjectValue(step.fields + mapOf("action" to wireString(action), "device" to wireString(step.device),
+                "expected" to wireObject("file_count" to wireLong(0))))
+            assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(value) }
+        }
+        val step = SyncScenarioCorpus.load(directory).second.flatMap { it.steps }.first { it.action == "collect" }
+        assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(WireValue.ObjectValue(step.fields + mapOf(
+            "action" to wireString("collect"), "device" to wireString(step.device), "unused" to wireLong(1)))) }
+    }
 
     @Test fun textExpansionUsesUtf8BytesAndAvoidsOverflow() {
         fun text(count: Long) = wireObject("action" to wireString("bind_text"), "device" to wireString("a"),

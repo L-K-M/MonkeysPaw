@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.core.integration
 
 import ch.lkmc.monkeyspaw.core.syncapi.*
+import ch.lkmc.monkeyspaw.core.domain.llm.SecretReadSource
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -20,6 +21,20 @@ class ScenarioDeviceProcessTest {
     }
     @Test fun malformedInputFailsWithoutLeavingAChild() {
         assertFailsWith<ScenarioFailure> { ScenarioDeviceProcess.launch("{}".encodeToByteArray(), "paused", 3000) }
+    }
+    @Test fun aRecoveryWorkerCannotSubstituteAFreshSyncForTheKilledJournal() {
+        val scenario = ScenarioDecoder.decode(Files.readAllBytes(fixtureRoot().resolve("01-round-trip.json"))).single()
+        runLiveScenario(scenario) { runner ->
+            runner.run()
+            val device = runner.device("a")
+            device.engine.stop(); device.settle()
+            val account = device.accounts.loadAccount()!!
+            val secret = device.secrets.read(account.secretAccount, SecretReadSource.PERSISTED)!!
+            val input = secret.value.withValue { WireJson.canonical(wireObject("directory" to wireString(device.directory.toString()),
+                "name" to wireString(device.name), "secret" to wireString(it), "now" to wireString(device.now.toString()),
+                "checkpoint" to wireString("none"), "file_count" to wireLong(1))) }
+            assertFailsWith<ScenarioFailure> { ScenarioDeviceProcess.launch(input, "complete").use { it.requireSuccess() } }
+        }
     }
     @Test fun stateFileAndDirectoryFlushInterruptionsRecoverTwiceOverRealHTTP() {
         for (checkpoint in listOf("before_state_file_flush", "before_state_directory_flush")) {
