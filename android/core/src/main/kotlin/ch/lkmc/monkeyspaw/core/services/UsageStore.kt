@@ -23,7 +23,7 @@ class UsageStore internal constructor(
         val events = (read(path) + (at ?: clock.now())).takeLast(Limits.usageEventCap)
         files.write(StateJson.encode("events", JsonArray(events.map(StateJson::number))), path)
         cached[identity] = events
-        onRecord(identity, events)
+        onRecord(identity, events.toList())
         events.toList()
     }
 

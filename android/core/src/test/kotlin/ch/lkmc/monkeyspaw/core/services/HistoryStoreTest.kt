@@ -34,14 +34,25 @@ class HistoryStoreTest {
     }
 
     @Test fun retentionIgnoresUnexpectedFilesAndDeletionKeepsSidecarsIfRevisionSurvives() {
+        for (stepMillis in listOf(0L, 1L)) retentionKeepsTheNewestRevisions(stepMillis)
+    }
+
+    private fun retentionKeepsTheNewestRevisions(stepMillis: Long) {
         val h = ServiceHarness()
         val directory = "history/${identity.storageKey}"
         h.state.put("Settings", "settings.json")
         h.state.put("Unexpected", "$directory/not-a-revision.md")
         h.state.put("Bad date", "$directory/19701301T000001.234Z-000000.md")
-        repeat(51) { h.history.snapshot("Revision $it".encodeToByteArray(), identity, h.clock.date) }
+        val created = (0 until 51).map {
+            val revision = h.history.snapshot("Revision $it".encodeToByteArray(), identity, h.clock.date)
+            h.clock.date = h.clock.date.plusMillis(stepMillis)
+            revision
+        }
         h.history.prune(identity)
         assertEquals(50, h.history.revisions(identity).size)
+        assertEquals(created.drop(1).asReversed(), h.history.revisions(identity))
+        assertFailsWith<LibraryError.RevisionNotFound> { h.history.read(created.first()) }
+        assertEquals("Revision 50", h.history.read(created.last()).decodeToString())
         assertEquals("Settings", h.state.text("settings.json"))
         assertEquals("Unexpected", h.state.text("$directory/not-a-revision.md"))
         val revision = h.history.revisions(identity).first()

@@ -30,9 +30,9 @@ class PromptHistorySnapshot internal constructor(val revision: HistoryRevision, 
 class EditingService(private val library: LibraryService) {
     fun load(path: String): PromptLoadResult = library.mutations.run { library.checkedLoad(path) }
 
-    fun create(source: String, path: String): EditResult = writeSource(source, path) { EditResult.Saved(library.create(it, path)) }
+    fun create(source: String, path: String): EditResult = writeSource(source, path, null) { EditResult.Saved(library.create(it, path)) }
 
-    fun save(source: String, path: String, expectedStamp: FileStamp?): EditResult = writeSource(source, path) { document ->
+    fun save(source: String, path: String, expectedStamp: FileStamp?): EditResult = writeSource(source, path, expectedStamp) { document ->
         val current = library.checkedLoad(path)
         when (current) {
             is PromptLoadResult.Loaded -> {
@@ -47,15 +47,21 @@ class EditingService(private val library: LibraryService) {
         EditResult.Saved(library.save(document, path, expectedStamp))
     }
 
-    fun rename(path: String, filename: String, expectedStamp: FileStamp): EditResult = command(path, expectedStamp) {
-        if (filename.isEmpty() || '/' in filename) throw StoreError.InvalidPath
+    fun rename(path: String, filename: String, expectedStamp: FileStamp): EditResult {
         val folder = path.substringBeforeLast('/', "")
-        moved(path, (if (folder.isEmpty()) "" else "$folder/") + filename, expectedStamp)
+        val destination = (if (folder.isEmpty()) "" else "$folder/") + filename
+        return command(path, expectedStamp, validate = {
+            if (filename.isEmpty() || '/' in filename) throw StoreError.InvalidPath
+            LibraryPath.validate(destination)
+        }) { moved(path, destination, expectedStamp) }
     }
 
-    fun move(path: String, folder: String, expectedStamp: FileStamp): EditResult = command(path, expectedStamp) {
-        if (folder.isNotEmpty()) StorePath.validate(folder)
-        moved(path, (if (folder.isEmpty()) "" else "$folder/") + LibraryPath.filename(path), expectedStamp)
+    fun move(path: String, folder: String, expectedStamp: FileStamp): EditResult {
+        val destination = (if (folder.isEmpty()) "" else "$folder/") + LibraryPath.filename(path)
+        return command(path, expectedStamp, validate = {
+            if (folder.isNotEmpty()) StorePath.validate(folder)
+            LibraryPath.validate(destination)
+        }) { moved(path, destination, expectedStamp) }
     }
 
     fun delete(path: String, expectedStamp: FileStamp): EditResult = command(path, expectedStamp) {
@@ -79,27 +85,32 @@ class EditingService(private val library: LibraryService) {
             is LibraryMoveResult.Relocated -> EditResult.Relocated(move.baseline, move.current)
         }
 
-    private fun command(path: String, stamp: FileStamp, perform: () -> EditResult): EditResult = library.mutations.run {
-        val current = library.checkedLoad(path)
-        when (current) {
-            PromptLoadResult.Missing -> return@run EditResult.Missing
-            is PromptLoadResult.Failed -> return@run EditResult.Failed(current.error)
-            is PromptLoadResult.Loaded -> {
-                if (current.prompt.entry.stamp != stamp) return@run EditResult.Conflict(current.prompt.entry.stamp)
-                current.prompt.readOnlyReason?.let { return@run EditResult.ReadOnly(it) }
+    private fun command(path: String, stamp: FileStamp, validate: () -> Unit = {},
+                        perform: () -> EditResult): EditResult = library.mutations.run {
+        try {
+            validate()
+            val current = library.checkedLoad(path)
+            when (current) {
+                PromptLoadResult.Missing -> return@run EditResult.Missing
+                is PromptLoadResult.Failed -> return@run EditResult.Failed(current.error)
+                is PromptLoadResult.Loaded -> {
+                    if (current.prompt.entry.stamp != stamp) return@run EditResult.Conflict(current.prompt.entry.stamp)
+                    current.prompt.readOnlyReason?.let { return@run EditResult.ReadOnly(it) }
+                }
             }
-        }
-        try { perform() } catch (error: Exception) { outcome(error, path, stamp) }
+            perform()
+        } catch (error: Exception) { outcome(error, path, stamp) }
     }
 
-    private fun writeSource(source: String, path: String, write: (PromptDocument) -> EditResult): EditResult = library.mutations.run {
+    private fun writeSource(source: String, path: String, expectedStamp: FileStamp?,
+                            write: (PromptDocument) -> EditResult): EditResult = library.mutations.run {
         val document = PromptCodec.parse(source, LibraryPath.filename(path))
         if (document.isReadOnly) return@run EditResult.ReadOnly(SourceReadOnlyReason.FUTURE_FORMAT)
         if (document.issues.any { it.severity == PromptIssueSeverity.ERROR }) return@run EditResult.Invalid(document.issues)
         try { write(document) }
         catch (_: PromptWriteError.SourceTooLarge) { EditResult.Invalid(listOf(PromptIssue(PromptIssueCode.SOURCE_TOO_LARGE))) }
         catch (_: PromptWriteError.UnsupportedFormat) { EditResult.ReadOnly(SourceReadOnlyReason.FUTURE_FORMAT) }
-        catch (error: Exception) { outcome(error, path, null) }
+        catch (error: Exception) { outcome(error, path, expectedStamp) }
     }
 
     private fun outcome(error: Exception, path: String, expectedStamp: FileStamp?): EditResult {

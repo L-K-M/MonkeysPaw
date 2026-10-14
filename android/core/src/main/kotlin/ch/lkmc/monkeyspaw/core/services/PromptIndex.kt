@@ -63,6 +63,7 @@ class PromptIndex internal constructor(private val library: LibraryService) {
     }
 
     internal fun acceptUsage(identity: PromptIdentity, events: List<Instant>) {
+        if (prompts.values.none { it.entry.identity == identity }) return
         prompts = prompts.mapValues { (_, input) ->
             if (input.entry.identity == identity) IndexedPrompt(input.entry, events) else input
         }

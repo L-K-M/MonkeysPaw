@@ -67,7 +67,7 @@ class FillServiceTest {
         assertTrue(snapshots.isEmpty())
         h.clock.date = Instant.ofEpochSecond(86400)
         h.clipboard.pending!!.invoke("{{raw}}\nprivate text")
-        assertEquals(PromptBuiltinValues("{{raw}}\nprivate text", "1970-01-01", "00:00"), snapshots.single())
+        assertEquals(PromptBuiltinValues(clipboard = "{{raw}}\nprivate text", date = "1970-01-01", time = "00:00"), snapshots.single())
         assertEquals(1, h.clock.samples)
     }
 
@@ -83,7 +83,22 @@ class FillServiceTest {
         }
         val h = ServiceHarness()
         h.clipboard.text = ""
-        h.fill.builtinSnapshot(h.draft("{{clipboard}}")) { assertEquals("", it.clipboard) }
+        val snapshots = mutableListOf<PromptBuiltinValues>()
+        h.fill.builtinSnapshot(h.draft("{{clipboard}}"), snapshots::add)
+        assertEquals("", snapshots.single().clipboard)
+    }
+
+    @Test fun interruptedClipboardCopyPreservesTheExceptionAndInterruptStatus() {
+        val h = ServiceHarness()
+        val interruption = InterruptedException()
+        h.clipboard.writeError = interruption
+        try {
+            assertSame(interruption, assertFailsWith<InterruptedException> {
+                h.fill.copy(h.draft("Body"), emptyMap(), PromptBuiltinValues())
+            })
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally { Thread.interrupted() }
+        assertTrue(h.state.bytesSnapshot().isEmpty())
     }
 
     @Test fun formPreservesBodyOrderMetadataRememberFlagsAndEmptyRememberedText() {

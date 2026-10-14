@@ -11,10 +11,14 @@ import kotlin.math.roundToLong
 /** Private version-1 state only; parsing failures never retain JSON or decoder error bodies. */
 internal object StateJson {
     fun read(bytes: ByteArray): JsonObject {
-        val root = Json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as? JsonObject
+        val root = try {
+            Json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as? JsonObject
+        } catch (_: Exception) { throw LibraryError.OperationFailed }
             ?: throw LibraryError.OperationFailed
         val version = root["version"] as? JsonPrimitive ?: throw LibraryError.OperationFailed
-        if (version.isString || BigDecimal(version.content).intValueExact() != 1) throw LibraryError.OperationFailed
+        if (version.isString || version.content.toBigDecimalOrNull()?.compareTo(BigDecimal.ONE) != 0) {
+            throw LibraryError.OperationFailed
+        }
         return root
     }
 
@@ -29,13 +33,17 @@ internal object StateJson {
     fun instant(element: JsonElement): Instant {
         val primitive = element as? JsonPrimitive ?: throw LibraryError.OperationFailed
         if (primitive.isString) throw LibraryError.OperationFailed
-        val seconds = primitive.content.toDouble()
+        val seconds = primitive.content.toDoubleOrNull() ?: throw LibraryError.OperationFailed
         if (!seconds.isFinite()) throw LibraryError.OperationFailed
-        val whole = floor(seconds)
-        if (whole < Instant.MIN.epochSecond.toDouble() || whole > Instant.MAX.epochSecond.toDouble()) {
+        val floored = floor(seconds)
+        val whole = floored.toLong()
+        val nanos = ((seconds - floored) * 1_000_000_000).roundToLong()
+        // Double rounds MAX's epoch second upward; compare the exact integer bounds.
+        if (whole < Instant.MIN.epochSecond || whole > Instant.MAX.epochSecond ||
+            whole == Instant.MAX.epochSecond && nanos >= 1_000_000_000) {
             throw LibraryError.OperationFailed
         }
-        return Instant.ofEpochSecond(whole.toLong(), ((seconds - whole) * 1_000_000_000).roundToLong())
+        return Instant.ofEpochSecond(whole, nanos)
     }
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -48,7 +56,9 @@ internal object StateJson {
         Utf8Order.compare(a.encodeToByteArray(throwOnInvalidSequence = true), b.encodeToByteArray(throwOnInvalidSequence = true))
     })
 
-    fun encode(payload: String, contents: JsonElement): ByteArray =
-        objectOf(mapOf(payload to contents, "version" to JsonPrimitive(1))).toString()
+    fun encode(payload: String, contents: JsonElement): ByteArray {
+        require(payload != "version") { "State payload cannot replace the version marker." }
+        return objectOf(mapOf(payload to contents, "version" to JsonPrimitive(1))).toString()
             .encodeToByteArray(throwOnInvalidSequence = true)
+    }
 }

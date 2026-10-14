@@ -72,8 +72,10 @@ internal class MemoryStore : StateStore {
         access(Operation.MOVE, source)
         StorePath.validate(destination)
         onMove?.invoke(source, destination)
+        val moved = files[source] ?: throw StoreError.NotFound
         if (destination in files) throw StoreError.AlreadyExists
-        files[destination] = files.remove(source) ?: throw StoreError.NotFound
+        files.remove(source)
+        files[destination] = moved
     }
     private fun publish(bytes: ByteArray, path: String, private: Boolean) {
         writes.add(path)

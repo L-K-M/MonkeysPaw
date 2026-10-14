@@ -21,8 +21,9 @@ internal class MutationBoundary {
 }
 
 internal fun sanitized(error: Exception): Exception = when (error) {
+    is InterruptedException -> error.also { Thread.currentThread().interrupt() }
     is StoreError, is LibraryError, is PromptWriteError, is ULIDGenerationError,
-    is CancellationException, is InterruptedException -> error
+    is CancellationException -> error
     else -> LibraryError.OperationFailed
 }
 
@@ -105,14 +106,16 @@ sealed interface PromptLoadResult {
 
 sealed interface LibraryMoveResult {
     data class Moved(val entry: LibraryEntry) : LibraryMoveResult
-    /** The move committed. Bind to baseline.relativePath and reconcile the destination observation. */
+    /** The move committed. Bind to baseline.relativePath and reconcile the destination observation.
+     * The baseline carries the source stamp; reload before using it as an expected stamp. */
     data class Relocated(val baseline: LibraryEntry, val current: PromptLoadResult) : LibraryMoveResult
 }
 
 enum class KeyMigration { UNCHANGED, MIGRATED }
 
 internal interface PromptKeyedStore {
-    /** Move the whole key or fail unchanged; completed moves are reversible. */
+    /** Move the whole key or fail unchanged; completed moves are reversible.
+     * UNCHANGED means an equal identity or absent source, and destination collisions throw KeyedStateConflict. */
     fun migrateKey(source: PromptIdentity, destination: PromptIdentity): KeyMigration
 }
 

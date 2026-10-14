@@ -255,6 +255,43 @@ class StateStoresTest {
         assertFalse(error.toString().contains("private"))
     }
 
+    @Test fun usageListenerCannotMutateCachedOrReturnedEvents() {
+        val h = ServiceHarness()
+        val first = Instant.ofEpochSecond(1)
+        val second = Instant.ofEpochSecond(2)
+        h.usage.recordUse(identity, first)
+        h.usage.onRecord = { _, events -> (events as MutableList).clear() }
+        assertEquals(listOf(first, second), h.usage.recordUse(identity, second))
+        assertEquals(listOf(first, second), h.usage.cachedEvents(identity))
+        assertEquals(listOf(first, second), h.usage.useEvents(identity))
+    }
+
+    @Test fun moveFakeChecksTheSourceFirstAndRefusesAnOccupiedSelfMove() {
+        val store = MemoryStore()
+        store.put("Destination", "b.md")
+        val before = store.bytesSnapshot()
+        assertFailsWith<StoreError.NotFound> { store.move("missing.md", "b.md") }
+        assertEquals(before, store.bytesSnapshot())
+        assertFailsWith<StoreError.AlreadyExists> { store.move("b.md", "b.md") }
+        assertEquals(before, store.bytesSnapshot())
+    }
+
+    @Test fun interruptedMutationRestoresTheFlagAndReleasesTheLock() {
+        val boundary = MutationBoundary()
+        try {
+            assertFailsWith<InterruptedException> {
+                boundary.run {
+                    Thread.currentThread().interrupt()
+                    Thread.sleep(1)
+                }
+            }
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally { Thread.interrupted() }
+        val pool = Executors.newSingleThreadExecutor()
+        try { assertEquals(42, pool.submit<Int> { boundary.run { 42 } }.get(5, TimeUnit.SECONDS)) }
+        finally { pool.shutdownNow() }
+    }
+
     @Test fun concurrentReadMergeWritesRetainEveryFieldAndUsageEvent() {
         val h = ServiceHarness()
         val pool = Executors.newFixedThreadPool(6)

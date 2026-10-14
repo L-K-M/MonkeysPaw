@@ -1,7 +1,9 @@
 package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import ch.lkmc.monkeyspaw.core.ports.StorePath
 import java.time.Instant
 import kotlin.test.*
 
@@ -75,6 +77,46 @@ class EditingAndIndexTest {
         assertEquals(0, h.state.accesses)
         assertIs<EditResult.ReadOnly>(h.editing.create("---\nformat: 2\n---\nBody", "a.md"))
         assertTrue(h.prompts.bytesSnapshot().isEmpty())
+    }
+
+    @Test fun invalidRenameNamesAndComposedDestinationsFailBeforeAnyStoreAccess() {
+        val h = ServiceHarness()
+        val opened = h.put("Original", "folder/a.md")
+        val accesses = h.prompts.accesses
+        val original = h.prompts.bytesSnapshot()
+        for (filename in listOf("", ".", "..", "../escape.md", "nested/a.md", "a\\b.md", "a\u0000.md",
+            "a\u0085.md", "a\u200b.md", "a\u202e.md", "a\ud800.md", "a\udc00.md", "é".repeat(509) + ".md")) {
+            assertEquals(EditResult.Failed(StoreError.InvalidPath), h.editing.rename(opened.relativePath, filename, opened.stamp))
+            assertEquals(accesses, h.prompts.accesses)
+            assertEquals(0, h.state.accesses)
+            assertEquals(original, h.prompts.bytesSnapshot())
+        }
+        val folder = "x".repeat(Limits.maxPathBytes - 2)
+        StorePath.validate(folder)
+        assertEquals(EditResult.Failed(StoreError.InvalidPath), h.editing.move(opened.relativePath, folder, opened.stamp))
+        assertEquals(accesses, h.prompts.accesses)
+        assertEquals(0, h.state.accesses)
+        assertEquals(original, h.prompts.bytesSnapshot())
+        assertTrue(h.entropy.requests.isEmpty())
+    }
+
+    @Test fun saveRetainsExpectedStampWhenAStagingFailureRecreatesThePrompt() {
+        for (changed in listOf(false, true)) {
+            val h = ServiceHarness()
+            val opened = h.put("Original")
+            h.values.record(opened.identity, mapOf("field" to "kept"))
+            val state = h.state.bytesSnapshot()
+            h.state.fault = { op, _ -> if (op == MemoryStore.Operation.LIST) {
+                if (changed) h.prompts.put("External recreation", "a.md")
+                StoreError.NotFound
+            } else null }
+            val outcome = h.editing.save("Draft", "a.md", opened.stamp)
+            h.state.fault = null
+            if (changed) assertEquals(EditResult.Conflict(h.prompts.stamp("a.md")!!), outcome)
+            else assertEquals(EditResult.Failed(StoreError.NotFound), outcome)
+            assertEquals(if (changed) "External recreation" else "Original", h.prompts.text("a.md"))
+            assertEquals(state, h.state.bytesSnapshot())
+        }
     }
 
     @Test fun deletionAndRecreationProduceDifferentStampedOutcomes() {
@@ -224,6 +266,31 @@ class EditingAndIndexTest {
         h.prompts.fault = { op, _ -> if (op == MemoryStore.Operation.READ) StoreError.IOFailure else null }
         assertFailsWith<StoreError.IOFailure> { h.index.rebuild() }
         assertEquals(old.version, h.index.snapshot().version)
+    }
+
+    @Test fun malformedUsageEventAloneCannotReplaceTheLastCompleteIndex() {
+        val h = ServiceHarness()
+        val entry = h.put("Original")
+        h.index.rebuild()
+        h.index.recordUse(entry.identity)
+        val old = h.index.snapshot()
+        h.put("External replacement")
+        h.state.put("{\"events\":[1e999],\"version\":1}", "usage/${entry.identity.storageKey}")
+        assertFailsWith<LibraryError.OperationFailed> { h.index.rebuild() }
+        assertEquals(old, h.index.snapshot())
+    }
+
+    @Test fun usageForAnUnindexedIdentityDoesNotPublishAnIdenticalIndex() {
+        val h = ServiceHarness()
+        val entry = h.put("Original")
+        val old = h.index.rebuild()
+        val unknown = PromptIdentity.at("missing.md")
+        assertEquals(listOf(h.clock.date), h.index.recordUse(unknown))
+        assertEquals(old, h.index.snapshot())
+        assertEquals(listOf(h.clock.date), h.usage.useEvents(unknown))
+        h.index.recordUse(entry.identity)
+        assertEquals(old.version + 1, h.index.snapshot().version)
+        assertEquals(listOf(h.clock.date), h.index.snapshot().prompts.single().useEvents)
     }
 
     @Test fun indexPublishesAfterPromptCommitAndUsageWriteFailureKeepsRankingUnchanged() {
