@@ -54,6 +54,8 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
     let retainedSourcePath: String?
     let copyID: String?
     let heldIssue: SyncIssueCode?
+    /// Also retained when raw forensic bytes cannot carry a front-matter marker.
+    var copyOrigin: SyncPromptOrigin? = nil
 
     var description: String { "<sync library edit>" }
     var customMirror: Mirror { Mirror(self, children: ["edit": description]) }
@@ -67,7 +69,7 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
             guard expected != nil, bytes == nil, hash == nil, transition == nil,
                   retainedBytes == expected?.bytes,
                   retainedSourcePath.map({ RelativePath($0) }) == expected.map({ RelativePath($0.path) }),
-                  copyID == nil, heldIssue == nil else { throw SyncError.invalidState }
+                  copyID == nil, heldIssue == nil, copyOrigin == nil else { throw SyncError.invalidState }
             return
         }
         guard let bytes, hash == SyncHash(bytes: bytes), let transition,
@@ -83,7 +85,10 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
             if heldIssue != nil {
                 let nonPrompt = !LibraryPath.isPrompt(retainedSourcePath)
                 guard bytes == retainedBytes, copyID == nil,
-                      !document.canRender || (nonPrompt && heldIssue == .localVisibility) else { throw SyncError.invalidState }
+                      !document.canRender || (nonPrompt && heldIssue == .localVisibility)
+                        || (heldIssue == .content(.invalidMetadataType) && SyncConflictMetadata.hasInvalidOrigin(in: document)) else {
+                    throw SyncError.invalidState
+                }
                 return
             }
             let original = PromptCodec.parseFile(retainedBytes, filename: LibraryPath.filename(retainedSourcePath))
@@ -91,14 +96,20 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   original.frontMatter.id?.rawValue != copyID else { throw SyncError.invalidState }
         } else {
             try LibraryPath.validate(path)
-            guard heldIssue == nil, copyID == nil, retainedBytes == expected?.bytes,
-                  retainedSourcePath.map({ RelativePath($0) }) == expected.map({ RelativePath($0.path) }) else {
-                throw SyncError.invalidState
-            }
+            guard copyOrigin == nil, copyID == nil, retainedBytes == expected?.bytes,
+                  retainedSourcePath.map({ RelativePath($0) }) == expected.map({ RelativePath($0.path) }),
+                  heldIssue == nil || (heldIssue == .content(.invalidMetadataType)
+                    && SyncConflictMetadata.hasInvalidOrigin(in: document)) else { throw SyncError.invalidState }
         }
         guard !document.isReadOnly, !document.issues.contains(where: { $0.severity == .error }) else {
             throw SyncError.invalidState
         }
+        if heldIssue == .content(.invalidMetadataType), kind != .rescue { return }
+        do {
+            let origin = try SyncConflictMetadata.origin(in: document)
+            if let copyOrigin, origin != copyOrigin { throw SyncError.invalidState }
+        }
+        catch { throw SyncError.invalidState }
     }
 }
 
@@ -131,10 +142,11 @@ final class SyncLibraryMutations {
 
     func publication(_ bytes: Data, at path: RelativePath, expecting expected: SyncLibraryFile?,
                      transition: SyncIdentityTransition, mode: SyncFileMode = .normal,
-                     kind: SyncLibraryEdit.Kind = .apply, id: UUID = UUID()) throws -> SyncLibraryEdit {
+                     kind: SyncLibraryEdit.Kind = .apply, markerIssue: SyncIssueCode? = nil,
+                     id: UUID = UUID()) throws -> SyncLibraryEdit {
         let edit = SyncLibraryEdit(id: id, kind: kind, path: path.string, expected: expected, bytes: bytes,
             hash: SyncHash(bytes: bytes), transition: transition, mode: mode, retainedBytes: expected?.bytes,
-            retainedSourcePath: expected?.path, copyID: nil, heldIssue: nil)
+            retainedSourcePath: expected?.path, copyID: nil, heldIssue: markerIssue)
         try edit.validate()
         return edit
     }
@@ -150,10 +162,11 @@ final class SyncLibraryMutations {
     /// The planner chooses destination and fresh ID once, before journaling.
     /// Unsupported/forensic files stay byte-exact and held, with no injected text.
     func rescue(_ file: SyncLibraryFile, at destination: RelativePath, freshID: ULID,
-                id: UUID = UUID()) throws -> SyncLibraryEdit {
+                origin: SyncPromptOrigin = .rescued, id: UUID = UUID()) throws -> SyncLibraryEdit {
         let document = PromptCodec.parseFile(file.bytes, filename: LibraryPath.filename(file.path))
         var issue = document.issues.first(where: { $0.severity == .error }).map { SyncIssueCode.content($0.code) }
         if document.isReadOnly { issue = .content(.unsupportedFormat) }
+        if issue == nil, SyncConflictMetadata.hasInvalidOrigin(in: document) { issue = .content(.invalidMetadataType) }
         if !LibraryPath.isPrompt(file.path) { issue = .localVisibility }
         var bytes = file.bytes
         var copyID: String?
@@ -161,13 +174,15 @@ final class SyncLibraryMutations {
             guard document.frontMatter.id != freshID else { throw SyncError.invalidState }
             bytes = PromptUTF8.encode(try ImportMapper.replacingIdentity(freshID, in: document,
                 filename: LibraryPath.filename(destination.string)).document.source)
+            bytes = try SyncConflictMetadata.settingOrigin(origin, in: bytes, filename: LibraryPath.filename(destination.string))
             copyID = freshID.rawValue
         }
         let target = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(destination.string))
-        let edit = SyncLibraryEdit(id: id, kind: .rescue, path: destination.string, expected: nil, bytes: bytes,
+        var edit = SyncLibraryEdit(id: id, kind: .rescue, path: destination.string, expected: nil, bytes: bytes,
             hash: SyncHash(bytes: bytes), transition: try SyncIdentityTransition(from: nil,
                 to: PromptIdentity(path: destination.string, id: target.frontMatter.id)), mode: .normal,
             retainedBytes: file.bytes, retainedSourcePath: file.path, copyID: copyID, heldIssue: issue)
+        edit.copyOrigin = origin
         try edit.validate()
         return edit
     }

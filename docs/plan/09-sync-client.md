@@ -328,15 +328,32 @@ instead of doubling.
     `Conflicts/<group folder or "Personal">/<name> (conflict <device>
     <UTC YYYY-MM-DD HHmm>).md` (`CONFLICT_NAME_FORMAT`). It is never placed beside the original,
     where a group folder would push it into the group.
-  - State marks it `origin: conflict_of <id>`. The Conflicts filter uses
-    that flag, never the file name, so renaming a copy keeps it listed.
-    Files pulled into `Conflicts/` from other devices are listed too.
+  - Private content carries `x-monkeyspaw-conflict-of: <ULID>` in front
+    matter, mirrored as typed state `origin: conflict_of <id>` (§20 E18).
+    Rescues instead carry `x-monkeyspaw-rescued: true` and rescued origin.
+    Ingest requires a canonical uppercase ULID distinct from the copy's ID,
+    and an actual boolean for rescued; false means no rescued origin. A
+    conflict marker together with rescued true is invalid. Invalid local markers
+    are held raw with `metadata.invalid_type`, never trusted as origin. Canonical
+    server bytes with invalid markers are installed exactly with nil origin and
+    a fingerprinted per-file error, so one bad marker cannot block the whole pull. Group
+    metadata is validated but only private state projects origin. Ordinary
+    copies, renames and private sync preserve the keys; clearing them clears
+    state origin on ingest. The Conflicts filter uses marker-derived origin,
+    never the file name. Copies from another device remain listed anywhere.
   - The resolve view reuses the improve diff (§7.3). The actions are: keep
     server, keep mine (re-push on the new head), or keep both.
-- **A `409` on `/move`** resolves to the server's scope and path. The local
-  version then follows edit-vs-edit.
-- **Create retried after a network drop.** If the `409` head equals what was
-  pushed, the create succeeded: adopt it, and make no copy.
+- **Dispatch by envelope code.** A `409 conflict`, including on `/move`,
+  resolves to the head's scope and path, preserving the losing local version.
+  A `409 path_taken` renames the intended destination before retrying a
+  transfer; its unrelated `existing` content never implies original ownership.
+- **Lost acknowledgements.** Journal exact sent scope/path/full-byte hash,
+  bytes and base revision. An identical newer conflict head proves a create,
+  edit or move succeeded: adopt it without a copy (§20 E9). For a move this
+  comparison uses the server baseline canonicalized for the destination,
+  not an accompanying local edit. An unknown moved baseline cannot prove
+  success. A newer local re-read stays dirty and is never treated as sent.
+  A push acknowledgement does not advance pull cursors.
 - **Edit vs delete.**
   - Local edit vs server delete or `410 deleted`: the local version becomes
     a new private prompt with a new id in `Conflicts/`, and the user is
@@ -346,17 +363,43 @@ instead of doubling.
 - **Path clash** (`409 path_taken`): rename the local file first, to
   `<name> (2).md`, then `(3)` up to `PATH_CLASH_MAX = 20`. Update state,
   then retry. Beyond the cap the file is marked `syncError`.
-- **Denied (`403`)** for a viewer edit, delete, or move: the file is
-  restored from `GET /prompts/{id}` at its recorded path (a moved file is
-  moved back). Any local edit is kept as a private copy in `Conflicts/`, and
-  the user is notified.
-- **A `403` on create**, such as a new file dropped into a viewer group's
-  folder: the file moves to `Conflicts/` as a private prompt, and the user
-  is notified. A `403` is never retried.
-- **Not retryable** (`422`, `404` on update): state records `last_error`.
-  The file is skipped until its content changes. The footer shows "sync
-  errors" and lists the file and the reason.
+  Sync naming compares NFC/full-fold `path_key`, independently of editor copy
+  names. An incoming server prompt owns its path; relocate a writable local
+  occupant with its identity/history intact, or rescue a viewer/unknown
+  occupant privately before replanning (§20 E12). Name truncation retains
+  whole Unicode characters, the complete conflict timestamp and collision
+  suffix. Private destinations fit the 1,024-byte wire cap, even when the
+  source uses the 1,287-byte rooted cap. Long rescue hierarchies flatten with
+  a stable source-path hash suffix; the journal retains the exact source map.
+- **Denied (`403`)** never proves the user is a viewer (§20 E20). Refresh
+  memberships. An edit/delete/move restores only an accessible GET head whose
+  ID, scope and path match the acknowledged recorded original. Malformed or
+  mismatched GET heads are unavailable for restoration. Otherwise
+  rescue locally. Creates always rescue locally. Keep any local version
+  privately and notify; do not immediately repeat the denied operation.
+- **Input errors** (`422`, `404` on update): persist a sanitized issue code
+  and a fingerprint of input bytes, path, scope, operation and access generation.
+  The same fingerprint is skipped, including after restart. Repair to any
+  offending input permits another attempt. A 403 uses the same hold until
+  input/access changes. The footer shows "sync errors" and lists the file
+  and the fixed reason, never a server error body.
 - **No cascades.** A conflict copy is created once per losing local version.
-  It is a new private prompt and is never compared against the original.
+  It has its own private identity and is never compared against the original.
+  A conflict of a marked copy retains its root origin rather than pointing at
+  another conflict copy. Reuse a current private copy only when regenerating
+  it with its own ID/origin yields identical full bytes; this works after
+  restart or rename. Reuse requires a conflict-of origin identifying the original;
+  rescued true alone cannot identify a source, so equal-bodied rescues stay distinct.
+  Recheck that copy through the apply journal before retiring the source. Plan
+  every pull's copies together, reserving incoming paths and prior allocations
+  and excluding any candidate that the same plan replaces or removes.
+  Different versions in the same minute get bounded
+  distinct names. Journal the chosen destination and fresh ID once and replay
+  those choices. Forensic/unsupported content remains byte-exact with a typed
+  upload hold; no marker or ID is injected into invalid bytes (§20 E14).
+  Permanent retention records bind raw holds to account/root, destination,
+  source, hash, issue and typed origin. Ingest must read those holds before
+  duplicate-ID repair or ownership matching; an embedded raw ID never identifies
+  a live server head. Held files remain path occupants and are preserved on clashes.
 - **Timestamps.** Conflict names use UTC. `{{date}}` and `{{time}}` stay
   local, because they are template values, not records.

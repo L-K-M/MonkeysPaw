@@ -16,11 +16,15 @@ struct SyncReconciliationSnapshot {
     let binding: SyncLibraryIdentity
     let files: [SyncLibraryFile]
     let availability: Availability
+    /// Y7 supplies durable raw-copy/account holds before any ID matching/repair.
+    let heldPaths: Set<RelativePath>
 
-    init(binding: SyncLibraryIdentity, files: [SyncLibraryFile], availability: Availability = .available) {
+    init(binding: SyncLibraryIdentity, files: [SyncLibraryFile], availability: Availability = .available,
+         heldPaths: Set<RelativePath> = []) {
         self.binding = binding
         self.files = files
         self.availability = availability
+        self.heldPaths = heldPaths
     }
 }
 
@@ -99,7 +103,8 @@ struct SyncReconciliationPlan: CustomStringConvertible, CustomReflectable {
 }
 
 /// Y6 chooses naming, metadata and a stable fresh ID before journal creation.
-/// The rescue edit must retain the exact losing version and its source mapping.
+/// A new rescue retains exact losing bytes/source mapping. A reused copy is a
+/// checked .apply of its unchanged bytes, so racing edits block source retirement.
 struct SyncReconciliationCopy {
     let edit: SyncLibraryEdit
     let origin: SyncPromptOrigin

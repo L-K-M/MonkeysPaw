@@ -28,28 +28,58 @@ extension SyncReconciler {
         var next = plan.nextState
         var edits: [SyncLibraryEdit] = []
         var destinations = Set(try plan.occupiedPaths.map(folded))
-        destinations.formUnion(try installations.map { try folded($0.remote.libraryPath) })
+        let serverPaths = Set(try installations.map { try folded($0.remote.libraryPath) })
+        destinations.formUnion(serverPaths)
         var identities = plan.localIdentities.union(next.prompts.keys)
+        var reused = Set<String>()
         for preservation in preservations {
             let source = RelativePath(preservation.local.path)
             guard let copy = copies[source] else { throw SyncReconciliationError.requiresPolicy }
             let edit = copy.edit
             try edit.validate()
-            guard edit.kind == .rescue, edit.retainedBytes == preservation.local.bytes,
-                  edit.retainedSourcePath.map({ RelativePath($0) }) == source,
-                  destinations.insert(try folded(RelativePath(edit.path))).inserted else {
+            let previousOrigin = try? SyncConflictMetadata.origin(in: preservation.local.bytes,
+                filename: LibraryPath.filename(preservation.local.path))
+            let expectedOrigin: SyncPromptOrigin = preservation.reason == .restoreMissing ? .rescued
+                : previousOrigin ?? .conflictOf(preservation.id)
+            guard copy.origin == expectedOrigin else { throw SyncReconciliationError.requiresPolicy }
+            if edit.heldIssue == nil, try SyncConflictMetadata.origin(in: edit.bytes!,
+                filename: LibraryPath.filename(edit.path)) != copy.origin {
                 throw SyncReconciliationError.requiresPolicy
             }
-            if preservation.reason == .restoreMissing {
-                guard copy.origin == .rescued else { throw SyncReconciliationError.requiresPolicy }
-            } else if case .conflictOf(let id) = copy.origin, id != preservation.id {
-                throw SyncReconciliationError.requiresPolicy
-            }
-            if edit.heldIssue == nil {
-                guard let rawID = edit.copyID, let id = try? SyncIdentifiers.ulid(rawID),
-                      identities.insert(.assigned(id)).inserted else { throw SyncReconciliationError.requiresPolicy }
+            if edit.kind == .rescue {
+                guard edit.retainedBytes == preservation.local.bytes,
+                      edit.retainedSourcePath.map({ RelativePath($0) }) == source,
+                      destinations.insert(try folded(RelativePath(edit.path))).inserted else {
+                    throw SyncReconciliationError.requiresPolicy
+                }
+                if edit.heldIssue == nil {
+                    guard let rawID = edit.copyID, let id = try? SyncIdentifiers.ulid(rawID),
+                          identities.insert(.assigned(id)).inserted else { throw SyncReconciliationError.requiresPolicy }
+                    next.prompts[.assigned(id)] = try SyncPromptState(scope: .user(next.binding.account.userID),
+                        path: RelativePath(edit.path), rev: 0, origin: copy.origin)
+                }
+            } else if edit.kind == .apply, let existing = edit.expected,
+                      case .assigned(let id) = try existing.identity {
+                guard case .conflictOf = copy.origin else { throw SyncReconciliationError.requiresPolicy }
+                let path = RelativePath(edit.path)
+                guard path != source, plan.occupiedPaths.contains(path), plan.localIdentities.contains(.assigned(id)),
+                      !serverPaths.contains(try folded(path)), reused.insert(try folded(path)).inserted,
+                      edit.bytes == existing.bytes,
+                      try SyncConflictMetadata.copyBytes(preservation.local, freshID: id, origin: copy.origin,
+                          filename: LibraryPath.filename(edit.path)) == existing.bytes else {
+                    throw SyncReconciliationError.requiresPolicy
+                }
+                let old = next.prompts[.assigned(id)]
+                guard old == nil || old?.scope == .user(next.binding.account.userID) else {
+                    throw SyncReconciliationError.requiresPolicy
+                }
+                // Keep the acknowledged path/hash: a renamed or edited copy still
+                // needs its own private push. This checked edit proves it survives.
                 next.prompts[.assigned(id)] = try SyncPromptState(scope: .user(next.binding.account.userID),
-                    path: RelativePath(edit.path), rev: 0, origin: copy.origin)
+                    path: old?.path ?? path, rev: old?.rev ?? 0, canonicalHash: old?.canonicalHash,
+                    origin: copy.origin, lastError: old?.lastError)
+            } else {
+                throw SyncReconciliationError.requiresPolicy
             }
             edits.append(edit) // Copies are durable before originals can be retired.
         }
@@ -60,7 +90,9 @@ extension SyncReconciler {
                 throw SyncReconciliationError.requiresPolicy
             }
             edits.append(try mutations.publication(remote.bytes, at: remote.libraryPath, expecting: target,
-                transition: SyncIdentityTransition(from: target?.identity, to: .assigned(remote.id)), mode: remote.mode))
+                transition: SyncIdentityTransition(from: target?.identity, to: .assigned(remote.id)), mode: remote.mode,
+                markerIssue: SyncConflictMetadata.ingest(remote.bytes, filename: LibraryPath.filename(remote.path.string),
+                                                         scope: remote.scope.pathScope).issue))
             if let source = installation.source, RelativePath(source.path) != remote.libraryPath {
                 removals[RelativePath(source.path)] = source
             }
