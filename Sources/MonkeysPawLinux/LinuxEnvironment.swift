@@ -195,7 +195,7 @@ final class LinuxEnvironment {
     private let updateVersion: String?
     private let suppliedReleasePage: ReleasePageOpening?
     private let isRunningTests: Bool
-    private let updateScheduler = GLibScheduler()
+    private let updateScheduler = GLibUpdateScheduler()
     private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
     private let statusNotifierBusAddress: String?
     private var statusNotifierItem: LinuxStatusNotifierItem?
@@ -395,6 +395,7 @@ final class LinuxEnvironment {
         self.updateVersion = updateVersion
         suppliedReleasePage = releasePage
         isRunningTests = ProcessInfo.processInfo.arguments.first?.hasSuffix(".xctest") == true
+            || environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
         statusNotifierBusAddress = environment["DBUS_SESSION_BUS_ADDRESS"]
@@ -1124,7 +1125,6 @@ final class LinuxEnvironment {
         hotkey.shutdown()
         remoteDesktop.shutdown()
         portal.shutdown()
-        (scheduler as? GLibScheduler)?.shutdown()
     }
 
     func runSelfTest(done: @escaping (SelfTestReport) -> Void) {

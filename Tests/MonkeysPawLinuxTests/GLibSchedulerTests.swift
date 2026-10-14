@@ -7,8 +7,21 @@ import XCTest
 final class GLibSchedulerTests: XCTestCase {
     private final class Lifetime {}
 
+    func testRuntimeSchedulerPreservesAcceptedWorkAfterRelease() {
+        weak var lifetime: Lifetime?
+        var calls = 0
+        do {
+            let scheduler = GLibScheduler()
+            let captured = Lifetime()
+            lifetime = captured
+            scheduler.after(.zero) { withExtendedLifetime(captured) { calls += 1 } }
+        }
+        XCTAssertTrue(GTKTestSupport.spin { calls == 1 })
+        XCTAssertNil(lifetime)
+    }
+
     func testTimersRunOnceOnGLibThreadAndReleaseCapturedWork() {
-        let scheduler = GLibScheduler()
+        let scheduler = GLibUpdateScheduler()
         defer { scheduler.shutdown() }
         weak var lifetime: Lifetime?
         var calls = 0
@@ -27,7 +40,7 @@ final class GLibSchedulerTests: XCTestCase {
     }
 
     func testDisableRemovesNativeTimerAndShutdownRejectsQueuedRegistration() {
-        let scheduler = GLibScheduler()
+        let scheduler = GLibUpdateScheduler()
         weak var lifetime: Lifetime?
         var registered = false
         do {
@@ -54,7 +67,7 @@ final class GLibSchedulerTests: XCTestCase {
     }
 
     func testWorkerRegistrationAfterShutdownCannotReviveTimer() {
-        let scheduler = GLibScheduler()
+        let scheduler = GLibUpdateScheduler()
         scheduler.shutdown()
         var calls = 0
         let completed = NSLock()

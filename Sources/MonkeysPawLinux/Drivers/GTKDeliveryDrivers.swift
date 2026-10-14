@@ -355,9 +355,15 @@ struct GTKNotifier: Notifier, LibraryAvailabilityNotifier {
     }
 }
 
-/// Native sources belong to the GTK thread. Explicit shutdown also drops
-/// registrations queued by workers before teardown reaches the main loop.
-final class GLibScheduler: Scheduler {
+struct GLibScheduler: Scheduler {
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        GTK.after(delay.timeInterval, work)
+    }
+}
+
+/// Update-only cancellation; the ordinary runtime scheduler keeps accepted
+/// callbacks alive. Native sources and queued registrations retire on shutdown.
+final class GLibUpdateScheduler: Scheduler {
     private var sources = Set<guint>()
     private var enabled = true
     private var stopped = false
@@ -366,6 +372,7 @@ final class GLibScheduler: Scheduler {
         let pending = sources
         if pending.isEmpty { return }
         GTK.onMainLoop {
+            // The context owns the lookup result; it is borrowed, not a new ref.
             for source in pending where g_main_context_find_source_by_id(nil, source) != nil {
                 g_source_remove(source)
             }
@@ -385,8 +392,6 @@ final class GLibScheduler: Scheduler {
         }
     }
 
-    /// Used only by the dedicated update scheduler, so preference changes
-    /// cannot cancel delivery or library timers sharing the runtime scheduler.
     func suspend() {
         precondition(Thread.isMainThread)
         enabled = false
