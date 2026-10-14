@@ -173,7 +173,7 @@ def wait_healthy(docker, name, url):
 
 
 def database_control(value):
-    """Serve must be stopped: use its exact nonblocking flock protocol."""
+    """Mutations require stopped serve; reads share its nonblocking flock protocol."""
     data = Path(value["data"])
     if not data.is_absolute() or data.is_symlink() or not data.is_dir():
         raise SmokeFailure("invalid control directory")

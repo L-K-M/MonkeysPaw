@@ -603,7 +603,8 @@ jobs:
           retention-days: 3
 
   android-sync:
-    name: Android sync acceptance
+    # Preserve the existing check name for branch protection; this now runs full acceptance.
+    name: Android sync live server smoke (Z15)
     needs: changes
     if: needs.changes.outputs.android-sync == 'true'
     runs-on: ubuntu-24.04
