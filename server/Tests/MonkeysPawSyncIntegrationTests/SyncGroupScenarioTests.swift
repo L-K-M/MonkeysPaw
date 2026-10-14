@@ -51,10 +51,14 @@ extension ScenarioRunner {
             }
         }
         for (index, id) in ids.enumerated() {
-            try await http(ScenarioHTTP(device: action.device, method: action.method,
-                path: try substituting(.string(action.path), id: id, index: index).string(),
-                body: action.body.map { substituting($0, id: id, index: index) }, status: action.status,
-                expected: action.expected.mapValues { substituting($0, id: id, index: index) }, bindings: [:]))
+            do {
+                try await http(ScenarioHTTP(device: action.device, method: action.method,
+                    path: try substituting(.string(action.path), id: id, index: index).string(),
+                    body: action.body.map { substituting($0, id: id, index: index) }, status: action.status,
+                    expected: action.expected.mapValues { substituting($0, id: id, index: index) }, bindings: [:]))
+            } catch let error as ScenarioFailure {
+                throw ScenarioFailure.invalid("HTTP series item \(index): " + error.description)
+            }
         }
     }
 

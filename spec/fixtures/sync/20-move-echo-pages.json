@@ -289,7 +289,7 @@
             "base_rev": 0,
             "scope": "user",
             "path": "Source/${item.index}.md",
-            "content": "---\nid: ${item.id}\ntitle: Item\n---\nSmall.\n"
+            "content": "---\nid: \"${item.id}\"\ntitle: Item\n---\nSmall.\n"
           },
           "status": 200,
           "expected": {
@@ -406,7 +406,7 @@
             "base_rev": 0,
             "scope": "group",
             "path": "Destination/${item.index}.md",
-            "content": "---\nid: ${item.id}\ntitle: Item\n---\nSmall.\n",
+            "content": "---\nid: \"${item.id}\"\ntitle: Item\n---\nSmall.\n",
             "group_id": "${group.team}"
           },
           "status": 200,
@@ -814,7 +814,7 @@
             "base_rev": 0,
             "scope": "user",
             "path": "Source/${item.index}.md",
-            "content": "---\nid: ${item.id}\ntitle: Item\n---\n${text.fill}"
+            "content": "---\nid: \"${item.id}\"\ntitle: Item\n---\n${text.fill}"
           },
           "status": 200,
           "expected": {
@@ -835,7 +835,7 @@
             "base_rev": 0,
             "scope": "group",
             "path": "Destination/${item.index}.md",
-            "content": "---\nid: ${item.id}\ntitle: Item\n---\n${text.fill}",
+            "content": "---\nid: \"${item.id}\"\ntitle: Item\n---\n${text.fill}",
             "group_id": "${group.team}"
           },
           "status": 200,

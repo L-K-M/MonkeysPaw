@@ -326,7 +326,7 @@ final class ScenarioRunner {
 
     func http(_ action: ScenarioHTTP) async throws {
         let response = try await device(action.device).request(method: action.method, path: expand(action.path), body: action.body.map(expand))
-        try check(response.statusCode == action.status, "HTTP status")
+        try check(response.statusCode == action.status, "HTTP status (actual \(response.statusCode), expected \(action.status))")
         if !action.expected.isEmpty || !action.bindings.isEmpty {
             let json = try JSONDecoder().decode(ScenarioValue.self, from: response.body)
             for (pointer, expected) in action.expected { try check(json.at(expand(pointer)) == expand(expected), "HTTP JSON checkpoint") }
