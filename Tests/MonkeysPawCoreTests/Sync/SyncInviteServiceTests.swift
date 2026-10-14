@@ -3,6 +3,22 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncInviteServiceTests: XCTestCase {
+    func testConcurrentPullAndAccountFilesDoNotRaceInMemoryStore() throws {
+        let files = MemoryFileStore()
+        let bytes = Data("state".utf8)
+        let failuresLock = NSLock()
+        var failures = 0
+        DispatchQueue.concurrentPerform(iterations: 512) { index in
+            do { try files.writePrivate(bytes, at: "sync/concurrent-\(index).json") }
+            catch { failuresLock.lock(); failures += 1; failuresLock.unlock() }
+        }
+        XCTAssertEqual(failures, 0)
+        XCTAssertEqual(try files.listFiles().count, 512)
+        for index in 0..<512 {
+            XCTAssertEqual(try files.read(at: "sync/concurrent-\(index).json"), bytes)
+        }
+    }
+
     func testStagingDoesNoHTTPClipboardOrPersistence() throws {
         let rig = try SyncInviteRig()
         let writes = rig.sync.base.data.writeCount
