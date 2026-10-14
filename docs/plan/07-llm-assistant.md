@@ -460,10 +460,13 @@ Improve: prompt + instruction + selected findings ─► LLM ─► artifact ─
 
 The prompts live in `Assistant/Prompts/*.md`.
 `scripts/generate-assistant-prompts.py` deterministically embeds their exact
-UTF-8 bytes in Core's checked-in `AssistantPrompts.generated.swift` catalog,
-following the seed-catalog pattern. Source-to-catalog snapshot tests reject
-stale, missing or extra prompts, and the stdlib-only generator's `--check`
-compares regenerated Swift bytes. No runtime resource bundle is required
+UTF-8 bytes in Core's checked-in `AssistantPrompts.generated.swift` and
+Kotlin `AssistantPrompts.generated.kt` catalogs, following the seed-catalog
+pattern. Source-to-catalog snapshot tests in both languages reject stale,
+missing or extra prompts, and the stdlib-only generator's `--check` compares
+both regenerated catalogs in CI. `--stdout` continues to emit Swift alone.
+Prompt-source and generator changes select both Swift and Android CI jobs.
+No runtime resource bundle is required
 ([§19 B30](19-m4-m5-decisions.md)).
 
 | Prompt | Contents |
