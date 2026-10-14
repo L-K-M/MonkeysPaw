@@ -30,6 +30,10 @@ public struct SecretAccount: Hashable, Codable, Sendable {
         try! SecretAccount(namespace: "provider", name: id.rawValue)
     }
 
+    public static func device(_ connectionID: UUID) -> SecretAccount {
+        try! SecretAccount(namespace: "device", name: connectionID.uuidString.lowercased())
+    }
+
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         let parts = value.split(separator: ":", omittingEmptySubsequences: false)

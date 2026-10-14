@@ -130,6 +130,16 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   connection: normalized server URL, user ID, username, device ID/name and a
   local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;
   no password, device token or invite token enters these records.
+  The optional `activation` is `inactive` or `enabled`; existing version-1
+  connections without it infer enabled only when `account` is non-null.
+  Login stages an inactive connection, then enables it after reserved-folder
+  preflight and journaled account/root preparation. `cleanup_connections`
+  retains local UUID references for failed persisted-token deletion. An
+  inactive or signed-out connection never reads an environment token at startup.
+  The secret-store envelope is version 1 and binds the token to the normalized
+  deployment, user ID and local connection UUID; raw persisted tokens require
+  reauthentication. Raw environment tokens must verify the recorded user and
+  current device through `/me` before use.
 - **Library ownership.** Separate version-1 `<data>/sync/binding.json`
   retains ownership by library root, managed group-folder ownership and an
   upload hold set independently of active state or connection metadata.
@@ -145,6 +155,11 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   account. Same-account reauthentication retains queued edits.
 - **Sign-out.** Revoke the device token, clear active state and connection
   metadata, and leave library files and non-secret library ownership in place.
+  Stop and drain work, durably disable automatic resume, then attempt revocation
+  with a five-second deadline. Complete local apply recovery and retain exact
+  possibly-sent request facts before clearing state, without retrying a network
+  write. Failed recovery keeps its state/journal blocked. Report unconfirmed
+  remote revocation, failed secret deletion and failed metadata cleanup explicitly.
 - **Personal values and errors.** Group favourite `true` inserts, explicit
   `false` removes, and absent preserves the remembered value. There is no
   group-private overlay. Origin is typed as conflict-of a ULID or rescued;

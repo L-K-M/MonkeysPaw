@@ -171,6 +171,7 @@ public enum Limits {
 
     /// M6 E6: one sync request has a 60-second monotonic deadline.
     static let syncRequestTimeout: Duration = .seconds(60)
+    static let syncLogoutTimeout: Duration = .seconds(5)
 
     /// M6 E6: collection, including its one immediate restart, shares a budget.
     static let syncCollectionBudget: Duration = .seconds(300)
@@ -218,6 +219,7 @@ public enum Limits {
     /// §9.2: versioned private client records, independent of wire/API versions.
     static let syncStateVersion: Int = 1
     static let syncAccountVersion: Int = 1
+    static let syncDeviceSecretVersion: Int = 1
     static let syncBindingVersion: Int = 1
     static let syncApplyJournalVersion: Int = 1
     static let syncPushJournalVersion: Int = 1

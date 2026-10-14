@@ -1,15 +1,21 @@
 import Foundation
 
-private struct SyncConnectionDocument: Codable {
+enum SyncAccountActivation: String, Codable, Sendable { case inactive, enabled }
+
+struct SyncConnectionDocument: Codable {
     let version: Int
     let account: SyncAccount?
+    let activation: SyncAccountActivation
+    let cleanupConnections: [UUID]
 
-    init(account: SyncAccount?) {
+    init(account: SyncAccount?, activation: SyncAccountActivation = .enabled, cleanupConnections: [UUID] = []) {
         version = Limits.syncAccountVersion
         self.account = account
+        self.activation = account == nil ? .inactive : activation
+        self.cleanupConnections = cleanupConnections
     }
 
-    private enum CodingKeys: String, CodingKey { case version, account }
+    private enum CodingKeys: String, CodingKey { case version, account, activation, cleanupConnections = "cleanup_connections" }
 
     init(from decoder: Decoder) throws {
         let value = try decoder.container(keyedBy: CodingKeys.self)
@@ -18,12 +24,23 @@ private struct SyncConnectionDocument: Codable {
         // Explicit null is the persisted signed-out state, not missing metadata.
         guard value.contains(.account) else { throw SyncError.corruptFile }
         account = try value.decodeIfPresent(SyncAccount.self, forKey: .account)
+        activation = try value.decodeIfPresent(SyncAccountActivation.self, forKey: .activation)
+            ?? (account == nil ? .inactive : .enabled)
+        let ids = try value.decodeIfPresent([String].self, forKey: .cleanupConnections) ?? []
+        cleanupConnections = try ids.map(SyncIdentifiers.uuid)
+        guard Set(cleanupConnections).count == cleanupConnections.count,
+              account != nil || activation == .inactive,
+              activation != .enabled || account.map({ !cleanupConnections.contains($0.connectionID) }) == true else {
+            throw SyncError.invalidState
+        }
     }
 
     func encode(to encoder: Encoder) throws {
         var value = encoder.container(keyedBy: CodingKeys.self)
         try value.encode(version, forKey: .version)
         try value.encode(account, forKey: .account)
+        try value.encode(activation, forKey: .activation)
+        try value.encode(cleanupConnections.map { $0.uuidString.lowercased() }, forKey: .cleanupConnections)
     }
 }
 
@@ -68,13 +85,63 @@ public final class SyncAccountStore: @unchecked Sendable {
     var readOnlyError: SyncError? { connection.snapshot.error ?? ownership.snapshot.error }
 
     func loadAccount() throws -> SyncAccount? {
-        _ = try ownership.load()
-        return try connection.load()?.account
+        try loadConnection().account
     }
 
-    func setAccount(_ account: SyncAccount?) throws {
+    func loadConnection() throws -> SyncConnectionDocument {
         _ = try ownership.load()
-        try connection.update { _ in SyncConnectionDocument(account: account) }
+        return try connection.load() ?? SyncConnectionDocument(account: nil)
+    }
+
+    /// An explicit login may reflush uncertain metadata on the same live graph.
+    /// This does not release the library's journal recovery gate.
+    func recoverConnection() throws -> SyncConnectionDocument {
+        _ = try ownership.recover()
+        return try connection.recover() ?? SyncConnectionDocument(account: nil)
+    }
+
+    func setAccount(_ account: SyncAccount?, activation: SyncAccountActivation = .enabled) throws {
+        _ = try ownership.load()
+        try connection.update { current in
+            SyncConnectionDocument(account: account, activation: activation,
+                                   cleanupConnections: current?.cleanupConnections ?? [])
+        }
+    }
+
+    /// Persist this before destructive transitions or remote logout. A surviving
+    /// environment token cannot turn an inactive connection back on at startup.
+    func disableAutomaticResume() throws {
+        try connection.update { current in
+            SyncConnectionDocument(account: current?.account, activation: .inactive,
+                                   cleanupConnections: current?.cleanupConnections ?? [])
+        }
+    }
+
+    /// Explicit compensation/sign-out can recover uncertain connection metadata;
+    /// independent library ownership and a pending apply journal stay untouched.
+    func saveInactive(_ account: SyncAccount?, retiring ids: [UUID]) throws {
+        let cached = connection.snapshot.value
+        _ = try connection.recover()
+        try connection.update { current in
+            let cleanup = Set((current?.cleanupConnections ?? cached?.cleanupConnections ?? []) + ids)
+            return SyncConnectionDocument(account: account, activation: .inactive,
+                cleanupConnections: cleanup.sorted { $0.uuidString < $1.uuidString })
+        }
+    }
+
+    func finishSecretCleanup(_ id: UUID) throws {
+        try connection.update { current in
+            SyncConnectionDocument(account: current?.account, activation: current?.activation ?? .inactive,
+                cleanupConnections: (current?.cleanupConnections ?? []).filter { $0 != id })
+        }
+    }
+
+    func retireSecret(_ id: UUID) throws {
+        try connection.update { current in
+            let ids = Set((current?.cleanupConnections ?? []) + [id])
+            return SyncConnectionDocument(account: current?.account, activation: current?.activation ?? .inactive,
+                cleanupConnections: ids.sorted { $0.uuidString < $1.uuidString })
+        }
     }
 
     func binding(for root: SyncLibraryRoot) throws -> SyncLibraryBinding? {

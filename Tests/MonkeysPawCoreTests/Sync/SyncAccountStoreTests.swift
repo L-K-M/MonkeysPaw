@@ -353,6 +353,59 @@ final class SyncAccountStoreTests: XCTestCase {
         }
     }
 
+    func testInactiveConnectionAndPendingCleanupSurviveRestartWithoutLosingOwnership() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncAccountStore(files: files, operations: operations)
+        let account = try connection()
+        let binding = try ownership()
+        try store.setAccount(account)
+        try store.updateBinding(for: binding.root) { _ in binding }
+        try store.disableAutomaticResume()
+        let restarted = SyncAccountStore(files: files, operations: operations)
+        XCTAssertEqual(try restarted.loadConnection().activation, .inactive)
+        XCTAssertEqual(try restarted.loadAccount(), account)
+        try restarted.saveInactive(nil, retiring: [account.connectionID, account.connectionID])
+        let signedOut = SyncAccountStore(files: files, operations: operations)
+        XCTAssertNil(try signedOut.loadAccount())
+        XCTAssertEqual(try signedOut.loadConnection().cleanupConnections, [account.connectionID])
+        XCTAssertEqual(try signedOut.binding(for: binding.root), binding)
+        try signedOut.finishSecretCleanup(account.connectionID)
+        XCTAssertTrue(try SyncAccountStore(files: files, operations: operations).loadConnection().cleanupConnections.isEmpty)
+    }
+
+    func testLegacyVersionOneActivationAndUnknownFieldsSurviveSignOut() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        var document = try accountDocument(connection())
+        document["future"] = ["nested": "keep"]
+        try SyncTestValues.write(document, to: files, path: accountPath)
+        let store = SyncAccountStore(files: files, operations: operations)
+        XCTAssertEqual(try store.loadConnection().activation, .enabled)
+        try store.saveInactive(nil, retiring: [SyncTestValues.uuid])
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: accountPath)) as? [String: Any])
+        XCTAssertEqual(written["future"] as? [String: String], ["nested": "keep"])
+        XCTAssertTrue(written["account"] is NSNull)
+        XCTAssertEqual(written["activation"] as? String, "inactive")
+    }
+
+    func testMalformedActivationAndCleanupCannotAuthorizeStartupOrEdits() throws {
+        for additions: [String: Any] in [["activation": "unknown"], ["activation": "enabled", "account": NSNull()],
+                ["cleanup_connections": ["bad"]], ["cleanup_connections": [SyncTestValues.uuid.uuidString.lowercased()]],
+                ["activation": "inactive", "cleanup_connections": [SyncTestValues.uuid.uuidString.lowercased(), SyncTestValues.uuid.uuidString.lowercased()]]] {
+            let files = MemoryFileStore()
+            let operations = MemorySyncFileOperations(files: files)
+            var document = try accountDocument(connection())
+            document.merge(additions) { _, next in next }
+            try SyncTestValues.write(document, to: files, path: accountPath)
+            let bytes = try files.read(at: accountPath)
+            let store = SyncAccountStore(files: files, operations: operations)
+            XCTAssertThrowsError(try store.loadConnection()) { XCTAssertEqual($0 as? SyncError, .corruptFile) }
+            XCTAssertThrowsError(try store.disableAutomaticResume())
+            XCTAssertEqual(try files.read(at: accountPath), bytes)
+        }
+    }
+
     private func connection(userID: ULID = SyncTestValues.user) throws -> SyncAccount {
         try SyncAccount(identity: SyncTestValues.account(userID: userID), username: "user_1",
                         deviceID: SyncTestValues.device, deviceName: "Linux", connectionID: SyncTestValues.uuid)
