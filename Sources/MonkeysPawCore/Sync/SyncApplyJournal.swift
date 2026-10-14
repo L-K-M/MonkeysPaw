@@ -71,6 +71,7 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
               Set(steps.map { RelativePath($0.edit.path) }).count == steps.count else { throw SyncError.invalidState }
         for step in steps {
             try step.edit.validate()
+            guard step.edit.kind != .repairDuplicate || step.migrations.isEmpty else { throw SyncError.invalidState }
             guard !step.completed || step.started else { throw SyncError.invalidState }
             for migration in step.migrations {
                 try migration.validate()
