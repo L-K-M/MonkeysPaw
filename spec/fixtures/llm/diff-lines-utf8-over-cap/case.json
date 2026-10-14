@@ -1,0 +1,12 @@
+{
+  "category": "llm",
+  "expected": {
+    "error": "sourceTooLarge"
+  },
+  "kind": "diff",
+  "merged": "merged.txt",
+  "operation": "lines",
+  "original": "original.txt",
+  "originalRepeat": 52429,
+  "schema": 1
+}

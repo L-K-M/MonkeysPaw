@@ -50,6 +50,19 @@ class EveryFixtureTest {
     val temporary = TemporaryFolder()
 
     @Test
+    fun `diff rows and canonical bytes fail the full gate when changed`() = withCopy { root, schemas ->
+        val fixture = Corpus.load(root, schemas).cases(Category.LLM).single { it.name == "diff-artifact-rename" }
+        val original = fixture.envelopeFile.bytes()
+        val expected = JsonObject(fixture.expected + ("body" to JsonArray(emptyList())))
+        val changed = JsonObject(fixture.envelope + ("expected" to expected))
+        Files.writeString(fixture.envelopeFile.path, changed.toString())
+        assertFailsWith<AssertionError> { EveryFixtures.consume(Corpus.load(root, schemas)) }
+        Files.write(fixture.envelopeFile.path, original)
+        Files.writeString(fixture.source("candidate.md").path, "wrong bytes")
+        assertFailsWith<AssertionError> { EveryFixtures.consume(Corpus.load(root, schemas)) }
+    }
+
+    @Test
     fun `merge preservation and candidate bytes fail the full gate when changed`() = withCopy { root, schemas ->
         val fixture = Corpus.load(root, schemas).cases(Category.LLM).single { it.name == "merge-improve-typed-metadata" }
         val original = fixture.envelopeFile.bytes()

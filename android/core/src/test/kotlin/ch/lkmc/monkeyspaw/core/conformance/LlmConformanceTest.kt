@@ -45,7 +45,9 @@ internal object LlmFixtureConsumer {
             }
             val expected = fixture.expected
             val kind = envelope["kind"].stringValue()
-            if (kind == "merge") {
+            if (kind == "diff") {
+                assertEquals(typedIntegers(expected), LlmDiffFixtures.consume(envelope, ::bytes), "$label diff result")
+            } else if (kind == "merge") {
                 assertEquals(typedIntegers(expected), LlmMergeFixtures.consume(envelope, ::bytes), "$label merge result")
             } else if (kind == "schema") {
                 val outputKind = envelope["outputKind"].stringValue()

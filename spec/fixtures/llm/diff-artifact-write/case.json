@@ -1,0 +1,85 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "body": [
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [
+          {
+            "kind": "added",
+            "name": "input"
+          }
+        ],
+        "text": "Use {{input}}\n"
+      }
+    ],
+    "candidate": "candidate.md",
+    "frontMatter": [
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "id: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "title: Fixture title\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 4,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "description: Fixture description\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 5,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "tags: []\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 6,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "fields: {}\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 7,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      }
+    ],
+    "originalCanonical": null,
+    "placeholderWarnings": [
+      {
+        "kind": "added",
+        "name": "input"
+      }
+    ]
+  },
+  "filename": "Original.md",
+  "id": "01K6Z4V9KQWZX7MPQ4T8ZNB2PD",
+  "kind": "diff",
+  "operation": "write",
+  "original": null,
+  "schema": 1
+}

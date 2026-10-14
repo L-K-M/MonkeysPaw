@@ -1,0 +1,75 @@
+{
+  "category": "llm",
+  "expected": {
+    "rows": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "A\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "B\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 1,
+        "originalLine": 3,
+        "placeholderWarnings": [],
+        "text": "C\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "B\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 3,
+        "originalLine": 4,
+        "placeholderWarnings": [],
+        "text": "A\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 4,
+        "originalLine": 5,
+        "placeholderWarnings": [],
+        "text": "B\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 6,
+        "placeholderWarnings": [],
+        "text": "B\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 5,
+        "originalLine": 7,
+        "placeholderWarnings": [],
+        "text": "A\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 6,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "C\n"
+      }
+    ]
+  },
+  "kind": "diff",
+  "merged": "merged.txt",
+  "operation": "lines",
+  "original": "original.txt",
+  "schema": 1
+}

@@ -39,6 +39,23 @@ final class PromptConformanceTests: XCTestCase {
         }
     }
 
+    func testDiffRowsAndCanonicalBytesCannotBypassFullGate() throws {
+        try withTemporaryCorpus { root in
+            let directory = root.appendingPathComponent("llm/diff-artifact-rename")
+            let url = directory.appendingPathComponent("case.json")
+            let original = try Data(contentsOf: url)
+            var envelope = try JSONDecoder().decode(LlmFixtureJSON.self, from: original).object
+            var expected = try envelope["expected"]!.object
+            expected["body"] = .array([])
+            envelope["expected"] = .object(expected)
+            try LlmFixtureJSON.object(envelope).bytes().write(to: url)
+            XCTAssertThrowsError(try consumeCorpus(at: root), "diff rows")
+            try original.write(to: url)
+            try Data("wrong bytes".utf8).write(to: directory.appendingPathComponent("candidate.md"))
+            XCTAssertThrowsError(try consumeCorpus(at: root), "diff candidate bytes")
+        }
+    }
+
     func testHiddenMetadataIsIgnoredAtEveryCorpusLevel() throws {
         let baseline = try consumeCorpus(at: fixtureRoot)
         try withTemporaryCorpus { root in

@@ -1,0 +1,82 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "body": [
+      {
+        "kind": "unchanged",
+        "mergedLine": 1,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "Same\n"
+      }
+    ],
+    "candidate": "candidate.md",
+    "frontMatter": [
+      {
+        "kind": "unchanged",
+        "mergedLine": 1,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "title: é\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 3,
+        "placeholderWarnings": [],
+        "text": "description: é\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "title: é\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "description: é\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 4,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "tags: []\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 5,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "fields: {}\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 6,
+        "originalLine": 4,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      }
+    ],
+    "originalCanonical": "original-canonical.md",
+    "placeholderWarnings": []
+  },
+  "filename": "Original.md",
+  "id": null,
+  "kind": "diff",
+  "operation": "improve",
+  "original": "original.md",
+  "schema": 1
+}

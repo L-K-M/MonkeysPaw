@@ -1,0 +1,3 @@
+{{ invalid
+ {{real}}}}
+Actual {{gone}}

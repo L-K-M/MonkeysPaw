@@ -1,0 +1,13 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "error": "comparisonTooComplex"
+  },
+  "filename": "Original.md",
+  "id": null,
+  "kind": "diff",
+  "operation": "improve",
+  "original": "original.md",
+  "schema": 1
+}
