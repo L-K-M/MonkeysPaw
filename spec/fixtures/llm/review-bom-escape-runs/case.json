@@ -1,0 +1,30 @@
+{
+  "category": "llm",
+  "expected": {
+    "parsed": true,
+    "recovered": "recovered.json",
+    "result": {
+      "review": {
+        "findings": [
+          {
+            "criterion": "clarity",
+            "problem": "",
+            "quote": "start\"﻿x\\﻿x/﻿x\b﻿x\f﻿x\n﻿x\r﻿x\t﻿xA﻿x😀﻿x﻿﻿xmiddle﻿end",
+            "quoteMatch": {
+              "endByteExclusive": 81,
+              "startByte": 4
+            },
+            "severity": "low",
+            "suggestion": ""
+          }
+        ],
+        "summary": ""
+      }
+    }
+  },
+  "kind": "decode",
+  "outputKind": "review",
+  "reviewedSource": "reviewed.md",
+  "schema": 1,
+  "source": "output.txt"
+}

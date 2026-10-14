@@ -184,23 +184,67 @@ struct LlmJSONParser {
     }
 
     private mutating func string() throws -> String {
-        let start = position
         guard consume(34) else { throw AssistantError.invalidOutput }
-        var escaped = false
+        var decoded = ""
+        var start = position
         while position < bytes.count {
             let byte = bytes[position]
-            position += 1
-            if escaped { escaped = false }
-            else if byte == 92 { escaped = true }
-            else if byte == 34 {
-                guard let decoded = try? JSONSerialization.jsonObject(with: Data(bytes[start..<position]),
-                    options: [.fragmentsAllowed]), let string = decoded as? String else {
-                    throw AssistantError.invalidOutput
-                }
-                return string
+            guard byte >= 32 else { throw AssistantError.invalidOutput }
+            if byte != 34 && byte != 92 {
+                position += 1
+                continue
             }
+
+            // Foundation decodes raw string runs differently on macOS and Linux.
+            if bytes[start..<position].starts(with: [0xEF, 0xBB, 0xBF]) { start += 3 }
+            guard let raw = String(validating: bytes[start..<position], as: UTF8.self) else {
+                throw AssistantError.invalidOutput
+            }
+            decoded += raw
+            position += 1
+            if byte == 34 { return decoded }
+            guard position < bytes.count else { throw AssistantError.invalidOutput }
+            let escape = bytes[position]
+            position += 1
+            switch escape {
+            case 34, 47, 92: decoded.unicodeScalars.append(Unicode.Scalar(escape))
+            case 98: decoded += "\u{08}"
+            case 102: decoded += "\u{0C}"
+            case 110: decoded += "\n"
+            case 114: decoded += "\r"
+            case 116: decoded += "\t"
+            case 117:
+                var scalar = try hexQuad()
+                if (0xD800...0xDBFF).contains(scalar) {
+                    guard consume(92), consume(117) else { throw AssistantError.invalidOutput }
+                    let low = try hexQuad()
+                    guard (0xDC00...0xDFFF).contains(low) else { throw AssistantError.invalidOutput }
+                    scalar = 0x10000 + (scalar - 0xD800) * 0x400 + (low - 0xDC00)
+                }
+                guard let unicode = Unicode.Scalar(scalar) else { throw AssistantError.invalidOutput }
+                decoded.unicodeScalars.append(unicode)
+            default: throw AssistantError.invalidOutput
+            }
+            start = position
         }
         throw AssistantError.invalidOutput
+    }
+
+    private mutating func hexQuad() throws -> UInt32 {
+        guard position + 4 <= bytes.count else { throw AssistantError.invalidOutput }
+        var scalar: UInt32 = 0
+        for _ in 0..<4 {
+            let digit: UInt32
+            switch bytes[position] {
+            case 48...57: digit = UInt32(bytes[position] - 48)
+            case 65...70: digit = UInt32(bytes[position] - 55)
+            case 97...102: digit = UInt32(bytes[position] - 87)
+            default: throw AssistantError.invalidOutput
+            }
+            scalar = scalar * 16 + digit
+            position += 1
+        }
+        return scalar
     }
 
     private mutating func literal(_ literal: String) throws {

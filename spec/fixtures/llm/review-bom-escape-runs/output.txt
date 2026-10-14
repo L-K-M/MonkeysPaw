@@ -1,0 +1,1 @@
+{"summary":"","findings":[{"criterion":"clarity","severity":"low","quote":"﻿start\"﻿﻿x\\﻿﻿x\/﻿﻿x\b﻿﻿x\f﻿﻿x\n﻿﻿x\r﻿﻿x\t﻿﻿x\u0041﻿﻿x\uD83D\uDE00﻿﻿x\uFEFF﻿﻿xmiddle﻿end","problem":"","suggestion":""}]}

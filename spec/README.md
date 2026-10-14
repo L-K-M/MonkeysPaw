@@ -50,8 +50,8 @@ K10 established nine categories with 1,032 cases and 2,168 visible files:
 format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
 paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 489 invalid).
-M11 L2 adds 285 LLM schema and decoding cases with 908 files as the tenth
-category, bringing the corpus to 1,317 cases and 3,076 visible files. Case
+M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
+category, bringing the corpus to 1,319 cases and 3,083 visible files. Case
 shapes are below. These are reported counts, not fixed enumeration limits.
 Sync-engine scenarios arrive with their implementations under the
 move-together rule.
@@ -744,7 +744,7 @@ M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
 `EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
 `LlmConformanceTest` uses the same adapter. Both languages compare every
-expectation. The LLM corpus has 285 cases, 908 visible files and 2,794
+expectation. The LLM corpus has 287 cases, 915 visible files and 2,819
 expectation members, with zero pending cases. All ten categories stay
 registered. Run `swift test --filter 'PromptConformance|Llm|Assistant'` and the
 existing `:core:test` command. On the implementation host use `swift64` and
@@ -806,12 +806,15 @@ wrong type and object layer's extra key; duplicate/escaped/canonically equal
 keys and field names; fences, prose, nested think blocks and array wrappers;
 invalid first objects; surrogate and escape errors; Unicode byte matching;
 ordered content issues; 32/33 containers; and exact/over-limit UTF-8 sizes.
-The reference also distinguishes literal BOMs at the start of each raw
+The shared reader also distinguishes literal BOMs at the start of each raw
 UTF-8 string run (removed) from escaped `\uFEFF` (retained), and accepts
 BOM-prefixed NSNumber fragments while scanning array preambles. These
-existing Swift behaviors are pinned explicitly, including decoded-key
-duplicates and review quote ranges. Core on macOS CI must verify the same
-Foundation behavior; this Linux capture does not establish Darwin parity.
+compatibility rules are pinned explicitly, including decoded-key duplicates
+and review quote ranges. Swift owns string decoding so Foundation cannot
+change BOM handling at escape boundaries. The escape-run fixtures cover
+every JSON escape, surrogate pairs, repeated BOMs and interior BOMs in both
+artifacts and reviews. Core on macOS CI remains the Darwin conformance gate;
+Linux captures alone do not establish Darwin parity.
 Raw byte cases also pin truncated/interrupted sequences, overlong forms,
 stray continuations, surrogate encodings, out-of-range scalars and valid
 supplementary scalars, including issue offsets and review ranges after
