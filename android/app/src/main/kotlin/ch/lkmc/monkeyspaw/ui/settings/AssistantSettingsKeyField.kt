@@ -25,9 +25,10 @@ private class SecureKeyField(context: Context) : EditText(context) {
     private var onInput: ((String) -> Unit)? = null
 
     init {
+        // Set single-line first; older Android otherwise replaces the password mask.
+        isSingleLine = true
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-        isSingleLine = true
         isSaveEnabled = false
         isSaveFromParentEnabled = false
         importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS

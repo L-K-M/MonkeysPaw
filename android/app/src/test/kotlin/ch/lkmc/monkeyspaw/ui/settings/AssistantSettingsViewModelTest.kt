@@ -540,6 +540,63 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertEquals(2, changes.generation.value)
     }
 
+    @Test fun `operational graph load failure is typed read-only and Refresh can recover`() = runTest(scheduler) {
+        var failed = false
+        val model = AssistantSettingsViewModel(Lazy {
+            assertTrue(onWorker)
+            if (!failed) { failed = true; throw IllegalStateException("Unavailable storage graph") }
+            settings.value
+        }, Lazy { testing.value }, worker, applicationScope, changes)
+        models.put(UUID.randomUUID().toString(), model)
+        model.open(); runCurrent()
+        assertNull(model.state.value.operation)
+        assertEquals(ProviderSettingsError.ReadFailed, model.state.value.error)
+        assertEquals(ProviderSettingsError.ReadFailed, model.state.value.readOnlyError)
+        assertNull(model.state.value.error!!.cause)
+        assertFalse(model.state.value.canChangeProfiles)
+        model.refresh(); runCurrent()
+        assertNull(model.state.value.error)
+        assertFalse(model.state.value.isReadOnly)
+        model.addProfile()
+        assertNotNull(model.state.value.draft)
+        assertEquals(0, client.calls)
+        assertEquals(0, changes.generation.value)
+    }
+
+    @Test fun `field disposal clears an invalid replacement error without changing metadata`() = runTest(scheduler) {
+        val model = model(); model.addProfile(); model.renameProfile("Staged")
+        model.setKeyInput("invalid\u0000input"); model.save(); runCurrent()
+        assertEquals(ProviderSettingsError.InvalidKey, model.state.value.error)
+        model.discardTypedKey()
+        assertEquals(AssistantKeyEdit.KEEP, model.state.value.keyEdit)
+        assertNull(model.state.value.error)
+        assertEquals("Staged", model.state.value.draft!!.displayName)
+        assertTrue(model.state.value.profiles.isEmpty())
+    }
+
+    @Test fun `failed mutation graph resolution releases operation and completes notifications`() = runTest(scheduler) {
+        var unavailable = false
+        val model = AssistantSettingsViewModel(Lazy {
+            assertTrue(onWorker)
+            if (unavailable) throw IllegalStateException("Unavailable storage graph")
+            settings.value
+        }, Lazy { testing.value }, worker, applicationScope, changes)
+        models.put(UUID.randomUUID().toString(), model)
+        model.open(); runCurrent(); model.addProfile(); model.setKeyInput("staged")
+        unavailable = true
+        model.save(); runCurrent()
+        assertNull(model.state.value.operation)
+        assertEquals(ProviderSettingsError.WriteFailed, model.state.value.error)
+        assertEquals(AssistantKeyEdit.REPLACE, model.state.value.keyEdit)
+        assertEquals(2, changes.generation.value)
+        model.close()
+        unavailable = false
+        model.open(); runCurrent()
+        assertFalse(model.state.value.isReadOnly)
+        model.addProfile()
+        assertNotNull(model.state.value.draft)
+    }
+
     private fun model(service: ProviderSettingsService? = null): AssistantSettingsViewModel {
         val model = AssistantSettingsViewModel(Lazy { service ?: settings.value }, Lazy { testing.value }, worker, applicationScope, changes)
         models.put(UUID.randomUUID().toString(), model)

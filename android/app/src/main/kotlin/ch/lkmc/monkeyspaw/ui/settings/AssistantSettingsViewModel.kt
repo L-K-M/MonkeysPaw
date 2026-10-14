@@ -80,7 +80,18 @@ internal class AssistantSettingsViewModel @Inject constructor(
         if (!isOpen || navigation != navigationRevision) return
         loadJob = viewModelScope.launch {
             // Hilt's Lazy keeps synchronous ProviderSettingsStore construction off UI.
-            val loaded = withContext(worker) { settings.get().snapshot to testing.get() }
+            val loaded = try { withContext(worker) { settings.get().snapshot to testing.get() } }
+            catch (failure: CancellationException) { throw failure }
+            catch (failure: Exception) {
+                if (navigation != navigationRevision) return@launch
+                val typed = failure as? ProviderSettingsError ?: ProviderSettingsError.ReadFailed
+                snapshot = ProviderSettingsSnapshot(snapshot.settings, typed)
+                operation = null
+                error = typed
+                keyStorage = AssistantKeyStorage.Failed(typed)
+                publish()
+                return@launch
+            }
             if (navigation != navigationRevision) return@launch
             snapshot = loaded.first
             connectionService = loaded.second
@@ -109,7 +120,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
     fun keepKey() = editDraft(KeyInputHandling.RESET) { it.copy(key = ProviderKeyEdit.Keep) }
     fun clearKey() = editDraft(KeyInputHandling.RESET) { it.copy(key = ProviderKeyEdit.Clear) }
 
-    /** A recreated native field is blank; discard its old replacement instead of saving hidden input. */
+    /** Disposal retires a replacement even during persistence/read-only state: a new field is blank. */
     fun discardTypedKey() {
         val current = draft ?: return
         if (current.key !is ProviderKeyEdit.Replace) return
@@ -118,6 +129,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
         resetKeyInput()
         picker?.update(requireNotNull(draft))
         stopTest()
+        error = null
         publish()
     }
 
@@ -218,6 +230,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
         finish: (Boolean) -> Unit) {
         if (!isOpen || !canChangeProfiles) return
         val navigation = navigationRevision
+        val previousSnapshot = snapshot
         this.operation = operation
         error = null
         stopTest()
@@ -225,11 +238,16 @@ internal class AssistantSettingsViewModel @Inject constructor(
         publish()
         // Accepted mutations outlive this screen and ViewModel. Core protects commit/compensation.
         applicationScope.launch(worker) {
-            val service = settings.get()
-            val failure = try { edit(service); null }
+            var service: ProviderSettingsService? = null
+            val failure = try {
+                val resolved = settings.get()
+                service = resolved
+                edit(resolved)
+                null
+            }
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { error as? ProviderSettingsError ?: ProviderSettingsError.WriteFailed }
-            val updated = service.snapshot
+            val updated = service?.snapshot ?: ProviderSettingsSnapshot(previousSnapshot.settings, failure)
             withContext(Dispatchers.Main.immediate) {
                 providerChanges.changed()
                 if (!alive) return@withContext
