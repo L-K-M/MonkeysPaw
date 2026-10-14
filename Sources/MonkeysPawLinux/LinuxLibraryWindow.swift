@@ -482,7 +482,7 @@ final class LinuxLibraryWindow {
             }
         }
         gtk_widget_set_sensitive(save, available && state.canSave ? 1 : 0)
-        gtk_widget_set_sensitive(saveCopy, available && state.canSave ? 1 : 0)
+        gtk_widget_set_sensitive(saveCopy, available && state.canSaveAsCopy ? 1 : 0)
         gtk_widget_set_sensitive(revert, available && state.prompt != nil && state.status != .loading
             && state.status != .saving && state.status != .commandRunning ? 1 : 0)
         commands.update(state, available: available)
