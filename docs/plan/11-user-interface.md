@@ -138,9 +138,11 @@ Per OS:
 
   Linux's **Repeat Last Prompt** desktop action and repeat shortcut share the
   resident application's `repeat` action. Repeat uses the current target and
-  preserves hidden picker drafts. Refusals and repeat persistence warnings
-  appear in a reusable **Repeat last** window; review-required results offer
-  **Open prompt…** through the existing Library editor. Shortcuts renders both
+  preserves hidden picker drafts. It refuses repeat while any of the app's
+  windows has focus, including the picker and fill form. Refusals and repeat
+  persistence warnings appear in a reusable **Repeat last** window;
+  review-required results offer **Open prompt…** through the existing Library
+  editor. Shortcuts renders both
   actions' live bindings, verification, change instructions and errors.
   Repeat has no default key; GNOME/manual guidance uses the repeat command.
 

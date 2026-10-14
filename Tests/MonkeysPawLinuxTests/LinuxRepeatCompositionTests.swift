@@ -192,6 +192,29 @@ final class LinuxRepeatCompositionTests: XCTestCase {
         }
     }
 
+    func testFocusedPickerAndFillFormRefuseRepeatWithoutChangingValues() throws {
+        try put("{{field}}")
+        try deliver(values: ["field": "delivered"])
+        for filling in [false, true] {
+            environment.pickerModel.open()
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+            if filling {
+                environment.pickerModel.use(mode: .copyOnly)
+                XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.builtinsResolved == true })
+                environment.pickerModel.fillModel?.setValue("draft", name: "field")
+            }
+            gtk_window_present(mp_window(environment.panel.clipboardOwner))
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+            let writes = clipboard.writes.count
+            let captures = focus.captures
+            XCTAssertEqual(try repeatNow(), .unavailable(.ownWindow))
+            XCTAssertEqual(clipboard.writes.count, writes)
+            XCTAssertEqual(focus.captures, captures)
+            if filling { XCTAssertEqual(environment.pickerModel.fillModel?.values["field"], "draft") }
+            hideWindows()
+        }
+    }
+
     func testBusyRepeatDropsOverlapAndKeepsHiddenFillDraft() throws {
         try put("{{field}}|{{clipboard}}")
         clipboard.text = "old"

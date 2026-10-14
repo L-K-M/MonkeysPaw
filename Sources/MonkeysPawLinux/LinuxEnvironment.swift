@@ -523,10 +523,16 @@ final class LinuxEnvironment {
     }
 
     private var isOwnWindowActive: Bool {
-        guard let window = gtk_application_get_active_window(application),
-              gtk_widget_get_visible(mp_window_widget(window)) != 0,
-              gtk_window_is_active(window) != 0 else { return false }
-        return mp_window_widget(window) != panel.clipboardOwner
+        var windows = gtk_application_get_windows(application)
+        while let node = windows {
+            if let raw = node.pointee.data {
+                let window = raw.assumingMemoryBound(to: GtkWindow.self)
+                if gtk_widget_get_visible(mp_window_widget(window)) != 0,
+                   gtk_window_is_active(window) != 0 { return true }
+            }
+            windows = node.pointee.next
+        }
+        return false
     }
 
     func presentFromLauncher(source: StaticString = "direct") {
