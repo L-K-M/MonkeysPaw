@@ -248,6 +248,90 @@ class SyncEngine internal constructor(
         if (graph.journal.pending?.nextState?.binding?.root?.let { it != root } == true) throw SyncError.BindingMismatch
     }
 
+    /** Account activation uses the original graph, recovering exact same-account requests only. */
+    internal suspend fun prepareAccount(binding: SyncLibraryIdentity, client: SyncHTTPClient, device: String,
+                                        intent: SyncAccountIntent) = withContext(io) {
+        stop()
+        drain()
+        val resume = lock.withLock {
+            requireStoppedGraph(binding.root)
+            requireAccountCommit(graph.journal.replay())
+            val owned = graph.accounts.binding(binding.root)
+            val inventory = SyncGroupFolders.inventory(binding, SyncReconciliationSnapshot.Availability.AVAILABLE,
+                mutations = graph.mutations)
+            SyncGroupFolders.preflight(inventory, owned)
+            if (intent == SyncAccountIntent.STARTUP && owned != null && owned.owner != binding.account) throw SyncError.BindingMismatch
+            val request = graph.pending.recoverForAccountTransition()
+            when {
+                request == null -> false
+                request.binding != binding -> {
+                    if (intent != SyncAccountIntent.LOGIN) throw SyncError.BindingMismatch
+                    graph.pending.retainHeld(request)
+                    graph.pending.clear()
+                    false
+                }
+                else -> {
+                    session = Session(binding, client, device)
+                    mutableReport.value = reports.value.copy(needsSignIn = false)
+                    true
+                }
+            }
+        }
+        if (resume) recoverJournal()
+        currentCoroutineContext().ensureActive()
+        lock.withLock {
+            requireStoppedGraph(binding.root)
+            var old = graph.states.loadForAccountTransition()
+            val owned = graph.accounts.binding(binding.root)
+            if (owned != null && owned.owner != binding.account) {
+                if (intent != SyncAccountIntent.LOGIN) throw SyncError.BindingMismatch
+                val previous = SyncLibraryIdentity(owned.owner, binding.root)
+                if (old != null && old.binding.root == binding.root && old.binding != previous) throw SyncError.BindingMismatch
+                if (old?.binding?.root != binding.root) { graph.states.clear(); old = null }
+                val inventory = SyncGroupFolders.inventory(previous, SyncReconciliationSnapshot.Availability.AVAILABLE,
+                    mutations = graph.mutations)
+                SyncGroupFolders.accountChange(binding.account, old, owned, inventory, wallClock.now(), freshID,
+                    graph.mutations)?.let { requireAccountCommit(graph.journal.apply(it)); mutableLibraryVersion.value++ }
+            } else if (owned == null) {
+                if (old != null && old.binding.root == binding.root && old.binding.account != binding.account) throw SyncError.BindingMismatch
+                val inventory = SyncGroupFolders.inventory(binding, SyncReconciliationSnapshot.Availability.AVAILABLE,
+                    mutations = graph.mutations)
+                SyncGroupFolders.preflight(inventory, null)
+                graph.accounts.updateBinding(binding.root) {
+                    if (it != null) throw SyncError.BindingMismatch
+                    SyncLibraryBinding(binding.root, binding.account)
+                }
+            }
+            val state = graph.states.loadForAccountTransition()
+            if (intent == SyncAccountIntent.STARTUP && state?.binding?.root == binding.root && state.binding.account != binding.account) {
+                throw SyncError.BindingMismatch
+            }
+            if (state?.binding != binding) graph.states.reset(binding)
+        }
+    }
+
+    /** Sign-out retains possibly-sent facts without retrying HTTP, and keeps ownership. */
+    internal suspend fun prepareSignOut(root: SyncLibraryRoot) = withContext(io) {
+        stopAccountSession()
+        drain()
+        lock.withLock {
+            if (active != null || retired) throw SyncPushError.Busy
+            if (graph.journal.pending != null || graph.mutations.pendingPermit != null || graph.mutations.hasUnreadableJournal) {
+                requireStoppedGraph(root)
+                requireAccountCommit(graph.journal.replay())
+                mutableLibraryVersion.value++
+            }
+            graph.pending.recoverForAccountTransition()?.let { graph.pending.retainHeld(it); graph.pending.clear() }
+            graph.states.clear()
+            mutableReport.value = SyncReport()
+            publishScheduling()
+        }
+    }
+
+    private fun requireAccountCommit(outcome: SyncApplyOutcome) {
+        if (outcome != SyncApplyOutcome.Committed) throw SyncCoordinatorError.RecoveryRequired
+    }
+
     private val eligible: Boolean get() = reports.value.enabled && !retired && health == SyncRootHealth.AVAILABLE &&
         !reports.value.needsSignIn && reports.value.blockingIssue == null && scope.coroutineContext[Job]?.isActive != false
 
