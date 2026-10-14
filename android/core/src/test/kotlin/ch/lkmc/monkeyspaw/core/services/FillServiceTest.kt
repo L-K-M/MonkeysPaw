@@ -2,11 +2,85 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import ch.lkmc.monkeyspaw.core.ports.*
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.*
 
 class FillServiceTest {
+    @Test fun everyModeDeliversTheSameLiteralRenderAndDoesNotLearnAtTheEffect() {
+        val h = ServiceHarness()
+        val entry = h.put("{{f}}|{{clipboard}}|{{f}}")
+        val before = h.state.bytesSnapshot()
+        for (mode in DeliveryMode.entries) {
+            var calls = 0
+            val result = h.fill.deliver(entry.document, mapOf("f" to "{{raw}}\n"),
+                PromptBuiltinValues(clipboard = "snapshot"), mode, TextDelivery { received, text ->
+                    calls++
+                    assertEquals(mode, received)
+                    assertTrue(text == "{{raw}}\n|snapshot|{{raw}}\n")
+                    assertEquals(before, h.state.bytesSnapshot())
+                    TextDeliveryResult.ACCEPTED
+                })
+            assertEquals(TextDeliveryResult.ACCEPTED, result)
+            assertEquals(1, calls)
+        }
+        assertEquals(0, h.clipboard.reads)
+        assertEquals(before, h.state.bytesSnapshot())
+    }
+
+    @Test fun blockedRefusedStaleAndThrowingEndpointsNeverLearn() {
+        val h = ServiceHarness()
+        val entry = h.put("{{f}}")
+        for (mode in DeliveryMode.entries) {
+            assertFailsWith<PromptRenderError.MissingRequiredValue> {
+                h.fill.deliver(entry.document, mapOf("f" to ""), PromptBuiltinValues(), mode,
+                    TextDelivery { _, _ -> fail("Validation must precede the endpoint") })
+            }
+            for (result in listOf(TextDeliveryResult.REFUSED, TextDeliveryResult.STALE)) {
+                assertEquals(result, h.fill.deliver(entry.document, mapOf("f" to "value"),
+                    PromptBuiltinValues(), mode, TextDelivery { _, _ -> result }))
+            }
+            val failure = assertFailsWith<LibraryError.OperationFailed> {
+                h.fill.deliver(entry.document, mapOf("f" to "value"), PromptBuiltinValues(), mode,
+                    TextDelivery { _, _ -> throw IllegalStateException("private endpoint failure") })
+            }
+            assertNull(failure.cause)
+        }
+        assertTrue(h.state.bytesSnapshot().isEmpty())
+    }
+
+    @Test fun unusedBuiltinsNeverSampleTheClockZoneOrClipboard() {
+        val h = ServiceHarness()
+        val fill = FillService(h.library, h.clipboard) { fail("Unused zone must not be read") }
+        var snapshots = 0
+        fill.builtinSnapshot(h.draft("{{f}}")) { snapshots++; assertEquals(PromptBuiltinValues(), it) }
+        fill.builtinSnapshot(h.draft("{{clipboard}}")) { snapshots++; assertEquals("", it.clipboard) }
+        assertEquals(2, snapshots)
+        assertEquals(0, h.clock.samples)
+        assertEquals(1, h.clipboard.reads)
+    }
+
+    @Test fun ephemeralBookkeepingDoesNotReadOrWriteLearningState() {
+        val h = ServiceHarness()
+        val entry = h.put("{{f}}")
+        h.state.fault = { _, _ -> fail("Ephemeral bookkeeping must not touch persistence") }
+        assertTrue(h.fill.recordDelivery(entry, mapOf("f" to "value"), LearningPolicy.EPHEMERAL).isEmpty())
+    }
+
+    @Test fun normalBookkeepingRemembersEmptyPermittedValuesThenRecordsOneUseWithIndependentWarnings() {
+        val h = ServiceHarness()
+        val entry = h.put("---\nfields:\n  f:\n    optional: true\n  fresh:\n    remember: false\n---\n{{f}}/{{fresh}}")
+        assertTrue(h.fill.recordDelivery(entry, mapOf("f" to "", "fresh" to "session"), LearningPolicy.NORMAL).isEmpty())
+        assertTrue(h.values.rememberedValues(entry.identity) == mapOf("f" to ""))
+        assertEquals(1, h.usage.useEvents(entry.identity).size)
+        h.state.fault = { op, _ -> if (op == MemoryStore.Operation.PRIVATE_WRITE) StoreError.IOFailure else null }
+        assertEquals(listOf(PersistenceWarning.REMEMBERED_VALUES_NOT_SAVED),
+            h.fill.recordDelivery(entry, mapOf("f" to "later"), LearningPolicy.NORMAL))
+        assertEquals(2, h.usage.useEvents(entry.identity).size)
+        assertTrue(h.values.rememberedValues(entry.identity) == mapOf("f" to ""))
+    }
+
     @Test fun copyWritesValidatedRawTextWithoutLearningOrAnExtraClipboardRead() {
         val h = ServiceHarness()
         val entry = h.put("{{f}} {{f}} {{clipboard}}")
