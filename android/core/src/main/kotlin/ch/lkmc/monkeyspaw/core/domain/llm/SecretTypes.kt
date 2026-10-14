@@ -17,6 +17,8 @@ data class SecretAccount(val namespace: String, val name: String) {
 
         fun provider(id: ProviderProfileID): SecretAccount = SecretAccount("provider", id.rawValue)
 
+        fun device(id: java.util.UUID): SecretAccount = SecretAccount("device", id.toString())
+
         fun parse(value: String): SecretAccount {
             val parts = value.split(':')
             if (parts.size != 2) throw SecretStoreError.InvalidAccount

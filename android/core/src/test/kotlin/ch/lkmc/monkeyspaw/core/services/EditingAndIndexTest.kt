@@ -85,13 +85,14 @@ class EditingAndIndexTest {
         val accesses = h.prompts.accesses
         val original = h.prompts.bytesSnapshot()
         for (filename in listOf("", ".", "..", "../escape.md", "nested/a.md", "a\\b.md", "a\u0000.md",
-            "a\u0085.md", "a\u200b.md", "a\u202e.md", "a\ud800.md", "a\udc00.md", "é".repeat(509) + ".md")) {
+            "a\u0085.md", "a\u200b.md", "a\u202e.md", "a\ud800.md", "a\udc00.md",
+            "é".repeat((Limits.maxRootedPathBytes - 3) / 2) + ".md")) {
             assertEquals(EditResult.Failed(StoreError.InvalidPath), h.editing.rename(opened.relativePath, filename, opened.stamp))
             assertEquals(accesses, h.prompts.accesses)
             assertEquals(0, h.state.accesses)
             assertEquals(original, h.prompts.bytesSnapshot())
         }
-        val folder = "x".repeat(Limits.maxPathBytes - 2)
+        val folder = "x".repeat(Limits.maxRootedPathBytes - 2)
         StorePath.validate(folder)
         assertEquals(EditResult.Failed(StoreError.InvalidPath), h.editing.move(opened.relativePath, folder, opened.stamp))
         assertEquals(accesses, h.prompts.accesses)

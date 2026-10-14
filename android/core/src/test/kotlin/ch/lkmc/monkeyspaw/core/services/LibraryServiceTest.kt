@@ -398,7 +398,8 @@ class LibraryServiceTest {
         h.put("Original")
         val accesses = h.prompts.accesses
         val invalid = listOf("", "/a.md", "../a.md", "./a.md", "a//b.md", "a/../b.md", "a/./b.md",
-            "a\\b.md", "a\u0000.md", "a\n.md", "README.md", "_a.md", "_dir/a.md", ".git/a.md", "a.MD", "a.txt", "é".repeat(511) + ".md")
+            "a\\b.md", "a\u0000.md", "a\n.md", "README.md", "_a.md", "_dir/a.md", ".git/a.md", "a.MD", "a.txt",
+            "é".repeat(Limits.maxRootedPathBytes / 2) + ".md")
         for (path in invalid) {
             assertFails { h.library.save(h.draft("Body"), path) }
             assertFails { h.library.create(h.draft("Body"), path) }
