@@ -44,8 +44,8 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)!
         let uri = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
         if let hook = takeHook(method: request.method.rawValue, path: uri) { try await hook() }
-        let requestRewrite = takeRewrite(response: false, method: request.method.rawValue, path: uri)
-        let responseRewrite = takeRewrite(response: true, method: request.method.rawValue, path: uri)
+        let requestRewrite = takeRewrite(phase: .request, method: request.method.rawValue, path: uri)
+        let responseRewrite = takeRewrite(phase: .response, method: request.method.rawValue, path: uri)
         var bytes = request.body
         if let requestRewrite {
             guard let body = bytes else { throw ScenarioFailure.invalid("request patch without body") }
@@ -79,9 +79,9 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         return .init(statusCode: response.status.code, headers: headers, body: received)
     }
 
-    private func takeRewrite(response: Bool, method: String, path: String) -> ScenarioRewrite? {
+    private func takeRewrite(phase: ScenarioRewrite.Phase, method: String, path: String) -> ScenarioRewrite? {
         locked {
-            guard let index = rewrites.firstIndex(where: { $0.response == response && $0.method.rawValue == method && $0.path == path }) else { return nil }
+            guard let index = rewrites.firstIndex(where: { $0.phase == phase && $0.method.rawValue == method && $0.path == path }) else { return nil }
             return rewrites.remove(at: index)
         }
     }

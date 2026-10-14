@@ -104,6 +104,7 @@ final class ScenarioDevice {
     let accounts: SyncAccountStore
     let sync: SyncService
     let account: SyncAccountService
+    let scheduler = ScenarioScheduler()
 
     init(name: String, directory: URL, clock: ScenarioClock, entropy: ScenarioEntropy,
          transport: InProcessHTTPTransport) throws {
@@ -122,7 +123,7 @@ final class ScenarioDevice {
         states = SyncStateStore(files: data, operations: data)
         accounts = SyncAccountStore(files: data, operations: data)
         sync = try SyncService(library: library, libraryOperations: files, dataFiles: data, dataOperations: data,
-            states: states, accounts: accounts, scheduler: ScenarioScheduler(), mainThread: ScenarioMainThread(), clock: clock, entropy: entropy)
+            states: states, accounts: accounts, scheduler: scheduler, mainThread: ScenarioMainThread(), clock: clock, entropy: entropy)
         account = try SyncAccountService(sync: sync, accounts: accounts, secrets: secrets, transport: transport, libraryRoot: files.root.path)
     }
 
@@ -247,6 +248,16 @@ final class ScenarioRunner {
             let device = try device(name)
             device.files.resetMetrics()
             device.transport.resetMetrics()
+        case .watch(let name, let path):
+            let device = try device(name)
+            let path = try expand(path)
+            let stamp = try device.files.stamp(at: path)
+            let hash = try stamp.map { _ in SHA256.hexDigest(try device.files.read(at: path)) }
+            device.sync.filesChanged([.init(path: RelativePath(path), stamp: stamp, hash: hash)])
+        case .fireTimers(let name, let seconds):
+            let device = try device(name)
+            device.scheduler.fire(delay: .seconds(seconds))
+            try await device.settle()
         case .bindPrompt(let name, let path, let symbol):
             let entry = try device(name).library.load(at: expand(path))
             guard case .assigned(let id) = entry.identity else { throw ScenarioFailure.invalid("cannot bind an idless prompt") }
@@ -269,7 +280,7 @@ final class ScenarioRunner {
         case .beforeRequest(let name, let method, let path, let then):
             try device(name).transport.before(method: method, path: expand(path)) { [self] in try await http(then) }
         case .rewrite(let action):
-            let rewrite = ScenarioRewrite(device: action.device, response: action.response, method: action.method,
+            let rewrite = ScenarioRewrite(device: action.device, phase: action.phase, method: action.method,
                 path: try expand(action.path), patch: try action.patch.mapValues(expand))
             try device(action.device).transport.rewrite(rewrite)
         case .expect(let expectation): try expect(expectation)

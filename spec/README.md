@@ -783,6 +783,8 @@ Every action requires `action` and `device`. The additional members are:
 | `restart` | No additional members; stop/drain, replace the device graph, reopen the same disk and secret roots, then run account startup. This is a graceful graph restart, not process-death proof. |
 | `sign_out` | No additional members; require complete cleanup and confirmed real remote revocation. |
 | `reset_metrics` | No additional members; reset that device's file-write/trash and HTTP trace counters. It does not erase files, history or state. |
+| `watch` | `path`; submit a real stamp/raw-hash change through `SyncService.filesChanged`. |
+| `fire_timers` | `delay_seconds`; fire captured callbacks having exactly this requested delay, once, then drain. This tests callback/receipt policy without advancing wall or monotonic time, and does not prove native timer timing. |
 | `bind_prompt` | `path`, `name`; bind an assigned local identity as `${prompt.<name>}`. |
 | `seed_keyed` | `path`; store one history revision, one usage event at `now`, and `{"field":"remembered locally"}` through the real keyed stores, for migration proof. |
 | `favorite` | `id`, `value` (boolean); apply Core's group-favourite state intent without changing a viewer's file. Native UI/access intents belong to Y16. |
