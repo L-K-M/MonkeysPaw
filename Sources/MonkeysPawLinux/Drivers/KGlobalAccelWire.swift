@@ -20,7 +20,13 @@ enum KGlobalAccelWire {
     static let root = "/kglobalaccel"
     static let interface = "org.kde.KGlobalAccel"
     static let componentInterface = "org.kde.kglobalaccel.Component"
-    static let actionID = [AppIdentity.linuxAppID, ActionName.toggle.rawValue, "Monkey's Paw", "Open picker"]
+    static func actionName(_ action: HotkeyAction) -> String {
+        action == .togglePicker ? ActionName.toggle.rawValue : "repeat"
+    }
+
+    static func action(for name: String) -> HotkeyAction? {
+        HotkeyAction.allCases.first { actionName($0) == name }
+    }
 
     // kglobalaccel_p.h SetShortcutFlag. Autoloading is zero; never add 4 here.
     enum Setter: UInt32 { case present = 2, defaultSuggestion = 8 }
@@ -140,7 +146,7 @@ enum KGlobalAccelWire {
         return keys(child)
     }
 
-    static func hasForeignHolder(_ value: OpaquePointer) -> Bool? {
+    static func hasForeignHolder(_ value: OpaquePointer, for ownedAction: HotkeyAction) -> Bool? {
         guard hasType(value, "(a(ssssssaiai))") else { return nil }
         let holders = g_variant_get_child_value(value, 0)!
         defer { g_variant_unref(holders) }
@@ -165,7 +171,7 @@ enum KGlobalAccelWire {
             let actionName = String(cString: g_variant_get_string(action, nil))
             let componentName = String(cString: g_variant_get_string(component, nil))
             guard !actionName.isEmpty, !componentName.isEmpty else { return nil }
-            if actionName != ActionName.toggle.rawValue || componentName != AppIdentity.linuxAppID { foreign = true }
+            if actionName != self.actionName(ownedAction) || componentName != AppIdentity.linuxAppID { foreign = true }
         }
         return foreign
     }
@@ -180,15 +186,18 @@ enum KGlobalAccelWire {
         return children.withUnsafeBufferPointer { g_variant_new_array(nativeType, $0.baseAddress, UInt($0.count))! }
     }
 
-    static func action() -> OpaquePointer { array("s", actionID.map { g_variant_new_string($0) }) }
+    static func action(_ action: HotkeyAction = .togglePicker) -> OpaquePointer {
+        array("s", [AppIdentity.linuxAppID, actionName(action), "Monkey's Paw",
+                    action == .togglePicker ? "Open picker" : "Repeat last prompt"].map { g_variant_new_string($0) })
+    }
     static func sequence(_ chords: [Int32]) -> OpaquePointer {
         tuple([array("i", chords.map { g_variant_new_int32($0) })])
     }
     static func encode(_ keys: KGlobalAccelKeys) -> OpaquePointer {
         array("(ai)", keys.sequences.map { sequence($0) })
     }
-    static func setter(_ keys: KGlobalAccelKeys, _ mode: Setter) -> OpaquePointer {
-        tuple([action(), encode(keys), g_variant_new_uint32(mode.rawValue)])
+    static func setter(_ keys: KGlobalAccelKeys, _ mode: Setter, for ownedAction: HotkeyAction) -> OpaquePointer {
+        tuple([action(ownedAction), encode(keys), g_variant_new_uint32(mode.rawValue)])
     }
     static func holderQuery(_ chords: [Int32], _ match: MatchType) -> OpaquePointer {
         tuple([sequence(chords), tuple([g_variant_new_int32(match.rawValue)])])
