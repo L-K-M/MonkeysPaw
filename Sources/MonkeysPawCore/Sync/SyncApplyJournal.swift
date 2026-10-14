@@ -379,6 +379,7 @@ final class SyncApplyJournal {
                 state = record.nextState
             }
             stateCommitted = true
+            try mutations.stateCommitted(record.id)
             // StateStore's private write and checked flush must finish first.
             try persistence.reset(nil)
             mutations.finish(record.id)
@@ -393,7 +394,9 @@ final class SyncApplyJournal {
         }
     }
 
-    private func settleRemovedJournal(_ permit: (id: UUID, nextState: SyncState)) throws {
+    private func settleRemovedJournal(_ permit: SyncLibraryWriteGate.Permit) throws {
+        // Preparation may leave state identical; equality alone cannot prove commit.
+        guard permit.commit == .stateDurable else { throw LibraryError.recoveryRequired }
         let previous = states.snapshot.value
         _ = try states.recover(for: permit.nextState.binding) { state in
             guard state == permit.nextState else { throw LibraryError.recoveryRequired }

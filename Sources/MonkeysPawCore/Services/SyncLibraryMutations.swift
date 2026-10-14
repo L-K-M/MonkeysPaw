@@ -370,6 +370,7 @@ final class SyncLibraryMutations {
     }
 
     func begin(_ id: UUID, nextState: SyncState) throws { try library.beginSyncApply(id, nextState: nextState) }
+    func stateCommitted(_ id: UUID) throws { try library.markSyncApplyStateCommitted(id) }
     func finish(_ id: UUID) { library.endSyncApply(id) }
     func replacePermit(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
         try library.replaceSyncApply(previous, with: next, nextState: nextState)
@@ -377,7 +378,7 @@ final class SyncLibraryMutations {
     func blockForRecovery() { library.blockSyncApplyForRecovery() }
     func finishEmptyRecovery() { library.finishEmptySyncRecovery() }
     func resume(_ id: UUID, nextState: SyncState) { library.resumeSyncApply(id, nextState: nextState) }
-    var pendingPermit: (id: UUID, nextState: SyncState)? { library.pendingSyncApplyPermit }
+    var pendingPermit: SyncLibraryWriteGate.Permit? { library.pendingSyncApplyPermit }
     var hasUnreadableJournal: Bool { library.hasUnreadableSyncJournal }
 
     func prepareMigrations(for edit: SyncLibraryEdit) throws -> [SyncKeyedMigration] {

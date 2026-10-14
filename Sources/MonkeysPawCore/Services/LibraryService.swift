@@ -682,6 +682,12 @@ public final class LibraryService: PromptFavoriteEditing {
         try syncWriteGate.begin(id, nextState: nextState)
     }
 
+    func markSyncApplyStateCommitted(_ id: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try syncWriteGate.stateCommitted(id)
+    }
+
     func endSyncApply(_ id: UUID) {
         lock.lock()
         defer { lock.unlock() }
@@ -706,7 +712,7 @@ public final class LibraryService: PromptFavoriteEditing {
         syncWriteGate.resume(id, nextState: nextState)
     }
 
-    var pendingSyncApplyPermit: (id: UUID, nextState: SyncState)? {
+    var pendingSyncApplyPermit: SyncLibraryWriteGate.Permit? {
         lock.lock()
         defer { lock.unlock() }
         return syncWriteGate.pendingPermit

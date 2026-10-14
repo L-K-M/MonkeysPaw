@@ -15,9 +15,14 @@ protocol SyncKeyedStore {
 /// own store lock. Writes already in progress finish before preparation can
 /// snapshot that store; new writes are refused until the journal is settled.
 final class SyncLibraryWriteGate {
-    private enum Owner: Equatable { case apply(UUID, SyncState) }
+    enum CommitEvidence { case uncommitted, stateDurable }
+    struct Permit {
+        let id: UUID
+        let nextState: SyncState
+        var commit: CommitEvidence = .uncommitted
+    }
     private let lock = NSLock()
-    private var owner: Owner?
+    private var owner: Permit?
     private var recoveryBlocked = false
 
     func requireEditable() throws {
@@ -30,23 +35,32 @@ final class SyncLibraryWriteGate {
         lock.lock()
         defer { lock.unlock() }
         guard !recoveryBlocked else { throw LibraryError.recoveryRequired }
-        if case .apply(let current, _)? = owner, current != id { throw LibraryError.recoveryRequired }
-        owner = .apply(id, nextState)
+        if let owner, owner.id != id { throw LibraryError.recoveryRequired }
+        if owner?.id != id || owner?.nextState != nextState {
+            owner = Permit(id: id, nextState: nextState)
+        }
+    }
+
+    func stateCommitted(_ id: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !recoveryBlocked, owner?.id == id else { throw LibraryError.recoveryRequired }
+        owner?.commit = .stateDurable
     }
 
     func finish(_ id: UUID) {
         lock.lock()
         defer { lock.unlock() }
         guard !recoveryBlocked else { return }
-        if case .apply(let current, _)? = owner, current == id { owner = nil }
+        if owner?.id == id { owner = nil }
     }
 
     func replace(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
         guard !recoveryBlocked else { throw LibraryError.recoveryRequired }
-        guard case .apply(let current, _)? = owner, current == previous else { throw LibraryError.recoveryRequired }
-        owner = .apply(next, nextState)
+        guard owner?.id == previous else { throw LibraryError.recoveryRequired }
+        owner = Permit(id: next, nextState: nextState)
     }
 
     /// Serialized recovery adopts the validated on-disk journal even after
@@ -54,17 +68,18 @@ final class SyncLibraryWriteGate {
     func resume(_ id: UUID, nextState: SyncState) {
         lock.lock()
         defer { lock.unlock() }
-        owner = .apply(id, nextState)
+        if owner?.id != id || owner?.nextState != nextState {
+            owner = Permit(id: id, nextState: nextState)
+        }
         recoveryBlocked = false
     }
 
     /// Retain completion evidence in the live graph when its journal object
     /// is abandoned after an uncertain deletion removed the on-disk intent.
-    var pendingPermit: (id: UUID, nextState: SyncState)? {
+    var pendingPermit: Permit? {
         lock.lock()
         defer { lock.unlock() }
-        guard case .apply(let id, let nextState)? = owner else { return nil }
-        return (id, nextState)
+        return owner
     }
 
     var hasUnreadableJournal: Bool {
