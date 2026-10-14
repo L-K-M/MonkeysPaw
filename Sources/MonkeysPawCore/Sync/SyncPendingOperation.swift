@@ -93,6 +93,8 @@ final class SyncPendingOperationStore {
         return pending
     }
 
+    var snapshot: SyncStoreSnapshot<SyncPendingOperation> { persistence.snapshot }
+
     func save(_ pending: SyncPendingOperation) throws {
         try persistence.update { old in
             guard old == nil else { throw SyncError.invalidState }

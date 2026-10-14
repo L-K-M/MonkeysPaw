@@ -194,7 +194,16 @@ final class SyncApplyJournal {
 
     var pending: SyncApplyRecord? { persistence.snapshot.value }
 
-    func apply(_ plan: SyncApplyPlan) throws -> SyncApplyOutcome {
+    func apply(_ plan: SyncApplyPlan, permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
+        if let permit {
+            try permit.validate(plan.nextState.binding)
+            return try permit.mutate {
+                let paths = try permit.ownPaths(edits: plan.edits, directories: plan.directories, library: mutations)
+                let result = try apply(plan)
+                if result == .committed { try permit.remember(paths, library: mutations) }
+                return result
+            }
+        }
         lock.lock()
         defer { lock.unlock() }
         guard try persistence.load() == nil else { throw SyncError.invalidState }
@@ -229,7 +238,18 @@ final class SyncApplyJournal {
     }
 
     /// No new names or IDs are generated on replay. Safe to call twice.
-    func replay() throws -> SyncApplyOutcome {
+    func replay(permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
+        if let permit {
+            return try permit.mutate {
+                let record = pending
+                if let record { try permit.validate(record.nextState.binding) }
+                let paths = try permit.ownPaths(edits: record?.steps.map(\.edit) ?? [],
+                    directories: record?.directorySteps.map(\.edit) ?? [], library: mutations)
+                let result = try replay()
+                if result == .committed { try permit.remember(paths, library: mutations) }
+                return result
+            }
+        }
         lock.lock()
         defer { lock.unlock() }
         if let record = try persistence.recover() {

@@ -179,6 +179,16 @@ public enum Limits {
     static let syncCollectionBudget: Duration = .seconds(300)
     static let syncCollectionRestartLimit: Int = 1
 
+    /// §9.3/E22: native schedulers own timers; Core owns their generations.
+    public static let syncInterval: Duration = .seconds(60)
+    public static let syncDebounce: Duration = .seconds(3)
+    public static let syncBackoffMin: Duration = .seconds(5)
+    public static let syncBackoffMax: Duration = .seconds(600)
+    /// Bound preparatory replanning and watcher receipts within one graph.
+    static let syncPreparationLimit: Int = 1_024
+    static let syncOwnWriteReceiptCap: Int = 4_096
+    static let syncImmediateRerunLimit: Int = 1
+
     /// §9.6: sync clashes use (2) through (20), separately from editor copies.
     static let syncPathClashMax: Int = 20
     static let syncConflictDeviceMaxBytes: Int = 64
