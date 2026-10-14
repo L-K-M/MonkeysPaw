@@ -51,15 +51,16 @@ fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
 K10 established nine categories with 1,032 cases and 2,168 visible files:
-format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
-paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
+format 17/34, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
+paths 141/282, ranking 36/164, import 15/30 and DTOs 649/1,298 (160 valid,
 489 invalid).
 M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
 category. L3 adds one Foundation transcript-escaping golden using the same
 decode contract. L11 adds 74 merge cases with 250 files, and L4 adds 48
-Anthropic exchange cases with 756 files and 203 ordered actions, bringing the
-corpus to 1,442 cases and 4,093 visible files. Case shapes are below. These
-are reported counts, not fixed enumeration limits.
+Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
+diff cases with 249 files, bringing the corpus to 1,509 cases and 4,346 visible
+files. Case shapes are below. These are reported counts, not fixed enumeration
+limits.
 Sync-engine scenarios arrive with their implementations under the
 move-together rule.
 
@@ -751,7 +752,7 @@ M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
 `EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
 `LlmConformanceTest` uses the same adapter. Both languages compare every
-expectation. The LLM corpus has 410 cases, 1,925 visible files and 11,025
+expectation. The LLM corpus has 475 cases, 2,174 visible files and 16,902
 expectation members, with zero pending cases. All ten categories stay
 registered. L3's transcript-escaping output is also a byte golden for both
 languages' session transcript helpers. Run
@@ -905,6 +906,44 @@ output. Mutation tests corrupt candidate bytes, identities, preservation,
 issues and write failures, and reject unread nested members and invalid
 repeat inputs. Full-gate mutations independently prove merge checks execute.
 
+
+L12 adds the closed `kind: "diff"` envelope with 65 cases, 249 visible files
+and 5,877 expectation members. Both full gates execute every row, warning,
+byte golden and typed failure against the unchanged Swift diff contract.
+The envelope requires `schema: 1`, `category: "llm"`, `kind: "diff"`,
+`operation` and `expected`. `operation: "lines"` additionally requires
+`original` and `merged`, distinct strict UTF-8 `.txt` references. Optional
+positive `originalRepeat` and `mergedRepeat` expand each source independently.
+`write` and `improve` instead require `artifact`, `original`, `filename` and
+`id`, using the merge kind's strict artifact and baseline contracts; originals
+are strict UTF-8 `.md` files. Write has null original and a supplied valid
+ULID; improve has a supplied original and null ID. Optional `originalRepeat`
+(improve only) and `artifactBodyRepeat` expand the source/body. All repeats
+and expanded inputs are bounded to 256 KiB + 1. Artifact cases require a
+ready merge before comparison; merge validation failures stay in merge cases.
+
+Line expectations have exactly `rows`. Artifact expectations have exactly
+`frontMatter`, `body`, `placeholderWarnings`, `originalCanonical` (null for
+write) and `candidate`; the last two reference separate canonical `.md`
+byte goldens. Every row has `kind: "unchanged"|"removed"|"added"`, exact
+`text`, one-based nullable `originalLine`/`mergedLine` and
+`placeholderWarnings`. A removed row has no merged line, an added row no
+original line. Each warning is exactly `{kind: "added"|"removed", name}`
+or `{kind: "renamed", from, to}`. Failure expectations have only
+`error: "sourceTooLarge"|"comparisonTooComplex"`.
+
+Both consumers compare exact row text bytes and reconstruct both complete
+sources, with separate canonical header/body rows for artifacts. Swift
+compares decoded string UTF-8 directly rather than Foundation JSON
+reserialization. Goldens pin deletion ties, unequal section line counts,
+CRLF, bare CR, final-newline presence, emoji and composed/decomposed text,
+first-use ordering, retained/reused names, ambiguous pairings across hunks,
+escapes and invalid multiline literal exclusion. Compact boundary cases pin
+256 KiB byte caps and the bounded search frontier, including the last
+successful fully replaced script and the first refused one. Mutation tests
+reject changed row text/line numbers, warnings, canonical bytes, typed errors,
+unread nested members, unsafe/duplicate references and invalid repeats.
+No UI, executor or editor selection-offset adapter is added in this slice.
 
 L4 adds the closed `kind: "exchange"` envelope. Both semantic consumers execute
 all 48 cases and 203 ordered actions through the production Anthropic client.

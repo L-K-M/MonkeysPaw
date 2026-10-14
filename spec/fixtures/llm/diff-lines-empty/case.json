@@ -1,0 +1,11 @@
+{
+  "category": "llm",
+  "expected": {
+    "rows": []
+  },
+  "kind": "diff",
+  "merged": "merged.txt",
+  "operation": "lines",
+  "original": "original.txt",
+  "schema": 1
+}

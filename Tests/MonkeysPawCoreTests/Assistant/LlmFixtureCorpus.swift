@@ -85,8 +85,11 @@ enum LlmFixtureCorpus {
             let envelope = try JSONDecoder().decode(LlmFixtureJSON.self,
                 from: Data(contentsOf: directory.appendingPathComponent("case.json"))).object
             let kind = try member(envelope, "kind").string
-            if kind == "exchange" {
-                let exchange = try LlmExchangeFixtureCorpus.consume(envelope, at: directory)
+            if kind == "exchange" || kind == "diff" {
+                let exchange = try kind == "exchange"
+                    ? LlmExchangeFixtureCorpus.consume(envelope, at: directory)
+                    : (files: LlmDiffFixtureCorpus.consume(envelope, at: directory),
+                       expectations: member(envelope, "expected").expectationCount)
                 guard Set(exchange.files.map { RelativePath($0) }).count == exchange.files.count,
                       Set(files.map { RelativePath($0) }) == Set((["case.json"] + exchange.files).map { RelativePath($0) }) else {
                     throw Failure.invalidCorpus

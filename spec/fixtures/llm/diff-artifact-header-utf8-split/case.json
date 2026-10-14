@@ -1,0 +1,114 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "body": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [
+          {
+            "from": "old",
+            "kind": "renamed",
+            "to": "new"
+          }
+        ],
+        "text": "😀é {{old}}\r\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [
+          {
+            "from": "old",
+            "kind": "renamed",
+            "to": "new"
+          }
+        ],
+        "text": "😀é {{new}}\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 2,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "尾"
+      }
+    ],
+    "candidate": "candidate.md",
+    "frontMatter": [
+      {
+        "kind": "unchanged",
+        "mergedLine": 1,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "title: \"Before \\U0001F600\"\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 3,
+        "placeholderWarnings": [],
+        "text": "description: é\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "title: Fixture title\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "description: Fixture description\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 4,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "tags: []\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 5,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "fields: {}\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 6,
+        "originalLine": 4,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      }
+    ],
+    "originalCanonical": "original-canonical.md",
+    "placeholderWarnings": [
+      {
+        "from": "old",
+        "kind": "renamed",
+        "to": "new"
+      }
+    ]
+  },
+  "filename": "Original.md",
+  "id": null,
+  "kind": "diff",
+  "operation": "improve",
+  "original": "original.md",
+  "schema": 1
+}

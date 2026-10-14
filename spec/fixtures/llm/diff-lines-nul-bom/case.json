@@ -1,0 +1,26 @@
+{
+  "category": "llm",
+  "expected": {
+    "rows": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "﻿a\u0000\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "﻿a\u0000\r\n"
+      }
+    ]
+  },
+  "kind": "diff",
+  "merged": "merged.txt",
+  "operation": "lines",
+  "original": "original.txt",
+  "schema": 1
+}

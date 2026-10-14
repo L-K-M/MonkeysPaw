@@ -1,0 +1,26 @@
+{
+  "category": "llm",
+  "expected": {
+    "rows": [
+      {
+        "kind": "unchanged",
+        "mergedLine": 1,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "😀\r\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 2,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "́x"
+      }
+    ]
+  },
+  "kind": "diff",
+  "merged": "merged.txt",
+  "operation": "lines",
+  "original": "original.txt",
+  "schema": 1
+}

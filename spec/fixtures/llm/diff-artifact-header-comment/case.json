@@ -1,0 +1,117 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "body": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "Old {{topic}}\r\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "New {{topic}}\n"
+      }
+    ],
+    "candidate": "candidate.md",
+    "frontMatter": [
+      {
+        "kind": "unchanged",
+        "mergedLine": 1,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 2,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "id: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 3,
+        "originalLine": 3,
+        "placeholderWarnings": [],
+        "text": "title: Fixture title\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 4,
+        "originalLine": 4,
+        "placeholderWarnings": [],
+        "text": "description: Fixture description\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 5,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "tags: []\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 6,
+        "originalLine": 5,
+        "placeholderWarnings": [],
+        "text": "private: false\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 7,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "fields: {}\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 8,
+        "originalLine": 6,
+        "placeholderWarnings": [],
+        "text": "model:\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 9,
+        "originalLine": 7,
+        "placeholderWarnings": [],
+        "text": "  nested:\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 10,
+        "originalLine": 8,
+        "placeholderWarnings": [],
+        "text": "  - 1\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 11,
+        "originalLine": 9,
+        "placeholderWarnings": [],
+        "text": "  - false\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 12,
+        "originalLine": 10,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      }
+    ],
+    "originalCanonical": "original-canonical.md",
+    "placeholderWarnings": []
+  },
+  "filename": "Original.md",
+  "id": null,
+  "kind": "diff",
+  "operation": "improve",
+  "original": "original.md",
+  "schema": 1
+}

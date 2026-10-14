@@ -1,0 +1,100 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "body": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "\\{{fake}} {{ a b }}\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "\\{{other}} {{#if x}}\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [
+          {
+            "kind": "added",
+            "name": "_value2"
+          },
+          {
+            "kind": "added",
+            "name": "date"
+          }
+        ],
+        "text": "{{_value2}} {{date}}\n"
+      }
+    ],
+    "candidate": "candidate.md",
+    "frontMatter": [
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "title: Fixture title\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "description: Fixture description\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 4,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "tags: []\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 5,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "fields: {}\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 6,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      }
+    ],
+    "originalCanonical": "original-canonical.md",
+    "placeholderWarnings": [
+      {
+        "kind": "added",
+        "name": "_value2"
+      },
+      {
+        "kind": "added",
+        "name": "date"
+      }
+    ]
+  },
+  "filename": "Original.md",
+  "id": null,
+  "kind": "diff",
+  "operation": "improve",
+  "original": "original.md",
+  "schema": 1
+}

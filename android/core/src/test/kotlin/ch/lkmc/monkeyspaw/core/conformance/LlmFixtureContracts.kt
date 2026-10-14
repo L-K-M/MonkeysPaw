@@ -13,6 +13,7 @@ internal object LlmFixtureContracts {
     fun read(envelope: JsonObject): List<String> {
         corpusRequire(envelope["schema"].integerValue() == BigInteger.ONE, "Unknown LLM schema version")
         corpusRequire(envelope["category"].stringValue() == "llm", "Wrong LLM category")
+        if (envelope["kind"].stringValue() == "diff") return LlmDiffContracts.read(envelope)
         if (envelope["kind"].stringValue() == "merge") return merge(envelope)
         if (envelope["kind"].stringValue() == "exchange") return LlmExchangeContracts.read(envelope)
         val outputKind = envelope["outputKind"].stringValue()

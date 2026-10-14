@@ -1,0 +1,47 @@
+{
+  "category": "llm",
+  "expected": {
+    "rows": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [],
+        "text": "a\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "b\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "b\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "b\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 4,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "b\n"
+      }
+    ]
+  },
+  "kind": "diff",
+  "merged": "merged.txt",
+  "operation": "lines",
+  "original": "original.txt",
+  "schema": 1
+}

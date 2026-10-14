@@ -1,0 +1,141 @@
+{
+  "artifact": "artifact.json",
+  "category": "llm",
+  "expected": {
+    "body": [
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 1,
+        "placeholderWarnings": [
+          {
+            "kind": "removed",
+            "name": "z"
+          }
+        ],
+        "text": "😀 {{z}}\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [
+          {
+            "kind": "added",
+            "name": "y"
+          }
+        ],
+        "text": "{{y}}\n"
+      },
+      {
+        "kind": "unchanged",
+        "mergedLine": 2,
+        "originalLine": 2,
+        "placeholderWarnings": [],
+        "text": "\n"
+      },
+      {
+        "kind": "removed",
+        "mergedLine": null,
+        "originalLine": 3,
+        "placeholderWarnings": [
+          {
+            "kind": "removed",
+            "name": "a"
+          },
+          {
+            "kind": "removed",
+            "name": "z"
+          }
+        ],
+        "text": "{{a}} {{z}}\r\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [
+          {
+            "kind": "added",
+            "name": "b"
+          },
+          {
+            "kind": "added",
+            "name": "y"
+          }
+        ],
+        "text": "{{b}} {{y}}\r\n"
+      }
+    ],
+    "candidate": "candidate.md",
+    "frontMatter": [
+      {
+        "kind": "added",
+        "mergedLine": 1,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 2,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "title: Fixture title\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 3,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "description: Fixture description\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 4,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "tags: []\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 5,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "fields: {}\n"
+      },
+      {
+        "kind": "added",
+        "mergedLine": 6,
+        "originalLine": null,
+        "placeholderWarnings": [],
+        "text": "---\n"
+      }
+    ],
+    "originalCanonical": "original-canonical.md",
+    "placeholderWarnings": [
+      {
+        "kind": "removed",
+        "name": "z"
+      },
+      {
+        "kind": "removed",
+        "name": "a"
+      },
+      {
+        "kind": "added",
+        "name": "y"
+      },
+      {
+        "kind": "added",
+        "name": "b"
+      }
+    ]
+  },
+  "filename": "Original.md",
+  "id": null,
+  "kind": "diff",
+  "operation": "improve",
+  "original": "original.md",
+  "schema": 1
+}
