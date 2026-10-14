@@ -192,6 +192,10 @@ final class LinuxEnvironment {
     private let backgroundWork: BackgroundWork
     private let suppliedAssistantTransport: HTTPTransporting?
     private let suppliedClipboard: Clipboard?
+    private let updateVersion: String?
+    private let suppliedReleasePage: ReleasePageOpening?
+    private let isRunningTests: Bool
+    private let updateScheduler = GLibScheduler()
     private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
     private let statusNotifierBusAddress: String?
     private var statusNotifierItem: LinuxStatusNotifierItem?
@@ -234,6 +238,28 @@ final class LinuxEnvironment {
     private(set) lazy var providerSettingsService = ProviderSettingsService(
         store: ProviderSettingsStore(files: configFiles, log: log), secrets: secretStore, log: log)
     private lazy var assistantTransport: HTTPTransporting = suppliedAssistantTransport ?? URLSessionHTTPTransport()
+    private var currentUpdateService: UpdateService?
+    private var updateSettingsObserver: UUID?
+    private(set) lazy var updateService: UpdateService = {
+        if !settingsModel.allowsAutomaticUpdateChecks { updateScheduler.suspend() }
+        let service = UpdateService(transport: assistantTransport, currentVersion: updateVersion,
+            settings: settings, stateStore: UpdateStateStore(files: dataFiles), clock: clock,
+            scheduler: updateScheduler, mainThread: mainThread,
+            releasePage: suppliedReleasePage ?? GTKReleasePageOpener())
+        currentUpdateService = service
+        updateSettingsObserver = settingsModel.addObserver { [weak self, weak service] snapshot, _ in
+            if snapshot.allowsAutomaticUpdateChecks { self?.updateScheduler.resume() }
+            else { self?.updateScheduler.suspend() }
+            service?.refreshAutomaticPolicy()
+        }
+        return service
+    }()
+    private var currentUpdateSettingsModel: UpdateSettingsModel?
+    private(set) lazy var updateSettingsModel: UpdateSettingsModel = {
+        let model = UpdateSettingsModel(settings: settingsModel, updates: updateService, mainThread: mainThread)
+        currentUpdateSettingsModel = model
+        return model
+    }()
     private lazy var assistantService = AssistantService(providerSettings: providerSettingsService,
         anthropic: AnthropicClient(transport: assistantTransport),
         openAICompatible: OpenAIClient(transport: assistantTransport, providerState: ProviderStateStore(files: configFiles)),
@@ -313,6 +339,13 @@ final class LinuxEnvironment {
                                session: session, mainThread: mainThread, remoteDesktop: remoteDesktop),
         session: session, shortcuts: shortcuts, selfTest: selfTest, mainThread: mainThread)
     private(set) lazy var setupModel = SetupModel(setup: setup)
+    private var currentDeliverySettingsModel: DeliverySettingsModel?
+    private(set) lazy var deliverySettingsModel: DeliverySettingsModel = {
+        let model = DeliverySettingsModel(settings: settingsModel, delivery: delivery, setup: setup, mainThread: mainThread)
+        model.onOpenSetup = { [weak self] in self?.showSetup() }
+        currentDeliverySettingsModel = model
+        return model
+    }()
     private(set) lazy var shortcutsSettingsModel = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
     private var currentSetupWindow: LinuxSetupWindow?
     private var currentSettingsWindow: LinuxSettingsWindow?
@@ -323,6 +356,14 @@ final class LinuxEnvironment {
     private var quitPending = false
 
     private let application: UnsafeMutablePointer<GtkApplication>
+
+    static var packagedVersion: String? {
+        #if MONKEYSPAW_PACKAGED_VERSION
+        return PackagedBuildVersion.value
+        #else
+        return nil
+        #endif
+    }
 
     init(application: UnsafeMutablePointer<GtkApplication>,
          environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -335,6 +376,8 @@ final class LinuxEnvironment {
          backgroundWork: BackgroundWork? = nil,
          assistantTransport: HTTPTransporting? = nil,
          clipboard: Clipboard? = nil,
+         updateVersion: String? = LinuxEnvironment.packagedVersion,
+         releasePage: ReleasePageOpening? = nil,
          libraryAvailabilityNotifier: LibraryAvailabilityNotifier? = nil,
          launchURI: @escaping (URL) -> Void = { url in
              // A dismissed panel may be unrealized before asynchronous handle export completes.
@@ -349,6 +392,10 @@ final class LinuxEnvironment {
         self.backgroundWork = backgroundWork ?? LinuxBackgroundWork()
         suppliedAssistantTransport = assistantTransport
         suppliedClipboard = clipboard
+        self.updateVersion = updateVersion
+        suppliedReleasePage = releasePage
+        isRunningTests = ProcessInfo.processInfo.arguments.first?.hasSuffix(".xctest") == true
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
         statusNotifierBusAddress = environment["DBUS_SESSION_BUS_ADDRESS"]
         log = CompositeLogSink(
@@ -394,6 +441,7 @@ final class LinuxEnvironment {
     func start() {
         LinuxPickerTrace.record("environment.start", "shutdown=\(isShutDown)")
         guard !isShutDown else { return }
+        if !isRunningTests, updateVersion != nil { updateService.startAutomaticChecks() }
         startLibrary()
         _ = onboardingModel
         startStatusNotifierItem()
@@ -596,6 +644,8 @@ final class LinuxEnvironment {
                 self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,
                     rememberedValues: self.rememberedValuesSettingsModel,
+                    delivery: self.deliverySettingsModel, updates: self.updateSettingsModel,
+                    session: self.session.currentSession(),
                     makeAssistant: { [weak self] in
                         guard let self, !self.isShutDown else { return nil }
                         let model = AssistantSettingsModel(settings: self.providerSettingsService,
@@ -800,8 +850,7 @@ final class LinuxEnvironment {
                 canAccess: { [weak self, weak callbacks] _ in
                     guard let graph = self?.currentLibraryGraph, graph.callbacks === callbacks else { return false }
                     return graph.callbacks.isActive && graph.picker.libraryAvailable
-                }, isOwnWindowActive: { [weak self] in self?.isOwnWindowActive ?? true },
-                pasteChord: { [weak self] _ in self?.settingsModel.deliveryPreferences.linuxDefaultPasteChord ?? .standard })
+                }, isOwnWindowActive: { [weak self] in self?.isOwnWindowActive ?? true })
         }
         let repeatModel = repeatService.map { RepeatModel(service: $0, main: mainThread) }
         let picker = PickerModel(index: index, fill: fill, delivery: delivery, main: callbacks, repeatService: repeatService)
@@ -1060,6 +1109,12 @@ final class LinuxEnvironment {
         currentSetupWindow?.hide()
         currentOnboardingWindow?.hide()
         currentSettingsWindow?.hide()
+        currentDeliverySettingsModel?.retire()
+        currentUpdateSettingsModel?.retire()
+        currentUpdateService?.stop()
+        updateScheduler.shutdown()
+        if let updateSettingsObserver { settingsModel.removeObserver(updateSettingsObserver) }
+        updateSettingsObserver = nil
         currentLibraryWindow?.tearDown()
         currentLibraryGraph?.stop()
         currentDelivery?.invalidatePendingPresentation()
@@ -1069,6 +1124,7 @@ final class LinuxEnvironment {
         hotkey.shutdown()
         remoteDesktop.shutdown()
         portal.shutdown()
+        (scheduler as? GLibScheduler)?.shutdown()
     }
 
     func runSelfTest(done: @escaping (SelfTestReport) -> Void) {

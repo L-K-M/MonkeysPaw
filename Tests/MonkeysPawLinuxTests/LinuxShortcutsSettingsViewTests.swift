@@ -39,6 +39,7 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
         view = LinuxSettingsWindow(application: application, general: environment.generalSettingsModel,
             shortcuts: model, rememberedValues: environment.rememberedValuesSettingsModel,
+            delivery: environment.deliverySettingsModel, updates: environment.updateSettingsModel, session: .otherX11,
             makeAssistant: { nil },
             chooser: SettingsFolderChooser(), openSetup: { XCTFail("Unexpected Setup intent") })
         view.show()

@@ -576,6 +576,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         if view == nil {
             view = LinuxSettingsWindow(application: application, general: environment.generalSettingsModel,
                 shortcuts: environment.shortcutsSettingsModel, rememberedValues: environment.rememberedValuesSettingsModel,
+                delivery: environment.deliverySettingsModel, updates: environment.updateSettingsModel, session: .otherX11,
                 makeAssistant: { [weak self] in
                     guard let self else { return nil }
                     let main = GLibMainThread()

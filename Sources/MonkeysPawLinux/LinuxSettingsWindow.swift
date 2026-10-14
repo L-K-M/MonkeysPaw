@@ -10,6 +10,8 @@ final class LinuxSettingsWindow {
     private let shortcuts: ShortcutsSettingsModel
     private let rememberedValues: RememberedValuesSettingsModel
     private let assistant: LinuxAssistantSettingsPage
+    private let delivery: LinuxSettingsDeliveryPage
+    private let updates: LinuxSettingsUpdatePage
     private let chooser: LinuxFolderChoosing
     private let openSetup: () -> Void
     private let librarySwitchMessage: () -> String?
@@ -42,6 +44,7 @@ final class LinuxSettingsWindow {
 
     init(application: UnsafeMutablePointer<GtkApplication>, general: GeneralSettingsModel,
          shortcuts: ShortcutsSettingsModel, rememberedValues: RememberedValuesSettingsModel,
+         delivery: DeliverySettingsModel, updates: UpdateSettingsModel, session: DesktopSession,
          makeAssistant: @escaping () -> AssistantSettingsModel?,
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
          librarySwitchMessage: @escaping () -> String? = { nil }) {
@@ -49,6 +52,8 @@ final class LinuxSettingsWindow {
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
+        self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
+        self.updates = LinuxSettingsUpdatePage(model: updates)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
@@ -65,6 +70,8 @@ final class LinuxSettingsWindow {
             self.shortcuts.onChange = nil
             self.rememberedValues.onChange = nil
             self.assistant.retire(.destroyed)
+            self.delivery.retire()
+            self.updates.retire()
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed, !self.isVisible else { return }
@@ -72,6 +79,8 @@ final class LinuxSettingsWindow {
             self.cancelFolderChoice()
             self.rememberedValues.cancelForgetAll()
             self.assistant.retire(.hidden)
+            self.delivery.hide()
+            self.updates.hide()
         }
 
         let notebook = gtk_notebook_new()!
@@ -79,6 +88,7 @@ final class LinuxSettingsWindow {
         gtk_notebook_append_page(mp_notebook(notebook), generalPage(), GTK.label(LinuxStrings.generalTab))
         gtk_notebook_append_page(mp_notebook(notebook), shortcutsPage(), GTK.label(LinuxStrings.shortcutsTab))
         gtk_notebook_append_page(mp_notebook(notebook), assistant.widget, GTK.label(LinuxAssistantSettingsStrings.tab))
+        gtk_notebook_append_page(mp_notebook(notebook), self.delivery.widget, GTK.label(DeliverySettingsStrings.title))
         gtk_window_set_child(mp_window(window), notebook)
         general.onChange = { [weak self] in self?.renderGeneral() }
         shortcuts.onChange = { [weak self] in self?.renderShortcuts() }
@@ -95,6 +105,8 @@ final class LinuxSettingsWindow {
         rememberedValues.onChange = nil
         rememberedValues.cancelForgetAll()
         assistant.retire(isDestroyed ? .destroyed : .hidden)
+        delivery.hide()
+        updates.hide()
     }
 
     func show() {
@@ -103,6 +115,8 @@ final class LinuxSettingsWindow {
         renderGeneral()
         shortcuts.refresh()
         assistant.show()
+        delivery.show()
+        updates.show()
         gtk_window_present(mp_window(window))
     }
 
@@ -172,6 +186,7 @@ final class LinuxSettingsWindow {
         gtk_box_append(mp_box(forgetConfirmation), confirmButtons)
         gtk_box_append(mp_box(page), forgetConfirmation)
         forgetMessage = namedLabel("settings-forget-message", in: page)
+        gtk_box_append(mp_box(page), updates.widget)
         return scrolled(page)
     }
 
