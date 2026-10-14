@@ -38,7 +38,7 @@ LLM checks compare exact schema and recovered-object bytes, strict JSON
 validity, typed artifacts with ordered draft issues, and typed reviews with
 exact UTF-8 quote ranges. Merge checks compare canonical candidate bytes,
 identity, ordered issues and typed preserved metadata with key presence.
-exact UTF-8 quote ranges. Exchange checks execute the clients and compare raw
+Exchange checks execute the clients and compare raw
 HTTP body bytes, exact headers, fixed deadlines, typed errors/pages and usage.
 Both structural inventory and semantic consumption
 cover the same ten categories.
@@ -50,19 +50,19 @@ error HTTP status and Retry-After header values. Constructed-invalid values
 fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
-K10 established nine categories. Their current totals are 1,034 cases and
-2,172 visible files: format 17/34, grammar 22/44, render 22/44, validation
-113/226, canonical 19/50, paths 141/282, ranking 36/164, import 15/30 and
-DTOs 649/1,298 (160 valid,
-489 invalid).
-M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
-category. L3 adds one Foundation transcript-escaping golden using the same
-decode contract. L11 adds 74 merge cases with 250 files, and L4 adds 48
+The nine non-LLM content categories currently have 1,034 cases and 2,172
+visible files: format 17/34, grammar 22/44, render 22/44, validation 113/226,
+canonical 19/50, paths 141/282, ranking 36/164, import 15/30 and DTOs 649/1,298
+(160 valid, 489 invalid).
+M11 L2 introduced LLM schema and decoding as the tenth category. Together
+with L3's Foundation transcript-escaping golden, these kinds have 288 cases
+and 919 files. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
 diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,169
-files and 278 ordered actions, bringing the corpus to 1,536 cases and 5,515
-visible files. Case shapes are below. These are reported counts, not fixed
-enumeration limits.
+files and 278 ordered actions, bringing the current content corpus to 1,536
+cases and 5,515 visible files.
+Case shapes are below. These are reported counts, not fixed enumeration limits.
+
 Sync-engine scenarios arrive with their implementations under the
 move-together rule.
 
