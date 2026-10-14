@@ -69,6 +69,9 @@ internal class SyncHTTPClient(
     private val clock: MonotonicClock = MonotonicClock(System::nanoTime),
     private val trust: SyncTLSTrust = SyncTLSTrust.SYSTEM,
 ) {
+    fun permitting(permit: SyncWorkPermit): SyncHTTPClient =
+        SyncHTTPClient(server, SyncPermittedTransport(transport, permit), credential, clock, trust)
+
     suspend fun login(request: LoginRequest, deadlineNanos: Long? = null): SyncAuthentication =
         authentication(send(HttpMethod.POST, "/auth/login", AuthResponse.codec, encode(request, LoginRequest.codec),
             authentication = Authentication.NONE, deadlineNanos = deadlineNanos))

@@ -1,0 +1,302 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
+package ch.lkmc.monkeyspaw.core.sync
+
+import ch.lkmc.monkeyspaw.core.domain.ULID
+import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
+import ch.lkmc.monkeyspaw.core.domain.sync.*
+import ch.lkmc.monkeyspaw.core.ports.*
+import ch.lkmc.monkeyspaw.core.services.*
+import ch.lkmc.monkeyspaw.core.syncapi.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.test.*
+import java.time.Instant
+import kotlin.test.*
+
+class SyncCoordinatorTest {
+    private val v = SyncTestValues
+    private val groupScope = PromptScope.Group(v.group.rawValue)
+    private val groupPath = "Groups/Team/a.md"
+
+    @Test fun locallyDeniedViewerEditPreservesRawPersonalMetadataAndRestoresExactHead() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        val raw = EngineHarness.source("Unsynced edit", "private: true\nfavorite: true\n# local formatting\n")
+        h.files.put(raw, groupPath)
+        h.start()
+        val result = h.engine.runBackground()
+        assertEquals(SyncStatus.HAS_CONFLICTS, result.status)
+        assertContentEquals(h.remote.getValue(v.personal.rawValue).content.encodeToByteArray(), h.files.read(groupPath))
+        assertEquals(SyncFileMode.READ_ONLY, h.rig.libraryOperations.modes[groupPath])
+        assertTrue(h.requests.any { it.method == HttpMethod.GET })
+        assertTrue(h.writes.isNotEmpty())
+        for (request in h.writes) assertEquals(PromptScope.User, PutPromptRequest.codec.decode(request.body!!).scope)
+        val copy = h.files.listFiles().single { it.relativePath.startsWith("Conflicts/") }
+        val source = h.files.text(copy.relativePath)
+        assertTrue("Unsynced edit" in source)
+        val document = PromptCodec.parse(source, "copy.md")
+        assertTrue(document.frontMatter.isPrivate)
+        assertTrue(document.frontMatter.favorite)
+        assertTrue(h.data.listFiles().filter { it.relativePath.endsWith(".bin") }.any { h.data.read(it.relativePath).contentEquals(raw) })
+        assertEquals(SyncPromptOrigin.ConflictOf(v.personal), h.state.prompts.values.single { it.origin != null }.origin)
+        h.engine.stop()
+    }
+
+    @Test fun idlessViewerCreateGetsAnIdentityOnlyInAPrivateRescue() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.groups[v.group] = SyncGroupState("Team", "Team", Role.VIEWER)
+        h.states.update(h.binding) { SyncState(h.binding, v.uuid, mapOf(v.userScope to "old", v.groupScope to "old-group"), h.groups) }
+        h.files.put(EngineHarness.source("Viewer create", "private: true\n", id = null), groupPath)
+        h.start()
+        val result = h.engine.runBackground()
+        assertNull(h.files.stamp(groupPath))
+        assertEquals(SyncStatus.HAS_CONFLICTS, result.status)
+        assertTrue(h.requests.none { it.method == HttpMethod.GET })
+        assertTrue(h.writes.all { PutPromptRequest.codec.decode(it.body!!).scope == PromptScope.User })
+        val copy = h.files.listFiles().single()
+        assertTrue(copy.relativePath.startsWith("Conflicts/"))
+        assertNotNull(PromptCodec.parseFile(h.files.read(copy.relativePath), "copy.md").frontMatter.id)
+        assertEquals(SyncPromptOrigin.Rescued, h.state.prompts.values.single().origin)
+        h.engine.stop()
+    }
+
+    @Test fun locallyDeniedViewerDeleteRestoresHeadWithoutASharedDelete() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        h.files.delete(groupPath)
+        h.start(); h.engine.runBackground()
+        assertContentEquals(h.remote.getValue(v.personal.rawValue).content.encodeToByteArray(), h.files.read(groupPath))
+        assertTrue(h.writes.isEmpty())
+        assertEquals(SyncFileMode.READ_ONLY, h.rig.libraryOperations.modes[groupPath])
+        h.engine.stop()
+    }
+
+    @Test fun headTransportFailureKeepsDeniedBytesAndCannotClaimSuccessfulSync() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        val raw = EngineHarness.source("Keep offline", "private: true\n")
+        h.files.put(raw, groupPath)
+        h.respond = { if (it.method == HttpMethod.GET) throw HttpTransportError.NetworkFailure else null }
+        h.start()
+        val report = h.engine.runBackground()
+        assertEquals(SyncStatus.OFFLINE, report.status)
+        assertNull(report.lastSuccess)
+        assertContentEquals(raw, h.files.read(groupPath))
+        assertTrue(h.writes.isEmpty())
+        assertEquals(1, h.files.listFiles().size)
+        h.engine.stop()
+    }
+
+    @Test fun headGETRereadsALaterSavedVersionBeforePreserving() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        h.files.put(EngineHarness.source("First local edit"), groupPath)
+        val later = EngineHarness.source("Later saved edit", "# retain exact newest bytes\nprivate: true\n")
+        h.respond = { if (it.method == HttpMethod.GET) h.files.put(later, groupPath); null }
+        h.start(); h.engine.runBackground()
+        val copy = h.files.listFiles().single { it.relativePath.startsWith("Conflicts/") }
+        assertTrue("Later saved edit" in h.files.text(copy.relativePath))
+        assertFalse("First local edit" in h.files.text(copy.relativePath))
+        assertTrue(h.data.listFiles().filter { it.relativePath.endsWith(".bin") }.any { h.data.read(it.relativePath).contentEquals(later) })
+        h.engine.stop()
+    }
+
+    @Test fun inaccessibleOrMismatchedDeniedHeadCannotAuthorizeRestoration() = runTest {
+        for (status in listOf(403, 404, 410, 200)) {
+            val h = EngineHarness(testScheduler, backgroundScope)
+            h.seed(path = groupPath, group = true)
+            h.files.put(EngineHarness.source("Keep privately"), groupPath)
+            h.respond = { request -> if (request.method != HttpMethod.GET) null else when (status) {
+                200 -> HttpResponse(200, body = Prompt.codec.encode(EngineHarness.prompt(EngineHarness.source(), 1, groupScope, "other.md")))
+                410 -> HttpResponse(410, body = ErrorResponse.codec.encode(ErrorResponse.Deleted))
+                403 -> EngineHarness.errorResponse(403, FailureCode.FORBIDDEN)
+                else -> EngineHarness.errorResponse(404, FailureCode.NOT_FOUND)
+            } }
+            h.start(); h.engine.runBackground()
+            assertNull(h.files.stamp(groupPath))
+            assertTrue(h.files.listFiles().single().relativePath.startsWith("Conflicts/"))
+            assertTrue(h.writes.all { PutPromptRequest.codec.decode(it.body!!).scope == PromptScope.User })
+            h.engine.stop()
+        }
+    }
+
+    @Test fun viewerHeadCollisionRescuesOccupantAndRecollectsBeforeAnyPushCandidate() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        val other = EngineHarness.source("Other server head", id = v.groupPrompt)
+        h.files.put(other, "Groups/Team/b.md")
+        h.states.update(h.binding) { it.copy(prompts = it.prompts +
+            (v.groupID to SyncPromptState(v.groupScope, "b.md", 1, SyncHash.of(other))), favorites = mapOf(v.groupID to true)) }
+        h.remote[v.groupPrompt.rawValue] = EngineHarness.prompt(other, 1, groupScope, "b.md", v.groupPrompt.rawValue)
+        h.files.put(EngineHarness.source("Local edit"), groupPath)
+        var moved = false
+        h.respond = { request ->
+            if (!moved && request.method == HttpMethod.GET) {
+                moved = true
+                h.files.move(groupPath, "Groups/Team/c.md")
+                h.files.move("Groups/Team/b.md", groupPath)
+            }
+            null
+        }
+        h.start()
+        val partial = h.engine.runBackground()
+        assertNull(partial.lastSuccess)
+        assertEquals(1, h.pulls)
+        assertTrue(h.writes.isEmpty(), "No push can follow an internal scope reset before recollection")
+        assertEquals(0, h.state.prompts[v.groupID]!!.rev)
+        assertNull(h.state.prompts[v.groupID]!!.canonicalHash)
+        assertEquals(true, h.state.favorites[v.groupID])
+        assertEquals("0", h.state.cursors[v.groupScope])
+        h.engine.runBackground()
+        assertEquals(2, h.pulls)
+        assertContentEquals(h.remote.getValue(v.personal.rawValue).content.encodeToByteArray(), h.files.read(groupPath))
+        assertContentEquals(h.remote.getValue(v.groupPrompt.rawValue).content.encodeToByteArray(), h.files.read("Groups/Team/b.md"))
+        assertTrue(h.writes.none { it.method == HttpMethod.DELETE })
+        assertTrue(h.writes.all { PutPromptRequest.codec.decode(it.body!!).scope == PromptScope.User })
+        h.engine.stop()
+    }
+
+    @Test fun accessFingerprintsAreStableAcrossRestartNamesAndFolderOrderingButChangeWithRole() {
+        val a = SyncGroupState("Team", "Team", Role.EDITOR)
+        val b = SyncGroupState("Other", "Other", Role.VIEWER)
+        val first = SyncCoordinator.accessGeneration(linkedMapOf(v.group to a, v.otherUser to b))
+        assertTrue(first >= 0)
+        assertEquals(first, SyncCoordinator.accessGeneration(linkedMapOf(v.otherUser to b, v.group to a)))
+        assertEquals(first, SyncCoordinator.accessGeneration(mapOf(v.group to a.copy(name = "Renamed", folder = "Folder"), v.otherUser to b)))
+        assertNotEquals(first, SyncCoordinator.accessGeneration(mapOf(v.group to a.copy(role = Role.VIEWER), v.otherUser to b)))
+        assertEquals(0, SyncCoordinator.accessGeneration(emptyMap()))
+    }
+
+    @Test fun unchangedInputErrorSurvivesReauthenticationAndIsNotPushedOrImmediatelyRerun() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(rev = 0)
+        h.respond = { request -> if (request.method == HttpMethod.PUT) EngineHarness.errorResponse(404, FailureCode.NOT_FOUND) else null }
+        h.start(); val first = h.engine.runBackground()
+        assertEquals(SyncStatus.SYNC_ERROR, first.status)
+        assertNull(first.lastSuccess)
+        val fingerprint = h.state.prompts[v.personalID]!!.lastError!!.fingerprint
+        h.engine.stop()
+        h.start(SyncExecutionMode.FOREGROUND); runCurrent()
+        assertEquals(fingerprint, h.state.prompts[v.personalID]!!.lastError!!.fingerprint)
+        assertEquals(1, h.writes.size)
+        advanceTimeBy(5_001); runCurrent(); assertEquals(1, h.writes.size)
+        assertEquals(2, h.pulls)
+        assertNull(h.engine.reports.value.lastSuccess)
+        h.engine.stop(); h.engine.drain()
+    }
+
+    @Test fun restorePushesPreservedWritableVersionsOnlyAfterEveryScopeCommits() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(EngineHarness.source("Preserved local"), rev = 8)
+        h.groups[v.group] = SyncGroupState("Team", "Team", Role.EDITOR)
+        val groupBytes = EngineHarness.source("Group local", id = v.groupPrompt)
+        h.files.put(groupBytes, "Groups/Team/g.md")
+        h.states.update(h.binding) { it.copy(groups = h.groups, cursors = it.cursors + (v.groupScope to "old group"),
+            prompts = it.prompts + (v.groupID to SyncPromptState(v.groupScope, "g.md", 8,
+                SyncHash.of(SyncLocalScanner.canonical(groupBytes, "g.md", v.groupScope).bytes)))) }
+        h.remote[v.personal.rawValue] = EngineHarness.prompt(EngineHarness.source("Restored server"), 3)
+        h.remote[v.groupPrompt.rawValue] = EngineHarness.prompt(EngineHarness.source("Group restored", id = v.groupPrompt),
+            3, groupScope, "g.md", v.groupPrompt.rawValue)
+        val database = SyncIdentifiers.uuid("22345678-1234-abcd-9876-123456789abc")
+        h.respond = { request -> when {
+            request.url.endsWith("/sync/pull") -> {
+                val pull = PullResponse.codec.decode(h.pullResponse().body).copy(databaseID = database.toString())
+                HttpResponse(200, body = PullResponse.codec.encode(pull))
+            }
+            request.method == HttpMethod.PUT -> {
+                assertEquals(database, h.state.databaseID)
+                assertEquals(setOf(v.userScope, v.groupScope), h.state.cursors.keys)
+                val put = PutPromptRequest.codec.decode(request.body!!)
+                assertEquals(3, put.baseRev)
+                assertTrue("local" in put.content)
+                null
+            }
+            else -> null
+        } }
+        h.start()
+        assertNotNull(h.engine.runBackground().lastSuccess)
+        assertEquals(2, h.writes.size)
+        assertEquals(database, h.state.databaseID)
+        h.engine.stop()
+    }
+
+    @Test fun boundedPreparationLeavesCursorsUnacknowledgedAndAlwaysDiscardsStaging() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.files.put(EngineHarness.source(id = null), "a.md")
+        h.remote[v.personal.rawValue] = EngineHarness.prompt(EngineHarness.source())
+        val coordinator = SyncCoordinator(SyncWorkPermit(h.binding, 1, coroutineContext[Job]), h.client, h.data,
+            h.states, h.accounts, h.rig.mutations, h.rig.journal, h.pending, "Device", { v.device },
+            { Instant.parse("2026-10-14T12:00:00Z") }, MonotonicClock { testScheduler.currentTime * 1_000_000 }, preparationLimit = 1)
+        assertFailsWith<SyncCoordinatorError.NoProgress> { coordinator.run() }
+        assertTrue(h.state.cursors.isEmpty())
+        assertNull(h.state.databaseID)
+        assertTrue(h.writes.isEmpty())
+        assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
+    }
+
+    @Test fun requiredSnapshotRecollectionIsBoundedWithoutAnyStatePublication() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.states.update(h.binding) { SyncState(h.binding, v.uuid, mapOf(v.userScope to "0")) }
+        h.accounts.updateBinding(h.binding.root) { SyncLibraryBinding(h.binding.root, h.binding.account) }
+        val before = h.state
+        h.respond = { HttpResponse(200, body = PullResponse.codec.encode(PullResponse(v.uuid.toString(),
+            listOf(SyncScope(ScopeIdentity.User(v.user.rawValue), Mode.DELTA, 0, "0", false, emptyList())), emptyList()))) }
+        h.start(); val report = h.engine.runBackground()
+        assertEquals(2, h.pulls)
+        assertTrue(report.retrying)
+        assertNull(report.lastSuccess)
+        assertEquals(before, h.state)
+        assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
+        h.engine.stop()
+    }
+
+    @Test fun accessibleMovedHeadIsInstalledBeforeItsRemovedGroupIsRetired() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        val bytes = h.remote.getValue(v.personal.rawValue).content.encodeToByteArray()
+        h.remote[v.personal.rawValue] = EngineHarness.prompt(bytes, 2, PromptScope.User)
+        h.groups.clear()
+        h.respond = { request -> if (!request.url.endsWith("/sync/pull")) null else {
+            val pull = PullResponse.codec.decode(h.pullResponse().body).copy(removed = listOf(v.groupScope.rawValue))
+            HttpResponse(200, body = PullResponse.codec.encode(pull))
+        } }
+        h.start()
+        val report = h.engine.runBackground()
+        assertNotNull(report.lastSuccess)
+        assertContentEquals(bytes, h.files.read("a.md"))
+        assertNull(h.files.stamp(groupPath))
+        assertTrue(h.state.groups.isEmpty())
+        assertEquals(v.userScope, h.state.prompts[v.personalID]!!.scope)
+        assertTrue(h.files.listFiles().none { it.relativePath.startsWith("Conflicts/") })
+        assertTrue(h.writes.isEmpty())
+        h.engine.stop()
+    }
+
+    @Test fun suspendedHTTPNeverHoldsTheOrdinaryLibraryMutationLock() = runBlocking {
+        val rig = SyncJournalHarness(seed = false)
+        val arrived = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val server = SyncServerURL(rig.binding.account.serverURL)
+        val client = SyncHTTPClient(server, HttpTransport {
+            arrived.complete(Unit); release.await()
+            HttpResponse(200, body = PullResponse.codec.encode(PullResponse(v.uuid.toString(),
+                listOf(SyncScope(ScopeIdentity.User(v.user.rawValue), Mode.SNAPSHOT, 0, "0", false, emptyList())), emptyList())))
+        }, SyncCredential(server, ch.lkmc.monkeyspaw.core.domain.llm.SecretValue("A".repeat(43))))
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val graph = SyncEngineGraph(rig.local.state, rig.states, rig.accounts, rig.mutations, rig.journal,
+            SyncPendingOperationStore(rig.local.state, rig.dataOperations))
+        val engine = SyncEngine(graph, scope, Dispatchers.IO, Clock { Instant.parse("2026-10-14T12:00:00Z") },
+            { v.device }, MonotonicClock(System::nanoTime))
+        engine.start(rig.binding, client, "Device")
+        val worker = launch { engine.runBackground() }
+        arrived.await()
+        try {
+            withTimeout(3_000) {
+                async(Dispatchers.Default) { rig.local.library.save(PromptCodec.parse("Ordinary save", "local.md"), "local.md") }.await()
+            }
+            assertEquals("Ordinary save", rig.local.library.load("local.md").document.body)
+        } finally {
+            engine.stop(); release.complete(Unit); worker.join(); engine.drain(); scope.cancel()
+        }
+    }
+}
