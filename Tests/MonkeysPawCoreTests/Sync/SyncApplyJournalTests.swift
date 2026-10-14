@@ -87,6 +87,38 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertNoThrow(try rig.library.entries())
     }
 
+    func testLiveJournalCannotBeginUntilEmptyRecoveryIsDurable() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        try rig.data.put("corrupt", at: "sync/apply.json")
+        XCTAssertThrowsError(try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                                                mutations: rig.mutations, states: rig.states)) {
+            XCTAssertEqual($0 as? SyncError, .corruptFile)
+        }
+        try rig.data.delete(at: "sync/apply.json")
+        let writes = rig.data.writeCount
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        XCTAssertEqual(rig.data.writeCount, writes)
+        XCTAssertNil(try rig.files.stamp(at: "a.md"))
+        rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount + 1
+        XCTAssertThrowsError(try rig.journal.replay()) {
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .ioFailure)
+        }
+        XCTAssertTrue(rig.mutations.hasUnreadableJournal)
+        XCTAssertThrowsError(try rig.library.entries()) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.dataOperations.failOperationNumber = nil
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(rig.dataOperations.flushedDirectories, [RelativePath("sync"), nil])
+        XCTAssertFalse(rig.mutations.hasUnreadableJournal)
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+    }
+
     func testUncertainReplanRecoversReplacementWithTheSamePermitGraph() throws {
         let rig = try SyncApplyTestRig()
         try rig.files.write(SyncApplyTestRig.bytes("Old"), at: "a.md")
@@ -330,6 +362,15 @@ final class SyncApplyJournalTests: XCTestCase {
                 XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
             }
             rig.mutations.finish(owner)
+            XCTAssertThrowsError(try rig.library.entries()) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+            }
+            XCTAssertEqual(rig.mutations.pendingPermit?.id, owner)
+            let repairedPlan = SyncApplyPlan(id: owner, expectedState: nil,
+                nextState: try SyncState(binding: rig.binding), edits: [])
+            let repairedRecord = try SyncApplyRecord(plan: repairedPlan, steps: [])
+            try rig.data.writePrivate(JSONEncoder().encode(repairedRecord), at: "sync/apply.json")
+            XCTAssertEqual(try rig.journal.replay(), .committed)
             XCTAssertNoThrow(try rig.library.entries())
         }
     }
@@ -861,6 +902,33 @@ final class SyncApplyJournalTests: XCTestCase {
             XCTAssertEqual(try rig.files.read(at: "a.md"), edit.bytes)
             XCTAssertNil(rig.states.snapshot.value)
             XCTAssertNotNil(rig.journal.pending)
+        }
+    }
+
+    func testDisplacedRetentionConflictKeepsPermanentErrorAndAppliedBytes() throws {
+        for flushFails in [false, true] {
+            let rig = try SyncApplyTestRig()
+            try rig.files.write(SyncApplyTestRig.bytes("Old"), at: "a.md")
+            let edit = try rig.replacement()
+            let displaced = SyncApplyTestRig.bytes("New noncooperating writer")
+            let retained = SyncApplyTestRig.bytes("Previously retained writer")
+            let path = "sync/retained/" + edit.id.uuidString.lowercased() + "-displaced.bin"
+            try rig.data.writePrivate(retained, at: path)
+            rig.libraryOperations.racingBytesAfterCheck = displaced
+            if flushFails { rig.libraryOperations.failFlushNumber = 1 }
+            XCTAssertThrowsError(try rig.journal.apply(rig.plan([edit]))) {
+                let error = $0 as? SyncFileOperationError
+                XCTAssertEqual(error?.code, .invalidState)
+                XCTAssertEqual(error?.effect, .applied)
+                XCTAssertEqual(error?.displacedBytes, displaced)
+            }
+            XCTAssertEqual(try rig.files.read(at: "a.md"), edit.bytes)
+            XCTAssertEqual(try rig.data.read(at: path), retained)
+            XCTAssertNil(rig.states.snapshot.value)
+            XCTAssertNotNil(rig.journal.pending)
+            XCTAssertThrowsError(try rig.library.entries()) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+            }
         }
     }
 

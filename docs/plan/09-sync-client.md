@@ -98,6 +98,10 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   with uncommitted state stays recovery-required until restored or resolved.
   Corrupt/future journals stay blocked until explicitly restored or reset;
   a reset's deletion must be flushed before ordinary access resumes.
+  Ordinary begin/finish cannot clear this block, including an existing permit;
+  only validated recovery resumption or durable empty recovery releases it.
+  Failed recovery reads preserve the durability-uncertain latch while reporting
+  their typed error, so a retry still revalidates and reflushes the document.
   Publish exact server bytes, verify the result, flush files and affected
   directories, durably commit state, then durably remove the journal. Replay
   rechecks installed bytes and modes even for completed steps; an uncertain
@@ -112,7 +116,8 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   external keyed record or partially applied identity migration instead reports
   typed recovery-required and retains its journal; it never promises a conflict
   replan that would discard migration. A secondary raw-retention failure preserves
-  the original applied effect and displaced bytes in its returned fixed error.
+  the original applied effect and displaced bytes in its returned typed error.
+  Conflicting retained bytes report permanent invalid-state, never retryable I/O.
 - **Connection metadata.** `<data>/sync/account.json` is a version-1 optional
   connection: normalized server URL, user ID, username, device ID/name and a
   local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;

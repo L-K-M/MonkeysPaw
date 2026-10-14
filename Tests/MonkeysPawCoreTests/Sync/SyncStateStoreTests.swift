@@ -222,6 +222,65 @@ final class SyncStateStoreTests: XCTestCase {
         }
     }
 
+    func testRecoveryReadFailureKeepsDurabilityLatchAndRetriesFlush() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncStateStore(files: files, operations: operations)
+        let state = try SyncTestValues.state()
+        try store.update(for: state.binding) { $0 = state }
+        store.blockForRecovery(retaining: nil)
+        let flushCount = operations.flushCount
+        files.onRead = { _ in throw FileStoreError.ioFailure }
+        for _ in 0..<2 {
+            XCTAssertThrowsError(try store.recover(for: state.binding)) {
+                XCTAssertEqual($0 as? SyncError, .readFailed(.ioFailure))
+            }
+            XCTAssertEqual(store.snapshot.error, .durabilityUncertain)
+            XCTAssertNil(store.snapshot.value)
+            XCTAssertThrowsError(try store.load(for: state.binding)) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
+        }
+        XCTAssertEqual(operations.flushCount, flushCount)
+        files.onRead = nil
+        XCTAssertEqual(try store.recover(for: state.binding), state)
+        XCTAssertEqual(operations.flushCount, flushCount + 3)
+        XCTAssertNil(store.snapshot.error)
+    }
+
+    func testMissingUncertainPublicationCannotRecoverAsAnEmptyDocument() throws {
+        for acknowledged in [false, true] {
+            let files = MemoryFileStore()
+            let operations = MemorySyncFileOperations(files: files)
+            let store = SyncStateStore(files: files, operations: operations)
+            let state = try SyncTestValues.state()
+            if acknowledged { try store.update(for: state.binding) { $0 = state } }
+            operations.failFlushNumber = operations.flushCount + 1
+            XCTAssertThrowsError(try store.update(for: state.binding) { $0 = state }) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
+            let published = try files.read(at: path)
+            try files.delete(at: path)
+            operations.failFlushNumber = nil
+            let flushCount = operations.flushCount
+            for _ in 0..<2 {
+                XCTAssertThrowsError(try store.recover(for: state.binding)) {
+                    XCTAssertEqual($0 as? SyncError, .readFailed(.notFound))
+                }
+                XCTAssertEqual(store.snapshot.error, .durabilityUncertain)
+                XCTAssertEqual(store.snapshot.value, acknowledged ? state : nil)
+                XCTAssertThrowsError(try store.update(for: state.binding) { $0 = state }) {
+                    XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+                }
+            }
+            XCTAssertEqual(operations.flushCount, flushCount)
+            try files.writePrivate(published, at: path)
+            XCTAssertEqual(try store.recover(for: state.binding), state)
+            XCTAssertEqual(operations.flushCount, flushCount + 3)
+            XCTAssertNil(store.snapshot.error)
+        }
+    }
+
     func testClearRetryMustFlushAnAlreadyDeletedDocumentBeforeRecovery() throws {
         for acknowledged in [false, true] {
             for offset in 1...2 {

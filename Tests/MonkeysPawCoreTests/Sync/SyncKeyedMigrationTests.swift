@@ -2,6 +2,62 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncKeyedMigrationTests: XCTestCase {
+    func testUnreadableJournalGateRequiresExplicitRecovery() throws {
+        for restoreJournal in [false, true] {
+            let gate = SyncLibraryWriteGate()
+            let id = UUID()
+            let state = try SyncTestValues.state()
+            gate.blockForRecovery()
+            XCTAssertThrowsError(try gate.begin(id, nextState: state)) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+            }
+            gate.finish(id)
+            XCTAssertTrue(gate.hasUnreadableJournal)
+            XCTAssertNil(gate.pendingPermit)
+            XCTAssertThrowsError(try gate.requireEditable()) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+            }
+            if restoreJournal {
+                gate.resume(id, nextState: state)
+                XCTAssertEqual(gate.pendingPermit?.id, id)
+                XCTAssertThrowsError(try gate.requireEditable()) {
+                    XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+                }
+                gate.finish(id)
+            } else { gate.finishEmptyRecovery() }
+            XCTAssertFalse(gate.hasUnreadableJournal)
+            XCTAssertNoThrow(try gate.requireEditable())
+        }
+    }
+
+    func testUnreadableJournalCannotBeFinishedByAnExistingPermit() throws {
+        let gate = SyncLibraryWriteGate()
+        let id = UUID()
+        let state = try SyncTestValues.state()
+        try gate.begin(id, nextState: state)
+        gate.blockForRecovery()
+        gate.finish(id)
+        gate.finishEmptyRecovery()
+        XCTAssertTrue(gate.hasUnreadableJournal)
+        XCTAssertEqual(gate.pendingPermit?.id, id)
+        XCTAssertEqual(gate.pendingPermit?.nextState, state)
+        for candidate in [id, UUID()] {
+            XCTAssertThrowsError(try gate.begin(candidate, nextState: state)) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+            }
+        }
+        XCTAssertThrowsError(try gate.replace(id, with: UUID(), nextState: state)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        XCTAssertThrowsError(try gate.requireEditable()) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        gate.resume(id, nextState: state)
+        gate.finish(id)
+        XCTAssertFalse(gate.hasUnreadableJournal)
+        XCTAssertNoThrow(try gate.requireEditable())
+    }
+
     func testHistoryMigrationRejectsInvalidIdentityRoutesBeforeAnyIO() throws {
         let source = "history/" + SyncTestValues.personalPrompt.rawValue + "/head.json"
         let destination = "history/" + SyncTestValues.groupPrompt.rawValue + "/head.json"

@@ -79,7 +79,8 @@ final class SyncPersistence<Document: Codable> {
             loaded = Loaded(document: nil, object: [:])
         } catch {
             let safe = error as? SyncError ?? .corruptFile
-            cached = SyncStoreSnapshot(value: cached.value, error: safe)
+            // Report the read error without replacing the recovery latch.
+            cached = SyncStoreSnapshot(value: cached.value, error: .durabilityUncertain)
             throw safe
         }
         try validate(loaded.document)

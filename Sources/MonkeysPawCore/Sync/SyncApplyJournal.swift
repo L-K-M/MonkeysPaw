@@ -174,14 +174,14 @@ final class SyncApplyJournal {
         lock.lock()
         defer { lock.unlock() }
         if let record = try persistence.recover() {
-            if let permit = mutations.pendingPermit, permit.id != record.id {
-                // A failed replacement flush may leave the new ID on disk
-                // while this graph still owns the previous plan's permit.
-                try mutations.replacePermit(permit.id, with: record.id, nextState: record.nextState)
-            } else { try mutations.begin(record.id, nextState: record.nextState) }
+            mutations.resume(record.id, nextState: record.nextState)
             _ = try states.recover(for: record.nextState.binding)
         } else {
             if let permit = mutations.pendingPermit { try settleRemovedJournal(permit) }
+            else if mutations.hasUnreadableJournal {
+                try SyncDurability.flushParents(of: "sync/apply.json", operations: operations)
+                mutations.finishEmptyRecovery()
+            }
             return .committed
         }
         return try run()
@@ -244,12 +244,18 @@ final class SyncApplyJournal {
                     // publication. Keep them even when durability failed.
                     if let displaced = operationError.displacedBytes, displaced != step.edit.retainedBytes {
                         do { try retain(displaced, path: retentionPrefix(step.edit) + "-displaced.bin") }
+                        catch SyncError.invalidState {
+                            throw SyncFileOperationError(.invalidState, effect: operationError.effect, displacedBytes: displaced)
+                        }
                         catch { throw operationError }
                     }
                     throw operationError
                 }
                 if let displaced = result.displacedBytes, displaced != step.edit.retainedBytes {
                     do { try retain(displaced, path: retentionPrefix(step.edit) + "-displaced.bin") }
+                    catch SyncError.invalidState {
+                        throw SyncFileOperationError(.invalidState, effect: result.effect, displacedBytes: displaced)
+                    }
                     catch { throw SyncFileOperationError(.ioFailure, effect: result.effect, displacedBytes: displaced) }
                 }
                 if case .replanAsConflict = result.outcome {
@@ -303,6 +309,7 @@ final class SyncApplyJournal {
             states.blockForRecovery(retaining: previous)
             throw error
         }
+        mutations.resume(permit.id, nextState: permit.nextState)
         mutations.finish(permit.id)
     }
 

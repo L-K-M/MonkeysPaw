@@ -15,19 +15,21 @@ protocol SyncKeyedStore {
 /// own store lock. Writes already in progress finish before preparation can
 /// snapshot that store; new writes are refused until the journal is settled.
 final class SyncLibraryWriteGate {
-    private enum Owner: Equatable { case apply(UUID, SyncState), unreadableJournal }
+    private enum Owner: Equatable { case apply(UUID, SyncState) }
     private let lock = NSLock()
     private var owner: Owner?
+    private var recoveryBlocked = false
 
     func requireEditable() throws {
         lock.lock()
         defer { lock.unlock() }
-        guard owner == nil else { throw LibraryError.recoveryRequired }
+        guard owner == nil, !recoveryBlocked else { throw LibraryError.recoveryRequired }
     }
 
     func begin(_ id: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
+        guard !recoveryBlocked else { throw LibraryError.recoveryRequired }
         if case .apply(let current, _)? = owner, current != id { throw LibraryError.recoveryRequired }
         owner = .apply(id, nextState)
     }
@@ -35,12 +37,14 @@ final class SyncLibraryWriteGate {
     func finish(_ id: UUID) {
         lock.lock()
         defer { lock.unlock() }
+        guard !recoveryBlocked else { return }
         if case .apply(let current, _)? = owner, current == id { owner = nil }
     }
 
     func replace(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
         lock.lock()
         defer { lock.unlock() }
+        guard !recoveryBlocked else { throw LibraryError.recoveryRequired }
         guard case .apply(let current, _)? = owner, current == previous else { throw LibraryError.recoveryRequired }
         owner = .apply(next, nextState)
     }
@@ -51,6 +55,7 @@ final class SyncLibraryWriteGate {
         lock.lock()
         defer { lock.unlock() }
         owner = .apply(id, nextState)
+        recoveryBlocked = false
     }
 
     /// Retain completion evidence in the live graph when its journal object
@@ -65,19 +70,21 @@ final class SyncLibraryWriteGate {
     var hasUnreadableJournal: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return owner == .unreadableJournal
+        return recoveryBlocked
     }
 
     func blockForRecovery() {
         lock.lock()
         defer { lock.unlock() }
-        if owner == nil { owner = .unreadableJournal }
+        // Keep any live completion evidence, but ordinary finish cannot unlock
+        // a graph after a journal read or recovery failure.
+        recoveryBlocked = true
     }
 
     func finishEmptyRecovery() {
         lock.lock()
         defer { lock.unlock() }
-        if owner == .unreadableJournal { owner = nil }
+        if owner == nil { recoveryBlocked = false }
     }
 }
 

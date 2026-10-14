@@ -27,6 +27,8 @@ public struct SyncFilePublication: Sendable, CustomStringConvertible, CustomRefl
 
 public enum SyncFileFailureCode: String, Sendable {
     case changed, invalidPath, notFound, occupied, ioFailure, durabilityFailed
+    /// Permanent consistency failure; retrying I/O cannot resolve it.
+    case invalidState
 }
 
 public enum SyncFileMutationEffect: Equatable, Sendable {
