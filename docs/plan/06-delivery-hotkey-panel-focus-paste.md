@@ -49,16 +49,30 @@ Hotkey notes:
     confirmed registrations, restoring the previous action after native or save
     failure and reporting any failed recovery. Replacing or clearing one action
     preserves the other action and its verification. Restart loads both choices.
-  The M7 Core contract precedes driver activation: portal, KDE and GNOME adapters
-  report repeat unbound until their two-action implementations land (D9–D11).
-  Native Settings/composition follows in D12/D13.
+  The M7 Core contract precedes driver activation. GNOME/manual drivers declare
+  both actions independently; repeat stays unbound until a key is explicitly
+  assigned. Portal and KDE two-action support follows in D9/D10. Native
+  Settings/composition and the Linux desktop repeat entry follow in D12/D13.
 - **GNOME keybinding.** The custom keybinding row is named
-  `Monkey's Paw: <action>`, so re-syncs update it in place. Installation
-  runs from the explicit Setup hotkey action, never from startup, a service,
+  `Monkey's Paw: <action>`, so installation recognizes it without resetting
+  your key. Installation runs from the explicit Setup hotkey action, never
+  from startup, a service,
   a self-test or the package's `postinst` (that would write
   root's dconf). It is recorded only on success (Vervellum
   `ShortcutInstaller` rule). A failed read of the binding list aborts, and is
-  never treated as an empty list that a write could then wipe.
+  never treated as an empty list that a write could then wipe. Repeat has no
+  default key: its owned `Monkey's Paw: repeat` row runs
+  `gapplication action ch.lkmc.monkeyspaw repeat` and can be installed only
+  after an explicit key assignment. Existing key choices, including unbound
+  choices, remain authoritative. Renamed rows, foreign commands, duplicate
+  owned rows and dormant fields are preserved. Installation checks the list
+  again before publishing; separate gsettings calls cannot exclude an edit
+  after the final check.
+- **Manual repeat.** In your desktop's custom shortcut settings, assign your
+  chosen key to `gapplication action ch.lkmc.monkeyspaw repeat`. Use the same
+  command on the host for a sandboxed install; no key is chosen by the app.
+  D11 supplies the driver instructions; D12 adds the GApplication/desktop
+  entry. A manual or cold invocation never verifies a portal/KDE/Carbon key.
 - **D-Bus activation.** The `.desktop` file sets `DBusActivatable=true`.
   The package installs a D-Bus service file whose `Exec` runs
   `monkeyspaw --gapplication-service`. `gapplication action` therefore
@@ -91,8 +105,8 @@ Hotkey notes:
   custom rows. Retire only the exact untouched M1b default (owned name,
   exact toggle command, default GTK trigger), by removing its list entry
   while retaining its fields. Preserve all other entries and fields. An
-  edited owned row or another active row invoking our toggle blocks binding
-  and asks you to disable that row in GNOME Settings first. Failed reads or
+  edited owned row or another active row invoking our toggle or repeat blocks
+  binding and asks you to disable that row in GNOME Settings first. Failed reads or
   writes also block binding. This happens only from the explicit Setup
   action; cancellation does not recreate the retired fallback. Unsupported
   or unavailable GlobalShortcuts uses the existing gsettings mechanism on

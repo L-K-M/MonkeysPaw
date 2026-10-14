@@ -22,8 +22,9 @@ verification green. M7 makes registration, verification, change and clear intent
 action-aware. Repeat starts unbound, with no suggested key. Carbon choices survive
 restart; capture or clear affects only the selected action. A failed registration
 or save restores its previous binding and reports failure, including unsuccessful
-recovery. Unsupported native adapters keep repeat honestly unbound until D9–D11;
-D12/D13 provide the native controls and activation. Core supplies this contract
+recovery. GNOME/manual drivers supply repeat instructions. GNOME installs only
+explicitly assigned keys; portal/KDE adapters follow in D9/D10. D12/D13 provide
+the native controls and activation. Core supplies this contract
 independently of the native windows.
 
 Settings → General shows your active library folder, whether it is the default,
