@@ -159,7 +159,10 @@ public final class FillModel: @unchecked Sendable {
                     // failures are visible, but cannot cancel the clipboard action.
                     guard state == .delivering else { return }
                     guard let outcome else { state = .closed; onChange?(); return }
-                    guard recording.map({ repeatService?.isCurrent($0) == true }) ?? true else { return }
+                    guard recording.map({ repeatService?.isCurrent($0) == true }) ?? true else {
+                        finishDelivery(outcome)
+                        return
+                    }
                     do {
                         try fill.rememberedOnDelivery(identity: entry.identity,
                                                       fields: entry.document.effectiveFields, values: delivered)
@@ -168,7 +171,6 @@ public final class FillModel: @unchecked Sendable {
                     catch { persistenceWarnings.append(.usageNotSaved) }
                     if let repeatService, let recording {
                         repeatService.recordCompleted(entry: entry, values: delivered, mode: mode, ticket: recording) { [self] saved in
-                            guard repeatService.isCurrent(recording) else { return }
                             persistenceWarnings += saved
                             finishDelivery(outcome)
                         }

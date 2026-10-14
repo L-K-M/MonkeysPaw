@@ -2,6 +2,94 @@
 import XCTest
 
 final class DeliveryServiceTests: XCTestCase {
+    func testCaptureInvocationCompletesOnInjectedMainThread() throws {
+        for source: DeliveryInvocationSource in [.picker, .currentTarget] {
+            let h = DeliveryHarness()
+            h.arm()
+            h.main.mode = .deferred
+            var completions = 0
+            h.service.captureInvocation(source: source) { invocation in
+                XCTAssertTrue(h.main.isRunning)
+                XCTAssertEqual(invocation.target, h.focus.target)
+                XCTAssertEqual(invocation.session, .macOS)
+                completions += 1
+            }
+            XCTAssertEqual(completions, 0)
+            h.main.drain()
+            XCTAssertEqual(completions, 1)
+        }
+    }
+
+    func testSentBackendAfterPresentationInvalidationReportsActualOutcomeOnce() throws {
+        let h = DeliveryHarness()
+        h.arm()
+        var captured: DeliveryInvocation?
+        h.service.captureInvocation(source: .picker) { captured = $0 }
+        let invocation = try XCTUnwrap(captured)
+        h.injectors[.cgEvent]?.mode = .deferred
+        var outcomes: [DeliveryOutcome?] = []
+        h.service.deliver("test", mode: .paste(.standard), invocation: invocation) { outcomes.append($0) }
+        h.settle()
+        XCTAssertEqual(h.injectors[.cgEvent]?.chords, [.standard])
+
+        h.service.invalidatePendingPresentation()
+        h.injectors[.cgEvent]?.complete([.sent, .sent])
+
+        XCTAssertEqual(outcomes, [.pasted(.cgEvent)])
+        XCTAssertEqual(h.service.lastDelivery, DeliveryReceipt(outcome: .pasted(.cgEvent), focus: .confirmed))
+        h.service.deliver("next", mode: .copyOnly) { _ in }
+        XCTAssertEqual(h.clipboard.text, "next", "Completion must release the delivery queue.")
+        h.settle()
+    }
+
+    func testSentBackendAfterRevocationKeepsClipboardRestore() throws {
+        for cancelInvocation in [true, false] {
+            let h = DeliveryHarness(clipboardRestore: .previousText)
+            h.clipboard.replaceText("previous")
+            h.arm()
+            var captured: DeliveryInvocation?
+            h.service.captureInvocation(source: .picker) { captured = $0 }
+            let invocation = try XCTUnwrap(captured)
+            h.injectors[.cgEvent]?.mode = .deferred
+            var valid = true
+            var outcomes: [DeliveryOutcome?] = []
+            h.service.deliver("test", mode: .paste(.standard), invocation: invocation,
+                              isValid: { valid }) { outcomes.append($0) }
+            h.settle()
+            XCTAssertEqual(h.injectors[.cgEvent]?.chords, [.standard])
+            if cancelInvocation { invocation.cancel() }
+            else { valid = false }
+            h.injectors[.cgEvent]?.complete([.sent, .sent])
+
+            XCTAssertEqual(outcomes, [.pasted(.cgEvent)])
+            XCTAssertEqual(h.service.lastDelivery?.outcome, .pasted(.cgEvent))
+            h.scheduler.advance(by: Limits.clipboardRestoreDelay - .milliseconds(1))
+            XCTAssertEqual(h.clipboard.text, "test")
+            h.scheduler.advance(by: .milliseconds(1))
+            h.scheduler.repeatLastCallback()
+            XCTAssertEqual(h.clipboard.text, "previous")
+            XCTAssertEqual(h.clipboard.restorationWrites, 1)
+            XCTAssertNil(h.clipboard.lastSnapshot)
+        }
+    }
+
+    func testRevokedInvocationBeforePasteStillCancelsWithoutReceipt() throws {
+        let h = DeliveryHarness()
+        h.arm()
+        var captured: DeliveryInvocation?
+        h.service.captureInvocation(source: .picker) { captured = $0 }
+        let invocation = try XCTUnwrap(captured)
+        var outcomes: [DeliveryOutcome?] = []
+        h.service.deliver("test", mode: .paste(.standard), invocation: invocation) { outcomes.append($0) }
+        invocation.cancel()
+        h.settle()
+        h.scheduler.repeatLastCallback()
+
+        XCTAssertEqual(outcomes, [nil])
+        XCTAssertNil(h.service.lastDelivery)
+        XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
+    }
+
     func testClipboardHideSettleRestoreInjectOrder() throws {
         let h = DeliveryHarness()
         h.arm()

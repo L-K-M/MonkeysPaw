@@ -107,9 +107,9 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
                 let validation = result.map { self.availability(for: $0) }
                 self.main.run {
                     guard self.isCurrent(ticket), revision == self.revision else { done(self.availability); return }
-                    self.loaded = true
                     switch validation {
                     case .success(let value):
+                        self.loaded = true
                         if let snapshot = try? result.get() {
                             self.snapshot = Snapshot(record: snapshot.record, values: snapshot.values,
                                 entry: value.1 ?? snapshot.entry)
@@ -117,7 +117,9 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
                         self.publish(self.checkedAccess(value))
                     case .failure(let error):
                         let failure = error as? RepeatFailure ?? .readFailed
-                        self.lock.withLock { self.blocked = failure }
+                        if failure == .invalidationFailed {
+                            self.lock.withLock { self.blocked = failure }
+                        }
                         self.publish(.unavailable(failure))
                     }
                     done(self.availability)

@@ -363,13 +363,15 @@ public final class PickerModel: @unchecked Sendable {
         }) { [self] outcome in
             main.run { [self] in
                 guard let outcome else { state = .closed; onChange?(); return }
-                guard recording.map({ repeatService?.isCurrent($0) == true }) ?? true else { return }
+                guard recording.map({ repeatService?.isCurrent($0) == true }) ?? true else {
+                    finishDelivery(entry.identity, outcome: outcome, warnings: [])
+                    return
+                }
                 var warnings: [PromptPersistenceWarning] = []
                 do { try index.recordUse(of: entry.identity) }
                 catch { warnings.append(.usageNotSaved) }
                 if let repeatService, let recording {
                     repeatService.recordCompleted(entry: entry, values: [:], mode: mode, ticket: recording) { [self] saved in
-                        guard repeatService.isCurrent(recording) else { return }
                         finishDelivery(entry.identity, outcome: outcome, warnings: warnings + saved)
                     }
                 } else { finishDelivery(entry.identity, outcome: outcome, warnings: warnings) }

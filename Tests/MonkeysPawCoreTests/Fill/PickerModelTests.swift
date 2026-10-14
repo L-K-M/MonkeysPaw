@@ -3,6 +3,51 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testStaleTicketAfterDeliveryOutcomeFinishesWithoutRecordingUsage() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("body")
+        h.flow.delivery.injectors[.cgEvent]?.mode = .deferred
+        try h.open()
+        h.picker.use(mode: .paste(.standard))
+        h.flow.settle()
+        var changes: [PickerModel.State] = []
+        h.picker.onChange = { changes.append(h.picker.state) }
+        h.flow.delivery.main.mode = .deferred
+        h.flow.delivery.injectors[.cgEvent]?.complete([.sent, .sent])
+        XCTAssertTrue(h.flow.delivery.main.drainOne())
+        XCTAssertEqual(h.flow.delivery.service.lastDelivery?.outcome, .pasted(.cgEvent))
+        XCTAssertEqual(h.picker.state, .delivering)
+
+        try h.service.retire()
+        h.flow.delivery.main.drain()
+
+        XCTAssertEqual(changes, [.done(.pasted(.cgEvent))])
+        XCTAssertEqual(h.picker.state, .done(.pasted(.cgEvent)))
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testStaleRecordingCallbackFinishesAndPreservesPickerWarnings() throws {
+        let h = try RepeatHarness(heldWork: true)
+        _ = try h.put("body")
+        try h.open()
+        h.flow.data.failNextWrite = true
+        h.picker.use(mode: .copyOnly)
+        h.flow.settle()
+        XCTAssertEqual(h.picker.state, .delivering)
+        XCTAssertEqual(h.held.pending.count, 1)
+        var changes: [PickerModel.State] = []
+        h.picker.onChange = { changes.append(h.picker.state) }
+
+        try h.service.retire()
+        h.held.releaseAll()
+
+        XCTAssertEqual(changes, [.done(.copiedOnly(.requested))])
+        XCTAssertEqual(h.picker.state, .done(.copiedOnly(.requested)))
+        XCTAssertEqual(h.picker.persistenceWarnings, [.usageNotSaved])
+        XCTAssertNil(try h.store.load())
+    }
+
     func testFieldlessInvocationKeepsOriginalArmedTargetDuringBuiltinRead() throws {
         let h = PromptFlowHarness()
         _ = try h.put("{{clipboard}}")

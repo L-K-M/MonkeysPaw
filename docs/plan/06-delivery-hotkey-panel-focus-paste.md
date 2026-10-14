@@ -180,9 +180,12 @@ Hotkey notes:
     A tombstone is persisted before reporting a successful clear/retirement.
     Failure reports unsuccessful clear and disables repeat until a durable
     retry; composition must retain the binding rather than claim retirement.
+    A transient record read failure reports unavailable and permits a retry.
     A failed disk write cannot promise removal across restart. Revoked
     continuations cannot start a paste or recreate cleared state; an event
-    already submitted to a native injector cannot be unsent. D12/D13 supply
+    already submitted to a native injector cannot be unsent. A backend's sent
+    result completes delivery even if revoked while its reply is pending;
+    stale recording tickets still cannot recreate cleared data. D12/D13 supply
     native actions/hotkeys/UI, and D14 supplies the current terminal policy.
   - `selftest` runs §6.5.
 

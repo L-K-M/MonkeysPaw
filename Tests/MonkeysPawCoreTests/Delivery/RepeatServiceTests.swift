@@ -5,6 +5,51 @@ import XCTest
 final class RepeatServiceTests: XCTestCase {
     private let assigned = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\n"
 
+    func testStartupReadFailureCanRetryLoadOrRepeat() throws {
+        for reload in [true, false] {
+            let h = try RepeatHarness()
+            _ = try h.put("body")
+            try h.deliver(mode: .copyOnly)
+            let restarted = h.restart()
+            var reads = 0
+            h.flow.data.onRead = { path in
+                guard path == "last-delivery.json" else { return }
+                reads += 1
+                if reads == 1 { throw FileStoreError.ioFailure }
+            }
+            var availability: [RepeatAvailability] = []
+            restarted.load { availability.append($0) }
+            XCTAssertEqual(availability, [.unavailable(.readFailed)])
+
+            if reload {
+                restarted.load { availability.append($0) }
+                XCTAssertEqual(availability, [.unavailable(.readFailed), .ready])
+            }
+            XCTAssertEqual(h.repeatNow(using: restarted), [.delivered(.copiedOnly(.requested), [])])
+            XCTAssertEqual(reads, 2)
+        }
+    }
+
+    func testStartupInvalidationFailureStaysBlockedUntilDurableRepair() throws {
+        let h = try RepeatHarness()
+        _ = try h.put("body")
+        try h.deliver()
+        let restarted = h.restart(binding: try RepeatBinding(root: "/other"))
+        h.flow.data.failNextWrite = true
+        var availability: [RepeatAvailability] = []
+        restarted.load { availability.append($0) }
+        restarted.load { availability.append($0) }
+        XCTAssertEqual(availability, [.unavailable(.invalidationFailed), .unavailable(.invalidationFailed)])
+        XCTAssertEqual(h.repeatNow(using: restarted), [.unavailable(.invalidationFailed)])
+        XCTAssertNotNil(try h.store.load())
+
+        try restarted.forgetValues()
+        restarted.load { availability.append($0) }
+        XCTAssertEqual(availability.last, .nothingToRepeat)
+        XCTAssertEqual(h.repeatNow(using: restarted), [.nothingToRepeat])
+        XCTAssertNil(try h.store.load())
+    }
+
     func testPickerAndFillRecordEveryCompletedUserOutcomeExactlyOnce() throws {
         for filled in [false, true] {
             for mode: DeliveryMode in [.paste(.standard), .copyOnly] {

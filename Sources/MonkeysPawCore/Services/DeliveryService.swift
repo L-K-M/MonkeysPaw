@@ -174,8 +174,9 @@ public final class DeliveryService {
         enqueue(text, mode: mode, done: done)
     }
 
-    /// Capture on the UI thread, before any async work. A repeat uses the
-    /// current target without changing the hidden picker's armed target/draft.
+    /// Capture and invoke completion on the injected UI thread, before async
+    /// work. A repeat uses the current target without changing the hidden
+    /// picker's armed target/draft.
     public func captureInvocation(source: DeliveryInvocationSource,
                                   completion: @escaping (DeliveryInvocation) -> Void) {
         mainThread.run {
@@ -185,8 +186,10 @@ public final class DeliveryService {
         }
     }
 
-    /// Nil means revoked before completion. Validation runs in the existing
-    /// queue before write/hide and again after settle/focus, before injection.
+    /// Nil means revoked before delivery completes. A sent paste remains a
+    /// completed outcome even if revoked while the backend's reply is pending.
+    /// Validation runs in the existing queue before write/hide and again after
+    /// settle/focus, before injection.
     /// Its caller owns background source/access checks; isValid is a UI gate.
     public func deliver(
         _ text: String, mode: DeliveryMode, invocation: DeliveryInvocation,
@@ -490,7 +493,7 @@ public final class DeliveryService {
     private func finish(_ request: Request, outcome: DeliveryOutcome, focus: FocusConfirmation) {
         // Every continuation entered through MainThread, including done.
         guard !request.didComplete else { return }
-        guard current(request) else { cancel(request); return }
+        // Revocation cannot undo a completed paste or copy.
         request.didComplete = true
         if case .ladder = request.selection {
             lastDelivery = DeliveryReceipt(outcome: outcome, focus: focus)
