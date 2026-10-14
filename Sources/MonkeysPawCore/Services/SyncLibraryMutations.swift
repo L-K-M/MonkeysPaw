@@ -127,8 +127,10 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   original.frontMatter.id?.rawValue != copyID else { throw SyncError.invalidState }
         } else {
             try LibraryPath.validate(path)
-            guard copyOrigin == nil, copyID == nil, retainedBytes == (expected ?? adoptingSource)?.bytes,
-                  retainedSourcePath.map({ RelativePath($0) }) == (expected ?? adoptingSource).map({ RelativePath($0.path) }),
+            // Mirrors publication(): an exact-case alias adoption retains its source, not the alias.
+            let source = adoptingSource ?? expected
+            guard copyOrigin == nil, copyID == nil, retainedBytes == source?.bytes,
+                  retainedSourcePath.map({ RelativePath($0) }) == source.map({ RelativePath($0.path) }),
                   heldIssue == nil || (heldIssue == .content(.invalidMetadataType)
                     && SyncConflictMetadata.hasInvalidOrigin(in: document)) else { throw SyncError.invalidState }
         }
