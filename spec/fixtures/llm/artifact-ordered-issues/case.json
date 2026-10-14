@@ -1,0 +1,127 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "artifact" : {
+        "body" : "{{selection}} {{ bad name }} {{open",
+        "description" : "Research a topic",
+        "fields" : [
+          {
+            "default" : "bad",
+            "description" : "Voice to use",
+            "label" : "Tone",
+            "name" : "1name",
+            "optional" : false,
+            "options" : [
+
+            ],
+            "remember" : true,
+            "type" : "choice"
+          },
+          {
+            "default" : "science",
+            "description" : "",
+            "label" : "Topic",
+            "name" : "clipboard",
+            "optional" : false,
+            "options" : [
+              {
+                "label" : "A",
+                "value" : "a"
+              }
+            ],
+            "remember" : true,
+            "type" : "text"
+          },
+          {
+            "default" : "science",
+            "description" : "",
+            "label" : "Topic",
+            "name" : "unused",
+            "optional" : false,
+            "options" : [
+
+            ],
+            "remember" : true,
+            "type" : "text"
+          }
+        ],
+        "notes" : "Explain the context and preserve the tone.",
+        "tags" : [
+          "research",
+          "work"
+        ],
+        "title" : "Research"
+      },
+      "issues" : [
+        {
+          "code" : "field.invalid_name",
+          "location" : null,
+          "severity" : "error"
+        },
+        {
+          "code" : "field.invalid_options",
+          "location" : null,
+          "severity" : "error"
+        },
+        {
+          "code" : "field.invalid_default",
+          "location" : null,
+          "severity" : "error"
+        },
+        {
+          "code" : "field.reserved_name",
+          "location" : null,
+          "severity" : "error"
+        },
+        {
+          "code" : "field.invalid_options",
+          "location" : null,
+          "severity" : "error"
+        },
+        {
+          "code" : "template.invalid_placeholder",
+          "location" : {
+            "bodyByteOffset" : 14
+          },
+          "severity" : "warning"
+        },
+        {
+          "code" : "template.unbalanced_opener",
+          "location" : {
+            "bodyByteOffset" : 29
+          },
+          "severity" : "error"
+        },
+        {
+          "code" : "field.reserved_name",
+          "location" : {
+            "bodyByteOffset" : 0
+          },
+          "severity" : "error"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        }
+      ]
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "schema" : 1,
+  "source" : "output.txt"
+}

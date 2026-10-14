@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "category": "llm",
+  "kind": "schema",
+  "outputKind": "review",
+  "expected": {
+    "bytes": "schema.json"
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "artifact" : {
+        "body" : "Literal { braces } [arrays], \"quotes\", \\ paths and \\\"}\\\".\r\n```json\n<think>{literal}</think>\n```",
+        "description" : "Research a topic",
+        "fields" : [
+          {
+            "default" : "neutral",
+            "description" : "Voice to use",
+            "label" : "Tone",
+            "name" : "tone",
+            "optional" : false,
+            "options" : [
+              {
+                "label" : "Neutral",
+                "value" : "neutral"
+              }
+            ],
+            "remember" : true,
+            "type" : "choice"
+          },
+          {
+            "default" : "",
+            "description" : "Background",
+            "label" : "Context",
+            "name" : "context",
+            "optional" : true,
+            "options" : [
+
+            ],
+            "remember" : false,
+            "type" : "multiline"
+          },
+          {
+            "default" : "science",
+            "description" : "",
+            "label" : "Topic",
+            "name" : "topic",
+            "optional" : false,
+            "options" : [
+
+            ],
+            "remember" : true,
+            "type" : "text"
+          }
+        ],
+        "notes" : "Ends with a backslash \\",
+        "tags" : [
+          "research",
+          "work"
+        ],
+        "title" : "Research"
+      },
+      "issues" : [
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        }
+      ]
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "schema" : 1,
+  "source" : "output.txt"
+}

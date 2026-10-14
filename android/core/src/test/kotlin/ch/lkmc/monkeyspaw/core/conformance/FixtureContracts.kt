@@ -12,12 +12,14 @@ import kotlinx.serialization.json.JsonPrimitive
 /** Checks fixture shapes and references; it never runs prompt or DTO implementations. */
 internal object FixtureContracts {
     fun read(category: Category, envelope: JsonObject, schemas: Set<String>, envelopeName: String): List<String> {
+        if (category == Category.LLM) return LlmFixtureContracts.read(envelope)
         val required = setOf("schema", "category", "expected") + when (category) {
             Category.FORMAT, Category.GRAMMAR, Category.RENDER, Category.VALIDATION -> setOf("filename")
             Category.RANKING -> setOf("query", "now", "prompts")
             Category.IMPORT -> setOf("source")
             Category.PATHS, Category.CANONICAL -> setOf("source", "scope")
             Category.DTO -> setOf("source", "dto")
+            Category.LLM -> error("LLM contract dispatched above")
         }
         val optional = when (category) {
             Category.RENDER -> setOf("repeat", "values", "builtins")
@@ -79,6 +81,7 @@ internal object FixtureContracts {
                 corpusRequire(source != "case.json", "DTO source cannot be case.json")
                 listOf(source)
             }
+            Category.LLM -> error("LLM contract dispatched above")
         }
     }
 

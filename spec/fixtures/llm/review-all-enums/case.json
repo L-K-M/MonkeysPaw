@@ -1,0 +1,349 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "review" : {
+        "findings" : [
+          {
+            "criterion" : "clarity",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "clarity",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "clarity",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "context",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "context",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "context",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "role",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "role",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "role",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "delimiting",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "delimiting",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "delimiting",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "output_format",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "output_format",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "output_format",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "examples",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "examples",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "examples",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "reasoning",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "reasoning",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "reasoning",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "decomposition",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "decomposition",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "decomposition",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "placeholders",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "high",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "placeholders",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "placeholders",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 12,
+              "startByte" : 0
+            },
+            "severity" : "low",
+            "suggestion" : "Request primary sources."
+          }
+        ],
+        "summary" : "Clarify sources."
+      }
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "review",
+  "reviewedSource" : "prompt.md",
+  "schema" : 1,
+  "source" : "output.txt"
+}
