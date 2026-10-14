@@ -113,6 +113,55 @@ scenario, expected/actual return behavior, tester/date and PASS/FAIL/NOT RUN
 or UNSUPPORTED. Keep prompt content, typed text and selections out of logs
 and collected evidence.
 
+## Share entry checks (M9 N6): NOT RUN
+
+The sharesheet's "Monkey's Paw" target accepts `ACTION_SEND` with exact
+`text/plain`. It offers **Use in prompt**, which hosts the same picker,
+capture-field chooser and Copy form, or **Save as new prompt**, which opens
+the existing editor with an unsaved body draft. Shared text is never sender
+metadata, a file path or an import. A leading YAML fence remains body text.
+Subject, HTML, stream, URI and routing extras are ignored; URLs are not fetched.
+No result or insertion is returned to the sender.
+
+JVM tests exercise the decoder's pure extraction seam, retained entry with
+fake clipboard effects, and the existing Fill/editor against isolated
+app-private stores. The Android build gate covers compilation, lint and
+minified APK packaging. These checks cannot execute Android Bundle
+unparcelling, native spans, the sharesheet or Compose attachment. Keep all
+physical checks below NOT RUN until evidence is recorded on the final signed
+minified APK. No device or emulator was used for N6.
+
+| Source / scenario | Expected behavior | Status |
+|---|---|---|
+| Plain text from a native app | Chooser opens; no file, clipboard write or learning before an explicit action | NOT RUN |
+| Styled text from a supporting host | Plain snapshot retains Unicode, whitespace, braces and line breaks; spans are removed | NOT RUN |
+| Browser URL plus subject/HTML/attachment | Only EXTRA_TEXT is captured; no URL fetch or attachment access | NOT RUN |
+| Use in prompt, multiple candidate fields | First multiline by body order, else first explicit/implicit text; switch/ignore preserves edits and restores unedited prefills | NOT RUN |
+| Use in prompt, choices/builtins/fieldless | No injected capture; ordinary choices/preview and explicit Copy or cancel | NOT RUN |
+| Copy success or failure | Sensitive clipboard changes once on success, then permitted learning and finish; failure keeps form and teaches nothing | NOT RUN |
+| New prompt, Save | No file until Save; exclusive creation, fresh ID and exact body; intentionally edited unknown metadata follows the existing editor policy | NOT RUN |
+| Occupied filename or failed Save | Existing file stays intact; draft stays editable with an error and explicit retry | NOT RUN |
+| Back / cancel | Chooser/Fill has no delivery; editor offers its existing Save/Discard/Cancel guard | NOT RUN |
+| Rotation / background / replacement | Retain current in-memory form and builtin snapshot through rotation; a new Intent retires the prior share; stale callbacks cannot finish or copy into it | NOT RUN |
+| Process loss | Drop capture and draft, finish safely without replay or saved payload | NOT RUN |
+| Forged action/MIME or invalid text | Missing/empty/mistyped, malformed Unicode and over-256-KiB UTF-8 input cancel without truncation or effects | NOT RUN |
+
+Use harmless test strings, including a body beginning with `---`, decomposed
+Unicode, CR/LF and literal braces. Verify the sender's original field stays
+unchanged for Copy, Save and cancel, and no sender result or commit occurs.
+An accepted Copy followed by a storage warning shows the shared Done path
+without repeating Copy. Confirm rotation retains edits without a second
+clipboard read; a replacement starts at the chooser with only its new text.
+Back from an unsaved editor must retain the draft on Cancel and discard it
+without a file on Discard. Save from that guard closes only after success.
+
+Record main commit, APK SHA-256, signing fingerprint/build type,
+device/model/API, source app/version and text type, scenario, expected/actual
+behavior, tester/date and PASS/FAIL/NOT RUN. Keep shared text, prompt content
+and field values out of collected logs and bug reports. A missing share
+target or failing source integration is a coverage gap, not acceptance.
+M9 remains open until the required owner matrix is complete (§22 H12).
+
 ## Unicode runtime checks
 
 M8 K6 uses a pure JVM ICU4J dependency for NFC and Unicode Cc/Cf properties.
