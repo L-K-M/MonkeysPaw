@@ -124,6 +124,33 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         assertFalse(Files.exists(stateDir.resolve("provider-settings.json")))
     }
 
+    @Test fun `DataStore flow cancellation reaches Core without poisoning the provider store`() = runBlocking {
+        var cancelledRead = false
+        var current = AndroidSettings(records = mapOf("provider-settings" to SettingsRecord(
+            "{\"version\":1,\"profiles\":[]}", "fixture-incarnation")))
+        val fake = object : DataStore<AndroidSettings> {
+            override val data: Flow<AndroidSettings> = flow {
+                if (cancelledRead) throw CancellationException("fixture cancellation")
+                emit(current)
+            }
+            override suspend fun updateData(transform: suspend (AndroidSettings) -> AndroidSettings): AndroidSettings {
+                current = transform(current)
+                return current
+            }
+        }
+        val state = AndroidStateStore(stateDir.toFile(), settings = AndroidSettingsStore(fake))
+        val service = ProviderSettingsService(ProviderSettingsStore(state), NoSecretAccess(), Dispatchers.IO)
+        val before = service.snapshot
+        cancelledRead = true
+        assertFailsWith<CancellationException> { service.resolveForTesting(ProviderDraft()) }
+        assertEquals(before, service.snapshot)
+        assertFalse(service.snapshot.isReadOnly)
+        cancelledRead = false
+        val draft = ProviderDraft()
+        service.save(draft)
+        assertEquals(draft.id, service.snapshot.settings.selectedProfileID)
+    }
+
     @Test fun `mapped file operations retain incarnation semantics and refuse moves across backends`() = runBlocking {
         withStore { _, state ->
             val path = "provider-settings.json"

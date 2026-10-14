@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.services
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -20,6 +21,7 @@ class ProviderSettingsStore(private val files: StateStore) {
 
     init {
         try { cached = ProviderSettingsSnapshot(read().settings) }
+        catch (error: CancellationException) { throw error }
         catch (error: Exception) { failClosed(error) }
     }
 
@@ -55,12 +57,15 @@ class ProviderSettingsStore(private val files: StateStore) {
 
     private fun loadCurrent(): Loaded {
         cached.readOnlyError?.let { throw it }
-        return try { read() } catch (error: Exception) { throw failClosed(error) }
+        return try { read() }
+        catch (error: CancellationException) { throw error }
+        catch (error: Exception) { throw failClosed(error) }
     }
 
     private fun read(): Loaded {
         val bytes = try { files.read(path) }
         catch (_: StoreError.NotFound) { return Loaded(ProviderSettings(), JsonObject(emptyMap()), true) }
+        catch (error: CancellationException) { throw error }
         catch (_: Exception) { throw ProviderSettingsError.ReadFailed }
 
         val objectValue: JsonObject

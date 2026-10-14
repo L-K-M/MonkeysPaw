@@ -171,6 +171,34 @@ class ProviderSettingsStoreTest {
         }
     }
 
+    @Test fun cancelledMetadataReadPropagatesWithoutMakingValidSettingsReadOnly() = runTest {
+        val h = ProviderSettingsHarness()
+        val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-stored"))
+        h.service.save(draft)
+        val before = h.service.snapshot
+        val bytes = h.files.read("provider-settings.json")
+        val reads = h.secrets.reads.size
+        h.files.readError = CancellationException("fixture cancellation")
+        assertFailsWith<CancellationException> { h.service.resolveForTesting(draft) }
+        assertEquals(before, h.service.snapshot)
+        assertFalse(h.service.snapshot.isReadOnly)
+        assertEquals(reads, h.secrets.reads.size)
+        h.files.readError = null
+        assertContentEquals(bytes, h.files.read("provider-settings.json"))
+        assertEquals(SecretValue("fixture-stored"), h.service.connection(draft.id).key)
+        h.service.selectProfile(null)
+        assertFalse(h.service.snapshot.isReadOnly)
+    }
+
+    @Test fun cancellationDuringConstructionPropagatesInsteadOfCreatingAPoisonedStore() {
+        val files = ProviderRecordingState()
+        files.readError = CancellationException("fixture cancellation")
+        assertFailsWith<CancellationException> { ProviderSettingsStore(files) }
+        assertTrue(files.attemptedWrites.isEmpty())
+        files.readError = null
+        assertFalse(ProviderSettingsHarness(files).service.snapshot.isReadOnly)
+    }
+
     @Test fun externalFutureOrCorruptReplacementBlocksEveryCredentialAndMetadataOperation() = runTest {
         for ((text, expected) in listOf("{\"version\":8}" to ProviderSettingsError.FutureVersion(8), "invalid" to ProviderSettingsError.CorruptFile)) {
             val h = ProviderSettingsHarness()
