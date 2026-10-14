@@ -22,7 +22,9 @@ final class LinuxSyncFileOperationsTests: XCTestCase {
         store.bindSyncRoot()
     }
 
-    override func tearDown() { try? FileManager.default.removeItem(at: temporary) }
+    override func tearDown() {
+        if let temporary { try? FileManager.default.removeItem(at: temporary) }
+    }
 
     func testSlashWithCombiningMarkStillTraversesAndChecksParents() throws {
         let path = "folder/\u{301}name.md"
