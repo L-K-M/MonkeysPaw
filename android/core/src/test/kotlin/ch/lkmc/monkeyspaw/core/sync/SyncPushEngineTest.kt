@@ -613,7 +613,7 @@ class SyncPushEngineTest {
             when (kind) {
                 "staleAck" -> assertEquals(SyncHTTPClientError.MalformedResponse, failure)
                 "unauthorized" -> assertEquals(SyncHTTPClientError.Unauthorized, failure)
-                else -> assertEquals(HttpTransportError.Cancelled, assertIs<SyncHTTPClientError.Transport>(failure).error)
+                else -> assertEquals(HttpTransportError.Cancelled, assertIs<CancellationException>(failure).cause)
             }
             assertContentEquals(saved, h.data.read("sync/push.json"))
             assertEquals(3, h.record.rev)
