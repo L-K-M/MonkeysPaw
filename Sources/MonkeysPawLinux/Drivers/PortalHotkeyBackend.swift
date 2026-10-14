@@ -58,6 +58,12 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     /// KDE rechecks owned daemon state after List and immediately before Bind.
     var beforeBind: (([PortalShortcut], [PortalShortcut], @escaping (Bool) -> Void) -> Void)?
 
+    /// Only an explicit portal attachment may recover a departed owner. Native
+    /// quiescence still requires a known session's acknowledged Close.
+    var canRecoverAfterOwnerLoss: Bool {
+        !uncertainCreation && !retiring.isEmpty && retiring.values.allSatisfy { $0.state == .ownerLost }
+    }
+
     /// Invalidate all callbacks/leases first, then wait for Session.Close.
     /// A failed Create may have loaded native actions without returning a handle.
     func quiesce(done: @escaping (Bool) -> Void) {
@@ -71,12 +77,13 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func retire(_ session: String) {
+        let ownerWasLost = retiring[session]?.state == .ownerLost
         let entry = Retirement(state: .pending)
         retiring[session] = entry
         transport.closeSession(session, deadline: ContinuousClock.now.advanced(by: Limits.portalCallTimeout)) { [weak self] outcome in
             guard let self, self.retiring[session]?.id == entry.id else { return }
             if outcome == .success { self.retiring.removeValue(forKey: session) }
-            else { self.retiring[session]?.state = .failed }
+            else { self.retiring[session]?.state = ownerWasLost ? .ownerLost : .failed }
             self.finishCleanup()
         }
     }
@@ -195,8 +202,8 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     var isAttached: Bool { sessionHandle != nil && bindAttempted }
     var hasCompleteCatalogue: Bool { isAttached && Set(onFire.keys).isSubset(of: sessionActions) }
 
-    /// A KDE retry rechecks capability without attaching a session. The caller
-    /// has already acknowledged old-session cleanup before invoking this seam.
+    /// A KDE retry rechecks capability after gating the old route. A departed
+    /// owner may permit explicit replacement; native still needs acknowledged Close.
     func prepareAttachment(done: @escaping (UInt32?) -> Void) {
         guard selection != .stopped, !configuring, !isAttached, !onFire.isEmpty else { done(nil); return }
         probe { [weak self] in
@@ -309,6 +316,9 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 }
                 self.creating = false
                 self.uncertainCreation = false
+                // The stable handle now names a definite replacement session;
+                // a later Close must acknowledge this owner before native resumes.
+                if self.retiring[session]?.state == .ownerLost { self.retiring.removeValue(forKey: session) }
                 self.sessionHandle = session
                 self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "ListShortcuts",
                     arguments: [.objectPath(session)], deadline: self.ipcDeadline(deadline)) { [weak self] result in
@@ -394,6 +404,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func apply(_ shortcuts: [PortalShortcut], version: UInt32) {
+        // Responses may omit unbound actions; the Bind request owns the catalogue.
         sessionShortcuts = shortcuts
         for action in HotkeyAction.allCases where onFire[action] != nil {
             let trigger = sessionActions.contains(action)
@@ -448,6 +459,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             completeConfiguration()
         case .lost:
             guard case .portal = selection else { return }
+            defer { finishCleanup() }
             close(.ownerLost)
             let revision = revision
             update(.failed, LinuxStrings.shortcutSessionLost)
@@ -528,6 +540,11 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             else { retiring.removeValue(forKey: sessionHandle) }
         }
         sessionHandle = nil
+        if mode == .ownerLost {
+            // Invalidate old Close continuations as well as the active session.
+            // These markers allow explicit portal recovery, never native activation.
+            for session in Array(retiring.keys) { retiring[session] = Retirement(state: .ownerLost) }
+        }
         // Deduplication belongs to the retired session, even if its path is reused.
         lastActivation.removeAll()
         activationTokens.removeAll()

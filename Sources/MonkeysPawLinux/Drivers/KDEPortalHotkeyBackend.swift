@@ -9,7 +9,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     let unboundActions = UnboundHotkeyActions()
     private enum Effective { case none, native, portal }
     private enum Phase { case idle, busy, stopped }
-    var mechanism: HotkeyMechanism { currentRegistration.mechanism }
+    private(set) var mechanism = HotkeyMechanism.globalShortcutsPortal
     private(set) var activationRevision: UUID? = UUID()
     var onChange: (() -> Void)?
     var currentRegistration: HotkeyRegistration { registration(for: .togglePicker) }
@@ -151,7 +151,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
         let deadline = ContinuousClock.now.advanced(by: consentBudget)
         portal.quiesce { [weak self] safe in
             guard let self, self.operation == operation, self.phase == .busy else { return }
-            guard safe else { self.failClosed(LinuxStrings.kdeCleanupFailed); return }
+            guard safe || self.portal.canRecoverAfterOwnerLoss else { self.failClosed(LinuxStrings.kdeCleanupFailed); return }
             self.portal.prepareAttachment { [weak self] version in
                 guard let self, self.operation == operation, self.phase == .busy else { return }
                 self.version = version
@@ -324,6 +324,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private func publish(_ action: HotkeyAction, _ registration: HotkeyRegistration, configuration: HotkeyConfiguration) {
+        if effective == .none { mechanism = registration.mechanism }
         let previous = self.registration(for: action)
         if previous.mechanism != registration.mechanism || previous.status != registration.status || previous.detail != registration.detail {
             tokenRevisions.removeValue(forKey: action)
@@ -337,6 +338,11 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
 
     private func select(_ effective: Effective) {
         self.effective = effective
+        switch effective {
+        case .native: mechanism = .kglobalaccel
+        case .portal: mechanism = .globalShortcutsPortal
+        case .none: break
+        }
         activationRevision = UUID()
         tokenRevisions.removeAll()
         for action in HotkeyAction.allCases { _ = portal.consumeActivationToken(for: action) }

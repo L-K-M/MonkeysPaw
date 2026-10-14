@@ -109,6 +109,9 @@ Hotkey notes:
   but need explicit fresh configuration to regain readiness. The next Bind
   omits the removed action even if List still returns it; re-declaring the
   action makes its saved choice eligible again. Unregister never starts consent.
+  Bind responses may omit unbound actions. Keep the declared session catalogue
+  separate from returned bindings, so an explicitly unbound action does not
+  cause another Create/Bind on an otherwise complete session.
 - **GNOME fallback migration (M1c).** Before portal binding, inspect the
   custom rows. Retire only the exact untouched M1b default (owned name,
   exact toggle command, default GTK trigger), by removing its list entry
@@ -158,6 +161,11 @@ Hotkey notes:
     resume after verified cleanup. Removing one callback never reactivates a
     suspended peer; removing both only retires presence. Persistent keys survive
     every cleanup.
+    After portal owner loss, explicit attachment may recover through a definite
+    replacement session. Preserve departed-owner cleanup markers on failed
+    Close, including loss during a pending Close; they never authorize native
+    activation. A renewed stable handle replaces its old marker, and native
+    still waits for that known session's acknowledged Close.
   - Each action's composite registration id survives selection changes. Only events
     from the effective mechanism/revision may invoke or verify that action. Reject
     duplicate events and obsolete tokens; manual/cold GApplication toggles

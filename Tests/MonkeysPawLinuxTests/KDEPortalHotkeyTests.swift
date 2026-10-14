@@ -445,6 +445,117 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertNil(backend.consumeActivationToken(for: .repeatLast))
     }
 
+    func testReplacementPortalCanAttachButNativeStillWaitsForKnownSessionClose() throws {
+        daemon.actionNames = ["toggle", "repeat"]
+        daemon.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start(bothActions: true)
+        configure()
+        service.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .failed })
+        service = try FakePortal(address: address)
+        service.behavior = .sessions
+        service.kde = daemon
+        try service.ownName()
+        let registrations = daemon.calls.filter { $0.method == "doRegister" }.count
+        fallback()
+        XCTAssertFalse(daemon.present)
+        XCTAssertEqual(backend.currentRegistration.status, .failed)
+        XCTAssertEqual(daemon.calls.filter { $0.method == "doRegister" }.count, registrations)
+
+        configure()
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .registered)
+        XCTAssertEqual(daemon.portalPresentActions, ["toggle", "repeat"])
+        XCTAssertTrue(daemon.removedActions.isEmpty)
+        guard backend.currentRegistration.status == .registered else { return }
+        let handle = try session()
+        service.holdSessionClose = true
+        var completions = 0
+        backend.useNative { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { self.service.closedPaths.contains(handle) })
+        XCTAssertEqual(completions, 0)
+        XCTAssertFalse(daemon.present)
+        try activateRepeat()
+        XCTAssertEqual(repeatFires, 0)
+        service.releaseSessionCloses()
+        XCTAssertTrue(GTKTestSupport.spin { completions == 1 })
+        XCTAssertEqual(daemon.presentActions, ["toggle", "repeat"])
+        XCTAssertFalse(daemon.portalPresent)
+        XCTAssertEqual(daemon.keys(for: "repeat"), "@a(ai) [([67108933],)]")
+    }
+
+    func testUnboundResponseSubsetDoesNotShrinkTheDeclaredPortalCatalogue() throws {
+        for version: UInt32 in [1, 2] {
+            service.versions["org.freedesktop.portal.GlobalShortcuts"] = version
+            daemon.actionNames = ["toggle", "repeat"]
+            daemon.additionalKeys["repeat"] = "@a(ai) []"
+            service.responses["BindShortcuts"] = "(uint32 0, {'shortcuts': <[('toggle', {'trigger_description': <'Saved KDE choice'>})]>})"
+            start(bothActions: true)
+            configure()
+            let handle = try session()
+            let calls = service.calls.count
+            let closes = service.closedPaths
+            XCTAssertTrue(portal.hasCompleteCatalogue)
+            XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound)
+            service.emit(member: "ShortcutsChanged", body: "(objectpath '\(handle)', [('toggle', {'trigger_description': <'Edited picker'>})])")
+            PortalSessionTestSupport.barrier(transport)
+            XCTAssertTrue(portal.hasCompleteCatalogue)
+            configure()
+            XCTAssertEqual(service.calls.count, calls)
+            XCTAssertEqual(try session(), handle)
+            XCTAssertEqual(service.closedPaths, closes)
+            XCTAssertEqual(daemon.keys(for: "repeat"), "@a(ai) []")
+            if version == 2 { XCTAssertEqual(service.ordinaryCalls.last?.method, "ConfigureShortcuts") }
+            backend.shutdown()
+            XCTAssertTrue(GTKTestSupport.spin { !self.daemon.portalPresent })
+            backend = nil
+        }
+    }
+
+    func testOwnerLossDuringCloseRetainsExplicitPortalRecovery() throws {
+        daemon.actionNames = ["toggle", "repeat"]
+        daemon.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start(bothActions: true)
+        configure()
+        let oldSession = try session()
+        service.holdSessionClose = true
+        var completions = 0
+        backend.useNative { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { self.service.closedPaths.contains(oldSession) })
+        service.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { completions == 1 })
+        XCTAssertFalse(daemon.present)
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .failed)
+        service = try FakePortal(address: address)
+        service.behavior = .sessions
+        service.kde = daemon
+        try service.ownName()
+        configure()
+        XCTAssertEqual(backend.currentRegistration.status, .registered)
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .registered)
+        XCTAssertFalse(daemon.present)
+        XCTAssertEqual(daemon.portalPresentActions, ["toggle", "repeat"])
+        XCTAssertEqual(daemon.keys(for: "repeat"), "@a(ai) [([67108933],)]")
+        XCTAssertEqual(completions, 1)
+    }
+
+    func testRetiringPickerKeepsRepeatMechanismCorrectAcrossNativeHandoff() throws {
+        daemon.actionNames = ["toggle", "repeat"]
+        daemon.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
+        start(bothActions: true)
+        configure()
+        backend.unregister(backend.currentRegistration)
+        let repeatAction = backend.registration(for: .repeatLast)
+        fallback()
+        XCTAssertEqual(backend.mechanism, .kglobalaccel)
+        XCTAssertEqual(backend.registration(for: .repeatLast).mechanism, .kglobalaccel)
+        XCTAssertEqual(backend.registration(for: .repeatLast).id, repeatAction.id)
+        XCTAssertEqual(daemon.presentActions, ["repeat"])
+        daemon.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 42)")
+        XCTAssertTrue(GTKTestSupport.spin { self.repeatFires == 1 })
+        XCTAssertEqual(daemon.savedKeys, "@a(ai) [([201326672],)]")
+    }
+
     func testUnboundRepeatDeclarationPreservesNativePickerAndStartsNoPortalInteraction() throws {
         start()
         let picker = backend.currentRegistration
