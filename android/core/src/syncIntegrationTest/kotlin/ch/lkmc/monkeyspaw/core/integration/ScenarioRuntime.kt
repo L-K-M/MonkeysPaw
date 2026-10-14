@@ -2,7 +2,7 @@ package ch.lkmc.monkeyspaw.core.integration
 
 import ch.lkmc.monkeyspaw.core.domain.sync.SyncIdentifiers
 import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
-import ch.lkmc.monkeyspaw.core.syncapi.WireJson
+import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -19,7 +19,8 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 
-internal class ScenarioDeployment(val server: SyncServerURL, val users: Map<String, Pair<String, Path>>)
+internal class ScenarioDeployment(val server: SyncServerURL, val users: Map<String, Pair<String, Path>>,
+                                 val control: suspend (Map<String, WireValue>) -> WireValue)
 
 internal fun privateRegularFile(path: Path) {
     scenarioCheck(!Files.isSymbolicLink(path) && Files.isRegularFile(path, NOFOLLOW_LINKS) &&
@@ -91,29 +92,32 @@ internal class ScenarioRuntime private constructor(val root: Path, private val t
         private val native = System.getenv("MONKEYSPAW_SYNC_SERVER_EXECUTABLE")?.takeIf { it.isNotEmpty() }?.let { executable(Path.of(it)) }
         private var process: Process? = null
         private var container: String? = null
+        private var image: String? = null
+        private var port = 0
+        private var advanced = 0L
         private val environment = mapOf("MONKEYSPAW_DATA_DIR" to data.toString(), "MONKEYSPAW_HTTP_HOST" to "127.0.0.1",
             "MONKEYSPAW_LOG_LEVEL" to "critical", "MONKEYSPAW_ADMIN_PASSWORD_FILE" to passwords.getValue("alice").toString())
         suspend fun start(users: List<String>): ScenarioDeployment {
-            val port: Int
             val adminCommand: List<String>
+            port = ServerSocket(0, 0, InetAddress.getByName("127.0.0.1")).use { it.localPort }
             if (native != null) {
-                port = ServerSocket(0, 0, InetAddress.getByName("127.0.0.1")).use { it.localPort }
                 process = builder(listOf(native, "serve"), environment + ("MONKEYSPAW_HTTP_PORT" to port.toString()))
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
                 adminCommand = listOf(native)
             } else {
                 val docker = findExecutable("docker")
-                val image = command(listOf(docker, "inspect", "--format", "{{.Image}}", templateContainer)).decodeToString().trim()
-                scenarioCheck(Regex("sha256:[a-f0-9]{64}").matches(image), "invalid server image identity")
-                val name = "monkeyspaw-z16-" + UUID.randomUUID().toString()
+                image = command(listOf(docker, "inspect", "--format", "{{.Image}}", templateContainer)).decodeToString().trim()
+                scenarioCheck(Regex("sha256:[a-f0-9]{64}").matches(image!!), "invalid server image identity")
+                val name = "monkeyspaw-z17-" + UUID.randomUUID().toString()
                 container = name
                 command(listOf(docker, "run", "--detach", "--name", name, "--user", Files.getAttribute(root, "unix:uid").toString() + ":" + Files.getAttribute(root, "unix:gid"),
-                    "--publish", "127.0.0.1::8080", "--volume", "$data:/data", "--volume", "${root.resolve("secrets")}:/run/secrets:ro",
-                    "--env", "MONKEYSPAW_ADMIN_PASSWORD_FILE=/run/secrets/alice", image))
+                    "--label", "monkeyspaw.sync-run=$templateContainer",
+                    // An explicit ephemeral allocation survives stop/start with the same account URL.
+                    "--publish", "127.0.0.1:$port:8080", "--volume", "$data:/data", "--volume", "${root.resolve("secrets")}:/run/secrets:ro",
+                    "--env", "MONKEYSPAW_ADMIN_PASSWORD_FILE=/run/secrets/alice", image!!))
                 val bindings = WireJson.parse(command(listOf(docker, "inspect", "--format", "{{json .NetworkSettings.Ports}}", name))).obj().getValue("8080/tcp").array()
                 scenarioCheck(bindings.size == 1 && bindings[0].at("/HostIp").text() == "127.0.0.1", "invalid loopback publication")
-                port = bindings[0].at("/HostPort").text().toInt()
-                scenarioCheck(port in 1..65535, "invalid server port")
+                scenarioCheck(bindings[0].at("/HostPort").text().toInt() == port, "invalid server port")
                 adminCommand = listOf(docker, "exec", name, "/usr/local/bin/monkeyspaw-server")
             }
             val url = "http://127.0.0.1:$port"
@@ -125,7 +129,63 @@ internal class ScenarioRuntime private constructor(val root: Path, private val t
                 val id = SyncIdentifiers.ulid(created.at("/id").text()).rawValue
                 id to password
             }
-            return ScenarioDeployment(SyncServerURL(url), seeded)
+            return ScenarioDeployment(SyncServerURL(url), seeded, ::control)
+        }
+        private suspend fun stopServe() {
+            process?.let { child ->
+                child.destroy()
+                if (!child.waitFor(5, TimeUnit.SECONDS)) child.destroyForcibly()
+                scenarioCheck(child.waitFor(5, TimeUnit.SECONDS), "native server did not stop")
+                process = null
+            }
+            container?.let { command(listOf(findExecutable("docker"), "stop", "--time", "5", it)) }
+        }
+        private suspend fun restartServe() {
+            if (native != null) process = builder(listOf(native, "serve"), environment + ("MONKEYSPAW_HTTP_PORT" to port.toString()))
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            else command(listOf(findExecutable("docker"), "start", container!!))
+            waitHealthy("http://127.0.0.1:$port")
+        }
+        private suspend fun offline(fields: Map<String, WireValue>): WireValue {
+            val input = WireValue.ObjectValue(fields + mapOf(
+                "data" to wireString(data.toString()),
+                "owner" to wireString(templateContainer),
+                "native" to (native?.let(::wireString) ?: WireValue.Null),
+                "image" to (image?.let(::wireString) ?: WireValue.Null)))
+            return WireJson.parse(command(listOf(findExecutable("python3"), System.getProperty("monkeyspaw.syncControl"), "--control"),
+                input = WireJson.canonical(input)))
+        }
+        private suspend fun control(fields: Map<String, WireValue>): WireValue {
+            if (fields.getValue("action").text() == "inspect") return offline(fields)
+            stopServe()
+            try {
+                when (fields.getValue("action").text()) {
+                    "advance_server" -> {
+                        val seconds = fields.getValue("seconds").count()
+                        advanced += seconds
+                        return offline(mapOf("action" to wireString("age"),
+                            "kind" to wireString("expiry"), "seconds" to wireLong(seconds)))
+                    }
+                    "retention" -> {
+                        offline(mapOf("action" to wireString("retention_begin")))
+                        val seconds = advanced + (fields["clock_offset_seconds"]?.count() ?: 0)
+                        if (seconds > 0) offline(mapOf("action" to wireString("age"),
+                            "kind" to wireString("retention"), "seconds" to wireLong(seconds)))
+                        restartServe()
+                        // Wait for actual startup maintenance; no fabricated floor or deletion.
+                        val deadline = System.nanoTime() + 30_000_000_000
+                        do {
+                            val observed = offline(mapOf("action" to wireString("inspect")))
+                            if (observed.at("/changes").count() == 0L && observed.at("/tombstones").count() == 0L) break
+                            scenarioCheck(System.nanoTime() < deadline, "retention deadline exceeded")
+                            delay(100)
+                        } while (true)
+                        stopServe()
+                        return offline(mapOf("action" to wireString("retention_end")))
+                    }
+                    else -> return offline(fields)
+                }
+            } finally { restartServe() }
         }
         suspend fun close() {
             process?.let { child ->
@@ -152,10 +212,13 @@ private fun builder(arguments: List<String>, environment: Map<String, String>): 
     .also { it.environment().putAll(environment) }
 
 /** Drain bounded output before awaiting exit; every timeout reaps the owned process. */
-private suspend fun command(arguments: List<String>, environment: Map<String, String> = emptyMap()): ByteArray = withContext(Dispatchers.IO) {
-    val child = builder(arguments, environment).start()
+private suspend fun command(arguments: List<String>, environment: Map<String, String> = emptyMap(), input: ByteArray? = null): ByteArray = withContext(Dispatchers.IO) {
+    val specification = builder(arguments, environment)
+    if (input != null) specification.redirectInput(ProcessBuilder.Redirect.PIPE)
+    val child = specification.start()
     val reader = Executors.newSingleThreadExecutor()
     try {
+        if (input != null) child.outputStream.use { it.write(input) }
         val output = reader.submit<ByteArray> { child.inputStream.use { it.readNBytes(65_537) } }.get(55, TimeUnit.SECONDS)
         scenarioCheck(output.size <= 65_536, "command output exceeded limit")
         scenarioCheck(child.waitFor(5, TimeUnit.SECONDS) && child.exitValue() == 0, "scenario server command failed")

@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import signal
 import stat
+import sqlite3
+import fcntl
 import subprocess
 import sys
 import tempfile
@@ -162,6 +164,8 @@ if stage == "inspect":
         print(os.environ.get("FAKE_RUNNING", "true"))
 elif stage == "exec":
     print(json.dumps({"id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ", "username": args[5]}))
+elif stage == "ps":
+    print(os.environ.get("FAKE_OWNED", ""))
 '''
 
 FAKE_RUNNER = r'''#!/usr/bin/python3
@@ -290,6 +294,15 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(self.read_calls()[-1][:3], ["image", "rm", "--force"])
                 self.assert_clean()
 
+    def test_interrupted_runner_containers_are_removed_by_the_owned_label(self):
+        with patch.dict(os.environ, {"FAKE_OWNED": "deadbeefdead"}):
+            self.run_smoke()
+        calls = self.read_calls()
+        listing = next(call for call in calls if call[0] == "ps")
+        self.assertTrue(listing[-1].startswith("label=monkeyspaw.sync-run=monkeyspaw-android-sync-"))
+        self.assertIn(["rm", "--force", "deadbeefdead"], calls)
+        self.assert_clean()
+
     def test_missing_runner_docker_or_root_identity_fails_before_provisioning(self):
         with self.assertRaises(smoke.SmokeFailure):
             smoke.smoke([])
@@ -335,6 +348,95 @@ class HealthTests(unittest.TestCase):
                 self.assertIsInstance(factory.call_args.args[0], smoke.urllib.request.ProxyHandler)
                 self.assertIsInstance(factory.call_args.args[1], smoke.NoRedirect)
         self.assertIsNone(smoke.NoRedirect().redirect_request(None, None, 302, "", {}, "http://outside.invalid"))
+
+
+class OfflineControlTests(unittest.TestCase):
+    def setUp(self):
+        root = tempfile.TemporaryDirectory(prefix="android-sync-control-test-")
+        self.addCleanup(root.cleanup)
+        self.data = Path(root.name)
+        (self.data / ".monkeyspaw.lock").touch(mode=0o600)
+        self.database = self.data / "monkeyspaw.db"
+        with sqlite3.connect(self.database) as db:
+            db.executescript("""
+                CREATE TABLE meta(database_id TEXT);
+                INSERT INTO meta VALUES ('AE279D6D-61B8-4EAA-A1D1-D286264D2EC1');
+                CREATE TABLE changes(seq INTEGER PRIMARY KEY, scope_key TEXT, at TEXT, content TEXT);
+                INSERT INTO changes VALUES(1,'user:01ARZ3NDEKTSV4RRFFQ69G5FAZ','2026-10-14T00:00:00.000Z','exact bytes');
+                CREATE TRIGGER changes_immutable BEFORE UPDATE ON changes BEGIN SELECT RAISE(ABORT,'immutable'); END;
+                CREATE TABLE prompts(id TEXT, scope TEXT, owner_id TEXT, group_id TEXT, deleted_at TEXT, rev INTEGER, content TEXT);
+                CREATE TABLE prompt_revisions(scope TEXT, owner_id TEXT, group_id TEXT, rev INTEGER);
+                CREATE TABLE retired_prompt_ids(scope TEXT, owner_id TEXT, group_id TEXT);
+                CREATE TABLE scope_heads(scope_key TEXT, head_seq INTEGER);
+                INSERT INTO scope_heads VALUES('user:01ARZ3NDEKTSV4RRFFQ69G5FAZ',1);
+                CREATE TABLE scope_floors(scope_key TEXT, floor_seq INTEGER);
+                CREATE TABLE snapshots(scope_key TEXT, created_at TEXT, expires_at TEXT, manifest BLOB,
+                    CHECK(expires_at > created_at));
+                INSERT INTO snapshots VALUES('user:01ARZ3NDEKTSV4RRFFQ69G5FAZ','2026-10-14T00:00:00.000Z',
+                    '2026-10-14T00:15:00.000Z',x'000102');
+                CREATE TRIGGER snapshots_immutable BEFORE UPDATE ON snapshots BEGIN SELECT RAISE(ABORT,'immutable'); END;
+            """)
+
+    def control(self, action, **fields):
+        return smoke.database_control(dict(action=action, data=str(self.data), **fields))
+
+    def test_only_timestamps_age_and_immutable_triggers_are_restored(self):
+        with sqlite3.connect(self.database) as db:
+            original = smoke.database_fingerprint(db, {"changes": {"at"}, "prompts": {"deleted_at"},
+                                                       "snapshots": {"created_at", "expires_at"}})
+        self.control("age", kind="retention", seconds=91 * 86400)
+        self.control("age", kind="expiry", seconds=901)
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(original, smoke.database_fingerprint(db, {"changes": {"at"}, "prompts": {"deleted_at"},
+                                                                       "snapshots": {"created_at", "expires_at"}}))
+            self.assertLess(db.execute("SELECT at FROM changes").fetchone()[0], "2026-08")
+            self.assertLess(db.execute("SELECT expires_at FROM snapshots").fetchone()[0], "2026-10-14T00:00:00.000Z")
+            with self.assertRaises(sqlite3.IntegrityError): db.execute("UPDATE changes SET content='changed'")
+            with self.assertRaises(sqlite3.IntegrityError): db.execute("UPDATE snapshots SET manifest=x'ff'")
+        self.assertEqual(self.control("inspect")["changes"], 1)
+        self.assertEqual(self.control("inspect", scope="user:01ARZ3NDEKTSV4RRFFQ69G5FAZ")["head"], 1)
+
+    def test_a_live_server_lock_refuses_all_offline_mutation(self):
+        with (self.data / ".monkeyspaw.lock").open("r+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(smoke.SmokeFailure, "server still running"):
+                self.control("age", kind="retention", seconds=91 * 86400)
+        self.assertEqual(self.control("inspect")["changes"], 1)
+
+    def test_maintenance_observer_counts_only_committed_effects_and_removes_itself(self):
+        self.control("retention_begin")
+        self.control("age", kind="retention", seconds=91 * 86400)
+        with sqlite3.connect(self.database) as db:
+            db.execute("DELETE FROM changes")
+            db.rollback()
+            db.execute("DELETE FROM changes")
+            db.execute("INSERT INTO scope_floors VALUES('user:01ARZ3NDEKTSV4RRFFQ69G5FAZ',2)")
+            db.execute("UPDATE scope_floors SET floor_seq=3")
+            db.execute("UPDATE scope_floors SET floor_seq=3")
+        self.assertEqual(self.control("retention_end"), {"changes": 1, "floors": 2, "tombstones": 0, "revisions": 0})
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'acceptance_%'").fetchone()[0], 0)
+
+    def test_invalid_age_controls_never_change_the_database(self):
+        for fields in (dict(kind="retention", seconds=0), dict(kind="retention", seconds=True), dict(kind="heads", seconds=1)):
+            with self.assertRaises(smoke.SmokeFailure): self.control("age", **fields)
+        self.assertEqual(self.control("inspect")["changes"], 1)
+
+
+class ArtifactTests(unittest.TestCase):
+    def test_failure_artifact_cannot_copy_credentials_bodies_or_stack_traces(self):
+        with tempfile.TemporaryDirectory(prefix="android-sync-reports-") as directory:
+            root = Path(directory)
+            (root / "TEST-private.xml").write_text('''<testsuite tests="2" failures="1" errors="0" skipped="0"
+                name="SECRET TOKEN"><testcase name="PRIVATE CONTENT"><failure message="PASSWORD">PRIVATE STACK</failure></testcase>
+                <system-out>SECRET TOKEN
+Full semantic sync acceptance: 24 files / 87 cases / 3000 actions / 8000 expectations; pending 0.
+                </system-out></testsuite>''')
+            result = root / "sanitized.json"
+            totals, summaries = smoke.sanitized_reports(root, result)
+            self.assertEqual(totals, dict(tests=2, failures=1, errors=0, skipped=0))
+            self.assertEqual(summaries[0]["cases"], 87)
+            self.assertNotRegex(result.read_text(), "SECRET|PRIVATE|PASSWORD|TOKEN|STACK")
 
 
 if __name__ == "__main__":

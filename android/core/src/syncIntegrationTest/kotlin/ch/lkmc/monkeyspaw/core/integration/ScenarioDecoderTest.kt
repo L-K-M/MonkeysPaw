@@ -36,7 +36,7 @@ class ScenarioDecoderTest {
         assertEquals(cases.size, cases.map { it.id }.toSet().size)
         assertTrue(cases.any { it.id == "01-round-trip" })
         assertTrue(cases.any { it.steps.any { step -> step.action == "kill_client" } })
-        println("Z15 structural decode: ${files.size} files, ${cases.size} cases; semantic execution remains partial")
+        println("Sync structural decode: ${files.size} files, ${cases.size} cases; execution belongs to ScenarioRunnerTest")
     }
 
     @Test fun schemaRequiresNumericOneAndClosedEnvelope() {

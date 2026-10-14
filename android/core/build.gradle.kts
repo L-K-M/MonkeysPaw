@@ -52,7 +52,7 @@ dependencies {
 }
 
 tasks.register<Test>(syncIntegrationTest.name) {
-    description = "Run named Y12/Y13 sync scenarios over the real server (Z16 partial proof; Z17 completes ownership)."
+    description = "Execute the entire shared sync corpus against a required same-head server."
     group = "verification"
     testClassesDirs = syncIntegrationTest.output.classesDirs
     classpath = syncIntegrationTest.runtimeClasspath
@@ -63,6 +63,10 @@ tasks.register<Test>(syncIntegrationTest.name) {
     // A previous success cannot replace a real server run.
     outputs.upToDateWhen { false }
     outputs.cacheIf { false }
+    systemProperty("monkeyspaw.workerClasspath", syncIntegrationTest.runtimeClasspath.asPath)
+    systemProperty("monkeyspaw.syncControl", rootProject.file("../scripts/android-sync-ci.py").absolutePath)
+    inputs.file(rootProject.file("../scripts/android-sync-ci.py")).withPropertyName("syncControls")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     environment("MONKEYSPAW_SYNC_MANIFEST", providers.environmentVariable("MONKEYSPAW_SYNC_MANIFEST").orElse("").get())
     environment("MONKEYSPAW_REQUIRE_SYNC_SERVER", providers.environmentVariable("MONKEYSPAW_REQUIRE_SYNC_SERVER").orElse("").get())
     testLogging {

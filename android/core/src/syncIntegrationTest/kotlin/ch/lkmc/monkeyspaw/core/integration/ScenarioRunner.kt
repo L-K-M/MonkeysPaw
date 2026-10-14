@@ -7,6 +7,7 @@ import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
+import ch.lkmc.monkeyspaw.core.sync.*
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
 import java.nio.file.Files
@@ -38,14 +39,14 @@ internal class ScenarioTimers : CoroutineDispatcher(), Delay {
 }
 
 internal class ScenarioDevice(val name: String, val directory: Path, val now: Instant, val entropy: Entropy,
-                              val transport: ScenarioTransport) {
+                              val transport: ScenarioTransport, secretStore: SecretStore? = null) {
     private val timers = ScenarioTimers()
     private val scope = CoroutineScope(SupervisorJob() + timers)
     val clock = Clock { now }
     private val monotonic = MonotonicClock(System::nanoTime)
     val files = DiskSyncFiles(directory.resolve("library"), library = true)
     val data = DiskSyncFiles(directory.resolve("data"))
-    val secrets = FixtureSecretStore(DiskSyncFiles(directory.resolve("secrets")))
+    val secrets = secretStore ?: FixtureSecretStore(DiskSyncFiles(directory.resolve("secrets")))
     val library = LibraryService(files, data, clock, entropy)
     val states = SyncStateStore(data, data.operations)
     val accounts = SyncAccountStore(data, data.operations)
@@ -95,13 +96,20 @@ internal class ScenarioEntropy(seed: Long) : Entropy {
     }
 }
 
-/** Y12/Y13 partial executor. Unsupported Y14 controls fail until Z17 supplies their real adapters. */
+/** Full shared-language executor; every registered action must actually finish. */
 internal class ScenarioRunner(private val scenario: SyncScenario, val root: Path,
                               private val deployments: Map<String, ScenarioDeployment>) {
     val symbols = ScenarioSymbols()
     private val devices = linkedMapOf<String, ScenarioDevice>()
     private val transports = mutableListOf<ScenarioTransport>()
     val checkpoints = ScenarioCheckpoints(symbols)
+    private val consumed = mutableMapOf<ScenarioStep, Int>()
+    private val crashPlans = mutableMapOf<String, SyncApplyRecord>()
+    private val backups = mutableSetOf<String>()
+    var actions = 0
+        private set
+    var expectations = 0
+        private set
     init {
         scenario.prompts.forEach { (name, id) -> symbols.bind("prompt.$name", id) }
         deployments.forEach { (server, deployment) -> deployment.users.forEach { (user, value) -> symbols.bind("user.$server.$user", value.first) } }
@@ -120,11 +128,14 @@ internal class ScenarioRunner(private val scenario: SyncScenario, val root: Path
             } catch (error: Throwable) {
                 val failure = transports.firstNotNullOfOrNull { it.mutationFailure } ?: error
                 val reason = if (failure is ScenarioFailure) failure.message else "operation failed (${failure.javaClass.simpleName})"
+                println("FAIL ${scenario.id} step ${index + 1}: $reason")
                 throw ScenarioFailure("${scenario.id} step ${index + 1}: $reason")
             }
         }
         scenarioCheck(checkpoints.count > 0, "scenario did not execute checkpoints")
         scenarioCheck(transports.all { it.pending == 0 }, "unused network mutation")
+        scenarioCheck(crashPlans.isEmpty(), "unrecovered killed client")
+        scenarioCheck(consumed == scenario.steps.flatMap(::scenarioActions).groupingBy { it }.eachCount(), "unconsumed or repeated action")
         scenarioCheck(transports.sumOf { it.traces.count { trace -> trace.status > 0 } } > 0, "scenario issued no real HTTP")
     }
     fun device(name: String): ScenarioDevice = devices[symbols.expand(name)] ?: throw ScenarioFailure("unknown device")
@@ -214,8 +225,117 @@ internal class ScenarioRunner(private val scenario: SyncScenario, val root: Path
             "drop_next_response", "fail_next_request" -> device.transport.interrupt(if (step.action == "drop_next_response") ScenarioTransport.Phase.RESPONSE else ScenarioTransport.Phase.REQUEST,
                 step.string("method"), text("path"))
             "expect" -> checkpoints.check(device, step.fields.getValue("expected").obj())
-            else -> throw ScenarioFailure("action requires Z17 adapter: ${step.action}")
+            "advance_server", "retention", "server_expect", "backup", "restore" -> {
+                val server = step.string("server")
+                val deployment = deployments[server] ?: throw ScenarioFailure("unknown deployment")
+                if (step.action == "backup") scenarioCheck(backups.add("$server.${step.string("name")}"), "backup name reused")
+                if (step.action == "restore") {
+                    scenarioCheck("$server.${step.string("name")}" in backups, "unknown backup")
+                    for (graph in devices.values) graph.engine.stop()
+                    for (graph in devices.values) graph.settle()
+                }
+                val oldID = if (step.action == "restore") deployment.control(mapOf("action" to wireString("inspect"))).at("/database_id").text() else null
+                val result = deployment.control(symbols.expand(WireValue.ObjectValue(step.fields - setOf("bind", "expected")))
+                    .obj() + ("action" to wireString(if (step.action == "server_expect") "inspect" else step.action)))
+                if (step.action != "server_expect") for (transport in transports) transport.serverRestarted()
+                if (step.action == "restore") {
+                    scenarioCheck(result.at("/database_id").text() != oldID, "restore must rotate database identity")
+                    symbols.bind(step.string("bind"), result.at("/database_id").text())
+                }
+                step.fields["expected"]?.obj()?.forEach { (key, expected) ->
+                    scenarioCheck(result.obj()[key]?.count() == expected.count(), "server $key checkpoint")
+                }
+            }
+            "collect" -> collect(device, step.fields.getValue("expected").obj())
+            "kill_client" -> killClient(device, step.string("checkpoint"), step.fields.getValue("file_count").count().toInt())
+            "resume_client" -> resumeClient(device)
+            else -> throw ScenarioFailure("unknown action")
         }
+        consumed[step] = (consumed[step] ?: 0) + 1
+        actions++
+        expectations += scenarioExpectations(step)
+    }
+    private suspend fun collect(device: ScenarioDevice, fields: Map<String, WireValue>) {
+        val account = device.accounts.loadAccount() ?: throw ScenarioFailure("collection requires account")
+        val state = device.states.loadForAccountTransition() ?: throw ScenarioFailure("collection requires state")
+        val secret = device.secrets.read(account.secretAccount, SecretReadSource.PERSISTED) ?: throw ScenarioFailure("collection requires secret")
+        val server = SyncServerURL(account.identity.serverURL)
+        val token = secret.value.withValue { WireJson.parse(it.encodeToByteArray()).at("/token").text() }
+        val collection = SyncPullCollector(SyncHTTPClient(server, device.transport, SyncCredential(server, SecretValue(token))),
+            device.data, account.identity.userID).collect(PullRequest(state.databaseID?.toString(), state.cursors.mapKeys { it.key.rawValue }),
+                System.nanoTime() + 60_000_000_000)
+        collection.use {
+            val expected = ScenarioFields(symbols.expand(WireValue.ObjectValue(fields)))
+            val key = SyncScopeKey.parse(expected.string("scope"))
+            val scope = collection.scopes[key] ?: throw ScenarioFailure("missing collected scope")
+            scenarioCheck(scope.head == expected.required("head").count() && scope.cursor == expected.string("cursor"), "collected head/cursor")
+            val items = mutableMapOf<String, FeedPrompt>()
+            collection.forEachPage(Mode.SNAPSHOT) { page ->
+                if (page.scope == key) for (value in page.items) {
+                    val prompt = (value.item as? FeedItem.Upsert)?.prompt ?: throw ScenarioFailure("non-upsert snapshot item")
+                    scenarioCheck(items.put(prompt.id, prompt) == null, "duplicate collected identity")
+                }
+            }
+            scenarioCheck(items.size.toLong() == expected.required("item_count").count(), "collected item count")
+            expected.take("prompts")?.array()?.forEach {
+                val prompt = ScenarioFields(it)
+                val actual = items[prompt.string("id")] ?: throw ScenarioFailure("missing collected prompt")
+                scenarioCheck(actual.rev == prompt.required("rev").count() && actual.path == prompt.string("path") &&
+                    actual.content == prompt.string("content"), "exact collected prompt")
+                prompt.finish()
+            }
+            expected.take("absent")?.array()?.forEach { scenarioCheck(it.text() !in items, "discarded snapshot item") }
+            expected.finish()
+            scenarioCheck(device.states.loadForAccountTransition() == state, "collection never commits state")
+        }
+        scenarioCheck(device.data.listFiles().none { it.relativePath.startsWith("sync/pull-") }, "collection staging cleanup")
+    }
+    private suspend fun killClient(device: ScenarioDevice, checkpoint: String, fileCount: Int) {
+        scenarioCheck(device.name !in crashPlans, "client already killed")
+        device.engine.stop(); device.settle()
+        val before = device.states.loadForAccountTransition() ?: throw ScenarioFailure("kill requires state")
+        ScenarioDeviceProcess.launch(workerInput(device, checkpoint, fileCount), "paused").use { child ->
+            scenarioCheck(child.alive, "checkpoint must belong to live child")
+            val record = SyncApplyJson.codec.decode(WireJson.parse(device.data.read("sync/apply.json")) as WireValue.ObjectValue)
+            val state = device.states.loadForAccountTransition()
+            val publications = record.steps.filter { it.edit.bytes != null && it.edit.kind != SyncLibraryEdit.Kind.MODE }
+            val installed = publications.count { step -> device.files.stamp(step.edit.path) != null &&
+                device.files.read(step.edit.path).contentEquals(step.edit.bytes!!) }
+            scenarioCheck(record.expectedState == before && record.nextState.cursors != before.cursors, "crash journal new cursor intent")
+            if (checkpoint == "after_files") scenarioCheck(installed == fileCount && installed < publications.size && state == before,
+                "partial files with uncommitted state")
+            else {
+                scenarioCheck(installed == publications.size && installed >= fileCount, "all files precede state commit")
+                val committed = checkpoint in setOf("after_state", "before_state_file_flush", "before_state_directory_flush")
+                scenarioCheck(state == if (committed) record.nextState else before, "state commit boundary")
+            }
+            child.kill()
+            crashPlans[device.name] = record
+        }
+    }
+    private suspend fun resumeClient(old: ScenarioDevice) {
+        val record = crashPlans[old.name] ?: throw ScenarioFailure("resume requires killed client")
+        ScenarioDeviceProcess.launch(workerInput(old, "none", 1), "complete").use { it.requireSuccess() }
+        val recovered = old.states.loadForAccountTransition() ?: throw ScenarioFailure("recovery lost state")
+        val bytes = old.files.listFiles().associate { it.relativePath to old.files.read(it.relativePath).toList() }
+        ScenarioDeviceProcess.launch(workerInput(old, "replay", 1), "complete").use { it.requireSuccess() }
+        scenarioCheck(old.states.loadForAccountTransition() == recovered &&
+            old.files.listFiles().associate { it.relativePath to old.files.read(it.relativePath).toList() } == bytes, "second replay changed recovered bytes/state")
+        old.stop()
+        val replacement = old.reopen()
+        devices[old.name] = replacement
+        scenarioCheck(replacement.data.stamp("sync/apply.json") == null && recovered.databaseID == record.nextState.databaseID &&
+            recovered.cursors == record.nextState.cursors, "recovered journal UUID/cursors")
+        for (step in record.steps.filter { it.edit.copyID != null }) scenarioCheck(replacement.files.read(step.edit.path).contentEquals(step.edit.bytes!!),
+            "stable losing-copy identity and bytes")
+        crashPlans.remove(old.name)
+    }
+    private suspend fun workerInput(device: ScenarioDevice, checkpoint: String, files: Int): ByteArray {
+        val account = device.accounts.loadAccount() ?: throw ScenarioFailure("worker requires account")
+        val secret = device.secrets.read(account.secretAccount, SecretReadSource.PERSISTED) ?: throw ScenarioFailure("worker requires secret")
+        return secret.value.withValue { WireJson.canonical(wireObject("directory" to wireString(device.directory.toString()),
+            "name" to wireString(device.name), "secret" to wireString(it), "now" to wireString(device.now.toString()),
+            "checkpoint" to wireString(checkpoint), "file_count" to wireLong(files.toLong()))) }
     }
     private suspend fun http(step: ScenarioStep) {
         val response = device(step.device).request(step.string("method"), symbols.expand(step.string("path")), step.fields["body"]?.let(symbols::expand))
