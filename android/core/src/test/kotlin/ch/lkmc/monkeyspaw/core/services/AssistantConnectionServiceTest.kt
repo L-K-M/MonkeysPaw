@@ -310,6 +310,44 @@ internal class AssistantConnectionServiceTest {
         assertEquals(1, results.size)
     }
 
+    @Test fun queuedCompletionCannotLetALateCredentialFailureReplaceTheDeadline() = runTest {
+        val completion = ConnectionQueuedDispatcher()
+        val h = ConnectionHarness(testScheduler, completion = completion)
+        val draft = h.draft()
+        h.provider.service.save(draft)
+        val release = CompletableDeferred<Unit>()
+        h.provider.secrets.beforeRead = {
+            withContext(NonCancellable) { release.await() }
+            throw SecretStoreError.Locked
+        }
+        val (test, results) = h.start(draft.copy(key = ProviderKeyEdit.Keep))
+        runCurrent()
+        advanceTimeBy(15_000)
+        runCurrent()
+        assertEquals(emptyList(), results)
+        release.complete(Unit)
+        runCurrent()
+        completion.drain()
+        assertEquals<List<ConnectionTestResult>>(listOf(ConnectionTestResult.Timeout), results)
+        test.cancel()
+        completion.drain()
+        assertEquals(1, results.size)
+        assertEquals(emptyList(), h.requests)
+    }
+
+    @Test fun failuresReceivedAfterTheAbsoluteDeadlineBecomeTimeout() = runTest {
+        for (kind in kinds) {
+            val h = ConnectionHarness(testScheduler)
+            h.replies.add {
+                h.clockShift += Limits.modelListTimeoutNanos
+                HttpResponse(401, body = byteArrayOf())
+            }
+            assertEquals(ConnectionTestResult.Timeout, h.run(h.draft(kind)))
+            assertEquals(1, h.requests.size)
+            h.assertNoWrites()
+        }
+    }
+
     @Test fun editOrSwitchAwayAndBackRejectsAlreadyQueuedSuccess() = runTest {
         for (switch in listOf(false, true)) {
             val completion = ConnectionQueuedDispatcher()

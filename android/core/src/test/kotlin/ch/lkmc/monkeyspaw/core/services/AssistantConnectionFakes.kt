@@ -45,7 +45,8 @@ internal class ConnectionHarness(
         replies.removeFirst().invoke(request)
     }
     val service = AssistantConnectionService(provider.service, AnthropicClient(transport, clock) { utc },
-        OpenAIClient(transport, ProviderStateStore(provider.files), clock) { utc }, io, completion, clock)
+        OpenAIClient(transport, ProviderStateStore(provider.files), clock) { utc }, io, completion, clock,
+        timer = StandardTestDispatcher(scheduler, "connection-deadline"))
 
     fun draft(kind: ProviderKind = ProviderKind.OPENAI_COMPATIBLE): ProviderDraft = ProviderDraft(
         kind = kind, modelID = "manual-model", key = ProviderKeyEdit.typed("fixture-only-key"))

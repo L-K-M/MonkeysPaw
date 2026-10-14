@@ -11,8 +11,8 @@ import kotlin.time.Duration.Companion.nanoseconds
 import kotlinx.coroutines.*
 
 /** Explicit, read-only Test intent. Clients and this service must share the monotonic time base.
- * IO owns credential resolution and list processing; completion owns the timer and callbacks.
- * Supply a dispatch-capable completion executor independent of potentially blocking IO.
+ * IO owns credential resolution and list processing; completion dispatches callbacks.
+ * Keep the timer independent of both IO and UI queues; completion must support dispatch.
  */
 class AssistantConnectionService(
     private val providerSettings: ProviderSettingsService,
@@ -21,12 +21,13 @@ class AssistantConnectionService(
     private val io: CoroutineDispatcher,
     private val completion: CoroutineDispatcher,
     private val clock: MonotonicClock = MonotonicClock(System::nanoTime),
+    private val timer: CoroutineDispatcher = Dispatchers.Default,
 ) {
     /** The caller cancels this handle on edit, navigation departure or destruction. */
     fun testConnection(draft: ProviderDraft, onComplete: (ConnectionTestResult) -> Unit): AssistantConnectionTest {
         val deadline = clock.nowNanos() + Limits.modelListTimeoutNanos
         val test = AssistantConnectionTest(completion, onComplete)
-        test.scope.launch(completion) {
+        test.scope.launch(timer) {
             while (true) {
                 val remaining = deadline - clock.nowNanos()
                 if (remaining <= 0) break
@@ -42,7 +43,8 @@ class AssistantConnectionService(
                 val client = if (connection.kind == ProviderKind.ANTHROPIC) anthropic else openAICompatible
                 test.finish(ConnectionTestResult.Ok(models(connection, client, deadline)))
             } catch (error: Exception) {
-                test.finish(failure(error))
+                val result = if (deadline - clock.nowNanos() <= 0) ConnectionTestResult.Timeout else failure(error)
+                test.finish(result)
             }
         }
         return test
