@@ -281,240 +281,3288 @@
           "path": "Sample.md"
         },
         {
-          "action": "http_series",
+          "action": "http",
           "device": "a",
           "method": "PUT",
-          "path": "/api/v1/prompts/${item.id}",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
           "body": {
             "base_rev": 0,
             "scope": "user",
-            "path": "Source/${item.index}.md",
-            "content": "---\nid: \"${item.id}\"\ntitle: Item\n---\nSmall.\n"
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 0.\n"
           },
-          "status": 200,
           "expected": {
             "/rev": 1
-          },
-          "ids": [
-            "000000000000000000000000Z8",
-            "000000000000000000000000Z9",
-            "000000000000000000000000ZA",
-            "000000000000000000000000ZB",
-            "000000000000000000000000ZC",
-            "000000000000000000000000ZD",
-            "000000000000000000000000ZE",
-            "000000000000000000000000ZF",
-            "000000000000000000000000ZG",
-            "000000000000000000000000ZH",
-            "000000000000000000000000ZJ",
-            "000000000000000000000000ZK",
-            "000000000000000000000000ZM",
-            "000000000000000000000000ZN",
-            "000000000000000000000000ZP",
-            "000000000000000000000000ZQ",
-            "000000000000000000000000ZR",
-            "000000000000000000000000ZS",
-            "000000000000000000000000ZT",
-            "000000000000000000000000ZV",
-            "000000000000000000000000ZW",
-            "000000000000000000000000ZX",
-            "000000000000000000000000ZY",
-            "000000000000000000000000ZZ",
-            "00000000000000000000000100",
-            "00000000000000000000000101",
-            "00000000000000000000000102",
-            "00000000000000000000000103",
-            "00000000000000000000000104",
-            "00000000000000000000000105",
-            "00000000000000000000000106",
-            "00000000000000000000000107",
-            "00000000000000000000000108",
-            "00000000000000000000000109",
-            "0000000000000000000000010A",
-            "0000000000000000000000010B",
-            "0000000000000000000000010C",
-            "0000000000000000000000010D",
-            "0000000000000000000000010E",
-            "0000000000000000000000010F",
-            "0000000000000000000000010G",
-            "0000000000000000000000010H",
-            "0000000000000000000000010J",
-            "0000000000000000000000010K",
-            "0000000000000000000000010M",
-            "0000000000000000000000010N",
-            "0000000000000000000000010P",
-            "0000000000000000000000010Q",
-            "0000000000000000000000010R",
-            "0000000000000000000000010S",
-            "0000000000000000000000010T",
-            "0000000000000000000000010V",
-            "0000000000000000000000010W",
-            "0000000000000000000000010X",
-            "0000000000000000000000010Y",
-            "0000000000000000000000010Z",
-            "00000000000000000000000110",
-            "00000000000000000000000111",
-            "00000000000000000000000112",
-            "00000000000000000000000113",
-            "00000000000000000000000114",
-            "00000000000000000000000115",
-            "00000000000000000000000116",
-            "00000000000000000000000117",
-            "00000000000000000000000118",
-            "00000000000000000000000119",
-            "0000000000000000000000011A",
-            "0000000000000000000000011B",
-            "0000000000000000000000011C",
-            "0000000000000000000000011D",
-            "0000000000000000000000011E",
-            "0000000000000000000000011F",
-            "0000000000000000000000011G",
-            "0000000000000000000000011H",
-            "0000000000000000000000011J",
-            "0000000000000000000000011K",
-            "0000000000000000000000011M",
-            "0000000000000000000000011N",
-            "0000000000000000000000011P",
-            "0000000000000000000000011Q",
-            "0000000000000000000000011R",
-            "0000000000000000000000011S",
-            "0000000000000000000000011T",
-            "0000000000000000000000011V",
-            "0000000000000000000000011W",
-            "0000000000000000000000011X",
-            "0000000000000000000000011Y",
-            "0000000000000000000000011Z",
-            "00000000000000000000000120",
-            "00000000000000000000000121",
-            "00000000000000000000000122",
-            "00000000000000000000000123",
-            "00000000000000000000000124",
-            "00000000000000000000000125",
-            "00000000000000000000000126",
-            "00000000000000000000000127",
-            "00000000000000000000000128",
-            "00000000000000000000000129",
-            "0000000000000000000000012A"
-          ]
+          }
         },
         {
-          "action": "http_series",
+          "action": "http",
           "device": "a",
           "method": "PUT",
-          "path": "/api/v1/prompts/${item.id}",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 1.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 2.\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 3.\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 2,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 4.\n"
+          },
+          "expected": {
+            "/rev": 3
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 2,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 5.\n"
+          },
+          "expected": {
+            "/rev": 3
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 3,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 6.\n"
+          },
+          "expected": {
+            "/rev": 4
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 3,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 7.\n"
+          },
+          "expected": {
+            "/rev": 4
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 4,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 8.\n"
+          },
+          "expected": {
+            "/rev": 5
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 4,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 9.\n"
+          },
+          "expected": {
+            "/rev": 5
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 5,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 10.\n"
+          },
+          "expected": {
+            "/rev": 6
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 5,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 11.\n"
+          },
+          "expected": {
+            "/rev": 6
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 6,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 12.\n"
+          },
+          "expected": {
+            "/rev": 7
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 6,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 13.\n"
+          },
+          "expected": {
+            "/rev": 7
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 7,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 14.\n"
+          },
+          "expected": {
+            "/rev": 8
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 7,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 15.\n"
+          },
+          "expected": {
+            "/rev": 8
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 8,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 16.\n"
+          },
+          "expected": {
+            "/rev": 9
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 8,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 17.\n"
+          },
+          "expected": {
+            "/rev": 9
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 9,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 18.\n"
+          },
+          "expected": {
+            "/rev": 10
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 9,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 19.\n"
+          },
+          "expected": {
+            "/rev": 10
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 10,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 20.\n"
+          },
+          "expected": {
+            "/rev": 11
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 10,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 21.\n"
+          },
+          "expected": {
+            "/rev": 11
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 11,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 22.\n"
+          },
+          "expected": {
+            "/rev": 12
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 11,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 23.\n"
+          },
+          "expected": {
+            "/rev": 12
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 12,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 24.\n"
+          },
+          "expected": {
+            "/rev": 13
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 12,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 25.\n"
+          },
+          "expected": {
+            "/rev": 13
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 13,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 26.\n"
+          },
+          "expected": {
+            "/rev": 14
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 13,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 27.\n"
+          },
+          "expected": {
+            "/rev": 14
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 14,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 28.\n"
+          },
+          "expected": {
+            "/rev": 15
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 14,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 29.\n"
+          },
+          "expected": {
+            "/rev": 15
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 15,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 30.\n"
+          },
+          "expected": {
+            "/rev": 16
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 15,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 31.\n"
+          },
+          "expected": {
+            "/rev": 16
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 16,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 32.\n"
+          },
+          "expected": {
+            "/rev": 17
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 16,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 33.\n"
+          },
+          "expected": {
+            "/rev": 17
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 17,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 34.\n"
+          },
+          "expected": {
+            "/rev": 18
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 17,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 35.\n"
+          },
+          "expected": {
+            "/rev": 18
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 18,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 36.\n"
+          },
+          "expected": {
+            "/rev": 19
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 18,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 37.\n"
+          },
+          "expected": {
+            "/rev": 19
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 19,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 38.\n"
+          },
+          "expected": {
+            "/rev": 20
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 19,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 39.\n"
+          },
+          "expected": {
+            "/rev": 20
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 20,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 40.\n"
+          },
+          "expected": {
+            "/rev": 21
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 20,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 41.\n"
+          },
+          "expected": {
+            "/rev": 21
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 21,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 42.\n"
+          },
+          "expected": {
+            "/rev": 22
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 21,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 43.\n"
+          },
+          "expected": {
+            "/rev": 22
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 22,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 44.\n"
+          },
+          "expected": {
+            "/rev": 23
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 22,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 45.\n"
+          },
+          "expected": {
+            "/rev": 23
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 23,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 46.\n"
+          },
+          "expected": {
+            "/rev": 24
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 23,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 47.\n"
+          },
+          "expected": {
+            "/rev": 24
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 24,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 48.\n"
+          },
+          "expected": {
+            "/rev": 25
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 24,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 49.\n"
+          },
+          "expected": {
+            "/rev": 25
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 25,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 50.\n"
+          },
+          "expected": {
+            "/rev": 26
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 25,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 51.\n"
+          },
+          "expected": {
+            "/rev": 26
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 26,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 52.\n"
+          },
+          "expected": {
+            "/rev": 27
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 26,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 53.\n"
+          },
+          "expected": {
+            "/rev": 27
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 27,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 54.\n"
+          },
+          "expected": {
+            "/rev": 28
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 27,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 55.\n"
+          },
+          "expected": {
+            "/rev": 28
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 28,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 56.\n"
+          },
+          "expected": {
+            "/rev": 29
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 28,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 57.\n"
+          },
+          "expected": {
+            "/rev": 29
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 29,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 58.\n"
+          },
+          "expected": {
+            "/rev": 30
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 29,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 59.\n"
+          },
+          "expected": {
+            "/rev": 30
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 30,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 60.\n"
+          },
+          "expected": {
+            "/rev": 31
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 30,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 61.\n"
+          },
+          "expected": {
+            "/rev": 31
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 31,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 62.\n"
+          },
+          "expected": {
+            "/rev": 32
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 31,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 63.\n"
+          },
+          "expected": {
+            "/rev": 32
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 32,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 64.\n"
+          },
+          "expected": {
+            "/rev": 33
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 32,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 65.\n"
+          },
+          "expected": {
+            "/rev": 33
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 33,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 66.\n"
+          },
+          "expected": {
+            "/rev": 34
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 33,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 67.\n"
+          },
+          "expected": {
+            "/rev": 34
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 34,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 68.\n"
+          },
+          "expected": {
+            "/rev": 35
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 34,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 69.\n"
+          },
+          "expected": {
+            "/rev": 35
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 35,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 70.\n"
+          },
+          "expected": {
+            "/rev": 36
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 35,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 71.\n"
+          },
+          "expected": {
+            "/rev": 36
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 36,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 72.\n"
+          },
+          "expected": {
+            "/rev": 37
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 36,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 73.\n"
+          },
+          "expected": {
+            "/rev": 37
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 37,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 74.\n"
+          },
+          "expected": {
+            "/rev": 38
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 37,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 75.\n"
+          },
+          "expected": {
+            "/rev": 38
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 38,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 76.\n"
+          },
+          "expected": {
+            "/rev": 39
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 38,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 77.\n"
+          },
+          "expected": {
+            "/rev": 39
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 39,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 78.\n"
+          },
+          "expected": {
+            "/rev": 40
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 39,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 79.\n"
+          },
+          "expected": {
+            "/rev": 40
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 40,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 80.\n"
+          },
+          "expected": {
+            "/rev": 41
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 40,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 81.\n"
+          },
+          "expected": {
+            "/rev": 41
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 41,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 82.\n"
+          },
+          "expected": {
+            "/rev": 42
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 41,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 83.\n"
+          },
+          "expected": {
+            "/rev": 42
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 42,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 84.\n"
+          },
+          "expected": {
+            "/rev": 43
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 42,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 85.\n"
+          },
+          "expected": {
+            "/rev": 43
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 43,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 86.\n"
+          },
+          "expected": {
+            "/rev": 44
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 43,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 87.\n"
+          },
+          "expected": {
+            "/rev": 44
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 44,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 88.\n"
+          },
+          "expected": {
+            "/rev": 45
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 44,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 89.\n"
+          },
+          "expected": {
+            "/rev": 45
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 45,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 90.\n"
+          },
+          "expected": {
+            "/rev": 46
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 45,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 91.\n"
+          },
+          "expected": {
+            "/rev": 46
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 46,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 92.\n"
+          },
+          "expected": {
+            "/rev": 47
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 46,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 93.\n"
+          },
+          "expected": {
+            "/rev": 47
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 47,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 94.\n"
+          },
+          "expected": {
+            "/rev": 48
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 47,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 95.\n"
+          },
+          "expected": {
+            "/rev": 48
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 48,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 96.\n"
+          },
+          "expected": {
+            "/rev": 49
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z9",
+          "status": 200,
+          "body": {
+            "base_rev": 48,
+            "scope": "user",
+            "path": "Source/1.md",
+            "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 97.\n"
+          },
+          "expected": {
+            "/rev": 49
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000000Z8",
+          "status": 200,
+          "body": {
+            "base_rev": 49,
+            "scope": "user",
+            "path": "Source/0.md",
+            "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 98.\n"
+          },
+          "expected": {
+            "/rev": 50
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
           "body": {
             "base_rev": 0,
             "scope": "group",
-            "path": "Destination/${item.index}.md",
-            "content": "---\nid: \"${item.id}\"\ntitle: Item\n---\nSmall.\n",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 0.\n",
             "group_id": "${group.team}"
           },
-          "status": 200,
           "expected": {
             "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 1.\n",
+            "group_id": "${group.team}"
           },
-          "ids": [
-            "000000000000000000000001YG",
-            "000000000000000000000001YH",
-            "000000000000000000000001YJ",
-            "000000000000000000000001YK",
-            "000000000000000000000001YM",
-            "000000000000000000000001YN",
-            "000000000000000000000001YP",
-            "000000000000000000000001YQ",
-            "000000000000000000000001YR",
-            "000000000000000000000001YS",
-            "000000000000000000000001YT",
-            "000000000000000000000001YV",
-            "000000000000000000000001YW",
-            "000000000000000000000001YX",
-            "000000000000000000000001YY",
-            "000000000000000000000001YZ",
-            "000000000000000000000001Z0",
-            "000000000000000000000001Z1",
-            "000000000000000000000001Z2",
-            "000000000000000000000001Z3",
-            "000000000000000000000001Z4",
-            "000000000000000000000001Z5",
-            "000000000000000000000001Z6",
-            "000000000000000000000001Z7",
-            "000000000000000000000001Z8",
-            "000000000000000000000001Z9",
-            "000000000000000000000001ZA",
-            "000000000000000000000001ZB",
-            "000000000000000000000001ZC",
-            "000000000000000000000001ZD",
-            "000000000000000000000001ZE",
-            "000000000000000000000001ZF",
-            "000000000000000000000001ZG",
-            "000000000000000000000001ZH",
-            "000000000000000000000001ZJ",
-            "000000000000000000000001ZK",
-            "000000000000000000000001ZM",
-            "000000000000000000000001ZN",
-            "000000000000000000000001ZP",
-            "000000000000000000000001ZQ",
-            "000000000000000000000001ZR",
-            "000000000000000000000001ZS",
-            "000000000000000000000001ZT",
-            "000000000000000000000001ZV",
-            "000000000000000000000001ZW",
-            "000000000000000000000001ZX",
-            "000000000000000000000001ZY",
-            "000000000000000000000001ZZ",
-            "00000000000000000000000200",
-            "00000000000000000000000201",
-            "00000000000000000000000202",
-            "00000000000000000000000203",
-            "00000000000000000000000204",
-            "00000000000000000000000205",
-            "00000000000000000000000206",
-            "00000000000000000000000207",
-            "00000000000000000000000208",
-            "00000000000000000000000209",
-            "0000000000000000000000020A",
-            "0000000000000000000000020B",
-            "0000000000000000000000020C",
-            "0000000000000000000000020D",
-            "0000000000000000000000020E",
-            "0000000000000000000000020F",
-            "0000000000000000000000020G",
-            "0000000000000000000000020H",
-            "0000000000000000000000020J",
-            "0000000000000000000000020K",
-            "0000000000000000000000020M",
-            "0000000000000000000000020N",
-            "0000000000000000000000020P",
-            "0000000000000000000000020Q",
-            "0000000000000000000000020R",
-            "0000000000000000000000020S",
-            "0000000000000000000000020T",
-            "0000000000000000000000020V",
-            "0000000000000000000000020W",
-            "0000000000000000000000020X",
-            "0000000000000000000000020Y",
-            "0000000000000000000000020Z",
-            "00000000000000000000000210",
-            "00000000000000000000000211",
-            "00000000000000000000000212",
-            "00000000000000000000000213",
-            "00000000000000000000000214",
-            "00000000000000000000000215",
-            "00000000000000000000000216",
-            "00000000000000000000000217",
-            "00000000000000000000000218",
-            "00000000000000000000000219",
-            "0000000000000000000000021A",
-            "0000000000000000000000021B",
-            "0000000000000000000000021C",
-            "0000000000000000000000021D",
-            "0000000000000000000000021E",
-            "0000000000000000000000021F",
-            "0000000000000000000000021G",
-            "0000000000000000000000021H",
-            "0000000000000000000000021J",
-            "0000000000000000000000021K"
-          ]
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 2.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 3.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 2,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 4.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 3
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 2,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 5.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 3
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 3,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 6.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 4
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 3,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 7.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 4
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 4,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 8.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 5
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 4,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 9.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 5
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 5,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 10.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 6
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 5,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 11.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 6
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 6,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 12.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 7
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 6,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 13.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 7
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 7,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 14.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 8
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 7,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 15.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 8
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 8,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 16.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 9
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 8,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 17.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 9
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 9,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 18.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 10
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 9,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 19.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 10
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 10,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 20.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 11
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 10,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 21.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 11
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 11,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 22.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 12
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 11,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 23.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 12
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 12,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 24.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 13
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 12,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 25.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 13
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 13,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 26.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 14
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 13,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 27.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 14
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 14,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 28.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 15
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 14,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 29.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 15
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 15,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 30.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 16
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 15,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 31.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 16
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 16,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 32.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 17
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 16,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 33.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 17
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 17,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 34.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 18
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 17,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 35.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 18
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 18,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 36.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 19
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 18,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 37.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 19
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 19,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 38.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 20
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 19,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 39.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 20
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 20,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 40.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 21
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 20,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 41.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 21
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 21,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 42.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 22
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 21,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 43.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 22
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 22,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 44.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 23
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 22,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 45.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 23
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 23,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 46.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 24
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 23,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 47.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 24
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 24,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 48.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 25
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 24,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 49.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 25
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 25,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 50.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 26
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 25,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 51.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 26
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 26,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 52.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 27
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 26,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 53.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 27
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 27,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 54.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 28
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 27,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 55.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 28
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 28,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 56.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 29
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 28,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 57.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 29
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 29,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 58.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 30
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 29,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 59.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 30
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 30,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 60.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 31
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 30,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 61.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 31
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 31,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 62.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 32
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 31,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 63.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 32
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 32,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 64.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 33
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 32,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 65.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 33
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 33,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 66.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 34
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 33,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 67.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 34
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 34,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 68.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 35
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 34,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 69.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 35
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 35,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 70.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 36
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 35,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 71.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 36
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 36,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 72.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 37
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 36,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 73.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 37
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 37,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 74.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 38
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 37,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 75.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 38
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 38,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 76.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 39
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 38,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 77.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 39
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 39,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 78.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 40
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 39,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 79.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 40
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 40,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 80.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 41
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 40,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 81.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 41
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 41,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 82.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 42
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 41,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 83.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 42
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 42,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 84.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 43
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 42,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 85.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 43
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 43,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 86.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 44
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 43,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 87.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 44
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 44,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 88.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 45
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 44,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 89.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 45
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 45,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 90.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 46
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 45,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 91.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 46
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 46,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 92.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 47
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 46,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 93.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 47
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 47,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 94.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 48
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 47,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 95.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 48
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 48,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 96.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 49
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 48,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 97.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 49
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YG",
+          "status": 200,
+          "body": {
+            "base_rev": 49,
+            "scope": "group",
+            "path": "Destination/0.md",
+            "content": "---\nid: \"000000000000000000000001YG\"\ntitle: Item\n---\nUpdate 98.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 50
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/000000000000000000000001YH",
+          "status": 200,
+          "body": {
+            "base_rev": 49,
+            "scope": "group",
+            "path": "Destination/1.md",
+            "content": "---\nid: \"000000000000000000000001YH\"\ntitle: Item\n---\nUpdate 99.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 50
+          }
         },
         {
           "action": "http",
@@ -596,13 +3644,29 @@
               {
                 "path": "Groups/Team/Sample.md",
                 "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Source/0.md",
+                "content": "---\nid: \"000000000000000000000000Z8\"\ntitle: Item\n---\nUpdate 98.\n"
+              },
+              {
+                "path": "Source/1.md",
+                "content": "---\nid: \"000000000000000000000000Z9\"\ntitle: Item\n---\nUpdate 97.\n"
+              },
+              {
+                "path": "Groups/Team/Destination/0.md",
+                "content": "---\nid: 000000000000000000000001YG\ntitle: Item\n---\nUpdate 98.\n"
+              },
+              {
+                "path": "Groups/Team/Destination/1.md",
+                "content": "---\nid: 000000000000000000000001YH\ntitle: Item\n---\nUpdate 99.\n"
               }
             ],
             "absent": [
               "Sample.md"
             ],
-            "file_count": 201,
-            "prompt_count": 201,
+            "file_count": 6,
+            "prompt_count": 6,
             "unique_ids": true,
             "protected_ids": [
               "${prompt.p}"
@@ -621,6 +3685,30 @@
                   "field": "remembered locally"
                 },
                 "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              },
+              {
+                "id": "000000000000000000000000Z8",
+                "scope": "user:${user.main.alice}",
+                "path": "Source/0.md",
+                "rev": 50
+              },
+              {
+                "id": "000000000000000000000000Z9",
+                "scope": "user:${user.main.alice}",
+                "path": "Source/1.md",
+                "rev": 49
+              },
+              {
+                "id": "000000000000000000000001YG",
+                "scope": "group:${group.team}",
+                "path": "Destination/0.md",
+                "rev": 50
+              },
+              {
+                "id": "000000000000000000000001YH",
+                "scope": "group:${group.team}",
+                "path": "Destination/1.md",
+                "rev": 50
               }
             ],
             "requests": [
@@ -693,7 +3781,7 @@
                 "count": 0
               }
             ],
-            "file_count": 201
+            "file_count": 6
           }
         }
       ]
