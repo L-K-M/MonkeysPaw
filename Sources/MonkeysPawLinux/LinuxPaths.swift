@@ -1,5 +1,6 @@
 #if os(Linux)
 import Foundation
+import Glibc
 import MonkeysPawCore
 
 /// Read XDG variables directly: Foundation's applicationSupportDirectory
@@ -8,10 +9,17 @@ import MonkeysPawCore
 struct LinuxPaths {
     private let environment: [String: String]
     private let home: URL
+    private let isSandboxed: Bool
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment,
-         home: URL? = nil) {
+         home: URL? = nil,
+         flatpakInfoExists: Bool = FileManager.default.fileExists(atPath: "/.flatpak-info")) {
         self.environment = environment
+        if case .flatpak = LinuxSessionProbe.detect(environment: environment, flatpakInfoExists: flatpakInfoExists) {
+            isSandboxed = true
+        } else {
+            isSandboxed = false
+        }
         // g_get_home_dir() prefers HOME, falling back to the passwd home directory.
         let configuredHome = environment["HOME"].flatMap { value -> URL? in
             guard value.hasPrefix("/") else { return nil }
@@ -20,16 +28,26 @@ struct LinuxPaths {
         self.home = home ?? configuredHome ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     }
 
-    /// $XDG_CONFIG_HOME/monkeyspaw, else ~/.config/monkeyspaw.
-    var configDirectory: URL {
-        directory(environment: "XDG_CONFIG_HOME", fallback: ".config")
-            .appendingPathComponent(AppIdentity.binaryName, isDirectory: true)
+    /// Sandbox roots never fall back to or import native config/data.
+    private var sandboxDirectory: URL {
+        home.appendingPathComponent(".var/app/\(AppIdentity.linuxAppID)", isDirectory: true)
     }
 
-    /// $XDG_DATA_HOME/monkeyspaw, else ~/.local/share/monkeyspaw.
+    private var configRoot: URL {
+        isSandboxed ? sandboxDirectory.appendingPathComponent("config", isDirectory: true)
+            : directory(environment: "XDG_CONFIG_HOME", fallback: ".config")
+    }
+
+    /// Flatpak's private config root; otherwise XDG_CONFIG_HOME or ~/.config.
+    var configDirectory: URL {
+        configRoot.appendingPathComponent(AppIdentity.binaryName, isDirectory: true)
+    }
+
+    /// Flatpak's private data root; otherwise XDG_DATA_HOME or ~/.local/share.
     var dataDirectory: URL {
-        directory(environment: "XDG_DATA_HOME", fallback: ".local/share")
-            .appendingPathComponent(AppIdentity.binaryName, isDirectory: true)
+        let root = isSandboxed ? sandboxDirectory.appendingPathComponent("data", isDirectory: true)
+            : directory(environment: "XDG_DATA_HOME", fallback: ".local/share")
+        return root.appendingPathComponent(AppIdentity.binaryName, isDirectory: true)
     }
 
     /// Matches Unix load_user_special_dirs in GLib 2.74.6, glib/gutils.c:
@@ -37,8 +55,7 @@ struct LinuxPaths {
     /// Backslashes, embedded $ and backticks stay literal, never shell code.
     /// https://github.com/GNOME/glib/blob/2.74.6/glib/gutils.c
     var documentsDirectory: URL {
-        let file = directory(environment: "XDG_CONFIG_HOME", fallback: ".config")
-            .appendingPathComponent("user-dirs.dirs")
+        let file = configRoot.appendingPathComponent("user-dirs.dirs")
         var selected: URL?
         if let source = try? String(contentsOf: file, encoding: .utf8) {
             for line in source.split(separator: "\n") {
@@ -61,7 +78,34 @@ struct LinuxPaths {
                 selected = directory
             }
         }
-        return selected ?? home.appendingPathComponent("Documents", isDirectory: true)
+        if let selected, supportsLibrary(at: selected) { return selected }
+        return home.appendingPathComponent("Documents", isDirectory: true)
+    }
+
+    /// Portal mounts and outside-home aliases cannot support a sandbox library.
+    func supportsLibrary(at directory: URL) -> Bool {
+        guard isSandboxed else { return true }
+        guard directory.isFileURL, Self.contains(directory, in: home) else { return false }
+        return Self.contains(Self.resolvingExistingPrefixes(directory), in: Self.resolvingExistingPrefixes(home))
+    }
+
+    private static func contains(_ directory: URL, in root: URL) -> Bool {
+        let path = directory.standardizedFileURL.path.utf8
+        let parent = root.standardizedFileURL.path
+        return path.elementsEqual(parent.utf8) || path.starts(with: (parent == "/" ? parent : parent + "/").utf8)
+    }
+
+    /// Match RootedFileStore's POSIX resolution, including missing default folders.
+    private static func resolvingExistingPrefixes(_ directory: URL) -> URL {
+        var resolved = URL(fileURLWithPath: "/", isDirectory: true)
+        for component in directory.standardizedFileURL.pathComponents.dropFirst() {
+            resolved.appendPathComponent(component, isDirectory: true)
+            if let path = realpath(resolved.path, nil) {
+                resolved = URL(fileURLWithPath: String(cString: path), isDirectory: true)
+                free(path)
+            }
+        }
+        return resolved
     }
 
     private static func quotedDirectory(_ source: String) -> String? {
