@@ -42,7 +42,8 @@ extension SyncReconciler {
             let expectedOrigin: SyncPromptOrigin = preservation.reason == .restoreMissing ? .rescued
                 : previousOrigin ?? .conflictOf(preservation.id)
             guard copy.origin == expectedOrigin else { throw SyncReconciliationError.requiresPolicy }
-            if edit.heldIssue == nil, try SyncConflictMetadata.origin(in: edit.bytes!,
+            guard let bytes = edit.bytes else { throw SyncReconciliationError.requiresPolicy }
+            if edit.heldIssue == nil, try SyncConflictMetadata.origin(in: bytes,
                 filename: LibraryPath.filename(edit.path)) != copy.origin {
                 throw SyncReconciliationError.requiresPolicy
             }

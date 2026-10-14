@@ -375,6 +375,26 @@ final class SyncConflictPolicyTests: XCTestCase {
         }
     }
 
+    func testReconciliationRejectsTrashEditAsPreservationCopy() throws {
+        let rig = try SyncApplyTestRig()
+        let local = try file(rig, body: "Losing")
+        let plan = try reconciliation(rig, local: local)
+        let old = rig.states.snapshot.value
+        let edit = try rig.mutations.trash(local)
+        try edit.validate()
+        let copy = SyncReconciliationCopy(edit: edit, origin: .conflictOf(id))
+        let writes = rig.files.writeCount
+        XCTAssertThrowsError(try SyncReconciler.apply(plan, mutations: rig.mutations, journal: rig.journal,
+            copies: ["a.md": copy])) {
+            XCTAssertEqual($0 as? SyncReconciliationError, .requiresPolicy)
+        }
+        XCTAssertEqual(try rig.files.read(at: "a.md"), local.bytes)
+        XCTAssertEqual(rig.files.writeCount, writes)
+        XCTAssertTrue(rig.libraryOperations.trashed.isEmpty)
+        XCTAssertEqual(rig.states.snapshot.value, old)
+        XCTAssertNil(rig.journal.pending)
+    }
+
     func testForensicRescueRetainsRawBytesAndTypedHoldWithoutInjectedText() throws {
         let inputs = [Data([0xff, 0x00, 0xfe]), Data("---\nformat: 2\n---\nFuture".utf8),
                       Data("---\ntitle: [\n---\nMalformed".utf8), bytes("Body", extra: "x-monkeyspaw-rescued: 'true'\n")]
