@@ -9,6 +9,11 @@ optional namespaced secret reference) and the selected profile ID. Missing
 files start empty; unknown root/profile keys follow profile IDs on rewrite.
 Loading and atomic publication follow §5.1's fail-closed settings contract
 ([§19 B23](19-m4-m5-decisions.md)).
+Android maps the logical `provider-settings.json` and `provider-state.json`
+paths through `StateStore` to namespaced `provider-settings`/`provider-state`
+records in the single M8 settings DataStore. The logical version-1 JSON and
+unknown metadata are preserved; no second settings DataStore or provider
+metadata file is created (§10.6, §22 J8).
 Secret edits are compensated if metadata cannot commit. Failed compensation
 blocks further credential resolution and makes that store instance read-only;
 after restart, a credential with a mismatched destination still requires

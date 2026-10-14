@@ -48,7 +48,9 @@ internal class AppGraphTest {
     fun `graph roots are disjoint library state and settings trees`() {
         val module = source("di/AppModule.kt")
         assertTrue(module.contains("AndroidPromptStore(File(context.filesDir, \"library\"))"))
-        assertTrue(module.contains("AndroidStateStore(File(context.filesDir, \"state\"))"))
+        assertTrue(module.contains("AndroidStateStore(File(context.filesDir, \"state\"), settings = settings)"))
+        assertTrue(AppModule::class.java.declaredMethods.single { it.returnType == StateStore::class.java }
+            .parameterTypes.contains(AndroidSettingsStore::class.java))
         assertTrue(module.contains("File(context.filesDir, \"datastore/settings.json\")"))
         assertTrue(module.contains("File(context.filesDir, \"datastore/secrets.json\")"))
     }
