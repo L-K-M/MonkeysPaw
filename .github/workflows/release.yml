@@ -360,7 +360,7 @@ jobs:
             local manifest="$1" digest filename
             shift
             local names=()
-            while read -r digest filename; do
+            while read -r digest filename || [[ -n "$digest" || -n "$filename" ]]; do
               [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
               names+=("$filename")
             done < "dist/$manifest"
@@ -614,7 +614,7 @@ jobs:
             local manifest="$1" digest filename
             shift
             local names=()
-            while read -r digest filename; do
+            while read -r digest filename || [[ -n "$digest" || -n "$filename" ]]; do
               [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
               names+=("$filename")
             done < "dist/$manifest"

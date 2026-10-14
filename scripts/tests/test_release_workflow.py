@@ -243,7 +243,7 @@ class ReleaseAssetTests(unittest.TestCase):
             file = self.dist / manifest
             original = file.read_text()
             substitute = (self.dist / f"{self.deb}.sha256").read_text()
-            mutations = [original + original, substitute]
+            mutations = [original + original, original + original.rstrip("\n"), substitute]
             if len(names) > 1:
                 mutations.append(original.splitlines(keepends=True)[0])
             for mutation in mutations:
