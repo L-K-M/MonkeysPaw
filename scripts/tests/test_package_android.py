@@ -143,11 +143,14 @@ if os.environ.get("FAKE_FAILURE") != "missing-apk":
 
     def test_check_validates_configuration_only_and_local_properties_match_gradle_precedence(self):
         sdk_path = str(self.sdk).replace(" ", "\\ ")
-        (self.root / "android/local.properties").write_text(f"sdk.dir={sdk_path}\n")
-        result = self.run_script("package-android.sh", "--check", ANDROID_HOME="/absent-sdk")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(self.calls.exists())
-        self.assertFalse((self.root / "dist").exists())
+        # Gradle's Properties loader also accepts CRLF files written on Windows.
+        for ending in ("\n", "\r\n"):
+            with self.subTest(ending=repr(ending)):
+                (self.root / "android/local.properties").write_bytes(f"sdk.dir={sdk_path}{ending}".encode())
+                result = self.run_script("package-android.sh", "--check", ANDROID_HOME="/absent-sdk")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse(self.calls.exists())
+                self.assertFalse((self.root / "dist").exists())
 
     def test_bad_or_misaligned_package_versions_fail_before_wrapper(self):
         for version in ("", "0.1", "0.2.0", "0.2.0-beta.1", "0.1.0-beta.01", "0.1.0+build",
@@ -161,6 +164,7 @@ if os.environ.get("FAKE_FAILURE") != "missing-apk":
     def test_failed_gradle_or_missing_apk_never_stages_an_artifact(self):
         for failure in ("gradle", "missing-apk"):
             with self.subTest(failure=failure):
+                self.calls.unlink(missing_ok=True)
                 result = self.run_script("package-android.sh", FAKE_FAILURE=failure)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertTrue(self.calls.exists())

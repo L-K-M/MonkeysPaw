@@ -13,6 +13,11 @@ ENGINE = shutil.which("lkm-release")
 
 
 class AndroidVersionFixture(unittest.TestCase):
+    def identity(self):
+        # atime is excluded: reading the file may update it on strictatime filesystems.
+        status = self.gradle.stat()
+        return status.st_ino, status.st_size, status.st_mtime_ns, status.st_mode
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="monkeyspaw-version-")
         self.addCleanup(directory.cleanup)
@@ -60,10 +65,10 @@ class AndroidVersionHookTests(AndroidVersionFixture):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(self.gradle.read_text(),
                              f'    versionName = "{version}"\n    versionCode = {code}\n')
-            before = self.gradle.stat()
+            before = self.identity()
             result = self.hook(version)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(self.gradle.stat(), before)
+            self.assertEqual(self.identity(), before)
 
     def test_missing_and_malformed_new_versions_do_not_change_any_bytes(self):
         original = self.gradle.read_bytes()
@@ -97,9 +102,9 @@ class AndroidVersionHookTests(AndroidVersionFixture):
         self.gradle.write_text(text)
         self.assertNotEqual(self.hook("0.2.0").returncode, 0)
         self.assertEqual(self.gradle.read_text(), text)
-        before = self.gradle.stat()
+        before = self.identity()
         self.assertEqual(self.hook("0.1.0").returncode, 0)
-        self.assertEqual(self.gradle.stat(), before)
+        self.assertEqual(self.identity(), before)
 
     def test_replacement_preserves_comments_permissions_order_and_crlf(self):
         text = (b'// versionName = "9.9.9"\r\n'
