@@ -103,6 +103,55 @@ internal class SeedOfferViewModelTest : TemporaryFiles() {
     }
 
     @Test
+    fun `a rescan failure after successful installation reports a library failure and keeps the completed decision`() = runTest {
+        var creates = 0
+        var failRescan = true
+        val model = model { prompts -> object : PromptStore by prompts {
+            override fun create(bytes: ByteArray, path: String) {
+                prompts.create(bytes, path)
+                creates += 1
+            }
+
+            override fun listFiles() = if (creates == 10 && failRescan) throw StoreError.IOFailure else prompts.listFiles()
+        } }
+        model.refresh()
+        runCurrent()
+        model.accept()
+        runCurrent()
+        assertEquals(SeedProgress.COMPLETE, settings.data.value.seedProgress)
+        assertEquals(10, model.libraryState.value.snapshot.prompts.size)
+        assertNotNull(model.libraryState.value.error)
+        assertEquals(SeedOfferUiState.Failed(), model.state.value)
+        failRescan = false
+        model.refresh()
+        runCurrent()
+        assertEquals(SeedOfferUiState.Ready, model.state.value)
+        assertEquals(10, creates)
+    }
+
+    @Test
+    fun `failed completion progress keeps all installed prompts and suppresses a reopened offer`() = runTest {
+        settings.failCompletion = true
+        val model = model()
+        model.refresh()
+        runCurrent()
+        model.accept()
+        runCurrent()
+        assertEquals(SeedOfferUiState.Failed(SeedSummary(10)), model.state.value)
+        assertEquals(SeedProgress.INSTALLING, settings.data.value.seedProgress)
+        assertEquals(10, model.libraryState.value.snapshot.prompts.size)
+        val identities = model.libraryState.value.snapshot.prompts.map { it.entry.identity }
+        models.clear()
+        settings.failCompletion = false
+        val reopened = model()
+        reopened.refresh()
+        runCurrent()
+        assertEquals(SeedOfferUiState.Ready, reopened.state.value)
+        assertEquals(identities, reopened.libraryState.value.snapshot.prompts.map { it.entry.identity })
+        assertEquals(SeedProgress.INSTALLING, settings.data.value.seedProgress)
+    }
+
+    @Test
     fun `failed progress write shows failure preserves the offer and creates nothing`() = runTest {
         val model = model()
         model.refresh()
@@ -136,10 +185,13 @@ internal class SeedOfferViewModelTest : TemporaryFiles() {
     private class TestSettings : DataStore<AndroidSettings> {
         override val data = MutableStateFlow(AndroidSettings())
         var failWrites = false
+        var failCompletion = false
 
         override suspend fun updateData(transform: suspend (t: AndroidSettings) -> AndroidSettings): AndroidSettings {
             if (failWrites) throw IOException("SECRET progress file")
-            return transform(data.value).also { data.value = it }
+            val next = transform(data.value)
+            if (failCompletion && next.seedProgress == SeedProgress.COMPLETE) throw IOException("SECRET progress file")
+            return next.also { data.value = it }
         }
     }
 }

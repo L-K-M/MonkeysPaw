@@ -51,8 +51,11 @@ internal class SeedOfferViewModel @Inject constructor(
         work = viewModelScope.launch {
             val result = installer.install()
             val refreshed = library.refresh()
-            mutableState.value = if (result.error != null || refreshed.error != null) SeedOfferUiState.Failed(result.summary)
-                else SeedOfferUiState.Ready
+            mutableState.value = when {
+                result.error != null -> SeedOfferUiState.Failed(result.summary)
+                refreshed.error != null -> SeedOfferUiState.Failed()
+                else -> SeedOfferUiState.Ready
+            }
         }
     }
 
