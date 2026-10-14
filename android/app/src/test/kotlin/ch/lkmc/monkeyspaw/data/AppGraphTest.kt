@@ -1,6 +1,8 @@
 package ch.lkmc.monkeyspaw.data
 
 import ch.lkmc.monkeyspaw.core.ports.StateStore
+import ch.lkmc.monkeyspaw.core.ports.HttpTransport
+import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
 import ch.lkmc.monkeyspaw.core.services.EditingService
 import ch.lkmc.monkeyspaw.core.services.FillService
 import ch.lkmc.monkeyspaw.core.ports.Clock
@@ -26,7 +28,8 @@ internal class AppGraphTest {
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
             AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, CoroutineScope::class.java,
             AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
-            AndroidClock::class.java, Clock::class.java, Clipboard::class.java)) {
+            AndroidClock::class.java, Clock::class.java, Clipboard::class.java,
+            HttpTransport::class.java, MonotonicClock::class.java)) {
             val provider = methods.single { it.returnType == type }
             assertNotNull(provider.getAnnotation(Singleton::class.java), "${type.simpleName} must be process-scoped")
         }
@@ -62,6 +65,25 @@ internal class AppGraphTest {
     }
 
     @Test
+    fun `network permission and config retain system trust with runtime cleartext policy`() {
+        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+            .parse(File(sources, "res/xml/network_security_config.xml"))
+        assertEquals("true", (document.getElementsByTagName("base-config").item(0) as org.w3c.dom.Element)
+            .getAttribute("cleartextTrafficPermitted"))
+        val anchors = document.getElementsByTagName("certificates")
+        assertEquals(1, anchors.length)
+        assertEquals("system", (anchors.item(0) as org.w3c.dom.Element).getAttribute("src"))
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val manifest = factory.newDocumentBuilder().parse(File(sources, "AndroidManifest.xml"))
+        val application = manifest.getElementsByTagName("application").item(0) as org.w3c.dom.Element
+        assertEquals("@xml/network_security_config", application.getAttributeNS(androidNamespace, "networkSecurityConfig"))
+        val permissions = manifest.getElementsByTagName("uses-permission")
+        assertEquals(1, (0 until permissions.length).count {
+            (permissions.item(it) as org.w3c.dom.Element).getAttributeNS(androidNamespace, "name") == "android.permission.INTERNET"
+        })
+    }
+
+    @Test
     fun `manifest guard rejects an exported activity alias`() {
         val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
         val document = factory.newDocumentBuilder().parse(File(sources, "AndroidManifest.xml"))
@@ -89,7 +111,9 @@ internal class AppGraphTest {
                 assertTrue(element.getAttributeNS(androidNamespace, "name") in allowed)
             }
             if (element.tagName in setOf("uses-permission", "permission")) {
-                assertEquals("remove", element.getAttributeNS("http://schemas.android.com/tools", "node"))
+                if (element.getAttributeNS(androidNamespace, "name") != "android.permission.INTERNET") {
+                    assertEquals("remove", element.getAttributeNS("http://schemas.android.com/tools", "node"))
+                }
             }
         }
     }

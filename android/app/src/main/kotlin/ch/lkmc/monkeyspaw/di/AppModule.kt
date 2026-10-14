@@ -72,6 +72,15 @@ internal object AppModule {
 
     @Provides
     @Singleton
+    fun monotonicClock(): MonotonicClock = MonotonicClock(System::nanoTime)
+
+    @Provides
+    @Singleton
+    fun httpTransport(clock: MonotonicClock, @ApplicationScope scope: CoroutineScope): HttpTransport =
+        OkHttpHttpTransport(clock, scope)
+
+    @Provides
+    @Singleton
     fun entropy(): Entropy {
         val random = SecureRandom()
         return Entropy { count -> ByteArray(count).also(random::nextBytes) }
