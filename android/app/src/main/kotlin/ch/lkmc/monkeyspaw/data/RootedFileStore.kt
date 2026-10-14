@@ -31,6 +31,11 @@ internal open class AtomicPublication {
     open fun syncDirectory(directory: Path) {
         FileChannel.open(directory, StandardOpenOption.READ).use { it.force(true) }
     }
+
+    open fun renameDirectory(source: Path, destination: Path) {
+        // ATOMIC_MOVE permits replacement even without REPLACE_EXISTING.
+        Files.move(source, destination)
+    }
 }
 
 /**
@@ -41,23 +46,30 @@ internal open class AtomicPublication {
 internal class RootedFileStore(
     root: File,
     private val scan: Scan,
-    private val publication: AtomicPublication = AtomicPublication(),
+    internal val publication: AtomicPublication = AtomicPublication(),
 ) : StateStore {
     enum class Scan { LIBRARY, STATE }
-    private enum class Parents { EXISTING, CREATE }
+    internal enum class Parents { EXISTING, CREATE }
+    private enum class Inventory { INDEX, FULL }
 
     private val requestedRoot = root.toPath()
     // Resolve trusted system aliases once, off the UI thread, then recheck canonical ancestors.
     private val root: Path by lazy { canonicalRoot() }
     @Volatile private var rootPrepared = false
+    private var rootIdentity: FileStamp? = null
+    private val createdRootDirectories = linkedSetOf<Path>()
 
     fun prepareRoot() = sanitized {
+        if (rootPrepared) return@sanitized requireRoot()
         rootExists(Parents.CREATE)
+        pinRoot()
         rootPrepared = true
     }
 
     fun requireRoot() = sanitized {
         if (!rootExists(Parents.EXISTING)) throw StoreError.NotFound
+        pinRoot()
+        rootPrepared = true
     }
 
     override fun listFiles(): List<StoredFile> = sanitized {
@@ -137,6 +149,13 @@ internal class RootedFileStore(
     }
 
     private fun stage(bytes: ByteArray, destination: Path, publish: (Path) -> Unit) {
+        staged(bytes, destination) { temporary ->
+            publish(temporary)
+            syncDirectory(destination.parent)
+        }
+    }
+
+    internal fun staged(bytes: ByteArray, destination: Path, publish: (Path) -> Unit) {
         // Every file is app-private; ordinary prompt/state writes deliberately use 0600 too.
         val permissions = PosixFilePermissions.fromString("rw-------")
         val temporary = Files.createTempFile(destination.parent, ".monkeyspaw-", ".tmp",
@@ -150,7 +169,6 @@ internal class RootedFileStore(
                 publication.flush(channel)
             }
             publish(temporary)
-            syncDirectory(destination.parent)
         } finally {
             // Like Swift's deferred unlink, cleanup cannot report a committed write as failed.
             try { publication.removeTemporary(temporary) } catch (_: Exception) { }
@@ -179,12 +197,63 @@ internal class RootedFileStore(
     }
 
     private fun rootExists(parents: Parents): Boolean {
+        if (parents == Parents.CREATE && rootPrepared) {
+            if (!rootExists(Parents.EXISTING)) throw StoreError.NotFound
+            return true
+        }
         var directory = root.root
         for (component in root) {
             directory = directory.resolve(component)
-            if (!ensureDirectory(directory, parents)) return false
+            if (!ensureDirectory(directory, parents) { createdRootDirectories.add(it) }) return false
         }
+        if (rootIdentity != null && nodeIdentity(root) != rootIdentity) throw StoreError.InvalidRoot
         return true
+    }
+
+    private fun pinRoot() {
+        val current = nodeIdentity(root)
+        if (rootIdentity != null && rootIdentity != current) throw StoreError.InvalidRoot
+        rootIdentity = current
+    }
+
+    /** Checked operations never recreate an unavailable established root. */
+    internal fun syncPath(path: String, parents: Parents = Parents.EXISTING,
+                          created: (Path) -> Unit = {}): Path? {
+        StorePath.validate(path)
+        requireRoot()
+        var directory = root
+        val parts = path.split('/')
+        for (part in parts.dropLast(1)) {
+            directory = directory.resolve(part)
+            if (attributes(directory) == null && parents == Parents.CREATE) {
+                try {
+                    Files.createDirectory(directory)
+                    created(directory)
+                } catch (_: FileAlreadyExistsException) { }
+            }
+            if (!ensureDirectory(directory, Parents.EXISTING)) return null
+        }
+        return directory.resolve(parts.last())
+    }
+
+    internal fun syncDirectory(path: String?): Path {
+        requireRoot()
+        if (path == null) return root
+        val directory = syncPath(path) ?: throw StoreError.NotFound
+        if (!ensureDirectory(directory, Parents.EXISTING)) throw StoreError.NotFound
+        return directory
+    }
+
+    internal fun rootDurabilityDirectories(): List<Path> =
+        (createdRootDirectories.flatMap { listOf(it, it.parent) } + listOf(root, root.parent))
+            .distinct().sortedByDescending { it.nameCount }
+
+    internal fun fullInventory(): List<StoredFile> = sanitized {
+        requireRoot()
+        val result = mutableListOf<StoredFile>()
+        collect(root, "", result, Inventory.FULL)
+        requireRoot()
+        result.sortedWith { a, b -> comparePaths(a.relativePath, b.relativePath) }
     }
 
     private fun locate(path: String, parents: Parents): Path? {
@@ -199,7 +268,7 @@ internal class RootedFileStore(
         return directory.resolve(parts.last())
     }
 
-    private fun ensureDirectory(directory: Path, parents: Parents): Boolean {
+    private fun ensureDirectory(directory: Path, parents: Parents, created: (Path) -> Unit = {}): Boolean {
         val existing = attributes(directory)
         if (existing != null) {
             if (existing.isSymbolicLink) throw StoreError.OutsideRoot
@@ -207,7 +276,10 @@ internal class RootedFileStore(
             return true
         }
         if (parents == Parents.EXISTING) return false
-        try { Files.createDirectory(directory) }
+        try {
+            Files.createDirectory(directory)
+            created(directory)
+        }
         catch (_: FileAlreadyExistsException) {
             // Another store can create a shared ancestor; recheck instead of trusting it.
             return ensureDirectory(directory, Parents.EXISTING)
@@ -215,38 +287,47 @@ internal class RootedFileStore(
         return true
     }
 
-    private fun collect(directory: Path, prefix: String, result: MutableList<StoredFile>) {
+    private fun collect(directory: Path, prefix: String, result: MutableList<StoredFile>, inventory: Inventory = Inventory.INDEX) {
+        val full = inventory == Inventory.FULL
+        if (full) syncDirectory(prefix.removeSuffix("/").ifEmpty { null })
         Files.newDirectoryStream(directory).use { children ->
             for (child in children) {
                 val name = child.fileName.toString()
-                if (scan == Scan.LIBRARY && name.startsWith('_')) continue
-                val attributes = attributes(child) ?: continue
+                if (!full && scan == Scan.LIBRARY && name.startsWith('_')) continue
+                val attributes = attributes(child) ?: if (full) throw StoreError.NotFound else continue
                 val path = prefix + name
+                if (full) StorePath.validate(path)
                 when {
-                    attributes.isSymbolicLink -> continue
+                    attributes.isSymbolicLink -> if (full) throw StoreError.OutsideRoot else continue
                     attributes.isDirectory -> {
-                        if (scan == Scan.LIBRARY && name.startsWith('.')) continue
-                        collect(child, "$path/", result)
+                        if (!full && scan == Scan.LIBRARY && name.startsWith('.')) continue
+                        collect(child, "$path/", result, inventory)
                     }
                     attributes.isRegularFile -> {
                         // A crash can leave staged bytes; keep other dot files and sidecars eligible.
-                        if (name.startsWith(".monkeyspaw-") && name.endsWith(".tmp")) continue
-                        if (scan == Scan.LIBRARY && (!name.endsWith(".md") || path == "README.md")) continue
+                        if (!full && name.startsWith(".monkeyspaw-") && name.endsWith(".tmp")) continue
+                        if (!full && scan == Scan.LIBRARY && (!name.endsWith(".md") || path == "README.md")) continue
                         StorePath.validate(path)
                         result += StoredFile(path, fileStamp(child))
                     }
+                    full -> throw StoreError.NotRegularFile
                 }
             }
         }
     }
 
-    private fun attributes(path: Path): BasicFileAttributes? = try {
+    internal fun attributes(path: Path): BasicFileAttributes? = try {
         Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
     } catch (_: NoSuchFileException) { null }
 
-    private fun requireRegular(attributes: BasicFileAttributes) {
+    internal fun requireRegular(attributes: BasicFileAttributes) {
         if (attributes.isSymbolicLink) throw StoreError.OutsideRoot
         if (!attributes.isRegularFile) throw StoreError.NotRegularFile
+    }
+
+    internal fun nodeIdentity(path: Path, incarnation: String = ""): FileStamp {
+        val values = Files.readAttributes(path, "unix:dev,ino", LinkOption.NOFOLLOW_LINKS)
+        return FileStamp("node:${values.getValue("dev")}:${values.getValue("ino")}:$incarnation")
     }
 
     private fun fileStamp(path: Path): FileStamp {
@@ -258,7 +339,7 @@ internal class RootedFileStore(
             .joinToString(":") { attributes.getValue(it).toString() })
     }
 
-    private fun comparePaths(left: String, right: String): Int {
+    internal fun comparePaths(left: String, right: String): Int {
         val a = left.encodeToByteArray()
         val b = right.encodeToByteArray()
         for (index in 0 until minOf(a.size, b.size)) {
