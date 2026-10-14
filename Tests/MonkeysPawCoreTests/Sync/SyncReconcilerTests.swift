@@ -12,6 +12,48 @@ final class SyncReconcilerTests: XCTestCase {
     private var personal: SyncScopeKey { .user(user) }
     private var team: SyncScopeKey { .group(group) }
 
+    func testUnchangedSnapshotPreservesQueuedLocalEditsAndDeletions() throws {
+        for key in [personal, team] {
+            for deleted in [false, true] {
+                let rig = try SyncApplyTestRig()
+                let acknowledged = try key == personal ? bytes("Acknowledged") : groupBytes("Acknowledged")
+                let previous = try baseline(rig, [record(id, "a.md", data: acknowledged, rev: 7, scope: key)])
+                let path = key == personal ? "a.md" : "Groups/Team/a.md"
+                let edited = try key == personal ? bytes("Queued edit") : groupBytes("Queued edit")
+                if !deleted { try rig.files.write(edited, at: path) }
+                let snapshot = scope(key, mode: .snapshot, items: [upsert(100, rev: 7, data: acknowledged)])
+                let pull = try collected(key == personal ? [snapshot] : [scope(), snapshot])
+                defer { try? pull.discard() }
+                let plan = try reconcile(pull, rig)
+                XCTAssertEqual(plan.mode, .normal)
+                XCTAssertTrue(plan.operations.isEmpty, "An unchanged head must not restore a deletion or conflict with a queued edit")
+                guard plan.operations.isEmpty else { continue }
+                XCTAssertEqual(try apply(plan, rig), .committed)
+                XCTAssertEqual(rig.states.snapshot.value?.prompts, previous.prompts)
+                XCTAssertEqual(rig.states.snapshot.value?.cursors, pull.cursors)
+                if deleted { XCTAssertNil(try rig.files.stamp(at: path)) }
+                else { XCTAssertEqual(try rig.files.read(at: path), edited) }
+            }
+        }
+    }
+
+    func testUnchangedSnapshotDoesNotReflagOrCopyALocallyResolvedMarker() throws {
+        let rig = try SyncApplyTestRig()
+        let marked = try SyncConflictMetadata.settingOrigin(.conflictOf(other), in: bytes("Kept"), filename: "a.md")
+        let unmarked = try SyncConflictMetadata.settingOrigin(nil, in: marked, filename: "a.md")
+        _ = try baseline(rig, [record(id, "a.md", data: marked, rev: 7)])
+        try rig.files.write(unmarked, at: "a.md")
+        let pull = try collected([scope(mode: .snapshot, items: [upsert(100, rev: 7, data: marked)])])
+        defer { try? pull.discard() }
+        let plan = try reconcile(pull, rig)
+        XCTAssertTrue(plan.operations.isEmpty)
+        XCTAssertNil(plan.nextState.prompts[.assigned(id)]?.origin)
+        guard plan.operations.isEmpty else { return }
+        XCTAssertEqual(try apply(plan, rig), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), unmarked)
+        XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(id)]?.canonicalHash, SyncHash(bytes: marked))
+    }
+
     func testOwnEchoAndOlderDeltaAreNoOpsEvenWithDirtyLocalContent() throws {
         for rev: Int64 in [2, 7] {
             let rig = try SyncApplyTestRig()

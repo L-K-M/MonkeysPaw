@@ -124,7 +124,14 @@ enum SyncReconciler {
                 // Folding ownership precedes this shortcut, so an old move_out
                 // cannot turn an echoed move-back upsert into a deletion.
                 let markers = try SyncConflictMetadata.ingest(remote.bytes, filename: LibraryPath.filename(remote.path.string), scope: remote.scope.pathScope)
-                if mode != .restore, headMode == .delta, let previous, remote.rev <= previous.rev {
+                // An unchanged snapshot is also an echo. Preserve queued local
+                // edits/deletes/renames and marker clearing until they push.
+                let acknowledgedSnapshot = headMode == .snapshot && previous.map {
+                    remote.rev == $0.rev && remote.scope == $0.scope && remote.path == $0.path
+                        && remote.hash == $0.canonicalHash
+                } == true
+                if mode != .restore, let previous,
+                   (headMode == .delta && remote.rev <= previous.rev) || acknowledgedSnapshot {
                     if let issue = markers.issue, remote.hash == previous.canonicalHash {
                         prompts[identity] = try SyncPromptState(scope: previous.scope, path: previous.path, rev: previous.rev,
                             canonicalHash: previous.canonicalHash, origin: previous.origin, lastError: SyncPromptError(code: issue,

@@ -5,6 +5,75 @@ import XCTest
 final class ConflictResolutionServerTests: XCTestCase {
     private let original = ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PD")!
 
+    func testGroupDecisionsSurviveZeroCursorSnapshotWithoutCascade() async throws {
+        for action in [ConflictResolutionAction.keepServer, .keepMine, .keepBoth] {
+            try await groupDecision(action)
+        }
+    }
+
+    private func groupDecision(_ action: ConflictResolutionAction) async throws {
+        try await withDevices(differentUsers: true) { owner, editor, symbols in
+            let response = try await owner.request(method: .post, path: "/api/v1/groups", body: .object(["name": .string("Team")]))
+            XCTAssertEqual(response.statusCode, 200)
+            let group = try JSONDecoder().decode(SyncAPI.Group.self, from: response.body)
+            let member = try XCTUnwrap(symbols["user.server.bob"])
+            let added = try await owner.request(method: .put,
+                path: "/api/v1/groups/" + group.id + "/members/" + member, body: .object(["role": .string("editor")]))
+            XCTAssertEqual(added.statusCode, 200)
+            for device in [owner, editor] { device.sync.syncNow(); try await device.settle() }
+            try owner.files.write(self.bytes("Server", id: self.original), at: "Groups/Team/original.md")
+            owner.sync.syncNow(); try await owner.settle()
+            editor.sync.syncNow(); try await editor.settle()
+            let baseline = try editor.files.read(at: "Groups/Team/original.md")
+
+            let copyID = ULID("01K6Z4V9KQWZX7MPQ4T8ZNB2PF")!
+            let body = "Mine Cafe\u{301}\r\n{{topic}}"
+            let source = "---\nid: " + copyID.rawValue + "\ntitle: Exact\nfavorite: true\nprivate: true\nx-extra: {nested: [1, false]}\n---\n" + body
+            let marked = try SyncConflictMetadata.settingOrigin(.conflictOf(self.original),
+                in: Data(source.utf8), filename: "copy.md")
+            try editor.files.write(marked, at: "Conflicts/Team/copy.md")
+            editor.sync.syncNow(); try await editor.settle()
+            let service = ConflictResolutionService(sync: editor.sync)
+            let preview = try await service.preview(.init(identity: .assigned(copyID), relativePath: "Conflicts/Team/copy.md"))
+            XCTAssertTrue(preview.canKeepMine)
+            let candidate = try XCTUnwrap(preview.candidateBytes)
+            XCTAssertEqual(candidate, try CanonicalForm.group(candidate, filename: "original.md").bytes)
+            let document = PromptCodec.parseFile(candidate, filename: "original.md")
+            XCTAssertEqual(document.frontMatter.id, self.original)
+            XCTAssertEqual(Data(document.body.utf8), Data(body.utf8))
+            XCTAssertFalse(String(decoding: candidate, as: UTF8.self).contains("favorite:"))
+            XCTAssertFalse(String(decoding: candidate, as: UTF8.self).contains("private:"))
+            XCTAssertNil(try SyncConflictMetadata.origin(in: document))
+            let result = try await service.resolve(action, preview: preview)
+            guard case .resolved(let resolved) = result else { return XCTFail("Writable group resolution failed") }
+            XCTAssertEqual(resolved, action)
+            let editorCount = action == .keepBoth ? 2 : 1
+            XCTAssertEqual(try editor.files.listFiles().count, editorCount, "Immediately after resolution")
+            for device in [editor, owner, editor] {
+                device.sync.syncNow(); try await device.settle()
+                let paths = try device.files.listFiles().map(\.relativePath)
+                XCTAssertEqual(paths.count, device === editor ? editorCount : 1,
+                    device.name + ": " + paths.joined(separator: ", "))
+                let origins = device.states.snapshot.value?.prompts.values.compactMap(\.origin) ?? []
+                XCTAssertTrue(origins.isEmpty, device.name + ": " + String(describing: origins))
+            }
+            for device in [editor, owner] {
+                XCTAssertEqual(try device.files.read(at: "Groups/Team/original.md"), action == .keepMine ? candidate : baseline)
+                XCTAssertEqual(try device.files.listFiles().count, device === editor ? editorCount : 1, device.name)
+                XCTAssertTrue(device.states.snapshot.value?.prompts.values.allSatisfy { $0.origin == nil } == true)
+                XCTAssertEqual(device.sync.report.counts.conflicts, 0)
+            }
+            if action == .keepBoth {
+                let kept = PromptCodec.parseFile(try editor.files.read(at: "Conflicts/Team/copy.md"), filename: "copy.md")
+                XCTAssertEqual(kept.frontMatter.id, copyID)
+                XCTAssertEqual(Data(kept.body.utf8), Data(body.utf8))
+                XCTAssertTrue(kept.frontMatter.favorite)
+                XCTAssertTrue(kept.frontMatter.isPrivate)
+                XCTAssertNil(try SyncConflictMetadata.origin(in: kept))
+            } else { XCTAssertNil(try editor.files.stamp(at: "Conflicts/Team/copy.md")) }
+        }
+    }
+
     func testLostResolutionAcknowledgementRetainsCopyAndDoesNotCascadeOnPull() async throws {
         try await withDevices { a, b, _ in
             let selection = try await self.conflict(a, b)

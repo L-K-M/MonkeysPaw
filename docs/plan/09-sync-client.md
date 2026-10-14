@@ -209,6 +209,11 @@ saves, and on demand.
      entries its scope owns. Items are matched by id and canonical hash,
      never by rev order: after a restore, server revs can be lower than
      recorded ones. The `database_id` comparison is made once per pull.
+     - On a normal resync, an item with exactly the acknowledged scope, path,
+       rev and hash is an unchanged head. Keep queued local edits, renames,
+       deletions and conflict-marker removal for the following push, including
+       when a zero cursor produces another snapshot. This shortcut never applies
+       after a database restore.
      - An id present on both sides with an identical hash: record the
        snapshot `rev`.
      - An id present on both sides, different content, on a normal resync:
