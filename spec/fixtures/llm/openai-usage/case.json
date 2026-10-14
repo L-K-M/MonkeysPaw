@@ -1,0 +1,681 @@
+{
+  "actions": [
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "1-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "1-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "1-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "1-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "2-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "2-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "2-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": {
+          "inputTokens": 12,
+          "outputTokens": 34
+        }
+      },
+      "intent": {
+        "brief": "2-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "3-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "3-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "3-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "3-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "4-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "4-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "4-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "4-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "5-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "5-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "5-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "5-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "6-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "6-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "6-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "6-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "7-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "7-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "7-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "7-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "8-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "8-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "8-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "8-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "9-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "9-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "9-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "9-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "10-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "10-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "10-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": {
+          "inputTokens": 1,
+          "outputTokens": 2
+        }
+      },
+      "intent": {
+        "brief": "10-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "11-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "11-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "11-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": {
+          "inputTokens": 9223372036854775807,
+          "outputTokens": 0
+        }
+      },
+      "intent": {
+        "brief": "11-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "12-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "authorization": "Bearer fixture-only-api-key",
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "12-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "12-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "12-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    }
+  ],
+  "category": "llm",
+  "kind": "exchange",
+  "schema": 1,
+  "setup": {
+    "capabilityState": null,
+    "nowMonotonicMs": 9000,
+    "nowUTC": "2026-10-13T00:00:00Z"
+  }
+}

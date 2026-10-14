@@ -1,0 +1,1 @@
+{"profiles":[{"baseURL":"https:\/\/api.openai.com\/v1","format":"json_object","id":"00000000-0000-4000-8000-000000000064","kind":"openaiCompatible","modelID":"fixture-model"}],"version":1}

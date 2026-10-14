@@ -1,0 +1,537 @@
+{
+  "actions": [
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "1-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://localhost:11434/v1/chat/completions"
+          },
+          "response": {
+            "body": "1-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "1-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "1-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "http://localhost:11434",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {},
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://localhost:11434/v1/models?after_id=cursor%2B/%F0%9F%98%80?%26%3D%22"
+          },
+          "response": {
+            "body": "2-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": null,
+        "page": {
+          "firstID": null,
+          "hasMore": false,
+          "lastID": null,
+          "models": []
+        },
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": "cursor+/😀?&=\"",
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "http://localhost:11434",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "3-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://127.0.0.1:1234/v1/chat/completions"
+          },
+          "response": {
+            "body": "3-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "3-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "3-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "http://127.0.0.1:1234/v1/chat/completions/",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {},
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://127.0.0.1:1234/v1/models?after_id=cursor%2B/%F0%9F%98%80?%26%3D%22"
+          },
+          "response": {
+            "body": "4-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": null,
+        "page": {
+          "firstID": null,
+          "hasMore": false,
+          "lastID": null,
+          "models": []
+        },
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": "cursor+/😀?&=\"",
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "http://127.0.0.1:1234/v1/chat/completions/",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "5-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://[::1]:9000/v1/chat/completions"
+          },
+          "response": {
+            "body": "5-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "5-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "5-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "http://[::1]:9000/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {},
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://[::1]:9000/v1/models?after_id=cursor%2B/%F0%9F%98%80?%26%3D%22"
+          },
+          "response": {
+            "body": "6-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": null,
+        "page": {
+          "firstID": null,
+          "hasMore": false,
+          "lastID": null,
+          "models": []
+        },
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": "cursor+/😀?&=\"",
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "http://[::1]:9000/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "7-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/chat/completions"
+          },
+          "response": {
+            "body": "7-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "7-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "7-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.OPENAI.COM.:443/v1/models/",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {},
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.openai.com/v1/models?after_id=cursor%2B/%F0%9F%98%80?%26%3D%22"
+          },
+          "response": {
+            "body": "8-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": null,
+        "page": {
+          "firstID": null,
+          "hasMore": false,
+          "lastID": null,
+          "models": []
+        },
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": "cursor+/😀?&=\"",
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.OPENAI.COM.:443/v1/models/",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "9-1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "content-type": "application/json"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://router.example/custom/chat/completions"
+          },
+          "response": {
+            "body": "9-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "9-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "9-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://router.example/custom/chat/completions/",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {},
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://router.example/custom/models?after_id=cursor%2B/%F0%9F%98%80?%26%3D%22"
+          },
+          "response": {
+            "body": "10-1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": null,
+        "output": null,
+        "page": {
+          "firstID": null,
+          "hasMore": false,
+          "lastID": null,
+          "models": []
+        },
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": "cursor+/😀?&=\"",
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "https://router.example/custom/chat/completions/",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": null,
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    }
+  ],
+  "category": "llm",
+  "kind": "exchange",
+  "schema": 1,
+  "setup": {
+    "capabilityState": null,
+    "nowMonotonicMs": 9000,
+    "nowUTC": "2026-10-13T00:00:00Z"
+  }
+}

@@ -3,8 +3,12 @@ package ch.lkmc.monkeyspaw.core.conformance
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
+import ch.lkmc.monkeyspaw.core.llm.AssistantClient
 import ch.lkmc.monkeyspaw.core.llm.LlmOutputDecoder
+import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
 import ch.lkmc.monkeyspaw.core.ports.*
+import ch.lkmc.monkeyspaw.core.services.MemoryStore
+import ch.lkmc.monkeyspaw.core.services.ProviderStateStore
 import java.time.Instant
 import java.util.Locale
 import kotlinx.coroutines.runBlocking
@@ -12,7 +16,7 @@ import kotlinx.serialization.json.*
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/** Closed exchange envelope. L6 extends capability variants alongside its real store/client. */
+/** Closed exchange envelope, with raw request and capability-state byte goldens. */
 internal object LlmExchangeContracts {
     fun read(root: JsonObject): List<String> {
         root.members(setOf("schema", "category", "kind", "setup", "actions"))
@@ -25,7 +29,7 @@ internal object LlmExchangeContracts {
         }
         val setup = root["setup"].objectValue()
         setup.members(setOf("capabilityState", "nowUTC", "nowMonotonicMs"))
-        corpusRequire(setup["capabilityState"] == JsonNull, "Anthropic has no capability state")
+        if (setup["capabilityState"] != JsonNull) source(setup["capabilityState"], setOf(".json", ".bin"))
         val utc = setup["nowUTC"].stringValue()
         corpusRequire(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z").matches(utc) && Instant.parse(utc).toString() == utc, "Invalid UTC origin")
         nonnegative(setup["nowMonotonicMs"])
@@ -37,7 +41,7 @@ internal object LlmExchangeContracts {
             val profile = action["profile"].objectValue()
             profile.members(setOf("id", "kind", "baseURL", "modelID", "key"))
             ProviderProfileID.parse(profile["id"].stringValue())
-            corpusRequire(profile["kind"].stringValue() == "anthropic", "Unknown provider kind")
+            corpusRequire(profile["kind"].stringValue() in ProviderKind.entries.map { it.rawValue }, "Unknown provider kind")
             profile["baseURL"].stringValue(); profile["modelID"].stringValue(); nullableString(profile["key"])
             val intent = action["intent"].objectValue()
             val kind = intent["kind"].stringValue()
@@ -106,8 +110,11 @@ internal object LlmExchangeContracts {
             }
             if (expected["error"] != JsonNull) error(expected["error"].objectValue())
             val cache = expected["cache"].objectValue()
-            cache.members(setOf("format", "writes"))
-            corpusRequire(cache["format"].stringValue() == "json_schema" && cache["writes"].integerValue() == java.math.BigInteger.ZERO, "Anthropic cannot learn formats")
+            val openai = profile["kind"].stringValue() == ProviderKind.OPENAI_COMPATIBLE.rawValue
+            cache.members(setOf("format", "writes") + if (openai) setOf("state") else emptySet())
+            corpusRequire(cache["format"].stringValue() in OpenAIResponseFormat.entries.map { it.rawValue }, "Unknown cached format")
+            nonnegative(cache["writes"])
+            if (openai && cache["state"] != JsonNull) source(cache["state"], setOf(".json", ".bin"))
         }
         corpusRequire(references.distinct().size == references.size, "Duplicate exchange reference")
         return references
@@ -149,6 +156,9 @@ internal object LlmExchangeConsumer {
         val origin = setup["nowMonotonicMs"].integerValue().longValueExact() * 1_000_000
         val utc = Instant.parse(setup["nowUTC"].stringValue())
         var expectations = countExpectations(setup)
+        val files = ExchangeStateFiles()
+        if (setup["capabilityState"] != JsonNull) files.memory.put(bytes(setup["capabilityState"].stringValue()), "provider-state.json")
+        val providerState = ProviderStateStore(files)
         for (item in root["actions"].arrayValue()) {
             val action = item.objectValue()
             val expected = action["expected"].objectValue()
@@ -196,7 +206,12 @@ internal object LlmExchangeConsumer {
                 if ("failure" in reply) throw transportError(reply["failure"].stringValue())
                 HttpResponse(reply["status"].integerValue().intValueExact(), reply["headers"].objectValue().mapValues { it.value.stringValue() }, bytes(reply["body"].stringValue()))
             }
-            val client = AnthropicClient(transport, MonotonicClock { origin + elapsedNanos }, { utc.plusNanos(elapsedNanos) })
+            val clock = MonotonicClock { origin + elapsedNanos }
+            val client: AssistantClient = when (kind) {
+                ProviderKind.ANTHROPIC -> AnthropicClient(transport, clock, { utc.plusNanos(elapsedNanos) })
+                ProviderKind.OPENAI_COMPATIBLE -> OpenAIClient(transport, providerState, clock, { utc.plusNanos(elapsedNanos) })
+            }
+            val cacheAccesses = files.memory.accesses
             var response: AssistantResponse? = null
             var page: AssistantModelPage? = null
             var failure: AssistantError? = null
@@ -210,6 +225,7 @@ internal object LlmExchangeConsumer {
                         else client.listModels(connection, after, origin + (budget ?: Limits.modelListTimeoutNanos))
                 }
             } catch (error: AssistantError) { failure = error }
+            if (assistantRequest == null) assertEquals(cacheAccesses, files.memory.accesses, "Model listing must not consult cache")
             assertEquals(expected["requestCount"].integerValue().intValueExact(), calls, "Ordered call count")
             assertEquals(errorGolden(expected["error"]!!), failure, "Typed error")
             if (expected["output"] == JsonNull) assertNull(response)
@@ -224,9 +240,15 @@ internal object LlmExchangeConsumer {
             assertEquals(expected["usage"], response?.usage?.let {
                 buildJsonObject { put("inputTokens", it.inputTokens); put("outputTokens", it.outputTokens) }
             } ?: JsonNull, "Optional usage")
-            // Anthropic does not own a capability store or perform format probes.
-            assertEquals(JsonNull, setup["capabilityState"])
-            assertEquals(buildJsonObject { put("format", "json_schema"); put("writes", 0) }, expected["cache"])
+            val cache = expected["cache"].objectValue()
+            val stateBytes = files.memory.bytesSnapshot()["provider-state.json"]?.toByteArray()
+            // Inspect an isolated snapshot so this assertion cannot observe/reset the live client identity.
+            val snapshot = MemoryStore()
+            stateBytes?.let { snapshot.put(it, "provider-state.json") }
+            val format = if (kind == ProviderKind.ANTHROPIC) OpenAIResponseFormat.JSON_SCHEMA else ProviderStateStore(snapshot).format(connection)
+            assertEquals(cache["format"].stringValue(), format.rawValue, "Next action format")
+            assertEquals(cache["writes"].integerValue().intValueExact(), files.writes, "Cumulative cache writes")
+            if ("state" in cache) assertRequestBody(if (cache["state"] == JsonNull) null else bytes(cache["state"].stringValue()), stateBytes)
             expectations += countExpectations(expected)
         }
         expectations
@@ -264,6 +286,12 @@ internal object LlmExchangeConsumer {
         is JsonObject -> value.size + value.values.sumOf(::countExpectations)
         is JsonArray -> value.sumOf(::countExpectations)
         else -> 0
+    }
+
+    private class ExchangeStateFiles(val memory: MemoryStore = MemoryStore()) : StateStore by memory {
+        var writes = 0
+            private set
+        override fun write(bytes: ByteArray, path: String) { writes++; memory.write(bytes, path) }
     }
 }
 

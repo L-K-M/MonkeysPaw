@@ -1,0 +1,291 @@
+{
+  "actions": [
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "brief": "1-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "brief": "3-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": " \t\n",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": " \t\n",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "brief": "5-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-key\r\nHeader: value",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-key\r\nHeader: value",
+        "kind": "openaiCompatible",
+        "modelID": "fixture-model"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "notConfigured"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "brief": "7-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": ""
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "notConfigured"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "brief": "8-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": " \n"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "state": null,
+          "writes": 0
+        },
+        "error": {
+          "code": "notConfigured"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 0,
+        "usage": null
+      },
+      "intent": {
+        "brief": "9-1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.openai.com/v1",
+        "id": "00000000-0000-4000-8000-000000000061",
+        "key": "fixture-only-api-key",
+        "kind": "openaiCompatible",
+        "modelID": "model\n"
+      }
+    }
+  ],
+  "category": "llm",
+  "kind": "exchange",
+  "schema": 1,
+  "setup": {
+    "capabilityState": null,
+    "nowMonotonicMs": 9000,
+    "nowUTC": "2026-10-13T00:00:00Z"
+  }
+}

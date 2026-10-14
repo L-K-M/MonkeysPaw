@@ -67,8 +67,55 @@ final class LlmExchangeConformanceTests: XCTestCase {
         }
     }
 
-    private func change(_ directory: URL, path: [String], transform: (LlmFixtureJSON) throws -> LlmFixtureJSON) throws {
-        let url = directory.appendingPathComponent("anthropic-write-official-unset/case.json")
+    func testOpenAIProbeOrderingAndCapabilityExpectationsCannotBeIgnored() throws {
+        let name = "openai-ladder-none"
+        let changes: [([String], LlmFixtureJSON)] = [
+            (["actions", "0", "exchanges", "1", "request", "deadlineMs"], .integer(299_999)),
+            (["actions", "0", "exchanges", "1", "elapsedMs"], .integer(70_001)),
+            (["actions", "0", "expected", "cache", "format"], .string("json_object")),
+            (["actions", "0", "expected", "cache", "writes"], .integer(0)),
+            (["actions", "0", "expected", "cache", "state"], .null),
+            (["setup", "capabilityState"], .string("../initial-state.bin"))
+        ]
+        for (path, value) in changes {
+            try withFixture(name: name) { directory in
+                try change(directory, name: name, path: path) { _ in value }
+                XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory), path.joined(separator: "/"))
+            }
+        }
+        try withFixture(name: name) { directory in
+            try change(directory, name: name, path: ["actions", "0", "expected", "cache"]) {
+                var value = try $0.object
+                value["ignored"] = .boolean(true)
+                return .object(value)
+            }
+            XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory))
+        }
+    }
+
+    func testNonNullInitialStateAndPublishedCacheByteGoldensAreConsumed() throws {
+        let name = "openai-cached-json_object"
+        let envelope = try JSONDecoder().decode(LlmFixtureJSON.self, from: Data(contentsOf: root.appendingPathComponent(name + "/case.json"))).object
+        let initial = try envelope["setup"]!.object["capabilityState"]!.string
+        let published = try envelope["actions"]!.array[0].object["expected"]!.object["cache"]!.object["state"]!.string
+        for filename in [initial, published] {
+            try withFixture(name: name) { directory in
+                try Data("{}".utf8).write(to: directory.appendingPathComponent(name + "/" + filename))
+                XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory), filename)
+            }
+        }
+        try withFixture(name: name) { directory in
+            try change(directory, name: name, path: ["actions", "0", "expected", "cache", "state"]) { _ in .string(initial) }
+            XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory))
+        }
+        try withFixture(name: name) { directory in
+            try FileManager.default.removeItem(at: directory.appendingPathComponent(name + "/" + initial))
+            XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory))
+        }
+    }
+
+    private func change(_ directory: URL, name: String = "anthropic-write-official-unset", path: [String], transform: (LlmFixtureJSON) throws -> LlmFixtureJSON) throws {
+        let url = directory.appendingPathComponent(name + "/case.json")
         func replacing(_ value: LlmFixtureJSON, path: ArraySlice<String>) throws -> LlmFixtureJSON {
             guard let first = path.first else { return try transform(value) }
             if case .array(var items) = value {
@@ -84,12 +131,11 @@ final class LlmExchangeConformanceTests: XCTestCase {
         try replacing(value, path: path[...]).bytes().write(to: url)
     }
 
-    private func withFixture(_ work: (URL) throws -> Void) throws {
+    private func withFixture(name: String = "anthropic-write-official-unset", _ work: (URL) throws -> Void) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("llm-exchange-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
-        try FileManager.default.copyItem(at: root.appendingPathComponent("anthropic-write-official-unset"),
-                                        to: directory.appendingPathComponent("anthropic-write-official-unset"))
+        try FileManager.default.copyItem(at: root.appendingPathComponent(name), to: directory.appendingPathComponent(name))
         try work(directory)
     }
 }

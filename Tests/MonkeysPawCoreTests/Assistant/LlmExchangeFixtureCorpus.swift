@@ -21,7 +21,6 @@ enum LlmExchangeFixtureCorpus {
               try member(root, "kind").string == "exchange" else { throw invalid }
         let setup = try member(root, "setup").object
         try keys(setup, ["capabilityState", "nowUTC", "nowMonotonicMs"])
-        guard try member(setup, "capabilityState").isNull else { throw invalid }
         let utcString = try member(setup, "nowUTC").string
         let formatter = ISO8601DateFormatter()
         guard utcString.utf8.count == 20, let utc = formatter.date(from: utcString),
@@ -44,13 +43,19 @@ enum LlmExchangeFixtureCorpus {
             guard Data(text.utf8) == data else { throw invalid }
             return text
         }
+        let stateFiles = ProviderRecordingFiles()
+        let initialState = try member(setup, "capabilityState")
+        if !initialState.isNull {
+            try stateFiles.memory.write(bytes(initialState, extensions: [".json", ".bin"]), at: "provider-state.json")
+        }
+        let providerState = ProviderStateStore(files: stateFiles)
         for item in actions {
             let action = try item.object
             try keys(action, ["profile", "intent", "budgetMs", "exchanges", "expected"])
             let profile = try member(action, "profile").object
             try keys(profile, ["id", "kind", "baseURL", "modelID", "key"])
             guard let uuid = UUID(uuidString: try member(profile, "id").string),
-                  let provider = ProviderKind(rawValue: try member(profile, "kind").string), provider == .anthropic else { throw invalid }
+                  let provider = ProviderKind(rawValue: try member(profile, "kind").string) else { throw invalid }
             let key = try nullableString(member(profile, "key"))
             let connection = ProviderConnection(profileID: ProviderProfileID(uuid), kind: provider,
                 baseURL: try ProviderSettings.normalizeBaseURL(member(profile, "baseURL").string, kind: provider),
@@ -138,11 +143,17 @@ enum LlmExchangeFixtureCorpus {
             guard try ["output", "page", "error"].filter({ !(try member(expected, $0)).isNull }).count == 1,
                   try nonnegative(member(expected, "requestCount")) == frames.count else { throw invalid }
             let cache = try member(expected, "cache").object
-            try keys(cache, ["format", "writes"])
-            guard try member(cache, "format").string == "json_schema", try member(cache, "writes").integer == 0 else { throw invalid }
+            try keys(cache, provider == .openaiCompatible ? ["format", "writes", "state"] : ["format", "writes"])
+            guard OpenAIResponseFormat(rawValue: try member(cache, "format").string) != nil else { throw invalid }
+            let cacheWrites = try nonnegative(member(cache, "writes"))
             let clock = ExchangeClock(origin: origin, utc: utc)
             let transport = ExchangeTransport(frames: frames, clock: clock)
-            let client = AnthropicClient(transport: transport, clock: clock.clock)
+            let client: AssistantClient
+            switch provider {
+            case .anthropic: client = AnthropicClient(transport: transport, clock: clock.clock)
+            case .openaiCompatible: client = OpenAIClient(transport: transport, providerState: providerState, now: clock.clock.monotonic)
+            }
+            let cacheAccesses = stateFiles.memory.accessCount
             var output: AssistantResponse?
             var page: AssistantModelPage?
             var error: AssistantError?
@@ -156,6 +167,7 @@ enum LlmExchangeFixtureCorpus {
                     page = try await client.listModels(using: connection, afterID: afterID, deadline: origin.advanced(by: Limits.modelListTimeout))
                 } else { page = try await client.listModels(using: connection) }
             } catch let failure as AssistantError { error = failure }
+            if request == nil, stateFiles.memory.accessCount != cacheAccesses { throw mismatch("model cache access") }
             if let violation = await transport.violation { throw violation }
             guard await transport.count == frames.count else { throw mismatch("call count") }
             let expectedError = try member(expected, "error")
@@ -182,6 +194,17 @@ enum LlmExchangeFixtureCorpus {
                 _ = try nonnegative(member(usage, "inputTokens")); _ = try nonnegative(member(usage, "outputTokens"))
             }
             guard try usageSnapshot(output?.usage).bytes() == usage.bytes() else { throw mismatch("optional usage") }
+            guard stateFiles.attemptedWrites.count == cacheWrites else { throw mismatch("cache writes") }
+            let stateBytes = try stateFiles.memory.stamp(at: "provider-state.json") == nil ? nil : stateFiles.memory.read(at: "provider-state.json")
+            // An isolated snapshot prevents this assertion from observing/resetting the live client identity.
+            let snapshot = MemoryFileStore()
+            if let stateBytes { try snapshot.write(stateBytes, at: "provider-state.json") }
+            let nextFormat = provider == .anthropic ? OpenAIResponseFormat.jsonSchema : try ProviderStateStore(files: snapshot).format(for: connection)
+            guard nextFormat.rawValue == (try member(cache, "format").string) else { throw mismatch("next action format") }
+            if let golden = cache["state"] {
+                let expectedBytes = golden.isNull ? nil : try bytes(golden, extensions: [".json", ".bin"])
+                guard stateBytes == expectedBytes else { throw mismatch("raw cache state") }
+            }
             try validateError(expectedError)
             expectations += LlmFixtureJSON.object(expected).expectationCount
         }
