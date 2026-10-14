@@ -958,7 +958,14 @@ final class SyncTestScheduler: Scheduler {
     }
     func advance(_ delay: Duration) {
         clock.advance(delay)
-        for timer in timers where timer.deadline <= clock.instant() { fire(timer.id) }
+        while true {
+            lock.lock()
+            let next = entries.filter { $0.deadline <= clock.instant() && !fired.contains($0.id) }
+                .min { $0.deadline == $1.deadline ? $0.id < $1.id : $0.deadline < $1.deadline }
+            lock.unlock()
+            guard let next else { return }
+            fire(next.id)
+        }
     }
     func fire(_ id: Int) {
         lock.lock()

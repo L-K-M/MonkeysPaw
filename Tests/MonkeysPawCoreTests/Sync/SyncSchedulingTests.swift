@@ -3,6 +3,25 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncSchedulingTests: XCTestCase {
+    func testSchedulerDrainsDueTimersInDeadlineOrderAndOnlyOnce() {
+        let scheduler = SyncTestScheduler(clock: SyncTestClock())
+        var fired: [String] = []
+        scheduler.after(.seconds(2)) { fired.append("later") }
+        scheduler.after(.seconds(1)) {
+            fired.append("earlier")
+            scheduler.after(.zero) { fired.append("chained") }
+            scheduler.after(.seconds(1)) { fired.append("future") }
+        }
+        scheduler.advance(.seconds(3))
+        XCTAssertEqual(fired, ["earlier", "later", "chained"])
+        scheduler.advance(.zero)
+        XCTAssertEqual(fired, ["earlier", "later", "chained"])
+        scheduler.advance(.seconds(1))
+        XCTAssertEqual(fired, ["earlier", "later", "chained", "future"])
+        scheduler.advance(.seconds(10))
+        XCTAssertEqual(fired, ["earlier", "later", "chained", "future"])
+    }
+
     func testOverlappingTriggersCoalesceIntoOneSerialRerun() async throws {
         let rig = try SyncServiceRig()
         let gate = SyncTransportGate()
