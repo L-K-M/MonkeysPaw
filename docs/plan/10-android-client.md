@@ -140,6 +140,19 @@ Rules:
 3. The user is back in the target app, long-presses, and pastes. Terminals
    paste through their own bracketed-paste path, so multi-line text is safe.
 
+The M8 entries use one explicit route to a private `FillActivity` in its own
+`singleTask` task, separate from Library. Repeated entry brings the held
+picker or form forward without resetting its fields or builtin snapshot.
+Copy and Back finish that session; a later invocation opens a fresh one.
+The static shortcut targets a small private, empty-affinity trampoline
+because Android adds `NEW_TASK | CLEAR_TASK` to its first intent. The
+system launches it as the publisher app, so it need not be exported. The
+trampoline forwards only a fresh shortcut route, then finishes. The tile
+service is exported with `BIND_QUICK_SETTINGS_TILE`; the widget receiver
+is private and its button uses an explicit immutable activity PendingIntent.
+Locked tile clicks use `unlockAndRun`; the other entries use normal system
+keyguard behavior, without showing the form above the lock screen (§20 F16).
+
 **C. Text-selection action (`ACTION_PROCESS_TEXT`).**
 
 - The user selects text, then picks "Monkey's Paw" from the selection

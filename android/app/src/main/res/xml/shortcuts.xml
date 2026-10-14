@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="insert_prompt"
+        android:enabled="true"
+        android:icon="@drawable/ic_insert_prompt"
+        android:shortcutShortLabel="@string/entry_insert_prompt"
+        android:shortcutLongLabel="@string/entry_shortcut_long_label">
+        <intent
+            android:action="ch.lkmc.monkeyspaw.FILL.SHORTCUT"
+            android:targetPackage="ch.lkmc.monkeyspaw"
+            android:targetClass="ch.lkmc.monkeyspaw.entry.PromptShortcutActivity" />
+    </shortcut>
+</shortcuts>

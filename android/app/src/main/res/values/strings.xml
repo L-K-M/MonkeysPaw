@@ -53,6 +53,10 @@
     <string name="fill_copy">Copy</string>
     <string name="fill_cancel">Cancel</string>
     <string name="fill_done">Done</string>
+    <string name="entry_insert_prompt">Insert prompt</string>
+    <string name="entry_shortcut_long_label">Insert a prompt with Monkey\'s Paw</string>
+    <string name="entry_widget_label">Monkey\'s Paw: Insert prompt</string>
+    <string name="entry_widget_description">Choose and fill a prompt, then copy it to paste in your app.</string>
     <plurals name="seeds_added_count">
         <item quantity="one">Added %d starter prompt.</item>
         <item quantity="other">Added %d starter prompts.</item>

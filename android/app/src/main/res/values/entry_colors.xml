@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="entry_widget_background">#090D24</color>
+    <color name="entry_widget_text">#FFFFFF</color>
+    <color name="entry_widget_ripple">#40FFFFFF</color>
+</resources>

@@ -21,7 +21,18 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".entry.FillActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="ch.lkmc.monkeyspaw.fill" />
+        <!-- A static shortcut resets its first target's task; keep that target separate. -->
+        <activity
+            android:name=".entry.PromptShortcutActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -29,6 +40,30 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+        <service
+            android:name=".entry.PromptTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_insert_prompt"
+            android:label="@string/entry_insert_prompt"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <receiver
+            android:name=".entry.PromptWidgetProvider"
+            android:exported="false"
+            android:label="@string/entry_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/prompt_widget_info" />
+        </receiver>
     </application>
 </manifest>
