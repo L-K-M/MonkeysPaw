@@ -270,6 +270,34 @@ final class PortalHotkeyTests: XCTestCase {
         XCTAssertEqual(repeatFires, 0)
     }
 
+    func testRedeclarationKeepsDuplicateSuppressionForTheRetainedSession() throws {
+        portal.boundShortcuts = "[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
+        try registerBoth()
+        configure()
+        let handle = try session()
+        let picker = backend.currentRegistration
+        let repeatAction = backend.registration(for: .repeatLast)
+        let revision = backend.activationRevision
+        let methods = portal.calls.map(\.method)
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(repeatFires, 1)
+        backend.unregister(repeatAction)
+        let replacement = backend.register(.repeatLast, accelerator: nil) { [weak self] in self?.repeatFires += 1 }
+        XCTAssertNotEqual(replacement.id, repeatAction.id)
+        XCTAssertEqual(replacement.status, .registered)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(portal.calls.map(\.method), methods)
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 17, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(repeatFires, 1, "An old duplicate must not reach the replacement callback.")
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 18, @a{sv} {})")
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(repeatFires, 2)
+        XCTAssertEqual(fires, 0)
+    }
+
     func testDuplicateBeforeBindAcknowledgementStillSendsOnlyOneBind() throws {
         try registerBoth()
         backend.beforeBind = { _, done in done(true); done(true) }

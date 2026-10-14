@@ -481,7 +481,6 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         guard let action = registrations.first(where: { $0.value.id == registration.id })?.key else { return }
         onFire.removeValue(forKey: action)
         accelerators.removeValue(forKey: action)
-        lastActivation.removeValue(forKey: action)
         invalidateToken(action)
         fallback.unregister(fallback.registration(for: action))
         update(action, .unbound, SetupStrings.unboundShortcut, configuration: .unavailable)
