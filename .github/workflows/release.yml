@@ -11,20 +11,31 @@ on:
         default: true
   pull_request:
     paths:
+      - .github/workflows/ci.yml
       - .github/workflows/release.yml
       - server/Dockerfile
       - packaging/**
       - scripts/package-macos.sh
+      - scripts/package-android.sh
+      - scripts/verify-android-release.py
       - scripts/build.sh
       - scripts/check-version.py
+      - scripts/sync-android-version.sh
+      - scripts/release.sh
+      - scripts/tests/**
+      - android/**
+      - spec/**
+      - seed/**
+      - MonkeysPaw.xcodeproj/project.pbxproj
+      - README.md
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-# Builds drop write permission; registry write access is scoped to image-publish.
+# Write permissions belong only to the two publish jobs.
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -241,9 +252,85 @@ jobs:
           done
           (cd "$RUNNER_TEMP/macos-roundtrip" && shasum -a 256 -c "MonkeysPaw-$VERSION.sha256")
 
+  android-build:
+    name: Build and verify release APK
+    needs: [tests, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    outputs:
+      apk_file: ${{ steps.package.outputs.apk_file }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+      - name: Set up Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install the pinned Android SDK packages
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0"'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Test, lint and shrink the full release version
+        run: ./gradlew --max-workers=2 :core:test testDebugUnitTest lintDebug assembleRelease "-PreleaseVersion=$VERSION" -Pandroid.builder.sdkDownload=false
+      - name: Stage and verify APK metadata, signer and checksum
+        id: package
+        run: |
+          ../scripts/package-android.sh "$VERSION"
+          apk_file="monkeyspaw-v$VERSION.apk"
+          python3 ../scripts/verify-android-release.py "../dist/$apk_file" "$VERSION"
+          echo "apk_file=$apk_file" >> "$GITHUB_OUTPUT"
+      - name: Upload APK and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MonkeysPaw-release-android
+          path: |
+            dist/${{ steps.package.outputs.apk_file }}
+            dist/${{ steps.package.outputs.apk_file }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+      - name: Download the uploaded APK artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MonkeysPaw-release-android
+          path: ${{ runner.temp }}/android-roundtrip
+      - name: Byte-compare against original APK outputs
+        env:
+          APK_FILE: ${{ steps.package.outputs.apk_file }}
+        run: |
+          for file in "$APK_FILE" "$APK_FILE.sha256"; do
+            cmp "../dist/$file" "$RUNNER_TEMP/android-roundtrip/$file"
+          done
+          (cd "$RUNNER_TEMP/android-roundtrip" && sha256sum --strict -c "$APK_FILE.sha256")
+      - name: Upload Android reports on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MonkeysPaw-android-release-reports
+          path: |
+            android/core/build/reports/tests/test/
+            android/core/build/test-results/test/*.xml
+            android/app/build/reports/tests/testDebugUnitTest/
+            android/app/build/test-results/testDebugUnitTest/*.xml
+            android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 3
+
   artifacts:
     name: Verify all release assets
-    needs: [tests, verify, linux, macos]
+    needs: [tests, verify, linux, macos, android-build, server-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -251,6 +338,7 @@ jobs:
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+      APK_FILE: ${{ needs.android-build.outputs.apk_file }}
     steps:
       - name: Assemble verified workflow artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -261,12 +349,28 @@ jobs:
       - name: Require every asset and verify checksums
         run: |
           for file in "$DEB_FILE" "$DEB_FILE.sha256" \
-            "MonkeysPaw-$VERSION.dmg" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.sha256"; do
-            test -s "dist/$file"
+            "MonkeysPaw-$VERSION.dmg" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.sha256" \
+            "$APK_FILE" "$APK_FILE.sha256"; do
+            test -f "dist/$file" && test -s "dist/$file"
           done
+          shopt -s nullglob dotglob
           files=(dist/*)
-          test "${#files[@]}" -eq 5
-          (cd dist && sha256sum -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256")
+          test "${#files[@]}" -eq 7
+          # Require each manifest to cover its exact payloads, once, in package order.
+          verify_manifest() {
+            local manifest="$1" digest filename
+            shift
+            local names=()
+            while read -r digest filename || [[ -n "$digest" || -n "$filename" ]]; do
+              [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+              names+=("$filename")
+            done < "dist/$manifest"
+            test "${names[*]}" = "$*"
+          }
+          verify_manifest "$DEB_FILE.sha256" "$DEB_FILE"
+          verify_manifest "MonkeysPaw-$VERSION.sha256" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.dmg"
+          verify_manifest "$APK_FILE.sha256" "$APK_FILE"
+          (cd dist && sha256sum --strict -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256" "$APK_FILE.sha256")
 
   server-images:
     name: Build and smoke server image (${{ matrix.arch }})
@@ -382,7 +486,7 @@ jobs:
       - name: Upload smoke-tested OCI archive and digest
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          # Keep images outside the MonkeysPaw-release-* five-file assembly.
+          # Keep images outside the MonkeysPaw-release-* asset assembly.
           name: MonkeysPaw-server-image-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/server-image/server-${{ matrix.arch }}.tar
@@ -398,8 +502,8 @@ jobs:
 
   image-publish:
     name: Promote verified multiarch image
-    needs: [tests, verify, linux, macos, artifacts, server-images]
-    if: github.event_name != 'pull_request' && needs.verify.outputs.publish == 'true'
+    needs: [tests, verify, linux, macos, android-build, artifacts, server-images]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'tag' && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -474,8 +578,8 @@ jobs:
   publish:
     name: Publish verified draft
     # Registry promotion precedes undrafting; a failed image keeps the release hidden.
-    needs: [tests, verify, linux, macos, artifacts, server-images, image-publish]
-    if: github.event_name != 'pull_request' && needs.verify.outputs.publish == 'true'
+    needs: [tests, verify, linux, macos, android-build, artifacts, server-images, image-publish]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'tag' && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -486,6 +590,7 @@ jobs:
       RELEASE_TAG: ${{ needs.verify.outputs.tag }}
       VERSION: ${{ needs.verify.outputs.version }}
       DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+      APK_FILE: ${{ needs.android-build.outputs.apk_file }}
       PRERELEASE: ${{ needs.verify.outputs.prerelease }}
     # No checkout or repository scripts execute with the write-enabled token.
     steps:
@@ -497,21 +602,50 @@ jobs:
           path: dist
       - name: Create draft and attach every asset
         run: |
+          for file in "$DEB_FILE" "$DEB_FILE.sha256" \
+            "MonkeysPaw-$VERSION.dmg" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.sha256" \
+            "$APK_FILE" "$APK_FILE.sha256"; do
+            test -f "dist/$file" && test -s "dist/$file"
+          done
+          shopt -s nullglob dotglob
           files=(dist/*)
-          test "${#files[@]}" -eq 5
-          (cd dist && sha256sum -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256")
+          test "${#files[@]}" -eq 7
+          # Keep this check identical to assembly; no checkout runs with the write token.
+          verify_manifest() {
+            local manifest="$1" digest filename
+            shift
+            local names=()
+            while read -r digest filename || [[ -n "$digest" || -n "$filename" ]]; do
+              [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+              names+=("$filename")
+            done < "dist/$manifest"
+            test "${names[*]}" = "$*"
+          }
+          verify_manifest "$DEB_FILE.sha256" "$DEB_FILE"
+          verify_manifest "MonkeysPaw-$VERSION.sha256" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.dmg"
+          verify_manifest "$APK_FILE.sha256" "$APK_FILE"
+          (cd dist && sha256sum --strict -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256" "$APK_FILE.sha256")
+          cat > "$RUNNER_TEMP/android-release-notes.md" <<'NOTES'
+          Android requires API 26 or later. Download the APK and its .apk.sha256 together and verify the checksum before sideloading. The release APK is signed and shrunk with R8.
+
+          Use the Quick Settings tile, launcher shortcut or widget to pick and fill a prompt, then Copy and paste manually in the target app.
+
+          Both Android variants use the same public signing key. The signature does not establish publisher identity; use artifacts from this repository's GitHub Release. See the [signing decision](https://github.com/L-K-M/MonkeysPaw/blob/main/docs/decisions/0001-android-zero-secret-signing.md) and [Android checks](https://github.com/L-K-M/MonkeysPaw/blob/main/docs/platform/android.md).
+          NOTES
           gh release create "$RELEASE_TAG" "${files[@]}" --verify-tag --draft \
             --title "Monkey's Paw $VERSION" --generate-notes \
+            --notes-file "$RUNNER_TEMP/android-release-notes.md" \
             --prerelease="$PRERELEASE" --latest=false
       - name: Download and byte-compare every draft asset
         run: |
           # GH_TOKEN authorizes draft lookup and downloads from asset API URLs.
           gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-assets"
+          shopt -s nullglob dotglob
           for file in dist/*; do
             cmp "$file" "$RUNNER_TEMP/release-assets/$(basename "$file")"
           done
           downloaded=("$RUNNER_TEMP/release-assets/"*)
-          test "${#downloaded[@]}" -eq 5
+          test "${#downloaded[@]}" -eq 7
       - name: Publish only after every comparison passes
         run: |
           latest=true

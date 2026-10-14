@@ -86,6 +86,7 @@ class SelectionTests(unittest.TestCase):
             "scripts/make-linux-icons.sh": frozenset({"deb"}),
             "scripts/build.sh": frozenset({"core-linux", "deb", "macos-artifacts", "android"}),
             "scripts/package-android.sh": frozenset({"core-linux", "android"}),
+            "scripts/verify-android-release.py": frozenset({"core-linux", "android"}),
             "scripts/release.sh": ALL,
             "scripts/generate-seeds.py": SWIFT,
             "scripts/generate-assistant-prompts.py": ALL,
@@ -99,6 +100,8 @@ class SelectionTests(unittest.TestCase):
             "scripts/tests/test_check_version.py": frozenset({"core-linux"}),
             "scripts/tests/test_android_version.py": frozenset({"core-linux"}),
             "scripts/tests/test_package_android.py": frozenset({"core-linux"}),
+            "scripts/tests/test_verify_android_release.py": frozenset({"core-linux"}),
+            "scripts/tests/test_release_workflow.py": frozenset({"core-linux"}),
             # A new test may run in any job; it selects everything until mapped.
             "scripts/tests/test_future.py": ALL,
             "README.md": frozenset({"core-linux", "deb"}),
@@ -108,6 +111,7 @@ class SelectionTests(unittest.TestCase):
             "LICENSE": frozenset(),
             "docs/plan/14-repository-packaging-ci-release.md": frozenset(),
             "docs/platform/macos.md": frozenset(),
+            "docs/decisions/0001-android-zero-secret-signing.md": frozenset({"core-linux"}),
         }
         for path, expected in cases.items():
             with self.subTest(path=path):

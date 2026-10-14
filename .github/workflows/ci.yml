@@ -549,6 +549,14 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Test, lint and assemble both APKs
         run: ./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+      - name: Stage and verify the signed release APK and checksum
+        id: release
+        run: |
+          version=$(python3 ../scripts/check-version.py --committed-version)
+          ../scripts/package-android.sh "$version"
+          apk_file="monkeyspaw-v$version.apk"
+          python3 ../scripts/verify-android-release.py "../dist/$apk_file" "$version"
+          echo "apk_file=$apk_file" >> "$GITHUB_OUTPUT"
       - name: Upload debug APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -556,6 +564,28 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 3
+      - name: Upload verified release APK and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MonkeysPaw-android-release
+          path: |
+            dist/${{ steps.release.outputs.apk_file }}
+            dist/${{ steps.release.outputs.apk_file }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+      - name: Download the uploaded release APK artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MonkeysPaw-android-release
+          path: ${{ runner.temp }}/android-ci-roundtrip
+      - name: Byte-compare against original release APK outputs
+        env:
+          APK_FILE: ${{ steps.release.outputs.apk_file }}
+        run: |
+          for file in "$APK_FILE" "$APK_FILE.sha256"; do
+            cmp "../dist/$file" "$RUNNER_TEMP/android-ci-roundtrip/$file"
+          done
+          (cd "$RUNNER_TEMP/android-ci-roundtrip" && sha256sum --strict -c "$APK_FILE.sha256")
       - name: Upload Android reports on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
