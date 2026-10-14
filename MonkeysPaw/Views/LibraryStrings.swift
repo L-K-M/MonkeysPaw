@@ -7,6 +7,7 @@ enum LibraryStrings {
     static let filter = "Filter library"
     static let preview = "Prompt preview"
     static let folders = "Folders"
+    static let groups = "Groups"
     static let tags = "Tags"
     static let readOnly = "Read-only"
     static let invalid = "Invalid"
@@ -15,6 +16,14 @@ enum LibraryStrings {
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
     static let keyboardHint = "↑↓: select · ⌘S: save · ⌘⇧F: favourite · ⌘⇧A: Assistant · Esc: close Assistant, clear filter, then close"
+
+    static func role(_ role: AssistantGroupRole) -> String {
+        switch role {
+        case .viewer: return "Viewer"
+        case .editor: return "Editor"
+        case .owner: return "Owner"
+        }
+    }
 
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {

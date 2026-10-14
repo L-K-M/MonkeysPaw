@@ -163,6 +163,10 @@ final class LibraryViewState: ObservableObject {
         isActive && libraryAvailable && editorState.canSave
             && editorState.conflict == nil && editorState.pendingDecision == nil
     }
+    var canSaveAsCopy: Bool {
+        isActive && libraryAvailable && editorState.canSaveAsCopy
+            && editorState.conflict == nil && editorState.pendingDecision == nil
+    }
     var canRevert: Bool {
         isActive && libraryAvailable && editorState.prompt != nil
             && editorState.status != .loading && editorState.status != .saving
@@ -189,6 +193,10 @@ final class LibraryViewState: ObservableObject {
 
     var canToggleFavorite: Bool {
         guard isActive, libraryAvailable, let row = snapshot.selectedPrompt else { return false }
+        // Group favourites are a personal overlay, including for a viewer or
+        // a dirty open editor. The model rechecks committed access at intent time.
+        if case .group = row.access { return row.canRender }
+        if row.access == .unavailable { return false }
         if row.relativePath == editorState.prompt?.relativePath,
            !editorState.canEdit || editorState.previewFailure != nil { return false }
         return row.canRender && !row.isReadOnly
@@ -328,7 +336,7 @@ final class LibraryViewState: ObservableObject {
         if canShowConflict { onConflictRequested?() }
         else if canSave { editor.save() }
     }
-    func saveAsCopy() { if canSave { editor.saveAsCopy() } }
+    func saveAsCopy() { if canSaveAsCopy { editor.saveAsCopy() } }
     func revert() { if canRevert { editor.revert() } }
 
     func loadHistory() { if canLoadHistory { editor.loadHistory() } }

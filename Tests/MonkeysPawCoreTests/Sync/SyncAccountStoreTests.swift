@@ -6,6 +6,33 @@ final class SyncAccountStoreTests: XCTestCase {
     private let accountPath = "sync/account.json"
     private let bindingPath = "sync/binding.json"
 
+    func testConfiguredAccountPredicateUsesValidatedMetadataWithoutSecretLookup() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncAccountStore(files: files, operations: operations)
+        XCTAssertFalse(store.hasConfiguredAccount)
+        try store.setAccount(connection(), activation: .inactive)
+        XCTAssertTrue(store.hasConfiguredAccount, "A saved server suppresses local seed onboarding even before reauthentication")
+        let reloaded = SyncAccountStore(files: files, operations: operations)
+        XCTAssertTrue(reloaded.hasConfiguredAccount)
+        try reloaded.setAccount(nil)
+        XCTAssertFalse(reloaded.hasConfiguredAccount)
+        XCTAssertFalse(SyncAccountStore(files: files, operations: operations).hasConfiguredAccount)
+    }
+
+    func testFailedSignOutPublicationRetainsConfiguredAccountPredicate() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncAccountStore(files: files, operations: operations)
+        try store.setAccount(connection())
+        files.failNextWrite = true
+        XCTAssertThrowsError(try store.setAccount(nil))
+        XCTAssertTrue(store.hasConfiguredAccount)
+        operations.failFlushNumber = operations.flushCount + 1
+        XCTAssertThrowsError(try store.setAccount(nil))
+        XCTAssertTrue(store.hasConfiguredAccount, "An uncertain write must not replace the last validated cache")
+    }
+
     func testRoundTripNonSecretConnectionAndDeviceSecretAccount() throws {
         let files = MemoryFileStore()
         let operations = MemorySyncFileOperations(files: files)

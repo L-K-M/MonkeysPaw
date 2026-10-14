@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case switched
         case deliveryInFlight
         case editorBusy
+        case syncBusy
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case settingsNotSaved(SettingsError)
@@ -19,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .deliveryInFlight: return .deliveryInFlight
             // Core's folder port has one busy result. Native Settings retains
             // the editor-specific message without widening Core in this slice.
-            case .editorBusy: return .deliveryInFlight
+            case .editorBusy, .syncBusy: return .deliveryInFlight
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .settingsNotSaved(let error): return .settingsNotSaved(error)
@@ -86,6 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var importModel: ImportModel?
     private var promptEditing: PromptEditingService?
     private var terminationPending = false
+    private var terminationDrained = false
+    private var libraryTransition: UUID?
+    private var syncTransitionMessage: String?
     private var editorSwitchRefused = false
     private(set) var setupModel: SetupModel?
     private(set) var settingsModel: SettingsModel?
@@ -111,12 +115,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var libraryFiles: FileStore?
     private var library: LibraryService?
     private var index: PromptIndex?
+    private(set) var syncComposition: MacSyncComposition?
+    private(set) var syncIndexRefreshFailure: PromptEditingFailure?
+    private var syncIndexRetryPending = false
+    private var syncRecoveryWaiting = false
+    private var syncStarted = false
+    private var pendingSyncLibraryChoice: (directory: URL, choice: URL?)?
     private var watcher: LibraryWatcher?
     private var libraryGeneration: UInt64 = 0
     private var libraryStarted = false
     private var libraryWarningLogged = false
     private var log: LogSink?
     private let clock = SystemClock()
+
+    // Native UI slices bind these graph-scoped models and retire their own
+    // subscriptions when the library changes. Merely opening Account sends no HTTP.
+    var accountModel: AccountModel? { libraryTransition == nil ? syncComposition?.account : nil }
+    var inviteModel: InviteModel? { libraryTransition == nil ? syncComposition?.invites : nil }
+    var groupManagementModel: GroupManagementModel? { libraryTransition == nil ? syncComposition?.groups : nil }
+    var conflictModel: ConflictModel? { libraryTransition == nil ? syncComposition?.conflicts : nil }
+    var syncStatusModel: SyncStatusModel? { syncComposition?.status }
 
     /// Hosted tests replace workspace/AX access while exercising the real UI wiring.
     init(libraryRoot: URL? = nil, dataRoot: URL? = nil,
@@ -230,6 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         log.write(.info, "Application started")
 
+        startSync()
         beginOnboarding()
     }
 
@@ -242,25 +261,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !isShutDown else { return .terminateNow }
+        guard !isShutDown, !terminationDrained else { return .terminateNow }
         guard !terminationPending else { return .terminateLater }
-        guard let editor = editorModel, isEditorBusy else {
-            return .terminateNow
-        }
+        guard libraryTransition == nil else { return .terminateCancel }
+        if !isEditorBusy, importModel?.state.isImporting != true,
+           (syncComposition?.retireIfIdle() ?? .stopped) == .stopped { return .terminateNow }
         terminationPending = true
-        // A draft may live in a minimized window. Make the decision sheet visible.
-        libraryWindow?.show()
-        // EditorModel owns caller completions and replies exactly once per request.
-        editor.request(.quit) { [weak self] result in
-            // AppKit must first receive terminateLater, even with an inline
-            // injected dialog or a just-completed save.
-            DispatchQueue.main.async { [weak self] in
+        if let editor = editorModel, isEditorBusy {
+            libraryWindow?.show()
+            editor.request(.quit) { [weak self] result in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.isShutDown, self.terminationPending else { return }
+                    if result == .allowed { self.drainForTermination() }
+                    else { self.terminationPending = false; self.replyToTermination(false) }
+                }
+            }
+        } else { DispatchQueue.main.async { [weak self] in self?.drainForTermination() } }
+        return .terminateLater
+    }
+
+    private func drainForTermination() {
+        guard !isShutDown, terminationPending else { return }
+        libraryWindow?.presentation.retireAssistant()
+        if importModel?.state.isImporting != true, (syncComposition?.retireIfIdle() ?? .stopped) == .stopped {
+            terminationPending = false
+            terminationDrained = true
+            replyToTermination(true)
+            return
+        }
+        let wasAvailable = pickerModel?.libraryAvailable == true
+        pickerModel?.libraryAvailable = false
+        libraryWindow?.presentation.setLibraryAvailable(false)
+        let graph = syncComposition
+        graph?.retireModels()
+        let main = mainThread
+        let work = backgroundWork
+        Task.detached { [weak self] in
+            await Self.drain(work)
+            let result = await graph?.drainAndRetire() ?? .stopped
+            main.run { [weak self] in
                 guard let self, !self.isShutDown, self.terminationPending else { return }
                 self.terminationPending = false
-                self.replyToTermination(result == .allowed)
+                self.terminationDrained = result == .stopped
+                if result != .stopped {
+                    graph?.restoreModelsAfterFailedDrain()
+                    let available = wasAvailable && (try? (self.libraryFiles as? RootedFileStore)?.requireRoot()) != nil
+                    self.pickerModel?.libraryAvailable = available
+                    self.libraryWindow?.presentation.setLibraryAvailable(available)
+                    self.syncTransitionMessage = "Local sync recovery must finish before you quit."
+                    self.log?.write(.warning, "Quit refused; local sync recovery is required")
+                }
+                self.replyToTermination(result == .stopped)
             }
         }
-        return .terminateLater
+    }
+
+    private static func drain(_ work: BackgroundWork) async {
+        await withCheckedContinuation { completion in work.run { completion.resume() } }
     }
 
     private func tearDown() {
@@ -277,6 +334,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateService?.stop()
         delivery?.invalidatePendingPresentation()
         delivery?.shutdown()
+        let graph = syncComposition
+        graph?.retireModels()
+        Task.detached { _ = await graph?.drainAndRetire() }
         watcher?.stop()
         libraryWindow?.presentation.retireAssistant()
         libraryBrowserModel?.deactivate()
@@ -453,6 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }, onProviderChange: { [weak self] in self?.libraryWindow?.presentation.assistantProfileChanged() })
         settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
             guard let self else { return nil }
+            if let message = self.syncTransitionMessage { return message }
             if self.editorSwitchRefused {
                 return self.isEditorBusy ? EditorStrings.librarySwitchRefused : nil
             }
@@ -472,7 +533,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status: status, mainThread: mainThread, isLibraryEmpty: { [weak self] in
                 guard let library = self?.library else { throw LibraryError.operationFailed }
                 return try library.entries().isEmpty
-            }, hasConfiguredSyncServer: { false }, seedIfEmpty: { [weak self] in
+            }, hasConfiguredSyncServer: { [weak self] in
+                self?.syncComposition?.accounts.hasConfiguredAccount == true
+            }, seedIfEmpty: { [weak self] in
                 guard let self else { throw LibraryError.operationFailed }
                 return try self.seedCurrentLibrary()
             })
@@ -498,6 +561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer {
             do { try index.rebuild() }
             catch { log?.write(.warning, "Starter prompt index refresh failed") }
+            syncComposition?.sync.localSave()
         }
         return try SeedService(library: library).seedIfEmpty()
     }
@@ -544,6 +608,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func switchLibrary(to url: URL?) -> LibrarySwitchResult {
         assert(Thread.isMainThread, "Library replacement is main-thread-confined")
         guard !isShutDown, let pickerModel, let settingsModel else { return .libraryUnavailable(.ioFailure) }
+        guard libraryTransition == nil, !terminationPending else { return .syncBusy }
+        syncTransitionMessage = nil
         editorSwitchRefused = false
         if isEditorBusy {
             editorSwitchRefused = true
@@ -562,6 +628,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showRepeatResult(.unavailable(.invalidationFailed))
             return .repeatInvalidationFailed
         }
+        if let graph = syncComposition {
+            let result = graph.retireIfIdle()
+            if result != .stopped || importModel?.state.isImporting == true {
+                drainForLibrarySwitch(to: directory, files: files, choice: url, graph: graph)
+                return .syncBusy
+            }
+        }
+        return replaceLibrary(to: directory, files: files, choice: url, settings: settingsModel)
+    }
+
+    private func drainForLibrarySwitch(to directory: URL, files: FileStore, choice: URL?, graph: MacSyncComposition) {
+        let id = UUID()
+        libraryTransition = id
+        syncTransitionMessage = "Sync is finishing before the library changes."
+        pickerModel?.libraryAvailable = false
+        libraryWindow?.presentation.setLibraryAvailable(false)
+        libraryWindow?.presentation.retireAssistant()
+        graph.retireModels()
+        let main = mainThread
+        let work = backgroundWork
+        Task.detached { [weak self] in
+            await Self.drain(work)
+            let result = await graph.drainAndRetire()
+            main.run { [weak self] in
+                guard let self, !self.isShutDown, self.libraryTransition == id, let settings = self.settingsModel else { return }
+                self.libraryTransition = nil
+                if result == .stopped {
+                    self.syncTransitionMessage = nil
+                    _ = self.replaceLibrary(to: directory, files: files, choice: choice, settings: settings)
+                } else {
+                    graph.restoreModelsAfterFailedDrain()
+                    self.syncTransitionMessage = "Local sync recovery must finish before you change libraries."
+                    let available = (try? (self.libraryFiles as? RootedFileStore)?.requireRoot()) != nil
+                    self.pickerModel?.libraryAvailable = available
+                    self.libraryWindow?.presentation.setLibraryAvailable(available)
+                    self.log?.write(.warning, "Library replacement refused; local sync recovery is required")
+                }
+                self.generalSettingsModel?.refresh()
+                self.settingsWindow?.presentation.objectWillChange.send()
+                self.onboardingModel?.refresh()
+            }
+        }
+    }
+
+    private func replaceLibrary(to directory: URL, files: FileStore, choice: URL?, settings: SettingsModel) -> LibrarySwitchResult {
         repeatModel?.deactivate()
         repeatWindow?.tearDown()
         repeatWindow = nil
@@ -579,23 +690,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editorModel?.deactivate()
         promptEditing?.deactivate()
         importModel?.deactivate()
-        pickerModel.onChange = nil
+        pickerModel?.onChange = nil
         pickerPresentation = nil
         self.pickerModel = nil
         libraryDirectory = directory
         onboardingWindow?.updateLibraryPaths(active: directory.path, default: defaultLibraryDirectory.path)
         libraryStarted = false
         libraryWarningLogged = false
+        syncIndexRefreshFailure = nil
+        syncIndexRetryPending = false
+        syncRecoveryWaiting = false
+        pendingSyncLibraryChoice = nil
         installLibrary(files: files, availability: true)
         let startup = startLibrary()
         libraryStatusModel?.libraryReplaced(available: self.pickerModel?.libraryAvailable == true)
-        if case .failure(let error) = startup { return .libraryUnavailable(error) }
+        if case .failure(let error) = startup {
+            if syncRecoveryWaiting, syncStarted, syncComposition?.accounts.hasConfiguredAccount == true {
+                pendingSyncLibraryChoice = (directory, choice)
+                startSync()
+                return .syncBusy
+            }
+            return .libraryUnavailable(error)
+        }
 
         // SettingsModel forwards to the shared SettingsService and retains its
         // typed error. Never persist a choice whose watcher/rebuild failed.
-        if let url { settingsModel.setLibraryFolder(url.path) }
-        else { settingsModel.clearLibraryFolder() }
-        if let error = settingsModel.error { return .settingsNotSaved(error) }
+        if let choice { settings.setLibraryFolder(choice.path) }
+        else { settings.clearLibraryFolder() }
+        if syncStarted { startSync() }
+        if let error = settings.error { return .settingsNotSaved(error) }
         return .switched
     }
 
@@ -616,6 +739,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let files = try RootedFileStore(root: directory)
             if location == .platformDefault { try files.createRoot() }
             try files.requireRoot()
+            try files.pinRoot()
             _ = try files.listFiles()
             return files
         } catch let error as FileStoreError { throw error }
@@ -635,6 +759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let libraryMain = LibraryMainThread(main: mainThread, isCurrent: isCurrent)
         let library = LibraryService(library: files, data: data, clock: clock,
             entropy: SystemEntropy(), keyedStores: [values, usage])
+        syncComposition = composeSync(library: library, files: files, data: data, main: libraryMain)
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let editing = PromptEditingService(library: library, index: index, work: backgroundWork, main: libraryMain)
         let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: libraryMain)
@@ -653,9 +778,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return true
             })
         imports.onAvailabilityChange = { [weak self] in self?.updateLibraryMenuItems() }
-        editor.onChange = { [weak self] in
-            guard isCurrent(), let self, self.editorSwitchRefused else { return }
-            self.settingsWindow?.presentation.objectWillChange.send()
+        var previousEditorStatus = editor.state.status
+        editor.onChange = { [weak self, weak editor] in
+            guard isCurrent(), let self, let editor else { return }
+            let previous = previousEditorStatus
+            previousEditorStatus = editor.state.status
+            if previous == .saving, editor.state.status == .saved { self.syncComposition?.sync.localSave() }
+            if previous == .commandRunning, editor.state.status != .commandRunning {
+                if case .failed = editor.state.status {} else { self.syncComposition?.sync.localSave() }
+            }
+            if self.editorSwitchRefused { self.settingsWindow?.presentation.objectWillChange.send() }
         }
         let repeatService = composeRepeat(library: library, index: index, isCurrent: isCurrent)
         let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain,
@@ -713,7 +845,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AssistantModel(service: assistant, main: assistantMain, context: { [weak self, weak editor] in
                     AssistantContext(libraryID: graphID, profile: assistant.selectedProfile,
                         editor: editor?.assistantSnapshot,
-                        access: isCurrent() && self?.pickerModel?.libraryAvailable == true ? .privatePrompt : .unavailable)
+                        access: isCurrent() && self?.pickerModel?.libraryAvailable == true
+                            ? (editor?.assistantAccess ?? .privatePrompt) : .unavailable)
                 })
             }
         }
@@ -728,8 +861,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
         updateLibraryMenuItems()
+        syncComposition?.onAccountChange = { [weak self] in
+            guard isCurrent() else { return }
+            self?.onboardingModel?.refresh()
+        }
+        syncComposition?.onStatusChange = { [weak self, weak index] state in
+            guard isCurrent(), let self, let index, self.libraryTransition == nil,
+                  state.phase == .idle, state.blockingIssue == nil else { return }
+            self.refreshSyncIndex(index, generation: generation)
+        }
+        index.addObserver { [weak self, weak index] in
+            libraryMain.run { [weak self, weak index] in
+                guard let self, let index else { return }
+                self.syncIndexRefreshFailure = index.lastSyncRefreshFailure
+                if index.lastSyncRefreshFailure != nil { self.warnAboutLibrary() }
+                if let conflict = self.syncComposition?.conflicts, !conflict.state.isBusy,
+                   conflict.state.preview != nil { conflict.refresh() }
+            }
+        }
         if let raw = try? makeFileWatcher(libraryDirectory, log) {
             watcher = LibraryWatcher(watcher: raw, scheduler: scheduler)
+        }
+    }
+
+    private func composeSync(library: LibraryService, files: FileStore, data: FileStore, main: MainThread) -> MacSyncComposition? {
+        guard let libraryOperations = files as? RootedFileStore, let dataOperations = data as? RootedFileStore else { return nil }
+        let states = SyncStateStore(files: data, operations: dataOperations)
+        let accounts = SyncAccountStore(files: data, operations: dataOperations)
+        let scheduler = DispatchSyncScheduler()
+        do {
+            let access = try GroupAccessService(library: library, states: states, accounts: accounts,
+                libraryRoot: libraryDirectory.path)
+            let sync = try SyncService(library: library, libraryOperations: libraryOperations,
+                dataFiles: data, dataOperations: dataOperations, states: states, accounts: accounts,
+                scheduler: scheduler, mainThread: main, clock: clock, entropy: SystemEntropy())
+            let account = try SyncAccountService(sync: sync, accounts: accounts, secrets: secrets,
+                transport: httpTransport, libraryRoot: libraryDirectory.path)
+            return MacSyncComposition(sync: sync, accounts: accounts, states: states, access: access,
+                accountService: account, inviteService: SyncInviteService(account: account, clipboard: clipboard),
+                groupService: SyncGroupService(account: account, clipboard: clipboard),
+                conflictService: ConflictResolutionService(sync: sync), scheduler: scheduler, main: main)
+        } catch {
+            scheduler.tearDown()
+            log?.write(.warning, "Sync unavailable; saved metadata requires recovery")
+            return nil
+        }
+    }
+
+    /// Explicit seam for hosted tests and the later native Account flow.
+    func startSync() {
+        syncStarted = true
+        syncComposition?.startup()
+    }
+
+    private func refreshSyncIndex(_ index: PromptIndex, generation: UInt64) {
+        guard syncRecoveryWaiting || index.lastSyncRefreshFailure != nil, !syncIndexRetryPending else { return }
+        syncIndexRetryPending = true
+        let files = libraryFiles as? RootedFileStore
+        backgroundWork.run { [weak self] in
+            let refreshed: Bool
+            do { try files?.requireRoot(); try index.rebuild(origin: .sync); refreshed = true }
+            catch { refreshed = false }
+            self?.mainThread.run { [weak self] in
+                guard let self, !self.isShutDown, self.libraryGeneration == generation else { return }
+                self.syncIndexRetryPending = false
+                self.syncIndexRefreshFailure = index.lastSyncRefreshFailure
+                guard refreshed, self.syncRecoveryWaiting else { return }
+                self.syncRecoveryWaiting = false
+                self.pickerModel?.libraryAvailable = true
+                self.libraryWindow?.presentation.setLibraryAvailable(true)
+                self.libraryStarted = false
+                _ = self.startLibrary()
+                self.libraryStatusModel?.update(self.pickerModel?.libraryAvailable == true ? .available : .lostWhileRunning)
+                if self.pickerModel?.libraryAvailable == true, let pending = self.pendingSyncLibraryChoice,
+                   pending.directory == self.libraryDirectory {
+                    self.pendingSyncLibraryChoice = nil
+                    if let choice = pending.choice { self.settingsModel?.setLibraryFolder(choice.path) }
+                    else { self.settingsModel?.clearLibraryFolder() }
+                    self.generalSettingsModel?.refresh()
+                }
+            }
         }
     }
 
@@ -739,9 +950,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         libraryStarted = true
         guard pickerModel.libraryAvailable else { degradeLibrary(); return .failure(.ioFailure) }
         let generation = libraryGeneration
+        let sync = syncComposition?.sync
         do {
             // The picker/index hook is installed before this first publish.
             try Self.startLibrary(index: index, watcher: watcher) { [weak self] update in
+                if case .rootUnavailable = update { sync?.rootHealthChanged(.unavailable) }
                 self?.mainThread.run { [weak self] in
                     guard let self, self.libraryGeneration == generation,
                           !self.isShutDown,
@@ -758,6 +971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .success(())
         } catch {
             let failure = error as? FileStoreError ?? .ioFailure
+            syncRecoveryWaiting = syncComposition != nil && (try? (libraryFiles as? RootedFileStore)?.requireRoot()) != nil
             degradeLibrary(failure)
             return .failure(failure)
         }
@@ -781,6 +995,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             degradeLibrary(error as? FileStoreError)
             return
+        }
+        if let files = libraryFiles as? RootedFileStore {
+            syncComposition?.filesChanged(changes, files: files, work: backgroundWork)
         }
         do { try index.apply(changes) }
         catch {
@@ -806,6 +1023,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func degradeLibrary(_ error: FileStoreError? = nil) {
+        if let files = libraryFiles as? RootedFileStore, (try? files.requireRoot()) == nil {
+            syncComposition?.sync.rootHealthChanged(.unavailable)
+        }
         watcher?.stop()
         pickerModel?.libraryAvailable = false
         libraryWindow?.presentation.setLibraryAvailable(false)
@@ -843,7 +1063,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let entry = try library.createPrompt(titled: title, body: Strings.newPromptBody)
             let path = entry.relativePath
-            do { try index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
+            syncComposition?.sync.localSave()
+            do { try index.apply(LibraryChangeSet(created: [RelativePath(path)]), origin: .local) }
             catch { log?.write(.warning, "Prompt saved; immediate index refresh failed") }
             handle(.edit(identity: entry.identity, relativePath: path))
         } catch {

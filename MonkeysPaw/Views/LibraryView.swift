@@ -79,6 +79,11 @@ struct LibraryView: View {
         List(selection: Binding<LibrarySectionID?>(get: { presentation.snapshot.selectedSection },
             set: { if let section = $0 { presentation.selectSection(section) } })) {
             ForEach(standardSections, id: \.id, content: sectionRow)
+            if !groupSections.isEmpty {
+                Section(LibraryStrings.groups) {
+                    ForEach(groupSections, id: \.id, content: sectionRow)
+                }
+            }
             if !folderSections.isEmpty {
                 Section(LibraryStrings.folders) {
                     ForEach(folderSections, id: \.id, content: sectionRow)
@@ -106,6 +111,10 @@ struct LibraryView: View {
         presentation.snapshot.sections.filter { if case .folder = $0.id { return true }; return false }
     }
 
+    private var groupSections: [LibraryBrowserSection] {
+        presentation.snapshot.sections.filter { if case .group = $0.id { return true }; return false }
+    }
+
     private var tagSections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { if case .tag = $0.id { return true }; return false }
     }
@@ -113,6 +122,9 @@ struct LibraryView: View {
     private func sectionRow(_ section: LibraryBrowserSection) -> some View {
         HStack {
             Text(section.title).padding(.leading, CGFloat(section.depth) * 12)
+            if let role = section.role {
+                Text(LibraryStrings.role(role)).font(.caption).foregroundStyle(.secondary)
+            }
             Spacer()
             Text(String(section.count)).foregroundStyle(.secondary)
         }
@@ -163,7 +175,7 @@ struct LibraryView: View {
                         .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("library-save")
                     Button(EditorStrings.revert, action: presentation.revert).disabled(!presentation.canRevert)
                         .accessibilityIdentifier("library-revert")
-                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSave)
+                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSaveAsCopy)
                         .accessibilityIdentifier("library-save-copy")
                 }
                 HStack {
