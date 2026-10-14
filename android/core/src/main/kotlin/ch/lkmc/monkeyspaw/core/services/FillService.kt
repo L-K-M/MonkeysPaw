@@ -24,7 +24,7 @@ sealed interface FillPreview {
     data class Blocked(val error: PromptRenderError, val issues: List<PromptIssue>) : FillPreview
 }
 
-/** Read-only preparation; learning is an explicit post-copy action. Cancelled forms teach nothing. */
+/** Preparation is read-only; clipboard copy and post-copy learning are separate intents. */
 class FillService(private val library: LibraryService, private val clipboard: Clipboard, private val timeZone: () -> ZoneId) {
     private val snapshotLock = Any()
 
@@ -63,8 +63,15 @@ class FillService(private val library: LibraryService, private val clipboard: Cl
     fun render(document: PromptDocument, values: Map<String, String>, builtins: PromptBuiltinValues): String =
         PromptRenderer.render(document, values, builtins)
 
+    /** On the clipboard's owning UI thread. Validation/write failure prevents any learning. */
+    fun copy(document: PromptDocument, values: Map<String, String>, builtins: PromptBuiltinValues): String {
+        val text = render(document, values, builtins)
+        try { clipboard.writeText(text) } catch (error: Exception) { throw sanitized(error) }
+        return text
+    }
+
     /**
-     * Only after Clipboard.writeText succeeded, on an IO worker. Record supplied remember-fields
+     * Only after copy succeeded, on an IO worker. Record supplied remember-fields
      * verbatim, including empty strings; never pin absent fields to a default. K15 owns copy lifetime
      * and reports failures here as post-copy warnings, then records usage through library.index.
      */

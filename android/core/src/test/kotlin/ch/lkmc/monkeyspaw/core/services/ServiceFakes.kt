@@ -108,9 +108,11 @@ internal class TestClipboard : Clipboard {
     var deferred = false
     var readFailure = false
     var writeFailure = false
+    var writeError: Exception? = null
     var pending: ((String?) -> Unit)? = null
     override fun writeText(text: String) {
         if (writeFailure) throw StoreError.IOFailure
+        writeError?.let { throw it }
         this.text = text
     }
     override fun readText(completion: (String?) -> Unit) {

@@ -7,6 +7,38 @@ import java.time.ZoneOffset
 import kotlin.test.*
 
 class FillServiceTest {
+    @Test fun copyWritesValidatedRawTextWithoutLearningOrAnExtraClipboardRead() {
+        val h = ServiceHarness()
+        val entry = h.put("{{f}} {{f}} {{clipboard}}")
+        h.values.record(entry.identity, mapOf("f" to "prior"))
+        h.usage.recordUse(entry.identity)
+        val before = h.state.bytesSnapshot()
+        val text = h.fill.copy(entry.document, mapOf("f" to "{{raw}}\n"), PromptBuiltinValues(clipboard = "snapshot"))
+        assertEquals("{{raw}}\n {{raw}}\n snapshot", text)
+        assertEquals(text, h.clipboard.text)
+        assertEquals(0, h.clipboard.reads)
+        assertEquals(before, h.state.bytesSnapshot())
+    }
+
+    @Test fun blockedAndFailedCopyTeachNothingAndPreserveTypedOrSanitizedErrors() {
+        val h = ServiceHarness()
+        val entry = h.put("{{f}}")
+        h.values.record(entry.identity, mapOf("f" to "prior"))
+        h.usage.recordUse(entry.identity)
+        val before = h.state.bytesSnapshot()
+        h.clipboard.text = "prior clipboard"
+        assertFailsWith<PromptRenderError.MissingRequiredValue> { h.fill.copy(entry.document, mapOf("f" to ""), PromptBuiltinValues()) }
+        assertEquals("prior clipboard", h.clipboard.text)
+        h.clipboard.writeFailure = true
+        assertFailsWith<StoreError.IOFailure> { h.fill.copy(entry.document, mapOf("f" to "typed"), PromptBuiltinValues()) }
+        h.clipboard.writeFailure = false
+        h.clipboard.writeError = IllegalStateException("private clipboard error body")
+        val error = assertFailsWith<LibraryError.OperationFailed> { h.fill.copy(entry.document, mapOf("f" to "typed"), PromptBuiltinValues()) }
+        assertNull(error.cause)
+        assertEquals("prior clipboard", h.clipboard.text)
+        assertEquals(before, h.state.bytesSnapshot())
+    }
+
     @Test fun builtinsUseOneGregorianLocalSnapshotAndNeverReadUnusedClipboard() {
         val h = ServiceHarness(ZoneOffset.ofHours(-5))
         h.clock.date = Instant.EPOCH
