@@ -25,6 +25,53 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
     }
 
     @Test
+    fun `seed provider records and setup decisions round trip together`() = runBlocking {
+        val settings = AndroidSettings(SeedProgress.DECLINED, mapOf(
+            "provider-settings" to SettingsRecord(" metadata\n雪/é😀 ", "settings-incarnation"),
+            "provider-state" to SettingsRecord("capability", "state-incarnation")),
+            KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.PENDING))
+        val output = ByteArrayOutputStream()
+        SettingsSerializer.writeTo(settings, output)
+        assertEquals(settings, SettingsSerializer.readFrom(ByteArrayInputStream(output.toByteArray())))
+    }
+
+    @Test
+    fun `version one files with every optional field subset load without rewriting`() = runBlocking {
+        val path = filesDir.resolve("datastore/settings.json")
+        val records = mapOf("provider-settings" to SettingsRecord("metadata", "fixture-stamp"))
+        val setup = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.COMPLETE)
+        val recordsField = """, "records":{"provider-settings":{"payload":"metadata","stamp":"fixture-stamp"}}"""
+        val setupField = """, "keyboardTileSetup":{"version":1,"enableKeyboard":"COMPLETE","selectKeyboard":"SKIPPED","addTile":"COMPLETE"}"""
+        for ((fields, expected) in listOf(
+            "" to AndroidSettings(SeedProgress.DECLINED),
+            recordsField to AndroidSettings(SeedProgress.DECLINED, records),
+            setupField to AndroidSettings(SeedProgress.DECLINED, keyboardTileSetup = setup),
+            "$recordsField$setupField" to AndroidSettings(SeedProgress.DECLINED, records, setup),
+        )) {
+            val original = """{"version":1,"seedProgress":"DECLINED"$fields}""".encodeToByteArray()
+            put(path, original)
+            withStore { assertEquals(expected, it.read()) }
+            assertContentEquals(original, java.nio.file.Files.readAllBytes(path))
+        }
+    }
+
+    @Test
+    fun `atomic seed provider record and setup updates preserve all fields on reopen`() = runBlocking {
+        val records = mapOf("provider-settings" to SettingsRecord("metadata", "settings-incarnation"),
+            "provider-state" to SettingsRecord("capability", "state-incarnation"))
+        val setup = KeyboardTileSetupProgress(SetupDecision.SKIPPED, SetupDecision.COMPLETE, SetupDecision.SKIPPED)
+        val expected = AndroidSettings(SeedProgress.COMPLETE, records, setup)
+        withStore { store ->
+            coroutineScope {
+                (1..20).flatMap { listOf(async { store.setSeedProgress(expected.seedProgress) },
+                    async { store.updateRecords { records } }, async { store.setKeyboardTileSetup(setup) }) }.awaitAll()
+            }
+            assertEquals(expected, store.read())
+        }
+        withStore { assertEquals(expected, it.read()) }
+    }
+
+    @Test
     fun `M8 settings upgrade retains every seed state and offers setup only until resolved`() = runBlocking {
         val path = filesDir.resolve("datastore/settings.json")
         val resolved = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.COMPLETE)
@@ -109,6 +156,7 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
         SettingsSerializer.writeTo(AndroidSettings(), output)
         val valid = output.toString(Charsets.UTF_8)
         for (invalid in listOf(valid.replace("\"version\":1", "\"version\":2"),
+            valid.replace("\"keyboardTileSetup\":{\"version\":1", "\"keyboardTileSetup\":{\"version\":2"),
             valid.replace("\"enableKeyboard\":\"PENDING\"", "\"enableKeyboard\":false"),
             valid.replace("\"enableKeyboard\":\"PENDING\"", "\"enableKeyboard\":\"FOREIGN_ID\""),
             valid.replace("\"addTile\":\"PENDING\"", "\"addTile\":\"PENDING\",\"keyboardId\":\"private\""))) {
