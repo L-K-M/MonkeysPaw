@@ -1,6 +1,13 @@
 package ch.lkmc.monkeyspaw.core.conformance
 
 import java.nio.file.Files
+import java.time.Instant
+import ch.lkmc.monkeyspaw.core.llm.AssistantHTTP
+import ch.lkmc.monkeyspaw.core.ports.HttpMethod
+import ch.lkmc.monkeyspaw.core.ports.HttpRequest
+import ch.lkmc.monkeyspaw.core.ports.HttpTransport
+import ch.lkmc.monkeyspaw.core.ports.HttpTransportError
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
@@ -43,6 +50,17 @@ internal class LlmExchangeConformanceTest {
                 assertFails { LlmFixtureConsumer.consume(listOf(altered)) }
             }
         } finally { Files.delete(temporary) }
+    }
+
+    @Test fun missingBodyCannotBecomeAnExpectedNetworkFailure() = runBlocking<Unit> {
+        val request = HttpRequest("https://fixture.example", HttpMethod.POST, deadlineNanos = 1)
+        val transport = HttpTransport { actual ->
+            LlmExchangeConsumer.assertRequestBody("{}".toByteArray(), actual.body)
+            throw HttpTransportError.NetworkFailure
+        }
+        assertFailsWith<AssertionError> {
+            AssistantHTTP.send(request, transport, { Instant.parse("2026-10-13T00:00:00Z") })
+        }
     }
 
     private fun replace(value: JsonElement, path: List<String>, transform: (JsonElement) -> JsonElement): JsonElement {

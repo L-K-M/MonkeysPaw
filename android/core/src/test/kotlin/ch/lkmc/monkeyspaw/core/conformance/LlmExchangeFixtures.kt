@@ -189,8 +189,7 @@ internal object LlmExchangeConsumer {
                 assertEquals(golden["requestByteCap"].integerValue().intValueExact(), request.requestByteCap, "Request cap")
                 assertEquals(golden["responseByteCap"].integerValue().intValueExact(), request.responseByteCap, "Response cap")
                 assertEquals(golden["deadlineMs"].integerValue().longValueExact() * 1_000_000, request.deadlineNanos - origin, "Absolute deadline")
-                if (golden["body"] == JsonNull) assertNull(request.body, "GET body")
-                else assertBytesEqual(bytes(golden["body"].stringValue()), request.body ?: error("Missing request body"), "Raw request body")
+                assertRequestBody(if (golden["body"] == JsonNull) null else bytes(golden["body"].stringValue()), request.body)
                 expectations += countExpectations(golden) + 1
                 val reply = frame["response"].objectValue()
                 elapsedNanos = reply["elapsedMs"].integerValue().longValueExact() * 1_000_000
@@ -231,6 +230,11 @@ internal object LlmExchangeConsumer {
             expectations += countExpectations(expected)
         }
         expectations
+    }
+
+    internal fun assertRequestBody(expected: ByteArray?, actual: ByteArray?) {
+        if (expected == null) assertNull(actual, "GET body")
+        else assertBytesEqual(expected, actual ?: throw AssertionError("Missing request body"), "Raw request body")
     }
 
     private fun pageSnapshot(page: AssistantModelPage): JsonObject = buildJsonObject {
