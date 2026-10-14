@@ -126,7 +126,8 @@ enum SyncReconciler {
                 let markers = try SyncConflictMetadata.ingest(remote.bytes, filename: LibraryPath.filename(remote.path.string), scope: remote.scope.pathScope)
                 // An unchanged snapshot is also an echo. Preserve queued local
                 // edits/deletes/renames and marker clearing until they push.
-                let acknowledgedSnapshot = headMode == .snapshot && previous.map {
+                // First sync must finish preparatory identity/path adoption.
+                let acknowledgedSnapshot = mode == .normal && headMode == .snapshot && previous.map {
                     remote.rev == $0.rev && remote.scope == $0.scope && remote.path == $0.path
                         && remote.hash == $0.canonicalHash
                 } == true
