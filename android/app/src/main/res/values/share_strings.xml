@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="share_title">Shared text</string>
+    <string name="share_help">Use this text in a prompt and copy the result, or start a new prompt. The new prompt is saved only when you tap Save.</string>
+    <string name="share_use_in_prompt">Use in prompt</string>
+    <string name="share_save_as_new">Save as new prompt</string>
+    <string name="share_cancel">Cancel</string>
+    <string name="share_back">Back</string>
+</resources>

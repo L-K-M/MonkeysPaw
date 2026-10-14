@@ -109,7 +109,7 @@ internal class AppGraphTest {
         assertFalse(application.hasAttributeNS(androidNamespace, "fullBackupContent"))
         assertFalse(application.hasAttributeNS(androidNamespace, "dataExtractionRules"))
         val allowed = setOf(".MainActivity", ".entry.FillActivity", ".entry.PromptTileService", ".entry.PromptWidgetProvider",
-            ".entry.PromptShortcutActivity", ".entry.ProcessTextActivity")
+            ".entry.PromptShortcutActivity", ".entry.ProcessTextActivity", ".entry.ShareReceiverActivity")
         val elements = document.getElementsByTagName("*")
         for (index in 0 until elements.length) {
             val element = elements.item(index) as org.w3c.dom.Element
