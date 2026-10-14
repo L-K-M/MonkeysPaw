@@ -80,9 +80,13 @@ struct SyncPendingOperation: Codable, CustomStringConvertible, CustomReflectable
 /// Private 0600 publication and checked file/directory flush precede HTTP.
 /// A failed write or deletion blocks further pushes until recovery/restart.
 final class SyncPendingOperationStore {
+    private let files: FileStore
+    private let operations: SyncFileOperations
     private let persistence: SyncPersistence<SyncPendingOperation>
 
     init(files: FileStore, operations: SyncFileOperations) {
+        self.files = files
+        self.operations = operations
         persistence = SyncPersistence(files: files, operations: operations,
             path: "sync/push.json", version: Limits.syncPushJournalVersion)
     }
@@ -93,6 +97,8 @@ final class SyncPendingOperationStore {
         return pending
     }
 
+    var snapshot: SyncStoreSnapshot<SyncPendingOperation> { persistence.snapshot }
+
     func save(_ pending: SyncPendingOperation) throws {
         try persistence.update { old in
             guard old == nil else { throw SyncError.invalidState }
@@ -101,4 +107,22 @@ final class SyncPendingOperationStore {
     }
 
     func clear() throws { try persistence.reset(nil) }
+
+    /// A hold cancels further sending, but cannot erase possibly-sent bytes.
+    /// Retain exact facts durably before releasing the single active slot.
+    func retainHeld(_ request: SyncPendingOperation) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(request)
+        guard bytes.count <= Limits.syncRecordMaxBytes else { throw SyncError.invalidState }
+        let path = "sync/retained/push-" + SyncHash(bytes: bytes).rawValue + ".json"
+        do {
+            if try files.stamp(at: path) == nil { try files.writePrivate(bytes, at: path) }
+            else if try files.read(at: path) != bytes { throw SyncError.invalidState }
+            try SyncDurability.flushFileAndParents(path, operations: operations)
+        } catch let error as SyncError { throw error }
+        catch let error as SyncFileOperationError { throw error }
+        catch let error as FileStoreError { throw SyncError.writeFailed(error) }
+        catch { throw SyncError.writeFailed(.ioFailure) }
+    }
 }

@@ -194,7 +194,21 @@ final class SyncApplyJournal {
 
     var pending: SyncApplyRecord? { persistence.snapshot.value }
 
-    func apply(_ plan: SyncApplyPlan) throws -> SyncApplyOutcome {
+    func apply(_ plan: SyncApplyPlan, permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
+        if let permit {
+            try permit.validate(plan.nextState.binding)
+            return try permit.mutate {
+                let intended = try permit.intendedWrites(edits: plan.edits, directories: plan.directories, library: mutations)
+                var receipts: [SyncFileChange] = []
+                let result = try applyPlan(plan) { receipts = try permit.capture(intended, library: self.mutations) }
+                if result == .committed { permit.remember(receipts) }
+                return result
+            }
+        }
+        return try applyPlan(plan)
+    }
+
+    private func applyPlan(_ plan: SyncApplyPlan, captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
         guard try persistence.load() == nil else { throw SyncError.invalidState }
@@ -225,16 +239,34 @@ final class SyncApplyJournal {
             if persistence.snapshot.error == nil, persistence.snapshot.value == nil { mutations.finish(plan.id) }
             throw Self.safe(error)
         }
-        return try run()
+        return try run(captureReceipts: captureReceipts)
     }
 
     /// No new names or IDs are generated on replay. Safe to call twice.
-    func replay() throws -> SyncApplyOutcome {
+    func replay(permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
+        if let permit {
+            return try permit.mutate { try replayPlan(permit: permit) }
+        }
+        return try replayPlan()
+    }
+
+    private func replayPlan(permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
-        if let record = try persistence.recover() {
+        // An uncertain publication can leave the cache nil or on an older intent.
+        if let record = try persistence.recover(validating: { record in
+            if let record { try permit?.validate(record.nextState.binding) }
+        }) {
             mutations.resume(record.id, nextState: record.nextState)
             _ = try states.recover(for: record.nextState.binding)
+            let intended = try permit?.intendedWrites(edits: record.steps.map(\.edit),
+                directories: record.directorySteps.map(\.edit), library: mutations) ?? []
+            var receipts: [SyncFileChange] = []
+            let result = try run {
+                if let permit { receipts = try permit.capture(intended, library: self.mutations) }
+            }
+            if result == .committed { permit?.remember(receipts) }
+            return result
         } else {
             if let permit = mutations.pendingPermit { try settleRemovedJournal(permit) }
             else if mutations.hasUnreadableJournal {
@@ -243,7 +275,6 @@ final class SyncApplyJournal {
             }
             return .committed
         }
-        return try run()
     }
 
     /// Replace a conflicted plan only after accounting for its committed steps.
@@ -288,7 +319,7 @@ final class SyncApplyJournal {
         return try run()
     }
 
-    private func run() throws -> SyncApplyOutcome {
+    private func run(captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
         guard var record = try persistence.load() else { return .committed }
         try mutations.begin(record.id, nextState: record.nextState)
         let binding = record.nextState.binding
@@ -363,6 +394,7 @@ final class SyncApplyJournal {
                     return .replanAsConflict(operationID: step.edit.id)
                 }
             }
+            try captureReceipts?()
             if let change = record.bindingChange {
                 guard let accounts else { throw SyncError.invalidState }
                 try accounts.updateBinding(for: change.next.root) { actual in

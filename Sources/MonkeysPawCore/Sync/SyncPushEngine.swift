@@ -26,13 +26,18 @@ final class SyncPushEngine {
     private let device: String
     private let freshID: () throws -> ULID
     private let now: () -> Date
+    private let permit: SyncWorkPermit?
     private let lock = NSLock()
     private var running = false
+    /// A validated head requiring folder/occupant preparation, retained only
+    /// until this serialized invocation returns. The exact request stays durable.
+    private(set) var policyHead: SyncConflictHead?
 
     init(binding: SyncLibraryIdentity, client: SyncHTTPClient, states: SyncStateStore,
          pending: SyncPendingOperationStore, mutations: SyncLibraryMutations, journal: SyncApplyJournal,
          ownership: @escaping () throws -> SyncLibraryBinding?, device: String,
-         freshID: @escaping () throws -> ULID, now: @escaping () -> Date = Date.init) throws {
+         freshID: @escaping () throws -> ULID, now: @escaping () -> Date = Date.init,
+         permit: SyncWorkPermit? = nil) throws {
         guard client.server.baseURL == binding.account.serverURL else { throw SyncError.bindingMismatch }
         self.binding = binding
         self.client = client
@@ -44,6 +49,7 @@ final class SyncPushEngine {
         self.device = device
         self.freshID = freshID
         self.now = now
+        self.permit = permit
     }
 
     func push(_ change: SyncLocalChange, availability: SyncReconciliationSnapshot.Availability,
@@ -79,18 +85,18 @@ final class SyncPushEngine {
                 accessGeneration: Int64 = 0) async throws -> SyncPushResult {
         try begin(availability)
         defer { end() }
-        if journal.pending != nil { try requireCommit(journal.replay()) }
+        if journal.pending != nil { try requireCommit(journal.replay(permit: permit)) }
         guard let request = try pending.load(for: binding) else { return .unchanged }
         let state = try currentState()
         let local = try live(request.intent.id, in: snapshot(state))
-        if try held(request, local: local) { return .held }
+        if try held(request, local: local) { try retireHeld(request); return .held }
         let result: SyncPushResult
         do {
             let prompt = try await client.prompt(id: request.intent.id)
             let head = try SyncConflictHead(prompt, userID: binding.account.userID)
             guard head.id == request.intent.id else { throw SyncConflictPolicyError.invalidHead }
             if unchangedHead(head, request: request) {
-                try pending.clear()
+                try clearPending()
                 return .replan
             }
             result = try await dispatch(.conflict(head: SyncAPI.ConflictHead(rev: head.rev,
@@ -98,7 +104,7 @@ final class SyncPushEngine {
                 request: request)
         } catch let error as SyncHTTPClientError {
             if error == .notFound, request.intent.baseRev == 0 {
-                try pending.clear()
+                try clearPending()
                 return .replan
             }
             // Invisible GET is not proof that an update/move was deleted.
@@ -155,15 +161,15 @@ final class SyncPushEngine {
 
     private func send(_ request: SyncPendingOperation) async throws -> SyncPushResult {
         guard SyncConflictPolicy.shouldAttempt(request.intent.fingerprint, lastError: request.recorded?.lastError) else { return .skipped }
-        try pending.save(request)
+        try savePending(request)
         // Journaling/GET may race a save. Never send the earlier captured bytes.
         let state = try currentState()
         let local = try live(request.intent.id, in: snapshot(state))
-        if try held(request, local: local) { try pending.clear(); return .held }
+        if try held(request, local: local) { try retireHeld(request); return .held }
         let current = try mutations.read(at: request.libraryPath)
         guard state.prompts[.assigned(request.intent.id)] == request.recorded,
               same(current, request.file), request.intent.operation != .delete || local == nil else {
-            try pending.clear()
+            try clearPending()
             return .replan
         }
         do {
@@ -200,7 +206,7 @@ final class SyncPushEngine {
         let state = try currentState()
         let snapshot = try snapshot(state)
         let local = try live(request.intent.id, in: snapshot)
-        if try held(request, local: local) { return .held }
+        if try held(request, local: local) { try retireHeld(request); return .held }
         let occupied = snapshot.files.compactMap { file -> RelativePath? in
             guard let location = SyncLocalScanner.location(of: RelativePath(file.path), binding: binding, groups: state.groups),
                   location.scope == request.intent.scope else { return nil }
@@ -216,16 +222,16 @@ final class SyncPushEngine {
             return try fileError(issue, request: request, state: state)
         case .serverWins(let head, _):
             let result = try install(head, error: nil)
-            try pending.clear()
+            try clearPending()
             return result
         case .remoteDeleted:
             try rescueAndRemove(request.intent.id, state: state, snapshot: snapshot, local: local)
-            try pending.clear()
+            try clearPending()
             return .replan
         case .denied(let restore, _, let issue):
             if let restore { _ = try install(restore, error: issue) }
             else { try rescueAndRemove(request.intent.id, state: state, snapshot: snapshot, local: local) }
-            try pending.clear()
+            try clearPending()
             return .refreshMemberships
         case .clashRename(let path): return try rename(path, request: request, state: state, local: local)
         case .adoptExisting:
@@ -233,8 +239,8 @@ final class SyncPushEngine {
             let decision = try SyncAdoption.pathTaken(existing, intent: request.intent, local: snapshot, groups: state.groups)
             if case .adopt = decision {
                 try requireCommit(journal.apply(SyncAdoption.application(decision, state: state, local: snapshot,
-                    groups: state.groups, device: device, at: now(), freshID: freshID, mutations: mutations)))
-                try pending.clear()
+                    groups: state.groups, device: device, at: now(), freshID: freshID, mutations: mutations), permit: permit))
+                try clearPending()
                 return .acknowledged
             }
             // A newer local edit cannot be adopted as the sent create.
@@ -255,7 +261,7 @@ final class SyncPushEngine {
             path: record?.path ?? request.intent.path, rev: record?.rev ?? 0,
             canonicalHash: record?.canonicalHash, origin: record?.origin, lastError: issue)
         try commit(state, next: next)
-        try pending.clear()
+        try clearPending()
         return .skipped
     }
 
@@ -266,7 +272,7 @@ final class SyncPushEngine {
         let adopted = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
                                          canonicalHash: head.hash, origin: head.origin)
         guard previous == request.recorded || previous == adopted else {
-            try pending.clear()
+            try clearPending()
             return .replan
         }
         var next = try setting(adopted, for: key, in: state)
@@ -281,7 +287,7 @@ final class SyncPushEngine {
             }
         }
         try commit(state, next: next, edits: edits)
-        try pending.clear()
+        try clearPending()
         return .acknowledged
     }
 
@@ -297,13 +303,13 @@ final class SyncPushEngine {
         let state = try currentState()
         let key = PromptIdentity.assigned(request.intent.id)
         guard state.prompts[key] == request.recorded || state.prompts[key] == nil else {
-            try pending.clear()
+            try clearPending()
             return .replan
         }
         let next = try setting(nil, for: key, in: state)
         // A file recreated in flight survives and will get the 410 rescue policy.
         try commit(state, next: next)
-        try pending.clear()
+        try clearPending()
         return .acknowledged
     }
 
@@ -311,7 +317,9 @@ final class SyncPushEngine {
         let expected = try states.load(for: binding)
         let state = try expected ?? SyncState(binding: binding)
         let snapshot = try snapshot(state)
-        let path = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups)
+        let path: RelativePath
+        do { path = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups) }
+        catch SyncError.invalidScope { policyHead = head; throw SyncReconciliationError.requiresPolicy }
         let remote = SyncReconciliationRemote(id: head.id, scope: head.scope, path: head.path, libraryPath: path,
             rev: head.rev, bytes: head.bytes, hash: head.hash, mode: mode(head.scope, state: state))
         let local = try live(head.id, in: snapshot)
@@ -319,8 +327,11 @@ final class SyncPushEngine {
         let targets = try snapshot.files.filter { try SyncNaming.pathKey(RelativePath($0.path)) == pathKey }
         guard targets.count <= 1, targets.allSatisfy({
             RelativePath($0.path) == path && $0.identityKey == head.id.rawValue && !snapshot.heldPaths.contains(path)
-        }) else { throw SyncReconciliationError.requiresPolicy }
-        if targets.isEmpty, try mutations.read(at: path) != nil { throw SyncReconciliationError.requiresPolicy }
+        }) else { policyHead = head; throw SyncReconciliationError.requiresPolicy }
+        if targets.isEmpty, try mutations.read(at: path) != nil {
+            policyHead = head
+            throw SyncReconciliationError.requiresPolicy
+        }
         let installation = SyncReconciliationInstall(remote: remote, source: local, target: targets.first)
         let record = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
                                         canonicalHash: head.hash, origin: head.origin, lastError: error)
@@ -346,7 +357,7 @@ final class SyncPushEngine {
         }
         let copies = try SyncConflictPolicy.copies(for: plan, device: device, at: now(), freshID: freshID,
                                                   existingCopies: candidates, mutations: mutations)
-        try requireCommit(journal.apply(SyncReconciler.application(plan, mutations: mutations, copies: copies)))
+        try requireCommit(journal.apply(SyncReconciler.application(plan, mutations: mutations, copies: copies), permit: permit))
         return .replan
     }
 
@@ -377,7 +388,7 @@ final class SyncPushEngine {
         guard let local, let location = SyncLocalScanner.location(of: RelativePath(local.path), binding: binding, groups: state.groups),
               location.scope == request.intent.scope,
               (try? SyncNaming.pathKey(location.path)) == (try? SyncNaming.pathKey(request.intent.path)) else {
-            try pending.clear()
+            try clearPending()
             return .replan
         }
         let destination = try SyncLocalScanner.rooted(path, scope: request.intent.scope, groups: state.groups)
@@ -389,7 +400,7 @@ final class SyncPushEngine {
         let edit = try mutations.publication(local.bytes, at: destination, expecting: nil,
                                             transition: SyncIdentityTransition(from: nil, to: key))
         try commit(state, next: next, edits: [edit, try mutations.trash(local)])
-        try pending.clear()
+        try clearPending()
         return .replan
     }
 
@@ -464,7 +475,7 @@ final class SyncPushEngine {
         guard expected == old || (expected == nil && old == empty) else {
             throw SyncPushError.applyRequired(.replanAsConflict(operationID: UUID()))
         }
-        try requireCommit(journal.apply(SyncApplyPlan(expectedState: expected, nextState: next, edits: edits)))
+        try requireCommit(journal.apply(SyncApplyPlan(expectedState: expected, nextState: next, edits: edits), permit: permit))
     }
 
     private func requireCommit(_ result: SyncApplyOutcome) throws {
@@ -490,16 +501,34 @@ final class SyncPushEngine {
     }
 
     private func begin(_ availability: SyncReconciliationSnapshot.Availability) throws {
+        try permit?.check()
         guard case .available = availability else { throw SyncReconciliationError.unavailableLibrary }
         lock.lock()
         defer { lock.unlock() }
         guard !running else { throw SyncPushError.busy }
         running = true
+        policyHead = nil
     }
 
     private func end() {
         lock.lock()
         defer { lock.unlock() }
         running = false
+    }
+
+    private func savePending(_ request: SyncPendingOperation) throws {
+        if let permit { try permit.mutate { try pending.save(request) } }
+        else { try pending.save(request) }
+    }
+
+    private func clearPending() throws {
+        if let permit { try permit.mutate { try pending.clear() } }
+        else { try pending.clear() }
+    }
+
+    private func retireHeld(_ request: SyncPendingOperation) throws {
+        let retire = { try self.pending.retainHeld(request); try self.pending.clear() }
+        if let permit { try permit.mutate(retire) }
+        else { try retire() }
     }
 }

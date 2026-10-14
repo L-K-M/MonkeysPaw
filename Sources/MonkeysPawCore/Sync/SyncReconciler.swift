@@ -127,7 +127,7 @@ enum SyncReconciler {
                 if mode != .restore, headMode == .delta, let previous, remote.rev <= previous.rev {
                     if let issue = markers.issue, remote.hash == previous.canonicalHash {
                         prompts[identity] = try SyncPromptState(scope: previous.scope, path: previous.path, rev: previous.rev,
-                            canonicalHash: previous.canonicalHash, origin: nil, lastError: SyncPromptError(code: issue,
+                            canonicalHash: previous.canonicalHash, origin: previous.origin, lastError: SyncPromptError(code: issue,
                                 fingerprint: SyncInputFingerprint(bytes: remote.bytes, path: remote.path, scope: remote.scope,
                                                                   accessGeneration: 0, operation: .put)))
                     }

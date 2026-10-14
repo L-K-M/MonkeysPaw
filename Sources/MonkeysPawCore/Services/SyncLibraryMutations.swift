@@ -40,7 +40,7 @@ struct SyncIdentityTransition: Codable {
 }
 
 struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
-    enum Kind: String, Codable { case apply, adopt, repairDuplicate, rescue, trash, mode }
+    enum Kind: String, Codable { case apply, adopt, relocate, repairDuplicate, rescue, trash, mode }
     let id: UUID
     let kind: Kind
     let path: String
@@ -56,8 +56,8 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
     let heldIssue: SyncIssueCode?
     /// Also retained when raw forensic bytes cannot carry a front-matter marker.
     var copyOrigin: SyncPromptOrigin? = nil
-    /// A byte-distinct spelling of the same adoption path on a case-sensitive
-    /// filesystem. Its keyed state migrates when the exact server bytes publish.
+    /// Checked source for an alternate adoption spelling or a byte-exact local
+    /// relocation. Keyed state migrates before the checked source retires.
     var adoptingSource: SyncLibraryFile? = nil
 
     var description: String { "<sync library edit>" }
@@ -68,11 +68,17 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         try expected?.validate()
         try adoptingSource?.validate()
         if let source = adoptingSource {
-            guard kind == .adopt, expected == nil, RelativePath(source.path) != RelativePath(path),
-                  try SyncNaming.pathKey(RelativePath(source.path)) == SyncNaming.pathKey(RelativePath(path)),
+            let pathMatches = kind == .relocate ? true
+                : try SyncNaming.pathKey(RelativePath(source.path)) == SyncNaming.pathKey(RelativePath(path))
+            let alias = kind == .adopt && expected?.stamp == source.stamp && expected?.bytes == source.bytes
+            guard (kind == .adopt || kind == .relocate), (expected == nil || alias), RelativePath(source.path) != RelativePath(path),
+                  pathMatches,
                   retainedBytes == source.bytes, retainedSourcePath.map({ RelativePath($0) }) == RelativePath(source.path) else {
                 throw SyncError.invalidState
             }
+        }
+        if kind == .relocate {
+            guard let source = adoptingSource, bytes == source.bytes else { throw SyncError.invalidState }
         }
         if let expected, RelativePath(expected.path) != RelativePath(path) { throw SyncError.invalidState }
         if let retainedSourcePath { try FileStorePath.validate(retainedSourcePath) }
@@ -96,7 +102,7 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         let assignedExternally = kind == .adopt && adoptingSource == nil && expected != nil
             && expected?.identityKey == transition.destination
             && transition.source == localKey
-        guard transition.source == (expected ?? adoptingSource)?.identityKey || assignedExternally else {
+        guard transition.source == (adoptingSource ?? expected)?.identityKey || assignedExternally else {
             throw SyncError.invalidState
         }
         let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
@@ -121,8 +127,10 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
                   original.frontMatter.id?.rawValue != copyID else { throw SyncError.invalidState }
         } else {
             try LibraryPath.validate(path)
-            guard copyOrigin == nil, copyID == nil, retainedBytes == (expected ?? adoptingSource)?.bytes,
-                  retainedSourcePath.map({ RelativePath($0) }) == (expected ?? adoptingSource).map({ RelativePath($0.path) }),
+            // Mirrors publication(): an exact-case alias adoption retains its source, not the alias.
+            let source = adoptingSource ?? expected
+            guard copyOrigin == nil, copyID == nil, retainedBytes == source?.bytes,
+                  retainedSourcePath.map({ RelativePath($0) }) == source.map({ RelativePath($0.path) }),
                   heldIssue == nil || (heldIssue == .content(.invalidMetadataType)
                     && SyncConflictMetadata.hasInvalidOrigin(in: document)) else { throw SyncError.invalidState }
         }
@@ -316,7 +324,7 @@ final class SyncLibraryMutations {
                      transition: SyncIdentityTransition, mode: SyncFileMode = .normal,
                      kind: SyncLibraryEdit.Kind = .apply, markerIssue: SyncIssueCode? = nil,
                      adoptingSource: SyncLibraryFile? = nil, id: UUID = UUID()) throws -> SyncLibraryEdit {
-        let source = expected ?? adoptingSource
+        let source = adoptingSource ?? expected
         var edit = SyncLibraryEdit(id: id, kind: kind, path: path.string, expected: expected, bytes: bytes,
             hash: SyncHash(bytes: bytes), transition: transition, mode: mode, retainedBytes: source?.bytes,
             retainedSourcePath: source?.path, copyID: nil, heldIssue: markerIssue)

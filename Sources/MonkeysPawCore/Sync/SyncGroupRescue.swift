@@ -1,6 +1,28 @@
 import Foundation
 
 extension SyncGroupFolders {
+    /// Y10 resolves a held/viewer incoming-path occupant through the same
+    /// checked rescue/hold migration as folder cleanup, without dropping scopes.
+    static func rescueOccupant(_ file: SyncLibraryFile, state: SyncState?, ownership: SyncLibraryBinding?,
+                               inventory: SyncGroupFolderInventory, at date: Date, freshID: () throws -> ULID,
+                               mutations: SyncLibraryMutations) throws -> SyncApplyPlan {
+        try validate(inventory, state: state, ownership: ownership)
+        var next = try state ?? SyncState(binding: inventory.local.binding)
+        var owned = try ownership ?? SyncLibraryBinding(root: next.binding.root, owner: next.binding.account)
+        let edits = try rescue([file], clean: { _ in false }, inventory: inventory, ownership: &owned,
+            previousOwnership: ownership, state: &next, holdAll: false, at: date, freshID: freshID, mutations: mutations)
+        // Keep acknowledged baselines for a distinct occupant: a fresh complete
+        // snapshot, rather than inferred local DELETE, must restore its head.
+        if let record = next.prompts[try file.identity], record.rev > 0 {
+            var cursors = next.cursors
+            cursors[record.scope] = SyncState.snapshotResetCursor
+            next = try SyncState(binding: next.binding, databaseID: next.databaseID, cursors: cursors,
+                groups: next.groups, prompts: next.prompts, favorites: next.favorites)
+        }
+        return SyncApplyPlan(expectedState: state, nextState: next, edits: edits,
+            bindingChange: owned == ownership ? nil : SyncBindingChange(expected: ownership, next: owned))
+    }
+
     /// Resolve accessible move/install outcomes first. A live ID owned by an
     /// accessible scope must never become a fresh rescue merely because its old
     /// folder was removed. The caller supplies the complete pull's final IDs.
