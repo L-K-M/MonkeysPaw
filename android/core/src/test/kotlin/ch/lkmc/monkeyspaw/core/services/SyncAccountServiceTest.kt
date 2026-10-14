@@ -906,4 +906,74 @@ class SyncAccountServiceTest {
         assertEquals(0, r.h.pulls)
         assertContentEquals(SyncJournalHarness.source("recovered").encodeToByteArray(), r.h.files.read("a.md"))
     }
+
+    @Test fun replacingConnectionAfterRestartValidatesAndRevokesItsPersistedSession() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        val previous = r.login().account!!
+        val oldAuthorization = "Bearer " + r.token
+        r.user = SyncTestValues.otherUser
+        r.token = "B".repeat(42) + "A"
+        r.respond = { request -> if (request.url.endsWith("/me") && request.headers["Authorization"] == oldAuthorization) {
+            HttpResponse(200, body = MeResponse.codec.encode(MeResponse(r.userDTO(previous.identity.userID),
+                emptyList(), listOf(r.deviceDTO(previous.deviceID)))))
+        } else null }
+        val result = r.login(r.reopen())
+        assertTrue(result.enabled)
+        assertEquals(SyncRemoteRevocation.REVOKED, result.cleanup.remote)
+        assertEquals(1, r.logouts.size)
+        assertTrue(r.logouts.single().headers["Authorization"] == oldAuthorization)
+        assertNull(r.secrets.values[previous.secretAccount])
+        assertTrue(r.h.accounts.loadConnection().cleanupConnections.isEmpty())
+    }
+
+    @Test fun staleIncludeSelectionKeepsVerifiedSessionForRefreshAndCorrectedRetry() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        r.login()
+        r.h.files.put(EngineHarness.source(), "a.md")
+        r.user = SyncTestValues.otherUser
+        val account = r.login().account
+        val holds = r.service.heldPrompts()
+        assertFailsWith<SyncAccountServiceError> { r.service.includeHeld(setOf(SyncTestValues.groupID)) }
+        assertEquals(account, r.service.refresh().account)
+        assertFalse(r.service.snapshot.enabled)
+        assertEquals(SyncAccountActivation.INACTIVE, r.h.accounts.loadConnection().activation)
+        assertEquals(holds, r.service.heldPrompts())
+        assertTrue(r.service.includeHeld(setOf(holds.single().identity)).enabled)
+        r.h.engine.runBackground()
+        assertEquals(1, r.puts.size)
+        assertEquals(2, r.requests.count { it.url.endsWith("/auth/login") })
+    }
+
+    @Test fun persistedOldSessionCleanupNeverRevokesAMismatchedUserOrCurrentDevice() = runTest {
+        for (mismatchedUser in listOf(false, true)) {
+            val r = AccountHarness(testScheduler, backgroundScope)
+            val previous = r.login().account!!
+            val oldAuthorization = "Bearer " + r.token
+            r.user = SyncTestValues.otherUser
+            r.token = "B".repeat(42) + "A"
+            r.respond = { request -> if (request.url.endsWith("/me") && request.headers["Authorization"] == oldAuthorization) {
+                HttpResponse(200, body = MeResponse.codec.encode(MeResponse(
+                    r.userDTO(if (mismatchedUser) r.user else previous.identity.userID), emptyList(),
+                    listOf(r.deviceDTO(if (mismatchedUser) previous.deviceID else SyncTestValues.group)))))
+            } else null }
+            val result = r.login(r.reopen())
+            assertTrue(result.enabled)
+            assertEquals(SyncRemoteRevocation.UNCONFIRMED, result.cleanup.remote)
+            assertTrue(r.logouts.isEmpty())
+        }
+    }
+
+    @Test fun includeAuthenticationFailureStillRetiresTheInvalidSession() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        r.login()
+        r.h.engine.stop(); r.h.engine.drain()
+        r.pendingCreate()
+        r.respond = { request -> if (request.method == HttpMethod.GET && request.url.contains("/prompts/"))
+            EngineHarness.errorResponse(401, FailureCode.UNAUTHORIZED) else null }
+        assertFailsWith<SyncAccountServiceError> { r.service.includeHeld(emptySet()) }
+        assertFalse(r.service.snapshot.enabled)
+        assertNull(r.service.snapshot.tier)
+        assertTrue(r.h.engine.reports.value.needsSignIn)
+        assertEquals(SyncAccountIssue.SignedOut, assertFailsWith<SyncAccountServiceError> { r.service.refresh() }.issue)
+    }
 }

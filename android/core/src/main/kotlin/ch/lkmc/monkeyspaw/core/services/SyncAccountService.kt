@@ -144,8 +144,8 @@ class SyncAccountService internal constructor(
                     old
                 }
                 val cleanup = withContext(NonCancellable) {
-                    val remote = if (previous.account == null) SyncRemoteRevocation.NOT_NEEDED
-                        else if (old?.account == previous.account) revoke(old.client) else SyncRemoteRevocation.UNCONFIRMED
+                    val remote = remoteCleanup(old?.takeIf { it.account == previous.account }, previous.account,
+                        readFailed = false, device = null)
                     deleteSecrets(previous.cleanupConnections + listOfNotNull(previous.account?.connectionID), SyncAccountCleanup(remote))
                 }
                 cached.value = snapshot.copy(cleanup = cleanup)
@@ -246,7 +246,13 @@ class SyncAccountService internal constructor(
             snapshot
         } catch (error: Throwable) {
             withContext(NonCancellable) { sync.stopAccountSession(); sync.drain() }
-            lock.withLock { active = null; cached.value = snapshot.copy(enabled = false, tier = null) }
+            val signIn = requiresSignIn(failure(error).issue)
+            if (signIn) sync.requireSignIn()
+            lock.withLock {
+                if (signIn) active = null
+                cached.value = snapshot.copy(enabled = false, tier = if (signIn) null else snapshot.tier,
+                    me = if (signIn) null else snapshot.me)
+            }
             throwFailure(error)
         }
     }
