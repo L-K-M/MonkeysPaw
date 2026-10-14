@@ -7,6 +7,7 @@ import ch.lkmc.monkeyspaw.core.ports.StoreError
 import ch.lkmc.monkeyspaw.core.ports.SyncTLSTrust
 import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -25,11 +26,12 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
     }
 
     @Test
-    fun `seed provider records and setup decisions round trip together`() = runBlocking {
-        val settings = AndroidSettings(SeedProgress.DECLINED, mapOf(
+    fun `seed provider records sync trust and setup decisions round trip together`() = runBlocking {
+        val settings = AndroidSettings(seedProgress = SeedProgress.DECLINED, records = mapOf(
             "provider-settings" to SettingsRecord(" metadata\n雪/é😀 ", "settings-incarnation"),
             "provider-state" to SettingsRecord("capability", "state-incarnation")),
-            KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.PENDING))
+            syncTls = SyncTlsSettings(SyncServerURL("https://sync.example/paw"), SyncTLSTrust.SYSTEM_AND_USER),
+            keyboardTileSetup = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.PENDING))
         val output = ByteArrayOutputStream()
         SettingsSerializer.writeTo(settings, output)
         assertEquals(settings, SettingsSerializer.readFrom(ByteArrayInputStream(output.toByteArray())))
@@ -39,36 +41,77 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
     fun `version one files with every optional field subset load without rewriting`() = runBlocking {
         val path = filesDir.resolve("datastore/settings.json")
         val records = mapOf("provider-settings" to SettingsRecord("metadata", "fixture-stamp"))
+        val syncTls = SyncTlsSettings(SyncServerURL("https://sync.example/paw"), SyncTLSTrust.SYSTEM_AND_USER)
         val setup = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.COMPLETE)
         val recordsField = """, "records":{"provider-settings":{"payload":"metadata","stamp":"fixture-stamp"}}"""
+        val syncTlsField = """, "syncTls":{"serverURL":"https://sync.example/paw","trust":"SYSTEM_AND_USER"}"""
         val setupField = """, "keyboardTileSetup":{"version":1,"enableKeyboard":"COMPLETE","selectKeyboard":"SKIPPED","addTile":"COMPLETE"}"""
         for ((fields, expected) in listOf(
-            "" to AndroidSettings(SeedProgress.DECLINED),
-            recordsField to AndroidSettings(SeedProgress.DECLINED, records),
-            setupField to AndroidSettings(SeedProgress.DECLINED, keyboardTileSetup = setup),
-            "$recordsField$setupField" to AndroidSettings(SeedProgress.DECLINED, records, setup),
+            "" to AndroidSettings(),
+            recordsField to AndroidSettings(records = records),
+            syncTlsField to AndroidSettings(syncTls = syncTls),
+            setupField to AndroidSettings(keyboardTileSetup = setup),
+            "$recordsField$syncTlsField" to AndroidSettings(records = records, syncTls = syncTls),
+            "$recordsField$setupField" to AndroidSettings(records = records, keyboardTileSetup = setup),
+            "$syncTlsField$setupField" to AndroidSettings(syncTls = syncTls, keyboardTileSetup = setup),
+            "$recordsField$syncTlsField$setupField" to AndroidSettings(records = records, syncTls = syncTls, keyboardTileSetup = setup),
         )) {
-            val original = """{"version":1,"seedProgress":"DECLINED"$fields}""".encodeToByteArray()
-            put(path, original)
-            withStore { assertEquals(expected, it.read()) }
-            assertContentEquals(original, java.nio.file.Files.readAllBytes(path))
+            for (seed in SeedProgress.entries) {
+                val original = """{"version":1,"seedProgress":"${seed.name}"$fields}""".encodeToByteArray()
+                put(path, original)
+                withStore { assertEquals(expected.copy(seedProgress = seed), it.read()) }
+                assertContentEquals(original, Files.readAllBytes(path))
+            }
         }
     }
 
     @Test
-    fun `atomic seed provider record and setup updates preserve all fields on reopen`() = runBlocking {
+    fun `atomic seed provider record sync trust and setup updates preserve all fields on reopen`() = runBlocking {
         val records = mapOf("provider-settings" to SettingsRecord("metadata", "settings-incarnation"),
             "provider-state" to SettingsRecord("capability", "state-incarnation"))
+        val server = SyncServerURL("https://sync.example/paw")
         val setup = KeyboardTileSetupProgress(SetupDecision.SKIPPED, SetupDecision.COMPLETE, SetupDecision.SKIPPED)
-        val expected = AndroidSettings(SeedProgress.COMPLETE, records, setup)
+        val expected = AndroidSettings(seedProgress = SeedProgress.COMPLETE, records = records,
+            syncTls = SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER), keyboardTileSetup = setup)
         withStore { store ->
+            store.selectSyncServer(server)
             coroutineScope {
                 (1..20).flatMap { listOf(async { store.setSeedProgress(expected.seedProgress) },
-                    async { store.updateRecords { records } }, async { store.setKeyboardTileSetup(setup) }) }.awaitAll()
+                    async { store.updateRecords { records } },
+                    async { store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER) },
+                    async { store.setKeyboardTileSetup(setup) }) }.awaitAll()
             }
             assertEquals(expected, store.read())
         }
         withStore { assertEquals(expected, it.read()) }
+    }
+
+    @Test
+    fun `null optional fields and unknown keys reject without overwriting coexisting settings`() = runBlocking {
+        val server = SyncServerURL("https://sync.example/paw")
+        val settings = AndroidSettings(seedProgress = SeedProgress.DECLINED,
+            records = mapOf("provider-settings" to SettingsRecord("metadata", "fixture-stamp")),
+            syncTls = SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER),
+            keyboardTileSetup = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.COMPLETE))
+        val output = ByteArrayOutputStream()
+        SettingsSerializer.writeTo(settings, output)
+        val valid = Json.parseToJsonElement(output.toString(Charsets.UTF_8)) as JsonObject
+        val path = filesDir.resolve("datastore/settings.json")
+        for (key in listOf("records", "syncTls", "keyboardTileSetup", "unknown")) {
+            val bytes = JsonObject(valid + (key to JsonNull)).toString().encodeToByteArray()
+            put(path, bytes)
+            withStore { store ->
+                assertFailsWith<CorruptionException> { store.read() }
+                assertFailsWith<CorruptionException> { store.setSeedProgress(SeedProgress.NOT_OFFERED) }
+                assertFailsWith<CorruptionException> { store.updateRecords { emptyMap() } }
+                assertFailsWith<CorruptionException> { store.selectSyncServer(null) }
+                assertFailsWith<CorruptionException> { store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM) }
+                assertFailsWith<CorruptionException> { store.setKeyboardTileSetup(KeyboardTileSetupProgress()) }
+            }
+            assertContentEquals(bytes, Files.readAllBytes(path))
+            withStore { assertFailsWith<CorruptionException> { it.read() } }
+            assertContentEquals(bytes, Files.readAllBytes(path))
+        }
     }
 
     @Test
@@ -233,28 +276,34 @@ internal class AndroidSettingsStoreTest : TemporaryFiles() {
     }
 
     @Test
-    fun `sync option writes preserve provider payloads and seed progress under concurrent updates`() = runBlocking {
+    fun `sync option writes preserve provider payloads seed progress and setup under concurrent updates`() = runBlocking {
         val server = SyncServerURL("https://sync.example")
         val records = mapOf("provider-settings" to SettingsRecord("provider metadata", "stamp-one"),
             "provider-state" to SettingsRecord("capability state", "stamp-two"))
+        val setup = KeyboardTileSetupProgress(SetupDecision.COMPLETE, SetupDecision.SKIPPED, SetupDecision.COMPLETE)
         withStore { store ->
             store.selectSyncServer(server)
             coroutineScope {
                 val seed = async { repeat(20) { store.setSeedProgress(SeedProgress.COMPLETE) } }
                 val providers = async { repeat(20) { store.updateRecords { records } } }
                 val tls = async { repeat(20) { store.setSyncTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER) } }
-                awaitAll(seed, providers, tls)
+                val keyboard = async { repeat(20) { store.setKeyboardTileSetup(setup) } }
+                awaitAll(seed, providers, tls, keyboard)
             }
         }
         withStore { store ->
             assertEquals(records, store.read().records)
             assertEquals(SeedProgress.COMPLETE, store.read().seedProgress)
             assertEquals(SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER), store.read().syncTls)
+            assertEquals(setup, store.read().keyboardTileSetup)
             store.updateRecords { it - "provider-state" }
             assertEquals(SyncTlsSettings(server, SyncTLSTrust.SYSTEM_AND_USER), store.read().syncTls)
+            assertEquals(setup, store.read().keyboardTileSetup)
             store.selectSyncServer(null)
+            assertNull(store.read().syncTls)
             assertEquals(records - "provider-state", store.read().records)
             assertEquals(SeedProgress.COMPLETE, store.read().seedProgress)
+            assertEquals(setup, store.read().keyboardTileSetup)
         }
     }
 
