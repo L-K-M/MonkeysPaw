@@ -51,7 +51,8 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun state(@ApplicationContext context: Context): StateStore = AndroidStateStore(File(context.filesDir, "state"))
+    fun state(@ApplicationContext context: Context, settings: AndroidSettingsStore): StateStore =
+        AndroidStateStore(File(context.filesDir, "state"), settings = settings)
 
     @Provides
     @Singleton

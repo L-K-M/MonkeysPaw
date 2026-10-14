@@ -41,4 +41,5 @@ object Limits {
     const val assistantEnvelopeNestingCap = 512
     // Foundation's provider-state reader accepts at most 512 open containers.
     internal const val providerStateJSONNestingCap = 512
+    internal const val providerSettingsJSONNestingCap = 512
 }

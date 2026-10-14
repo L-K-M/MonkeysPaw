@@ -233,11 +233,17 @@ constants.
 - **Local state.** M8 uses `filesDir/state/` for remembered values, usage and
   history, separate from the library and `filesDir/datastore/`. DataStore
   holds versioned settings and seed progress in `settings.json` (§20 F11).
-  From M11 it also holds provider metadata and capability state (§7, §22 J8)
-  as namespaced `provider-settings` and `provider-state` records: the
-  `StateStore` driver maps the logical `.json` paths to these atomic records,
-  preserving the desktop version-1 JSON shapes and unknown members. M10 owns
-  sync state under the §9.2 contract.
+  The existing `StateStore` driver maps logical `provider-settings.json` and
+  `provider-state.json` to the namespaced `provider-settings`/`provider-state`
+  entries in that same settings DataStore (§22 J8). Each entry preserves the
+  exact logical JSON payload and a non-secret incarnation stamp. The optional
+  `records` map is absent until the first provider edit, so reading an M8
+  install performs no speculative migration. Atomic updates retain seed
+  progress and the other provider record. Corrupt/future logical metadata is
+  retained as a read-only provider-settings record, never reset or copied to
+  a file. Provider stores use only background `StateStore` reads and atomic
+  replacement; moves across the settings/file backends are rejected.
+  M10 owns sync state under the §9.2 contract.
   L8 supplies the shared `SecretStore` for M10 and M11 in `app/data`, wired
   once by Hilt to a separate singleton `datastore/secrets.json` DataStore.
   Provider metadata remains separate from ciphertext (§22 J8).
