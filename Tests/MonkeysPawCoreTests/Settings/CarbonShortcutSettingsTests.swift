@@ -7,11 +7,15 @@ final class CarbonShortcutSettingsTests: XCTestCase {
         for choices in [nil, [:]] as [[String: Any]?] {
             let files = try fixture(choices)
             let original = try files.read(at: "settings.json")
+            let stamp = try files.stamp(at: "settings.json")
             let settings = SettingsService(store: SettingsStore(files: files))
             XCTAssertFalse(settings.snapshot.isReadOnly)
             XCTAssertEqual(settings.snapshot.document.carbonShortcuts, CarbonShortcutChoices())
+            files.failNextWrite = true
             try settings.setLibraryFolder(nil)
             XCTAssertEqual(try files.read(at: "settings.json"), original)
+            XCTAssertEqual(try files.stamp(at: "settings.json"), stamp)
+            XCTAssertTrue(files.failNextWrite, "A no-op setter must not attempt even a byte-identical write")
         }
     }
 
@@ -94,6 +98,19 @@ final class CarbonShortcutSettingsTests: XCTestCase {
         XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true,
             libraryFolderCompleted: true, seedsOffered: false, tourCompleted: true))
         XCTAssertEqual(try files.read(at: "settings.json"), original)
+    }
+
+    func testInvalidCarbonChoicesGateStoredEnabledUpdateChecks() throws {
+        let files = try fixture(["repeatLast": "FutureKey"])
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: "settings.json")) as? [String: Any])
+        object["automaticUpdateChecks"] = "enabled"
+        try files.write(JSONSerialization.data(withJSONObject: object), at: "settings.json")
+
+        let settings = SettingsService(store: SettingsStore(files: files))
+
+        XCTAssertEqual(settings.snapshot.readOnlyError, .corruptFile)
+        XCTAssertEqual(settings.snapshot.document.automaticUpdateChecks, .enabled)
+        XCTAssertFalse(settings.snapshot.allowsAutomaticUpdateChecks)
     }
 
     func testEverySetterPreservesBothChoicesAndUnknownJSON() throws {

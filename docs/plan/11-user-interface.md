@@ -69,10 +69,13 @@ document contains the enabled default. No update requests or restore
 behavior are activated by the Core preference/model slice. `carbonShortcuts`
 contains parsed Carbon-compatible accelerator strings or explicit null for an
 unbound action. Missing actions use picker/unbound defaults. Present invalid
-types, unsupported translations and in-app collisions make settings read-only.
-Invalid Carbon choices fall back to the Carbon defaults while the valid library,
-first-run and other preferences still load; no write may overwrite the invalid
-or future choices.
+types, malformed accelerator strings, unsupported Carbon translations and
+in-app collisions make settings read-only. In that read-only snapshot, the
+entire `carbonShortcuts` family uses Carbon defaults while valid library,
+first-run and other preferences still load. Both recovery and the write
+restriction apply together; no write may overwrite invalid or future choices.
+Restore a valid settings file and restart to recover editing, including when
+the stored choices collide. In-app rebinding handles valid, writable settings.
 Unknown nested members survive edits, and every settings setter preserves both
 choices. Registration and save failures never publish a requested key as saved.
 
