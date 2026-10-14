@@ -257,8 +257,9 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 guard let self, self.revision == revision, self.configuring else { return }
                 // A replacement portal owner cannot close the departed owner's
                 // sessions. Explicit attachment may retry; native quiescence
-                // still treats those sessions as uncertain.
-                guard safe || (!self.uncertainCreation && self.retiring.values.allSatisfy({ $0.state == .ownerLost }))
+                // also stays strict after an unanswered Create, until a definite
+                // new session supplies a handle we can close.
+                guard safe || self.retiring.values.allSatisfy({ $0.state == .ownerLost })
                 else { self.failed(.methodError); return }
                 self.migrate(deadline: deadline, version: version)
             }
@@ -304,6 +305,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                     return
                 }
                 self.creating = false
+                self.uncertainCreation = false
                 self.sessionHandle = session
                 self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "ListShortcuts",
                     arguments: [.objectPath(session)], deadline: self.ipcDeadline(deadline)) { [weak self] result in
@@ -333,7 +335,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             guard onFire[action] != nil || saved != nil else { continue }
             var properties = ["description": action == .togglePicker ? "Open Monkey's Paw" : "Repeat last prompt"]
             if let saved {
-                if let description = saved.properties["trigger_description"], !description.isEmpty {
+                if let description = saved.properties["trigger_description"], !description.isEmpty, onFire[action] != nil {
                     update(action, .needsAction, "Previously selected: " + description + ". " + LinuxStrings.shortcutAllow)
                 }
             } else if action == .togglePicker, let accelerator = accelerators[action] {

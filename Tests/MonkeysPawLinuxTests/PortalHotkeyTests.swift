@@ -183,6 +183,8 @@ final class PortalHotkeyTests: XCTestCase {
         let requested = portal.shortcuts(try XCTUnwrap(portal.calls.last))
         XCTAssertEqual(requested.map(\.id), ["toggle", "repeat"])
         XCTAssertTrue(requested.allSatisfy { $0.properties["preferred_trigger"] == nil })
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound)
+        XCTAssertEqual(backend.registration(for: .repeatLast).configuration, .unavailable)
         let methods = portal.calls.map(\.method)
         let revision = backend.activationRevision
         let repeatAction = backend.register(.repeatLast, accelerator: nil) { [weak self] in self?.repeatFires += 1 }
@@ -312,6 +314,35 @@ final class PortalHotkeyTests: XCTestCase {
             XCTAssertEqual(portal.calls.filter { $0.method == "BindShortcuts" }.count, binds + 1)
             XCTAssertTrue(tools.arguments.isEmpty)
         }
+    }
+
+    func testTimedOutCreateKeepsNativeGatedButExplicitRetryCanRecover() throws {
+        try registerBoth()
+        portal.handleCall = { $0.method == "CreateSession" }
+        var completions = 0
+        backend.configure(until: ContinuousClock.now.advanced(by: .milliseconds(100))) { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { completions > 0 })
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(backend.registration(for: .togglePicker).status, .failed)
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .failed)
+        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession"])
+        var quiescence: [Bool] = []
+        backend.quiesce { quiescence.append($0) }
+        XCTAssertEqual(quiescence, [false], "An unanswered Create cannot authorize native activation.")
+        portal.handleCall = nil
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession"], "Recovery must require an explicit gesture.")
+        configure()
+        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession", "CreateSession", "ListShortcuts", "BindShortcuts"])
+        XCTAssertEqual(backend.registration(for: .togglePicker).status, .registered)
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound)
+        let bind = try XCTUnwrap(portal.calls.last { $0.method == "BindShortcuts" })
+        XCTAssertEqual(portal.shortcuts(bind).map(\.id), ["toggle", "repeat"])
+        var recovered: [Bool] = []
+        backend.quiesce { recovered.append($0) }
+        XCTAssertTrue(GTKTestSupport.spin { !recovered.isEmpty })
+        XCTAssertEqual(recovered, [true], "A definite new session must close successfully before native recovery.")
+        XCTAssertTrue(tools.arguments.isEmpty)
     }
 
     func testShutdownFromProbePublicationCompletesConfigurationOnce() throws {
