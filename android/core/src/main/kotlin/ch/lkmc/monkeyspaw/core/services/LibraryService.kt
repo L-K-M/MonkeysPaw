@@ -258,6 +258,7 @@ class LibraryService(
     internal fun beginSyncApply(id: UUID, nextState: SyncState) =
         mutations.run { syncGate.begin(id, nextState) }
     internal fun endSyncApply(id: UUID) = mutations.run { syncGate.finish(id) }
+    internal fun commitSyncApplyState(id: UUID) = mutations.run { syncGate.stateCommitted(id) }
     internal fun replaceSyncApply(previous: UUID, next: UUID, nextState: SyncState) =
         mutations.run { syncGate.replace(previous, next, nextState) }
     internal fun resumeSyncApply(id: UUID, nextState: SyncState) =

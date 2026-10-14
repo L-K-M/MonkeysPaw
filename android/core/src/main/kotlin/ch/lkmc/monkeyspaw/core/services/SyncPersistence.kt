@@ -120,8 +120,8 @@ internal class SyncPersistence<T>(
 
     private fun write(next: T, original: SyncObject) {
         val bytes = try {
-            val objectValue = merge(codec.encode(next), original)
-            val encoded = encode(objectValue)
+            val objectValue = syncMergeDocument(codec.encode(next), original)
+            val encoded = syncDocumentBytes(objectValue)
             if (encoded.size > Limits.syncRecordMaxBytes) throw SyncError.InvalidState
             codec.decode(WireJson.parse(encoded).objectValue())
             encoded
@@ -144,51 +144,68 @@ internal class SyncPersistence<T>(
         }
         uncertainFlush = null
     }
+}
 
-    /** Dynamic maps replace membership; array records retain extensions by exact lexical identity. */
-    private fun merge(next: SyncObject, original: SyncObject): SyncObject {
-        val maps = setOf("cursors", "groups", "prompts", "favorites", "managed_folders")
-        val arrays = mapOf("libraries" to "library_root", "holds" to "path")
-        val result = original.fields.toMutableMap()
-        next.fields.forEach { (key, value) ->
-            val previous = original.fields[key]
-            result[key] = when {
-                value is SyncObject -> {
-                    val old = previous as? SyncObject ?: syncObject()
-                    if (key in maps) SyncObject(value.fields.mapValues { (id, item) ->
-                        if (item is SyncObject) merge(item, old.fields[id] as? SyncObject ?: syncObject()) else item
-                    })
-                    else {
-                        val retained = if (key == "origin" && value.fields["kind"] == wireString("rescued")) {
-                            SyncObject(old.fields - "prompt_id")
-                        } else old
-                        merge(value, retained)
-                    }
+/** Dynamic maps replace membership; array records retain extensions by stable recorded identity. */
+internal fun syncMergeDocument(next: SyncObject, original: SyncObject): SyncObject {
+    val maps = setOf("cursors", "groups", "prompts", "favorites", "managed_folders", "fields")
+    val arrays = mapOf("libraries" to "library_root", "holds" to "path", "localFiles" to "path")
+    val result = original.fields.toMutableMap()
+    next.fields.forEach { (key, value) ->
+        val previous = original.fields[key]
+        result[key] = when {
+            value is SyncObject -> {
+                val old = previous as? SyncObject ?: syncObject()
+                if (key in maps) SyncObject(value.fields.mapValues { (id, item) ->
+                    if (item is SyncObject) syncMergeDocument(item, old.fields[id] as? SyncObject ?: syncObject()) else item
+                })
+                else {
+                    val retained = if (key == "origin" && value.fields["kind"] == wireString("rescued")) {
+                        SyncObject(old.fields - "prompt_id")
+                    } else old
+                    syncMergeDocument(value, retained)
                 }
-                key in arrays && value is WireValue.ArrayValue -> {
-                    val identity = arrays.getValue(key)
-                    val old = (previous as? WireValue.ArrayValue)?.values.orEmpty().filterIsInstance<SyncObject>()
-                    WireValue.ArrayValue(value.values.map { item ->
-                        val record = item.objectValue()
-                        merge(record, old.firstOrNull { it.fields[identity] == record.fields[identity] } ?: syncObject())
-                    })
-                }
-                else -> value
             }
+            key in arrays && value is WireValue.ArrayValue -> {
+                val identity = arrays.getValue(key)
+                val old = (previous as? WireValue.ArrayValue)?.values.orEmpty().filterIsInstance<SyncObject>()
+                WireValue.ArrayValue(value.values.map { item ->
+                    val record = item.objectValue()
+                    syncMergeDocument(record, old.firstOrNull { it.fields[identity] == record.fields[identity] } ?: syncObject())
+                })
+            }
+            key in setOf("steps", "directorySteps", "migrations") && value is WireValue.ArrayValue -> {
+                fun identity(record: SyncObject): WireValue? = if (key == "migrations") {
+                    val change = record.fields["change"] as? SyncObject
+                    val payload = (change?.fields?.get("file") as? SyncObject)?.fields?.get("_0") as? SyncObject
+                        ?: change?.fields?.get("values") as? SyncObject
+                    payload?.fields?.get("source")?.let { source ->
+                        syncObject("store" to record.required("store"), "source" to source,
+                            "destination" to payload.required("destination"))
+                    }
+                } else (record.fields["edit"] as? SyncObject)?.fields?.get("id")
+                val old = (previous as? WireValue.ArrayValue)?.values.orEmpty().filterIsInstance<SyncObject>()
+                WireValue.ArrayValue(value.values.map { item ->
+                    val record = item.objectValue()
+                    val id = identity(record)
+                    syncMergeDocument(record, old.firstOrNull { id != null && identity(it) == id } ?: syncObject())
+                })
+            }
+            else -> value
         }
-        return SyncObject(result)
     }
+    return SyncObject(result)
+}
 
-    private fun encode(value: WireValue): ByteArray {
-        fun json(item: WireValue): JsonElement = when (item) {
-            is WireValue.Text -> JsonPrimitive(item.value.also(WireValidation::scalarCount))
-            is WireValue.Number -> JsonPrimitive(item.token.toBigDecimal())
-            is WireValue.BooleanValue -> JsonPrimitive(item.value)
-            WireValue.Null -> JsonNull
-            is WireValue.ArrayValue -> JsonArray(item.values.map(::json))
-            is SyncObject -> StateJson.objectOf(item.fields.mapValues { json(it.value) })
-        }
-        // Foundation JSONSerialization .sortedKeys: compact UTF-8, escaped slashes, no terminal newline.
-        return json(value).toString().replace("/", "\\/").encodeToByteArray(throwOnInvalidSequence = true)
+internal fun syncDocumentBytes(value: WireValue): ByteArray {
+    fun json(item: WireValue): JsonElement = when (item) {
+        is WireValue.Text -> JsonPrimitive(item.value.also(WireValidation::scalarCount))
+        is WireValue.Number -> JsonPrimitive(item.token.toBigDecimal())
+        is WireValue.BooleanValue -> JsonPrimitive(item.value)
+        WireValue.Null -> JsonNull
+        is WireValue.ArrayValue -> JsonArray(item.values.map(::json))
+        is SyncObject -> StateJson.objectOf(item.fields.mapValues { json(it.value) })
     }
+    // Foundation JSONSerialization .sortedKeys: compact UTF-8, escaped slashes, no terminal newline.
+    return json(value).toString().replace("/", "\\/").encodeToByteArray(throwOnInvalidSequence = true)
 }

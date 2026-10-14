@@ -57,16 +57,17 @@ internal object SyncStateJson {
     private fun prompt(value: SyncPromptState): SyncObject = syncObject(
         "scope_key" to wireString(value.scope.rawValue), "path" to wireString(value.path), "rev" to wireLong(value.rev),
         "canonical_hash" to wireNullable(value.canonicalHash?.rawValue),
-        "origin" to when (val origin = value.origin) {
-            null -> WireValue.Null
-            SyncPromptOrigin.Rescued -> syncObject("kind" to wireString("rescued"))
-            is SyncPromptOrigin.ConflictOf -> syncObject("kind" to wireString("conflict_of"), "prompt_id" to wireString(origin.promptID.rawValue))
-        },
+        "origin" to (value.origin?.let(::origin) ?: WireValue.Null),
         "last_error" to (value.lastError?.let {
             syncObject("code" to wireString(it.code.rawValue), "fingerprint" to fingerprint(it.fingerprint))
         } ?: WireValue.Null))
 
-    private fun origin(value: SyncObject): SyncPromptOrigin = when (WireObject(value).string("kind")) {
+    fun origin(value: SyncPromptOrigin): SyncObject = when (value) {
+        SyncPromptOrigin.Rescued -> syncObject("kind" to wireString("rescued"))
+        is SyncPromptOrigin.ConflictOf -> syncObject("kind" to wireString("conflict_of"), "prompt_id" to wireString(value.promptID.rawValue))
+    }
+
+    fun origin(value: SyncObject): SyncPromptOrigin = when (WireObject(value).string("kind")) {
         "conflict_of" -> SyncPromptOrigin.ConflictOf(SyncIdentifiers.ulid(WireObject(value).string("prompt_id")))
         "rescued" -> {
             if ("prompt_id" in value.fields) throw SyncError.InvalidState
