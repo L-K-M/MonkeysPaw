@@ -9,6 +9,63 @@ final class GnomeKeybindingTests: XCTestCase {
     private let itemSchema = GnomeKeybindingInstaller.itemSchema
     private let base = GnomeKeybindingInstaller.basePath
 
+    func testUnboundCatalogueKeepsStableActionIdentitiesWithoutRetainingUnusableCallbacks() throws {
+        let tools = try fakeSettings()
+        let backends: [LinuxHotkeyBackend] = [ManualHotkeyBackend(),
+            GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())]
+        for backend in backends {
+            var registrations: [HotkeyAction: HotkeyRegistration] = [:]
+            for action in HotkeyAction.allCases {
+                weak var callbackOwner: NSObject?
+                do {
+                    let owner = NSObject()
+                    callbackOwner = owner
+                    registrations[action] = backend.register(action, accelerator: nil) { _ = owner.description }
+                }
+                XCTAssertNil(callbackOwner, "Unsupported actions cannot invoke a parked callback")
+                XCTAssertEqual(backend.registration(for: action), registrations[action])
+                XCTAssertFalse(backend.fire(action))
+            }
+            XCTAssertNotEqual(registrations[.togglePicker]?.id, registrations[.repeatLast]?.id)
+            for action in HotkeyAction.allCases {
+                backend.unregister(try XCTUnwrap(registrations[action]))
+                XCTAssertEqual(backend.registration(for: action), registrations[action])
+            }
+            backend.shutdown()
+        }
+        XCTAssertTrue(tools.arguments.isEmpty)
+    }
+
+    func testUnboundRepeatAdaptersPreserveManualAndGnomeToggleCallbacksWithoutWriting() throws {
+        let tools = try fakeSettings()
+        let backends: [LinuxHotkeyBackend] = [ManualHotkeyBackend(),
+            GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())]
+        for backend in backends {
+            var fires = 0
+            let picker = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) { fires += 1 }
+            let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Repeat adapter is unbound") }
+            XCTAssertNotEqual(repeatAction.id, picker.id)
+            XCTAssertEqual(repeatAction.status, .unbound)
+            XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+            XCTAssertEqual(backend.currentRegistration, picker)
+            XCTAssertFalse(backend.fire(.repeatLast))
+            backend.unregister(repeatAction)
+            XCTAssertEqual(backend.currentRegistration, picker)
+            XCTAssertTrue(backend.fire(.togglePicker))
+            XCTAssertEqual(fires, 1)
+            let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared picker fired") }
+            XCTAssertEqual(cleared.status, .unbound)
+            XCTAssertEqual(backend.currentRegistration, cleared)
+            XCTAssertFalse(backend.fire(.togglePicker))
+            var completions = 0
+            backend.configure { completions += 1 }
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(fires, 1)
+            backend.shutdown()
+        }
+        XCTAssertTrue(tools.arguments.isEmpty)
+    }
+
     func testRegistrationIsQuietUntilExplicitSetupAction() throws {
         let tools = try fakeSettings()
         let backend = GnomeKeybindingBackend(runner: tools.runner, mainThread: GLibMainThread())

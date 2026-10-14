@@ -27,6 +27,7 @@ final class ShortcutsSettingsModelTests: XCTestCase {
         func configureCarbon(_ text: String = "Ctrl+Alt+P") throws {
             backend.mechanism = .carbon
             probe.liveHotkey = { [weak backend] in backend?.currentRegistrations[.togglePicker] }
+            probe.liveRepeatHotkey = { [weak backend] in backend?.currentRegistrations[.repeatLast] }
             shortcuts.configure([.togglePicker: try Accelerator(text)]) { [weak self] in self?.fires.append($0) }
             delivery.main.drain()
         }
@@ -281,7 +282,7 @@ final class ShortcutsSettingsModelTests: XCTestCase {
             XCTAssertEqual(h.settings?.error, error, text)
             XCTAssertEqual(h.settings?.togglePicker, original, text)
         }
-        XCTAssertEqual(h.backend.registered.count, 1)
+        XCTAssertEqual(h.backend.registered.count, 2)
         XCTAssertTrue(h.backend.unregistered.isEmpty)
     }
 
@@ -517,5 +518,111 @@ final class ShortcutsSettingsModelTests: XCTestCase {
 
         XCTAssertEqual(h.settings?.togglePicker.verification, .verified)
         XCTAssertEqual(h.setupHotkey?.status, .ok)
+    }
+
+    func testRepeatStateIntentsAndVerificationAreIndependentOfPicker() throws {
+        let h = Harness(session: .macOS, mainMode: .deferred)
+        try h.configureCarbon()
+        h.settings?.setAccelerator("Alt+R", for: .repeatLast)
+        h.delivery.main.drain()
+        XCTAssertEqual(h.settings?.repeatLast.binding, .accelerator(try Accelerator("Alt+R")))
+        XCTAssertEqual(h.settings?.repeatLast.registrationStatus, .registered)
+        XCTAssertEqual(h.settings?.repeatLast.changePath, .inApp)
+        XCTAssertNotEqual(h.settings?.repeatLast.registration?.id, h.settings?.togglePicker.registration?.id)
+
+        h.settings?.beginVerification(.repeatLast)
+        h.settings?.beginVerification()
+        h.delivery.main.drain()
+        h.backend.fire(.repeatLast)
+        h.delivery.main.drain()
+        XCTAssertEqual(h.settings?.repeatLast.verification, .verified)
+        XCTAssertEqual(h.settings?.togglePicker.verification, .waiting)
+        h.settings?.setAccelerator("Ctrl++R", for: .repeatLast)
+        h.delivery.main.drain()
+        XCTAssertNotNil(h.settings?.error(for: .repeatLast))
+        XCTAssertNil(h.settings?.error)
+        h.settings?.clear(.repeatLast)
+        h.delivery.main.drain()
+        XCTAssertNil(h.settings?.error(for: .repeatLast))
+        XCTAssertEqual(h.settings?.repeatLast.binding, .unbound)
+        XCTAssertEqual(h.settings?.repeatLast.verification, .notStarted)
+        XCTAssertEqual(h.settings?.togglePicker.verification, .waiting)
+    }
+
+    func testRepeatRefreshAndPlatformChangeUseItsOwnCatalogueEntryWithoutRegistrationOrConsent() {
+        let h = Harness(mainMode: .deferred)
+        h.probe.repeatHotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .unbound,
+            detail: SetupStrings.unboundShortcut, configuration: .systemSettings)
+        h.settings?.refresh()
+        h.delivery.main.drain()
+        XCTAssertEqual(h.settings?.repeatLast.binding, .unbound)
+        XCTAssertEqual(h.settings?.repeatLast.changePath, .systemSettings(action: .hotkey))
+        XCTAssertTrue(h.probe.queriedActions.contains(.repeatLast))
+        XCTAssertTrue(h.backend.registered.isEmpty)
+        XCTAssertTrue(h.probe.fixes.isEmpty)
+
+        h.settings?.performPlatformChange(for: .repeatLast)
+        h.delivery.main.drain()
+        XCTAssertEqual(h.probe.fixedActions, [.repeatLast])
+        XCTAssertEqual(h.probe.fixes, [.hotkey])
+        XCTAssertEqual(h.settings?.repeatLast.binding, .unbound)
+        XCTAssertEqual(h.settings?.repeatLast.verification, .notStarted)
+        XCTAssertTrue(h.backend.registered.isEmpty)
+    }
+
+    func testObsoleteProbeRegistrationCannotReplaceReboundActionInEitherModel() throws {
+        let h = Harness(session: .macOS)
+        try h.configureCarbon()
+        h.settings?.setAccelerator("Alt+R", for: .repeatLast)
+        let previous = try XCTUnwrap(h.settings?.repeatLast.registration)
+        h.settings?.setAccelerator("Alt+F8", for: .repeatLast)
+        let current = h.settings?.repeatLast
+        h.probe.liveRepeatHotkey = { previous }
+        var changes = 0
+        h.settings?.onChange = { changes += 1 }
+
+        h.settings?.refresh()
+        h.setupModel?.refresh()
+
+        XCTAssertEqual(h.settings?.repeatLast, current)
+        XCTAssertEqual(h.shortcuts.registrations[.repeatLast], current?.registration)
+        XCTAssertEqual(changes, 0)
+    }
+
+    func testRepeatKDEFixRechecksItsOwnCapabilityRatherThanThePickerRow() {
+        let h = Harness(session: .kdeWayland)
+        h.probe.kde = .ok
+        h.probe.hotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .registered,
+            detail: "Picker", alternativeConfiguration: .nativeFallback)
+        h.probe.repeatHotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .unbound,
+            detail: "Repeat", alternativeConfiguration: .nativeFallback)
+        h.setup.performFix(for: .kde, action: .repeatLast)
+        XCTAssertEqual(h.probe.fixedActions, [.repeatLast])
+        h.probe.repeatHotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .unbound,
+            detail: "Unsupported", configuration: .unavailable)
+        let queries = h.probe.queriedActions.count
+        h.setup.performFix(for: .kde, action: .repeatLast)
+        XCTAssertEqual(h.probe.queriedActions.count, queries + HotkeyAction.allCases.count)
+        XCTAssertEqual(Array(h.probe.queriedActions.suffix(2)), HotkeyAction.allCases)
+        XCTAssertEqual(h.probe.fixedActions, [.repeatLast])
+    }
+
+    func testManualRegistrationDoesNotVerifyEffectivePortalNativeOrCarbonActions() throws {
+        for mechanism in [HotkeyMechanism.globalShortcutsPortal, .kglobalaccel, .carbon] {
+            let h = Harness(mainMode: .immediate)
+            h.backend.mechanism = mechanism
+            var fires = 0
+            h.shortcuts.configure([.togglePicker: try Accelerator("Alt+P"), .repeatLast: try Accelerator("Alt+R")]) { _ in fires += 1 }
+            h.probe.repeatHotkey = HotkeyRegistration(mechanism: .manual, status: .needsAction,
+                detail: "gapplication action ch.lkmc.monkeyspaw repeat")
+            h.settings?.refresh()
+            h.settings?.beginVerification(.repeatLast)
+            h.backend.fire(.repeatLast)
+            h.delivery.main.drain()
+
+            XCTAssertEqual(fires, 1, "The event must be delivered before checking that it cannot verify \(mechanism)")
+            XCTAssertEqual(h.settings?.repeatLast.verification, .waiting, "\(mechanism)")
+            XCTAssertEqual(h.settings?.togglePicker.verification, .notStarted)
+        }
     }
 }

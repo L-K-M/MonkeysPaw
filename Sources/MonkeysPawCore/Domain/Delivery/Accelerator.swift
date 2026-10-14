@@ -101,6 +101,42 @@ public struct Accelerator: Equatable, Hashable, Sendable {
         return result + keyName
     }
 
+    /// Portable counterpart of Carbon's physical-key translation, used before
+    /// replacing a working registration. Plus and Command aliases can collide.
+    func carbonBinding() throws -> Accelerator {
+        let aliases: Set<Modifier> = [.command, .superKey, .commandOrControl]
+        guard modifiers.intersection(aliases).count <= 1 else {
+            throw ShortcutRebindError.overlappingCommandModifiers
+        }
+        switch key {
+        case .function(let number) where number > 20:
+            throw ShortcutRebindError.unsupportedCarbonKey
+        case .named(.insert), .named(.printScreen):
+            throw ShortcutRebindError.unsupportedCarbonKey
+        default: break
+        }
+
+        var normalized = modifiers.subtracting(aliases)
+        if !modifiers.isDisjoint(with: aliases) { normalized.insert(.command) }
+        if key == .named(.plus) { normalized.insert(.shift) }
+        return Accelerator(modifiers: normalized, key: key == .named(.plus) ? .named(.equal) : key)
+    }
+
+    /// Stable parser spelling for settings, independent of platform UI labels.
+    var settingsText: String {
+        let names: [(Modifier, String)] = [(.control, "Ctrl"), (.alt, "Alt"), (.shift, "Shift"),
+            (.superKey, "Super"), (.command, "Cmd"), (.commandOrControl, "CmdOrCtrl")]
+        var parts = names.filter { modifiers.contains($0.0) }.map(\.1)
+        switch key {
+        case .named(.pageUp): parts.append("PageUp")
+        case .named(.pageDown): parts.append("PageDown")
+        case .named(.quote): parts.append("Quote")
+        case .named(.printScreen): parts.append("PrintScreen")
+        default: parts.append(keyName)
+        }
+        return parts.joined(separator: "+")
+    }
+
     private var keyName: String {
         switch key {
         case .character(let character): return String(character)

@@ -6,6 +6,7 @@ import MonkeysPawCore
 /// GLib owns selection, presence ordering and callback routing. The two drivers
 /// share KDE's stored component, but only one may supply activation proof.
 final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
+    let unboundActions = UnboundHotkeyActions()
     private enum Effective { case none, native, portal }
     private enum Phase { case idle, busy, stopped }
     var mechanism: HotkeyMechanism { currentRegistration.mechanism }
@@ -59,12 +60,20 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
 
     deinit { shutdown() }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+        guard action == .togglePicker, let accelerator else {
+            if action == .togglePicker {
+                unregister(currentRegistration)
+                self.accelerator = nil
+            }
+            guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
         }
-        guard phase != .stopped else { return currentRegistration }
+        unboundActions.retire(action)
         self.onFire = onFire
         self.accelerator = accelerator
         let lease = UUID()
@@ -74,6 +83,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             self.tokenRevision = self.activationRevision
             self.onFire?()
         }
+        guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         operation += 1
         let operation = operation
         phase = .busy
@@ -356,23 +366,31 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     func fire(_ action: HotkeyAction) -> Bool { false }
 
     func unregister(_ registration: HotkeyRegistration) {
+        guard phase != .stopped else { return }
+        if unboundActions.unregister(registration) { return }
         guard registration.id == currentRegistration.id else { return }
         onFire = nil
+        accelerator = nil
         operation += 1
         select(.none)
-        native.unregister(native.currentRegistration)
-        portal.quiesce { _ in }
         phase = .idle
+        native.unregister(native.currentRegistration)
+        guard phase != .stopped else { return }
+        portal.quiesce { _ in }
         finish()
     }
 
     func shutdown() {
         guard phase != .stopped else { return }
-        unregister(currentRegistration)
         phase = .stopped
+        onFire = nil
+        accelerator = nil
+        operation += 1
+        select(.none)
+        onChange = nil
         native.shutdown()
         portal.shutdown()
-        onChange = nil
+        finish()
     }
 }
 #endif

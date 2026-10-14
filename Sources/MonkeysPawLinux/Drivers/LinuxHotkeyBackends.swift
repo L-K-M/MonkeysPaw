@@ -6,6 +6,8 @@ import MonkeysPawCore
 /// M1c/M1d can replace this selection without changing ShortcutService.
 protocol LinuxHotkeyBackend: AnyObject, HotkeyBackend {
     var currentRegistration: HotkeyRegistration { get }
+    var unboundActions: UnboundHotkeyActions { get }
+    func registration(for action: HotkeyAction) -> HotkeyRegistration
     var onChange: (() -> Void)? { get set }
     @discardableResult func fire(_ action: HotkeyAction) -> Bool
     func configure(done: @escaping () -> Void)
@@ -15,24 +17,55 @@ protocol LinuxHotkeyBackend: AnyObject, HotkeyBackend {
 }
 
 extension LinuxHotkeyBackend {
+    func registration(for action: HotkeyAction) -> HotkeyRegistration {
+        action == .togglePicker ? currentRegistration : unboundActions.registration(for: action, mechanism: mechanism)
+    }
     func configure(done: @escaping () -> Void) { done() }
     func configureNative(done: @escaping () -> Void) { configure(done: done) }
     func consumeActivationToken() -> String? { nil }
     func shutdown() { unregister(currentRegistration) }
 }
 
+/// Catalogue entries for actions these adapters cannot bind yet (D9–D11).
+/// Keep stable identities; unsupported adapters cannot consume callbacks.
+final class UnboundHotkeyActions {
+    private var registrations: [HotkeyAction: HotkeyRegistration] = [:]
+
+    func registration(for action: HotkeyAction, mechanism: HotkeyMechanism) -> HotkeyRegistration {
+        let registration = HotkeyRegistration(id: registrations[action]?.id ?? UUID(),
+            mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut, configuration: .unavailable)
+        registrations[action] = registration
+        return registration
+    }
+
+    func unregister(_ registration: HotkeyRegistration) -> Bool {
+        registrations.values.contains { $0.id == registration.id }
+    }
+
+    /// A live registration may keep its initial id. Relinquish catalogue
+    /// ownership so unregister reaches the live driver's teardown.
+    func retire(_ action: HotkeyAction) {
+        registrations.removeValue(forKey: action)
+    }
+}
+
 final class ManualHotkeyBackend: LinuxHotkeyBackend {
     let mechanism = HotkeyMechanism.manual
+    let unboundActions = UnboundHotkeyActions()
     var onChange: (() -> Void)?
     private var onFire: (() -> Void)?
     private(set) var currentRegistration = HotkeyRegistration(
         mechanism: .manual, status: .needsAction, detail: GnomeKeybindingInstaller.command)
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        guard action == .togglePicker, accelerator != nil else {
+            if action == .togglePicker { unregister(currentRegistration) }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
         }
+        unboundActions.retire(action)
         self.onFire = onFire
         currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
                                                 detail: GnomeKeybindingInstaller.command)
@@ -40,6 +73,7 @@ final class ManualHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func unregister(_ registration: HotkeyRegistration) {
+        if unboundActions.unregister(registration) { return }
         guard currentRegistration.id == registration.id else { return }
         onFire = nil
     }
@@ -53,6 +87,7 @@ final class ManualHotkeyBackend: LinuxHotkeyBackend {
 
 final class GnomeKeybindingBackend: LinuxHotkeyBackend {
     let mechanism = HotkeyMechanism.gnomeCustomKeybinding
+    let unboundActions = UnboundHotkeyActions()
     var onChange: (() -> Void)?
     private let installer: GnomeKeybindingInstaller
     private let mainThread: MainThread
@@ -68,11 +103,15 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
         self.mainThread = mainThread
     }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        guard action == .togglePicker, let accelerator else {
+            if action == .togglePicker { unregister(currentRegistration) }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
         }
+        unboundActions.retire(action)
         self.onFire = onFire
         self.accelerator = accelerator
         currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
@@ -100,10 +139,12 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
     }
 
     func unregister(_ registration: HotkeyRegistration) {
+        if unboundActions.unregister(registration) { return }
         guard currentRegistration.id == registration.id else { return }
-        // The compositor-owned row survives app exit. Remove only our callback;
-        // the binding can still cold-start the app through its D-Bus service.
+        // The compositor-owned row survives app exit. Clear our callback and
+        // requested key; the stored binding can still cold-start the app.
         onFire = nil
+        accelerator = nil
     }
 
     func fire(_ action: HotkeyAction) -> Bool {

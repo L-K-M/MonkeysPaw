@@ -6,6 +6,8 @@ import MonkeysPawCore
 /// One native resident action, owned by the default GLib loop. The KDE daemon
 /// owns persistent key choices; this driver owns presence and release callbacks.
 final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
+    let unboundActions = UnboundHotkeyActions()
+    private(set) var activationRevision: UUID? = UUID()
     private enum State { case idle, loading, ready, failed, stopped }
     private enum Operation { case registration, refresh, inspection, suspension }
     enum Inspection { case quiet, setup }
@@ -78,7 +80,9 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     private var componentPath: String?
     private var work: Work?
     private var state = State.idle
-    private var generation = 0
+    private var generation = 0 {
+        didSet { activationRevision = UUID() }
+    }
     private var keysRevision = 0
     private var assigned = KGlobalAccelKeys(sequences: [])
     private var suggestion = KGlobalAccelKeys(sequences: [])
@@ -90,6 +94,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
     /// Read all contexts/actions and full keys, without registering an action.
     /// A concurrent native refresh finishes first, still within its own bound.
     func inspect(_ mode: Inspection = .quiet, done: @escaping (Snapshot?) -> Void) {
+        guard state != .stopped else { done(nil); return }
         if let work {
             work.completions.append { [weak self] in
                 guard let self else { done(nil); return }
@@ -109,6 +114,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         removeSubscriptions()
         state = .idle
         finish()
+        guard state != .stopped else { done(false); return }
         suspensionAcknowledged = false
         guard let registeredOwner = registeredOwner ?? inactiveOwner else { done(true); return }
         let work = Work(budget: budget, operation: .suspension, done: { [weak self] in
@@ -135,16 +141,29 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     deinit { shutdown() }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         precondition(Thread.isMainThread)
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
-        }
         guard state != .stopped else {
             return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
         }
+        guard action == .togglePicker, let accelerator else {
+            if action == .togglePicker {
+                unregister(currentRegistration)
+                guard state != .stopped else {
+                    return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
+                }
+                suggestion = KGlobalAccelKeys(sequences: [])
+            }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
+        }
+        unboundActions.retire(action)
         if self.onFire != nil { unregister(currentRegistration) }
+        guard state != .stopped else {
+            return HotkeyRegistration(mechanism: mechanism, status: .failed, detail: LinuxStrings.kdeUnavailable)
+        }
         self.onFire = onFire
         suggestion = KGlobalAccelWire.translate(accelerator)
         currentRegistration = HotkeyRegistration(mechanism: mechanism, status: .needsAction,
@@ -165,12 +184,15 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     func unregister(_ registration: HotkeyRegistration) {
         precondition(Thread.isMainThread)
+        guard state != .stopped else { return }
+        if unboundActions.unregister(registration) { return }
         guard currentRegistration.id == registration.id else { return }
         onFire = nil
+        suggestion = KGlobalAccelKeys(sequences: [])
         generation += 1
         deactivate()
         removeSubscriptions()
-        state = state == .stopped ? .stopped : .idle
+        state = .idle
         finish()
     }
 
@@ -179,6 +201,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
         guard state != .stopped else { return }
         state = .stopped
         onFire = nil
+        suggestion = KGlobalAccelKeys(sequences: [])
         generation += 1
         deactivate()
         removeSubscriptions()

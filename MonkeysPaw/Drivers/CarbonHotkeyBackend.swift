@@ -46,9 +46,14 @@ final class CarbonHotkeyBackend: HotkeyBackend {
         liveRegistrations[action] ?? unboundRegistration(for: action)
     }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         if let previous = liveRegistrations[action] { unregister(previous) }
+        guard let accelerator else {
+            let registration = unboundRegistration(for: action)
+            liveRegistrations[action] = registration
+            return registration
+        }
 
         let combination: Combination
         do {

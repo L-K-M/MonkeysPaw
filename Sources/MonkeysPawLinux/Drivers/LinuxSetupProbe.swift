@@ -33,7 +33,7 @@ final class LinuxSetupProbe: SetupProbe {
         return .ok
     }
 
-    func hotkeyRegistration() -> HotkeyRegistration { hotkey.currentRegistration }
+    func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration { hotkey.registration(for: action) }
 
     func kdeStatus() -> SetupStatus {
         var host = session.currentSession()
@@ -43,8 +43,10 @@ final class LinuxSetupProbe: SetupProbe {
         return .needsAction(fix: SetupStrings.kdeShortcut)
     }
 
-    func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) {
+    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) {
         mainThread.run {
+            // D9–D11 supply action-aware native configuration, after this adapter.
+            guard action == .togglePicker || (kind != .hotkey && kind != .kde) else { done(); return }
             switch kind {
             case .ydotool:
                 self.showInstructions(LinuxStrings.ydotoolFix)

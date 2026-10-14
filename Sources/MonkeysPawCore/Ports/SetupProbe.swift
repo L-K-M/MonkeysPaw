@@ -3,11 +3,18 @@ public protocol SetupProbe {
     func accessibilityStatus() -> SetupStatus
     func portalStatus() -> SetupStatus
     func ydotoolStatus() -> SetupStatus
-    func hotkeyRegistration() -> HotkeyRegistration
+    func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration
     func kdeStatus() -> SetupStatus
 
     /// Launch a nonblocking driver action: prompt, open settings, or show
     /// instructions (§6.4). Call done exactly once on any thread after the
     /// action is launched or finished. The driver must bound its own waits.
-    func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void)
+    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void)
+}
+
+public extension SetupProbe {
+    func hotkeyRegistration() -> HotkeyRegistration { hotkeyRegistration(for: .togglePicker) }
+    func performFix(for kind: SetupRow.Kind, done: @escaping () -> Void) {
+        performFix(for: kind, action: .togglePicker, done: done)
+    }
 }

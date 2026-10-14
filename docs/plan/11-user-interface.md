@@ -13,14 +13,18 @@
 
 M2 Settings contains **General · Shortcuts**; the other tabs follow their
 milestones. Shortcuts renders the shared `ShortcutsSettingsModel`: the current
-toggle-picker binding (or unknown/unbound), registration mechanism and status,
+picker and repeat bindings (or unknown/unbound), registration mechanisms and statuses,
 backend conflict/failure detail, and a **Press your shortcut now** verification
 intent. macOS Carbon offers in-app rebinding. Linux offers the applicable
 system settings action, explicit Setup action, or desktop/manual instructions
 described in §6.1. Opening settings or completing a change request never turns
-verification green. Repeat last prompt is displayed unbound, inactive and
-unavailable for configuration until M7. Core supplies this contract
-independently of the later native windows.
+verification green. M7 makes registration, verification, change and clear intents
+action-aware. Repeat starts unbound, with no suggested key. Carbon choices survive
+restart; capture or clear affects only the selected action. A failed registration
+or save restores its previous binding and reports failure, including unsuccessful
+recovery. Unsupported native adapters keep repeat honestly unbound until D9–D11;
+D12/D13 provide the native controls and activation. Core supplies this contract
+independently of the native windows.
 
 Settings → General shows your active library folder, whether it is the default,
 and any read-only settings or library-switch error. You can choose another
@@ -47,7 +51,8 @@ each desktop's current settings location, without a version bump:
 
 ```json
 "delivery": {"linuxDefaultPasteChord": "standard", "clipboardRestore": "off"},
-"automaticUpdateChecks": "enabled"
+"automaticUpdateChecks": "enabled",
+"carbonShortcuts": {"togglePicker": "Ctrl+Alt+P", "repeatLast": null}
 ```
 
 `linuxDefaultPasteChord` accepts `standard`/`terminal`; `clipboardRestore`
@@ -61,7 +66,18 @@ and unknown JSON keys, including keys inside `delivery`. Failed saves
 publish the prior committed preference and a typed error. A read-only
 snapshot never permits automatic update checks, even when its fallback
 document contains the enabled default. No update requests or restore
-behavior are activated by the Core preference/model slice.
+behavior are activated by the Core preference/model slice. `carbonShortcuts`
+contains parsed Carbon-compatible accelerator strings or explicit null for an
+unbound action. Missing actions use picker/unbound defaults. Present invalid
+types, malformed accelerator strings, unsupported Carbon translations and
+in-app collisions make settings read-only. In that read-only snapshot, the
+entire `carbonShortcuts` family uses Carbon defaults while valid library,
+first-run and other preferences still load. Both recovery and the write
+restriction apply together; no write may overwrite invalid or future choices.
+Restore a valid settings file and restart to recover editing, including when
+the stored choices collide. In-app rebinding handles valid, writable settings.
+Unknown nested members survive edits, and every settings setter preserves both
+choices. Registration and save failures never publish a requested key as saved.
 
 Settings → Assistant renders `AssistantSettingsModel`: saved profiles and
 the active profile, a staged name/kind/base URL/model draft, key edit mode,

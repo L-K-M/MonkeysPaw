@@ -88,6 +88,103 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(fires, 2)
     }
 
+    func testStoppedBackendRejectsBoundAndUnboundDeclarationsWithoutRetainingCallbacks() throws {
+        start()
+        ready()
+        backend.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
+        let stopped = backend.currentRegistration
+        let revision = backend.activationRevision
+        let calls = service.calls.count
+        backend.unregister(stopped)
+        for action in HotkeyAction.allCases {
+            for accelerator in [nil, try Accelerator("Alt+R")] as [Accelerator?] {
+                weak var callbackOwner: NSObject?
+                do {
+                    let owner = NSObject()
+                    callbackOwner = owner
+                    let rejected = backend.register(action, accelerator: accelerator) { _ = owner.description }
+                    XCTAssertEqual(rejected.status, .failed)
+                }
+                XCTAssertNil(callbackOwner)
+            }
+        }
+        var completions = 0
+        backend.configure { completions += 1 }
+        backend.inspect { XCTAssertNil($0); completions += 1 }
+        backend.suspend { XCTAssertFalse($0); completions += 1 }
+        backend.shutdown()
+
+        XCTAssertEqual(completions, 3)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(service.calls.count, calls)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testClearRetiresNativePresenceAndCannotReconfigureAnOldSuggestion() throws {
+        start()
+        ready()
+        let revision = backend.activationRevision
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared binding fired") }
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertNotEqual(backend.activationRevision, revision)
+        XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
+        let calls = service.calls.count
+        var completions = 0
+        backend.configure { completions += 1 }
+        service.emit()
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(service.calls.count, calls)
+        XCTAssertEqual(backend.currentRegistration, cleared)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testShutdownFromPendingCompletionPreventsReplacementFromRestartingNativeBackend() throws {
+        for accelerator in [nil, try Accelerator("Alt+R")] as [Accelerator?] {
+            start()
+            let stopping = try XCTUnwrap(backend)
+            var completions = 0
+            stopping.configure { stopping.shutdown(); completions += 1 }
+            weak var callbackOwner: NSObject?
+            do {
+                let owner = NSObject()
+                callbackOwner = owner
+                let rejected = stopping.register(.togglePicker, accelerator: accelerator) { _ = owner.description }
+                XCTAssertEqual(rejected.status, .failed)
+            }
+
+            XCTAssertEqual(completions, 1)
+            XCTAssertNil(callbackOwner)
+            stopping.inspect { XCTAssertNil($0); completions += 1 }
+            XCTAssertEqual(completions, 2)
+            stopping.shutdown()
+        }
+    }
+
+    func testFirstBindingRotatesRevisionAndRepeatedClearStartsNoNativeWork() throws {
+        backend = KGlobalAccelHotkeyBackend(busAddress: address)
+        let revision = backend.activationRevision
+        let picker = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {
+            XCTFail("Retired picker fired")
+        }
+        XCTAssertNotEqual(backend.activationRevision, revision)
+        ready()
+        backend.unregister(picker)
+        XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
+        let methods = service.calls.map(\.method)
+
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        var completions = 0
+        backend.configure { completions += 1 }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertEqual(backend.currentRegistration, cleared)
+        XCTAssertEqual(service.calls.map(\.method), methods)
+    }
+
     func testAuthoritativeV2ShapesAndOneOwnedActionLifetime() throws {
         start()
         ready()
@@ -116,6 +213,10 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         XCTAssertEqual(backend.currentRegistration.configuration, .systemSettings)
         let repeatRegistration = backend.register(.repeatLast, accelerator: try Accelerator("Alt+R")) { XCTFail("Repeat must stay unbound") }
         XCTAssertEqual(repeatRegistration.status, .unbound)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatRegistration)
+        XCTAssertEqual(backend.register(.repeatLast, accelerator: nil) { XCTFail("Unbound repeat") }, repeatRegistration)
+        XCTAssertNotEqual(repeatRegistration.id, id)
+        XCTAssertEqual(service.calls.count, calls.count)
         backend.unregister(repeatRegistration)
         XCTAssertTrue(service.present)
         service.emit()
@@ -279,8 +380,12 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         start()
         ready()
         let id = backend.currentRegistration.id
+        let port: HotkeyBackend = backend
+        let previousRevision = port.activationRevision
+        XCTAssertNotNil(previousRevision)
         service.dropName()
         ready(.failed)
+        XCTAssertNotEqual(port.activationRevision, previousRevision)
         service.emit()
         let replacement = try FakeKGlobalAccel(address: address)
         defer { replacement.shutdown() }

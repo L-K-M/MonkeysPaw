@@ -1,25 +1,15 @@
 import Foundation
 
-public enum ShortcutRebindError: Error, Equatable {
-    case unavailable
-    case invalidAccelerator(AcceleratorError)
-    case unsupportedCarbonKey
-    case overlappingCommandModifiers
-}
-
 /// Registration is reported immediately; verification requires a real activation.
 public final class ShortcutService {
     /// Registration results, updated with live facts by SetupService refreshes.
     /// Read only on the injected MainThread.
     public private(set) var registrations: [HotkeyAction: HotkeyRegistration] = [:]
 
-    private enum ToggleState {
-        case ready, debouncing
-    }
-
     private let backend: HotkeyBackend
     private let scheduler: Scheduler
     private let mainThread: MainThread
+    private let settings: SettingsService?
     private var observers: [UUID: () -> Void] = [:]
     private var accelerators: [HotkeyAction: Accelerator] = [:]
     private var onFire: ((HotkeyAction) -> Void)?
@@ -34,13 +24,20 @@ public final class ShortcutService {
     private var activation: Activation {
         Activation(mechanism: backend.mechanism, revision: backend.activationRevision)
     }
-    private var revision = 0
-    private var toggleState = ToggleState.ready
+    private var revisions: [HotkeyAction: UUID] = [:]
+    private var retiredIDs = Set<UUID>()
+    private var debouncing = Set<HotkeyAction>()
+    private var replacing = Set<HotkeyAction>()
+    private var pendingConfiguration: (accelerators: [HotkeyAction: Accelerator]?,
+        done: (Result<Void, ShortcutRebindError>) -> Void, onFire: (HotkeyAction) -> Void)?
 
-    public init(backend: HotkeyBackend, scheduler: Scheduler, mainThread: MainThread) {
+    /// Inject settings for saved Carbon startup choices and confirmed edits.
+    public init(backend: HotkeyBackend, scheduler: Scheduler, mainThread: MainThread,
+                settings: SettingsService? = nil) {
         self.backend = backend
         self.scheduler = scheduler
         self.mainThread = mainThread
+        self.settings = settings
     }
 
     /// Add/remove are marshalled through MainThread, as are notifications.
@@ -57,76 +54,173 @@ public final class ShortcutService {
         mainThread.run { self.observers.removeValue(forKey: token) }
     }
 
+    /// A supplied catalogue is exact, including absent/unbound actions. Omit it
+    /// to load injected Carbon choices at startup. Read-only startup may use
+    /// recovered defaults, reporting the settings error without saving them;
+    /// subsequent configuration preserves those registrations on error.
+    /// Reentrant requests coalesce to the latest catalogue and handler. A
+    /// superseded request completes with unavailable; the latest runs after
+    /// all replacements and their callbacks finish.
     public func configure(
-        _ accelerators: [HotkeyAction: Accelerator], onFire: @escaping (HotkeyAction) -> Void
+        _ accelerators: [HotkeyAction: Accelerator]? = nil,
+        done: @escaping (Result<Void, ShortcutRebindError>) -> Void = { _ in },
+        onFire: @escaping (HotkeyAction) -> Void
     ) {
         mainThread.run { [self] in
-            self.apply(accelerators, onFire: onFire)
+            guard self.replacing.isEmpty else {
+                let superseded = self.pendingConfiguration
+                self.pendingConfiguration = (accelerators, done, onFire)
+                superseded?.done(.failure(.unavailable))
+                return
+            }
+            let snapshot = self.backend.mechanism == .carbon ? self.settings?.snapshot : nil
+            if let error = snapshot?.readOnlyError,
+               accelerators != nil || !self.ownedRegistrations.isEmpty {
+                done(.failure(.saveFailed(error)))
+                return
+            }
+            let catalogue: [HotkeyAction: Accelerator]
+            if let accelerators { catalogue = accelerators }
+            else if let snapshot {
+                catalogue = Dictionary(uniqueKeysWithValues: HotkeyAction.allCases.compactMap { action in
+                    snapshot.document.carbonShortcuts.accelerator(for: action).map { (action, $0) }
+                })
+            } else {
+                done(.failure(.unavailable))
+                return
+            }
+            if self.backend.mechanism == .carbon {
+                do {
+                    _ = try CarbonShortcutChoices(togglePicker: catalogue[.togglePicker], repeatLast: catalogue[.repeatLast])
+                } catch {
+                    done(.failure(error as? ShortcutRebindError ?? .unavailable))
+                    return
+                }
+            }
+
+            self.onFire = onFire
+            var failure = snapshot?.readOnlyError.map { ShortcutRebindError.saveFailed($0) }
+            for action in HotkeyAction.allCases {
+                let accelerator = catalogue[action]
+                let registration = self.install(action, accelerator: accelerator)
+                if self.backend.mechanism == .carbon, failure == nil,
+                   !Self.confirmed(registration, accelerator: accelerator) { failure = .registrationFailed }
+            }
+            self.notifyObservers()
+            if let failure { done(.failure(failure)) }
+            else { done(.success(())) }
         }
     }
 
-    /// Carbon is app-owned. Validate before tearing down the working binding.
-    /// A successful request still exposes the backend's registration status;
-    /// it does not verify activation or promise that native registration worked.
+    /// Compatibility intent for existing picker callers.
     public func setPickerAccelerator(
         _ text: String, done: @escaping (Result<HotkeyRegistration, ShortcutRebindError>) -> Void
     ) {
+        setAccelerator(text, for: .togglePicker, done: done)
+    }
+
+    public func setAccelerator(
+        _ text: String, for action: HotkeyAction,
+        done: @escaping (Result<HotkeyRegistration, ShortcutRebindError>) -> Void
+    ) {
+        let accelerator: Accelerator
+        do { accelerator = try Accelerator(text) }
+        catch let error as AcceleratorError {
+            mainThread.run { done(.failure(.invalidAccelerator(error))) }
+            return
+        } catch {
+            mainThread.run { done(.failure(.invalidAccelerator(.malformed))) }
+            return
+        }
+        replace(action, accelerator: accelerator, done: done)
+    }
+
+    public func clear(
+        _ action: HotkeyAction, done: @escaping (Result<HotkeyRegistration, ShortcutRebindError>) -> Void
+    ) {
+        replace(action, accelerator: nil, done: done)
+    }
+
+    private func replace(
+        _ action: HotkeyAction, accelerator: Accelerator?,
+        done: @escaping (Result<HotkeyRegistration, ShortcutRebindError>) -> Void
+    ) {
         mainThread.run {
-            guard self.backend.mechanism == .carbon, let onFire = self.onFire else {
+            guard self.backend.mechanism == .carbon, self.onFire != nil,
+                  self.replacing.insert(action).inserted else {
                 done(.failure(.unavailable))
                 return
             }
+            defer {
+                self.replacing.remove(action)
+                if self.replacing.isEmpty, let pending = self.pendingConfiguration {
+                    self.pendingConfiguration = nil
+                    self.configure(pending.accelerators, done: pending.done, onFire: pending.onFire)
+                }
+            }
 
-            let accelerator: Accelerator
-            do { accelerator = try Accelerator(text) }
-            catch let error as AcceleratorError {
-                done(.failure(.invalidAccelerator(error)))
+            if let error = self.settings?.snapshot.readOnlyError {
+                done(.failure(.saveFailed(error)))
                 return
+            }
+            do {
+                if let binding = try accelerator?.carbonBinding() {
+                    for other in HotkeyAction.allCases where other != action {
+                        if binding == (try self.accelerators[other]?.carbonBinding()) {
+                            throw ShortcutRebindError.collision(other)
+                        }
+                    }
+                }
             } catch {
-                done(.failure(.invalidAccelerator(.malformed)))
+                done(.failure(error as? ShortcutRebindError ?? .unavailable))
                 return
             }
 
-            // Mirrors CarbonHotkeyBackend.translate's portable rejection rules.
-            let commandAliases: Set<Accelerator.Modifier> = [.command, .superKey, .commandOrControl]
-            guard accelerator.modifiers.intersection(commandAliases).count <= 1 else {
-                done(.failure(.overlappingCommandModifiers))
-                return
-            }
-            switch accelerator.key {
-            case .function(let number) where number > 20:
-                done(.failure(.unsupportedCarbonKey))
-                return
-            case .named(.insert), .named(.printScreen):
-                done(.failure(.unsupportedCarbonKey))
-                return
-            default: break
+            let previous = self.accelerators[action]
+            let registration = self.install(action, accelerator: accelerator)
+            var failure: ShortcutRebindError?
+            if !Self.confirmed(registration, accelerator: accelerator) {
+                failure = .registrationFailed
+            } else {
+                do { try self.settings?.setCarbonShortcut(action, accelerator: accelerator) }
+                catch let error as SettingsError { failure = .saveFailed(error) }
+                catch let error as ShortcutRebindError { failure = error }
+                catch { failure = .saveFailed(.writeFailed(.ioFailure)) }
             }
 
-            var accelerators = self.accelerators
-            accelerators[.togglePicker] = accelerator
-            self.apply(accelerators, onFire: onFire)
-            // apply registers every configured action; keep the completion total.
-            guard let registration = self.registrations[.togglePicker] else {
-                done(.failure(.unavailable))
+            if let failure {
+                let restored = self.install(action, accelerator: previous)
+                self.notifyObservers()
+                done(.failure(Self.confirmed(restored, accelerator: previous) ? failure : .recoveryFailed))
                 return
             }
+
+            self.notifyObservers()
             done(.success(registration))
         }
     }
 
+    private static func confirmed(_ registration: HotkeyRegistration, accelerator: Accelerator?) -> Bool {
+        registration.mechanism == .carbon && registration.status == (accelerator == nil ? .unbound : .registered)
+    }
+
     /// Setup owns the live probe. Updating here fans out without re-registering.
     /// Called only on MainThread, inside Setup's snapshot read.
-    func refreshRegistration(_ registration: HotkeyRegistration) {
-        let previous = registrations[.togglePicker]
-        guard previous != registration else { return }
-        registrations[.togglePicker] = registration
-        if previous?.id != registration.id || previous?.mechanism != registration.mechanism
-            || previous?.status != registration.status || previous?.detail != registration.detail {
-            verification.removeValue(forKey: .togglePicker)
-            verifiedSelection.removeValue(forKey: .togglePicker)
+    func refreshRegistrations(_ incoming: [HotkeyAction: HotkeyRegistration]) {
+        var changed = false
+        for (action, registration) in incoming {
+            guard !replacing.contains(action), !retiredIDs.contains(registration.id) else { continue }
+            let previous = registrations[action]
+            guard previous != registration else { continue }
+            registrations[action] = registration
+            if previous?.id != registration.id || previous?.mechanism != registration.mechanism
+                || previous?.status != registration.status || previous?.detail != registration.detail {
+                verification.removeValue(forKey: action)
+                verifiedSelection.removeValue(forKey: action)
+            }
+            changed = true
         }
-        notifyObservers()
+        if changed { notifyObservers() }
     }
 
     /// A requested Carbon key becomes a known binding only after native success,
@@ -138,7 +232,9 @@ public final class ShortcutService {
 
     /// Read only on the injected MainThread.
     public func verification(for action: HotkeyAction) -> ShortcutVerification {
-        guard verifiedSelection[action] == activation else { return .notStarted }
+        guard verifiedSelection[action] == activation,
+              let registration = registrations[action],
+              registration.status != .unbound, registration.status != .failed else { return .notStarted }
         return verification[action] ?? .notStarted
     }
 
@@ -152,69 +248,59 @@ public final class ShortcutService {
         }
     }
 
-    private func apply(_ accelerators: [HotkeyAction: Accelerator], onFire: @escaping (HotkeyAction) -> Void) {
-        // Ignore late activations from registrations that were replaced.
-        revision += 1
-        let revision = revision
-        for registration in ownedRegistrations.values where registration.status != .unbound {
+    @discardableResult
+    private func install(_ action: HotkeyAction, accelerator: Accelerator?) -> HotkeyRegistration {
+        let revision = UUID()
+        revisions[action] = revision
+        if let registration = ownedRegistrations.removeValue(forKey: action) {
+            retiredIDs.insert(registration.id)
+            confirmedCarbonBindings.removeValue(forKey: registration.id)
             backend.unregister(registration)
         }
-        registrations.removeAll()
-        ownedRegistrations.removeAll()
-        verification.removeAll()
-        verifiedSelection.removeAll()
-        confirmedCarbonBindings.removeAll()
-        toggleState = .ready
-        self.accelerators = accelerators
-        self.onFire = onFire
+        verification.removeValue(forKey: action)
+        verifiedSelection.removeValue(forKey: action)
+        debouncing.remove(action)
+        accelerators[action] = accelerator
 
-        for action in HotkeyAction.allCases {
-            guard let accelerator = accelerators[action] else {
-                registrations[action] = HotkeyRegistration(
-                    mechanism: backend.mechanism, status: .unbound, detail: SetupStrings.unboundShortcut
-                )
-                continue
-            }
-            let registration = backend.register(action, accelerator: accelerator) { [weak self] in
-                guard let self else { return }
-                let activation = self.activation
-                self.mainThread.run {
-                    self.fired(action, revision: revision, activation: activation, onFire: onFire)
-                }
-            }
-            registrations[action] = registration
-            ownedRegistrations[action] = registration
-            if registration.mechanism == .carbon, registration.status == .registered {
-                confirmedCarbonBindings[registration.id] = accelerator
+        let registration = backend.register(action, accelerator: accelerator) { [weak self] in
+            guard let self else { return }
+            let activation = self.activation
+            self.mainThread.run {
+                self.fired(action, revision: revision, activation: activation)
             }
         }
-        notifyObservers()
+        // An unbound declaration may reuse its driver's stable identity.
+        retiredIDs.remove(registration.id)
+        registrations[action] = registration
+        ownedRegistrations[action] = registration
+        if registration.mechanism == .carbon, registration.status == .registered {
+            confirmedCarbonBindings[registration.id] = accelerator
+        }
+        return registration
     }
 
     private func notifyObservers() {
         for observer in Array(observers.values) { observer() }
     }
 
-    private func fired(_ action: HotkeyAction, revision: Int, activation: Activation,
-                       onFire: (HotkeyAction) -> Void) {
-        guard revision == self.revision, activation == self.activation else { return }
+    private func fired(_ action: HotkeyAction, revision: UUID, activation: Activation) {
+        guard revision == revisions[action], activation == self.activation,
+              let registration = registrations[action],
+              registration.status != .unbound, registration.status != .failed else { return }
 
-        if verification(for: action) == .waiting {
+        if registration.mechanism == activation.mechanism, verification(for: action) == .waiting {
             verification[action] = .verified
             notifyObservers()
         }
 
-        if action == .togglePicker {
-            guard toggleState == .ready else { return }
-            toggleState = .debouncing
-            scheduler.after(Limits.toggleDebounce) { [weak self] in
-                guard let self else { return }
-                self.mainThread.run {
-                    guard revision == self.revision else { return }
-                    self.toggleState = .ready
-                }
+        guard debouncing.insert(action).inserted else { return }
+        scheduler.after(Limits.toggleDebounce) { [weak self] in
+            guard let self else { return }
+            self.mainThread.run {
+                guard revision == self.revisions[action] else { return }
+                self.debouncing.remove(action)
             }
         }
-        onFire(action)
+        onFire?(action)
     }
 }

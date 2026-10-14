@@ -251,10 +251,15 @@ final class SettingsModelTests: XCTestCase {
         model.completeTour()
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with:
             files.read(at: "settings.json")) as? [String: Any])
-        XCTAssertEqual(Set(object.keys), ["version", "libraryFolderPath", "firstRun", "delivery", "automaticUpdateChecks"])
+        XCTAssertEqual(Set(object.keys),
+            ["version", "libraryFolderPath", "firstRun", "delivery", "automaticUpdateChecks", "carbonShortcuts"])
         XCTAssertEqual(object["delivery"] as? [String: String],
             ["linuxDefaultPasteChord": "standard", "clipboardRestore": "off"])
         XCTAssertEqual(object["automaticUpdateChecks"] as? String, "enabled")
+        let shortcuts = try XCTUnwrap(object["carbonShortcuts"] as? [String: Any])
+        XCTAssertEqual(Set(shortcuts.keys), ["togglePicker", "repeatLast"])
+        XCTAssertEqual(shortcuts["togglePicker"] as? String, "Ctrl+Alt+p")
+        XCTAssertTrue(shortcuts["repeatLast"] is NSNull)
         let progress = try XCTUnwrap(object["firstRun"] as? [String: Bool])
         XCTAssertEqual(Set(progress.keys), ["setupPresented", "libraryFolderCompleted", "seedsOffered", "tourCompleted"])
         XCTAssertTrue(progress.values.allSatisfy { $0 })

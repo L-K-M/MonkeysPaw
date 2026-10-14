@@ -37,12 +37,12 @@ public final class SetupModel {
         setup.refresh { _ in }
     }
 
-    public func beginHotkeyVerification() {
-        setup.beginHotkeyVerification()
+    public func beginHotkeyVerification(_ action: HotkeyAction = .togglePicker) {
+        setup.beginHotkeyVerification(action)
     }
 
-    public func fix(_ kind: SetupRow.Kind) {
-        setup.performFix(for: kind)
+    public func fix(_ kind: SetupRow.Kind, action: HotkeyAction = .togglePicker) {
+        setup.performFix(for: kind, action: action)
     }
 
     public func runSelfTest() {

@@ -4,6 +4,33 @@ import XCTest
 @testable import MonkeysPaw
 
 final class CarbonHotkeyBackendTests: XCTestCase {
+    func testUnboundDeclarationsDoNotRetainUnusableCallbacks() {
+        let backend = CarbonHotkeyBackend()
+        for action in HotkeyAction.allCases {
+            weak var callbackOwner: NSObject?
+            do {
+                let owner = NSObject()
+                callbackOwner = owner
+                let registration = backend.register(action, accelerator: nil) { _ = owner.description }
+                XCTAssertEqual(registration.status, .unbound)
+                XCTAssertEqual(backend.registration(for: action), registration)
+            }
+            XCTAssertNil(callbackOwner)
+        }
+    }
+
+    func testOptionalDeclarationsKeepDistinctStableUnboundActions() {
+        let backend = CarbonHotkeyBackend()
+        let picker = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker") }
+        let repeatLast = backend.register(.repeatLast, accelerator: nil) { XCTFail("Unbound repeat") }
+        XCTAssertEqual(picker.status, .unbound)
+        XCTAssertEqual(repeatLast.status, .unbound)
+        XCTAssertNotEqual(picker.id, repeatLast.id)
+        backend.unregister(repeatLast)
+        XCTAssertEqual(backend.registration(for: .togglePicker), picker)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatLast)
+    }
+
     func testUnboundRegistrationsKeepTheirIdentityPerAction() throws {
         let backend = CarbonHotkeyBackend()
         let toggle = backend.registration(for: .togglePicker)

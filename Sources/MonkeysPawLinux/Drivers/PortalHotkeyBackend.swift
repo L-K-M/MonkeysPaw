@@ -5,13 +5,15 @@ import MonkeysPawCore
 
 /// GNOME capability selection and both portal registration phases share one id.
 final class PortalHotkeyBackend: LinuxHotkeyBackend {
-    private enum Selection { case probing, portal(UInt32), fallback, stopped }
+    let unboundActions = UnboundHotkeyActions()
+    private enum Selection: Equatable { case probing, portal(UInt32), fallback, stopped }
     private enum Teardown { case close, alreadyClosed, ownerLost }
     enum Migration { case gnomeHost, none }
 
     // Unlike handle_token, this identity remains stable across app runs (§6.3).
     static let sessionToken = "monkeyspaw_shortcuts"
     var mechanism: HotkeyMechanism { currentRegistration.mechanism }
+    private(set) var activationRevision: UUID? = UUID()
     var onChange: (() -> Void)?
     private(set) var currentRegistration = HotkeyRegistration(
         mechanism: .globalShortcutsPortal, status: .needsAction, detail: LinuxStrings.shortcutAllow)
@@ -35,7 +37,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private var onFire: (() -> Void)?
     private var accelerator: Accelerator?
     private var activationToken: String?
-    private var activationRevision = 0
+    private var tokenRevision = 0
     private var parentLease: PortalParent?
     private var creating = false
     private var uncertainCreation = false
@@ -53,8 +55,10 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     /// Invalidate all callbacks/leases first, then wait for Session.Close.
     /// A failed Create may have loaded native actions without returning a handle.
     func quiesce(done: @escaping (Bool) -> Void) {
+        guard selection != .stopped else { done(false); return }
         close(.close)
         completeConfiguration()
+        guard selection != .stopped else { done(false); return }
         cleanupWaiters.append(done)
         for (session, entry) in retiring where entry.state == .failed { retire(session) }
         finishCleanup()
@@ -93,13 +97,23 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     deinit { shutdown() }
 
-    func register(_ action: HotkeyAction, accelerator: Accelerator,
+    func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else {
-            return HotkeyRegistration(mechanism: mechanism, status: .unbound, detail: SetupStrings.unboundShortcut)
+        guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+        guard action == .togglePicker, let accelerator else {
+            if action == .togglePicker {
+                unregister(currentRegistration)
+                self.accelerator = nil
+            }
+            guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
+            if action == .togglePicker { currentRegistration = registration }
+            return registration
         }
+        unboundActions.retire(action)
         close(.close)
         completeConfiguration()
+        guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         self.onFire = onFire
         self.accelerator = accelerator
         currentRegistration = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .needsAction,
@@ -110,6 +124,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     /// Probing never binds, creates sessions or reads/writes gsettings.
     private func probe(done: (() -> Void)? = nil) {
+        guard selection != .stopped else { done?(); return }
         revision += 1
         let revision = revision
         selection = .probing
@@ -150,7 +165,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     /// A KDE retry rechecks capability without attaching a session. The caller
     /// has already acknowledged old-session cleanup before invoking this seam.
     func prepareAttachment(done: @escaping (UInt32?) -> Void) {
-        guard !configuring, !isAttached, onFire != nil else { done(nil); return }
+        guard selection != .stopped, !configuring, !isAttached, onFire != nil else { done(nil); return }
         probe { [weak self] in
             if let self, case .portal(let version) = self.selection { done(version) }
             else { done(nil) }
@@ -162,7 +177,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func configure(until deadline: ContinuousClock.Instant, done: @escaping () -> Void) {
-        guard !configuring, onFire != nil else { done(); return }
+        guard selection != .stopped, !configuring, onFire != nil else { done(); return }
         switch selection {
         case .probing:
             configuring = true
@@ -198,6 +213,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 return
             }
             close(.close)
+            guard selection != .stopped else { completeConfiguration(); return }
             // close only tears down the old session; this explicit gesture owns
             // the new consent and never automatically installs another mechanism.
             configuring = true
@@ -327,13 +343,13 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             guard lastActivation != timestamp else { return }
             lastActivation = timestamp
             activationToken = token
-            activationRevision += 1
-            let activationRevision = activationRevision
+            tokenRevision += 1
+            let tokenRevision = tokenRevision
             onFire?()
             // ShortcutService marshals its callback through MainThread first.
             // Clear an unconsumed token after that hop (e.g. a debounced toggle).
             GTK.onMainLoop { [weak self] in
-                guard let self, self.activationRevision == activationRevision else { return }
+                guard let self, self.tokenRevision == tokenRevision else { return }
                 self.activationToken = nil
             }
         case .shortcutsChanged(let session, let shortcuts):
@@ -365,8 +381,11 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func unregister(_ registration: HotkeyRegistration) {
+        guard selection != .stopped else { return }
+        if unboundActions.unregister(registration) { return }
         guard registration.id == currentRegistration.id else { return }
         onFire = nil
+        accelerator = nil
         revision += 1
         fallback.shutdown()
         close(.close)
@@ -374,15 +393,21 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func shutdown() {
-        unregister(currentRegistration)
+        guard selection != .stopped else { return }
         selection = .stopped
+        onFire = nil
+        accelerator = nil
         if let observation { transport.removeObserver(observation); self.observation = nil }
+        fallback.shutdown()
+        close(.close)
+        completeConfiguration()
     }
 
     private func close(_ mode: Teardown) {
         // A native parent export may complete after teardown and a new gesture.
         // Invalidate that continuation before the next session can start.
         revision += 1
+        activationRevision = UUID()
         let ids = calls
         calls.removeAll()
         // Disable continuations before cancelling their native waits.

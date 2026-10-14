@@ -10,17 +10,20 @@ public struct SettingsDocument: Equatable, Sendable {
     public let firstRun: FirstRunProgress
     public let delivery: DeliveryPreferences
     public let automaticUpdateChecks: AutomaticUpdateChecks
+    public let carbonShortcuts: CarbonShortcutChoices
 
     public init() {
         libraryFolderPath = nil
         firstRun = FirstRunProgress()
         delivery = DeliveryPreferences()
         automaticUpdateChecks = .enabled
+        carbonShortcuts = CarbonShortcutChoices()
     }
 
     public init(libraryFolderPath: String?, firstRun: FirstRunProgress = FirstRunProgress(),
                 delivery: DeliveryPreferences = DeliveryPreferences(),
-                automaticUpdateChecks: AutomaticUpdateChecks = .enabled) throws {
+                automaticUpdateChecks: AutomaticUpdateChecks = .enabled,
+                carbonShortcuts: CarbonShortcutChoices = CarbonShortcutChoices()) throws {
         if let path = libraryFolderPath {
             // A combining scalar can join the slash's grapheme; POSIX paths
             // are absolute based on the separator byte, not text prefixes.
@@ -33,6 +36,7 @@ public struct SettingsDocument: Equatable, Sendable {
         self.firstRun = firstRun
         self.delivery = delivery
         self.automaticUpdateChecks = automaticUpdateChecks
+        self.carbonShortcuts = carbonShortcuts
     }
 
     // A chosen root can distinguish canonically equivalent filenames (§5.1).
@@ -41,6 +45,7 @@ public struct SettingsDocument: Equatable, Sendable {
             && lhs.firstRun == rhs.firstRun
             && lhs.delivery == rhs.delivery
             && lhs.automaticUpdateChecks == rhs.automaticUpdateChecks
+            && lhs.carbonShortcuts == rhs.carbonShortcuts
     }
 }
 

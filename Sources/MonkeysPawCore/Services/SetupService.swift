@@ -55,9 +55,23 @@ public final class SetupService {
     }
 
     /// Recheck the row so a stale view cannot launch an unnecessary fix.
-    public func performFix(for kind: SetupRow.Kind) {
+    public func performFix(for kind: SetupRow.Kind, action: HotkeyAction = .togglePicker) {
         mainThread.run {
-            guard let row = self.snapshot().rows.first(where: { $0.kind == kind }) else { return }
+            let snapshot = self.snapshot()
+            guard var row = snapshot.rows.first(where: { $0.kind == kind }) else { return }
+            if kind == .hotkey, let registration = snapshot.shortcutRegistrations[action] {
+                row = SetupRow(kind: kind, status: self.hotkeyStatus(registration, action: action),
+                               registration: registration)
+            }
+            if kind == .kde, let registration = snapshot.shortcutRegistrations[action] {
+                if registration.configuration == .unavailable { return }
+                row = SetupRow(kind: kind, status: row.status,
+                    registration: registration.alternativeConfiguration.map {
+                        HotkeyRegistration(id: registration.id, mechanism: registration.mechanism,
+                            status: registration.status, detail: registration.detail, configuration: $0)
+                    })
+            }
+            if (kind == .hotkey || kind == .kde), row.registration?.configuration == .unavailable { return }
             switch row.status {
             case .notApplicable: return
             case .ok:
@@ -67,7 +81,7 @@ public final class SetupService {
 
             // Keep duplicate completion checks on the UI thread as well.
             var didComplete = false
-            self.probe.performFix(for: kind) {
+            self.probe.performFix(for: kind, action: action) {
                 self.mainThread.run {
                     guard !didComplete else { return }
                     didComplete = true
@@ -77,8 +91,8 @@ public final class SetupService {
         }
     }
 
-    public func beginHotkeyVerification() {
-        shortcuts.beginVerification()
+    public func beginHotkeyVerification(_ action: HotkeyAction = .togglePicker) {
+        shortcuts.beginVerification(action)
     }
 
     public func runSelfTest(done: @escaping (SelfTestReport) -> Void) {
@@ -87,26 +101,20 @@ public final class SetupService {
 
     private func snapshot() -> SetupSnapshot {
         let session = session.currentSession()
-        let registration = probe.hotkeyRegistration()
+        let pickerRegistration = probe.hotkeyRegistration(for: .togglePicker)
+        var incoming: [HotkeyAction: HotkeyRegistration] = [.togglePicker: pickerRegistration]
+        for action in HotkeyAction.allCases where action != .togglePicker {
+            incoming[action] = probe.hotkeyRegistration(for: action)
+        }
         // The live read may itself notify ShortcutService observers. This
         // service will publish this snapshot, so do not recursively probe it.
         let wasReadingSnapshot = isReadingSnapshot
         isReadingSnapshot = true
-        shortcuts.refreshRegistration(registration)
+        shortcuts.refreshRegistrations(incoming)
         isReadingSnapshot = wasReadingSnapshot
-        let hotkeyStatus: SetupStatus
-        if registration.status == .unbound {
-            hotkeyStatus = .needsAction(fix: SetupStrings.assignShortcut)
-        } else if registration.status == .failed {
-            // A current failure supersedes proof from an earlier activation.
-            hotkeyStatus = .needsAction(fix: registration.detail)
-        } else if shortcuts.verification(for: .togglePicker) == .verified {
-            hotkeyStatus = .ok
-        } else if registration.status == .registered {
-            hotkeyStatus = .needsAction(fix: SetupStrings.pressShortcut)
-        } else {
-            hotkeyStatus = .needsAction(fix: registration.detail)
-        }
+        let registrations = shortcuts.registrations
+        let registration = registrations[.togglePicker] ?? pickerRegistration
+        let hotkeyStatus = hotkeyStatus(registration, action: .togglePicker)
 
         let host = hostSession(of: session)
         let isKDE = host == .kdeWayland || host == .kdeX11
@@ -138,7 +146,22 @@ public final class SetupService {
                     ? HotkeyRegistration(id: registration.id, mechanism: registration.mechanism,
                         status: registration.status, detail: registration.detail,
                         configuration: registration.alternativeConfiguration) : nil),
-        ])
+        ], shortcutRegistrations: registrations)
+    }
+
+    private func hotkeyStatus(_ registration: HotkeyRegistration, action: HotkeyAction) -> SetupStatus {
+        if registration.status == .unbound {
+            return .needsAction(fix: SetupStrings.assignShortcut)
+        } else if registration.status == .failed {
+            // A current failure supersedes proof from an earlier activation.
+            return .needsAction(fix: registration.detail)
+        } else if shortcuts.verification(for: action) == .verified {
+            return .ok
+        } else if registration.status == .registered {
+            return .needsAction(fix: SetupStrings.pressShortcut)
+        } else {
+            return .needsAction(fix: registration.detail)
+        }
     }
 
     private func hostSession(of session: DesktopSession) -> DesktopSession {

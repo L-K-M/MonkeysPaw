@@ -88,6 +88,149 @@ final class KDEPortalHotkeyTests: XCTestCase {
         try XCTUnwrap(service.sessionOwners.keys.first)
     }
 
+    func testUnboundRepeatAdapterPreservesNativePickerAndStartsNoPortalInteraction() throws {
+        start()
+        let picker = backend.currentRegistration
+        let calls = daemon.calls.count
+        let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Repeat adapter is unbound") }
+        XCTAssertEqual(repeatAction.status, .unbound)
+        XCTAssertNotEqual(repeatAction.id, picker.id)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        backend.unregister(repeatAction)
+        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(daemon.calls.count, calls)
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(daemon.present)
+        daemon.emit()
+        XCTAssertTrue(GTKTestSupport.spin { self.fires == 1 })
+    }
+
+    func testStoppedCompositeRejectsAllDeclarationsAndUnregisterCannotRestartIt() throws {
+        start()
+        backend.shutdown()
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        PortalSessionTestSupport.barrier(transport)
+        let stopped = backend.currentRegistration
+        let revision = backend.activationRevision
+        let nativeCalls = daemon.calls.count
+        let portalCalls = service.calls.count
+        let propertyCalls = service.propertyCalls.filter { $0.interface == "org.freedesktop.portal.GlobalShortcuts" }.count
+        backend.unregister(stopped)
+        for action in HotkeyAction.allCases {
+            for accelerator in [nil, try Accelerator("Alt+R")] as [Accelerator?] {
+                weak var callbackOwner: NSObject?
+                do {
+                    let owner = NSObject()
+                    callbackOwner = owner
+                    let rejected = backend.register(action, accelerator: accelerator) { _ = owner.description }
+                    XCTAssertEqual(rejected.status, .unbound)
+                    XCTAssertEqual(rejected.configuration, .unavailable)
+                    XCTAssertEqual(rejected, backend.unboundActions.registration(for: action, mechanism: backend.mechanism))
+                    if action == .repeatLast { XCTAssertNotEqual(rejected.id, stopped.id) }
+                }
+                XCTAssertNil(callbackOwner)
+            }
+        }
+        var completions = 0
+        backend.configure { completions += 1 }
+        backend.useNative { completions += 1 }
+        backend.shutdown()
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(daemon.calls.count, nativeCalls)
+        XCTAssertEqual(service.calls.count, portalCalls)
+        XCTAssertEqual(service.propertyCalls.filter { $0.interface == "org.freedesktop.portal.GlobalShortcuts" }.count, propertyCalls)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testClearCannotRestoreNativeOrPortalPickerThroughConfiguration() {
+        start()
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared picker fired") }
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        PortalSessionTestSupport.barrier(transport)
+        let nativeCalls = daemon.calls.count
+        let portalCalls = service.calls.count
+        var completions = 0
+        backend.configure { completions += 1 }
+        backend.useNative { completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, cleared)
+        XCTAssertEqual(daemon.calls.count, nativeCalls)
+        XCTAssertEqual(service.calls.count, portalCalls)
+        XCTAssertEqual(fires, 0)
+    }
+
+    func testRepeatedUnregisterBeforeUnboundDeclarationDoesNotRepeatNativeOrPortalCalls() throws {
+        start()
+        configure()
+        let handle = try session()
+        let picker = backend.currentRegistration
+        backend.unregister(picker)
+        XCTAssertTrue(GTKTestSupport.spin { self.service.closedPaths.contains(handle) && !self.daemon.present })
+        PortalSessionTestSupport.barrier(transport)
+        let nativeMethods = daemon.calls.map(\.method)
+        let portalMethods = service.calls.map(\.method)
+        let closes = service.closedPaths
+
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        var completions = 0
+        backend.configure { completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertEqual(daemon.calls.map(\.method), nativeMethods)
+        XCTAssertEqual(service.calls.map(\.method), portalMethods)
+        XCTAssertEqual(service.closedPaths, closes)
+        XCTAssertFalse(daemon.present)
+    }
+
+    func testShutdownFromPendingCompletionPreventsClearFromRetainingCompositeCallback() {
+        start()
+        var completions = 0
+        backend.configure { self.backend.shutdown(); completions += 1 }
+        weak var callbackOwner: NSObject?
+        do {
+            let owner = NSObject()
+            callbackOwner = owner
+            _ = backend.register(.togglePicker, accelerator: nil) { _ = owner.description }
+        }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertNil(callbackOwner)
+        let stopped = backend.currentRegistration
+        backend.configure { completions += 1 }
+        XCTAssertEqual(completions, 2)
+        XCTAssertEqual(backend.currentRegistration, stopped)
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+    }
+
+    func testLiveRegistrationAfterUnboundDeclarationStillTearsDownUsingInitialSnapshot() throws {
+        start()
+        let unbound = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker") }
+        XCTAssertEqual(unbound.status, .unbound)
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        let pending = backend.register(.togglePicker,
+            accelerator: Accelerator.defaultBinding(for: .togglePicker)) { [weak self] in self?.fires += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .registered })
+        XCTAssertEqual(backend.currentRegistration.id, pending.id)
+        XCTAssertTrue(daemon.present)
+
+        // ShortcutService owns the initial result, before the driver's live
+        // status changes. Its old unbound catalogue must not claim teardown.
+        backend.unregister(pending)
+
+        XCTAssertTrue(GTKTestSupport.spin { !self.daemon.present })
+        XCTAssertTrue(service.calls.isEmpty)
+    }
+
     private func activate(_ timestamp: UInt64 = 1) throws {
         service.emit(member: "Activated", body: "(objectpath '\(try session())', 'toggle', uint64 \(timestamp), {'activation_token': <'fixture-token'>})")
         PortalSessionTestSupport.barrier(transport)
@@ -598,6 +741,8 @@ final class KDEPortalHotkeyTests: XCTestCase {
             return true
         }
         configure()
+        XCTAssertTrue(service.calls.contains { $0.method == "CreateSession" },
+            "The uncertain-Create case requires CreateSession; methods: \(service.calls.map(\.method))")
         fallback()
         XCTAssertFalse(daemon.present)
         XCTAssertEqual(backend.currentRegistration.status, .failed)

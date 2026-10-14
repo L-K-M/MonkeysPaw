@@ -38,6 +38,10 @@ enum Strings {
         case .invalidAccelerator: return invalidShortcut
         case .unsupportedCarbonKey: return carbonUnsupportedKey
         case .overlappingCommandModifiers: return carbonOverlappingModifiers
+        case .collision: return "This key is assigned to your other Monkey's Paw action."
+        case .registrationFailed: return "Your shortcut could not be registered. Your previous choice was restored."
+        case .saveFailed: return "Your shortcut could not be saved. Your previous choice was restored."
+        case .recoveryFailed: return "Your previous shortcut could not be restored. Assign it again."
         }
     }
 

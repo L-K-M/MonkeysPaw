@@ -13,7 +13,8 @@ public final class SettingsService: Sendable {
     public func setLibraryFolder(_ path: String?) throws {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: path, firstRun: document.firstRun,
-                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks)
+                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
+                carbonShortcuts: document.carbonShortcuts)
         }
     }
 
@@ -22,7 +23,7 @@ public final class SettingsService: Sendable {
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
                 delivery: DeliveryPreferences(linuxDefaultPasteChord: chord,
                     clipboardRestore: document.delivery.clipboardRestore),
-                automaticUpdateChecks: document.automaticUpdateChecks)
+                automaticUpdateChecks: document.automaticUpdateChecks, carbonShortcuts: document.carbonShortcuts)
         }
     }
 
@@ -30,14 +31,24 @@ public final class SettingsService: Sendable {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
                 delivery: DeliveryPreferences(linuxDefaultPasteChord: document.delivery.linuxDefaultPasteChord,
-                    clipboardRestore: mode), automaticUpdateChecks: document.automaticUpdateChecks)
+                    clipboardRestore: mode), automaticUpdateChecks: document.automaticUpdateChecks,
+                carbonShortcuts: document.carbonShortcuts)
         }
     }
 
     public func setAutomaticUpdateChecks(_ mode: AutomaticUpdateChecks) throws {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
-                delivery: document.delivery, automaticUpdateChecks: mode)
+                delivery: document.delivery, automaticUpdateChecks: mode, carbonShortcuts: document.carbonShortcuts)
+        }
+    }
+
+    /// ShortcutService calls this only after the native action is confirmed.
+    func setCarbonShortcut(_ action: HotkeyAction, accelerator: Accelerator?) throws {
+        try store.update { document in
+            try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
+                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
+                carbonShortcuts: document.carbonShortcuts.replacing(action, with: accelerator))
         }
     }
 
@@ -55,7 +66,8 @@ public final class SettingsService: Sendable {
                     libraryFolderCompleted: progress.libraryFolderCompleted || step == .libraryFolder,
                     seedsOffered: progress.seedsOffered || step == .seeds,
                     tourCompleted: progress.tourCompleted || step == .tour),
-                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks)
+                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
+                carbonShortcuts: document.carbonShortcuts)
         }
     }
 }

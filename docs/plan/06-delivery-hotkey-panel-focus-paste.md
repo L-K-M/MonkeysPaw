@@ -13,7 +13,7 @@
 Hotkey notes:
 
 - **Shortcuts settings (M2).** The shared `ShortcutsSettingsModel` shows the
-  toggle-picker action's live registration, backend-reported binding/detail,
+  picker and repeat actions' live registrations, backend-reported binding/detail,
   conflict or failure information, and activation verification. An unknown
   binding stays unknown; the default is never presented as a current binding.
   Setup and Settings share refreshed snapshots and receive shortcut changes
@@ -34,9 +34,24 @@ Hotkey notes:
     `gapplication action` instructions.
   - Launching a change action does not confirm a binding or verification.
     Refresh uses the backend's reported result; verification still requires a
-    real activation of the current mechanism/revision. The repeat action is
-    displayed unbound, inactive and unavailable for configuration until M7.
-  This slice supplies the Core contract; per-platform Settings windows follow.
+    real activation of the current mechanism/revision for that action. Manual
+    activation never verifies an effective portal, KDE or Carbon binding.
+  - Both actions are declared to the backend, including a callback and a nil
+    accelerator for deliberately unbound repeat. Nil never selects a default.
+    Registration identities, verification, debounce and replacement lifetimes
+    are independent per action. Refresh only reads facts and never starts consent.
+    A whole-catalogue apply during a replacement coalesces to the latest request
+    and activation handler, applied after all in-flight replacements finish.
+  - Carbon choices are persisted in version-1 settings as `carbonShortcuts`:
+    `togglePicker` defaults to `Ctrl+Alt+P`, `repeatLast` to null. Null explicitly
+    clears either action; omission uses that action's default. Validate Carbon
+    translation and collisions (including aliases) before mutation. Save only
+    confirmed registrations, restoring the previous action after native or save
+    failure and reporting any failed recovery. Replacing or clearing one action
+    preserves the other action and its verification. Restart loads both choices.
+  The M7 Core contract precedes driver activation: portal, KDE and GNOME adapters
+  report repeat unbound until their two-action implementations land (D9–D11).
+  Native Settings/composition follows in D12/D13.
 - **GNOME keybinding.** The custom keybinding row is named
   `Monkey's Paw: <action>`, so re-syncs update it in place. Installation
   runs from the explicit Setup hotkey action, never from startup, a service,

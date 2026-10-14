@@ -131,6 +131,7 @@ final class SetupModelTests: XCTestCase {
         h.probe.portal = .ok
         h.probe.ydotool = .ok
         h.probe.kde = .ok
+        h.probe.hotkey = HotkeyRegistration(mechanism: h.backend.mechanism, status: .registered, detail: "Bound")
         h.shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
         h.model.beginHotkeyVerification()
         h.backend.fire()
@@ -211,6 +212,7 @@ final class SetupModelTests: XCTestCase {
 
     func testCurrentRegistrationFailureOverridesEarlierVerification() throws {
         let h = Harness(session: .gnomeWayland)
+        h.probe.hotkey = HotkeyRegistration(mechanism: h.backend.mechanism, status: .registered, detail: "Bound")
         h.shortcuts.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { _ in }
         let registered = try XCTUnwrap(h.shortcuts.registrations[.togglePicker])
         h.probe.hotkey = registered
