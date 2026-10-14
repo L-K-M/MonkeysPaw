@@ -3,6 +3,114 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class GroupAccessServiceTests: XCTestCase {
+    func testNewLocalGroupFavoriteSurvivesRestartAndIngestWithoutUIByteWrites() throws {
+        for initial in [false, true] {
+            let rig = try GroupAccessRig(role: .editor)
+            let path = "Groups/Team/new.md"
+            let document = PromptCodec.parse("---\ntitle: New\nfavorite: \(initial)\n---\nNew body", filename: "new.md")
+            let entry = try rig.base.library.create(document, at: path)
+            XCTAssertEqual(entry.favorite, initial)
+            let bytes = try rig.base.files.read(at: path)
+            let writes = rig.base.files.writeCount
+            guard case .saved(let starred) = rig.base.library.toggleFavorite(of: entry) else {
+                XCTFail("A new group prompt must be favouritable while offline")
+                continue
+            }
+            XCTAssertEqual(starred.favorite, !initial)
+            XCTAssertEqual(rig.base.files.writeCount, writes)
+            XCTAssertEqual(try rig.base.files.read(at: path), bytes)
+            let reopened = SyncStateStore(files: rig.base.data, operations: rig.base.dataOperations)
+            let state = try XCTUnwrap(reopened.load(for: rig.base.binding))
+            XCTAssertEqual(state.prompts[entry.identity]?.rev, 0)
+            XCTAssertNil(state.prompts[entry.identity]?.canonicalHash)
+            XCTAssertEqual(state.favorites[entry.identity] == true, !initial)
+            let scan = try SyncLocalScanner.scan(binding: rig.base.binding, state: state,
+                availability: .available, freshID: { SyncTestValues.personalPrompt }, mutations: rig.base.mutations)
+            if let preparation = scan.preparation { XCTAssertEqual(try rig.base.journal.apply(preparation), .committed) }
+            XCTAssertEqual(rig.base.states.snapshot.value?.favorites[entry.identity] == true, !initial,
+                "Ingest must not undo the newer personal intent with an unchanged raw favourite key")
+        }
+    }
+
+    func testNeverBoundGroupsRemainOrdinaryLocalFolders() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.files.put("Local", at: "Groups/Notes/a.md")
+        let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
+        let access = try GroupAccessService(library: rig.library, states: rig.states, accounts: accounts, libraryRoot: rig.binding.root.path)
+        let entry = try rig.library.load(at: "Groups/Notes/a.md")
+        XCTAssertEqual(entry.access, .local)
+        XCTAssertNil(try rig.library.loadForEditing(at: entry.relativePath).readOnlyReason)
+        _ = try rig.library.save(PromptCodec.parse("Edited", filename: "a.md"), at: entry.relativePath)
+        _ = try rig.library.move(from: entry.relativePath, to: "Notes/a.md")
+        XCTAssertTrue(access.snapshot.groups.isEmpty)
+    }
+
+    func testSignedOutBindingKeepsManagedGroupsReadOnlyAcrossRestart() throws {
+        let rig = try GroupAccessRig(role: .viewer)
+        try rig.accounts.updateBinding(for: rig.base.binding.root) { _ in
+            try SyncLibraryBinding(root: rig.base.binding.root, owner: rig.base.binding.account,
+                managedFolders: [SyncTestValues.group: SyncManagedFolder(owner: rig.base.binding.account, folder: "Team")])
+        }
+        try rig.base.states.clear()
+        let restarted = try SyncApplyTestRig(files: rig.base.files, data: rig.base.data)
+        let accounts = SyncAccountStore(files: restarted.data, operations: restarted.dataOperations)
+        let access = try GroupAccessService(library: restarted.library, states: restarted.states, accounts: accounts,
+            libraryRoot: restarted.binding.root.path)
+        XCTAssertTrue(access.snapshot.groups.isEmpty)
+        XCTAssertEqual(try restarted.library.loadForEditing(at: rig.path).readOnlyReason, .groupUnavailable)
+        XCTAssertThrowsError(try restarted.library.save(PromptCodec.parse("Overwrite", filename: "a.md"), at: rig.path))
+        XCTAssertEqual(try restarted.files.read(at: rig.path), rig.bytes)
+    }
+
+    func testAccountMetadataFailureAndResetRefreshAccessWithoutStateChange() throws {
+        let rig = try GroupAccessRig(role: .editor)
+        try rig.base.data.put("broken", at: "sync/account.json")
+        XCTAssertThrowsError(try rig.accounts.loadAccount())
+        XCTAssertTrue(rig.access.snapshot.isBlocked)
+        XCTAssertThrowsError(try rig.base.library.create(PromptCodec.parse("Private", filename: "p.md"), at: "p.md"))
+        try rig.accounts.resetAccount()
+        XCTAssertFalse(rig.access.snapshot.isBlocked)
+        XCTAssertNil(try rig.base.library.loadForEditing(at: rig.path).readOnlyReason)
+    }
+
+    func testSplitSyncRenameKeepsCleanAndDirtyEditorsAtExistingDestination() throws {
+        for dirty in [false, true] {
+            let rig = try GroupAccessRig(role: .editor)
+            try rig.open()
+            let draft = String(decoding: rig.bytes, as: UTF8.self) + "Draft"
+            if dirty { rig.ui { rig.model.edit(draft) } }
+            let destination = "Groups/Team/other.md"
+            try rig.base.files.move(from: rig.path, to: destination)
+            try rig.index.apply(.init(created: [RelativePath(destination)]), origin: .sync)
+            try rig.index.apply(.init(deleted: [RelativePath(rig.path)]), origin: .sync)
+            rig.settle()
+            XCTAssertEqual(rig.model.state.prompt?.relativePath, RelativePath(destination))
+            if dirty {
+                XCTAssertEqual(rig.model.state.source, draft)
+                XCTAssertEqual(rig.model.state.conflict?.kind, .modified)
+                XCTAssertEqual(rig.model.state.conflict?.origin, .sync)
+            } else {
+                XCTAssertEqual(rig.model.state.source, String(decoding: rig.bytes, as: UTF8.self))
+                XCTAssertNil(rig.model.state.conflict)
+            }
+        }
+    }
+
+    func testEmptyIndexRefreshesAfterStateAndEmptyJournalRecovery() throws {
+        for stateFailure in [false, true] {
+            let rig = try GroupAccessRig(role: .editor)
+            if stateFailure { rig.base.states.blockForRecovery(retaining: rig.base.states.snapshot.value) }
+            else { rig.base.library.blockSyncApplyForRecovery() }
+            let index = PromptIndex(service: rig.base.library, usage: rig.base.usage, clock: LibraryClock())
+            XCTAssertThrowsError(try index.rebuild())
+            XCTAssertTrue(index.search("").isEmpty)
+            if stateFailure { _ = try rig.base.states.recover(for: rig.base.binding) }
+            else { rig.base.library.finishEmptySyncRecovery() }
+            XCTAssertEqual(index.search("").count, 1)
+            XCTAssertNil(index.lastSyncRefreshFailure)
+        }
+    }
+
     func testViewerGuardsEveryLibraryMutationWithoutChangingBytes() throws {
         let rig = try GroupAccessRig(role: .editor)
         let original = try rig.base.library.load(at: rig.path)
@@ -164,7 +272,8 @@ final class GroupAccessServiceTests: XCTestCase {
         let states = SyncStateStore(files: h.data, operations: operations)
         let binding = try SyncTestValues.binding()
         try states.update(for: binding) { $0 = try GroupAccessRig.state(binding: binding, bytes: bytes, role: .viewer) }
-        let access = try GroupAccessService(library: h.service, states: states, libraryRoot: binding.root.path)
+        let accounts = SyncAccountStore(files: h.data, operations: operations)
+        let access = try GroupAccessService(library: h.service, states: states, accounts: accounts, libraryRoot: binding.root.path)
         try h.open()
         XCTAssertFalse(try XCTUnwrap(h.picker.results.first).favorite)
         _ = h.service.toggleFavorite(of: try h.service.load(at: "Groups/Team/a.md"))
@@ -397,7 +506,7 @@ final class GroupAccessServiceTests: XCTestCase {
     func testSyncEnginePublishesRolesModesAndOverlayWithoutUpload() async throws {
         let rig = try SyncServiceRig()
         let index = PromptIndex(service: rig.base.library, usage: rig.base.usage, clock: LibraryClock())
-        let access = try GroupAccessService(library: rig.base.library, states: rig.base.states, libraryRoot: rig.base.binding.root.path)
+        let access = try GroupAccessService(library: rig.base.library, states: rig.base.states, accounts: rig.accounts, libraryRoot: rig.base.binding.root.path)
         let bytes = try GroupAccessRig.content()
         rig.transport.handler = { index, request in
             XCTAssertEqual(request.method, .post, "Neither a role mode nor an overlay may issue a PUT")
@@ -469,6 +578,7 @@ private final class GroupAccessRig {
     let editing: PromptEditingService
     let model: EditorModel
     let access: GroupAccessService
+    let accounts: SyncAccountStore
     let path = "Groups/Team/a.md"
     let bytes: Data
 
@@ -479,7 +589,8 @@ private final class GroupAccessRig {
         self.bytes = bytes
         try base.files.write(bytes, at: path)
         try base.states.update(for: base.binding) { $0 = try Self.state(binding: base.binding, bytes: bytes, role: role) }
-        access = try GroupAccessService(library: base.library, states: base.states, libraryRoot: base.binding.root.path)
+        accounts = SyncAccountStore(files: base.data, operations: base.dataOperations)
+        access = try GroupAccessService(library: base.library, states: base.states, accounts: accounts, libraryRoot: base.binding.root.path)
         main = EditingMainThread(marker)
         main.isHeld = queued
         work = HeldBackgroundWork(marker)

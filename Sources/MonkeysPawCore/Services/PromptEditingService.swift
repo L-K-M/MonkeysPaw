@@ -566,7 +566,7 @@ public final class PromptEditingService: @unchecked Sendable {
                 state.pendingInitialChange = change
                 return nil
             }
-            guard !state.file.matches(stamp) else { return nil }
+            guard !state.file.matches(stamp) || renamedTo != nil else { return nil }
             // Accepted deferred changes also advance the state to communicate:
             // a recreation must make a following deletion observable.
             state.file = stamp.map(OpenFile.present) ?? .missing(previousStamp: previousStamp)

@@ -116,6 +116,23 @@ struct SyncGroupState: Equatable, Sendable, Codable {
     }
 }
 
+/// Remember the raw key consumed by a newer UI intent until ingest strips it.
+/// An absent key is distinct from having no pending intent.
+struct SyncFavoriteInput: Equatable, Sendable, Codable {
+    let value: Bool?
+    private enum CodingKeys: String, CodingKey { case value }
+
+    static func preferred(_ favorite: Bool?, after input: Self?) -> Bool? {
+        if let input, input.value == favorite { return nil }
+        return favorite
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(value, forKey: .value)
+    }
+}
+
 struct SyncPromptState: Equatable, Sendable, Codable {
     let scope: SyncScopeKey
     let path: RelativePath
@@ -125,11 +142,14 @@ struct SyncPromptState: Equatable, Sendable, Codable {
     let canonicalHash: SyncHash?
     let origin: SyncPromptOrigin?
     let lastError: SyncPromptError?
+    let favoriteInput: SyncFavoriteInput?
 
     init(scope: SyncScopeKey, path: RelativePath, rev: Int64, canonicalHash: SyncHash? = nil,
-         origin: SyncPromptOrigin? = nil, lastError: SyncPromptError? = nil) throws {
+         origin: SyncPromptOrigin? = nil, lastError: SyncPromptError? = nil,
+         favoriteInput: SyncFavoriteInput? = nil) throws {
         guard rev >= 0, rev == 0 ? canonicalHash == nil : canonicalHash != nil,
-              origin == nil || scope.pathScope == .user else { throw SyncError.invalidState }
+              origin == nil || scope.pathScope == .user,
+              favoriteInput == nil || scope.pathScope == .group else { throw SyncError.invalidState }
         if rev == 0 {
             // A local candidate may have a repairable wire-path issue; it is
             // never an acknowledged baseline or authorization to apply a pull.
@@ -144,10 +164,12 @@ struct SyncPromptState: Equatable, Sendable, Codable {
         self.canonicalHash = canonicalHash
         self.origin = origin
         self.lastError = lastError
+        self.favoriteInput = favoriteInput
     }
 
     private enum CodingKeys: String, CodingKey {
         case scope = "scope_key", path, rev, canonicalHash = "canonical_hash", origin, lastError = "last_error"
+        case favoriteInput = "favorite_input"
     }
 
     init(from decoder: Decoder) throws {
@@ -157,7 +179,8 @@ struct SyncPromptState: Equatable, Sendable, Codable {
                       rev: value.decode(Int64.self, forKey: .rev),
                       canonicalHash: value.decodeIfPresent(SyncHash.self, forKey: .canonicalHash),
                       origin: value.decodeIfPresent(SyncPromptOrigin.self, forKey: .origin),
-                      lastError: value.decodeIfPresent(SyncPromptError.self, forKey: .lastError))
+                      lastError: value.decodeIfPresent(SyncPromptError.self, forKey: .lastError),
+                      favoriteInput: value.decodeIfPresent(SyncFavoriteInput.self, forKey: .favoriteInput))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -169,6 +192,7 @@ struct SyncPromptState: Equatable, Sendable, Codable {
         // Null replaces the old optional value during unknown-field merging.
         try value.encode(origin, forKey: .origin)
         try value.encode(lastError, forKey: .lastError)
+        try value.encode(favoriteInput, forKey: .favoriteInput)
     }
 }
 

@@ -208,7 +208,8 @@ public final class PromptIndex: @unchecked Sendable {
         version &+= 1
         var stamps: [RelativePath: FileStamp] = [:]
         for path in set.created.union(set.modified).union(set.deleted) { pathVersions[path] = version }
-        for path in set.created.union(set.modified) { stamps[path] = prompts[path]?.entry.stamp }
+        // A split rename can delete its source after the destination published.
+        for (path, prompt) in prompts { stamps[path] = prompt.entry.stamp }
         return Publication(observers: observers.capture(), changeObservers: changeObservers.capture(),
             change: PromptIndexChange(changes: set, stamps: stamps, version: version, origin: origin,
                 selections: Dictionary(grouping: prompts.values.map {

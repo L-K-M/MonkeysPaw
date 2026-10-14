@@ -758,7 +758,12 @@ public final class EditorModel: @unchecked Sendable {
         let snapshot = editing.accessSnapshot
         state.access = snapshot.access(at: prompt.relativePath.string, identity: prompt.identity)
         state.accessGeneration = snapshot.generation
-        let reason = baseline.flatMap { LoadedPrompt.readOnlyReason(for: $0.document) } ?? state.access.readOnlyReason
+        let fileReason: PromptReadOnlyReason?
+        switch baseline?.readOnlyReason {
+        case .groupViewer?, .groupUnavailable?: fileReason = nil
+        default: fileReason = baseline?.readOnlyReason
+        }
+        let reason = fileReason ?? state.access.readOnlyReason
         state.readOnlyReason = reason
         state.conflict?.readOnlyReason = reason
     }
