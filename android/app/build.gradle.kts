@@ -219,4 +219,6 @@ tasks.withType<Test>().configureEach {
     inputs.files(graphSources.file("kotlin/ch/lkmc/monkeyspaw/entry/FillActivity.kt"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/AndroidClipboard.kt"))
         .withPropertyName("fillBoundarySources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/entry"), graphSources.dir("res"))
+        .withPropertyName("entrySources").withPathSensitivity(PathSensitivity.RELATIVE)
 }

@@ -6,6 +6,8 @@ import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.data.*
+import ch.lkmc.monkeyspaw.entry.EntrySource
+import ch.lkmc.monkeyspaw.entry.FillRoute
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -598,6 +600,90 @@ internal class FillViewModelTest : TemporaryFiles() {
         assertEquals(listOf("write", "remember", "usage"), events)
         assertEquals(1, core.usage.useEvents(core.load("a.md").identity).size)
         assertTrue(core.values.rememberedValues(core.load("a.md").identity)["f"] == "copied")
+    }
+
+    @Test
+    fun `repeated open while editing retains fields path and the opening clipboard snapshot`() = runTest {
+        putPrompt("{{f}}/{{clipboard}}")
+        putPrompt("Other", "b.md")
+        clipboard.text = "opening sample"
+        graph()
+        val model = openModel()
+        model.setValue("f", "held draft")
+        val held = model.state.value
+        clipboard.text = "changed clipboard"
+        repeat(3) {
+            model.open("a.md")
+            model.open("b.md")
+        }
+        runCurrent()
+        assertEquals(held, model.state.value)
+        assertEquals(1, clipboard.reads)
+        assertPreview(model, "held draft/opening sample")
+        model.copy()
+        runCurrent()
+        assertEquals("held draft/opening sample", clipboard.text)
+        assertEquals(1, clipboard.writes)
+        assertTrue(model.state.value.shouldFinish)
+        assertEquals(1, core.usage.useEvents(core.load("a.md").identity).size)
+        assertTrue(core.usage.useEvents(core.load("b.md").identity).isEmpty())
+    }
+
+    @Test
+    fun `Back from picker or form finishes without clipboard publication and a new session can open`() = runTest {
+        putPrompt("{{f}}/{{clipboard}}")
+        graph()
+        val picker = model()
+        picker.setForeground(true)
+        picker.cancel()
+        assertTrue(picker.state.value.shouldFinish)
+        assertEquals(0, clipboard.reads)
+        assertEquals(0, clipboard.writes)
+
+        val form = openModel()
+        form.setValue("f", "discarded draft")
+        form.cancel()
+        runCurrent()
+        assertTrue(form.state.value.shouldFinish)
+        assertEquals(0, clipboard.writes)
+        val identity = core.load("a.md").identity
+        assertTrue(core.values.rememberedValues(identity).isEmpty())
+        assertTrue(core.usage.useEvents(identity).isEmpty())
+
+        val next = openModel()
+        assertEquals(FillPhase.EDITING, next.state.value.phase)
+        assertFalse(next.state.value.shouldFinish)
+        assertEquals("", next.state.value.values["f"])
+        assertEquals(2, clipboard.reads)
+    }
+
+    @Test
+    fun `warm library selection opens a held picker and external reentry preserves its form`() = runTest {
+        putPrompt("{{f}}/{{clipboard}}", "b.md")
+        graph()
+        val held = model()
+        assertEquals(FillPhase.PICKING, held.state.value.phase)
+        FillRoute.sanitize(null, "b.md").promptPath?.let(held::open)
+        runCurrent()
+        assertEquals(FillPhase.EDITING, held.state.value.phase)
+        assertEquals(0, clipboard.reads, "A background Library activation cannot sample the clipboard")
+        clipboard.text = "opening sample"
+        held.setForeground(true)
+        runCurrent()
+        held.setValue("f", "selected from Library")
+        val draft = held.state.value
+        for (source in listOf(EntrySource.TILE, EntrySource.SHORTCUT, EntrySource.WIDGET)) {
+            FillRoute.sanitize(source.action, "ignored.md").promptPath?.let(held::open)
+        }
+        FillRoute.sanitize(null, "ignored.md").promptPath?.let(held::open)
+        runCurrent()
+        assertEquals(draft, held.state.value)
+        assertEquals(1, clipboard.reads)
+        held.copy()
+        runCurrent()
+        assertTrue(held.state.value.shouldFinish)
+        assertEquals("selected from Library/opening sample", clipboard.text)
+        assertEquals(1, core.usage.useEvents(core.load("b.md").identity).size)
     }
 
     private fun putPrompt(source: String, path: String = "a.md") = put(libraryDir.resolve(path), source.encodeToByteArray())

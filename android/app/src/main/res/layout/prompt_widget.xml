@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="4dp">
+    <Button
+        android:id="@+id/insert_prompt"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/prompt_widget_background"
+        android:minHeight="48dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:text="@string/entry_insert_prompt"
+        android:textAllCaps="false"
+        android:textColor="@color/entry_widget_text"
+        android:textSize="16sp" />
+</FrameLayout>

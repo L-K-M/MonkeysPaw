@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.entry
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -26,7 +27,7 @@ import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
-/** K17's external entry points will target this pick → fill → copy flow. */
+/** One pick → fill → copy session; repeated entries bring its existing draft to the foreground. */
 @AndroidEntryPoint
 class FillActivity : ComponentActivity() {
     private val fill: FillViewModel by viewModels()
@@ -48,11 +49,17 @@ class FillActivity : ComponentActivity() {
         super.onPause()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // A Library selection can activate a picker; the model preserves any held form and snapshot.
+        FillRoute.read(intent).promptPath?.let(fill::open)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = AppIdentity.displayName
         enableEdgeToEdge()
-        val requestedPath = intent.getStringExtra(promptPathExtra)
+        val requestedPath = FillRoute.read(intent).promptPath
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
