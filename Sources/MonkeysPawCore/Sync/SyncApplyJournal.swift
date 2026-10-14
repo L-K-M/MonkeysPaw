@@ -197,12 +197,17 @@ final class SyncApplyJournal {
         if let permit {
             try permit.validate(plan.nextState.binding)
             return try permit.mutate {
-                let paths = try permit.ownPaths(edits: plan.edits, directories: plan.directories, library: mutations)
-                let result = try apply(plan)
-                if result == .committed { try permit.remember(paths, library: mutations) }
+                let intended = try permit.intendedWrites(edits: plan.edits, directories: plan.directories, library: mutations)
+                var receipts: [SyncFileChange] = []
+                let result = try applyPlan(plan) { receipts = try permit.capture(intended, library: self.mutations) }
+                if result == .committed { permit.remember(receipts) }
                 return result
             }
         }
+        return try applyPlan(plan)
+    }
+
+    private func applyPlan(_ plan: SyncApplyPlan, captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
         guard try persistence.load() == nil else { throw SyncError.invalidState }
@@ -233,7 +238,7 @@ final class SyncApplyJournal {
             if persistence.snapshot.error == nil, persistence.snapshot.value == nil { mutations.finish(plan.id) }
             throw Self.safe(error)
         }
-        return try run()
+        return try run(captureReceipts: captureReceipts)
     }
 
     /// No new names or IDs are generated on replay. Safe to call twice.
@@ -242,13 +247,18 @@ final class SyncApplyJournal {
             return try permit.mutate {
                 let record = pending
                 if let record { try permit.validate(record.nextState.binding) }
-                let paths = try permit.ownPaths(edits: record?.steps.map(\.edit) ?? [],
+                let intended = try permit.intendedWrites(edits: record?.steps.map(\.edit) ?? [],
                     directories: record?.directorySteps.map(\.edit) ?? [], library: mutations)
-                let result = try replay()
-                if result == .committed { try permit.remember(paths, library: mutations) }
+                var receipts: [SyncFileChange] = []
+                let result = try replayPlan { receipts = try permit.capture(intended, library: self.mutations) }
+                if result == .committed { permit.remember(receipts) }
                 return result
             }
         }
+        return try replayPlan()
+    }
+
+    private func replayPlan(captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
         if let record = try persistence.recover() {
@@ -262,7 +272,7 @@ final class SyncApplyJournal {
             }
             return .committed
         }
-        return try run()
+        return try run(captureReceipts: captureReceipts)
     }
 
     /// Replace a conflicted plan only after accounting for its committed steps.
@@ -307,7 +317,7 @@ final class SyncApplyJournal {
         return try run()
     }
 
-    private func run() throws -> SyncApplyOutcome {
+    private func run(captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
         guard var record = try persistence.load() else { return .committed }
         try mutations.begin(record.id, nextState: record.nextState)
         let binding = record.nextState.binding
@@ -382,6 +392,7 @@ final class SyncApplyJournal {
                     return .replanAsConflict(operationID: step.edit.id)
                 }
             }
+            try captureReceipts?()
             if let change = record.bindingChange {
                 guard let accounts else { throw SyncError.invalidState }
                 try accounts.updateBinding(for: change.next.root) { actual in

@@ -250,6 +250,7 @@ public final class SyncService {
                     self?.locked {
                         guard let self, self.epoch == generation, self.eligible else { return }
                         self.current.counts = result.counts
+                        self.current.details = result.details
                         self.publish()
                     }
                 }) { [weak self] phase in self?.setPhase(phase, epoch: generation) }
