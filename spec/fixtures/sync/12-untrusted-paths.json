@@ -1,0 +1,893 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "12-reject-traversal",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 422,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "../escape.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "writes": 0
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "id": "12-reject-absolute",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 422,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "/escape.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "writes": 0
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "id": "12-reject-control",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 422,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "bad\u0001.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "writes": 0
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "id": "12-reject-hidden-parent",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 422,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": ".hidden/escape.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "writes": 0
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "id": "12-hostile-pull-traversal",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "rewrite_next_response",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "patch": {
+            "/scopes/0/items/0/prompt/path": "../escape.md"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "cursor_count": 1,
+            "writes": 0,
+            "status": "syncError",
+            "blocking_issue": "invalidProtocol",
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "status": 200,
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n",
+            "/path": "Sample.md"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 1,
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-hostile-pull-absolute",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "rewrite_next_response",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "patch": {
+            "/scopes/0/items/0/prompt/path": "/escape.md"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "cursor_count": 1,
+            "writes": 0,
+            "status": "syncError",
+            "blocking_issue": "invalidProtocol",
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "status": 200,
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n",
+            "/path": "Sample.md"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 1,
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-hostile-pull-control",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "rewrite_next_response",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "patch": {
+            "/scopes/0/items/0/prompt/path": "bad\u0001.md"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "cursor_count": 1,
+            "writes": 0,
+            "status": "syncError",
+            "blocking_issue": "invalidProtocol",
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "status": 200,
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n",
+            "/path": "Sample.md"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 1,
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-symlink-parent",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Link/escape.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "symlink",
+          "device": "a",
+          "path": "Link"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "prompt_count": 0,
+            "writes": 0,
+            "status": "syncError"
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "Link/escape.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-dot-filename",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": ".visible.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": ".visible.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "file_count": 1,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": ".visible.md",
+                "rev": 1
+              }
+            ],
+            "status": "idle"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "requests": [
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "12-local-visibility",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "_hidden.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "_hidden.md",
+                "rev": 0,
+                "error": "sync.local_visibility"
+              }
+            ],
+            "status": "syncError"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 0,
+            "requests": [
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          }
+        }
+      ]
+    }
+  ]
+}

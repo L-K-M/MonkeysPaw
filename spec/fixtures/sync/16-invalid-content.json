@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "16-local-invalid",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\nformat: 2\n---\nFuture.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "syncError",
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "syncError",
+            "writes": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "idle",
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "error": "none"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "status": 200,
+                "count": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "16-real-422",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "rewrite_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "patch": {
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "syncError",
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 0,
+                "error": "prompt.id_mismatch"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "status": 422,
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "status": "syncError",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nRepaired.\n"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Repaired.md"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "idle",
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Repaired.md",
+                "rev": 1,
+                "error": "none"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "status": 200,
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nRepaired.\n",
+            "/path": "Repaired.md",
+            "/rev": 1
+          }
+        }
+      ]
+    }
+  ]
+}

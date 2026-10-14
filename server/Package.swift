@@ -51,5 +51,15 @@ let package = Package(
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
             ]
         ),
+        .testTarget(
+            name: "MonkeysPawSyncIntegrationTests",
+            dependencies: [
+                "MonkeysPawServer",
+                .product(name: "MonkeysPawCore", package: "MonkeysPaw"),
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+            ],
+            // Client services use the desktop's Swift 5 language mode (E34).
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

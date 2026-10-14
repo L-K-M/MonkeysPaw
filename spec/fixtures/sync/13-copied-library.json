@@ -1,0 +1,568 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "13-copied-library-idless",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Sample.md",
+          "content": "---\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Sample.md"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "hash": "d016de7f37f4304abf22f3fe87eaec5e24dc8c8e556f0a0e81ea88eda623ddce",
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "file_count": 1,
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "13-copied-library-copied-id",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Sample.md"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "hash": "d016de7f37f4304abf22f3fe87eaec5e24dc8c8e556f0a0e81ea88eda623ddce",
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "file_count": 1,
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "13-copied-library-different-id",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Sample.md"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "hash": "d016de7f37f4304abf22f3fe87eaec5e24dc8c8e556f0a0e81ea88eda623ddce",
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "file_count": 1,
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "13-path-taken-adoption",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "a",
+          "path": "Sample.md"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.p}",
+            "status": 200,
+            "body": {
+              "base_rev": 0,
+              "scope": "user",
+              "path": "Sample.md",
+              "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "file_count": 1,
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.q}",
+                "status": 409,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 404
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 1
+              }
+            ],
+            "file_count": 1
+          }
+        }
+      ]
+    }
+  ]
+}

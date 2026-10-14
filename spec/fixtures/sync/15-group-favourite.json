@@ -1,0 +1,302 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "15-group-favourite",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "bind": {
+            "group.team": "/id"
+          },
+          "body": {
+            "name": "Team"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "viewer"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nShared.\r\n",
+            "group_id": "${group.team}"
+          }
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nShared.\r\n",
+                "mode": "readOnly"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "favorite": false,
+                "hash": "3329f615278d2f5aae9929223e2f4c3e4402d442e569fbf53877be9f3abd6169"
+              }
+            ]
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\nfavorite: true\nprivate: false\n---\nShared.\r\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nShared.\r\n",
+                "mode": "readOnly"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "favorite": true,
+                "hash": "3329f615278d2f5aae9929223e2f4c3e4402d442e569fbf53877be9f3abd6169"
+              }
+            ],
+            "writes": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "status": "idle"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "favorite": true
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nShared.\r\n",
+                "mode": "readOnly"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "favorite": true
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\nfavorite: false\n---\nShared.\r\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 1,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "favorite": false
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "favorite",
+          "device": "b",
+          "id": "${prompt.p}",
+          "value": true
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nShared.\r\n",
+                "mode": "readOnly"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "favorite": true
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nShared.\r\n",
+            "/rev": 1
+          }
+        }
+      ]
+    }
+  ]
+}

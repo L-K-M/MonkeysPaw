@@ -1,0 +1,631 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "14-account-change-user",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "bind": {
+            "group.team": "/id"
+          },
+          "body": {
+            "name": "Team"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n",
+            "group_id": "${group.team}"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Private.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Idless.md",
+          "content": "Unassigned old content.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "a",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+          "name": "rescued"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "account_user": "${user.main.bob}",
+            "held_count": 3,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ],
+            "absent": [
+              "Groups/Team/Sample.md"
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.rescued}\ntitle: Sample\nx-monkeyspaw-rescued: true\n---\nHello.\n",
+                "mode": "normal"
+              },
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+              }
+            ],
+            "prompt_count": 0,
+            "cursor_count": 1
+          }
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Idless.md",
+          "name": "held"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Idless.md",
+          "destination": "Renamed.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Renamed.md",
+          "content": "---\nid: ${prompt.held}\ntitle: Sample\n---\nEdited held content.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "held_count": 3,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.rescued}\ntitle: Sample\nx-monkeyspaw-rescued: true\n---\nHello.\n"
+              },
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+              },
+              {
+                "path": "Renamed.md",
+                "content": "---\nid: ${prompt.held}\ntitle: Sample\n---\nEdited held content.\n"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "id": "14-account-change-after-sign-out",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "bind": {
+            "group.team": "/id"
+          },
+          "body": {
+            "name": "Team"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n",
+            "group_id": "${group.team}"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Private.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Idless.md",
+          "content": "Unassigned old content.\n"
+        },
+        {
+          "action": "sign_out",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "account_user": "none",
+            "prompt_count": 0
+          }
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "account_user": "none",
+            "prompt_count": 0
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "a",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+          "name": "rescued"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "account_user": "${user.main.bob}",
+            "held_count": 3,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ],
+            "absent": [
+              "Groups/Team/Sample.md"
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.rescued}\ntitle: Sample\nx-monkeyspaw-rescued: true\n---\nHello.\n",
+                "mode": "normal"
+              },
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+              }
+            ],
+            "prompt_count": 0,
+            "cursor_count": 1
+          }
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Idless.md",
+          "name": "held"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Idless.md",
+          "destination": "Renamed.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Renamed.md",
+          "content": "---\nid: ${prompt.held}\ntitle: Sample\n---\nEdited held content.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "held_count": 3,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.rescued}\ntitle: Sample\nx-monkeyspaw-rescued: true\n---\nHello.\n"
+              },
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+              },
+              {
+                "path": "Renamed.md",
+                "content": "---\nid: ${prompt.held}\ntitle: Sample\n---\nEdited held content.\n"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "id": "14-account-change-server",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main",
+        "other"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "bind": {
+            "group.team": "/id"
+          },
+          "body": {
+            "name": "Team"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n",
+            "group_id": "${group.team}"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Private.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Idless.md",
+          "content": "Unassigned old content.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "other"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+          "name": "rescued"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "account_user": "${user.other.alice}",
+            "held_count": 3,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ],
+            "absent": [
+              "Groups/Team/Sample.md"
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.rescued}\ntitle: Sample\nx-monkeyspaw-rescued: true\n---\nHello.\n",
+                "mode": "normal"
+              },
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+              }
+            ],
+            "prompt_count": 0,
+            "cursor_count": 1
+          }
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Idless.md",
+          "name": "held"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Idless.md",
+          "destination": "Renamed.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Renamed.md",
+          "content": "---\nid: ${prompt.held}\ntitle: Sample\n---\nEdited held content.\n"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "held_count": 3,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.rescued}\ntitle: Sample\nx-monkeyspaw-rescued: true\n---\nHello.\n"
+              },
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOld private.\n"
+              },
+              {
+                "path": "Renamed.md",
+                "content": "---\nid: ${prompt.held}\ntitle: Sample\n---\nEdited held content.\n"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 404
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 404
+        }
+      ]
+    }
+  ]
+}
