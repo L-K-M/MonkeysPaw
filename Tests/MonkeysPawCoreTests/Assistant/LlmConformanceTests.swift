@@ -10,6 +10,32 @@ final class LlmConformanceTests: XCTestCase {
 
     func testEveryLlmExpectationAndByteGoldenIsExecuted() throws {
         let coverage = try LlmFixtureCorpus.consume(at: root)
+        var families = [String: Int]()
+        let names = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { !$0.hasPrefix(".") }
+        for name in names {
+            let envelope = try JSONDecoder().decode(LlmFixtureJSON.self,
+                from: Data(contentsOf: root.appendingPathComponent(name + "/case.json"))).object
+            let kind = try envelope["kind"]!.string
+            if kind == "exchange" {
+                for action in try envelope["actions"]!.array {
+                    let action = try action.object
+                    let provider = try action["profile"]!.object["kind"]!.string
+                    let intent = try action["intent"]!.object["kind"]!.string
+                    families["exchange/" + provider + "/" + intent, default: 0] += 1
+                }
+            } else {
+                let variant = try envelope[kind == "schema" || kind == "decode" ? "outputKind" : "operation"]!.string
+                families[kind + "/" + variant, default: 0] += 1
+            }
+        }
+        let required: Set<String> = ["schema/artifact", "schema/review", "decode/artifact", "decode/review",
+            "merge/write", "merge/improve", "diff/lines", "diff/write", "diff/improve",
+            "exchange/anthropic/write", "exchange/anthropic/review", "exchange/anthropic/improve", "exchange/anthropic/models",
+            "exchange/openaiCompatible/write", "exchange/openaiCompatible/review", "exchange/openaiCompatible/improve",
+            "exchange/openaiCompatible/models"]
+        XCTAssertEqual(Set(families.keys), required, "Every planned LLM family must have semantic evidence")
+        XCTAssertEqual(coverage.cases, names.count)
+        for family in families.keys.sorted() { print("llm family \(family): \(families[family]!) consumed cases/actions.") }
         print("llm: \(coverage.cases) cases / \(coverage.files.count) files; \(coverage.expectations) expectations; pending 0.")
     }
 

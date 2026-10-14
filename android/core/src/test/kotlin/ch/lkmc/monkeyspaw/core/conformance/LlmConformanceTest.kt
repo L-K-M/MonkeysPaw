@@ -14,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -155,7 +156,25 @@ internal object LlmFixtureConsumer {
 
 internal class LlmConformanceTest {
     @Test fun everyLlmExpectationAndByteGoldenIsExecuted() {
-        val coverage = LlmFixtureConsumer.consume(Corpus.load().cases(Category.LLM))
+        val fixtures = Corpus.load().cases(Category.LLM)
+        val coverage = LlmFixtureConsumer.consume(fixtures)
+        val families = fixtures.flatMap { fixture ->
+            val envelope = fixture.envelope
+            val kind = envelope["kind"].stringValue()
+            if (kind == "exchange") envelope["actions"].arrayValue().map { element ->
+                val action = element.objectValue()
+                "exchange/${action["profile"].objectValue()["kind"].stringValue()}/${action["intent"].objectValue()["kind"].stringValue()}"
+            } else listOf("$kind/" + envelope[if (kind in setOf("schema", "decode")) "outputKind" else "operation"].stringValue())
+        }.groupingBy { it }.eachCount()
+        val required = setOf("schema/artifact", "schema/review", "decode/artifact", "decode/review",
+            "merge/write", "merge/improve", "diff/lines", "diff/write", "diff/improve",
+            "exchange/anthropic/write", "exchange/anthropic/review", "exchange/anthropic/improve", "exchange/anthropic/models",
+            "exchange/openaiCompatible/write", "exchange/openaiCompatible/review", "exchange/openaiCompatible/improve",
+            "exchange/openaiCompatible/models")
+        assertEquals(required, families.keys, "Every planned LLM family must have semantic evidence")
+        assertEquals(fixtures.size, coverage.cases)
+        assertTrue(coverage.expectations > 0)
+        families.toSortedMap().forEach { (family, count) -> println("llm family $family: $count consumed cases/actions.") }
         println("llm: ${coverage.cases} cases / ${coverage.files.size} files; ${coverage.expectations} expectations; pending 0.")
     }
 
