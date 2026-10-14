@@ -1,4 +1,5 @@
 import Foundation
+import Yams
 @testable import MonkeysPawCore
 
 /// JSONDecoder preserves scalar spelling in golden strings without NSString bridging.
@@ -82,13 +83,15 @@ enum LlmFixtureCorpus {
             let envelope = try JSONDecoder().decode(LlmFixtureJSON.self,
                 from: Data(contentsOf: directory.appendingPathComponent("case.json"))).object
             let kind = try member(envelope, "kind").string
-            let outputKind = try member(envelope, "outputKind").string
-            guard ["artifact", "review"].contains(outputKind),
+            let outputKind = try envelope["outputKind"]?.string ?? ""
+            guard (kind == "merge" || ["artifact", "review"].contains(outputKind)),
                   try member(envelope, "schema").integer == 1,
                   try member(envelope, "category").string == "llm" else { throw Failure.invalidCorpus }
             let expected = try member(envelope, "expected").object
             var references = [String]()
-            if kind == "schema" {
+            if kind == "merge" {
+                references = try consumeMerge(envelope, expected: expected, at: directory)
+            } else if kind == "schema" {
                 try keys(envelope, ["schema", "category", "kind", "outputKind", "expected"])
                 try keys(expected, ["bytes"])
                 let source = try sourceName(member(expected, "bytes"), extensions: [".json"])
@@ -278,5 +281,186 @@ enum LlmFixtureCorpus {
     }
     private static func require(_ type: FileAttributeType, at url: URL) throws {
         guard try FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType == type else { throw Failure.invalidCorpus }
+    }
+}
+
+extension LlmFixtureCorpus {
+    private static func consumeMerge(_ envelope: [String: LlmFixtureJSON], expected: [String: LlmFixtureJSON],
+                                     at directory: URL) throws -> [String] {
+        try keys(envelope, ["schema", "category", "kind", "operation", "artifact", "original", "filename", "id", "expected"],
+                 optional: ["originalRepeat", "artifactBodyRepeat"])
+        let operation = try member(envelope, "operation").string
+        let filename = try member(envelope, "filename").string
+        let bodyRepeat = try envelope["artifactBodyRepeat"]?.integer ?? 1
+        guard bodyRepeat > 0, bodyRepeat <= Limits.maxPromptBytes + 1 else { throw Failure.invalidCorpus }
+        let artifactName = try sourceName(member(envelope, "artifact"), extensions: [".json"])
+        let output = try utf8(at: directory.appendingPathComponent(artifactName))
+        var references = [artifactName]
+        let original: PromptDocument?
+        let id: ULID?
+        if operation == "write" {
+            guard try member(envelope, "original").isNull, envelope["originalRepeat"] == nil,
+                  let supplied = ULID(try member(envelope, "id").string) else { throw Failure.invalidCorpus }
+            original = nil
+            id = supplied
+        } else if operation == "improve" {
+            guard try member(envelope, "id").isNull else { throw Failure.invalidCorpus }
+            let source = try sourceName(member(envelope, "original"), extensions: [".md", ".bin"])
+            references.append(source)
+            let data = try Data(contentsOf: directory.appendingPathComponent(source))
+            if source.hasSuffix(".md") { _ = try utf8(at: directory.appendingPathComponent(source)) }
+            let count = try envelope["originalRepeat"]?.integer ?? 1
+            guard count > 0, count <= Limits.maxPromptBytes + 1, data.count <= (Limits.maxPromptBytes + 1) / count else {
+                throw Failure.invalidCorpus
+            }
+            var expandedData = Data()
+            for _ in 0..<count { expandedData.append(data) }
+            original = PromptCodec.parseFile(expandedData, filename: filename)
+            id = nil
+        } else { throw Failure.invalidCorpus }
+        let candidateName = try validateMergeExpected(expected)
+        if let candidateName { references.append(candidateName) }
+        let snapshot: LlmFixtureJSON
+        do {
+            let decoded = try LlmOutputDecoder.artifact(from: output)
+            let body = try expanded(decoded.body, count: bodyRepeat, cap: Limits.maxPromptBytes + 1)
+            let artifact = LlmArtifact(title: decoded.title, description: decoded.description, tags: decoded.tags,
+                                      fields: decoded.fields, body: body, notes: decoded.notes)
+            let result = original.map { ArtifactMerge.improve(artifact, original: $0) } ?? ArtifactMerge.write(artifact, id: id!)
+            if case .ready(let candidate) = result {
+                guard let candidateName,
+                      candidate.canonicalBytes == (try Data(contentsOf: directory.appendingPathComponent(candidateName))),
+                      candidate.canonicalBytes == Data(candidate.document.source.utf8) else {
+                    throw Failure.mismatch(directory.lastPathComponent + ": candidate bytes")
+                }
+            }
+            snapshot = try mergeSnapshot(result, candidateName: candidateName ?? "candidate.md")
+        } catch AssistantError.invalidOutput { snapshot = .object(["error": .string("invalidOutput")]) }
+        guard try snapshot.bytes() == LlmFixtureJSON.object(expected).bytes() else {
+            throw Failure.mismatch(directory.lastPathComponent + ": merge result")
+        }
+        return references
+    }
+
+    static func mergeSnapshot(_ result: ArtifactMergeResult, candidateName: String) throws -> LlmFixtureJSON {
+        switch result {
+        case .ready(let candidate):
+            let document = candidate.document
+            let preserved = try document.preservedHeader?.mapping?.filter {
+                !["title", "description", "tags", "fields"].contains(PortableYAML.string($0.key) ?? "")
+            }.map { try yamlPair($0.key, $0.value) } ?? []
+            return .object(["ready": .object([
+                "candidate": .string(candidateName), "id": document.frontMatter.id.map { .string($0.rawValue) } ?? .null,
+                "issues": mergeIssues(document.issues), "preserved": .array(preserved)
+            ])])
+        case .invalid(let issues): return .object(["invalid": mergeIssues(issues)])
+        case .failed(let error):
+            var failed: [String: LlmFixtureJSON]
+            switch error {
+            case .invalidPrompt: failed = ["error": .string("invalidPrompt")]
+            case .serializationFailed: failed = ["error": .string("serializationFailed")]
+            case .sourceTooLarge: failed = ["error": .string("sourceTooLarge")]
+            case .unsupportedFormat(let version): failed = ["error": .string("unsupportedFormat"), "format": .string(version.decimalValue)]
+            }
+            return .object(["failed": .object(failed)])
+        }
+    }
+
+    private static func mergeIssues(_ issues: [PromptIssue]) -> LlmFixtureJSON {
+        .array(issues.map { issue in
+            let location: LlmFixtureJSON
+            switch issue.location {
+            case nil: location = .null
+            case .body(let offset): location = .object(["bodyByteOffset": .integer(offset)])
+            case .frontMatter(let line, let column): location = .object(["line": .integer(line), "column": .integer(column)])
+            }
+            return .object(["code": .string(issue.code.rawValue), "severity": .string(issue.severity.rawValue), "location": location])
+        })
+    }
+
+    private static func yamlPair(_ key: Node, _ value: Node) throws -> LlmFixtureJSON {
+        .object(["key": try yamlSnapshot(key), "value": try yamlSnapshot(value)])
+    }
+
+    private static func yamlSnapshot(_ node: Node) throws -> LlmFixtureJSON {
+        let value: LlmFixtureJSON
+        switch node {
+        case .scalar(let scalar): value = .string(scalar.string)
+        case .sequence(let sequence): value = .array(try sequence.map(yamlSnapshot))
+        case .mapping(let mapping): value = .array(try mapping.map { try yamlPair($0.key, $0.value) })
+        case .alias: throw Failure.invalidCorpus
+        }
+        return .object(["tag": .string(String(node.tag.rawValue.split(separator: ":").last!)), "value": value])
+    }
+
+    private static func validateMergeExpected(_ expected: [String: LlmFixtureJSON]) throws -> String? {
+        if let ready = expected["ready"] {
+            try keys(expected, ["ready"])
+            let ready = try ready.object
+            try keys(ready, ["candidate", "id", "issues", "preserved"])
+            let id = try member(ready, "id")
+            guard try id.isNull || ULID(id.string) != nil else { throw Failure.invalidCorpus }
+            try validateMergeIssues(member(ready, "issues"))
+            for pair in try member(ready, "preserved").array { try validateYAMLPair(pair) }
+            return try sourceName(member(ready, "candidate"), extensions: [".md"])
+        }
+        if let invalid = expected["invalid"] {
+            try keys(expected, ["invalid"])
+            try validateMergeIssues(invalid)
+        } else if let failed = expected["failed"] {
+            try keys(expected, ["failed"])
+            let failed = try failed.object
+            let error = try member(failed, "error").string
+            try keys(failed, error == "unsupportedFormat" ? ["error", "format"] : ["error"])
+            guard ["invalidPrompt", "serializationFailed", "sourceTooLarge", "unsupportedFormat"].contains(error) else {
+                throw Failure.invalidCorpus
+            }
+            if error == "unsupportedFormat" { _ = try member(failed, "format").string }
+        } else {
+            try keys(expected, ["error"])
+            guard try member(expected, "error").string == "invalidOutput" else { throw Failure.invalidCorpus }
+        }
+        return nil
+    }
+
+    private static func validateMergeIssues(_ value: LlmFixtureJSON) throws {
+        for issue in try value.array {
+            let issue = try issue.object
+            try keys(issue, ["code", "severity", "location"])
+            guard PromptIssueCode(rawValue: try member(issue, "code").string) != nil,
+                  ["error", "warning"].contains(try member(issue, "severity").string) else { throw Failure.invalidCorpus }
+            let location = try member(issue, "location")
+            if !location.isNull {
+                let location = try location.object
+                if let offset = location["bodyByteOffset"] {
+                    try keys(location, ["bodyByteOffset"])
+                    guard try offset.integer >= 0 else { throw Failure.invalidCorpus }
+                } else {
+                    try keys(location, ["line", "column"])
+                    guard try member(location, "line").integer > 0, try member(location, "column").integer > 0 else {
+                        throw Failure.invalidCorpus
+                    }
+                }
+            }
+        }
+    }
+
+    private static func validateYAMLPair(_ value: LlmFixtureJSON) throws {
+        let pair = try value.object
+        try keys(pair, ["key", "value"])
+        try validateYAMLNode(member(pair, "key"))
+        try validateYAMLNode(member(pair, "value"))
+    }
+
+    private static func validateYAMLNode(_ value: LlmFixtureJSON) throws {
+        let node = try value.object
+        try keys(node, ["tag", "value"])
+        let value = try member(node, "value")
+        switch try member(node, "tag").string {
+        case "map": for pair in try value.array { try validateYAMLPair(pair) }
+        case "seq": for child in try value.array { try validateYAMLNode(child) }
+        case "str", "int", "float", "bool", "null": _ = try value.string
+        default: throw Failure.invalidCorpus
+        }
     }
 }

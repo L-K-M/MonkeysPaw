@@ -16,6 +16,7 @@ internal object EveryFixtures {
     fun consume(corpus: Corpus): Set<String> {
         val content = PromptFixtures.consume(corpus)
         val dto = DtoRegistry.consumeAll(corpus)
+        val llm = LlmFixtureConsumer.consume(corpus.cases(Category.LLM))
         val byCategory = PromptFixtures.categories.associateWith { category ->
             content.filter { it.startsWith(category.directory + "/") }.toSet()
         } + mapOf(
@@ -24,7 +25,7 @@ internal object EveryFixtures {
             Category.CANONICAL to CanonicalFixtures.consume(corpus),
             Category.IMPORT to ImportFixtures.consume(corpus),
             Category.DTO to dto.files,
-            Category.LLM to LlmFixtureConsumer.consume(corpus.cases(Category.LLM)).files,
+            Category.LLM to llm.files,
         )
         corpusRequire(byCategory.keys == Category.entries.toSet(), "Missing semantic category adapter")
         val consumed = linkedSetOf<String>()
@@ -37,6 +38,7 @@ internal object EveryFixtures {
             println("Full gate ${category.directory}: ${cases.size} cases / ${files.size} files.")
         }
         assertEquals(corpus.enumeratedFiles, consumed, "Full semantic consumption must equal the visible inventory")
+        println("Full gate llm: ${llm.expectations} expectations; pending 0.")
         println("Full semantic conformance: ${corpus.cases.size} cases / ${consumed.size} files / ${byCategory.size} categories; " +
             "DTOs ${DtoRegistry.entries.size} contracts, ${dto.validCases} valid / ${dto.invalidCases} invalid; pending 0.")
         return consumed
@@ -46,6 +48,20 @@ internal object EveryFixtures {
 class EveryFixtureTest {
     @get:Rule
     val temporary = TemporaryFolder()
+
+    @Test
+    fun `merge preservation and candidate bytes fail the full gate when changed`() = withCopy { root, schemas ->
+        val fixture = Corpus.load(root, schemas).cases(Category.LLM).single { it.name == "merge-improve-typed-metadata" }
+        val original = fixture.envelopeFile.bytes()
+        val ready = fixture.expected["ready"].objectValue()
+        val changed = JsonObject(ready + ("preserved" to JsonArray(emptyList())))
+        val expected = JsonObject(mapOf("ready" to changed))
+        Files.writeString(fixture.envelopeFile.path, JsonObject(fixture.envelope + ("expected" to expected)).toString())
+        assertFailsWith<AssertionError> { EveryFixtures.consume(Corpus.load(root, schemas)) }
+        Files.write(fixture.envelopeFile.path, original)
+        Files.writeString(fixture.source(ready["candidate"].stringValue()).path, "wrong bytes")
+        assertFailsWith<AssertionError> { EveryFixtures.consume(Corpus.load(root, schemas)) }
+    }
 
     @Test
     fun `every visible fixture is consumed semantically exactly once`() {

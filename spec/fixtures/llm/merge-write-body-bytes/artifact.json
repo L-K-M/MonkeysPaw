@@ -1,0 +1,52 @@
+{
+  "title": "true",
+  "description": "line one\n---\nline two",
+  "tags": [
+    "on",
+    "010",
+    "true"
+  ],
+  "fields": [
+    {
+      "name": "tone",
+      "type": "choice",
+      "label": "Tone",
+      "description": "Help",
+      "default": "Swift",
+      "options": [
+        {
+          "label": "Rust",
+          "value": "Rust"
+        },
+        {
+          "label": "Swift 6",
+          "value": "Swift"
+        }
+      ],
+      "optional": false,
+      "remember": true
+    },
+    {
+      "name": "context",
+      "type": "multiline",
+      "label": "Context",
+      "description": "",
+      "default": "",
+      "options": [],
+      "optional": true,
+      "remember": false
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "label": "Name",
+      "description": "",
+      "default": "Reader",
+      "options": [],
+      "optional": false,
+      "remember": true
+    }
+  ],
+  "body": "\ufeff  \u6587\u66f8 {{tone}}\r\ne\u0301 {{context}} {{name}}\n\n",
+  "notes": "Session-only artifact notes"
+}

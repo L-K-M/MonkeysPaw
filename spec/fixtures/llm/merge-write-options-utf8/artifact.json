@@ -1,0 +1,36 @@
+{
+  "title": "New title",
+  "description": "New description",
+  "tags": [
+    "on",
+    "010",
+    "true"
+  ],
+  "fields": [
+    {
+      "name": "tone",
+      "type": "choice",
+      "label": "tone",
+      "description": "",
+      "default": "e\u0301",
+      "options": [
+        {
+          "label": "\u00e9",
+          "value": "e\u0301"
+        },
+        {
+          "label": "true",
+          "value": "true"
+        },
+        {
+          "label": "\ud83d\ude00",
+          "value": "\ud83d\ude00"
+        }
+      ],
+      "optional": false,
+      "remember": true
+    }
+  ],
+  "body": "{{tone}}",
+  "notes": "Session-only artifact notes"
+}

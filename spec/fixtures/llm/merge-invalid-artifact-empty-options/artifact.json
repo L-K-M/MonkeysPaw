@@ -1,0 +1,23 @@
+{
+  "title": "New title",
+  "description": "New description",
+  "tags": [
+    "on",
+    "010",
+    "true"
+  ],
+  "fields": [
+    {
+      "name": "tone",
+      "type": "choice",
+      "label": "tone",
+      "description": "",
+      "default": "",
+      "options": [],
+      "optional": false,
+      "remember": true
+    }
+  ],
+  "body": "New {{tone}} {{context}} {{name}}",
+  "notes": "Session-only artifact notes"
+}
