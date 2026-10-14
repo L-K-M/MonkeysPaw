@@ -74,6 +74,24 @@ class SyncServerURLTest {
         }
     }
 
+    @Test fun malformedPunycodeLabelsAreRejectedBeforeDeploymentOrRequestBinding() {
+        for (host in listOf("xn--", "xn--a.example")) assertInvalidHost(host)
+    }
+
+    @Test fun overlongIDNALabelsAreRejectedInUnicodeAndPunycode() {
+        val longestLabel = "é".repeat(57)
+        assertEquals("https://xn--9c" + "a".repeat(57) + ".example", SyncServerURL("https://$longestLabel.example").baseURL)
+        for (host in listOf("é".repeat(60) + ".example", "xn--9c" + "a".repeat(60) + ".example")) assertInvalidHost(host)
+    }
+
+    @Test fun bidiViolationsAreRejectedInUnicodeAndPunycode() {
+        for (host in listOf("אa.example", "xn--a-zhc.example")) assertInvalidHost(host)
+    }
+
+    @Test fun punycodeCannotBypassContextJValidation() {
+        assertInvalidHost("xn--ab-m1t.example")
+    }
+
     @Test fun credentialsQueriesAndFragmentsNeverBecomeDeploymentBases() {
         for (input in listOf("https://user:synthetic@example.com", "https://@example.com")) {
             assertEquals(SyncServerURLError.CredentialsInURL, assertFailsWith<SyncServerURLError> { SyncServerURL(input) })
@@ -150,6 +168,14 @@ class SyncServerURLTest {
         }
         assertNull(error.cause)
         assertTrue(error.suppressed.isEmpty())
+    }
+
+    private fun assertInvalidHost(host: String) {
+        assertEquals(SyncServerURLError.InvalidURL, assertFailsWith<SyncServerURLError>(host) { SyncServerURL("https://$host") })
+        val server = SyncServerURL("https://example.com")
+        assertEquals(HttpTransportError.InvalidURL, assertFailsWith<HttpTransportError>(host) {
+            server.validatedRequestURL("https://$host/api/v1/me")
+        })
     }
 
     private companion object { val userID = ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV")!! }

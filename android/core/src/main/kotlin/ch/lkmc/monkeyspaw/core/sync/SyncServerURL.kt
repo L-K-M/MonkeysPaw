@@ -60,7 +60,7 @@ class SyncServerURL(input: String) {
         const val hostCharacters = "abcdefghijklmnopqrstuvwxyz0123456789-_."
         const val pathCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:@/"
         const val hex = "0123456789ABCDEF"
-        val idna: IDNA = IDNA.getUTS46Instance(IDNA.NONTRANSITIONAL_TO_ASCII)
+        val idna: IDNA = IDNA.getUTS46Instance(IDNA.NONTRANSITIONAL_TO_ASCII or IDNA.CHECK_BIDI or IDNA.CHECK_CONTEXTJ)
 
         fun parse(raw: String, use: URLUse): Components {
             val input = raw.trimProviderWhitespace()
@@ -100,9 +100,11 @@ class SyncServerURL(input: String) {
             if (words != null) {
                 host = "[${canonicalIPv6(words)}]"
             } else {
-                // ICU is already pinned for portable Unicode; Java IDN uses an older mapping.
-                if (host.any { it.code > 127 }) {
-                    host = idna.nameToASCII(host, StringBuilder(), IDNA.Info()).toString()
+                // Validate ACE labels too, while preserving Foundation's permissive ASCII reg-names.
+                if (host.any { it.code > 127 } || host.split('.').any { it.startsWith("xn--") }) {
+                    val info = IDNA.Info()
+                    host = idna.nameToASCII(host, StringBuilder(), info).toString()
+                    if (info.hasErrors()) throw SyncServerURLError.InvalidURL
                 }
                 host = host.removeSuffix(".")
                 if (host.isEmpty() || host.endsWith('.') || ".." in host || host.any { it !in hostCharacters }) {
