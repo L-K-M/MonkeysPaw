@@ -695,6 +695,81 @@ final class SyncAccountServiceTests: XCTestCase {
         XCTAssertFalse(rig.sync.service.report.enabled)
     }
 
+    func testOldSecretCleanupReferenceSurvivesMetadataAndDeleteFaultAcrossRestart() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        let old = try XCTUnwrap(rig.account.snapshot.account)
+        rig.token = String(repeating: "b", count: 42) + "A"
+        rig.secrets.deleteError = SecretStoreError.locked
+        rig.sync.base.data.onWrite = { path in
+            guard path == "sync/account.json",
+                  let document = try? JSONSerialization.jsonObject(with: rig.sync.base.data.read(at: path)) as? [String: Any],
+                  document["activation"] as? String == "enabled",
+                  let account = document["account"] as? [String: Any],
+                  account["connection_id"] as? String != old.connectionID.uuidString.lowercased() else { return }
+            rig.sync.base.data.onWrite = nil
+            // Fail the cleanup metadata write following new-account enablement.
+            rig.sync.base.data.failNextWrite = true
+        }
+        var password = rig.password
+        let result = try await rig.reopenAccount().login(server: rig.server, username: "person", password: &password, deviceName: "Desktop")
+        await rig.sync.settle()
+        XCTAssertEqual(result.cleanup.secretFailures, [old.connectionID])
+        XCTAssertEqual(result.cleanup.remote, .unconfirmed)
+        XCTAssertTrue(try rig.sync.accounts.loadConnection().cleanupConnections.contains(old.connectionID))
+        rig.secrets.deleteError = nil
+        _ = try await rig.reopenAccount().signOut()
+        XCTAssertTrue(rig.secrets.persisted.isEmpty)
+    }
+
+    func testFailedStartupRetiresResumeCredentialBeforeDeferredRecovery() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        let pending = try await rig.pendingCreate()
+        let normal = rig.sync.transport.handler
+        var gotHead = false
+        var reads = 0
+        rig.sync.transport.handler = { index, request in
+            if request.method == .get, request.url.path.hasSuffix(pending.intent.id.rawValue) {
+                gotHead = true
+                return try SyncServiceRig.failure(.notFound)
+            }
+            return try await normal(index, request)
+        }
+        rig.sync.base.data.onRead = { path in
+            if path == "sync/state.json", gotHead {
+                reads += 1
+                if reads == 1 { throw FileStoreError.ioFailure }
+            }
+        }
+        _ = await failure { try await rig.reopenAccount().startup() }
+        XCTAssertTrue(gotHead)
+        rig.sync.base.data.onRead = nil
+        try rig.sync.base.states.reset(for: pending.binding)
+        try rig.sync.pending.save(pending)
+        let requests = rig.sync.transport.requests.count
+        do { try await rig.sync.service.recoverJournal() }
+        catch { /* A failed startup has no authenticated recovery session. */ }
+        XCTAssertEqual(rig.sync.transport.requests.count, requests)
+        XCTAssertFalse(rig.sync.service.report.enabled)
+    }
+
+    func testUnreadableSignOutMetadataReportsUnconfirmedRemoteRevocation() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        rig.sync.service.stop()
+        await rig.sync.service.drain()
+        try rig.sync.base.data.put("corrupt", at: "sync/account.json")
+        let cleanup = try await rig.reopenAccount().signOut()
+        XCTAssertEqual(cleanup.remote, .unconfirmed)
+        XCTAssertEqual(cleanup.metadataIssue, .corruptFile)
+        XCTAssertFalse(cleanup.isComplete)
+        XCTAssertFalse(rig.sync.service.report.enabled)
+    }
+
     func testMeUnauthorizedImmediatelyStopsCurrentWork() async throws {
         let rig = try SyncAccountRig()
         try await rig.login()

@@ -141,6 +141,8 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   Login stages an inactive connection, then enables it after reserved-folder
   preflight and journaled account/root preparation. `cleanup_connections`
   retains local UUID references for failed persisted-token deletion. An
+  old connection's UUID is retained in the same durable metadata publication
+  that replaces that connection, before any cleanup attempt. An
   inactive or signed-out connection never reads an environment token at startup.
   The secret-store envelope is version 1 and binds the token to the normalized
   deployment, user ID and local connection UUID; raw persisted tokens require

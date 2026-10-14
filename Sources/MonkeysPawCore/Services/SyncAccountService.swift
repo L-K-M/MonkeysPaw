@@ -145,7 +145,10 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
             try accounts.disableAutomaticResume()
             secretAttempted = true
             let tier = try writeSecret(bind(authentication.credential, to: account), account: account.secretAccount)
-            try accounts.setAccount(account, activation: .inactive)
+            // Keep the old secret reference in the SAME durable publication that
+            // replaces its account; a later cleanup fault cannot orphan it.
+            try accounts.setAccount(account, activation: .inactive,
+                retiring: [previous.account?.connectionID].compactMap { $0 })
             let binding = SyncLibraryIdentity(account: account.identity, root: root)
             try await sync.prepareAccount(binding: binding, client: client, device: account.deviceName, intent: .login)
             try Task.checkCancellation()
@@ -156,8 +159,6 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
             locked { active = session; cached = SyncAccountSnapshot(account: account, me: me, tier: tier, enabled: true) }
             var cleanup = SyncAccountCleanup()
             if let previous = previous.account {
-                do { try accounts.retireSecret(previous.connectionID) }
-                catch { cleanup.metadataIssue = metadataError(error) }
                 if let old, old.account == previous { cleanup.remote = await revoke(old.client) }
                 else { cleanup.remote = .unconfirmed }
             }
@@ -220,7 +221,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
             }
             return snapshot
         } catch {
-            sync.stop()
+            sync.stopAccountSession()
             await sync.drain()
             locked { active = nil; cached.enabled = false }
             let result = failure(error)
@@ -323,8 +324,9 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         await sync.drain()
         var cleanup = SyncAccountCleanup()
         var connection: SyncConnectionDocument?
+        var connectionReadFailed = false
         do { connection = try accounts.connectionForSignOut() }
-        catch { cleanup.metadataIssue = metadataError(error) }
+        catch { connectionReadFailed = true; cleanup.metadataIssue = metadataError(error) }
         do { try accounts.disableAutomaticResume() }
         catch { cleanup.metadataIssue = metadataError(error) }
         // Retire in-memory credentials before any suspension or cleanup error.
@@ -337,7 +339,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         }
         if let remote {
             cleanup.remote = await revoke(remote.client, device: device, validating: unverified)
-        } else if connection?.account != nil { cleanup.remote = .unconfirmed }
+        } else if connectionReadFailed || connection?.account != nil { cleanup.remote = .unconfirmed }
 
         let ids = Set((connection?.cleanupConnections ?? []) + [connection?.account?.connectionID, session?.account.connectionID].compactMap { $0 })
         do { try accounts.saveInactive(nil, retiring: Array(ids)); cleanup.metadataIssue = nil }

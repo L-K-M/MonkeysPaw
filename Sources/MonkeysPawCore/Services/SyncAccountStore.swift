@@ -106,11 +106,13 @@ public final class SyncAccountStore: @unchecked Sendable {
         try connection.load() ?? SyncConnectionDocument(account: nil)
     }
 
-    func setAccount(_ account: SyncAccount?, activation: SyncAccountActivation = .enabled) throws {
+    func setAccount(_ account: SyncAccount?, activation: SyncAccountActivation = .enabled,
+                    retiring ids: [UUID] = []) throws {
         _ = try ownership.load()
         try connection.update { current in
-            SyncConnectionDocument(account: account, activation: activation,
-                                   cleanupConnections: current?.cleanupConnections ?? [])
+            let cleanup = Set((current?.cleanupConnections ?? []) + ids)
+            return SyncConnectionDocument(account: account, activation: activation,
+                cleanupConnections: cleanup.sorted { $0.uuidString < $1.uuidString })
         }
     }
 
@@ -139,14 +141,6 @@ public final class SyncAccountStore: @unchecked Sendable {
         try connection.update { current in
             SyncConnectionDocument(account: current?.account, activation: current?.activation ?? .inactive,
                 cleanupConnections: (current?.cleanupConnections ?? []).filter { $0 != id })
-        }
-    }
-
-    func retireSecret(_ id: UUID) throws {
-        try connection.update { current in
-            let ids = Set((current?.cleanupConnections ?? []) + [id])
-            return SyncConnectionDocument(account: current?.account, activation: current?.activation ?? .inactive,
-                cleanupConnections: ids.sorted { $0.uuidString < $1.uuidString })
         }
     }
 
