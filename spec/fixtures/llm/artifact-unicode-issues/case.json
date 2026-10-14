@@ -1,0 +1,104 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "artifact" : {
+        "body" : "😀 {{é}}\r\n{{topic}} {{selection}} {{ a b }} {{missing",
+        "description" : "café / <>&  ",
+        "fields" : [
+          {
+            "default" : "neutral",
+            "description" : "Voice to use",
+            "label" : "Tone",
+            "name" : "tone",
+            "optional" : false,
+            "options" : [
+              {
+                "label" : "Neutral",
+                "value" : "neutral"
+              }
+            ],
+            "remember" : true,
+            "type" : "choice"
+          },
+          {
+            "default" : "",
+            "description" : "Background",
+            "label" : "Context",
+            "name" : "context",
+            "optional" : true,
+            "options" : [
+
+            ],
+            "remember" : false,
+            "type" : "multiline"
+          },
+          {
+            "default" : "science",
+            "description" : "",
+            "label" : "Topic",
+            "name" : "topic",
+            "optional" : false,
+            "options" : [
+
+            ],
+            "remember" : true,
+            "type" : "text"
+          }
+        ],
+        "notes" : "Explain the context and preserve the tone.",
+        "tags" : [
+          "café",
+          "café"
+        ],
+        "title" : "Café 😀"
+      },
+      "issues" : [
+        {
+          "code" : "template.invalid_placeholder",
+          "location" : {
+            "bodyByteOffset" : 5
+          },
+          "severity" : "warning"
+        },
+        {
+          "code" : "template.invalid_placeholder",
+          "location" : {
+            "bodyByteOffset" : 37
+          },
+          "severity" : "warning"
+        },
+        {
+          "code" : "template.unbalanced_opener",
+          "location" : {
+            "bodyByteOffset" : 47
+          },
+          "severity" : "error"
+        },
+        {
+          "code" : "field.reserved_name",
+          "location" : {
+            "bodyByteOffset" : 23
+          },
+          "severity" : "error"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        },
+        {
+          "code" : "field.unused",
+          "location" : null,
+          "severity" : "warning"
+        }
+      ]
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "schema" : 1,
+  "source" : "output.txt"
+}

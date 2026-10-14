@@ -139,6 +139,37 @@ final class LlmRecoverySchemaTests: XCTestCase {
             with: "\"title\":\"\\uD800\"")))
     }
 
+    func testStringBOMCompatibilityUsesRawRunsRatherThanDecodedStringPrefixes() throws {
+        let bom = "\u{FEFF}"
+        let escapes = [(#"\""#, "\""), (#"\\"#, "\\"), (#"\/"#, "/"), (#"\b"#, "\u{08}"),
+                       (#"\f"#, "\u{0C}"), (#"\n"#, "\n"), (#"\r"#, "\r"), (#"\t"#, "\t"),
+                       (#"\u0041"#, "A"), (#"\uD83D\uDE00"#, "😀"), (#"\uFEFF"#, bom)]
+        var examples = [("\"" + bom + "b\"", "b"), ("\"" + bom + bom + "b\"", bom + "b"),
+                        ("\"a" + bom + "b\"", "a" + bom + "b"), (#""\uFEFFb""#, bom + "b")]
+        for (wire, decoded) in escapes {
+            examples.append(("\"a" + wire + bom + bom + "b\"", "a" + decoded + bom + "b"))
+            examples.append(("\"" + wire + bom + "b\"", decoded + "b"))
+        }
+        for (wire, expected) in examples {
+            var parser = LlmJSONParser(bytes: Array(wire.utf8))
+            XCTAssertEqual(try Array(parser.parse().string.utf8), Array(expected.utf8), wire.debugDescription)
+        }
+    }
+
+    func testStringParserRejectsMalformedUTF8ControlsAndEscapes() throws {
+        let invalid: [[UInt8]] = [
+            [34, 0xED, 0xA0, 0x80, 34],
+            [34, 0xEF, 0xBB, 0xBF, 0xC0, 0xAF, 34], [34, 0, 34], [34, 10, 34]
+        ] + [#""\uDC00""#, #""\uD800\u0041""#, #""\uD800x""#, #""\u12x4""#,
+             #""\u123""#, #""\q""#, "\"unterminated", "\"trailing\\"].map { Array($0.utf8) }
+        for bytes in invalid {
+            var parser = LlmJSONParser(bytes: bytes)
+            XCTAssertThrowsError(try parser.parse()) {
+                XCTAssertEqual($0 as? AssistantError, .invalidOutput)
+            }
+        }
+    }
+
     func testInputByteCapAndNestingBoundApplyBeforeRecovery() throws {
         let json = try AssistantOutputFixtures.json(AssistantOutputFixtures.artifact)
         let padding = String(repeating: " ", count: Limits.responseCap - json.utf8.count)

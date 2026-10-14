@@ -264,6 +264,15 @@ Parsing and validation:
   respects strings and escapes exactly and is still strictly validated;
   an invalid first object is never skipped for a later one. Input is bounded
   to 2 MiB, nesting to 32 open containers, including empty containers.
+  Shared `spec/fixtures/llm` schema/decode cases pin request schema bytes,
+  recovered object bytes, JSON validity, typed output and ordered draft
+  issues in both languages. Duplicate decoded keys and field names use
+  Swift's canonical string equality; retained values keep their UTF-8 bytes.
+  The shared reader owns JSON string decoding: for compatibility with the
+  documented LLM fixtures, it removes one literal UTF-8 BOM at the start of
+  each raw string run, including after an escape, and retains escaped
+  `\uFEFF` and interior BOMs. This rule applies to keys and values on every
+  platform; Foundation's string-fragment decoding does not define it.
   A top-level array is not an object. Review quotes use exact UTF-8 byte
   matching against the input snapshot; empty or unmatched quotes are marked
   unmatched and never highlight unrelated text.

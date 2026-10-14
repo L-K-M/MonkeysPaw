@@ -1,0 +1,4 @@
+*.txt -text -whitespace
+*.bin -text -whitespace
+*.md -text -whitespace
+recovered.json -text -whitespace

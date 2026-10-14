@@ -1,0 +1,1 @@
+{"body":"{{tone}}","description":"Research a topic","fields":[{"default":"","description":"Voice to use","label":"Tone","name":"tone","optional":false,"options":[{"label":"Neutral","value":"neutral"}],"remember":true,"type":"choice"}],"notes":"Explain the context and preserve the tone.","tags":["research","work"],"title":"Research"}

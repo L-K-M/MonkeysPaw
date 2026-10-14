@@ -1,0 +1,1 @@
+{"body":"<context>{{ context }}</context>\nUse {{tone}} about {{topic}}.","description":"Research a topic","fields":false,"notes":"Explain the context and preserve the tone.","tags":["research","work"],"title":"Research"}

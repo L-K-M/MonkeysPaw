@@ -1,0 +1,1 @@
+{"findings":[{"criterion":"verifiability","problem":"The source requirements are vague.","quote":"Use sources.","severity":1,"suggestion":"Request primary sources."}],"summary":"Clarify sources."}

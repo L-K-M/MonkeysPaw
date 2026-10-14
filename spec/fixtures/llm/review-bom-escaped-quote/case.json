@@ -1,0 +1,27 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "review" : {
+        "findings" : [
+          {
+            "criterion" : "clarity",
+            "problem" : "",
+            "quote" : "﻿abc",
+            "quoteMatch" : null,
+            "severity" : "low",
+            "suggestion" : ""
+          }
+        ],
+        "summary" : ""
+      }
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "review",
+  "reviewedSource" : "prompt.md",
+  "schema" : 1,
+  "source" : "output.txt"
+}

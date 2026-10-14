@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonObject
 
 internal enum class Category(val directory: String) {
     FORMAT("format"), GRAMMAR("grammar"), RENDER("render"), VALIDATION("validation"),
-    RANKING("ranking"), IMPORT("import"), PATHS("paths"), CANONICAL("canonical"), DTO("dto");
+    RANKING("ranking"), IMPORT("import"), PATHS("paths"), CANONICAL("canonical"), DTO("dto"), LLM("llm");
 }
 
 internal class CorpusException(message: String) : IllegalArgumentException(message)
@@ -84,8 +84,10 @@ internal class Corpus private constructor(
                 for (input in fixture.files) {
                     corpusRequire(accounted.add(input.relativePath), "Duplicate accounting of ${input.relativePath}")
                 }
-                // DTO/canonical refusals may deliberately contain malformed source bytes.
-                if (category != Category.DTO && category != Category.CANONICAL) sources.values.forEach { it.utf8() }
+                // DTO/canonical refusals and LLM recovery samples may contain malformed bytes.
+                if (category !in setOf(Category.DTO, Category.CANONICAL, Category.LLM)) sources.values.forEach { it.utf8() }
+                if (category == Category.LLM) sources.values.filter { it.path.toString().endsWith(".txt") ||
+                    it.path.toString().endsWith(".md") }.forEach { it.utf8() }
                 if (category == Category.IMPORT) {
                     val count = envelope["repeat"]?.integerValue() ?: java.math.BigInteger.ONE
                     val size = java.math.BigInteger.valueOf(fixture.source().bytes().size.toLong()) * count
@@ -125,6 +127,7 @@ internal class Corpus private constructor(
                                 Category.IMPORT -> listOf(".md", ".prompt", ".prompty").any { name.endsWith(it) }
                                 Category.PATHS -> name == "path.txt"
                                 Category.DTO -> name.endsWith(".json")
+                                Category.LLM -> listOf(".txt", ".bin", ".json", ".md").any { name.endsWith(it) }
                             }
                             corpusRequire(allowed, "Unknown file $child")
                             enumerated.add(file(child).relativePath)

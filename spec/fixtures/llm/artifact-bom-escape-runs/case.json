@@ -1,0 +1,22 @@
+{
+  "category": "llm",
+  "expected": {
+    "parsed": true,
+    "recovered": "recovered.json",
+    "result": {
+      "artifact": {
+        "body": "",
+        "description": "",
+        "fields": [],
+        "notes": "start\"﻿x\\﻿x/﻿x\b﻿x\f﻿x\n﻿x\r﻿x\t﻿xA﻿x😀﻿x﻿﻿xmiddle﻿end",
+        "tags": [],
+        "title": ""
+      },
+      "issues": []
+    }
+  },
+  "kind": "decode",
+  "outputKind": "artifact",
+  "schema": 1,
+  "source": "output.txt"
+}

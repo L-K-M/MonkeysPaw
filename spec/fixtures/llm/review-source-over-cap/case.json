@@ -1,0 +1,16 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "error" : "invalidOutput"
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "review",
+  "reviewedRepeat" : 262145,
+  "reviewedSource" : "prompt.md",
+  "schema" : 1,
+  "source" : "output.txt"
+}

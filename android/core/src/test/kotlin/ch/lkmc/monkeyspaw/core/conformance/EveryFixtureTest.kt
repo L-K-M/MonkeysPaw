@@ -24,6 +24,7 @@ internal object EveryFixtures {
             Category.CANONICAL to CanonicalFixtures.consume(corpus),
             Category.IMPORT to ImportFixtures.consume(corpus),
             Category.DTO to dto.files,
+            Category.LLM to LlmFixtureConsumer.consume(corpus.cases(Category.LLM)).files,
         )
         corpusRequire(byCategory.keys == Category.entries.toSet(), "Missing semantic category adapter")
         val consumed = linkedSetOf<String>()
@@ -84,6 +85,8 @@ class EveryFixtureTest {
                 Category.CANONICAL -> "bytes" in candidate.expected
                 Category.PATHS -> "path" in candidate.expected
                 Category.DTO -> candidate.expected["valid"].booleanValue()
+                Category.LLM -> candidate.envelope["kind"].stringValue() == "decode" &&
+                    "artifact" in candidate.expected["result"].objectValue()
                 else -> true
             } }
             val expected = fixture.expected.toMutableMap()
@@ -99,6 +102,12 @@ class EveryFixtureTest {
                 Category.DTO -> {
                     expected.clear()
                     expected["valid"] = JsonPrimitive(false)
+                }
+                Category.LLM -> {
+                    val result = fixture.expected["result"].objectValue()
+                    val artifact = result["artifact"].objectValue()
+                    val altered = JsonObject(artifact + ("title" to JsonPrimitive(artifact["title"].stringValue() + " wrong")))
+                    expected["result"] = JsonObject(result + ("artifact" to altered))
                 }
             }
             val original = fixture.envelopeFile.bytes()

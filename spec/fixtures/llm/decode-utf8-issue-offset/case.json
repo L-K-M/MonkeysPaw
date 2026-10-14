@@ -1,0 +1,34 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "artifact" : {
+        "body" : "���{{open",
+        "description" : "",
+        "fields" : [
+
+        ],
+        "notes" : "",
+        "tags" : [
+
+        ],
+        "title" : ""
+      },
+      "issues" : [
+        {
+          "code" : "template.unbalanced_opener",
+          "location" : {
+            "bodyByteOffset" : 9
+          },
+          "severity" : "error"
+        }
+      ]
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "schema" : 1,
+  "source" : "output.bin"
+}

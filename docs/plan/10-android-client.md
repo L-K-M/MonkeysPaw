@@ -256,14 +256,17 @@ risk, so it is contained by contract:
   - path validation and `path_key`
   - ranking order
   - pure import conversions and reports
+  - LLM schemas, request bodies and response recovery/decoding, including
+    ordered draft issues and exact UTF-8 review quote ranges; `llm` starts
+    with schema/decode cases and gains each later kind with both consumers
   - SyncAPI DTO JSON
   The Swift `PromptConformanceTests` (`MonkeysPawCoreTests`) and Kotlin
   `EveryFixtureTest` (`core` JVM tests) both run every case and visible file
-  in all nine current categories: format, grammar, render, validation,
-  canonical, paths, ranking, import and DTOs. Import and all 54 wire DTOs,
+  in all ten current categories: format, grammar, render, validation,
+  canonical, paths, ranking, import, DTOs and LLM. Import and all 54 wire DTOs,
   including admin contracts, are parity requirements even though Android
   has no import, Account or admin UI. CI fails if either side diverges. Future
-  LLM and sync-engine fixtures land with both consumers under the
+  sync-engine fixtures land with both consumers under the
   move-together rule.
 - **Wire contract.** SyncAPI DTOs are defined once in Swift (`SyncAPI`).
   - A `dump-schema` executable in the server package writes JSON Schemas to
@@ -301,8 +304,12 @@ risk, so it is contained by contract:
   - Any scenario that stays engine-specific is listed in the fixture
     README.
 - **The move-together rule** goes into AGENTS.md: a change to format,
-  grammar, validation, canonical form, or the sync protocol lands with
-  fixture updates and both implementations in the same PR.
+  grammar, validation, canonical form, sync protocol, or assistant requests,
+  schemas, output recovery/decoding, merge/diff and shipped prompts lands
+  with fixture updates and both Swift and Kotlin implementations in the
+  same PR. New categories and kinds require both semantic consumers
+  immediately; unknown kinds, orphan files and unconsumed expectations
+  fail the gate.
 
 ### 10.8 Build, CI, release
 

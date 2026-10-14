@@ -1,0 +1,27 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "review" : {
+        "findings" : [
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "café",
+            "quoteMatch" : null,
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          }
+        ],
+        "summary" : "Clarify sources."
+      }
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "review",
+  "reviewedSource" : "prompt.md",
+  "schema" : 1,
+  "source" : "output.txt"
+}

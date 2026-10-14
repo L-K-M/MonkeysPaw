@@ -1,0 +1,18 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : false,
+    "recovered" : null,
+    "result" : {
+      "error" : "invalidOutput"
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "prefix" : {
+    "repeat" : 2096485,
+    "source" : "prefix.txt"
+  },
+  "schema" : 1,
+  "source" : "output.txt"
+}

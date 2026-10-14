@@ -1,0 +1,14 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : false,
+    "recovered" : null,
+    "result" : {
+      "error" : "invalidOutput"
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "artifact",
+  "schema" : 1,
+  "source" : "output.txt"
+}

@@ -1,0 +1,117 @@
+{
+  "category" : "llm",
+  "expected" : {
+    "parsed" : true,
+    "recovered" : "recovered.json",
+    "result" : {
+      "review" : {
+        "findings" : [
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 18,
+              "startByte" : 6
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "😀",
+            "quoteMatch" : {
+              "endByteExclusive" : 4,
+              "startByte" : 0
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "café",
+            "quoteMatch" : {
+              "endByteExclusive" : 45,
+              "startByte" : 40
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "café",
+            "quoteMatch" : {
+              "endByteExclusive" : 39,
+              "startByte" : 33
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "line\nnext",
+            "quoteMatch" : null,
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "line\r\nnext",
+            "quoteMatch" : {
+              "endByteExclusive" : 56,
+              "startByte" : 46
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "",
+            "quoteMatch" : null,
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "use sources.",
+            "quoteMatch" : null,
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "Use  sources.",
+            "quoteMatch" : null,
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          },
+          {
+            "criterion" : "verifiability",
+            "problem" : "The source requirements are vague.",
+            "quote" : "sources.",
+            "quoteMatch" : {
+              "endByteExclusive" : 18,
+              "startByte" : 10
+            },
+            "severity" : "medium",
+            "suggestion" : "Request primary sources."
+          }
+        ],
+        "summary" : "Unicode 😀 / café"
+      }
+    }
+  },
+  "kind" : "decode",
+  "outputKind" : "review",
+  "reviewedSource" : "prompt.md",
+  "schema" : 1,
+  "source" : "output.txt"
+}

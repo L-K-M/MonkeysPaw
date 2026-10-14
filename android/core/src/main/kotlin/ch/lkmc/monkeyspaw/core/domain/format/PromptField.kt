@@ -1,6 +1,6 @@
 package ch.lkmc.monkeyspaw.core.domain.format
 
-import java.text.Normalizer
+import com.ibm.icu.text.Normalizer2
 
 enum class FieldKind(val rawValue: String) { TEXT("text"), MULTILINE("multiline"), CHOICE("choice") }
 
@@ -19,6 +19,6 @@ data class PromptField(
     val isImplicit: Boolean = false,
 )
 
-/** Swift String equality is canonically equivalent; rendering retains the original spelling. */
+/** Swift canonical equality needs the pinned ICU data; rendering retains the original spelling. */
 internal fun equalChoiceValues(first: String, second: String): Boolean =
-    Normalizer.normalize(first, Normalizer.Form.NFC) == Normalizer.normalize(second, Normalizer.Form.NFC)
+    Normalizer2.getNFCInstance().normalize(first) == Normalizer2.getNFCInstance().normalize(second)

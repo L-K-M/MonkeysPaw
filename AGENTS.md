@@ -175,9 +175,13 @@ is unaffected.
 
 ## Architecture and engineering rules (§4.2)
 
-- A change to format, grammar, validation, canonical form or the sync
-  protocol lands with fixture updates and both the Swift and Kotlin
-  implementations in the same PR (§10.7, the move-together rule).
+- Move shared behavior together: changes to prompt format, grammar,
+  validation, canonical form, sync protocol, or assistant requests, schemas,
+  output recovery and decoding, merge/diff and shipped prompts require
+  shared fixture updates and both Swift and Kotlin implementations in the
+  same PR (§10.7, the move-together rule). Register each new fixture category
+  or kind with both semantic consumers; no pending adapter or ignored
+  expectation.
 - Each layer calls only the layer directly below it: Views → Presentation
   models → Services → Domain and Ports. Services see drivers only through
   port protocols. Views render state and forward intents; they never touch

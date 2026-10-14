@@ -23,6 +23,7 @@ class CorpusInventoryTest {
     @Test
     fun `inventory accounts for every visible fixture exactly once`() {
         val corpus = Corpus.load()
+        assertEquals(10, Category.entries.size)
         assertEquals(Category.entries.toSet(), corpus.cases.map { it.category }.toSet())
         Category.entries.forEach { assertTrue(corpus.cases(it).isNotEmpty(), it.directory) }
         val files = corpus.cases.flatMap { it.files }.map { it.relativePath }
@@ -180,6 +181,12 @@ class CorpusInventoryTest {
             }
         }
         mutateRejects(Category.DTO, "unknown DTO") { this["dto"] = JsonPrimitive("UnknownDTO") }
+        mutateRejects(Category.LLM, "unknown kind") { this["kind"] = JsonPrimitive("exchange") }
+        mutateRejects(Category.LLM, "false schema") { this["schema"] = JsonPrimitive(false) }
+        mutateRejects(Category.LLM, "unknown output kind") { this["outputKind"] = JsonPrimitive("unknown") }
+        mutateRejects(Category.LLM, "boolean parser golden") {
+            this["expected"] = changed(this["expected"]) { this["parsed"] = JsonPrimitive(1) }
+        }
     }
 
     @Test
@@ -192,6 +199,7 @@ class CorpusInventoryTest {
             Category.RANKING to listOf(listOf("prompts", "0"), listOf("expected", "results", "0")),
             Category.IMPORT to listOf(listOf("expected", "mappings", "0"), listOf("expected", "warnings", "0")),
             Category.CANONICAL to listOf(listOf("comparison")),
+            Category.LLM to listOf(listOf("expected", "result"), listOf("expected", "result", "artifact")),
         )
         paths.forEach { (category, members) -> members.forEach { path ->
             mutateRejects(category, "extra nested member $path") {
@@ -342,7 +350,7 @@ class CorpusInventoryTest {
         paths.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
     }
 
-    private val directoryCategories = setOf(Category.RANKING, Category.IMPORT, Category.PATHS, Category.CANONICAL, Category.DTO)
+    private val directoryCategories = setOf(Category.RANKING, Category.IMPORT, Category.PATHS, Category.CANONICAL, Category.DTO, Category.LLM)
 
     private fun envelopePath(category: Category): String = category.directory +
         if (category in directoryCategories) "/tiny/case.json" else "/tiny.json"
@@ -359,9 +367,11 @@ class CorpusInventoryTest {
         "paths/tiny/case.json" to """{"schema":1,"category":"paths","source":"path.txt","scope":"user","expected":{"path":"Tiny.md","path_key":"tiny.md"}}""",
         "canonical/tiny/case.json" to """{"schema":1,"category":"canonical","scope":"user","source":"source.md","expected":{"bytes":"x","body":"x","canonicalHash":"${"0".repeat(64)}","favorite":null,"warnings":[]},"comparison":{"source":"candidate.md","equivalent":false}}""",
         "dto/tiny/case.json" to """{"schema":1,"category":"dto","dto":"HealthResponse","source":"body.json","expected":{"valid":true}}""",
+        "llm/tiny/case.json" to """{"schema":1,"category":"llm","kind":"decode","outputKind":"artifact","source":"output.txt","expected":{"recovered":"recovered.json","parsed":true,"result":{"artifact":{"title":"","description":"","tags":[],"fields":[],"body":"","notes":""},"issues":[]}}}""",
         "format/tiny.md" to "x", "grammar/tiny.md" to "x", "render/tiny.md" to "x", "validation/tiny.md" to "x",
         "ranking/tiny/one.md" to "x", "ranking/tiny/two.md" to "x", "import/tiny/source.prompt" to "x",
         "paths/tiny/path.txt" to "Tiny.md", "canonical/tiny/source.md" to "x", "canonical/tiny/candidate.md" to "y",
         "dto/tiny/body.json" to "{}",
+        "llm/tiny/output.txt" to "{}", "llm/tiny/recovered.json" to "{}",
     )
 }
