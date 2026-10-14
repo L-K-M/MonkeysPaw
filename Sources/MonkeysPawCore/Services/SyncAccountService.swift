@@ -193,6 +193,10 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         await sync.drain()
         do {
             let connection = try accounts.loadConnection()
+            locked {
+                cached = SyncAccountSnapshot(account: connection.account,
+                    cleanup: SyncAccountCleanup(secretFailures: connection.cleanupConnections))
+            }
             guard let account = connection.account, connection.activation == .enabled else {
                 locked {
                     active = nil
@@ -319,7 +323,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         await sync.drain()
         var cleanup = SyncAccountCleanup()
         var connection: SyncConnectionDocument?
-        do { connection = try accounts.loadConnection() }
+        do { connection = try accounts.connectionForSignOut() }
         catch { cleanup.metadataIssue = metadataError(error) }
         do { try accounts.disableAutomaticResume() }
         catch { cleanup.metadataIssue = metadataError(error) }

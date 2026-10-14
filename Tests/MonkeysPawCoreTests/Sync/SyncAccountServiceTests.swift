@@ -639,6 +639,33 @@ final class SyncAccountServiceTests: XCTestCase {
         XCTAssertFalse(rig.sync.service.report.enabled)
     }
 
+    func testSignOutStillFindsAndDeletesTokenWhenOwnershipMetadataIsCorrupt() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        rig.sync.service.stop()
+        await rig.sync.service.drain()
+        let connection = try XCTUnwrap(rig.account.snapshot.account)
+        try rig.sync.base.data.put("corrupt", at: "sync/binding.json")
+        let result = try await rig.reopenAccount().signOut()
+        XCTAssertEqual(result.remote, .revoked)
+        XCTAssertNil(rig.secrets.persisted[connection.secretAccount])
+        XCTAssertEqual(try rig.sync.base.data.text(at: "sync/binding.json"), "corrupt")
+        XCTAssertFalse(rig.sync.service.report.enabled)
+    }
+
+    func testStartupFailureKeepsNonSecretMetadataForReauthentication() async throws {
+        let rig = try SyncAccountRig()
+        let connection = try rig.connection()
+        try rig.sync.accounts.setAccount(connection)
+        rig.secrets.readError = SecretStoreError.locked
+        _ = await failure { try await rig.account.startup() }
+        XCTAssertEqual(rig.account.snapshot.account, connection)
+        XCTAssertFalse(rig.account.snapshot.enabled)
+        XCTAssertNil(rig.account.snapshot.me)
+        XCTAssertNil(rig.account.snapshot.tier)
+    }
+
     func testMeUnauthorizedImmediatelyStopsCurrentWork() async throws {
         let rig = try SyncAccountRig()
         try await rig.login()
