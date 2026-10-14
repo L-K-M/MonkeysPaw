@@ -3,6 +3,20 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class ConflictResolutionTests: XCTestCase {
+    func testDeletingUnuploadedCopyRemovesItsPendingRecord() async throws {
+        for action in [ConflictResolutionAction.keepServer, .keepMine] {
+            let h = try await ConflictTestRig.make()
+            try h.rig.base.states.update(for: h.rig.base.binding) { state in
+                state.prompts[.assigned(h.copyID)] = try SyncPromptState(scope: SyncScanTestSupport.personal,
+                    path: RelativePath(h.path), rev: 0, origin: .conflictOf(h.original))
+            }
+            let preview = try await h.service.preview(h.selection)
+            _ = try await h.service.resolve(action, preview: preview)
+            XCTAssertNil(try h.rig.base.files.stamp(at: h.path))
+            XCTAssertNil(h.rig.base.states.snapshot.value?.prompts[.assigned(h.copyID)], "Never-uploaded copies need no DELETE")
+        }
+    }
+
     func testRescuedPromptOffersOnlyKeepBothWithoutInventingAnOriginal() async throws {
         let h = try await ConflictTestRig.make()
         let rescued = try SyncConflictMetadata.settingOrigin(.rescued, in: h.copyBytes, filename: "copy.md")
