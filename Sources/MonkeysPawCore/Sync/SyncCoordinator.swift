@@ -281,7 +281,10 @@ final class SyncCoordinator {
             try collected.discard()
             pull = nil
             phase(.scanning)
-            let finalScan = try await preparedScan(phase: phase)
+            guard let finalScan = try await preparedScan(phase: phase) else {
+                result.rerun = true
+                return result
+            }
             phase(.pushing)
             for change in finalScan.changes {
                 try permit.check()
@@ -445,7 +448,8 @@ final class SyncCoordinator {
             accessGeneration: accessGeneration, freshID: freshID, mutations: mutations)
     }
 
-    private func preparedScan(phase: (SyncPhase) -> Void) async throws -> SyncLocalScan {
+    /// A collision rescue can reset a scope; recollect before any push.
+    private func preparedScan(phase: (SyncPhase) -> Void) async throws -> SyncLocalScan? {
         for _ in 0..<Limits.syncPreparationLimit {
             let state = try currentState()
             let local = try scan(state)
@@ -458,7 +462,7 @@ final class SyncCoordinator {
             } else if let preparation = local.preparation {
                 try commit(preparation)
             } else if let path = local.issues.keys.sorted().first(where: { local.issues[$0] == .forbidden }), let state {
-                try await restoreDenied(path, state: state, local: local.snapshot)
+                if try await restoreDenied(path, state: state, local: local.snapshot) { return nil }
             } else { return local }
             phase(.scanning)
         }
@@ -467,7 +471,7 @@ final class SyncCoordinator {
 
     /// A known viewer denial needs the same preservation as a server 403,
     /// without dispatching an unauthorized mutation to obtain that response.
-    private func restoreDenied(_ path: RelativePath, state: SyncState, local: SyncReconciliationSnapshot) async throws {
+    private func restoreDenied(_ path: RelativePath, state: SyncState, local: SyncReconciliationSnapshot) async throws -> Bool {
         let source = local.files.first { RelativePath($0.path) == path }
         let identity = try source?.identity ?? state.prompts.first(where: {
             (try? SyncLocalScanner.rooted($0.value.path, scope: $0.value.scope, groups: state.groups)) == path
@@ -494,7 +498,7 @@ final class SyncCoordinator {
         let sources = matching.filter { !fresh.heldPaths.contains(RelativePath($0.path)) }
         guard sources.count <= 1 else { throw SyncReconciliationError.invalidLocalSnapshot }
         let file = sources.first
-        if file == nil, !matching.isEmpty { return }
+        if file == nil, !matching.isEmpty { return false }
         var next = state
         next.prompts[identity] = nil
         var installation: SyncReconciliationInstall?
@@ -510,7 +514,7 @@ final class SyncCoordinator {
                 let plan = SyncReconciliationPlan(mode: .normal, expectedState: state, nextState: state, operations: [],
                     occupiedPaths: Set(fresh.files.map { RelativePath($0.path) }), localIdentities: try Set(fresh.files.map { try $0.identity }))
                 try relocate(occupant, remote: remote, plan: plan, local: fresh)
-                return
+                return true
             }
             installation = SyncReconciliationInstall(remote: remote, source: file, target: targets.first)
             next.prompts[identity] = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
@@ -534,7 +538,7 @@ final class SyncCoordinator {
             let plan = SyncReconciliationPlan(mode: .normal, expectedState: state, nextState: next, operations: operations,
                 occupiedPaths: Set(fresh.files.map { RelativePath($0.path) }), localIdentities: try Set(fresh.files.map { try $0.identity }))
             try commit(application(plan, local: fresh))
-            return
+            return false
         }
         // Idless viewer creates receive their first identity only in a private
         // rescue; they never become group upload candidates.
@@ -553,6 +557,7 @@ final class SyncCoordinator {
             edits = [copy.edit, try mutations.trash(file)]
         }
         try commit(SyncApplyPlan(expectedState: state, nextState: next, edits: edits))
+        return false
     }
 
     private func changed(_ plan: SyncApplyPlan) -> Bool {

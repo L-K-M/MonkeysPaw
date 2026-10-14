@@ -11,9 +11,11 @@ extension SyncGroupFolders {
         var owned = try ownership ?? SyncLibraryBinding(root: next.binding.root, owner: next.binding.account)
         let edits = try rescue([file], clean: { _ in false }, inventory: inventory, ownership: &owned,
             previousOwnership: ownership, state: &next, holdAll: false, at: date, freshID: freshID, mutations: mutations)
-        // Keep acknowledged baselines for a distinct occupant: a fresh complete
-        // snapshot, rather than inferred local DELETE, must restore its head.
+        // Keep the identity/overlay, but retire the acknowledgement: this
+        // internal removal must be restored by snapshot, never pushed as DELETE.
         if let record = next.prompts[try file.identity], record.rev > 0 {
+            next.prompts[try file.identity] = try SyncPromptState(scope: record.scope,
+                path: record.path, rev: 0, origin: record.origin)
             var cursors = next.cursors
             cursors[record.scope] = SyncState.snapshotResetCursor
             next = try SyncState(binding: next.binding, databaseID: next.databaseID, cursors: cursors,
