@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.security.InvalidKeyException
 
 /** One process-scoped driver owns the separate secrets DataStore and serializes all key access. */
 internal class AndroidKeystoreSecretStore(
@@ -30,10 +31,7 @@ internal class AndroidKeystoreSecretStore(
     override suspend fun write(value: SecretValue, account: SecretAccount): SecretTier =
         operation(SecretStoreError.WriteFailed) {
             store.updateData { current ->
-                val key = keys.read() ?: if (current.entries.isEmpty()) keys.create() else throw SecretStoreError.Unavailable
-                // Save cannot silently replace a damaged or differently bound credential.
-                current.entries[account.rawValue]?.let { SecretEnvelope.open(it, account, key) }
-                SecretRecords(current.entries + (account.rawValue to SecretEnvelope.seal(value, account, key)))
+                SecretRecords(current.entries + (account.rawValue to sealForWrite(value, account, current)))
             }
             SecretTier.KEYSTORE
         }
@@ -44,6 +42,28 @@ internal class AndroidKeystoreSecretStore(
             if (account.rawValue !in current.entries) current else SecretRecords(current.entries - account.rawValue)
         }
         Unit
+    }
+
+    private fun sealForWrite(value: SecretValue, account: SecretAccount, current: SecretRecords): SecretEnvelope {
+        val key = try { keys.read() }
+        catch (error: SecretStoreError) {
+            if (error != SecretStoreError.Unavailable || current.entries.isNotEmpty()) throw error
+            return SecretEnvelope.seal(value, account, keys.replace())
+        }
+        if (key == null) {
+            if (current.entries.isNotEmpty()) throw SecretStoreError.Unavailable
+            return SecretEnvelope.seal(value, account, keys.create())
+        }
+
+        // Save cannot silently replace a damaged or differently bound credential.
+        current.entries[account.rawValue]?.let { SecretEnvelope.open(it, account, key) }
+        return try { SecretEnvelope.seal(value, account, key) }
+        catch (error: UserNotAuthenticatedException) { throw error }
+        catch (error: InvalidKeyException) {
+            // Replacing the shared alias would orphan any retained account's ciphertext.
+            if (current.entries.isNotEmpty()) throw error
+            SecretEnvelope.seal(value, account, keys.replace())
+        }
     }
 
     private suspend fun <T> operation(failure: SecretStoreError, work: suspend () -> T): T = withContext(io) {

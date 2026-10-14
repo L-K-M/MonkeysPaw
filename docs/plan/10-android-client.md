@@ -241,15 +241,18 @@ constants.
     The `keystore` tier describes storage, not proven hardware backing.
   - Keys require no user authentication, so background reads are supported.
     All operations serialize on injected IO. Reads do not create keys; Save
-    creates one only when the entire ciphertext store is empty and no alias
-    exists. Replacement authenticates the previous record first. Missing or
-    invalidated keys, altered ciphertext, corrupt/future documents and failed
-    atomic publication retain the prior data and report typed errors.
+    creates or replaces a key only when the entire ciphertext store is empty.
+    Replacing a credential authenticates the previous record first. With any
+    retained ciphertext, missing or invalidated keys, altered ciphertext,
+    corrupt/future documents and failed atomic publication retain the prior
+    data and report typed errors.
     Explicit Clear removes only that account without decrypting it or
     deleting the shared alias; repeated Clear is harmless. Corrupt/future
     documents block Clear as well and are never silently reset. Once all
     retained ciphertext is cleared, the next explicit Save reuses a usable
-    alias, or creates a key when none exists.
+    alias, creates a key when none exists, or deletes an unusable alias and
+    creates a fresh key if lookup reports unavailable or encryption rejects
+    the key as invalid. Locked-key failures do not trigger replacement.
 - **Backups.** The manifest sets `android:allowBackup="false"` and nothing
   else. There is no settings-only backup or backup exception (§20 F11).
   - Auto Backup would otherwise upload the library and the remembered values

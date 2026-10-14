@@ -10,11 +10,13 @@ import kotlinx.serialization.json.*
 import java.io.IOException
 import java.io.OutputStream
 import java.nio.file.Files
+import java.security.InvalidKeyException
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.spec.SecretKeySpec
 import kotlin.test.*
 
 /** Real JVM AES-GCM and DataStore; injected keys do not prove AndroidKeyStore or hardware backing. */
@@ -166,6 +168,7 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
     @Test
     fun `unusable and locked keys retain records while Clear works without key access`() = runBlocking {
         val keys = TestKeys()
+        val original = keys.key
         withStore(keys) { _, store -> store.write(sentinel(), first) }
         val bytes = Files.readAllBytes(path)
         withStore(keys) { _, store ->
@@ -173,13 +176,116 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
                 keys.failure = failure
                 assertError(failure) { store.read(first, SecretReadSource.EFFECTIVE) }
                 assertError(failure) { store.write(sentinel(), first) }
+                assertError(failure) { store.write(sentinel(), third) }
                 assertContentEquals(bytes, Files.readAllBytes(path))
+                assertSame(original, keys.key)
+                assertEquals(0, keys.creates)
+                assertEquals(0, keys.replacements)
             }
             val reads = keys.reads
             store.delete(third)
             store.delete(first)
             store.delete(first)
             assertEquals(reads, keys.reads)
+        }
+    }
+
+    @Test
+    fun `unusable alias lookup recovers after every ciphertext record is cleared`() = runBlocking {
+        val keys = TestKeys()
+        val original = keys.key
+        val value = sentinel()
+        withStore(keys) { data, store ->
+            store.write(sentinel(), first)
+            store.write(sentinel(), second)
+            keys.failure = SecretStoreError.Unavailable
+            store.delete(first)
+            assertError(SecretStoreError.Unavailable) { store.write(value, third) }
+            assertEquals(0, keys.replacements)
+            store.delete(second)
+            assertTrue(data.data.first().entries.isEmpty())
+
+            assertEquals(SecretTier.KEYSTORE, store.write(value, third))
+            assertEquals(1, keys.replacements)
+            assertEquals(1, keys.creates)
+            assertNotSame(original, keys.key)
+            assertSecret(value, store.read(third, SecretReadSource.EFFECTIVE))
+            assertNoPlaintext(value, keys.key!!)
+        }
+        withStore(keys) { _, store -> assertSecret(value, store.read(third, SecretReadSource.PERSISTED)) }
+    }
+
+    @Test
+    fun `invalid encryption key is replaced when the ciphertext store is empty`() = runBlocking {
+        val invalid = SecretKeySpec(byteArrayOf(1), "AES")
+        val keys = TestKeys(invalid)
+        val value = sentinel()
+        assertFailsWith<InvalidKeyException> { SecretEnvelope.seal(value, first, invalid) }
+        withStore(keys) { _, store ->
+            assertEquals(SecretTier.KEYSTORE, store.write(value, first))
+            assertEquals(1, keys.replacements)
+            assertEquals(1, keys.creates)
+            assertNotSame(invalid, keys.key)
+            assertSecret(value, store.read(first, SecretReadSource.EFFECTIVE))
+            assertNoPlaintext(value, keys.key!!)
+        }
+        withStore(keys) { _, store -> assertSecret(value, store.read(first, SecretReadSource.PERSISTED)) }
+    }
+
+    @Test
+    fun `invalid encryption key with retained ciphertext fails without replacing the alias`() = runBlocking {
+        val keys = TestKeys()
+        val original = keys.key
+        val value = sentinel()
+        withStore(keys) { data, store ->
+            store.write(value, first)
+            val retained = data.data.first().entries
+            val bytes = Files.readAllBytes(path)
+            val invalid = SecretKeySpec(byteArrayOf(1), "AES")
+            keys.key = invalid
+            assertError(SecretStoreError.WriteFailed) { store.write(sentinel(), third) }
+            assertEquals(retained, data.data.first().entries)
+            assertContentEquals(bytes, Files.readAllBytes(path))
+            assertSame(invalid, keys.key)
+            assertEquals(0, keys.creates)
+            assertEquals(0, keys.replacements)
+            keys.key = original
+            assertSecret(value, store.read(first, SecretReadSource.PERSISTED))
+        }
+    }
+
+    @Test
+    fun `usable alias is reused after clearing every record`() = runBlocking {
+        val keys = TestKeys()
+        val original = keys.key
+        val value = sentinel()
+        withStore(keys) { data, store ->
+            store.write(sentinel(), first)
+            store.delete(first)
+            assertTrue(data.data.first().entries.isEmpty())
+            assertEquals(SecretTier.KEYSTORE, store.write(value, second))
+            assertSame(original, keys.key)
+            assertEquals(0, keys.creates)
+            assertEquals(0, keys.replacements)
+            assertSecret(value, store.read(second, SecretReadSource.PERSISTED))
+        }
+    }
+
+    @Test
+    fun `locked or cancelled lookup never replaces an alias even with no ciphertext`() = runBlocking {
+        val keys = TestKeys()
+        val original = keys.key
+        withStore(keys) { data, store ->
+            keys.failure = SecretStoreError.Locked
+            assertError(SecretStoreError.Locked) { store.write(sentinel(), first) }
+            keys.failure = IOException("lookup failed")
+            assertError(SecretStoreError.WriteFailed) { store.write(sentinel(), first) }
+            keys.failure = CancellationException("cancelled")
+            assertFailsWith<CancellationException> { store.write(sentinel(), first) }
+            assertTrue(data.data.first().entries.isEmpty())
+            assertSame(original, keys.key)
+            assertEquals(0, keys.creates)
+            assertEquals(0, keys.replacements)
         }
     }
 
@@ -322,6 +428,7 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
     private class TestKeys(var key: SecretKey? = newKey()) : SecretKeyProvider {
         var creates = 0
         var reads = 0
+        var replacements = 0
         var failure: Exception? = null
         val threads = mutableSetOf<Thread>()
         override fun read(): SecretKey? {
@@ -334,6 +441,12 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
             creates++
             failure?.let { throw it }
             return newKey().also { key = it }
+        }
+        override fun replace(): SecretKey {
+            replacements++
+            key = null
+            failure = null
+            return create()
         }
     }
 

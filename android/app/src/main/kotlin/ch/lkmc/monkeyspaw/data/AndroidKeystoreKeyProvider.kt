@@ -18,6 +18,8 @@ internal interface SecretKeyProvider {
     fun read(): SecretKey?
     /** Only called after the complete ciphertext store is known to be empty. */
     fun create(): SecretKey
+    /** Delete an unusable alias and create a key only when no ciphertext remains. */
+    fun replace(): SecretKey
 }
 
 internal enum class KeystoreBacking { STRONGBOX, KEYSTORE }
@@ -45,6 +47,11 @@ internal class AndroidKeystoreKeyProvider(private val context: Context) : Secret
         read() ?: StrongBoxPolicy.generate(Build.VERSION.SDK_INT,
             Build.VERSION.SDK_INT >= 28 && context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE),
             ::generate)
+    }
+
+    override fun replace(): SecretKey = sanitized {
+        KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(ALIAS)
+        create()
     }
 
     private fun generate(backing: KeystoreBacking): SecretKey {
