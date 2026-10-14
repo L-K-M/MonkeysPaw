@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 #if os(Linux)
 import Glibc
@@ -316,3 +317,4 @@ final class ScenarioScheduler: Scheduler {
 struct ScenarioMainThread: MainThread {
     func run(_ work: @escaping () -> Void) { work() }
 }
+#endif

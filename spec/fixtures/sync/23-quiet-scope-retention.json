@@ -1,0 +1,290 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "23-quiet-scope-all-rows-purged",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\none\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "status": 200,
+          "body": {
+            "database_id": null,
+            "cursors": {}
+          },
+          "bind": {
+            "db.original": "/database_id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\ntwo\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 2,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nthree\n"
+          },
+          "expected": {
+            "/rev": 3
+          }
+        },
+        {
+          "action": "advance_server",
+          "device": "a",
+          "server": "main",
+          "seconds": 7862400
+        },
+        {
+          "action": "retention",
+          "device": "a",
+          "server": "main",
+          "expected": {
+            "changes": 3,
+            "floors": 1,
+            "tombstones": 0,
+            "revisions": 0
+          }
+        },
+        {
+          "action": "server_expect",
+          "device": "a",
+          "server": "main",
+          "scope": "user:${user.main.alice}",
+          "expected": {
+            "head": 3,
+            "floor": 4,
+            "changes": 0
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nthree\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 3
+              }
+            ],
+            "writes": 1,
+            "trash_count": 0,
+            "cursors": {
+              "user:${user.main.alice}": "3"
+            }
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "status": 200,
+          "body": {
+            "database_id": "${db.original}",
+            "cursors": {
+              "user:${user.main.alice}": "2"
+            }
+          },
+          "expected": {
+            "/scopes/0/mode": "snapshot",
+            "/scopes/0/head": 3,
+            "/scopes/0/cursor": "3"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "status": 200,
+          "body": {
+            "database_id": "${db.original}",
+            "cursors": {
+              "user:${user.main.alice}": "3"
+            }
+          },
+          "expected": {
+            "/scopes/0/mode": "delta",
+            "/scopes/0/items": [],
+            "/scopes/0/cursor": "3",
+            "/scopes/0/has_more": false
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "retention",
+          "device": "a",
+          "server": "main",
+          "expected": {
+            "changes": 0,
+            "floors": 0,
+            "tombstones": 0,
+            "revisions": 0
+          }
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nthree\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 3
+              }
+            ],
+            "writes": 0,
+            "trash_count": 0,
+            "cursors": {
+              "user:${user.main.alice}": "3"
+            },
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "count": 3
+              }
+            ]
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 1,
+            "cursors": {
+              "user:${user.main.alice}": "3"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

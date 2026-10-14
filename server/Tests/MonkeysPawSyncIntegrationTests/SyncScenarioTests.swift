@@ -1,5 +1,10 @@
 import Foundation
 import XCTest
+#if os(Linux)
+import Glibc
+#else
+import Darwin
+#endif
 @testable import MonkeysPawCore
 @testable import MonkeysPawServer
 
@@ -14,6 +19,8 @@ final class SyncScenarioTests: XCTestCase {
         let ids = Set(corpus.cases.map(\.id))
         var executed = Set<String>()
         for scenario in corpus.cases {
+            print("Executing sync scenario " + scenario.id)
+            fflush(stdout)
             do {
                 try await SyncServerHarness.run(scenario)
                 guard executed.insert(scenario.id).inserted else { throw ScenarioFailure.invalid("duplicate case execution") }

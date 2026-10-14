@@ -1,4 +1,5 @@
 import Foundation
+@testable import SyncScenarioSupport
 import HummingbirdTesting
 import HTTPTypes
 import NIOCore
@@ -20,18 +21,32 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     private var recorded: [ScenarioRequestTrace] = []
     private var rewrites: [ScenarioRewrite] = []
     private var hooks: [(method: String, path: String, run: () async throws -> Void)] = []
+    private var responseHooks: [(method: String, path: String, run: () async throws -> Void)] = []
+    private var failedMutation: ScenarioFailure?
     var library: ScenarioDisk?
 
     init(clients: [String: any TestClientProtocol]) { self.clients = clients }
     var traces: [ScenarioRequestTrace] { locked { recorded } }
-    var pendingRewrites: Int { locked { rewrites.count + hooks.count } }
+    var pendingRewrites: Int { locked { rewrites.count + hooks.count + responseHooks.count } }
+    var mutationFailure: ScenarioFailure? { locked { failedMutation } }
     func resetMetrics() { locked { recorded.removeAll() } }
     func rewrite(_ value: ScenarioRewrite) { locked { rewrites.append(value) } }
     func before(method: HTTPMethod, path: String, run: @escaping () async throws -> Void) {
         locked { hooks.append((method.rawValue, path, run)) }
     }
+    func after(method: HTTPMethod, path: String, run: @escaping () async throws -> Void) {
+        locked { responseHooks.append((method.rawValue, path, run)) }
+    }
 
     func send(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
+        do { return try await sendIntoRouter(request) }
+        catch let failure as ScenarioFailure {
+            locked { if failedMutation == nil { failedMutation = failure } }
+            throw failure
+        }
+    }
+
+    private func sendIntoRouter(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
         try Task.checkCancellation()
         guard ContinuousClock.now < request.deadline else { throw HTTPTransportError.deadlineExceeded }
         guard case .sync(let server) = request.urlPolicy,
@@ -43,7 +58,7 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         guard (request.body?.count ?? 0) <= request.requestByteCap else { throw HTTPTransportError.requestTooLarge }
         let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)!
         let uri = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
-        if let hook = takeHook(method: request.method.rawValue, path: uri) { try await hook() }
+        if let hook = takeHook(method: request.method.rawValue, path: uri) { try await runHook(hook) }
         let requestRewrite = takeRewrite(phase: .request, method: request.method.rawValue, path: uri)
         let responseRewrite = takeRewrite(phase: .response, method: request.method.rawValue, path: uri)
         var bytes = request.body
@@ -66,6 +81,10 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
             try await client.executeRequest(uri: uri, method: method, headers: requestHeaders, body: body)
         }
         locked { recorded.append(.init(method: request.method.rawValue, path: uri, status: response.status.code, body: safeBody, localPaths: localPaths)) }
+        if let hook = takeResponseHook(method: request.method.rawValue, path: uri) {
+            guard response.status == .ok else { throw ScenarioFailure.invalid("response hook requires real success") }
+            try await runHook(hook)
+        }
         guard response.body.readableBytes <= request.responseByteCap else { throw HTTPTransportError.responseTooLarge }
         var received = Data(response.body.readableBytesView)
         if let responseRewrite {
@@ -86,6 +105,15 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         }
     }
 
+    private func runHook(_ hook: () async throws -> Void) async throws {
+        do { try await hook() }
+        catch {
+            let failure = (error as? ScenarioFailure) ?? .invalid("network hook failed (" + String(describing: type(of: error)) + ")")
+            locked { if failedMutation == nil { failedMutation = failure } }
+            throw failure
+        }
+    }
+
     private func takeHook(method: String, path: String) -> (() async throws -> Void)? {
         locked {
             guard let index = hooks.firstIndex(where: { $0.method == method && $0.path == path }) else { return nil }
@@ -96,6 +124,13 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     private func locked<T>(_ operation: () -> T) -> T {
         lock.lock(); defer { lock.unlock() }
         return operation()
+    }
+
+    private func takeResponseHook(method: String, path: String) -> (() async throws -> Void)? {
+        locked {
+            guard let index = responseHooks.firstIndex(where: { $0.method == method && $0.path == path }) else { return nil }
+            return responseHooks.remove(at: index).run
+        }
     }
 }
 

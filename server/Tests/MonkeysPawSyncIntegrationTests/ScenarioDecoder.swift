@@ -109,6 +109,8 @@ enum ScenarioStep {
     case http(ScenarioHTTP)
     case beforeRequest(device: String, method: HTTPMethod, path: String, then: ScenarioHTTP)
     case rewrite(ScenarioRewrite)
+    case maintenance(device: String, ScenarioMaintenanceAction)
+    case crash(ScenarioCrashAction)
     case expect(ScenarioExpectation)
 }
 
@@ -138,7 +140,8 @@ struct ScenarioExpectation {
 
 enum ScenarioDecoder {
     static let expectationKeys: Set<String> = ["files", "absent", "file_count", "status", "blocking_issue", "state",
-        "prompt_count", "cursor_count", "held_count", "account_user", "writes", "trash_count", "requests", "history_count"]
+        "prompt_count", "cursor_count", "held_count", "account_user", "writes", "trash_count", "requests", "history_count",
+        "database_id", "cursors", "group_count", "journal_present"]
 
     static func decode(_ data: Data) throws -> [SyncScenario] {
         var envelope = try ScenarioObject(JSONDecoder().decode(ScenarioValue.self, from: data))
@@ -230,7 +233,12 @@ enum ScenarioDecoder {
             guard !fields.isEmpty, Set(fields.keys).isSubset(of: expectationKeys) else { throw ScenarioFailure.invalid("unknown or empty expectation") }
             try validateExpectations(fields)
             step = .expect(.init(device: device, fields: fields))
-        default: throw ScenarioFailure.invalid("unknown action")
+        default:
+            if let maintenance = try ScenarioMaintenanceAction.decode(action, device: device, object: &object) {
+                step = .maintenance(device: device, maintenance)
+            } else if let crash = try ScenarioCrashAction.decode(action, device: device, object: &object) {
+                step = .crash(crash)
+            } else { throw ScenarioFailure.invalid("unknown action") }
         }
         try object.finish()
         return step
@@ -272,7 +280,9 @@ enum ScenarioDecoder {
                     }
                 }
             case "absent": _ = try value.array().map { try $0.string() }
-            case "status", "blocking_issue", "account_user": _ = try value.string()
+            case "status", "blocking_issue", "account_user", "database_id": _ = try value.string()
+            case "cursors": _ = try value.object().mapValues { try $0.string() }
+            case "journal_present": _ = try value.boolean()
             default: _ = try value.integer()
             }
         }
@@ -287,7 +297,9 @@ enum SyncScenarioCorpus {
             .filter { !$0.lastPathComponent.hasPrefix(".") }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let names = Set(files.map(\.lastPathComponent))
         let required: Set<String> = ["01-round-trip.json", "11-path-clashes.json", "12-untrusted-paths.json", "13-copied-library.json",
-            "14-account-change.json", "15-group-favourite.json", "16-invalid-content.json"]
+            "14-account-change.json", "15-group-favourite.json", "16-invalid-content.json",
+            "06-removed-retention.json", "08-snapshot-triggers.json", "17-crash-apply.json",
+            "22-restore-lower-head.json", "23-quiet-scope-retention.json"]
         guard required.isSubset(of: names) else { throw ScenarioFailure.invalid("missing acceptance fixture") }
         var ids = Set<String>()
         var cases: [SyncScenario] = []
