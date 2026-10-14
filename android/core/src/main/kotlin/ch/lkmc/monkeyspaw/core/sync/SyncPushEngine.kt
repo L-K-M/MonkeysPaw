@@ -340,8 +340,10 @@ internal class SyncPushEngine(
         val destination = SyncLocalScanner.rooted(path, request.intent.scope, state.groups)
         val key = PromptIdentity.Assigned(request.intent.id)
         val record = state.prompts[key]
+        // Markers stay in the bytes; only private state projects their origin.
         val next = if (record?.rev == 0L) state.copy(prompts = state.prompts +
-            (key to SyncPromptState(request.intent.scope, path, 0, origin = record.origin))) else state
+            (key to SyncPromptState(request.intent.scope, path, 0,
+                origin = if (request.intent.scope is SyncScopeKey.User) record.origin else null))) else state
         val edit = mutations.publication(local.bytes, destination, null, SyncIdentityTransition(null, key))
         commit(state, next, listOf(edit, mutations.trash(local)))
         clearPending()

@@ -506,6 +506,48 @@ class SyncPushEngineTest {
         assertEquals(1, t.requests.size)
     }
 
+    @Test fun markedUnacknowledgedPrivateCreateClashesIntoGroupWithoutProjectingPrivateOrigin() = runTest {
+        for (origin in listOf(SyncPromptOrigin.ConflictOf(v.groupPrompt), SyncPromptOrigin.Rescued)) {
+            val marker = if (origin == SyncPromptOrigin.Rescued) "x-monkeyspaw-rescued: true\n"
+                else "x-monkeyspaw-conflict-of: '${v.groupPrompt.rawValue}'\n"
+            val raw = ScanHarness.bytes("Marked private copy", extra = marker + "favorite: true\nprivate: true\n")
+            val h = PushHarness().seed(base = raw, groups = true)
+            h.states.update(h.binding) { it.copy(prompts = it.prompts + (v.personalID to h.record.copy(origin = origin))) }
+            h.move()
+            val change = h.candidate()
+            assertEquals(v.userScope, h.record.scope)
+            assertEquals(origin, h.record.origin)
+            val old = h.state
+            val existing = CanonicalForm.group(ScanHarness.bytes("Occupied", id = v.groupPrompt), "a.md").bytes
+            val t = PushTransport {
+                assertEquals(0, put(it).baseRev)
+                assertEquals(PromptScope.Group(v.group.rawValue), put(it).scope)
+                failure(409, ErrorResponse.PathTaken(ExistingPrompt(v.groupPrompt.rawValue, 7, existing.decodeToString())))
+            }
+            assertEquals(SyncPushResult.REPLAN, h.engine(t).push(change, available))
+            assertEquals(h.team(), h.record.scope)
+            assertEquals("a (2).md", h.record.path)
+            assertEquals(0, h.record.rev)
+            assertNull(h.record.canonicalHash)
+            assertNull(h.record.origin)
+            assertEquals(old.cursors, h.state.cursors)
+            assertContentEquals(raw, h.files.read("Groups/Team/a (2).md"))
+            assertNull(h.files.stamp("Groups/Team/a.md"))
+            assertNull(h.pending.load(h.binding))
+            assertEquals(1, t.requests.size)
+            val retry = PushTransport {
+                assertEquals(0, put(it).baseRev)
+                assertEquals("a (2).md", put(it).path)
+                assertContentEquals(CanonicalForm.group(raw, "a (2).md").bytes, put(it).content.encodeToByteArray())
+                ack(1)
+            }
+            assertEquals(SyncPushResult.ACKNOWLEDGED, h.engine(retry).push(h.candidate(), available))
+            assertEquals(1, h.record.rev)
+            assertNull(h.record.origin)
+            assertEquals(true, h.state.favorites[v.personalID])
+        }
+    }
+
     @Test fun inFlightCreateEditWithExhaustedClashNamesPersistsFixedError() = runTest {
         val h = PushHarness().seed()
         val change = h.candidate()
