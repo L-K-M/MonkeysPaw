@@ -247,8 +247,9 @@ constants.
     atomic publication retain the prior data and report typed errors.
     Explicit Clear removes only that account without decrypting it or
     deleting the shared alias; repeated Clear is harmless. Corrupt/future
-    documents block Clear as well and are never silently reset. Clearing all
-    retained ciphertext permits a new key on the next explicit Save.
+    documents block Clear as well and are never silently reset. Once all
+    retained ciphertext is cleared, the next explicit Save reuses a usable
+    alias, or creates a key when none exists.
 - **Backups.** The manifest sets `android:allowBackup="false"` and nothing
   else. There is no settings-only backup or backup exception (§20 F11).
   - Auto Backup would otherwise upload the library and the remembered values

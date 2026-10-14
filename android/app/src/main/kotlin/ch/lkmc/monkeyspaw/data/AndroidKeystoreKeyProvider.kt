@@ -7,6 +7,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.security.keystore.UserNotAuthenticatedException
+import androidx.annotation.RequiresApi
 import ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError
 import java.security.KeyStore
 import javax.crypto.KeyGenerator
@@ -61,10 +62,15 @@ internal class AndroidKeystoreKeyProvider(private val context: Context) : Secret
                 generateKey()
             }
         } catch (error: Exception) {
-            if (Build.VERSION.SDK_INT >= 28 && error is StrongBoxUnavailableException) throw StrongBoxUnavailable()
+            if (Build.VERSION.SDK_INT >= 28 && causedByStrongBox(error)) throw StrongBoxUnavailable()
             throw error
         }
     }
+
+    // Some keystores wrap the StrongBox failure in a ProviderException.
+    @RequiresApi(28)
+    private fun causedByStrongBox(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { it is StrongBoxUnavailableException }
 
     private fun <T> sanitized(work: () -> T): T = try { work() }
     catch (_: UserNotAuthenticatedException) { throw SecretStoreError.Locked }
