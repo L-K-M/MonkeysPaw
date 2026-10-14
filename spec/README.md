@@ -60,15 +60,13 @@ and 919 files. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
 diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,169
 files and 278 ordered actions, bringing the current content corpus to 1,536
-cases and 5,515 visible files.
+cases and 5,515 visible files. The delegated sync corpus has 26 variants in 7 files.
 Case shapes are below. These are reported counts, not fixed enumeration limits.
 
-Sync-engine scenarios arrive with their implementations under the
-move-together rule.
-
-`fixtures/` contains exactly ten categories: `format`, `grammar`,
+`fixtures/` contains ten content categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical`, `dto` and
-`llm`. Each consumer enumerates all directories and files, rejects unknown
+`llm`, plus the delegated `sync` category. Each consumer enumerates its
+directories and files, rejects unknown
 categories, files, schema versions and case members, and requires every
 input and expectation to be consumed once. Symlinks and
 unexpected nested directories are rejected. The corpus itself is the
