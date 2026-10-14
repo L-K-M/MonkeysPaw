@@ -425,8 +425,9 @@ public final class EditorModel: @unchecked Sendable {
                 // draft typed after adoption rather than replacing it.
                 if loaded.stamp != state.stamp {
                     if state.isDirty || state.conflict != nil {
+                        let origin = state.conflict?.origin ?? .external
                         state.conflict = EditorConflict(kind: .modified, stamp: loaded.stamp,
-                            theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason)
+                            theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason, origin: origin)
                     } else { accept(loaded); state.status = .idle }
                 }
             } else if purpose == .inspectConflict {
@@ -441,7 +442,8 @@ public final class EditorModel: @unchecked Sendable {
             }
         case .deleted:
             if state.isDirty || state.conflict != nil || purpose == .reconcileCopy {
-                state.conflict = EditorConflict(kind: .deleted, stamp: nil)
+                let origin = state.conflict?.origin ?? .external
+                state.conflict = EditorConflict(kind: .deleted, stamp: nil, origin: origin)
                 if purpose != .inspectConflict { state.status = .idle }
             } else { resetEditor() }
         case .failed(let failure):
@@ -501,11 +503,12 @@ public final class EditorModel: @unchecked Sendable {
         } else { load(.replace) }
     }
 
-    private func openConflict(stamp: FileStamp?, origin: PromptChangeOrigin = .external) {
+    private func openConflict(stamp: FileStamp?, origin: PromptChangeOrigin? = nil) {
         // Invalidate earlier rereads immediately, including deletion while a
         // modified snapshot is still in the worker/UI queue.
         loadGeneration &+= 1
         if state.status == .loading { state.status = .idle }
+        let origin = origin ?? state.conflict?.origin ?? .external
         state.conflict = EditorConflict(kind: stamp == nil ? .deleted : .modified, stamp: stamp,
             readOnlyReason: state.readOnlyReason, origin: origin)
         changed()
