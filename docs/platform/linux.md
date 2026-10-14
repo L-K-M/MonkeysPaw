@@ -1,5 +1,26 @@
 # Linux picker and delivery checks
 
+## Delivery and update Settings (M7 D18, NOT RUN)
+
+Record commit/artifact/version/hash, desktop/compositor/session, GTK/portal/
+browser versions, date and tester. Run native X11, GNOME/KDE Wayland and both
+Flatpak host sessions that the release claims. Use harmless disposable text;
+record no prompt values, clipboard contents, restore tokens or error bodies.
+Automated GTK/private-bus tests exercise injected services and URI launching;
+they do not establish real portal consent, browser opening or clipboard
+ownership after hiding the panel. Earlier NOT RUN rows remain owner gates.
+
+| Check | Expected result | Result / evidence |
+|---|---|---|
+| Delivery preferences | Standard/Terminal and restore survive restart. Known native X11 terminal classes use the automatic terminal hint; other targets use the default. Explicit terminal, Fill standard and Copy override it. Each claimed terminal alias needs target readback without submission. | NOT RUN |
+| Wayland and Flatpak | Delivery explains unavailable terminal detection, default/explicit chords, portal consent and Copy fallback. Flatpak uses portal-to-Copy and creates no host autostart or dconf entry. Account and Assistant flows remain reachable when present. | NOT RUN |
+| Setup and Test paste | Each Delivery button forwards once. Setup reuses its window. Test reports actual target readback separately from sent events and failures. Check a browser/chat field and terminal after the picker hides. | NOT RUN |
+| Optional restore | Restore starts off. Enabled paste restores only previous text after 750 ms if still owned; slow targets, a newer identical/different copy, Copy, fallback and self-test keep the appropriate clipboard. Disabling prevents a pending restore. Accept the disclosed simultaneous-copy OS limitation before enabling it. | NOT RUN |
+| Updates | With automatic checks off, observe zero checker traffic across restart. Check Now makes only the disclosed GitHub metadata request, shows full packaged version and typed results. Errors stay distinct from up to date; unreadable settings/history block automatic traffic. | NOT RUN |
+| Release page | View release opens only the validated repository release page in the default browser, including the sandbox OpenURI path. Failed launching shows an actionable error. No update is downloaded or installed by the app. | NOT RUN |
+| Window and graph lifetime | Close/reopen Settings during a manual check, change library, and quit during pending work. Accepted checks/preferences retain their outcomes, detached controls do nothing, and retired timers/models never revive or deliver. Unsupported outside-home Flatpak choices preserve the current library. | NOT RUN |
+| Keyboard and Orca | Navigate Delivery and General updates with visible focus; read preferences, limitations, permission/backend facts, progress, errors and disabled controls. Preserve the existing General, Shortcuts, Assistant and Account procedures. | NOT RUN |
+
 ## Library import (M3, NOT RUN)
 
 - Commit / artifact / GTK version / desktop / compositor:
