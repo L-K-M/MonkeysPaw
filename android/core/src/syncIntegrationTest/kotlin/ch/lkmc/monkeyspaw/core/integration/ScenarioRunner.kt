@@ -9,17 +9,38 @@ import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.test.TestCoroutineScheduler
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
 
-@OptIn(ExperimentalCoroutinesApi::class)
+/** Fire only already-captured callbacks with exactly this delay, once, without advancing clocks. */
+@OptIn(InternalCoroutinesApi::class)
+internal class ScenarioTimers : CoroutineDispatcher(), Delay {
+    private class Waiter(val milliseconds: Long, val continuation: CancellableContinuation<Unit>)
+    private val lock = Any()
+    private val waiters = mutableListOf<Waiter>()
+    override fun isDispatchNeeded(context: CoroutineContext) = false
+    override fun dispatch(context: CoroutineContext, block: Runnable) = block.run()
+    override fun scheduleResumeAfterDelay(timeMillis: Long, continuation: CancellableContinuation<Unit>) {
+        val waiter = Waiter(timeMillis, continuation)
+        synchronized(lock) { waiters.add(waiter) }
+        continuation.invokeOnCancellation { synchronized(lock) { waiters.remove(waiter) } }
+    }
+    fun fire(seconds: Long) {
+        val ready = synchronized(lock) {
+            waiters.filter { it.milliseconds % 1000 == 0L && it.milliseconds / 1000 == seconds }
+                .also { waiters.removeAll(it.toSet()) }
+        }
+        for (waiter in ready) if (waiter.continuation.isActive) waiter.continuation.resume(Unit)
+    }
+}
+
 internal class ScenarioDevice(val name: String, val directory: Path, val now: Instant, val entropy: Entropy,
                               val transport: ScenarioTransport) {
-    private val timers = TestCoroutineScheduler()
-    private val scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(timers))
+    private val timers = ScenarioTimers()
+    private val scope = CoroutineScope(SupervisorJob() + timers)
     val clock = Clock { now }
     private val monotonic = MonotonicClock(System::nanoTime)
     val files = DiskSyncFiles(directory.resolve("library"), library = true)
@@ -59,7 +80,7 @@ internal class ScenarioDevice(val name: String, val directory: Path, val now: In
         val hash = stamp?.let { SyncHash.of(files.read(path)) }
         engine.committedMutation(if (files.ownsChange(path, stamp, hash)) SyncChangeOrigin.SYNC else SyncChangeOrigin.USER)
     }
-    suspend fun fireTimers(seconds: Long) { timers.advanceTimeBy(seconds * 1000); timers.runCurrent(); settle() }
+    suspend fun fireTimers(seconds: Long) { timers.fire(seconds); settle() }
     suspend fun stop() { engine.stop(); settle(); scope.cancel(); scope.coroutineContext[Job]?.join() }
     fun reopen() = ScenarioDevice(name, directory, now, entropy, transport)
 }
@@ -138,7 +159,7 @@ internal class ScenarioRunner(private val scenario: SyncScenario, val root: Path
                 scenarioCheck(cleanup.isComplete && cleanup.remote == SyncRemoteRevocation.REVOKED, "sign-out cleanup/revocation")
             }
             "reset_metrics" -> { device.files.resetMetrics(); device.transport.resetMetrics() }
-            "network" -> device.transport.network(step.string("mode") == "online")
+            "network" -> device.transport.network(ScenarioTransport.Network.valueOf(step.string("mode").uppercase()))
             "watch" -> device.watch(text("path"))
             "fire_timers" -> device.fireTimers(step.fields.getValue("delay_seconds").count())
             "bind_prompt" -> {
@@ -183,13 +204,15 @@ internal class ScenarioRunner(private val scenario: SyncScenario, val root: Path
             "before_next_request", "after_next_response" -> {
                 val then = step.fields.getValue("then")
                 val actions = (if (then is WireValue.ArrayValue) then.values else listOf(then)).map(ScenarioDecoder::decodeStep)
-                device.transport.hook(step.action == "after_next_response", step.string("method"), text("path"), step.fields["skip"]?.count() ?: 0) {
+                device.transport.hook(if (step.action == "after_next_response") ScenarioTransport.Phase.RESPONSE else ScenarioTransport.Phase.REQUEST,
+                    step.string("method"), text("path"), step.fields["skip"]?.count() ?: 0) {
                     for (action in actions) execute(action)
                 }
             }
-            "rewrite_next_request", "rewrite_next_response" -> device.transport.patch(step.action == "rewrite_next_response",
+            "rewrite_next_request", "rewrite_next_response" -> device.transport.patch(if (step.action == "rewrite_next_response") ScenarioTransport.Phase.RESPONSE else ScenarioTransport.Phase.REQUEST,
                 step.string("method"), text("path"), symbols.expand(step.fields.getValue("patch")).obj())
-            "drop_next_response", "fail_next_request" -> device.transport.interrupt(step.action == "drop_next_response", step.string("method"), text("path"))
+            "drop_next_response", "fail_next_request" -> device.transport.interrupt(if (step.action == "drop_next_response") ScenarioTransport.Phase.RESPONSE else ScenarioTransport.Phase.REQUEST,
+                step.string("method"), text("path"))
             "expect" -> checkpoints.check(device, step.fields.getValue("expected").obj())
             else -> throw ScenarioFailure("action requires Z17 adapter: ${step.action}")
         }
@@ -214,7 +237,7 @@ internal class ScenarioRunner(private val scenario: SyncScenario, val root: Path
         val lock = Any()
         var arrived = 0
         val participants = fields.map { device(it.getValue("device").text()) }
-        participants.forEach { participant -> participant.transport.hook(false, "PUT", paths[0]) {
+        participants.forEach { participant -> participant.transport.hook(ScenarioTransport.Phase.REQUEST, "PUT", paths[0]) {
             synchronized(lock) { arrived++; if (arrived == 2) barrier.complete(Unit) }
             withTimeout(30_000) { barrier.await() }
         } }

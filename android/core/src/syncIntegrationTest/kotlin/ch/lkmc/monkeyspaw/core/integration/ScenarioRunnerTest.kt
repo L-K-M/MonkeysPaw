@@ -112,4 +112,31 @@ class ScenarioRunnerMutationTest {
             scenarioCheck(device.transport.traces.count { it.method == "PUT" && it.status == 200 } == 1, "external watch must push once")
         }
     }
+    @Test fun anOfflineAttemptCannotConsumeAResponseMutation() {
+        liveRuntime()
+        val original = decode(roundTrip())
+        val tail = listOf(
+            ScenarioStep("network", "a", mapOf("mode" to wireString("offline"))),
+            ScenarioStep("rewrite_next_response", "a", mapOf("method" to wireString("POST"),
+                "path" to wireString("/api/v1/sync/pull"), "patch" to wireObject("/removed" to WireValue.ArrayValue(emptyList())))),
+            ScenarioStep("sync", "a", emptyMap()),
+            ScenarioStep("expect", "a", mapOf("expected" to wireObject("status" to wireString("offline")))),
+        )
+        val failure = assertFailsWith<ScenarioFailure> { runLiveScenario(original.copy(steps = original.steps + tail)) }
+        scenarioCheck(failure.message?.contains("unused network mutation") == true, "response mutation must await a real response")
+    }
+    @Test fun anUnmatchedTimerDelayCannotFireTheDebounce() {
+        runLiveScenario(decode(roundTrip())) { runner ->
+            runner.run()
+            val device = runner.device("a")
+            device.transport.resetMetrics()
+            val path = device.states.loadForAccountTransition()!!.prompts.values.single().path
+            device.files.externalWrite(device.files.read(path) + "Another external edit.\n".encodeToByteArray(), path)
+            device.watch(path)
+            device.fireTimers(4)
+            scenarioCheck(device.transport.traces.isEmpty(), "unmatched timer delay fired the debounce")
+            device.fireTimers(3)
+            scenarioCheck(device.transport.traces.count { it.method == "PUT" && it.status == 200 } == 1, "matching timer delay must push once")
+        }
+    }
 }

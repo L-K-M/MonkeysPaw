@@ -8,14 +8,16 @@ import java.net.URI
 
 /** Mutations wrap the unchanged HTTP driver; traces always describe the actual server response. */
 internal class ScenarioTransport : HttpTransport {
+    enum class Phase { REQUEST, RESPONSE }
+    enum class Network { ONLINE, OFFLINE }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val driver = OkHttpHttpTransport(MonotonicClock(System::nanoTime), scope)
     private val lock = Any()
     var library: DiskSyncFiles? = null
-    private var online = true
-    private data class Patch(val response: Boolean, val method: String, val path: String, val fields: Map<String, WireValue>)
-    private data class Hook(val after: Boolean, val method: String, val path: String, var skip: Long, val run: suspend () -> Unit)
-    private data class Interruption(val after: Boolean, val method: String, val path: String)
+    private var network = Network.ONLINE
+    private data class Patch(val phase: Phase, val method: String, val path: String, val fields: Map<String, WireValue>)
+    private data class Hook(val phase: Phase, val method: String, val path: String, var skip: Long, val run: suspend () -> Unit)
+    private data class Interruption(val phase: Phase, val method: String, val path: String)
     internal class Trace(val method: String, val path: String, val status: Int, val body: WireValue?,
                          val localPaths: List<String>, val pull: PullResponse?, val responseBytes: Int)
     private val recorded = mutableListOf<Trace>()
@@ -27,15 +29,15 @@ internal class ScenarioTransport : HttpTransport {
     val pending: Int get() = synchronized(lock) { patches.size + hooks.size + interruptions.size }
     val mutationFailure: ScenarioFailure? get() = synchronized(lock) { failure }
     fun resetMetrics() = synchronized(lock) { recorded.clear() }
-    fun network(online: Boolean) = synchronized(lock) { this.online = online }
-    fun patch(response: Boolean, method: String, path: String, fields: Map<String, WireValue>) = synchronized(lock) {
-        patches.add(Patch(response, method, path, fields))
+    fun network(mode: Network) = synchronized(lock) { network = mode }
+    fun patch(phase: Phase, method: String, path: String, fields: Map<String, WireValue>) = synchronized(lock) {
+        patches.add(Patch(phase, method, path, fields))
     }
-    fun hook(after: Boolean, method: String, path: String, skip: Long = 0, run: suspend () -> Unit) = synchronized(lock) {
-        hooks.add(Hook(after, method, path, skip, run))
+    fun hook(phase: Phase, method: String, path: String, skip: Long = 0, run: suspend () -> Unit) = synchronized(lock) {
+        hooks.add(Hook(phase, method, path, skip, run))
     }
-    fun interrupt(after: Boolean, method: String, path: String) = synchronized(lock) {
-        interruptions.add(Interruption(after, method, path))
+    fun interrupt(phase: Phase, method: String, path: String) = synchronized(lock) {
+        interruptions.add(Interruption(phase, method, path))
     }
 
     override suspend fun send(request: HttpRequest): HttpResponse = try {
@@ -50,9 +52,8 @@ internal class ScenarioTransport : HttpTransport {
         val uri = URI(request.url)
         val path = uri.rawPath + (uri.rawQuery?.let { "?$it" } ?: "")
         val method = request.method.rawValue
-        takeHook(false, method, path)?.let { runHook(it) }
-        val requestPatch = takePatch(false, method, path)
-        val responsePatch = takePatch(true, method, path)
+        takeHook(Phase.REQUEST, method, path)?.let { runHook(it) }
+        val requestPatch = takePatch(Phase.REQUEST, method, path)
         val bytes = if (requestPatch == null) request.body else {
             val original = request.body ?: throw ScenarioFailure("request patch without body")
             WireJson.canonical(WireJson.parse(original).patching(requestPatch.fields))
@@ -61,21 +62,22 @@ internal class ScenarioTransport : HttpTransport {
             request.responseByteCap, request.deadlineNanos, request.urlPolicy)
         val safeBody = if (path.startsWith("/api/v1/prompts/") || path == "/api/v1/sync/pull") bytes?.let(WireJson::parse) else null
         val localPaths = library?.listFiles()?.map { it.relativePath }.orEmpty()
-        if (!synchronized(lock) { online } || takeInterruption(false, method, path)) {
+        if (synchronized(lock) { network } == Network.OFFLINE || takeInterruption(Phase.REQUEST, method, path)) {
             record(Trace(method, path, 0, safeBody, localPaths, null, 0))
             throw HttpTransportError.NetworkFailure
         }
         val response = driver.send(actual)
         val pull = if (path == "/api/v1/sync/pull" && response.statusCode == 200) PullResponse.codec.decode(response.body) else null
         record(Trace(method, path, response.statusCode, safeBody, localPaths, pull, response.bodyByteCount))
-        takeHook(true, method, path)?.let {
+        takeHook(Phase.RESPONSE, method, path)?.let {
             scenarioCheck(response.statusCode == 200, "after hook requires real success")
             runHook(it)
         }
-        if (takeInterruption(true, method, path)) {
+        if (takeInterruption(Phase.RESPONSE, method, path)) {
             scenarioCheck(response.statusCode == 200, "acknowledgement loss requires real success")
             throw HttpTransportError.NetworkFailure
         }
+        val responsePatch = takePatch(Phase.RESPONSE, method, path)
         if (responsePatch == null) return response
         scenarioCheck(response.statusCode == 200, "response patch requires real success")
         val changed = WireJson.canonical(WireJson.parse(response.body).patching(responsePatch.fields))
@@ -93,20 +95,20 @@ internal class ScenarioTransport : HttpTransport {
         }
     }
     private fun record(trace: Trace) = synchronized(lock) { recorded.add(trace) }
-    private fun takePatch(response: Boolean, method: String, path: String): Patch? = synchronized(lock) {
-        val index = patches.indexOfFirst { it.response == response && it.method == method && it.path == path }
+    private fun takePatch(phase: Phase, method: String, path: String): Patch? = synchronized(lock) {
+        val index = patches.indexOfFirst { it.phase == phase && it.method == method && it.path == path }
         if (index < 0) null else patches.removeAt(index)
     }
-    private fun takeHook(after: Boolean, method: String, path: String): Hook? = synchronized(lock) {
-        val index = hooks.indexOfFirst { it.after == after && it.method == method && it.path == path }
+    private fun takeHook(phase: Phase, method: String, path: String): Hook? = synchronized(lock) {
+        val index = hooks.indexOfFirst { it.phase == phase && it.method == method && it.path == path }
         when {
             index < 0 -> null
             hooks[index].skip > 0 -> { hooks[index].skip--; null }
             else -> hooks.removeAt(index)
         }
     }
-    private fun takeInterruption(after: Boolean, method: String, path: String): Boolean = synchronized(lock) {
-        val index = interruptions.indexOfFirst { it.after == after && it.method == method && it.path == path }
+    private fun takeInterruption(phase: Phase, method: String, path: String): Boolean = synchronized(lock) {
+        val index = interruptions.indexOfFirst { it.phase == phase && it.method == method && it.path == path }
         if (index < 0) false else { interruptions.removeAt(index); true }
     }
     suspend fun close() { scope.cancel(); scope.coroutineContext[Job]?.join() }
