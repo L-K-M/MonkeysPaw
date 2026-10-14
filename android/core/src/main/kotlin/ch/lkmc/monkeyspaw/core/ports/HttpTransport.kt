@@ -2,13 +2,21 @@ package ch.lkmc.monkeyspaw.core.ports
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.hasControls
+import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import java.util.Collections
 import java.util.Locale
 
 enum class HttpMethod(val rawValue: String) { GET("GET"), POST("POST"), PUT("PUT"), DELETE("DELETE"), PATCH("PATCH") }
 
-/** M10 adds its deployment-bound sync policy when the Kotlin sync URL type exists. */
-enum class HttpUrlPolicy { ASSISTANT }
+/** User CA opt-in belongs to this exact deployment, never to assistant requests. */
+enum class SyncTLSTrust { SYSTEM, SYSTEM_AND_USER }
+
+sealed interface HttpUrlPolicy {
+    data object ASSISTANT : HttpUrlPolicy
+    data class Sync(val server: SyncServerURL, val trust: SyncTLSTrust = SyncTLSTrust.SYSTEM) : HttpUrlPolicy {
+        override fun toString(): String = "<sync URL policy>"
+    }
+}
 
 /** No client objects. Caps/header validation finish before any adapter sees a request. */
 class HttpRequest(
