@@ -99,4 +99,17 @@ class ScenarioRunnerMutationTest {
             runner.run()
         }
     }
+    @Test fun aLaterExternalWatchRunsTheProductionDebounceAndPush() {
+        runLiveScenario(decode(roundTrip())) { runner ->
+            runner.run()
+            val device = runner.device("a")
+            device.transport.resetMetrics()
+            val path = device.states.loadForAccountTransition()!!.prompts.values.single().path
+            device.files.externalWrite(device.files.read(path) + "Later external edit.\n".encodeToByteArray(), path)
+            device.watch(path)
+            device.fireTimers(3)
+            scenarioCheck(device.transport.traces.any { it.method == "POST" && it.path == "/api/v1/sync/pull" && it.status == 200 }, "external watch must pull")
+            scenarioCheck(device.transport.traces.count { it.method == "PUT" && it.status == 200 } == 1, "external watch must push once")
+        }
+    }
 }
