@@ -3,6 +3,106 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class ProviderNormalizationTests: XCTestCase {
+    func testEscapedIPLiteralSpellingsAreRejectedWithoutDecoding() {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for scheme in ["http", "https"] {
+                for host in ["[::%31]", "[%3A%3A1]", "[v1.%66e]", "[::%2531]"] {
+                    let input = "\(scheme)://\(host)"
+                    XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                        XCTAssertEqual($0 as? ProviderSettingsError, .invalidBaseURL, input)
+                    }
+                }
+            }
+            for input in ["https://[::%31]?q", "https://[%3A%3A1]#fragment"] {
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .queryOrFragmentInURL, input)
+                }
+            }
+            XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("https://user@[::%31]", kind: kind)) {
+                XCTAssertEqual($0 as? ProviderSettingsError, .credentialsInURL)
+            }
+        }
+    }
+
+    func testInvalidBracketedHostsAreRejectedForBothSchemesAndKinds() {
+        let hosts = ["[]", "[!]", "[foo]", "[::g]", "[1:2:3]", "[1:2:3:4:5:6:7:8:9]",
+                     "[1::2::3]", "[:::1]", "[12345::]", "[::ffff:999.0.0.1]",
+                     "[::ffff:192.0.02.1]", "[192.0.2.1::]", "[1:2:3:4:5:6:7:8::]",
+                     "[1:2:3:4:5:6::192.0.2.1]", "[v.fe]", "[vg.fe]", "[v1.]", "%5bfoo%5d"]
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for scheme in ["http", "https"] {
+                for host in hosts {
+                    let input = "\(scheme)://\(host)"
+                    XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                        XCTAssertEqual($0 as? ProviderSettingsError, .invalidBaseURL, input)
+                    }
+                }
+            }
+        }
+    }
+
+    func testOverflowedPortLexemesAreRejectedForBothKinds() {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for host in ["example.com", "[::1]", "[v1.fe]"] {
+                for port in ["0", "65536", "9223372036854775808", "18446744073709551616",
+                             String(repeating: "9", count: 100)] {
+                    let input = "https://\(host):\(port)/gateway"
+                    XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                        XCTAssertEqual($0 as? ProviderSettingsError, .invalidBaseURL, input)
+                    }
+                }
+            }
+        }
+    }
+
+    func testUndecodablePercentEscapedPathsAreRejectedWithoutTruncation() {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for path in ["/%FF", "/gateway/a%FFb/models", "/%C3", "/%C0%AF", "/%ED%A0%80",
+                         "/%F4%90%80%80", "/%E2%82"] {
+                let input = "https://example.com" + path
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .invalidBaseURL, input)
+                }
+            }
+        }
+    }
+
+    func testValidIPLiteralPortAndPathSpellingsRemainCanonical() throws {
+        let cases = [
+            ("https://[::]", "https://[::]"),
+            ("https://[2001:DB8::1]:443/gateway", "https://[2001:db8::1]/gateway"),
+            ("https://[1:2:3:4:5:6:7:8]:65535", "https://[1:2:3:4:5:6:7:8]:65535"),
+            ("https://[1:2:3:4:5:6:7::]", "https://[1:2:3:4:5:6:7::]"),
+            ("https://[::ffff:192.0.2.1]", "https://[::ffff:192.0.2.1]"),
+            ("https://[1:2:3:4:5:6:192.0.2.1]", "https://[1:2:3:4:5:6:192.0.2.1]"),
+            ("https://[v1.fe]", "https://[v1.fe]"),
+            ("https://[vF.a:b]", "https://[vf.a:b]"),
+            ("https://example.com:00000000000000000000000000000000000000000000001", "https://example.com:1"),
+            ("https://example.com/%", "https://example.com/%25"),
+            ("https://example.com/%ZZ", "https://example.com/%25ZZ"),
+            ("https://example.com/caf%C3%A9", "https://example.com/caf%C3%A9")
+        ]
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for (input, base) in cases {
+                let expected = kind == .openaiCompatible && !base.dropFirst(8).contains("/") ? base + "/v1" : base
+                let normalized = try ProviderSettings.normalizeBaseURL(input, kind: kind)
+                XCTAssertEqual(normalized.absoluteString, expected, input)
+                XCTAssertEqual(try ProviderSettings.normalizeBaseURL(expected, kind: kind), normalized, input)
+            }
+        }
+    }
+
+    func testEmptyPortsNormalizeToTheAbsentPortForEveryHostKind() throws {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for host in ["example.com", "[::1]", "[v1.fe]"] {
+                let input = "https://\(host):/gateway"
+                let normalized = try ProviderSettings.normalizeBaseURL(input, kind: kind)
+                XCTAssertEqual(normalized.absoluteString, "https://\(host)/gateway", input)
+                XCTAssertEqual(try ProviderSettings.normalizeBaseURL(normalized.absoluteString, kind: kind), normalized, input)
+            }
+        }
+    }
+
     func testAnthropicBaseAndFullEndpointsNormalizeWithoutRepeatedV1() throws {
         let cases = [
             ("https://api.anthropic.com", "https://api.anthropic.com"),

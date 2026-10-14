@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "category": "import",
+  "source": "example.prompt",
+  "expected": {
+    "source": "---\nfields:\n  voice:\n    type: choice\n    options:\n    - formal\n    - casual\n    default: casual\ninput:\n  schema:\n    tone(enum): formal, casual\n    mood?(enum, Mood): calm, bright\n    voice(enum):\n    - formal\n    - casual\n  default:\n    tone: casual\n    mood: calm\n    voice: casual\n---\n{{tone}} {{mood}} {{voice}}\n",
+    "body": "{{tone}} {{mood}} {{voice}}\n",
+    "mappings": [
+      {
+        "sourceKey": "input.schema.voice(enum)",
+        "fieldName": "voice",
+        "kind": "choice",
+        "defaultSource": "input.default.voice"
+      }
+    ],
+    "preservedKeys": [
+      "input"
+    ],
+    "dropped": [
+      "frontMatterPresentation"
+    ],
+    "warnings": [
+      {
+        "code": "invalidOptions",
+        "key": "input.schema.tone(enum)"
+      },
+      {
+        "code": "invalidOptions",
+        "key": "input.schema.mood?(enum, Mood)"
+      }
+    ]
+  }
+}
