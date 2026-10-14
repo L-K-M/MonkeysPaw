@@ -5,6 +5,21 @@ import XCTest
 @testable import MonkeysPaw
 
 final class MacShortcutSettingsTests: XCTestCase {
+    func testUnregisteringUnboundPickerPreservesBoundRepeatCallback() throws {
+        let backend = SettingsHotkeyBackend()
+        let picker = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        var fires = 0
+        let repeatLast = backend.register(.repeatLast, accelerator: try Accelerator("Alt+R")) { fires += 1 }
+
+        backend.unregister(picker)
+        backend.fire?()
+
+        XCTAssertEqual(fires, 1)
+        XCTAssertEqual(backend.current[.repeatLast], repeatLast)
+        backend.unregister(repeatLast)
+        XCTAssertNil(backend.fire)
+    }
+
     func testCaptureUsesPhysicalANSIKeysAndMasksIncidentalFlags() throws {
         for text in ["π", "з", "P", "p"] {
             let event = try key(kVK_ANSI_P, text: text,
@@ -352,7 +367,7 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
     func unregister(_ registration: HotkeyRegistration) {
         unregistered.append(registration)
         current = current.filter { $0.value != registration }
-        if registration.id != unboundRepeat.id { fire = nil }
+        if registration.id != unbound.id && registration.id != unboundRepeat.id { fire = nil }
     }
 }
 

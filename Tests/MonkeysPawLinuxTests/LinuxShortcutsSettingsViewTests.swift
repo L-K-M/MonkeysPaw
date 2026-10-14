@@ -160,6 +160,7 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
 
     func testFakeUnboundDeclarationsPreservePickerCallbackUntilPickerIsCleared() throws {
         let backend = SettingsHotkeyBackend()
+        let probe = SettingsSetupProbe(backend: backend)
         var fires = 0
         let picker = backend.register(.togglePicker, accelerator: try Accelerator("Alt+P")) { fires += 1 }
         let repeatAction = backend.register(.repeatLast, accelerator: nil) { XCTFail("Unbound repeat fired") }
@@ -172,6 +173,16 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         XCTAssertNotEqual(cleared.id, repeatAction.id)
         XCTAssertNotEqual(cleared.id, picker.id)
         XCTAssertNil(backend.fire)
+        XCTAssertEqual(probe.hotkeyRegistration(for: .togglePicker), cleared)
+        XCTAssertEqual(probe.hotkeyRegistration(for: .repeatLast), repeatAction)
+
+        let rebound = backend.register(.togglePicker, accelerator: try Accelerator("Alt+P")) { fires += 1 }
+        XCTAssertEqual(probe.hotkeyRegistration(for: .togglePicker), rebound)
+        backend.fire?()
+        XCTAssertEqual(fires, 2)
+        backend.unregister(rebound)
+        XCTAssertNil(backend.fire)
+        XCTAssertEqual(probe.hotkeyRegistration(for: .togglePicker), cleared)
     }
 
     private func refresh(_ mechanism: HotkeyMechanism, status: RegistrationStatus, detail: String,
@@ -191,18 +202,20 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
         detail: "Ctrl+K, Ctrl+P; Alt+F9", configuration: .systemSettings)
     var mechanism: HotkeyMechanism { registration.mechanism }
     var fire: (() -> Void)?
+    private(set) var pickerCleared = false
     let unboundRepeat = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
         detail: SetupStrings.unboundShortcut, configuration: .unavailable)
     let unboundPicker = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
         detail: SetupStrings.unboundShortcut, configuration: .unavailable)
     func register(_ action: HotkeyAction, accelerator: Accelerator?, onFire: @escaping () -> Void) -> HotkeyRegistration {
         guard action == .togglePicker else { return unboundRepeat }
-        guard accelerator != nil else { fire = nil; return unboundPicker }
+        guard accelerator != nil else { fire = nil; pickerCleared = true; return unboundPicker }
+        pickerCleared = false
         fire = onFire
         return registration
     }
     func unregister(_ registration: HotkeyRegistration) {
-        if registration.id == self.registration.id { fire = nil }
+        if registration.id == self.registration.id { fire = nil; pickerCleared = true }
     }
 }
 
@@ -215,7 +228,8 @@ private final class SettingsSetupProbe: SetupProbe {
     func ydotoolStatus() -> SetupStatus { .notApplicable }
     func kdeStatus() -> SetupStatus { .needsAction(fix: SetupStrings.kdeShortcut) }
     func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration {
-        action == .togglePicker ? backend.registration : backend.unboundRepeat
+        guard action == .togglePicker else { return backend.unboundRepeat }
+        return backend.pickerCleared ? backend.unboundPicker : backend.registration
     }
     func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) { fixes.append(kind); done() }
 }
