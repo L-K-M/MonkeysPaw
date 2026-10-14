@@ -1,5 +1,37 @@
 # Android acceptance
 
+## Release APK verification
+
+Download `monkeyspaw-v<full-version>.apk` and its `.apk.sha256` from this
+repository's GitHub Release into the same directory. Android API 26 or later
+is required. Before sideloading, run:
+
+```bash
+sha256sum -c monkeyspaw-v<full-version>.apk.sha256
+```
+
+Replace `<full-version>` with the release version, including any prerelease
+suffix. On macOS, use `shasum -a 256 -c` instead. Both debug and release APKs
+use the same [public signer](../decisions/0001-android-zero-secret-signing.md)
+and app ID, so installing one replaces the other. Anyone with the public key
+can sign an update; the signature does not establish publisher identity.
+Obtain APKs from this repository's release. Changing the signer breaks
+updates and requires uninstall/reinstall, which deletes app-private data.
+
+Ordinary CI and release dry runs verify the APK's ID, full version,
+committed code, API levels, signature/fingerprint and checksum, then download
+the workflow artifact and byte-compare both files. Release publication also
+requires every desktop and server-image gate and draft-download comparisons.
+These checks do not prove device installation, runtime behavior or updates.
+
+- Latest main five-task CI / artifact URL: NOT RUN
+- Release dry-run / APK artifact URL: NOT RUN
+- Final APK version / code / SHA-256 / signer fingerprint: NOT RUN
+- Install and update on API 26–33 / API 34+: NOT RUN
+
+The supervisor records CI links after integration; the owner records the
+final APK/device evidence. K19 creates no release tag.
+
 ## M8 quick entry points: NOT RUN
 
 Owner-run checks for §10.4 B and §20 F2/F16. No Android device or emulator

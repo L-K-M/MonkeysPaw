@@ -146,7 +146,8 @@ Rollout by milestone:
     that a container cannot set (Vervellum).
 - **release.yml.**
   - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
-    true. PRs touching packaging, `server/Dockerfile` or the release
+    true. PRs touching Android, shared fixtures/seeds, packaging,
+    `server/Dockerfile` or the release
     workflow run the dry-run path too. Every path first calls `ci.yml`, then
     checks committed versions. A real tag's numeric core must equal the
     committed `MARKETING_VERSION`, README marker and Android `versionName`;
@@ -156,23 +157,26 @@ Rollout by milestone:
     Branch/PR dry runs use the committed version. A manual publish requires
     selecting an existing `v*` tag and setting `dry_run` to false.
   - Concurrency is `release-${{ github.ref }}`, without cancellation.
-    Workflow permissions are `contents: write`; every build/verification
-    job reduces these to `contents: read`. Only GitHub publishing keeps
+    Workflow permissions default to `contents: read`. Only GitHub publishing gets
     `contents: write`; only image publishing gets `packages: write`, with
     `contents: read`. Actions are SHA-pinned, checkouts do not persist
     credentials, and each runner job has a timeout.
   - The draft release is published only after all build and verification
     gates pass and the server image tags are promoted and verified. Server
-    images are ghcr objects, never a sixth release asset. Release assets:
+    images are ghcr objects rather than release files. Release assets:
 
     - macOS: a universal `.dmg`, plus `.zip` and their `.sha256` manifest.
     - Linux: a `.deb` built by `packaging/build-deb.sh` with
       `--static-swift-stdlib` (plus `--build-system native` until swift-build
       links static Foundation; §16) and `dpkg-shlibdeps`, plus `.deb.sha256`.
+    - Android: the signed R8 `monkeyspaw-v<full-version>.apk` and `.apk.sha256`.
     - Flatpak: repacked from the deb (from M7).
+      Its separate CI artifact does not join release assembly until that
+      release wiring lands; it must then add the pair to every asset gate.
   - In M2 the Linux job runs first; the macOS job `needs` it, so a broken
     deb fails the tag before a release exists. Native server image builds
     run alongside macOS packaging after the Linux and version gates;
+    Android follows tests/version verification without waiting for Linux;
     flatpak joins in M7.
   - Server image builds run natively on `ubuntu-24.04` (amd64) and hosted
     `ubuntu-24.04-arm` (arm64), without QEMU/binfmt. Each passes `VERSION`,
@@ -180,7 +184,7 @@ Rollout by milestone:
     labels, then smoke-tests container health and `/api/health` 200 with a
     throwaway admin password file bind-mounted read-only. OCI archives and
     digests use separate workflow artifacts outside `MonkeysPaw-release-*`.
-  - Image publishing requires tests, verify, Linux, macOS, artifacts and
+  - Image publishing requires tests, verify, Linux, macOS, Android, artifacts and
     both native image builds. It pushes untagged digests, creates a
     multiarch manifest and verifies exactly amd64 and arm64 with the
     expected digests for each tag before GitHub publishing can run. This
@@ -194,14 +198,22 @@ Rollout by milestone:
   - Stable `vX.Y.Z` tags publish image tags `X.Y.Z`, `X.Y` and `latest` at
     `ghcr.io/l-k-m/monkeyspaw-server`. Hyphenated tags are prereleases and
     publish only the exact version image tag, never `X.Y` or `latest`.
-  - Each desktop packaging job downloads its workflow artifact and byte-compares
-    every file, including checksums, against the originals. An assembly job
-    requires all five assets and checks both manifests. The publish job
-    creates a draft with all five assets, downloads every release asset and
+  - Each packaging job downloads its workflow artifact and byte-compares
+    every file, including checksums, against the originals. Android also
+    validates APK ID/full version/committed code/API levels and the recorded
+    public signer before upload. Ordinary CI stages and round-trips the signed
+    R8 APK pair too. An assembly job requires exactly seven nonempty assets,
+    rejects missing/extra files (including hidden entries), requires exact
+    payload membership in each manifest and checks all three manifests.
+    The publish job repeats the asset gate, creates a draft with all seven
+    assets, downloads every release asset and
     byte-compares against those verified build outputs before undrafting.
     Any failure leaves the release unpublished. PRs and manual dry runs do
     every build and workflow-artifact verification, including both image
     smoke tests, and skip both publish jobs without logging in to ghcr.
+    This includes fork PRs. Both publish jobs require a tag and a true
+    publish output. Release notes include Android checksum/sideload guidance
+    and the public-signing disclosure alongside generated changes.
   - To cut the first release after CI and owner installation checks pass,
     run `scripts/release.sh 0.1.0 --push` on current main with the shared
     `lkm-release` engine installed. It bumps committed versions and pushes

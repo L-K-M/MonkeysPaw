@@ -412,8 +412,11 @@ risk, so it is contained by contract:
   - One invocation: `./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease`
     on every PR to prove JVM compatibility, lint and R8.
   - Only `setup-gradle` caches Gradle state, read-only outside main.
-    Uploads the debug APK and, on failure, JVM test and lint reports as
-    artifacts retained for three days.
+    Uploads the debug APK and the staged, verified R8 release APK/checksum;
+    the release pair is downloaded and byte-compared with the originals.
+    On failure, JVM test and lint reports are uploaded. All are retained
+    for three days. The 45-minute timeout and two-worker/3 GiB limits are
+    unchanged; tune them only from CI timing evidence (§20 F17).
   - Dependabot: a `gradle` entry for `/android`, with HalloMiao's `androidx`
     and `kotlin`+`ksp` groups.
 - **Signing.** `android/app/debug.keystore` is checked in and signs both
@@ -423,13 +426,22 @@ risk, so it is contained by contract:
   - Consequence: moving to a real key later breaks upgrades for every
     installed copy. That is a product decision, and Q12 records it.
 - **Release.** The same `v*` tag as the desktop apps and the server. An
-  `android-build` job:
+  `android-build` job follows tests/version verification, alongside Linux
+  packaging, with the same pinned Java/SDK/Gradle setup as ordinary CI:
   1. checks the tag against the committed numeric `versionName` (§20 F20):
      stable tags match exactly; prerelease tags match by numeric core
-  2. runs `testDebugUnitTest lintDebug assembleRelease` with the full validated
+  2. runs `:core:test testDebugUnitTest lintDebug assembleRelease` with the full validated
      tag version as `-PreleaseVersion=X.Y.Z[-prerelease]`
   3. stages `monkeyspaw-v<full-version>.apk` + `.apk.sha256`
-  The publish job attaches them to the same GitHub Release.
+  `scripts/verify-android-release.py` checks the staged APK's application ID,
+  full version, committed code, API levels, verified signature and recorded
+  signer fingerprint, and requires its exact checksum. The artifact pair is
+  uploaded, downloaded and byte-compared. Assembly and both publish jobs
+  require Android plus every desktop/image gate; seven assets are required
+  until separate Flatpak release wiring adds its pair. Draft assets are
+  downloaded and compared before publishing (§14). Fork PRs and manual dry
+  runs publish nothing; release notes include checksum/sideload guidance and
+  public-signing disclosure. Actual tagging needs separate owner authorization.
 - **Versioning.**
   - `scripts/release.sh` keeps `RELEASE_KIND=xcode` and sets
     `RELEASE_POST_BUMP=scripts/sync-android-version.sh`. The hook reads
