@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 
 private enum class FileDialog { RENAME, MOVE, DELETE }
 
@@ -69,6 +70,7 @@ internal fun EditorScreen(
             }
         }
         if (state.historyMaintenanceFailed) item { Text(stringResource(R.string.editor_history_warning)) }
+        if (state.provenanceMaintenanceFailed) item { Text(stringResource(R.string.editor_provenance_warning)) }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(EditorTab.entries) { tab ->
@@ -121,6 +123,10 @@ internal fun EditorScreen(
                     }
                     if (state.history.loading) CircularProgressIndicator()
                     if (state.history.failure != null) Text(stringResource(R.string.editor_history_failed))
+                    if (!state.history.loading && state.history.failure == null && !state.isNew) {
+                        Text(stringResource(R.string.editor_current_revision), style = MaterialTheme.typography.titleMedium)
+                        ProvenanceAttribution(state.history.currentProvenance)
+                    }
                     if (!state.history.loading && state.history.revisions.isEmpty()) Text(stringResource(R.string.editor_no_history))
                 }
                 items(state.history.revisions, key = { it.revision.filename }) { entry ->
@@ -129,11 +135,13 @@ internal fun EditorScreen(
                             Text(entry.revision.timestamp.toString())
                             Text(stringResource(R.string.editor_revision_size, entry.byteCount))
                             Text(stringResource(if (entry.canRestore) R.string.editor_revision_valid else R.string.editor_revision_forensic))
+                            ProvenanceAttribution(entry.provenance)
                         }
                     }
                 }
                 state.history.selectedRevision?.let { selected -> item {
                     Text(stringResource(R.string.editor_revision_source), style = MaterialTheme.typography.titleMedium)
+                    ProvenanceAttribution(selected.provenance)
                     if (selected.source == null) Text(stringResource(R.string.editor_source_unavailable))
                     else SelectionContainer { Text(selected.source) }
                     TextButton(onClick = { onRestore(selected) }, enabled = selected.canRestore && state.canCommand) {
@@ -205,6 +213,20 @@ internal fun EditorScreen(
                     TextButton(onClick = { onDecision(decision.id, EditorDecision.CANCEL) }, enabled = !state.writing) { Text(stringResource(R.string.editor_cancel)) }
                 }
             })
+    }
+}
+
+@Composable
+private fun ProvenanceAttribution(provenance: PromptProvenance?) {
+    if (provenance == null) {
+        Text(stringResource(R.string.editor_provenance_unrecorded))
+        return
+    }
+    Text(stringResource(R.string.editor_provenance_llm, provenance.providerHost, provenance.model))
+    Text(provenance.timestamp.toString(), style = MaterialTheme.typography.bodySmall)
+    provenance.usage?.let { usage ->
+        Text(stringResource(R.string.editor_provenance_usage, usage.inputTokens, usage.outputTokens),
+            style = MaterialTheme.typography.bodySmall)
     }
 }
 

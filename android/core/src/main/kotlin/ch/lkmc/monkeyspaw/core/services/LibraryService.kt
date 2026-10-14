@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.services
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.ranking.Utf8Order
 import ch.lkmc.monkeyspaw.core.ports.*
 
@@ -47,13 +48,14 @@ class LibraryService(
     }
 
     /** Null explicitly permits replacement/recreation; normal editing supplies the load stamp. */
-    fun save(document: PromptDocument, path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = mutations.run {
-        saveDocument(document, path, SaveMode.REPLACE, expectedStamp).also { index.acceptCommitted(it.entry, path) }
+    fun save(document: PromptDocument, path: String, expectedStamp: FileStamp? = null,
+             provenance: PromptProvenance? = null): LibrarySaveResult = mutations.run {
+        saveDocument(document, path, SaveMode.REPLACE, expectedStamp, provenance).also { index.acceptCommitted(it.entry, path) }
     }
 
     /** Exclusive create never reads or snapshots an occupied prompt destination. */
-    fun create(document: PromptDocument, path: String): LibrarySaveResult = mutations.run {
-        saveDocument(document, path, SaveMode.CREATE, null).also { index.acceptCommitted(it.entry, path) }
+    fun create(document: PromptDocument, path: String, provenance: PromptProvenance? = null): LibrarySaveResult = mutations.run {
+        saveDocument(document, path, SaveMode.CREATE, null, provenance).also { index.acceptCommitted(it.entry, path) }
     }
 
     fun assignIdentity(path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = mutations.run {
@@ -109,6 +111,17 @@ class LibraryService(
         index.acceptDeleted(path)
     }
 
+    /** Exact content binding prevents an external replacement inheriting the previous head's origin. */
+    fun provenance(path: String, expectedStamp: FileStamp? = null): PromptProvenance? = mutations.run {
+        val loaded = requireCurrent(path)
+        if (expectedStamp != null && loaded.entry.stamp != expectedStamp) throw LibraryError.Conflict
+        history.headProvenance(loaded.entry.identity, loaded.bytes)
+    }
+
+    fun provenance(revision: HistoryRevision): PromptProvenance? = mutations.run {
+        history.provenance(revision, history.read(revision))
+    }
+
     fun restore(revision: HistoryRevision, path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = mutations.run {
         LibraryPath.validate(path)
         when (val identity = revision.identity) {
@@ -119,11 +132,17 @@ class LibraryService(
         }
         val current = readCurrent(path)
         if (current != null && current.entry.identity != revision.identity) throw LibraryError.IdentityMismatch
-        var document = PromptCodec.parseFile(history.read(revision), LibraryPath.filename(path))
+        val bytes = history.read(revision)
+        var document = PromptCodec.parseFile(bytes, LibraryPath.filename(path))
         if (revision.identity is PromptIdentity.Assigned) {
             document = PromptMutations.assigningIdentity(revision.identity.id, document, LibraryPath.filename(path))
         }
-        save(document, path, expectedStamp)
+        val provenance = try { history.provenance(revision, bytes) }
+        catch (_: LibraryError.InvalidProvenance) {
+            // Readable revision bytes still restore; retain the committed result and both warnings.
+            return@run save(document, path, expectedStamp).copy(provenanceMaintenanceFailed = true)
+        }
+        save(document, path, expectedStamp, provenance)
     }
 
     internal fun checkedLoad(path: String): PromptLoadResult {
@@ -137,7 +156,7 @@ class LibraryService(
     }
 
     private fun saveDocument(draft: PromptDocument, path: String, mode: SaveMode,
-                             expectedStamp: FileStamp?): LibrarySaveResult {
+                             expectedStamp: FileStamp?, provenance: PromptProvenance?): LibrarySaveResult {
         LibraryPath.validate(path)
         PromptCodec.write(draft)
         val current = if (mode == SaveMode.REPLACE) readCurrent(path) else null
@@ -154,9 +173,16 @@ class LibraryService(
         val targetIdentity = PromptIdentity.at(path, document.frontMatter.id)
         val migrated = mutableListOf<PromptKeyedStore>()
         var snapshot: HistoryRevision? = null
+        var provenanceFailed = false
         try {
             migrate(sourceIdentity, targetIdentity, migrated)
-            if (current != null) snapshot = history.snapshot(current.bytes, targetIdentity, date)
+            if (current != null) {
+                val previous = try { history.headProvenance(targetIdentity, current.bytes) }
+                catch (_: Exception) { provenanceFailed = true; null }
+                snapshot = history.snapshot(current.bytes, targetIdentity, date)
+                try { history.archiveProvenance(previous, snapshot, current.bytes) }
+                catch (_: Exception) { provenanceFailed = true }
+            }
             when (mode) {
                 SaveMode.REPLACE -> {
                     if (prompts.stamp(path) != current?.entry?.stamp) throw LibraryError.Conflict
@@ -178,9 +204,11 @@ class LibraryService(
         val committed = try { requireCurrent(path) }
         catch (_: Exception) { throw LibraryError.CommitUnverified }
         if (!committed.bytes.contentEquals(bytes)) throw LibraryError.Conflict
-        // Retention happens after publication. Its failure is a committed outcome, never a retryable save.
+        // Attribution and retention happen after publication; failures never request another file write.
+        try { history.setHeadProvenance(provenance, targetIdentity, bytes) }
+        catch (_: Exception) { provenanceFailed = true }
         val maintenanceFailed = try { history.prune(targetIdentity); false } catch (_: Exception) { true }
-        return LibrarySaveResult(committed.entry, maintenanceFailed)
+        return LibrarySaveResult(committed.entry, maintenanceFailed, provenanceFailed)
     }
 
     private fun readCurrent(path: String): LoadedFile? {
