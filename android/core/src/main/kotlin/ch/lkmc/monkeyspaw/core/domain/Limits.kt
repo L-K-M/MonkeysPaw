@@ -19,6 +19,10 @@ object Limits {
     const val syncPageItemCap = 200
     const val revisionListCap = 200
     const val maxRetryAfterSeconds = 15 * 60L
+    const val syncStateVersion = 1
+    const val syncAccountVersion = 1
+    const val syncBindingVersion = 1
+    const val syncRecordMaxBytes = 16 * 1024 * 1024
 
     const val llmBudgetNanos = 300_000_000_000L
     const val modelListTimeoutNanos = 15_000_000_000L
