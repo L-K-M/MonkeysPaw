@@ -196,7 +196,9 @@ public final class ConflictResolutionService {
             }
         } else {
             edit = try context.mutations.trash(preview.baseline)
-            // Retain its acknowledged record until personal DELETE succeeds.
+            // Only acknowledged copies need a personal DELETE. A rev-zero
+            // record would otherwise survive scans as a phantom conflict.
+            if next.prompts[preview.copy.identity]?.rev == 0 { next.prompts[preview.copy.identity] = nil }
         }
         let result = try context.journal.apply(.init(expectedState: state, nextState: next, edits: [edit]), permit: context.permit)
         guard result == .committed else { throw ConflictResolutionFailure.recoveryRequired }
