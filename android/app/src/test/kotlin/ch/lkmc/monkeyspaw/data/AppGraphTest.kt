@@ -21,7 +21,8 @@ internal class AppGraphTest {
     fun `one singleton provider owns every mutable library service and DataStore`() {
         val methods = AppModule::class.java.declaredMethods
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
-            AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, CoroutineScope::class.java)) {
+            AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, CoroutineScope::class.java,
+            AndroidSeedCatalog::class.java, SeedInstaller::class.java)) {
             val provider = methods.single { it.returnType == type }
             assertNotNull(provider.getAnnotation(Singleton::class.java), "${type.simpleName} must be process-scoped")
         }
