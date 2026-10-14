@@ -17,7 +17,45 @@ import java.nio.file.Files
 import kotlin.test.*
 
 internal class ProviderRecordMappingTest : TemporaryFiles() {
-    @Test fun `old M8 settings open without a speculative rewrite and provider records reopen byte exact`() = runBlocking {
+    private val mainThread = Thread.currentThread()
+
+    @Test fun `provider IO rejects the main thread before DataStore access including Core construction`() = runBlocking {
+        var reads = 0
+        var updates = 0
+        val current = AndroidSettings(records = mapOf("provider-settings" to SettingsRecord(
+            "{\"version\":1,\"profiles\":[]}", "fixture-incarnation")))
+        val fake = object : DataStore<AndroidSettings> {
+            override val data: Flow<AndroidSettings> = flow { reads++; emit(current) }
+            override suspend fun updateData(transform: suspend (AndroidSettings) -> AndroidSettings): AndroidSettings {
+                updates++
+                return transform(current)
+            }
+        }
+        val state = state(AndroidSettingsStore(fake))
+        val path = "provider-settings.json"
+        val bytes = "{}".encodeToByteArray()
+        val operations = listOf<Pair<String, () -> Unit>>(
+            "read" to { state.read(path) }, "stamp" to { state.stamp(path) },
+            "list" to { state.listFiles() }, "write" to { state.write(bytes, path) },
+            "private write" to { state.writePrivate(bytes, path) }, "create" to { state.create(bytes, path) },
+            "delete" to { state.delete(path) }, "move" to { state.move(path, "provider-state.json") },
+            "Core construction" to { ProviderSettingsStore(state) },
+        )
+        for ((name, operation) in operations) assertFailsWith<AssertionError>(name) { operation() }
+        assertEquals(0, reads)
+        assertEquals(0, updates)
+
+        val service = withContext(Dispatchers.IO) {
+            ProviderSettingsService(ProviderSettingsStore(state), NoSecretAccess(), Dispatchers.Unconfined)
+        }
+        val before = reads
+        assertFailsWith<AssertionError> { service.resolveForTesting(ProviderDraft()) }
+        assertFailsWith<AssertionError> { service.selectProfile(null) }
+        assertEquals(before, reads)
+        assertEquals(0, updates)
+    }
+
+    @Test fun `old M8 settings open without a speculative rewrite and provider records reopen byte exact`() = runBlocking(Dispatchers.IO) {
         val original = "{\"version\":1,\"seedProgress\":\"DECLINED\"}"
         val path = filesDir.resolve("datastore/settings.json")
         put(path, original.encodeToByteArray())
@@ -46,7 +84,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         assertEquals(listOf("settings.json"), Files.list(path.parent).use { it.map { entry -> entry.fileName.toString() }.toList() })
     }
 
-    @Test fun `concurrent seed and provider record updates preserve all three independent settings`() = runBlocking {
+    @Test fun `concurrent seed and provider record updates preserve all three independent settings`() = runBlocking(Dispatchers.IO) {
         withStore { settings, state ->
             coroutineScope {
                 val seed = async { repeat(20) { settings.setSeedProgress(SeedProgress.INSTALLING) } }
@@ -61,7 +99,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         withStore { _, state -> assertEquals("metadata-19", state.read("provider-settings.json").decodeToString()) }
     }
 
-    @Test fun `provider corruption stays intact through seed updates and blocks Core before secrets`() = runBlocking {
+    @Test fun `provider corruption stays intact through seed updates and blocks Core before secrets`() = runBlocking(Dispatchers.IO) {
         withStore { settings, state ->
             for ((payload, expected) in listOf("invalid" to ProviderSettingsError.CorruptFile,
                 "{\"version\":9}" to ProviderSettingsError.FutureVersion(9))) {
@@ -78,7 +116,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         }
     }
 
-    @Test fun `malformed future and unreadable outer settings never reset or create provider files`() = runBlocking {
+    @Test fun `malformed future and unreadable outer settings never reset or create provider files`() = runBlocking(Dispatchers.IO) {
         val path = filesDir.resolve("datastore/settings.json")
         for (text in listOf("invalid", "{\"version\":7,\"seedProgress\":\"COMPLETE\"}",
             "{\"version\":1,\"seedProgress\":\"COMPLETE\",\"records\":{\"provider-settings\":7}}",
@@ -98,13 +136,13 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
             override val data: Flow<AndroidSettings> = flow { throw IOException("fixture-only path") }
             override suspend fun updateData(transform: suspend (AndroidSettings) -> AndroidSettings): AndroidSettings = throw IOException("fixture-only path")
         })
-        val state = AndroidStateStore(stateDir.toFile(), settings = inaccessible)
+        val state = state(inaccessible)
         assertEquals(ProviderSettingsError.ReadFailed, ProviderSettingsStore(state).let {
             ProviderSettingsService(it, NoSecretAccess(), Dispatchers.IO).snapshot.readOnlyError
         })
     }
 
-    @Test fun `failed atomic DataStore publication preserves both provider records and seed state`() = runBlocking {
+    @Test fun `failed atomic DataStore publication preserves both provider records and seed state`() = runBlocking(Dispatchers.IO) {
         val current = AndroidSettings(SeedProgress.COMPLETE, mapOf(
             "provider-settings" to SettingsRecord("metadata", "original-incarnation"),
             "provider-state" to SettingsRecord("capability", "other-incarnation")))
@@ -115,7 +153,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
                 throw IOException("fixture publication failed")
             }
         }
-        val state = AndroidStateStore(stateDir.toFile(), settings = AndroidSettingsStore(fake))
+        val state = state(AndroidSettingsStore(fake))
         val stamp = state.stamp("provider-settings.json")
         assertFailsWith<StoreError.IOFailure> { state.write("new".encodeToByteArray(), "provider-settings.json") }
         assertEquals(current, fake.data.value)
@@ -124,7 +162,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         assertFalse(Files.exists(stateDir.resolve("provider-settings.json")))
     }
 
-    @Test fun `DataStore flow cancellation reaches Core without poisoning the provider store`() = runBlocking {
+    @Test fun `DataStore flow cancellation reaches Core without poisoning the provider store`() = runBlocking(Dispatchers.IO) {
         var cancelledRead = false
         var current = AndroidSettings(records = mapOf("provider-settings" to SettingsRecord(
             "{\"version\":1,\"profiles\":[]}", "fixture-incarnation")))
@@ -138,7 +176,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
                 return current
             }
         }
-        val state = AndroidStateStore(stateDir.toFile(), settings = AndroidSettingsStore(fake))
+        val state = state(AndroidSettingsStore(fake))
         val service = ProviderSettingsService(ProviderSettingsStore(state), NoSecretAccess(), Dispatchers.IO)
         val before = service.snapshot
         cancelledRead = true
@@ -151,7 +189,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         assertEquals(draft.id, service.snapshot.settings.selectedProfileID)
     }
 
-    @Test fun `mapped file operations retain incarnation semantics and refuse moves across backends`() = runBlocking {
+    @Test fun `mapped file operations retain incarnation semantics and refuse moves across backends`() = runBlocking(Dispatchers.IO) {
         withStore { _, state ->
             val path = "provider-settings.json"
             state.create("one".encodeToByteArray(), path)
@@ -175,7 +213,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         }
     }
 
-    @Test fun `existing values usage and history still use their original file backend`() = runBlocking {
+    @Test fun `existing values usage and history still use their original file backend`() = runBlocking(Dispatchers.IO) {
         withStore { settings, state ->
             for (path in listOf("values.json", "usage/local", "history/local/000001.md")) {
                 state.writePrivate(path.encodeToByteArray(), path)
@@ -187,7 +225,7 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         }
     }
 
-    @Test fun `invalid UTF8 publication cannot damage the prior logical record`() = runBlocking {
+    @Test fun `invalid UTF8 publication cannot damage the prior logical record`() = runBlocking(Dispatchers.IO) {
         withStore { _, state ->
             state.write("kept".encodeToByteArray(), "provider-settings.json")
             assertFailsWith<StoreError.IOFailure> { state.write(byteArrayOf(-1), "provider-settings.json") }
@@ -200,9 +238,12 @@ internal class ProviderRecordMappingTest : TemporaryFiles() {
         try {
             val settings = AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
                 produceFile = { filesDir.resolve("datastore/settings.json").toFile() }))
-            work(settings, AndroidStateStore(stateDir.toFile(), settings = settings))
+            work(settings, state(settings))
         } finally { scope.coroutineContext.job.cancelAndJoin() }
     }
+
+    private fun state(settings: AndroidSettingsStore) = AndroidStateStore(stateDir.toFile(), settings = settings,
+        isMainThread = { Thread.currentThread() === mainThread })
 
     private class NoSecretAccess : SecretStore {
         var calls = 0

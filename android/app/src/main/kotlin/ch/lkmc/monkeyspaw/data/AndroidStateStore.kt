@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.data
 
+import android.os.Looper
 import ch.lkmc.monkeyspaw.core.ports.*
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -7,12 +8,15 @@ import java.util.UUID
 
 /** Provider records live in the existing settings DataStore. Other state stays in filesDir/state.
  * K11's synchronous port requires a background-only bridge; DataStore runs in its own IO scope.
+ * Blocking provider access asserts the worker contract, including Core store construction.
+ * Callers and DataStore must not share a single-thread executor.
  * Moves across the two backends are rejected rather than pretending to be atomic.
  */
 internal class AndroidStateStore private constructor(private val files: StateStore,
-    private val settings: AndroidSettingsStore?) : StateStore by files {
-    constructor(root: File, publication: AtomicPublication = AtomicPublication(), settings: AndroidSettingsStore? = null) :
-        this(RootedFileStore(root, RootedFileStore.Scan.STATE, publication), settings)
+    private val settings: AndroidSettingsStore?, private val isMainThread: () -> Boolean) : StateStore by files {
+    constructor(root: File, publication: AtomicPublication = AtomicPublication(), settings: AndroidSettingsStore? = null,
+        isMainThread: () -> Boolean = { Looper.myLooper() == Looper.getMainLooper() }) :
+        this(RootedFileStore(root, RootedFileStore.Scan.STATE, publication), settings, isMainThread)
 
     override fun read(path: String): ByteArray {
         val name = providerRecordPaths[path] ?: return files.read(path)
@@ -71,10 +75,19 @@ internal class AndroidStateStore private constructor(private val files: StateSto
         }
     }
 
-    private fun records(): Map<String, SettingsRecord> = runBlocking { requireSettings().read().records }
+    private fun records(): Map<String, SettingsRecord> {
+        assertBackgroundThread()
+        return runBlocking { requireSettings().read().records }
+    }
 
-    private fun update(change: (Map<String, SettingsRecord>) -> Map<String, SettingsRecord>) = runBlocking {
-        requireSettings().updateRecords(change)
+    private fun update(change: (Map<String, SettingsRecord>) -> Map<String, SettingsRecord>) {
+        assertBackgroundThread()
+        runBlocking { requireSettings().updateRecords(change) }
+    }
+
+    private fun assertBackgroundThread() {
+        // Programmer misuse must escape Core's recoverable storage-error handling.
+        if (isMainThread()) throw AssertionError("Provider state IO must run off the main thread.")
     }
 
     private fun requireSettings() = settings ?: throw StoreError.IOFailure

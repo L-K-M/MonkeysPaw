@@ -399,7 +399,7 @@ class ProviderKeyRulesTest {
             val error = assertFailsWith<ProviderSettingsError.Secret> { h.service.save(edit.copy(key = ProviderKeyEdit.typed(sentinel))) }
             h.secrets.writeError = null
             h.secrets.readError = IllegalStateException(sentinel)
-            assertFailsWith<ProviderSettingsError.Secret> { h.service.connection(draft.id) }
+            val connectionError = assertFailsWith<ProviderSettingsError.Secret> { h.service.connection(draft.id) }
             h.secrets.readError = null
             h.service.save(edit.copy(key = ProviderKeyEdit.Clear))
             val variants = listOf(sentinel, java.util.Base64.getEncoder().encodeToString(sentinel.encodeToByteArray()),
@@ -408,10 +408,12 @@ class ProviderKeyRulesTest {
                 assertTrue(variants.none { bytes.decodeToString().contains(it) }, "Secret reached metadata")
             }
             assertTrue(variants.none { output.toString(Charsets.UTF_8).contains(it) }, "Secret reached diagnostics")
-            for (value in listOf(draft, connection, connection.key, h.service.snapshot, h.store, h.service, error)) {
+            for (value in listOf(draft, connection, connection.key, h.service.snapshot, h.store, h.service, error,
+                error.message, connectionError, connectionError.message)) {
                 assertFalse(value.toString().contains(sentinel), "Secret reached a description")
             }
             assertNull(error.cause)
+            assertNull(connectionError.cause)
             assertTrue(output.size() > 0)
         } finally { System.setErr(originalErr) }
     }
