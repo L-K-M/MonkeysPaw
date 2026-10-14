@@ -90,4 +90,10 @@ public protocol SyncFileOperations {
     /// Direct child directories only, relative to this root; include empty/hidden
     /// directories for ownership/preflight checks, and never follow symlinks.
     func directories(at path: RelativePath?) throws -> [RelativePath]
+    /// Stable directory incarnation (not mtime): child edits and renames keep
+    /// it, delete/recreate changes it. Nil means absent; refuse links/files.
+    func directoryIdentity(at path: RelativePath) throws -> FileStamp?
+    /// Remove only an empty directory with this incarnation. Never recurse or
+    /// unlink contents. Flush its parent and report uncertain applied effects.
+    func removeEmptyDirectory(at path: RelativePath, expecting: FileStamp) throws
 }

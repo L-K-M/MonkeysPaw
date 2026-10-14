@@ -2,6 +2,77 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncLibraryMutationTests: XCTestCase {
+    func testDirectoryApplyWalkRaceReplansAndReplayCommits() throws {
+        for kind in [SyncDirectoryEdit.Kind.rename, .removeEmpty, .reserve] {
+            let rig = try SyncApplyTestRig()
+            try rig.libraryOperations.createDirectory(at: "Groups/source")
+            let edit = try directoryEdit(kind, rig: rig)
+            try vanishDuringDirectoryWalk(rig)
+            let baseline = try rig.plan([])
+            let plan = SyncApplyPlan(expectedState: baseline.expectedState, nextState: baseline.nextState,
+                edits: [], directories: [edit])
+            XCTAssertEqual(try rig.journal.apply(plan), .replanAsConflict(operationID: edit.id), kind.rawValue)
+            XCTAssertNotNil(rig.journal.pending)
+            XCTAssertNil(rig.states.snapshot.value)
+            XCTAssertEqual(try rig.journal.replay(), .committed, kind.rawValue)
+            XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+        }
+    }
+
+    func testDirectoryVerificationWalkRaceReplans() throws {
+        for kind in [SyncDirectoryEdit.Kind.rename, .removeEmpty, .reserve] {
+            let rig = try SyncApplyTestRig()
+            try rig.libraryOperations.createDirectory(at: "Groups/source")
+            let edit = try directoryEdit(kind, rig: rig)
+            if case .applied = try rig.mutations.apply(edit) {} else { XCTFail("Preparation failed") }
+            try vanishDuringDirectoryWalk(rig)
+            if case .replanAsConflict = try rig.mutations.verify(edit) {} else { XCTFail(kind.rawValue) }
+        }
+    }
+
+    func testDirectoryReplanWalkRaceKeepsRecoveryRequired() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.libraryOperations.createDirectory(at: "Groups/source")
+        let edit = try directoryEdit(.rename, rig: rig)
+        try vanishDuringDirectoryWalk(rig)
+        XCTAssertFalse(try rig.mutations.canReplan(SyncDirectoryStep(edit: edit)))
+    }
+
+    func testVanishedDirectoryListingReplansButInvalidListingsFailClosed() throws {
+        let rig = try SyncApplyTestRig()
+        try rig.libraryOperations.createDirectory(at: "Groups")
+        let edit = try SyncDirectoryEdit(reserving: "Groups/new")
+        rig.libraryOperations.directoryListing = { parent in
+            if parent == nil { return ["Groups"] }
+            throw SyncFileOperationError(.notFound)
+        }
+        if case .replanAsConflict = try rig.mutations.apply(edit) {} else { XCTFail("Missing parent was accepted") }
+        if case .replanAsConflict = try rig.mutations.verify(edit) {} else { XCTFail("Missing parent was accepted") }
+        for invalid: [RelativePath] in [["Groups/child"], ["Groups", "Groups"]] {
+            rig.libraryOperations.directoryListing = { parent in parent == nil ? invalid : [] }
+            XCTAssertThrowsError(try rig.mutations.apply(edit)) { XCTAssertEqual($0 as? SyncError, .invalidState) }
+            XCTAssertThrowsError(try rig.mutations.verify(edit)) { XCTAssertEqual($0 as? SyncError, .invalidState) }
+        }
+    }
+
+    private func directoryEdit(_ kind: SyncDirectoryEdit.Kind, rig: SyncApplyTestRig) throws -> SyncDirectoryEdit {
+        if kind == .reserve { return try SyncDirectoryEdit(reserving: "Groups/new") }
+        let identity = try XCTUnwrap(rig.libraryOperations.directoryIdentity(at: "Groups/source"))
+        if kind == .removeEmpty { return try SyncDirectoryEdit(removing: "Groups/source", identity: identity) }
+        return try SyncDirectoryEdit(renaming: "Groups/source", identity: identity, to: "Groups/new")
+    }
+
+    private func vanishDuringDirectoryWalk(_ rig: SyncApplyTestRig) throws {
+        try rig.libraryOperations.createDirectory(at: "Groups/race")
+        let identity = try XCTUnwrap(rig.libraryOperations.directoryIdentity(at: "Groups/race"))
+        rig.libraryOperations.onOperation = { operation in
+            guard operation == "directory-identity:Groups/race" else { return }
+            rig.libraryOperations.onOperation = nil
+            do { try rig.libraryOperations.removeEmptyDirectory(at: "Groups/race", expecting: identity) }
+            catch { XCTFail("Race injection failed: \(error)") }
+        }
+    }
+
     func testCapabilityDetectsAnIncarnationChangeDuringExpectationRead() throws {
         let files = MemoryFileStore()
         let operations = MemorySyncFileOperations(files: files)
