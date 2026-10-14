@@ -54,6 +54,16 @@ paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 These are reported counts, not fixed enumeration limits. LLM and sync-engine
 scenarios arrive with their implementations under the move-together rule.
 
+The delegated sync corpus has 71 executable variants in 19 JSON files: Y12's
+26 variants in seven files and Y13's 45 variants in twelve additional files.
+Together with the nine content categories, that is 1,103 cases and 2,187
+visible files, with separate semantic owners.
+Ledger variant counts are 01:1, 02:6, 03:6, 04:9, 05:7, 06:1, 07:2, 09:2,
+10:3, 11:5, 12:10, 13:4, 14:3, 15:1, 16:2, 18:2, 19:2, 20:3 and 21:2.
+The root content gate reports delegated file accounting separately; the server
+owner requires each acceptance file and compares all decoded and executed IDs.
+Y14 adds the post-retention removal, restore and crash variants.
+
 `fixtures/` contains nine content categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical` and `dto`, plus
 the delegated `sync` category. Each owning
@@ -763,7 +773,8 @@ Names use lowercase ASCII letters, digits and underscores. Exact UTF-8
 source strings live in action/checkpoint `content` fields; fixtures never
 contain passwords, issued tokens or actual host paths. `${user.main.alice}`,
 `${prompt.example}` and names created by `bind` expand in strings at execution.
-Bindings cannot change value. User IDs, group IDs and other scalar response
+Bindings cannot change value. References also expand in object keys and JSON
+pointer keys; colliding expanded object keys fail. User IDs, group IDs and other scalar response
 values can be bound symbolically; cursors and database UUIDs remain opaque.
 Checkpoint bytes and hashes are specification expectations, not recordings of
 implementation output. When using symbolic IDs, fixed hashes must account for
@@ -783,14 +794,22 @@ Every action requires `action` and `device`. The additional members are:
 | `restart` | No additional members; stop/drain, replace the device graph, reopen the same disk and secret roots, then run account startup. This is a graceful graph restart, not process-death proof. |
 | `sign_out` | No additional members; require complete cleanup and confirmed real remote revocation. |
 | `reset_metrics` | No additional members; reset that device's file-write/trash and HTTP trace counters. It does not erase files, history or state. |
+| `network` | `mode: online\|offline`; gate the device transport. Offline attempts fail before router dispatch; explicit sync after reconnection overrides transient backoff. |
 | `watch` | `path`; submit a real stamp/raw-hash change through `SyncService.filesChanged`. |
 | `fire_timers` | `delay_seconds`; fire captured callbacks having exactly this requested delay, once, then drain. This tests callback/receipt policy without advancing wall or monotonic time, and does not prove native timer timing. |
 | `bind_prompt` | `path`, `name`; bind an assigned local identity as `${prompt.<name>}`. |
+| `bind_cursor` | `scope`, `name`; bind the current persisted opaque cursor as `${cursor.<name>}` for exact request checks. |
+| `bind_text` | `name`, `unit`, `count`; bind `${text.<name>}` to exactly `count` repetitions of a nonempty UTF-8 unit, capped at 256 KiB. This spells byte-boundary inputs without large duplicated fixture strings. |
 | `seed_keyed` | `path`; store one history revision, one usage event at `now`, and `{"field":"remembered locally"}` through the real keyed stores, for migration proof. |
 | `favorite` | `id`, `value` (boolean); apply Core's group-favourite state intent without changing a viewer's file. Native UI/access intents belong to Y16. |
 | `http` | `method`, `path`, `status`; optional `body`, `expected`, `bind`. Send through the device's authenticated transport into the real router. `expected` maps JSON pointers to exact values; `bind` maps symbolic names to pointers returning strings. Every supplied assertion/binding is consumed. |
 | `rewrite_next_request` / `rewrite_next_response` | `method`, `path`, nonempty `patch` map of JSON pointers to replacement values. One matching real request/response is altered; response patches require an actual 200. They never fabricate successful server mutations. |
-| `before_next_request` | `method`, `path`, `then` (a complete `http` action). Execute the peer request through the real router before sending the matched request, to establish a deterministic race. |
+| `before_next_request` | `method`, `path`, `then` (a complete `http`, `write` or `expect` action); optional nonnegative `skip` defaults to zero. Skip that many matching requests, then run the action before dispatch. A peer HTTP action establishes a deterministic race; a checkpoint before page two proves no partial application. |
+| `after_next_response` | `method`, `path`, `then` (`http`, `write` or `expect`); run after a real 200 and before returning its bytes, including before acknowledgement loss. |
+| `drop_next_response` | `method`, `path`; require a real router 200, record it, then throw network failure before the client receives the acknowledgement. |
+| `fail_next_request` | `method`, `path`; fail one matching request before dispatch. The trace's status is zero, so it cannot count as a server rejection or committed write. |
+| `http_series` | All `http` fields plus `ids`, one to 200 distinct canonical ULIDs. Bindings are forbidden. Substitute `${item.id}` and zero-based `${item.index}` in path, body and expectations; send/check every request individually through the router. |
+| `race_http` | `writers`: exactly two objects containing `device`, `method`, `path`, `body`. The action's device must be one writer. Concurrent PUTs target one ID with equal CAS baselines. Require exactly one 200 and one 409 conflict, whose head matches the successful content/path/scope/rev. Bind `${race.winner}`, `${race.loser}`, `${race.content}` and `${race.losing_content}`; device references may use these symbols. |
 | `expect` | Nonempty `expected` object with the checkpoint members below. |
 
 Methods are `GET`, `POST`, `PUT`, `DELETE` or `PATCH`. HTTP paths are rooted
@@ -806,6 +825,21 @@ Device checkpoints support:
 - `file_count`, `prompt_count`, `cursor_count`, `held_count`, `history_count`,
   `writes` and `trash_count`: exact nonnegative counts. History counts concern
   persisted history files; writes concern library publications only.
+- `unique_ids`: boolean comparing all live file IDs for uniqueness.
+  `state_absent`: IDs that must have no prompt record.
+  `protected_ids`: IDs whose source retirement must always have another live
+  file carrying the same ID already published. This checks the retirement
+  instant, as well as final uniqueness and exact destination bytes. Managed
+  relocation uses checked publication then test trash for the old source;
+  `trash_count` still reports that source retirement.
+- `group_count`: exact count; `groups`: nonempty objects requiring `id`,
+  `name`, `folder`, `role`, checked against persisted mappings.
+- `pages`: nonempty ordered list corresponding exactly to all real successful
+  pull traces since reset. Require `item_count` across scopes and `has_more`
+  (any scope continues); optionally check `min_bytes`/`max_bytes` of actual
+  serialized responses, exact `removed`, `scopes` objects (`key`, `mode`),
+  `contains` events (`id`, `scope`, `kind`), and `absent_ids` for visibility.
+  Traces precede rewrites and never print content or credentials.
 - `status`: Core sync status; `blocking_issue`: a fixed issue or `none`;
   `account_user`: a symbolic user ID or `none`.
 - `state`: objects requiring `id`, `scope`, `path`, `rev`; optional `hash`,
@@ -817,10 +851,12 @@ Device checkpoints support:
   (a byte-exact file path present before router dispatch). Method/path `*`
   match all. Authentication headers and login bodies never enter traces.
 
-The seven initial files own ledger rows 01 and 11–16. Later slices extend
+The nineteen files own ledger rows 01–07, 09–16 and 18–21. Later slices extend
 this version-1 action/checkpoint vocabulary and add their files without changing
 existing semantics or bypassing the full-corpus executor. Y13 adds conflicts,
-permissions, transfers and group lifecycle; Y14 adds real retention/restore and
+permissions, transfers and group lifecycle, including in-flight role downgrades
+that receive real 403s. Known viewer access blocks unauthorized pushes before
+dispatch; direct HTTP actions separately verify router denial. Y14 adds real retention/restore and
 killed-worker proof. Platform store modes, native system trash and hardware
 behavior stay with their native suites. Adding protocol/format behavior still
 requires the Swift/Kotlin/fixture move-together rule; this test-only language is

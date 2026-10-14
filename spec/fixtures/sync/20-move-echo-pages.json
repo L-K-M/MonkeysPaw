@@ -1,0 +1,1036 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "20-own-move-echo",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "file_count": 1,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "writes": 0,
+            "trash_count": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ],
+            "pages": [
+              {
+                "item_count": 2,
+                "has_more": false,
+                "contains": [
+                  {
+                    "scope": "user:${user.main.alice}",
+                    "kind": "move_out",
+                    "id": "${prompt.p}"
+                  },
+                  {
+                    "scope": "group:${group.team}",
+                    "kind": "upsert",
+                    "id": "${prompt.p}"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md"
+            ],
+            "file_count": 1,
+            "prompt_count": 1,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "trash_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "20-split-items-boundary",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sentinel.md",
+            "content": "---\nid: ${prompt.q}\ntitle: Sentinel\n---\nSentinel.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Sample.md"
+        },
+        {
+          "action": "http_series",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${item.id}",
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Source/${item.index}.md",
+            "content": "---\nid: ${item.id}\ntitle: Item\n---\nSmall.\n"
+          },
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          },
+          "ids": [
+            "000000000000000000000000Z8",
+            "000000000000000000000000Z9",
+            "000000000000000000000000ZA",
+            "000000000000000000000000ZB",
+            "000000000000000000000000ZC",
+            "000000000000000000000000ZD",
+            "000000000000000000000000ZE",
+            "000000000000000000000000ZF",
+            "000000000000000000000000ZG",
+            "000000000000000000000000ZH",
+            "000000000000000000000000ZJ",
+            "000000000000000000000000ZK",
+            "000000000000000000000000ZM",
+            "000000000000000000000000ZN",
+            "000000000000000000000000ZP",
+            "000000000000000000000000ZQ",
+            "000000000000000000000000ZR",
+            "000000000000000000000000ZS",
+            "000000000000000000000000ZT",
+            "000000000000000000000000ZV",
+            "000000000000000000000000ZW",
+            "000000000000000000000000ZX",
+            "000000000000000000000000ZY",
+            "000000000000000000000000ZZ",
+            "00000000000000000000000100",
+            "00000000000000000000000101",
+            "00000000000000000000000102",
+            "00000000000000000000000103",
+            "00000000000000000000000104",
+            "00000000000000000000000105",
+            "00000000000000000000000106",
+            "00000000000000000000000107",
+            "00000000000000000000000108",
+            "00000000000000000000000109",
+            "0000000000000000000000010A",
+            "0000000000000000000000010B",
+            "0000000000000000000000010C",
+            "0000000000000000000000010D",
+            "0000000000000000000000010E",
+            "0000000000000000000000010F",
+            "0000000000000000000000010G",
+            "0000000000000000000000010H",
+            "0000000000000000000000010J",
+            "0000000000000000000000010K",
+            "0000000000000000000000010M",
+            "0000000000000000000000010N",
+            "0000000000000000000000010P",
+            "0000000000000000000000010Q",
+            "0000000000000000000000010R",
+            "0000000000000000000000010S",
+            "0000000000000000000000010T",
+            "0000000000000000000000010V",
+            "0000000000000000000000010W",
+            "0000000000000000000000010X",
+            "0000000000000000000000010Y",
+            "0000000000000000000000010Z",
+            "00000000000000000000000110",
+            "00000000000000000000000111",
+            "00000000000000000000000112",
+            "00000000000000000000000113",
+            "00000000000000000000000114",
+            "00000000000000000000000115",
+            "00000000000000000000000116",
+            "00000000000000000000000117",
+            "00000000000000000000000118",
+            "00000000000000000000000119",
+            "0000000000000000000000011A",
+            "0000000000000000000000011B",
+            "0000000000000000000000011C",
+            "0000000000000000000000011D",
+            "0000000000000000000000011E",
+            "0000000000000000000000011F",
+            "0000000000000000000000011G",
+            "0000000000000000000000011H",
+            "0000000000000000000000011J",
+            "0000000000000000000000011K",
+            "0000000000000000000000011M",
+            "0000000000000000000000011N",
+            "0000000000000000000000011P",
+            "0000000000000000000000011Q",
+            "0000000000000000000000011R",
+            "0000000000000000000000011S",
+            "0000000000000000000000011T",
+            "0000000000000000000000011V",
+            "0000000000000000000000011W",
+            "0000000000000000000000011X",
+            "0000000000000000000000011Y",
+            "0000000000000000000000011Z",
+            "00000000000000000000000120",
+            "00000000000000000000000121",
+            "00000000000000000000000122",
+            "00000000000000000000000123",
+            "00000000000000000000000124",
+            "00000000000000000000000125",
+            "00000000000000000000000126",
+            "00000000000000000000000127",
+            "00000000000000000000000128",
+            "00000000000000000000000129",
+            "0000000000000000000000012A"
+          ]
+        },
+        {
+          "action": "http_series",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${item.id}",
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Destination/${item.index}.md",
+            "content": "---\nid: ${item.id}\ntitle: Item\n---\nSmall.\n",
+            "group_id": "${group.team}"
+          },
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          },
+          "ids": [
+            "000000000000000000000001YG",
+            "000000000000000000000001YH",
+            "000000000000000000000001YJ",
+            "000000000000000000000001YK",
+            "000000000000000000000001YM",
+            "000000000000000000000001YN",
+            "000000000000000000000001YP",
+            "000000000000000000000001YQ",
+            "000000000000000000000001YR",
+            "000000000000000000000001YS",
+            "000000000000000000000001YT",
+            "000000000000000000000001YV",
+            "000000000000000000000001YW",
+            "000000000000000000000001YX",
+            "000000000000000000000001YY",
+            "000000000000000000000001YZ",
+            "000000000000000000000001Z0",
+            "000000000000000000000001Z1",
+            "000000000000000000000001Z2",
+            "000000000000000000000001Z3",
+            "000000000000000000000001Z4",
+            "000000000000000000000001Z5",
+            "000000000000000000000001Z6",
+            "000000000000000000000001Z7",
+            "000000000000000000000001Z8",
+            "000000000000000000000001Z9",
+            "000000000000000000000001ZA",
+            "000000000000000000000001ZB",
+            "000000000000000000000001ZC",
+            "000000000000000000000001ZD",
+            "000000000000000000000001ZE",
+            "000000000000000000000001ZF",
+            "000000000000000000000001ZG",
+            "000000000000000000000001ZH",
+            "000000000000000000000001ZJ",
+            "000000000000000000000001ZK",
+            "000000000000000000000001ZM",
+            "000000000000000000000001ZN",
+            "000000000000000000000001ZP",
+            "000000000000000000000001ZQ",
+            "000000000000000000000001ZR",
+            "000000000000000000000001ZS",
+            "000000000000000000000001ZT",
+            "000000000000000000000001ZV",
+            "000000000000000000000001ZW",
+            "000000000000000000000001ZX",
+            "000000000000000000000001ZY",
+            "000000000000000000000001ZZ",
+            "00000000000000000000000200",
+            "00000000000000000000000201",
+            "00000000000000000000000202",
+            "00000000000000000000000203",
+            "00000000000000000000000204",
+            "00000000000000000000000205",
+            "00000000000000000000000206",
+            "00000000000000000000000207",
+            "00000000000000000000000208",
+            "00000000000000000000000209",
+            "0000000000000000000000020A",
+            "0000000000000000000000020B",
+            "0000000000000000000000020C",
+            "0000000000000000000000020D",
+            "0000000000000000000000020E",
+            "0000000000000000000000020F",
+            "0000000000000000000000020G",
+            "0000000000000000000000020H",
+            "0000000000000000000000020J",
+            "0000000000000000000000020K",
+            "0000000000000000000000020M",
+            "0000000000000000000000020N",
+            "0000000000000000000000020P",
+            "0000000000000000000000020Q",
+            "0000000000000000000000020R",
+            "0000000000000000000000020S",
+            "0000000000000000000000020T",
+            "0000000000000000000000020V",
+            "0000000000000000000000020W",
+            "0000000000000000000000020X",
+            "0000000000000000000000020Y",
+            "0000000000000000000000020Z",
+            "00000000000000000000000210",
+            "00000000000000000000000211",
+            "00000000000000000000000212",
+            "00000000000000000000000213",
+            "00000000000000000000000214",
+            "00000000000000000000000215",
+            "00000000000000000000000216",
+            "00000000000000000000000217",
+            "00000000000000000000000218",
+            "00000000000000000000000219",
+            "0000000000000000000000021A",
+            "0000000000000000000000021B",
+            "0000000000000000000000021C",
+            "0000000000000000000000021D",
+            "0000000000000000000000021E",
+            "0000000000000000000000021F",
+            "0000000000000000000000021G",
+            "0000000000000000000000021H",
+            "0000000000000000000000021J",
+            "0000000000000000000000021K"
+          ]
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/prompts/${prompt.p}/move",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Sample.md",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "before_next_request",
+          "device": "b",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "then": {
+            "action": "expect",
+            "device": "b",
+            "expected": {
+              "files": [
+                {
+                  "path": "Sample.md",
+                  "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+                }
+              ],
+              "absent": [
+                "Groups/Team/Sample.md"
+              ],
+              "file_count": 2,
+              "prompt_count": 2,
+              "writes": 0,
+              "trash_count": 0,
+              "state": [
+                {
+                  "id": "${prompt.p}",
+                  "scope": "user:${user.main.alice}",
+                  "path": "Sample.md",
+                  "rev": 1,
+                  "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+                }
+              ],
+              "pages": [
+                {
+                  "item_count": 200,
+                  "has_more": true,
+                  "contains": [
+                    {
+                      "scope": "user:${user.main.alice}",
+                      "kind": "move_out",
+                      "id": "${prompt.p}"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "skip": 1
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md"
+            ],
+            "file_count": 201,
+            "prompt_count": 201,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "trash_count": 1,
+            "history_count": 1,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 2,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                },
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "count": 2
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              },
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "pages": [
+              {
+                "item_count": 200,
+                "has_more": true,
+                "contains": [
+                  {
+                    "scope": "user:${user.main.alice}",
+                    "kind": "move_out",
+                    "id": "${prompt.p}"
+                  }
+                ]
+              },
+              {
+                "item_count": 1,
+                "has_more": false,
+                "contains": [
+                  {
+                    "scope": "group:${group.team}",
+                    "kind": "upsert",
+                    "id": "${prompt.p}"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "trash_count": 0,
+            "history_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "file_count": 201
+          }
+        }
+      ]
+    },
+    {
+      "id": "20-split-bytes-boundary",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "bind_text",
+          "device": "a",
+          "name": "moved",
+          "unit": "\u0002",
+          "count": 130000
+        },
+        {
+          "action": "bind_text",
+          "device": "a",
+          "name": "fill",
+          "unit": "\u0001",
+          "count": 222000
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\n${text.moved}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sentinel.md",
+            "content": "---\nid: ${prompt.q}\ntitle: Sentinel\n---\nSentinel.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Sample.md"
+        },
+        {
+          "action": "http_series",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${item.id}",
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Source/${item.index}.md",
+            "content": "---\nid: ${item.id}\ntitle: Item\n---\n${text.fill}"
+          },
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          },
+          "ids": [
+            "000000000000000000000000Z8",
+            "000000000000000000000000Z9",
+            "000000000000000000000000ZA"
+          ]
+        },
+        {
+          "action": "http_series",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${item.id}",
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Destination/${item.index}.md",
+            "content": "---\nid: ${item.id}\ntitle: Item\n---\n${text.fill}",
+            "group_id": "${group.team}"
+          },
+          "status": 200,
+          "expected": {
+            "/rev": 1
+          },
+          "ids": [
+            "000000000000000000000001YG",
+            "000000000000000000000001YH",
+            "000000000000000000000001YJ"
+          ]
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/prompts/${prompt.p}/move",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Sample.md",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "before_next_request",
+          "device": "b",
+          "method": "POST",
+          "path": "/api/v1/sync/pull",
+          "then": {
+            "action": "expect",
+            "device": "b",
+            "expected": {
+              "files": [
+                {
+                  "path": "Sample.md",
+                  "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\n${text.moved}"
+                }
+              ],
+              "absent": [
+                "Groups/Team/Sample.md"
+              ],
+              "file_count": 2,
+              "prompt_count": 2,
+              "writes": 0,
+              "trash_count": 0,
+              "state": [
+                {
+                  "id": "${prompt.p}",
+                  "scope": "user:${user.main.alice}",
+                  "path": "Sample.md",
+                  "rev": 1
+                }
+              ],
+              "pages": [
+                {
+                  "item_count": 7,
+                  "has_more": true,
+                  "contains": [
+                    {
+                      "scope": "user:${user.main.alice}",
+                      "kind": "move_out",
+                      "id": "${prompt.p}"
+                    }
+                  ],
+                  "min_bytes": 7900000,
+                  "max_bytes": 8388608
+                }
+              ]
+            }
+          },
+          "skip": 1
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\n${text.moved}"
+              }
+            ],
+            "absent": [
+              "Sample.md"
+            ],
+            "file_count": 8,
+            "prompt_count": 8,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "trash_count": 1,
+            "history_count": 1,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 2,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                }
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "count": 2
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              },
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "pages": [
+              {
+                "item_count": 7,
+                "has_more": true,
+                "contains": [
+                  {
+                    "scope": "user:${user.main.alice}",
+                    "kind": "move_out",
+                    "id": "${prompt.p}"
+                  }
+                ],
+                "min_bytes": 7900000,
+                "max_bytes": 8388608
+              },
+              {
+                "item_count": 1,
+                "has_more": false,
+                "contains": [
+                  {
+                    "scope": "group:${group.team}",
+                    "kind": "upsert",
+                    "id": "${prompt.p}"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "trash_count": 0,
+            "history_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "file_count": 8
+          }
+        }
+      ]
+    }
+  ]
+}

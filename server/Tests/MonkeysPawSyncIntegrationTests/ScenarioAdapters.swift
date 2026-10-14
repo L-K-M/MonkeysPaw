@@ -14,6 +14,7 @@ final class ScenarioDisk: FileStore, SyncFileOperations {
     private let lock = NSRecursiveLock()
     private(set) var writes = 0
     private(set) var trashCount = 0
+    private(set) var unprotectedTrashIDs = Set<String>()
 
     init(root: URL, trash: URL) throws {
         self.root = root
@@ -22,7 +23,7 @@ final class ScenarioDisk: FileStore, SyncFileOperations {
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
     }
 
-    func resetMetrics() { locked { writes = 0; trashCount = 0 } }
+    func resetMetrics() { locked { writes = 0; trashCount = 0; unprotectedTrashIDs.removeAll() } }
 
     func listFiles() throws -> [StoredFile] {
         try locked {
@@ -48,8 +49,18 @@ final class ScenarioDisk: FileStore, SyncFileOperations {
             let url = try checked(path)
             guard let attributes = try attributes(url) else { return nil }
             guard attributes[.type] as? FileAttributeType == .typeRegular else { throw FileStoreError.notRegularFile }
-            let bytes = try Data(contentsOf: url)
-            return FileStamp("\(attributes[.systemFileNumber]!)" + SHA256.hexDigest(bytes))
+            // Atomic publication changes the inode; size/mtime also observe
+            // external edits. Core checks exact bytes/hashes separately.
+            #if os(Linux)
+            var info = Glibc.stat()
+            guard Glibc.lstat(url.path, &info) == 0 else { throw FileStoreError.ioFailure }
+            let times = "\(info.st_mtim.tv_sec):\(info.st_mtim.tv_nsec):\(info.st_ctim.tv_sec):\(info.st_ctim.tv_nsec)"
+            #else
+            var info = Darwin.stat()
+            guard Darwin.lstat(url.path, &info) == 0 else { throw FileStoreError.ioFailure }
+            let times = "\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)"
+            #endif
+            return FileStamp("\(info.st_dev):\(info.st_ino):\(info.st_size):" + times)
         }
     }
 
@@ -142,6 +153,14 @@ final class ScenarioDisk: FileStore, SyncFileOperations {
     func trash(at path: RelativePath, expecting: SyncFileExpectation) throws {
         try locked {
             guard try check(path, expecting) != nil else { throw SyncFileOperationError(.notFound) }
+            let document = PromptCodec.parseFile(try read(at: path.string), filename: LibraryPath.filename(path.string))
+            if let id = document.frontMatter.id {
+                let protected = try listFiles().contains { file in
+                    guard !file.relativePath.utf8.elementsEqual(path.string.utf8) else { return false }
+                    return PromptCodec.parseFile(try read(at: file.relativePath), filename: LibraryPath.filename(file.relativePath)).frontMatter.id == id
+                }
+                if !protected { unprotectedTrashIDs.insert(id.rawValue) }
+            }
             try FileManager.default.moveItem(at: checked(path.string), to: trashRoot.appendingPathComponent(UUID().uuidString))
             trashCount += 1
             try flushAncestors(of: path)

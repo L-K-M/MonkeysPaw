@@ -1,0 +1,1534 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "05-creator-editor-all-directions",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Other"
+          },
+          "bind": {
+            "group.other": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "editor"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.other}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "editor"
+          }
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\nfavorite: true\nprivate: true\n---\nBase.\n"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 2,
+                "favorite": true,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              }
+            ],
+            "file_count": 1,
+            "unique_ids": true,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Groups/Team/Sample.md",
+          "destination": "Groups/Other/Sample.md"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Other/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.other}",
+                "path": "Sample.md",
+                "rev": 3,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              }
+            ],
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              }
+            ],
+            "unique_ids": true
+          }
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Groups/Other/Sample.md",
+          "destination": "Private.md"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Private.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.bob}",
+                "path": "Private.md",
+                "rev": 4,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              }
+            ],
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              }
+            ],
+            "unique_ids": true
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/scope": "user",
+            "/path": "Private.md",
+            "/rev": 4,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "05-noncreator-editor",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "editor"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Other"
+          },
+          "bind": {
+            "group.other": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.other}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "editor"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Groups/Team/Sample.md",
+          "destination": "Groups/Other/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Other/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/Team/Sample (conflict b 2026-10-14 0000).md",
+          "name": "copy"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Conflicts/Team/Sample (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Groups/Other/Sample.md"
+            ],
+            "file_count": 2,
+            "unique_ids": true,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              },
+              {
+                "id": "${prompt.copy}",
+                "scope": "user:${user.main.bob}",
+                "path": "Conflicts/Team/Sample (conflict b 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 403
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/scope": "group",
+            "/group_id": "${group.team}",
+            "/rev": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "05-noncreator-owner",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "owner"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Other"
+          },
+          "bind": {
+            "group.other": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.other}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "owner"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Groups/Team/Sample.md",
+          "destination": "Groups/Other/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Other/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Other/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Groups/Team/Sample.md"
+            ],
+            "file_count": 1,
+            "unique_ids": true,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.other}",
+                "path": "Sample.md",
+                "rev": 3,
+                "hash": "58be3c1b9886c89f0d192bfe8cb0b06333ff350992ff3464033b555a82111426"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 1,
+                "status": 200,
+                "body": {
+                  "/base_rev": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/group_id": "${group.other}",
+            "/rev": 3,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+          }
+        }
+      ]
+    },
+    {
+      "id": "05-move-edit-ordinary",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md"
+            ],
+            "file_count": 1,
+            "prompt_count": 1,
+            "unique_ids": true,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 3,
+                "hash": "58be3c1b9886c89f0d192bfe8cb0b06333ff350992ff3464033b555a82111426"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 1,
+                "status": 200,
+                "body": {
+                  "/base_rev": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 1,
+            "unique_ids": true
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 3,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "05-move-edit-failed-put",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "fail_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "offline",
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/scope": "group",
+            "/group_id": "${group.team}",
+            "/path": "Sample.md",
+            "/rev": 2,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          }
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md"
+            ],
+            "file_count": 1,
+            "prompt_count": 1,
+            "unique_ids": true,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 3,
+                "hash": "58be3c1b9886c89f0d192bfe8cb0b06333ff350992ff3464033b555a82111426"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 1,
+                "status": 200,
+                "body": {
+                  "/base_rev": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 1,
+            "unique_ids": true
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 3,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "05-move-edit-lost-move-ack",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "drop_next_response",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/prompts/${prompt.p}/move"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "status": "offline",
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/scope": "group",
+            "/group_id": "${group.team}",
+            "/path": "Sample.md",
+            "/rev": 2,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          }
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md"
+            ],
+            "file_count": 1,
+            "prompt_count": 1,
+            "unique_ids": true,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 3,
+                "hash": "58be3c1b9886c89f0d192bfe8cb0b06333ff350992ff3464033b555a82111426"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 1,
+                "status": 200,
+                "body": {
+                  "/base_rev": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 1,
+            "unique_ids": true
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 3,
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "file_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "05-transfer-path-taken",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/prompts/${prompt.p}/move",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "status": 200,
+            "body": {
+              "base_rev": 0,
+              "scope": "group",
+              "path": "Sample.md",
+              "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOccupant.\n",
+              "group_id": "${group.team}"
+            },
+            "expected": {
+              "/rev": 1
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOccupant.\n"
+              }
+            ],
+            "file_count": 2,
+            "unique_ids": true,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample (2).md",
+                "rev": 2,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 409
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200,
+                "body": {
+                  "/path": "Sample (2).md"
+                },
+                "local_exists": "Groups/Team/Sample (2).md"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "Sample (2).md",
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOccupant.\n",
+            "/rev": 1
+          }
+        }
+      ]
+    }
+  ]
+}
