@@ -270,7 +270,9 @@ class LibraryService(
         checkWritePermit(permit)
         PromptCodec.write(document)
         val id = ULID.generate(clock.now(), entropy.bytes(Limits.ulidEntropyBytes))
+        val identity = PromptIdentity.Assigned(id)
         if (id == source.document.frontMatter.id || id == document.frontMatter.id ||
+            identity in accessSnapshot.prompts || identity in accessSnapshot.unavailableIDs ||
             entries().any { it.document.frontMatter.id == id }) throw LibraryError.IdentityMismatch
         val filename = LibraryPath.filename(destination)
         val copy = PromptMutations.replacingIdentity(id, document, filename)

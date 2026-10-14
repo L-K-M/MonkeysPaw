@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.core.services
 
+import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.canonical.CanonicalForm
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.sync.*
@@ -454,6 +455,18 @@ class GroupAccessServiceTest {
         h.local.clock.date = h.local.clock.date.plusSeconds(1)
         assertEquals(EditResult.DestinationOccupied, h.local.editing.createPrivateCopy(draft, entry, copied.relativePath))
         assertEquals(copied.stamp, h.library.load(copied.relativePath).stamp)
+    }
+
+    @Test fun privateCopyCannotReuseAKnownIdentityWhoseFileIsCurrentlyMissing() {
+        val h = AccessHarness(Role.VIEWER)
+        val id = ULID.generate(h.local.clock.date, h.local.entropy.value)
+        h.states.update(h.binding) { it.copy(prompts = it.prompts +
+            (PromptIdentity.Assigned(id) to SyncPromptState(v.userScope, "Missing.md", 1, v.hash))) }
+        val before = h.local.prompts.bytesSnapshot()
+        assertFailsWith<LibraryError.IdentityMismatch> {
+            h.library.createPrivateCopy(h.local.draft("Draft"), h.entry(), "Copy.md")
+        }
+        assertEquals(before, h.local.prompts.bytesSnapshot())
     }
 
     @Test fun staleFavoriteAndFailedStatePublicationPreserveSourceAndOverlay() {
