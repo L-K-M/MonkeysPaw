@@ -15,6 +15,7 @@ class MonkeysPawApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The repository recovers local journals before this read. Authentication is an explicit entry intent.
         scope.launch { library.refresh() }
     }
 }

@@ -1,0 +1,391 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
+package ch.lkmc.monkeyspaw.data
+
+import ch.lkmc.monkeyspaw.core.domain.ULID
+import ch.lkmc.monkeyspaw.core.domain.llm.*
+import ch.lkmc.monkeyspaw.core.domain.sync.*
+import ch.lkmc.monkeyspaw.core.ports.*
+import ch.lkmc.monkeyspaw.core.services.*
+import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
+import ch.lkmc.monkeyspaw.core.syncapi.*
+import ch.lkmc.monkeyspaw.di.AppModule
+import androidx.datastore.core.DataStoreFactory
+import dagger.Lazy
+import kotlinx.coroutines.*
+import kotlinx.coroutines.test.*
+import java.nio.file.Files
+import java.time.Instant
+import java.util.concurrent.Executors
+import kotlin.test.*
+
+internal class AndroidSyncRepositoryTest : TemporaryFiles() {
+    private class Secrets : SecretStore {
+        val values = mutableMapOf<SecretAccount, StoredSecret>()
+        var reads = 0
+        override suspend fun read(account: SecretAccount, source: SecretReadSource): StoredSecret? {
+            reads++
+            return values[account]
+        }
+        override suspend fun write(value: SecretValue, account: SecretAccount): SecretTier {
+            values[account] = StoredSecret(value, SecretTier.KEYSTORE)
+            return SecretTier.KEYSTORE
+        }
+        override suspend fun delete(account: SecretAccount) { values.remove(account) }
+    }
+
+    private inner class Rig(val dispatcher: CoroutineDispatcher, val secrets: Secrets = Secrets(),
+                            mono: MonotonicClock = MonotonicClock(System::nanoTime)) {
+        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        val checked = JvmCheckedSyncIO()
+        val prompts = AndroidPromptStore(libraryDir.toFile(), io = checked)
+        val files = AndroidStateStore(stateDir.toFile(), isMainThread = { false }, io = checked)
+        var beforeList: () -> Unit = {}
+        val library = library(files, object : PromptStore by prompts {
+            override fun listFiles(): List<StoredFile> { beforeList(); return prompts.listFiles() }
+        })
+        val startup = AndroidSyncStartup(library, prompts, files, libraryDir.toFile().absolutePath, dispatcher)
+        val repository = LibraryRepository(library, EditingService(library), prompts, dispatcher) { startup.ready() }
+        val settings = AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
+            produceFile = { filesDir.resolve("datastore/settings.json").toFile() }))
+        val requests = mutableListOf<HttpRequest>()
+        var respond: (suspend (HttpRequest) -> HttpResponse?)? = null
+        val remote = linkedMapOf<String, Prompt>()
+        var groupRole: Role? = null
+        var sequence = 1L
+        var secretConstructions = 0
+        var transportConstructions = 0
+        val transport = HttpTransport { request ->
+            requests.add(request)
+            respond?.invoke(request) ?: when {
+                request.url.endsWith("/auth/login") -> HttpResponse(200, body = AuthResponse.codec.encode(AuthResponse("A".repeat(43), user())))
+                request.url.endsWith("/me") -> HttpResponse(200, body = MeResponse.codec.encode(MeResponse(user(), emptyList(),
+                    listOf(Device(deviceID, "Android", timestamp, null, null, true)))))
+                request.url.endsWith("/auth/logout") -> HttpResponse(200, body = EmptyResponse.codec.encode(EmptyResponse))
+                request.url.endsWith("/sync/pull") -> pull()
+                request.method == HttpMethod.PUT -> {
+                    val put = PutPromptRequest.codec.decode(request.body!!)
+                    val id = request.url.substringAfterLast('/')
+                    val rev = (remote[id]?.rev ?: 0) + 1
+                    remote[id] = Prompt(id, rev, put.scope, put.path, put.content)
+                    HttpResponse(200, body = WriteResponse.codec.encode(WriteResponse(rev, ++sequence)))
+                }
+                else -> error("Unexpected test request")
+            }
+        }
+        val sync = AppModule.syncRepository(startup, library, repository, scope, dispatcher,
+            Clock { Instant.parse(timestamp) }, Entropy { ByteArray(it) { index -> index.toByte() } }, mono,
+            Lazy { secretConstructions++; secrets }, Lazy { transportConstructions++; transport }, settings)
+
+        private fun user() = User(userID, "person", null, AccountKind.MEMBER, timestamp, null)
+        private fun pull(): HttpResponse {
+            fun items(scope: PromptScope) = remote.values.filter { it.scope == scope }.sortedBy { it.id }.map { p ->
+                FeedItem.Upsert(sequence, FeedPrompt(p.id, p.rev, p.path, p.content))
+            }
+            val scopes = listOf(SyncScope(ScopeIdentity.User(userID), Mode.SNAPSHOT, sequence, "u-$sequence", false, items(PromptScope.User))) +
+                groupRole?.let { listOf(SyncScope(ScopeIdentity.Group(groupID, "Team", it), Mode.SNAPSHOT,
+                    sequence, "g-$sequence", false, items(PromptScope.Group(groupID)))) }.orEmpty()
+            return HttpResponse(200, body = PullResponse.codec.encode(PullResponse(databaseID, scopes, emptyList())))
+        }
+        suspend fun login() = sync.login("https://example.test/paw", "person", SecretValue("Synthetic-password-123"), "Android")
+        fun remote(path: String = "remote.md", rev: Long = 1, group: Boolean = false) {
+            val content = "---\nid: '$promptID'\ntitle: Remote\n---\nbody".encodeToByteArray()
+            remote[promptID] = Prompt(promptID, rev, if (group) PromptScope.Group(groupID) else PromptScope.User,
+                path, (if (group) ch.lkmc.monkeyspaw.core.domain.canonical.CanonicalForm.group(content, path.substringAfterLast('/')).bytes
+                    else content).decodeToString())
+            sequence = maxOf(sequence, rev)
+        }
+        suspend fun close() { scope.cancel(); scope.coroutineContext[Job]!!.join() }
+    }
+
+    @Test fun `local startup delivery reads and flow observation never construct authenticated dependencies`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            assertNull(r.sync.reports.value)
+            assertNull(r.sync.accounts.value)
+            r.repository.refresh()
+            r.repository.withLibrary { library, _ -> assertTrue(library.entries().isEmpty()) }
+            runCurrent()
+            assertEquals(0, r.secretConstructions)
+            assertEquals(0, r.transportConstructions)
+            assertEquals(0, r.secrets.reads)
+            assertTrue(r.requests.isEmpty())
+        } finally { r.close() }
+    }
+
+    @Test fun `concurrent UI and worker obtain one graph with the local stores and IO providers`() = runBlocking {
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { worker ->
+            val caller = Thread.currentThread()
+            val r = Rig(worker)
+            try {
+                r.beforeList = { assertNotEquals(caller, Thread.currentThread()) }
+                r.respond = { assertNotEquals(caller, Thread.currentThread()); null }
+                val graphs = coroutineScope { (1..12).map { async { r.sync.graph() } }.awaitAll() }
+                graphs.forEach { assertSame(graphs.first(), it) }
+                val graph = graphs.first()
+                assertSame(r.startup.ready(), graph.local)
+                assertSame(graph.local.states, graph.engine.graph.states)
+                assertSame(graph.local.accounts, graph.engine.graph.accounts)
+                assertSame(r.files, graph.engine.graph.files)
+                assertSame(r.files, AppModule.stateStore(r.files))
+                assertSame(r.library, r.repository.withLibrary { library, _ -> library })
+                r.login()
+                assertEquals(1, r.secretConstructions)
+                assertEquals(1, r.transportConstructions)
+                assertEquals(2, r.requests.size)
+            } finally { r.close() }
+        }
+    }
+
+    @Test fun `established missing root is not recreated by reconstructed local launch`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher)
+        r.login()
+        r.close()
+        Files.move(libraryDir, filesDir.resolve("lost-library"))
+        val reopened = Rig(dispatcher)
+        try {
+            assertSame(LibraryError.RecoveryRequired, reopened.repository.refresh().error)
+            assertFalse(Files.exists(libraryDir))
+            assertFalse(reopened.startup.rootAvailable.value)
+            assertEquals(0, reopened.secretConstructions)
+            assertTrue(reopened.requests.isEmpty())
+        } finally { reopened.close() }
+    }
+
+    @Test fun `cold missing-root sign out cleans credentials and reports any blocked journal recovery`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher)
+        r.login()
+        r.close()
+        Files.move(libraryDir, filesDir.resolve("lost-library"))
+        val reopened = Rig(dispatcher, r.secrets)
+        try {
+            val cleanup = reopened.sync.signOut()
+            assertFalse(cleanup.recoveryRequired, "An absent journal requires no library mutation during sign-out")
+            assertTrue(cleanup.isComplete)
+            assertTrue(r.secrets.values.isEmpty())
+            assertNull(reopened.sync.accounts.value!!.account)
+            assertFalse(Files.exists(libraryDir))
+            assertFalse(reopened.requests.any { it.url.endsWith("/sync/pull") || it.method == HttpMethod.PUT })
+        } finally { reopened.close() }
+    }
+
+    @Test fun `signed-out reconstruction resumes locally without secret lookup or HTTP`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher)
+        r.login()
+        r.sync.signOut()
+        r.close()
+        val reopened = Rig(dispatcher)
+        try {
+            assertNull(reopened.repository.refresh().error)
+            assertFalse(reopened.sync.resume().enabled)
+            assertEquals(0, reopened.secrets.reads)
+            assertTrue(reopened.requests.isEmpty())
+        } finally { reopened.close() }
+    }
+
+    @Test fun `selected TLS trust reaches only the bound client and changes rebuild without bypassing 401`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            val server = SyncServerURL("https://example.test/paw")
+            r.sync.selectServer(server)
+            r.sync.setTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER)
+            assertEquals(0, r.secretConstructions)
+            r.login()
+            assertTrue(r.requests.all { (it.urlPolicy as HttpUrlPolicy.Sync).trust == SyncTLSTrust.SYSTEM_AND_USER })
+            r.requests.clear()
+            r.sync.setTlsTrust(server, SyncTLSTrust.SYSTEM)
+            r.sync.reconnect()
+            assertTrue(r.requests.isNotEmpty())
+            assertTrue(r.requests.all { (it.urlPolicy as HttpUrlPolicy.Sync).trust == SyncTLSTrust.SYSTEM })
+            r.requests.clear()
+            r.sync.requireSignIn()
+            r.sync.resume()
+            r.sync.reconnect()
+            r.sync.syncNow()
+            r.sync.runBackground()
+            assertTrue(r.requests.isEmpty())
+            val another = SyncServerURL("https://other.test/paw")
+            assertEquals(SyncTLSTrust.SYSTEM, r.sync.selectServer(another)!!.trust)
+            assertFailsWith<SyncTlsSettingsError.ServerChanged> { r.sync.setTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER) }
+        } finally { r.close() }
+    }
+
+    @Test fun `corrupt metadata or journal blocks the first local read without making a root`() = runTest {
+        for (path in listOf("sync/state.json", "sync/account.json", "sync/binding.json", "sync/apply.json")) {
+            put(stateDir.resolve(path), "{\"version\":999}".encodeToByteArray())
+            val r = Rig(StandardTestDispatcher(testScheduler))
+            try {
+                var read = false
+                r.beforeList = { read = true }
+                assertNotNull(r.repository.refresh().error)
+                assertFalse(read)
+                assertFalse(Files.exists(libraryDir))
+                assertTrue(r.requests.isEmpty())
+            } finally { r.close(); Files.delete(stateDir.resolve(path)) }
+        }
+    }
+
+    @Test fun `local recovery finishes the exact apply before reconstructed startup scans with no auth`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher)
+        r.login()
+        r.remote()
+        r.checked.onFlush = { if (it == libraryDir.resolve("remote.md")) throw java.io.IOException("Synthetic failure") }
+        val failed = r.sync.runBackground()
+        assertNotNull(failed.blockingIssue)
+        assertTrue(Files.exists(stateDir.resolve("sync/apply.json")))
+        val expected = r.remote[promptID]!!.content
+        r.close()
+        val reopened = Rig(dispatcher)
+        try {
+            reopened.beforeList = { assertFalse(Files.exists(stateDir.resolve("sync/apply.json"))) }
+            val ready = reopened.repository.refresh()
+            assertNull(ready.error)
+            assertEquals(expected, ready.snapshot.prompts.single().entry.document.source)
+            assertFalse(Files.exists(stateDir.resolve("sync/apply.json")))
+            assertEquals(0, reopened.secretConstructions)
+            assertEquals(0, reopened.transportConstructions)
+            assertTrue(reopened.requests.isEmpty())
+            assertEquals(ready.snapshot.prompts.map { it.entry.relativePath to it.entry.stamp },
+                reopened.repository.refresh().snapshot.prompts.map { it.entry.relativePath to it.entry.stamp })
+        } finally { reopened.close() }
+    }
+
+    @Test fun `remote move publishes latest snapshot without a save trigger while user save triggers once`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.remote("old.md")
+            val moved = r.sync.runBackground()
+            assertNull(moved.blockingIssue, "${moved.status} ${moved.details.map { it.code }}")
+            runCurrent()
+            assertEquals(listOf("old.md"), r.repository.state.value.snapshot.prompts.map { it.entry.relativePath })
+            r.remote("nested/new.md", 2)
+            val movedAgain = r.sync.runBackground()
+            assertNull(movedAgain.blockingIssue, "${movedAgain.status} ${movedAgain.details.map { it.code }}")
+            assertEquals(SyncStatus.IDLE, movedAgain.status)
+            assertTrue(movedAgain.enabled)
+            assertEquals(2, r.requests.count { it.url.endsWith("/sync/pull") }, "Both passes collected")
+            val bound = r.sync.accounts.value!!.account!!
+            val persisted = r.sync.graph().local.states.load(SyncLibraryIdentity(bound.identity, SyncLibraryRoot(r.startup.libraryRoot)))!!
+            assertEquals("nested/new.md", persisted.prompts.values.single().path, "Committed path after move")
+            assertEquals(listOf("nested/new.md"), r.prompts.listFiles().map { it.relativePath }, "Disk after move")
+            runCurrent()
+            assertEquals(listOf("nested/new.md"), r.repository.state.value.snapshot.prompts.map { it.entry.relativePath })
+            assertEquals(0L, r.library.sourceChanges.value)
+            assertFalse(Files.exists(libraryDir.resolve("old.md")))
+            val graph = r.sync.graph()
+            val trigger = graph.engine.scheduling.value.triggerVersion
+            r.repository.withLibrary { library, _ ->
+                val current = library.load("nested/new.md")
+                val draft = ch.lkmc.monkeyspaw.core.domain.format.PromptCodec.parse(current.document.source + " edit", "new.md")
+                library.save(draft, current.relativePath, current.stamp)
+            }
+            runCurrent()
+            assertEquals(trigger + 1, graph.engine.scheduling.value.triggerVersion)
+            assertEquals(1L, r.library.sourceChanges.value)
+            r.repository.refresh()
+            r.repository.withLibrary { library, _ -> library.index.recordUse(library.load("nested/new.md").identity) }
+            runCurrent()
+            assertEquals(trigger + 1, graph.engine.scheduling.value.triggerVersion)
+            assertFalse(r.requests.any { it.method == HttpMethod.PUT }, "Background events only retain work")
+        } finally { r.close() }
+    }
+
+    @Test fun `viewer favourite and access changes publish projections without a source save`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.groupRole = Role.VIEWER
+            r.remote(group = true)
+            val pulled = r.sync.runBackground()
+            assertNull(pulled.blockingIssue, "${pulled.status} ${pulled.details.map { it.code }}")
+            runCurrent()
+            val before = r.sync.graph().engine.scheduling.value.triggerVersion
+            val entry = r.repository.state.value.snapshot.prompts.single().entry
+            r.repository.withLibrary { library, _ -> library.toggleFavorite(entry) }
+            runCurrent()
+            assertTrue(r.repository.state.value.snapshot.prompts.single().entry.favorite)
+            assertEquals(0L, r.library.sourceChanges.value)
+            assertEquals(before, r.sync.graph().engine.scheduling.value.triggerVersion)
+            assertEquals(Role.VIEWER, r.sync.access.value!!.groups.values.single().role)
+            r.groupRole = Role.EDITOR
+            r.sync.runBackground()
+            runCurrent()
+            assertEquals(Role.EDITOR, r.repository.state.value.snapshot.prompts.single().entry.access.let {
+                (it as PromptAccessState.Group).group.role
+            })
+        } finally { r.close() }
+    }
+
+    @Test fun `sign out cancels an admitted pull drains it and preserves local bytes`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.repository.withLibrary { _, editing -> editing.create("local", "keep.md") }
+            val entered = CompletableDeferred<Unit>()
+            r.respond = { if (it.url.endsWith("/sync/pull")) { entered.complete(Unit); awaitCancellation() } else null }
+            val work = async { r.sync.runBackground() }
+            entered.await()
+            assertTrue(r.sync.signOut().isComplete)
+            work.join()
+            runCurrent()
+            assertTrue(work.isCancelled)
+            assertTrue(Files.exists(libraryDir.resolve("keep.md")))
+            assertTrue(r.secrets.values.isEmpty())
+            assertFalse(r.sync.reports.value!!.enabled)
+            assertNull(r.sync.accounts.value!!.account)
+            assertFalse(r.requests.any { it.method == HttpMethod.PUT })
+        } finally { r.close() }
+    }
+
+    @Test fun `retirement cancels account activation waits for compensation and rejects late entries`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            val entered = CompletableDeferred<Unit>()
+            r.respond = { if (it.url.endsWith("/me")) { entered.complete(Unit); awaitCancellation() } else null }
+            val login = async { r.login() }
+            entered.await()
+            assertEquals(SyncStopResult.STOPPED, r.sync.retire())
+            login.join()
+            assertTrue(login.isCancelled)
+            assertTrue(r.secrets.values.isEmpty())
+            assertFalse(r.sync.reports.value!!.enabled)
+            assertFailsWith<CancellationException> { r.sync.runBackground() }
+            assertFailsWith<CancellationException> { r.login() }
+        } finally { r.close() }
+    }
+
+    @Test fun `root loss cancels work and cannot publish deletion inference or recreate the root`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.remote()
+            r.sync.runBackground()
+            val entered = CompletableDeferred<Unit>()
+            r.respond = { if (it.url.endsWith("/sync/pull")) { entered.complete(Unit); awaitCancellation() } else null }
+            val work = async { r.sync.runBackground() }
+            entered.await()
+            Files.move(libraryDir, filesDir.resolve("lost-library"))
+            assertNotNull(r.repository.refresh().error)
+            runCurrent()
+            work.join()
+            assertTrue(work.isCancelled)
+            assertFalse(Files.exists(libraryDir))
+            assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
+            assertFalse(r.requests.any { it.method == HttpMethod.DELETE || it.method == HttpMethod.PUT })
+        } finally { r.close() }
+    }
+
+    private companion object {
+        const val userID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        const val deviceID = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+        const val promptID = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+        const val groupID = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
+        const val databaseID = "11111111-1111-4111-8111-111111111111"
+        const val timestamp = "2026-10-14T00:00:00.000Z"
+    }
+}
