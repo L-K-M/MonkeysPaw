@@ -49,7 +49,7 @@ sealed class AssistantOutput {
     final override fun toString(): String = "<assistant output redacted>"
 }
 
-data class AssistantTokenUsage(val inputTokens: Int, val outputTokens: Int)
+data class AssistantTokenUsage(val inputTokens: Long, val outputTokens: Long)
 
 data class AssistantResponse(val output: AssistantOutput, val usage: AssistantTokenUsage? = null) {
     override fun toString(): String = "<assistant response redacted>"

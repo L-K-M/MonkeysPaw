@@ -112,8 +112,8 @@ internal fun String.endpoint(kind: ProviderKind, endpoint: ProviderEndpoint): St
 }
 
 sealed class ProviderSettingsError private constructor(code: String) : Exception(code, null, false, true) {
-    data class FutureVersion(val version: Int) : ProviderSettingsError("futureVersion")
-    data class UnsupportedVersion(val version: Int) : ProviderSettingsError("unsupportedVersion")
+    data class FutureVersion(val version: Long) : ProviderSettingsError("futureVersion")
+    data class UnsupportedVersion(val version: Long) : ProviderSettingsError("unsupportedVersion")
     data object CorruptFile : ProviderSettingsError("corruptFile")
     data object ReadFailed : ProviderSettingsError("readFailed")
     data object WriteFailed : ProviderSettingsError("writeFailed")

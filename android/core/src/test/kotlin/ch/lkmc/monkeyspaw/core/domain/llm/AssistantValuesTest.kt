@@ -90,6 +90,16 @@ class AssistantValuesTest {
         assertEquals("Edited", draft.copy(displayName = "Edited").displayName)
     }
 
+    @Test fun tokenUsageAndReportedVersionsRetainSwifts64BitIntegerRange() {
+        val usage = AssistantTokenUsage(inputTokens = 2_147_483_648L, outputTokens = Long.MAX_VALUE)
+        val output = AssistantOutput.Review(LlmReview("Summary", emptyList()))
+        val response = AssistantResponse(output, usage)
+        assertEquals(2_147_483_648L, response.usage!!.inputTokens)
+        assertEquals(Long.MAX_VALUE, response.usage.outputTokens)
+        assertEquals(2_147_483_648L, ProviderSettingsError.FutureVersion(2_147_483_648L).version)
+        assertEquals(Long.MIN_VALUE, ProviderSettingsError.UnsupportedVersion(Long.MIN_VALUE).version)
+    }
+
     @Test fun diagnosticStringsAndExceptionTracesRedactSecretsAndContent() {
         val sentinel = "runtime-${ProviderProfileID().rawValue}"
         val secret = SecretValue(sentinel)
