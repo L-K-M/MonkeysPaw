@@ -36,7 +36,9 @@ internal data class EditorConflict(val deleted: Boolean, val stamp: FileStamp? =
 
 /** A value captured before worker work begins; later edits cannot change its source or baseline. */
 internal data class EditorSnapshot(val session: Long, val revision: Long, val relativePath: String,
-    val source: String, val stamp: FileStamp?, val identity: PromptIdentity?, val isNew: Boolean)
+    val source: String, val stamp: FileStamp?, val identity: PromptIdentity?, val isNew: Boolean) {
+    override fun toString(): String = "<editor snapshot redacted>"
+}
 
 internal data class EditorRevision(val revision: HistoryRevision, val byteCount: Int,
     val source: String?, val canRestore: Boolean, val provenance: PromptProvenance? = null)
@@ -79,6 +81,8 @@ internal data class EditorUiState(
     val canSave: Boolean get() = canEdit && !writing && conflict == null && (isNew || stamp != null)
     val canCommand: Boolean get() = !isNew && stamp != null && readOnlyReason == null &&
         !writing && status != EditorStatus.LOADING && conflict == null
+
+    override fun toString(): String = "<editor state redacted>"
 }
 
 internal data class EditorDocumentState(val title: String, val issues: List<PromptIssue>,
