@@ -272,16 +272,17 @@ final class LinuxForgetControlsTests: XCTestCase {
             RememberedValuesStrings.message(for: .fileStoreFailure(.ioFailure)))
         XCTAssertEqual(try openForm("Alpha").values["topic"], "Keep draft")
         let window = try showSettings()
-        // A global reset deliberately skips reading. Block its atomic write to
-        // exercise failure, then restore only directory access for recovery.
+        // A global reset first tombstones repeat, without reading values.
+        // Blocking that write must leave values/drafts intact and repeat off.
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: paths.dataDirectory.path)
         try requestForgetAll(in: window)
         try click("settings-confirm-forget-all", in: window)
         let message = try settingsWidget("settings-forget-message", in: window)
-        let failure = RememberedValuesStrings.message(for: .fileStoreFailure(.ioFailure))
+        let failure = RememberedValuesStrings.message(for: .libraryFailure(.operationFailed))
         XCTAssertTrue(GTKTestSupport.spin { self.labelText(message) == failure })
         XCTAssertNotEqual(gtk_widget_get_visible(message), 0)
-        XCTAssertEqual(environment.pickerModel.forgetValuesError as? FileStoreError, .ioFailure)
+        XCTAssertEqual(environment.pickerModel.forgetValuesError as? LibraryError, .operationFailed)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.repeatModel?.availability == .unavailable(.invalidationFailed) })
         XCTAssertEqual(try openFormAfterSettings("Alpha").values["topic"], "Keep draft")
         _ = try showSettings()
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)

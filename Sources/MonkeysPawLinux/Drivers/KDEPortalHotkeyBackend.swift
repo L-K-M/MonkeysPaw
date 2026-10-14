@@ -136,6 +136,10 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             }
     }
 
+    func configure(for action: HotkeyAction, done: @escaping () -> Void) {
+        configure(done: done)
+    }
+
     func configure(done: @escaping () -> Void) {
         guard phase == .idle, !onFire.isEmpty else { done(); return }
         if version == nil, choice == .native { native.configure(done: done); return }

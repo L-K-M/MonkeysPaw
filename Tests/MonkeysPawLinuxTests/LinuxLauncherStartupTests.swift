@@ -259,6 +259,22 @@ final class LinuxLauncherStartupTests: XCTestCase {
         try quit(primary)
     }
 
+    func testLinuxAppColdRepeatActionReusesServicePrimaryWithoutOpeningPicker() throws {
+        let primary = try launch(["--gapplication-service"])
+        XCTAssertTrue(GTKTestSupport.spin { self.bus.hasOwner(AppIdentity.linuxAppID) })
+        try action(.repeat)
+        let notice = try waitForWindow(titled: LinuxStrings.repeatLast, in: primary)
+        XCTAssertNil(visibleWindow(titled: AppIdentity.displayName, in: primary))
+        XCTAssertNil(visibleWindow(titled: LinuxStrings.onboarding, in: primary))
+        assertCleanExit(try launch(["--gapplication-service"]))
+        XCTAssertEqual(try waitForWindow(titled: LinuxStrings.repeatLast, in: primary), notice)
+        try close(notice, titled: LinuxStrings.repeatLast, in: primary)
+        try action(.repeat)
+        XCTAssertEqual(try waitForWindow(titled: LinuxStrings.repeatLast, in: primary), notice)
+        XCTAssertTrue(primary.isRunning)
+        try quit(primary)
+    }
+
     func testOrdinaryLaunchOfServicePrimaryResumesPendingFolderStep() throws {
         let primary = try launch(["--gapplication-service"])
         XCTAssertTrue(GTKTestSupport.spin { self.bus.hasOwner(AppIdentity.linuxAppID) })
