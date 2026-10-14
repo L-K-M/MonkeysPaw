@@ -1,4 +1,5 @@
 import Foundation
+@testable import SyncScenarioSupport
 import Hummingbird
 import HummingbirdTesting
 import Logging
@@ -34,8 +35,8 @@ enum SyncServerHarness {
     }
 
     private static func withServers(_ scenario: SyncScenario, root: URL, clock: ScenarioClock, index: Int,
-                                   clients: [String: any TestClientProtocol], symbols: [String: String],
-                                   operation: @escaping ([String: any TestClientProtocol], [String: String]) async throws -> Void) async throws {
+                                   clients: [String: ScenarioDeployment], symbols: [String: String],
+                                   operation: @escaping ([String: ScenarioDeployment], [String: String]) async throws -> Void) async throws {
         guard index < scenario.servers.count else { try await operation(clients, symbols); return }
         let name = scenario.servers[index]
         let directory = root.appendingPathComponent("server-" + name)
@@ -55,14 +56,22 @@ enum SyncServerHarness {
             }
             let app = makeApplication(configuration: try .init(environment: ["MONKEYSPAW_LOG_LEVEL": "critical"]),
                                       accounts: accounts, sessions: sessions)
+            let deployment = ScenarioDeployment(database: database, directory: directory, clock: clock)
             let boundSymbols = symbols
-            try await ScenarioPeerApplication(base: app).test(.router) { client in
-                var clients = clients
-                clients[name + ".test"] = client
-                try await withServers(scenario, root: root, clock: clock, index: index + 1, clients: clients, symbols: boundSymbols,
-                                      operation: operation)
+            let testing: TestingSetup = scenario.steps.contains { if case .crash = $0 { return true }; return false } ? .live : .router
+            do {
+                try await ScenarioPeerApplication(base: app).test(testing) { client in
+                    deployment.client = client
+                    var clients = clients
+                    clients[name + ".test"] = deployment
+                    try await withServers(scenario, root: root, clock: clock, index: index + 1, clients: clients,
+                                          symbols: boundSymbols, operation: operation)
+                }
+                await deployment.shutdown()
+            } catch {
+                await deployment.shutdown()
+                throw error
             }
-            await database.shutdown()
         } catch {
             await database.shutdown()
             throw error
@@ -170,19 +179,23 @@ final class ScenarioDevice {
 
 final class ScenarioRunner {
     private let scenario: SyncScenario
-    private let root: URL
-    private var devices: [String: ScenarioDevice] = [:]
+    let root: URL
+    var devices: [String: ScenarioDevice] = [:]
     private var symbols: [String: String]
     private var checkpoints = 0
+    let deployments: [String: ScenarioDeployment]
+    var maintenanceBackups: [String: URL] = [:]
+    var crashPlans: [String: SyncApplyRecord] = [:]
 
-    init(scenario: SyncScenario, root: URL, clients: [String: any TestClientProtocol], symbols: [String: String]) throws {
+    init(scenario: SyncScenario, root: URL, clients: [String: ScenarioDeployment], symbols: [String: String]) throws {
         self.scenario = scenario
         self.root = root
         self.symbols = symbols
+        deployments = clients
         for (key, id) in scenario.prompts { self.symbols["prompt." + key] = id }
         for device in scenario.devices {
             devices[device.name] = try ScenarioDevice(name: device.name, directory: root.appendingPathComponent("device-" + device.name),
-                clock: ScenarioClock(scenario.now), entropy: ScenarioEntropy(seed: device.seed), transport: InProcessHTTPTransport(clients: clients))
+                clock: ScenarioClock(scenario.now), entropy: ScenarioEntropy(seed: device.seed), transport: InProcessHTTPTransport(clients: clients.mapValues { $0 as any TestClientProtocol }))
         }
     }
 
@@ -190,21 +203,30 @@ final class ScenarioRunner {
         for (index, step) in scenario.steps.enumerated() {
             do {
                 try await execute(step)
-                for device in devices.values { try device.transport.checkValidation() }
+                if let failure = devices.values.compactMap({ $0.transport.mutationFailure }).first { throw failure }
             }
             catch {
                 // XCTest's errors must never print source bytes, bodies or credentials.
-                let reason = safeFailure(error)
+                let reason = safeFailure(devices.values.compactMap({ $0.transport.mutationFailure }).first ?? error)
                 throw ScenarioFailure.invalid(scenario.id + " step \(index + 1): " + reason)
             }
         }
         try check(checkpoints > 0, "scenario did not execute checkpoints")
         try check(devices.values.allSatisfy { $0.transport.pendingRewrites == 0 }, "unused network mutation")
+        try check(crashPlans.isEmpty, "killed client was not recovered")
         try check(devices.values.reduce(0) { $0 + $1.transport.traces.count } > 0, "scenario did not execute real HTTP")
     }
 
     private func safeFailure(_ error: Error) -> String {
         if let failure = error as? ScenarioFailure { return failure.description }
+        if let http = error as? SyncHTTPClientError {
+            switch http {
+            case .transport(let code): return "HTTP transport " + code.rawValue
+            case .serverFailure(let code): return "HTTP server status \(code)"
+            case .malformedResponse: return "HTTP malformed response"
+            default: return "HTTP operation failed"
+            }
+        }
         if let account = error as? SyncAccountServiceError {
             switch account.issue {
             case .http(.transport(let code)): return "account transport " + code.rawValue
@@ -228,7 +250,7 @@ final class ScenarioRunner {
         return device
     }
 
-    private func execute(_ step: ScenarioStep) async throws {
+    func execute(_ step: ScenarioStep) async throws {
         switch step {
         case .login(let name, let user, let server):
             let device = try device(name)
@@ -307,23 +329,17 @@ final class ScenarioRunner {
         case .httpSeries(let action, let ids): try await httpSeries(action, ids: ids)
         case .raceHTTP(let writers): try await raceHTTP(writers)
         case .beforeRequest(let name, let method, let path, let skip, let then):
-            try device(name).transport.before(method: method, path: expand(path), skip: skip) { [self] in
-                do { try await execute(then) }
-                catch let error as ScenarioFailure { throw error }
-                catch { throw ScenarioFailure.invalid(safeFailure(error)) }
-            }
-        case .afterResponse(let name, let method, let path, let then):
-            try device(name).transport.after(method: method, path: expand(path)) { [self] in
-                do { try await execute(then) }
-                catch let error as ScenarioFailure { throw error }
-                catch { throw ScenarioFailure.invalid(safeFailure(error)) }
-            }
+            try device(name).transport.before(method: method, path: expand(path), skip: skip) { [self] in try await execute(then) }
         case .interrupt(let name, let method, let path, let phase):
             try device(name).transport.interrupt(method: method, path: expand(path), phase: phase)
         case .rewrite(let action):
             let rewrite = ScenarioRewrite(device: action.device, phase: action.phase, method: action.method,
                 path: try expand(action.path), patch: try expandFields(action.patch))
             try device(action.device).transport.rewrite(rewrite)
+        case .maintenance(let name, let action):
+            _ = try device(name)
+            try await executeMaintenance(action)
+        case .crash(let action): try await executeCrash(action)
         case .expect(let expectation): try expect(expectation)
         }
     }
@@ -365,6 +381,11 @@ final class ScenarioRunner {
             case "blocking_issue": try check((device.sync.report.blockingIssue?.rawValue ?? "none") == expected.string(), "blocking issue")
             case "prompt_count": try check((state?.prompts.count ?? 0) == expected.integer(), "prompt count")
             case "cursor_count": try check((state?.cursors.count ?? 0) == expected.integer(), "cursor count")
+            case "database_id": try check((state?.databaseID?.uuidString.lowercased() ?? "none") == expand(expected.string()), "database identity")
+            case "cursors":
+                let cursors = try expected.object().mapValues { try $0.string() }
+                for (key, value) in cursors { try check(state?.cursors[SyncScopeKey(expand(key))] == expand(value), "scope cursor") }
+            case "journal_present": try check((device.data.stamp(at: "sync/apply.json") != nil) == expected.boolean(), "apply journal presence")
             case "held_count": try check(device.account.heldPrompts().count == expected.integer(), "held count")
             case "account_user": try check((device.account.snapshot.account?.identity.userID.rawValue ?? "none") == expand(expected.string()), "account user")
             case "writes": try check(device.files.writes == expected.integer(), "file publication count")

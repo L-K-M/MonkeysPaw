@@ -68,15 +68,16 @@ files and 278 ordered actions, bringing the current content corpus to 1,536
 cases and 5,515 visible files.
 Case shapes are below. These are reported counts, not fixed enumeration limits.
 
-The delegated sync corpus has 71 executable variants in 19 JSON files: Y12's
-26 variants in seven files and Y13's 45 variants in twelve additional files.
-Together with the ten content categories, that is 1,607 cases and 5,534
-visible files, with separate semantic owners.
-Ledger variant counts are 01:1, 02:6, 03:6, 04:9, 05:7, 06:1, 07:2, 09:2,
-10:3, 11:5, 12:10, 13:4, 14:3, 15:1, 16:2, 18:2, 19:2, 20:3 and 21:2.
+The delegated sync corpus has 87 executable variants in 24 JSON files: Y12's
+26 variants in seven files, Y13's 45 variants in twelve files and Y14's 16
+variants in five files. Together with the ten content categories, that is
+1,623 cases and 5,539 visible files, with separate semantic owners.
+Ledger variant counts are 01:1, 02:6, 03:6, 04:9, 05:7, 06:2, 07:2, 08:7,
+09:2, 10:3, 11:5, 12:10, 13:4, 14:3, 15:1, 16:2, 17:4, 18:2, 19:2,
+20:3, 21:2, 22:3 and 23:1.
 The root content gate reports delegated file accounting separately; the server
 owner requires each acceptance file and compares all decoded and executed IDs.
-Y14 adds the post-retention removal, restore and crash variants.
+Y14 adds the post-retention removal, restore and crash variants above.
 
 `fixtures/` contains ten content categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical`, `dto` and `llm`, plus
@@ -1216,7 +1217,8 @@ Device checkpoints support:
   (a byte-exact file path present before router dispatch). Method/path `*`
   match all. Authentication headers and login bodies never enter traces.
 
-The nineteen files own ledger rows 01–07, 09–16 and 18–21. Later slices extend
+The twenty-four files own ledger rows 01–23, with two files for row 06,
+before and after retention. Later slices extend
 this version-1 action/checkpoint vocabulary and add their files without changing
 existing semantics or bypassing the full-corpus executor. Y13 adds conflicts,
 permissions, transfers and group lifecycle, including in-flight role downgrades
