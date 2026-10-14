@@ -60,6 +60,7 @@ public final class FillModel: @unchecked Sendable {
     private let delivery: DeliveryService
     private let index: PromptIndex
     private let main: MainThread
+    private let repeatService: RepeatService?
     private let onDraft: ([String: String]) -> Void
     private let onDelivering: () -> Void
     private let onBack: () -> Void
@@ -73,6 +74,7 @@ public final class FillModel: @unchecked Sendable {
 
     init(entry: LibraryEntry, form: FillForm, draft: [String: String]?, preferredMode: DeliveryMode,
          fill: FillService, delivery: DeliveryService, index: PromptIndex, main: MainThread,
+         repeatService: RepeatService? = nil,
          onDraft: @escaping ([String: String]) -> Void, onDelivering: @escaping () -> Void,
          onBack: @escaping () -> Void,
          onCancel: @escaping () -> Void,
@@ -82,6 +84,7 @@ public final class FillModel: @unchecked Sendable {
         self.delivery = delivery
         self.index = index
         self.main = main
+        self.repeatService = repeatService
         self.onDraft = onDraft
         self.onDelivering = onDelivering
         self.onBack = onBack
@@ -144,24 +147,43 @@ public final class FillModel: @unchecked Sendable {
             return
         }
         state = .delivering
+        let recording = repeatService?.beginRecording()
         onDelivering()
         onChange?()
-        delivery.deliver(text, mode: mode) { [self] outcome in
-            main.run { [self] in
-                // Copy-only and paste fallback are deliveries too. Learning
-                // failures are visible, but cannot cancel the clipboard action.
-                guard state == .delivering else { return }
-                do {
-                    try fill.rememberedOnDelivery(identity: entry.identity,
-                                                  fields: entry.document.effectiveFields, values: delivered)
-                } catch { persistenceWarnings.append(.rememberedValuesNotSaved) }
-                do { try index.recordUse(of: entry.identity) }
-                catch { persistenceWarnings.append(.usageNotSaved) }
-                state = .done(outcome)
-                onDelivered(outcome, persistenceWarnings)
-                onChange?()
+        delivery.captureInvocation(source: .picker) { [self] invocation in
+            delivery.deliver(text, mode: mode, invocation: invocation, isValid: { [self] in
+                recording.map { repeatService?.isCurrent($0) == true } ?? true
+            }) { [self] outcome in
+                main.run { [self] in
+                    // Copy-only and paste fallback are deliveries too. Learning
+                    // failures are visible, but cannot cancel the clipboard action.
+                    guard state == .delivering else { return }
+                    guard let outcome else { state = .closed; onChange?(); return }
+                    guard recording.map({ repeatService?.isCurrent($0) == true }) ?? true else {
+                        finishDelivery(outcome)
+                        return
+                    }
+                    do {
+                        try fill.rememberedOnDelivery(identity: entry.identity,
+                                                      fields: entry.document.effectiveFields, values: delivered)
+                    } catch { persistenceWarnings.append(.rememberedValuesNotSaved) }
+                    do { try index.recordUse(of: entry.identity) }
+                    catch { persistenceWarnings.append(.usageNotSaved) }
+                    if let repeatService, let recording {
+                        repeatService.recordCompleted(entry: entry, values: delivered, mode: mode, ticket: recording) { [self] saved in
+                            persistenceWarnings += saved
+                            finishDelivery(outcome)
+                        }
+                    } else { finishDelivery(outcome) }
+                }
             }
         }
+    }
+
+    private func finishDelivery(_ outcome: DeliveryOutcome) {
+        state = .done(outcome)
+        onDelivered(outcome, persistenceWarnings)
+        onChange?()
     }
 
     public func escape() {

@@ -1,3 +1,5 @@
+import Foundation
+
 /// Session detection is filled by drivers, including the host of a sandbox.
 public indirect enum DesktopSession: Equatable, Codable, Sendable {
     case macOS
@@ -19,6 +21,32 @@ public enum DeliveryTarget: Equatable, Sendable {
 public enum DeliveryMode: Equatable, Sendable {
     case paste(PasteChord)
     case copyOnly
+}
+
+public enum DeliveryInvocationSource: Sendable {
+    case picker
+    case currentTarget
+}
+
+/// Immutable focus/session captured before asynchronous builtin or file work.
+/// Cancellation is thread safe; side effects check it on the injected UI thread.
+public final class DeliveryInvocation: @unchecked Sendable {
+    public let target: DeliveryTarget?
+    public let session: DesktopSession
+    let owner: ObjectIdentifier
+    let generation: UInt64
+    private let lock = NSLock()
+    private var cancelled = false
+
+    init(target: DeliveryTarget?, session: DesktopSession, owner: ObjectIdentifier, generation: UInt64) {
+        self.target = target
+        self.session = session
+        self.owner = owner
+        self.generation = generation
+    }
+
+    public func cancel() { lock.withLock { cancelled = true } }
+    var isCancelled: Bool { lock.withLock { cancelled } }
 }
 
 public enum PasteChord: String, Equatable, Codable, Sendable {

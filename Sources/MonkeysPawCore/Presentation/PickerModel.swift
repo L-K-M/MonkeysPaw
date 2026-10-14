@@ -92,17 +92,19 @@ public final class PickerModel: @unchecked Sendable {
     private let fill: FillService
     private let delivery: DeliveryService
     private let main: MainThread
+    private let repeatService: RepeatService?
     private var indexObserver: UUID?
     private var matches: [PromptSearchResult] = []
     private var drafts: [PromptIdentity: [String: String]] = [:]
     private var snapshotGeneration: UInt64 = 0
 
     public init(index: PromptIndex, fill: FillService, delivery: DeliveryService,
-                main: MainThread) {
+                main: MainThread, repeatService: RepeatService? = nil) {
         self.index = index
         self.fill = fill
         self.delivery = delivery
         self.main = main
+        self.repeatService = repeatService
         indexObserver = index.addObserver { [weak self] in
             guard let self else { return }
             self.main.run { [weak self] in
@@ -168,13 +170,17 @@ public final class PickerModel: @unchecked Sendable {
         isResolvingBuiltins = true
         snapshotGeneration &+= 1
         let generation = snapshotGeneration
+        let recording = repeatService?.beginRecording()
         onChange?()
-        fill.builtinSnapshot(for: entry.document) { [weak self] snapshot in
-            guard let self else { return }
-            self.main.run { [weak self] in
-                guard let self, self.state == .picker, self.snapshotGeneration == generation else { return }
-                self.isResolvingBuiltins = false
-                self.deliver(entry, mode: mode, builtins: snapshot)
+        delivery.captureInvocation(source: .picker) { [weak self] invocation in
+            guard let self, self.state == .picker, self.snapshotGeneration == generation else { return }
+            self.fill.builtinSnapshot(for: entry.document) { [weak self] snapshot in
+                guard let self else { return }
+                self.main.run { [weak self] in
+                    guard let self, self.state == .picker, self.snapshotGeneration == generation else { return }
+                    self.isResolvingBuiltins = false
+                    self.deliver(entry, mode: mode, builtins: snapshot, invocation: invocation, recording: recording)
+                }
             }
         }
     }
@@ -202,7 +208,10 @@ public final class PickerModel: @unchecked Sendable {
             return
         }
 
-        do { try fill.forgetValues(for: identity) }
+        do {
+            try forgetRepeatValues(for: identity)
+            try fill.forgetValues(for: identity)
+        }
         catch {
             failForgetting(error)
             return
@@ -217,7 +226,10 @@ public final class PickerModel: @unchecked Sendable {
     @discardableResult
     public func forgetAllValues() -> RememberedValuesOutcome {
         guard !rejectForgetDuringDelivery() else { return .deliveryInFlight }
-        do { try fill.forgetAllValues() }
+        do {
+            try forgetRepeatValues(for: nil)
+            try fill.forgetAllValues()
+        }
         catch {
             return failForgetting(error)
         }
@@ -298,9 +310,15 @@ public final class PickerModel: @unchecked Sendable {
         onChange?()
     }
 
+    private func forgetRepeatValues(for identity: PromptIdentity?) throws {
+        do { try repeatService?.forgetValues(for: identity) }
+        catch { throw LibraryError.operationFailed }
+    }
+
     private func openFill(_ entry: LibraryEntry, mode: DeliveryMode) {
         let model = FillModel(entry: entry, form: fill.form(for: entry), draft: drafts[entry.identity],
                               preferredMode: mode, fill: fill, delivery: delivery, index: index, main: main,
+                              repeatService: repeatService,
                               onDraft: { [weak self] in self?.drafts[entry.identity] = $0 },
                               onDelivering: { [weak self] in
                                   self?.state = .delivering
@@ -327,7 +345,8 @@ public final class PickerModel: @unchecked Sendable {
         model.open()
     }
 
-    private func deliver(_ entry: LibraryEntry, mode: DeliveryMode, builtins: PromptBuiltinValues) {
+    private func deliver(_ entry: LibraryEntry, mode: DeliveryMode, builtins: PromptBuiltinValues,
+                         invocation: DeliveryInvocation, recording: RepeatRecording?) {
         let text: String
         do { text = try fill.render(entry.document, values: [:], builtins: builtins) }
         catch {
@@ -339,12 +358,23 @@ public final class PickerModel: @unchecked Sendable {
         }
         state = .delivering
         onChange?()
-        delivery.deliver(text, mode: mode) { [self] outcome in
+        delivery.deliver(text, mode: mode, invocation: invocation, isValid: { [self] in
+            recording.map { repeatService?.isCurrent($0) == true } ?? true
+        }) { [self] outcome in
             main.run { [self] in
+                guard let outcome else { state = .closed; onChange?(); return }
+                guard recording.map({ repeatService?.isCurrent($0) == true }) ?? true else {
+                    finishDelivery(entry.identity, outcome: outcome, warnings: [])
+                    return
+                }
                 var warnings: [PromptPersistenceWarning] = []
                 do { try index.recordUse(of: entry.identity) }
                 catch { warnings.append(.usageNotSaved) }
-                finishDelivery(entry.identity, outcome: outcome, warnings: warnings)
+                if let repeatService, let recording {
+                    repeatService.recordCompleted(entry: entry, values: [:], mode: mode, ticket: recording) { [self] saved in
+                        finishDelivery(entry.identity, outcome: outcome, warnings: warnings + saved)
+                    }
+                } else { finishDelivery(entry.identity, outcome: outcome, warnings: warnings) }
             }
         }
     }

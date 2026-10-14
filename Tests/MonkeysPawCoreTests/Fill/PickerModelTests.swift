@@ -3,6 +3,79 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testStaleTicketAfterDeliveryOutcomeFinishesWithoutRecordingUsage() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("body")
+        h.flow.delivery.injectors[.cgEvent]?.mode = .deferred
+        try h.open()
+        h.picker.use(mode: .paste(.standard))
+        h.flow.settle()
+        var changes: [PickerModel.State] = []
+        h.picker.onChange = { changes.append(h.picker.state) }
+        h.flow.delivery.main.mode = .deferred
+        h.flow.delivery.injectors[.cgEvent]?.complete([.sent, .sent])
+        XCTAssertTrue(h.flow.delivery.main.drainOne())
+        XCTAssertEqual(h.flow.delivery.service.lastDelivery?.outcome, .pasted(.cgEvent))
+        XCTAssertEqual(h.picker.state, .delivering)
+
+        try h.service.retire()
+        h.flow.delivery.main.drain()
+
+        XCTAssertEqual(changes, [.done(.pasted(.cgEvent))])
+        XCTAssertEqual(h.picker.state, .done(.pasted(.cgEvent)))
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testStaleRecordingCallbackFinishesAndPreservesPickerWarnings() throws {
+        let h = try RepeatHarness(heldWork: true)
+        _ = try h.put("body")
+        try h.open()
+        h.flow.data.failNextWrite = true
+        h.picker.use(mode: .copyOnly)
+        h.flow.settle()
+        XCTAssertEqual(h.picker.state, .delivering)
+        XCTAssertEqual(h.held.pending.count, 1)
+        var changes: [PickerModel.State] = []
+        h.picker.onChange = { changes.append(h.picker.state) }
+
+        try h.service.retire()
+        h.held.releaseAll()
+
+        XCTAssertEqual(changes, [.done(.copiedOnly(.requested))])
+        XCTAssertEqual(h.picker.state, .done(.copiedOnly(.requested)))
+        XCTAssertEqual(h.picker.persistenceWarnings, [.usageNotSaved])
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testFieldlessInvocationKeepsOriginalArmedTargetDuringBuiltinRead() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("{{clipboard}}")
+        try h.open()
+        let captured = try XCTUnwrap(h.delivery.focus.target)
+        h.delivery.clipboard.readMode = .deferred
+        h.picker.use(mode: .paste(.standard))
+        h.delivery.focus.target = .macOS(processID: 99, bundleID: "later")
+        h.delivery.service.arm()
+        h.delivery.clipboard.completeRead("snapshot")
+        h.settle()
+        XCTAssertEqual(h.delivery.recorder.events.last(where: { if case .restore = $0 { return true }; return false }), .restore(captured))
+    }
+
+    func testRetiredFieldlessBuiltinCallbackCannotDeliverOrRecord() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{clipboard}}")
+        try h.open()
+        h.flow.delivery.clipboard.readMode = .deferred
+        h.picker.use(mode: .paste(.standard))
+        try h.service.retire()
+        h.flow.delivery.clipboard.completeRead("late content")
+        h.flow.settle()
+        XCTAssertNil(h.flow.delivery.clipboard.text)
+        XCTAssertNil(try h.store.load())
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+    }
+
     func testRequestedIntentIsConsumedOnceAcrossChangeNotifications() throws {
         let h = PromptFlowHarness()
         let entry = try h.put("Body")

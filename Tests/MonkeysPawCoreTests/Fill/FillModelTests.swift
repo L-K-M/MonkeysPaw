@@ -3,6 +3,90 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class FillModelTests: XCTestCase {
+    func testStaleTicketAfterDeliveryOutcomeFinishesWithoutLearning() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{field}}")
+        h.flow.delivery.injectors[.cgEvent]?.mode = .deferred
+        try h.open()
+        h.picker.use(mode: .paste(.standard))
+        let form = try XCTUnwrap(h.picker.fillModel)
+        form.setValue("delivered", name: "field")
+        form.deliver(mode: .paste(.standard))
+        h.flow.settle()
+        var changes: [FillModel.State] = []
+        form.onChange = { changes.append(form.state) }
+        h.flow.delivery.main.mode = .deferred
+        h.flow.delivery.injectors[.cgEvent]?.complete([.sent, .sent])
+        XCTAssertTrue(h.flow.delivery.main.drainOne())
+        XCTAssertEqual(h.flow.delivery.service.lastDelivery?.outcome, .pasted(.cgEvent))
+        XCTAssertEqual(form.state, .delivering)
+
+        try h.service.retire()
+        h.flow.delivery.main.drain()
+
+        XCTAssertEqual(changes, [.done(.pasted(.cgEvent))])
+        XCTAssertEqual(form.state, .done(.pasted(.cgEvent)))
+        XCTAssertEqual(h.picker.state, .done(.pasted(.cgEvent)))
+        XCTAssertEqual(try h.flow.values.rememberedValues(for: entry.identity), [:])
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testStaleRecordingCallbackFinishesAndPreservesFillWarnings() throws {
+        let h = try RepeatHarness(heldWork: true)
+        let entry = try h.put("{{field}}")
+        try h.open()
+        h.picker.use(mode: .copyOnly)
+        let form = try XCTUnwrap(h.picker.fillModel)
+        form.setValue("delivered", name: "field")
+        h.flow.data.failNextWrite = true
+        form.deliver(mode: .copyOnly)
+        h.flow.settle()
+        XCTAssertEqual(form.state, .delivering)
+        XCTAssertEqual(h.held.pending.count, 1)
+        var changes: [FillModel.State] = []
+        form.onChange = { changes.append(form.state) }
+
+        try h.service.retire()
+        h.held.releaseAll()
+
+        XCTAssertEqual(changes, [.done(.copiedOnly(.requested))])
+        XCTAssertEqual(form.state, .done(.copiedOnly(.requested)))
+        XCTAssertEqual(h.picker.state, .done(.copiedOnly(.requested)))
+        XCTAssertEqual(h.picker.persistenceWarnings, [.rememberedValuesNotSaved])
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity).count, 1)
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testRepeatProjectionFailureRemainsVisibleAfterRealFillDelivery() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{field}}")
+        h.flow.data.onWrite = { if $0.hasPrefix("usage/") { h.flow.data.failNextWrite = true } }
+        try h.deliver(mode: .copyOnly, values: ["field": "exact"])
+        XCTAssertEqual(h.picker.fillModel?.state, .done(.copiedOnly(.requested)))
+        XCTAssertEqual(h.picker.persistenceWarnings, [.lastDeliveryNotSaved])
+        XCTAssertEqual(h.flow.delivery.clipboard.text, "exact")
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity).count, 1)
+        XCTAssertNil(try h.store.load())
+    }
+
+    func testLateInjectorReplyAfterRetirementCannotRememberFillValues() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("{{field}}")
+        h.flow.delivery.injectors[.cgEvent]?.mode = .deferred
+        try h.open()
+        h.picker.use(mode: .paste(.standard))
+        let form = try XCTUnwrap(h.picker.fillModel)
+        form.setValue("late fields", name: "field")
+        form.deliver(mode: .paste(.standard))
+        h.flow.settle()
+        try h.service.retire()
+        h.flow.delivery.injectors[.cgEvent]?.complete([.sent, .sent])
+        XCTAssertEqual(try h.flow.values.rememberedValues(for: entry.identity), [:])
+        XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity), [])
+        XCTAssertNil(try h.store.load())
+    }
+
     func testNativeFocusKeepsTraversalInFieldOrderAndRejectsInvalidPositions() throws {
         let h = PromptFlowHarness()
         _ = try h.put("{{a}} {{b}} {{c}}")

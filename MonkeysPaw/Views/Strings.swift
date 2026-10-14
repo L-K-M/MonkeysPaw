@@ -140,6 +140,7 @@ enum Strings {
         case .rememberedValuesUnavailable: return "Remembered values unavailable. Defaults are shown."
         case .rememberedValuesNotSaved: return "Delivered, but your field values could not be saved."
         case .usageNotSaved: return "Delivered, but your recent use could not be saved."
+        case .lastDeliveryNotSaved: return "Delivered, but repeat could not be saved."
         }
     }
 

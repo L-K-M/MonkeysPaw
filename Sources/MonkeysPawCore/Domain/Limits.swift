@@ -5,6 +5,9 @@ public enum Limits {
     private static let kibibyte = 1_024
     private static let mebibyte = kibibyte * kibibyte
 
+    /// §21 G3: one private last-delivery projection, never rendered text.
+    public static let lastDeliveryFileCapBytes: Int = mebibyte
+
     /// §6.3: 100 ms for the macOS panel to hide before restoring focus.
     public static let settleDelayMacOS: Duration = .milliseconds(100)
 

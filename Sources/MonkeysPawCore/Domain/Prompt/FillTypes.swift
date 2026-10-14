@@ -44,4 +44,5 @@ public enum PromptPersistenceWarning: String, Sendable {
     case rememberedValuesUnavailable
     case rememberedValuesNotSaved
     case usageNotSaved
+    case lastDeliveryNotSaved
 }
