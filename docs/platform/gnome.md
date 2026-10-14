@@ -62,7 +62,12 @@ standard/terminal receipt, and any fallback. A copy-only result needs a
 written root cause (capability, identity, consent, focus, session loss,
 injection or readback), evidence and the recovery tried.
 
-Flatpak checks: **NOT RUN; require the later package**.
+Flatpak checks: **NOT RUN; require the installed package**.
+
+Record the main commit, artifact version/hash, Flatpak version and any user
+overrides as well as the session/portal versions above. Use one active install
+route per user: native and Flatpak share `ch.lkmc.monkeyspaw`. Quit the other
+route and verify the activated process is the sandbox before these checks.
 
 - [ ] Confirm exported `.desktop`, D-Bus service and app id all match
   `ch.lkmc.monkeyspaw`. From the host, cold `gapplication action
@@ -72,3 +77,26 @@ Flatpak checks: **NOT RUN; require the later package**.
   portal shortcut: the sandbox cannot inspect host dconf rows.
 - [ ] Verify cold action identity, consent persistence, native parenting,
   real shortcut activation and per-backend self-test readback in the package.
+- [ ] Inspect `flatpak info --show-permissions ch.lkmc.monkeyspaw`: IPC/network,
+  Wayland/fallback-X11, home read/write and only Secret Service plus
+  `org.kde.StatusNotifierWatcher` talk permissions. Portals/app subnames use
+  filtered defaults; no host dconf, KGlobalAccel, host-spawn, unrestricted bus
+  or foreign-name ownership grant. Review user overrides separately.
+- [ ] With a tray extension/watcher enabled, confirm one item registers as
+  `ch.lkmc.monkeyspaw.StatusNotifierItem-<pid>-1`; click the picker and menu
+  actions, quit/relaunch, and restart the watcher. The item must disappear on
+  quit and return once on restart, with no owned `org.kde.*` name. Without a
+  watcher, the app remains usable and starts no watcher.
+- [ ] Confirm fresh sandbox settings and file-backed secrets are under
+  `~/.var/app/ch.lkmc.monkeyspaw/{config,data}/monkeyspaw`, with no native-state
+  import. Home access is read/write for the entire home, to support editable,
+  watched libraries there. Open the default library and choose another home
+  library; edit a prompt and confirm its live refresh and saved choice after
+  restart. A host XDG Documents folder outside home must fall back to
+  `~/Documents/MonkeysPaw`.
+- [ ] Choose an external folder or a document-portal path, then cancel another
+  choice. Refusal must show home/native guidance and preserve the active
+  library, watcher, editor and saved choice; cancellation preserves them too.
+  Include a home symlink leading outside home. Keep the library in home or
+  use the native app; an outside-home filesystem override does not remove
+  the app's home-only boundary.

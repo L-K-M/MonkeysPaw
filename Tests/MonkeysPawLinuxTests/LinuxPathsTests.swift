@@ -18,6 +18,69 @@ final class LinuxPathsTests: XCTestCase {
         XCTAssertEqual(paths.runtimeDirectory?.path, "/run/user/1000/monkeyspaw")
     }
 
+    func testSandboxPersistentRootsStayIsolatedFromNativeXDGOverrides() {
+        for overrides in [[:], ["XDG_CONFIG_HOME": "", "XDG_DATA_HOME": "relative"],
+                          ["XDG_CONFIG_HOME": "/native/config", "XDG_DATA_HOME": "/native/data"],
+                          ["XDG_CONFIG_HOME": "/home/test-user/.var/app/ch.lkmc.monkeyspaw/config",
+                           "XDG_DATA_HOME": "/home/test-user/.var/app/ch.lkmc.monkeyspaw/data"]] {
+            let environment = overrides.merging(["FLATPAK_ID": "ch.lkmc.monkeyspaw"]) { _, new in new }
+            let paths = LinuxPaths(environment: environment, home: home)
+            XCTAssertEqual(paths.configDirectory.path, "/home/test-user/.var/app/ch.lkmc.monkeyspaw/config/monkeyspaw")
+            XCTAssertEqual(paths.dataDirectory.path, "/home/test-user/.var/app/ch.lkmc.monkeyspaw/data/monkeyspaw")
+        }
+    }
+
+    func testFlatpakInfoIsEnoughToIsolatePersistentRoots() {
+        let paths = LinuxPaths(environment: [:], home: home, flatpakInfoExists: true)
+        XCTAssertEqual(paths.configDirectory.path, "/home/test-user/.var/app/ch.lkmc.monkeyspaw/config/monkeyspaw")
+        XCTAssertEqual(paths.dataDirectory.path, "/home/test-user/.var/app/ch.lkmc.monkeyspaw/data/monkeyspaw")
+    }
+
+    func testSandboxDocumentsUsePrivateSettingsAndFallBackFromExternalPaths() throws {
+        try withDirectories { directory in
+            let config = directory.appendingPathComponent(".var/app/ch.lkmc.monkeyspaw/config")
+            try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+            try Data("XDG_DOCUMENTS_DIR=\"/native/Documents\"\n".utf8)
+                .write(to: directory.appendingPathComponent("user-dirs.dirs"))
+            let paths = LinuxPaths(environment: ["FLATPAK_ID": "ch.lkmc.monkeyspaw", "XDG_CONFIG_HOME": directory.path],
+                                   home: directory)
+            let fallback = directory.appendingPathComponent("Documents")
+            XCTAssertEqual(paths.documentsDirectory.path, fallback.path)
+            try Data("XDG_DOCUMENTS_DIR=\"$HOME/Private Documents\"\n".utf8)
+                .write(to: config.appendingPathComponent("user-dirs.dirs"))
+            XCTAssertEqual(paths.documentsDirectory.path, directory.appendingPathComponent("Private Documents").path)
+            for outside in ["/external/Documents", "/run/user/1000/doc/fixture", directory.path + "-other/Documents"] {
+                try Data("XDG_DOCUMENTS_DIR=\"\(outside)\"\n".utf8).write(to: config.appendingPathComponent("user-dirs.dirs"))
+                XCTAssertEqual(paths.documentsDirectory.path, fallback.path)
+            }
+        }
+    }
+
+    func testSandboxRequiresHomeComponentsAndResolvesSymlinkEscapes() throws {
+        try withDirectories { directory in
+            let home = directory.appendingPathComponent("Home")
+            let outside = directory.appendingPathComponent("External")
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            let escape = home.appendingPathComponent("Escape")
+            try FileManager.default.createSymbolicLink(at: escape, withDestinationURL: outside)
+            let paths = LinuxPaths(environment: ["FLATPAK_ID": "ch.lkmc.monkeyspaw"], home: home)
+            for target in [home, home.appendingPathComponent("New/Library"), home.appendingPathComponent("Sub/../Library")] {
+                XCTAssertTrue(paths.supportsLibrary(at: target), target.path)
+            }
+            for target in [outside, URL(fileURLWithPath: home.path + "-other/Library"),
+                           home.appendingPathComponent("../External"), escape, escape.appendingPathComponent("New/Library"),
+                           URL(fileURLWithPath: "/run/user/1000/doc/fixture")] {
+                XCTAssertFalse(paths.supportsLibrary(at: target), target.path)
+            }
+            let alias = directory.appendingPathComponent("HomeAlias")
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: home)
+            let linkedHome = LinuxPaths(environment: ["FLATPAK_ID": "ch.lkmc.monkeyspaw"], home: alias)
+            XCTAssertTrue(linkedHome.supportsLibrary(at: alias.appendingPathComponent("New/Library")))
+            XCTAssertTrue(LinuxPaths(environment: [:], home: home, flatpakInfoExists: false).supportsLibrary(at: outside))
+        }
+    }
+
     func testUnsetDirectoriesUseHomeFallbacks() {
         assertFallbacks(environment: [:])
     }

@@ -110,6 +110,36 @@ Never commit those backups or shortcut values/tokens to this checklist.
 - [ ] On a KDE-host flatpak, verify the real installed/exported app identity,
   consent persistence, exported D-Bus service cold activation and per-backend
   paste readback. No direct KGlobalAccel activation or new host permission is
-  allowed. Packaging and real identity remain later owner proof.
+  allowed. Real installed identity remains owner proof.
+
+## Flatpak tray and library boundary
+
+All checks are **NOT RUN**. Record the main commit, artifact version/hash,
+Flatpak version and user overrides with the KDE/portal versions above.
+Use one active install route per user: native and Flatpak share
+`ch.lkmc.monkeyspaw`. Quit the other route and verify host activation reaches
+the sandbox before testing.
+
+- [ ] Inspect `flatpak info --show-permissions ch.lkmc.monkeyspaw`: IPC/network,
+  Wayland/fallback-X11, home read/write and only Secret Service plus
+  `org.kde.StatusNotifierWatcher` talk permissions. Portals/app subnames use
+  filtered defaults. No host dconf, KGlobalAccel, host-spawn, unrestricted bus
+  or foreign-name ownership grant is allowed; review user overrides separately.
+- [ ] Confirm one tray item registers under
+  `ch.lkmc.monkeyspaw.StatusNotifierItem-<pid>-1`, with no owned `org.kde.*`
+  name. Click the picker/menu actions, quit/relaunch and restart the watcher.
+  The item disappears on quit and returns once on restart. With no watcher,
+  the app remains usable and starts no watcher.
+- [ ] Confirm fresh config/data and file-backed secrets use
+  `~/.var/app/ch.lkmc.monkeyspaw/{config,data}/monkeyspaw`, without importing
+  native state. Home access is read/write for the whole home to support
+  editable, watched home libraries. Test the default and a chosen home
+  library, live edits, return to default and persistence after restart.
+  An outside-home XDG Documents setting falls back to `~/Documents/MonkeysPaw`.
+- [ ] Select an external/document-portal folder or a home symlink leading
+  outside home. The typed refusal shows home/native guidance and preserves
+  the active graph, watcher, editor and saved library choice. Cancel another
+  selection and confirm the same preservation. Use a home library or the
+  native app; an outside-home filesystem override cannot remove this boundary.
 
 Results: no owner session, version record or real KDE test has been run.

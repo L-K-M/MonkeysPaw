@@ -21,7 +21,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         let outcomes: [LibrarySwitchOutcome] = [
             .switched, .settingsNotSaved(.writeFailed(.ioFailure)), .deliveryInFlight,
             .invalidTarget(.notAbsolute), .invalidTarget(.missing), .invalidTarget(.notDirectory),
-            .invalidTarget(.unreadable), .invalidTarget(.symlink),
+            .invalidTarget(.unreadable), .invalidTarget(.symlink), .invalidTarget(.outsideSandboxHome),
             .invalidTarget(.rejectedByStore(.invalidRoot)), .libraryUnavailable(.ioFailure)
         ]
         for outcome in outcomes {

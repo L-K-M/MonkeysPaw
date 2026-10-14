@@ -6,6 +6,7 @@ public enum LibraryTargetError: Equatable, Sendable {
     case notDirectory
     case unreadable
     case symlink
+    case outsideSandboxHome
     case rejectedByStore(FileStoreError)
 }
 
