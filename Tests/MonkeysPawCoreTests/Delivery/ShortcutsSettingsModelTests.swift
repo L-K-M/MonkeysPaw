@@ -600,21 +600,27 @@ final class ShortcutsSettingsModelTests: XCTestCase {
         XCTAssertEqual(h.probe.fixedActions, [.repeatLast])
         h.probe.repeatHotkey = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .unbound,
             detail: "Unsupported", configuration: .unavailable)
+        let queries = h.probe.queriedActions.count
         h.setup.performFix(for: .kde, action: .repeatLast)
+        XCTAssertEqual(h.probe.queriedActions.count, queries + HotkeyAction.allCases.count)
+        XCTAssertEqual(Array(h.probe.queriedActions.suffix(2)), HotkeyAction.allCases)
         XCTAssertEqual(h.probe.fixedActions, [.repeatLast])
     }
 
     func testManualRegistrationDoesNotVerifyEffectivePortalNativeOrCarbonActions() throws {
         for mechanism in [HotkeyMechanism.globalShortcutsPortal, .kglobalaccel, .carbon] {
-            let h = Harness()
+            let h = Harness(mainMode: .immediate)
             h.backend.mechanism = mechanism
-            h.shortcuts.configure([.togglePicker: try Accelerator("Alt+P"), .repeatLast: try Accelerator("Alt+R")]) { _ in }
+            var fires = 0
+            h.shortcuts.configure([.togglePicker: try Accelerator("Alt+P"), .repeatLast: try Accelerator("Alt+R")]) { _ in fires += 1 }
             h.probe.repeatHotkey = HotkeyRegistration(mechanism: .manual, status: .needsAction,
                 detail: "gapplication action ch.lkmc.monkeyspaw repeat")
             h.settings?.refresh()
             h.settings?.beginVerification(.repeatLast)
             h.backend.fire(.repeatLast)
+            h.delivery.main.drain()
 
+            XCTAssertEqual(fires, 1, "The event must be delivered before checking that it cannot verify \(mechanism)")
             XCTAssertEqual(h.settings?.repeatLast.verification, .waiting, "\(mechanism)")
             XCTAssertEqual(h.settings?.togglePicker.verification, .notStarted)
         }

@@ -101,9 +101,11 @@ public final class SetupService {
 
     private func snapshot() -> SetupSnapshot {
         let session = session.currentSession()
-        let incoming = Dictionary(uniqueKeysWithValues: HotkeyAction.allCases.map {
-            ($0, probe.hotkeyRegistration(for: $0))
-        })
+        let pickerRegistration = probe.hotkeyRegistration(for: .togglePicker)
+        var incoming: [HotkeyAction: HotkeyRegistration] = [.togglePicker: pickerRegistration]
+        for action in HotkeyAction.allCases where action != .togglePicker {
+            incoming[action] = probe.hotkeyRegistration(for: action)
+        }
         // The live read may itself notify ShortcutService observers. This
         // service will publish this snapshot, so do not recursively probe it.
         let wasReadingSnapshot = isReadingSnapshot
@@ -111,7 +113,7 @@ public final class SetupService {
         shortcuts.refreshRegistrations(incoming)
         isReadingSnapshot = wasReadingSnapshot
         let registrations = shortcuts.registrations
-        let registration = registrations[.togglePicker]!
+        let registration = registrations[.togglePicker] ?? pickerRegistration
         let hotkeyStatus = hotkeyStatus(registration, action: .togglePicker)
 
         let host = hostSession(of: session)

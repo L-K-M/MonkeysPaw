@@ -26,6 +26,7 @@ final class ShortcutActionTests: XCTestCase {
         func set(_ text: String, for action: HotkeyAction) -> Result<HotkeyRegistration, ShortcutRebindError>? {
             var result: Result<HotkeyRegistration, ShortcutRebindError>?
             shortcuts.setAccelerator(text, for: action) { result = $0 }
+            XCTAssertNotNil(result, "The immediate MainThread must deliver the completion before returning")
             return result
         }
     }
@@ -141,6 +142,9 @@ final class ShortcutActionTests: XCTestCase {
 
         XCTAssertEqual(h.set("Alt+F8", for: .togglePicker), .failure(.recoveryFailed))
 
+        XCTAssertEqual(h.backend.registered.count, 4)
+        XCTAssertEqual(h.backend.unregistered.count, 2)
+        XCTAssertTrue(h.backend.registrationOutcomes.isEmpty)
         XCTAssertEqual(h.shortcuts.registrations[.togglePicker]?.status, .failed)
         XCTAssertEqual(h.settings.snapshot, previous)
         _ = try h.set("Ctrl+Alt+P", for: .togglePicker)?.get()
