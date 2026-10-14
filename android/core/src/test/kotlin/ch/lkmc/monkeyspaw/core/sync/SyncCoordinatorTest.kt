@@ -2,21 +2,109 @@
 
 package ch.lkmc.monkeyspaw.core.sync
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
+import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueCode
+import ch.lkmc.monkeyspaw.core.domain.format.PromptWriteError
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
+import java.lang.reflect.InvocationTargetException
 import java.time.Instant
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.test.*
 
 class SyncCoordinatorTest {
     private val v = SyncTestValues
     private val groupScope = PromptScope.Group(v.group.rawValue)
     private val groupPath = "Groups/Team/a.md"
+
+    @Test fun successfulPassSurvivesPullCleanupFailureAndStartupSweepsTheLeftovers() = runTest {
+        for (failure in listOf<Throwable>(StoreError.IOFailure, AssertionError("Synthetic cleanup failure"))) {
+            val h = EngineHarness(testScheduler, backgroundScope)
+            val bytes = EngineHarness.source("Downloaded head")
+            h.remote[v.personal.rawValue] = EngineHarness.prompt(bytes)
+            h.start()
+            h.data.onDelete = { if (it.startsWith("sync/pull-")) throw failure }
+
+            val result = h.engine.runBackground()
+            assertEquals(SyncStatus.IDLE, result.status)
+            assertNotNull(result.lastSuccess)
+            assertEquals(1, result.counts.pulled)
+            assertContentEquals(bytes, h.files.read("a.md"))
+            assertEquals("user-1", h.state.cursors[v.userScope])
+            assertTrue(h.data.listFiles().any { it.relativePath.startsWith("sync/pull-") })
+
+            h.engine.stop()
+            h.data.onDelete = null
+            val requests = h.requests.size
+            h.start()
+            assertEquals(requests, h.requests.size)
+            assertTrue(h.engine.reports.value.enabled)
+            assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
+            assertNotNull(h.engine.runBackground().lastSuccess)
+            h.engine.stop()
+        }
+    }
+
+    @Test fun deniedDeleteFallbackSkipsAnUnrootableRecordBeforeTheMatchingRecord() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        h.files.delete(groupPath)
+        val unrootable = SyncPromptState(v.groupScope, "a".repeat(Limits.maxRootedPathBytes), 0)
+        val state = h.state.copy(prompts = linkedMapOf(v.groupID to unrootable) + h.state.prompts)
+        h.states.update(h.binding) { state }
+        assertFailsWith<StoreError.InvalidPath> { SyncLocalScanner.rooted(unrootable.path, unrootable.scope, state.groups) }
+
+        // The scanner rejects this pending path earlier; isolate the defensive fallback without widening its API.
+        val restored = coordinator(h).restoreDeniedForTest(groupPath, state,
+            SyncReconciliationSnapshot(h.binding, emptyList()))
+        assertFalse(restored)
+        assertContentEquals(h.remote.getValue(v.personal.rawValue).content.encodeToByteArray(), h.files.read(groupPath))
+        assertEquals(unrootable, h.state.prompts[v.groupID])
+        assertTrue(h.writes.isEmpty())
+    }
+
+    @Test fun deniedHeadGETPreservesFreshUncanonicalizableBytesAndRestoresTheHead() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        h.files.put(EngineHarness.source("First local edit"), groupPath)
+        val later = EngineHarness.source("Future local edit", "format: 99\n")
+        assertEquals(v.personal, PromptCodec.parseFile(later, "a.md").frontMatter.id)
+        assertFailsWith<PromptWriteError.UnsupportedFormat> { SyncLocalScanner.canonical(later, "a.md", v.groupScope) }
+        h.respond = { if (it.method == HttpMethod.GET) h.files.put(later, groupPath); null }
+
+        h.start()
+        val report = h.engine.runBackground()
+        assertEquals(SyncStatus.SYNC_ERROR, report.status)
+        assertNull(report.blockingIssue)
+        assertTrue(report.details.any { it.code == PromptIssueCode.UNSUPPORTED_FORMAT.rawValue })
+        assertContentEquals(h.remote.getValue(v.personal.rawValue).content.encodeToByteArray(), h.files.read(groupPath))
+        val copy = h.files.listFiles().single { it.relativePath.startsWith("Conflicts/") }
+        assertContentEquals(later, h.files.read(copy.relativePath))
+        assertTrue(h.data.listFiles().filter { it.relativePath.endsWith(".bin") }.any { h.data.read(it.relativePath).contentEquals(later) })
+        assertTrue(h.writes.isEmpty())
+        h.engine.stop()
+    }
+
+    @Test fun adoptionReportsScanningBeforeMatchingAndPublishingTheIdentity() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.files.put(EngineHarness.source(id = null), "a.md")
+        h.remote[v.personal.rawValue] = EngineHarness.prompt(EngineHarness.source())
+        var currentPhase: SyncPhase? = null
+        val publicationPhases = mutableListOf<SyncPhase?>()
+        h.files.onWrite = { if (it == "a.md") publicationPhases.add(currentPhase) }
+
+        coordinator(h).run(phase = { currentPhase = it })
+        assertEquals(listOf<SyncPhase?>(SyncPhase.SCANNING), publicationPhases)
+        assertEquals(v.personal, PromptCodec.parseFile(h.files.read("a.md"), "a.md").frontMatter.id)
+        assertTrue(h.writes.isEmpty())
+    }
 
     @Test fun locallyDeniedViewerEditPreservesRawPersonalMetadataAndRestoresExactHead() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
@@ -299,4 +387,18 @@ class SyncCoordinatorTest {
             engine.stop(); release.complete(Unit); worker.join(); engine.drain(); scope.cancel()
         }
     }
+
+    private fun coordinator(h: EngineHarness) = SyncCoordinator(SyncWorkPermit(h.binding, 1), h.client, h.data,
+        h.states, h.accounts, h.rig.mutations, h.rig.journal, h.pending, "Device", { v.device },
+        { Instant.parse("2026-10-14T12:00:00Z") }, MonotonicClock { h.scheduler.currentTime * 1_000_000 })
+
+    private suspend fun SyncCoordinator.restoreDeniedForTest(path: String, state: SyncState,
+                                                            local: SyncReconciliationSnapshot): Boolean =
+        suspendCoroutineUninterceptedOrReturn { continuation ->
+            val method = javaClass.getDeclaredMethod("restoreDenied", String::class.java, SyncState::class.java,
+                SyncReconciliationSnapshot::class.java, Continuation::class.java)
+            method.isAccessible = true
+            try { method.invoke(this, path, state, local, continuation) }
+            catch (error: InvocationTargetException) { throw error.targetException }
+        }
 }

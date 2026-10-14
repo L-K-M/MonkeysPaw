@@ -63,7 +63,6 @@ internal class SyncCoordinator(
         var recollected = false
         var foldersPrepared = false
         var pull: SyncCollectedPull? = null
-        var failed = false
         try {
             repeat(preparationLimit) {
                 check()
@@ -110,7 +109,7 @@ internal class SyncCoordinator(
                     }
                 }
                 if (plan.mode == SyncReconciliationPlan.Mode.RESTORE) phase(SyncPhase.RESYNCING)
-                if (preparePolicy(plan, local)) return@repeat
+                if (preparePolicy(plan, local, phase)) return@repeat
                 phase(SyncPhase.GROUP_FOLDERS)
                 if (collected.removed.isNotEmpty()) {
                     val current = old ?: SyncState(permit.binding)
@@ -123,7 +122,7 @@ internal class SyncCoordinator(
                 commit(application(plan, local))
                 result = result.copy(counts = result.counts.copy(pulled = plan.operations.size))
                 progress(result)
-                collected.discard()
+                runCatching { collected.discard() }
                 pull = null
                 phase(SyncPhase.SCANNING)
                 // A denied-head collision resets a scope. Never return push candidates until it is recollected.
@@ -146,13 +145,9 @@ internal class SyncCoordinator(
                 return summarize(result)
             }
             throw SyncCoordinatorError.NoProgress
-        } catch (error: Throwable) {
-            failed = true
-            throw error
         } finally {
             // Cleanup must also run on cancellation/fatal driver errors. Start sweeps any failed deletion next time.
-            try { pull?.discard() }
-            catch (error: Throwable) { if (!failed) throw error }
+            runCatching { pull?.discard() }
         }
     }
 
@@ -283,7 +278,7 @@ internal class SyncCoordinator(
     private suspend fun restoreDenied(path: String, state: SyncState, local: SyncReconciliationSnapshot): Boolean {
         val source = local.files.firstOrNull { it.path == path }
         val identity = source?.identity ?: state.prompts.entries.firstOrNull {
-            SyncLocalScanner.rooted(it.value.path, it.value.scope, state.groups) == path
+            runCatching { SyncLocalScanner.rooted(it.value.path, it.value.scope, state.groups) }.getOrNull() == path
         }?.key ?: throw SyncCoordinatorError.NoProgress
         val recorded = state.prompts[identity]
         var head: SyncConflictHead? = null
@@ -317,7 +312,8 @@ internal class SyncCoordinator(
             val operations = mutableListOf<SyncReconciliationOperation>()
             if (file != null) {
                 val unchanged = installation?.let { file.path == it.remote.libraryPath &&
-                    SyncLocalScanner.canonical(file.bytes, it.remote.path, it.remote.scope).bytes.contentEquals(it.remote.bytes) } == true
+                    runCatching { SyncLocalScanner.canonical(file.bytes, it.remote.path, it.remote.scope).bytes }
+                        .getOrNull()?.contentEquals(it.remote.bytes) == true } == true
                 operations.add(if (unchanged) SyncReconciliationOperation.Install(installation!!)
                     else SyncReconciliationOperation.Preserve(SyncReconciliationPreservation(identity.id,
                         SyncReconciliationPreservation.Reason.DIRTY_UPSERT, file, installation)))
@@ -372,10 +368,11 @@ internal class SyncCoordinator(
         return SyncReconciliationPlan(plan.mode, plan.expectedState, next,
             plan.operations.filter { it !is SyncReconciliationOperation.RemovedScope }, plan.occupiedPaths, plan.localIdentities)
     }
-    private fun preparePolicy(plan: SyncReconciliationPlan, local: SyncReconciliationSnapshot): Boolean {
+    private fun preparePolicy(plan: SyncReconciliationPlan, local: SyncReconciliationSnapshot, phase: (SyncPhase) -> Unit): Boolean {
         for (operation in plan.operations) {
             when (operation) {
                 is SyncReconciliationOperation.Adoption -> {
+                    phase(SyncPhase.SCANNING)
                     val decision = SyncAdoption.match(operation.remote, local, plan.nextState.groups)
                     when (decision) {
                         is SyncAdoptionDecision.Adopt, is SyncAdoptionDecision.Conflict -> {
