@@ -39,7 +39,7 @@ internal data class SyncAuthentication(val credential: SyncCredential, val user:
 }
 
 /** Payloads are available to the engine, but exceptions retain no cause or diagnostic body. */
-internal sealed class SyncHTTPClientError private constructor() : Exception("Sync HTTP failed.", null, false, true) {
+sealed class SyncHTTPClientError private constructor() : Exception("Sync HTTP failed.", null, false, true) {
     class Conflict(val head: ConflictHead) : SyncHTTPClientError()
     class PathTaken(val existing: ExistingPrompt) : SyncHTTPClientError()
     data object Deleted : SyncHTTPClientError()

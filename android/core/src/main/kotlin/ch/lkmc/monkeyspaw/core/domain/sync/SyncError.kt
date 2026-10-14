@@ -5,7 +5,7 @@ import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathIssueCode
 import ch.lkmc.monkeyspaw.core.ports.StoreError
 
 /** Fixed diagnostics only, without input, parser exceptions or driver causes. */
-internal sealed class SyncError private constructor(code: String) : Exception(code, null, false, true) {
+sealed class SyncError private constructor(code: String) : Exception(code, null, false, true) {
     data object CorruptFile : SyncError("corruptFile")
     data class FutureVersion(val version: Long) : SyncError("futureVersion")
     data class UnsupportedVersion(val version: Long) : SyncError("unsupportedVersion")
