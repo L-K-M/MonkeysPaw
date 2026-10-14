@@ -6,7 +6,8 @@ enum AssistantHTTP {
     enum StatusPolicy { case successOnly, formatProbe }
 
     static func send(_ request: HTTPRequest, through transport: HTTPTransporting,
-                     policy: StatusPolicy = .successOnly) async throws -> HTTPResponse {
+                     policy: StatusPolicy = .successOnly,
+                     nowUTC: @Sendable () -> Date = { Date() }) async throws -> HTTPResponse {
         do {
             try Task.checkCancellation()
             let response = try await transport.send(request)
@@ -18,7 +19,7 @@ enum AssistantHTTP {
             case 400 where policy == .formatProbe: return response
             case 401, 403: throw AssistantError.authentication
             case 404: throw AssistantError.modelNotFound
-            case 429: throw AssistantError.rateLimited(retryAfter: retryAfter(response.headers))
+            case 429: throw AssistantError.rateLimited(retryAfter: retryAfter(response.headers, now: nowUTC()))
             case 529: throw AssistantError.overloaded
             default: throw AssistantError.providerFailure(statusCode: response.statusCode)
             }
@@ -33,7 +34,7 @@ enum AssistantHTTP {
         }
     }
 
-    private static func retryAfter(_ headers: [String: String]) -> TimeInterval? {
+    private static func retryAfter(_ headers: [String: String], now: Date) -> TimeInterval? {
         guard let raw = headers.first(where: { $0.key.lowercased() == "retry-after" })?.value else { return nil }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) }) {
@@ -48,6 +49,6 @@ enum AssistantHTTP {
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
         formatter.isLenient = false
         guard let date = formatter.date(from: value), formatter.string(from: date) == value else { return nil }
-        return max(0, date.timeIntervalSinceNow)
+        return max(0, date.timeIntervalSince(now))
     }
 }

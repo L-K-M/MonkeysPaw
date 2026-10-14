@@ -37,6 +37,7 @@ object Limits {
     const val responseCap = 2 * 1024 * 1024
     const val syncResponseCap = 16 * 1024 * 1024
     const val llmJSONNestingCap = 32
+    const val assistantEnvelopeNestingCap = 512
     // Foundation's provider-state reader accepts at most 512 open containers.
     internal const val providerStateJSONNestingCap = 512
 }
