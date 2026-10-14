@@ -44,6 +44,8 @@ sealed class LibraryError private constructor(message: String) : Exception(messa
     object CommitUnverified : LibraryError("File committed but could not be verified. Reload before retrying.")
     object PreviewMismatch : LibraryError("Saved bytes must match the assistant preview.")
     object CopyLimitReached : LibraryError("No available prompt name within the creation limit.")
+    object AccessDenied : LibraryError("This group prompt is read-only or unavailable.")
+    object AccessChanged : LibraryError("Access changed. Review the action again.")
     object OperationFailed : LibraryError("Local operation failed.")
 
     final override fun toString(): String = message.orEmpty()
@@ -78,10 +80,17 @@ sealed class PromptIdentity {
 }
 
 @ConsistentCopyVisibility
-data class LibraryEntry internal constructor(val relativePath: String, val document: PromptDocument, val stamp: FileStamp) {
+data class LibraryEntry internal constructor(
+    val relativePath: String, val document: PromptDocument, val stamp: FileStamp,
+    val access: PromptAccessState = PromptAccessState.Local, val accessGeneration: Long = 0,
+    val favorite: Boolean = document.frontMatter.favorite,
+) {
     val identity: PromptIdentity = PromptIdentity.at(relativePath, document.frontMatter.id)
     val folder: String get() = relativePath.substringBeforeLast('/', "")
     val issues: List<PromptIssue> get() = document.issues
+
+    internal fun projected(snapshot: GroupAccessSnapshot): LibraryEntry = copy(
+        access = snapshot.access(relativePath, identity), accessGeneration = snapshot.generation, favorite = snapshot.favorite(this))
 }
 
 data class HistoryRevision(val identity: PromptIdentity, val filename: String, val timestamp: Instant)
@@ -90,19 +99,20 @@ data class HistoryRevision(val identity: PromptIdentity, val filename: String, v
 data class LibrarySaveResult(val entry: LibraryEntry, val historyMaintenanceFailed: Boolean = false,
     val provenanceMaintenanceFailed: Boolean = false)
 
-enum class SourceReadOnlyReason { FUTURE_FORMAT, INVALID_UTF8, SOURCE_TOO_LARGE }
+enum class SourceReadOnlyReason { FUTURE_FORMAT, INVALID_UTF8, SOURCE_TOO_LARGE, GROUP_VIEWER, GROUP_UNAVAILABLE }
 
 class LoadedPrompt internal constructor(bytes: ByteArray, val entry: LibraryEntry) {
     private val bytes = bytes.copyOf()
     val sourceBytes: ByteArray get() = bytes.copyOf()
-    val readOnlyReason: SourceReadOnlyReason? = when {
+    private val sourceReadOnlyReason: SourceReadOnlyReason? = when {
         entry.document.isReadOnly -> SourceReadOnlyReason.FUTURE_FORMAT
         entry.issues.any { it.code == PromptIssueCode.INVALID_UTF8 } -> SourceReadOnlyReason.INVALID_UTF8
         entry.issues.any { it.code == PromptIssueCode.SOURCE_TOO_LARGE } -> SourceReadOnlyReason.SOURCE_TOO_LARGE
         else -> null
     }
-    val source: String? get() = if (readOnlyReason == SourceReadOnlyReason.INVALID_UTF8 ||
-        readOnlyReason == SourceReadOnlyReason.SOURCE_TOO_LARGE) null else entry.document.source
+    val readOnlyReason: SourceReadOnlyReason? = sourceReadOnlyReason ?: entry.access.readOnlyReason
+    val source: String? get() = if (sourceReadOnlyReason == SourceReadOnlyReason.INVALID_UTF8 ||
+        sourceReadOnlyReason == SourceReadOnlyReason.SOURCE_TOO_LARGE) null else entry.document.source
 }
 
 sealed interface PromptLoadResult {

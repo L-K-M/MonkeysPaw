@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.services
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.ports.*
+import kotlinx.coroutines.Job
 import java.util.concurrent.CancellationException
 
 sealed interface EditResult {
@@ -31,11 +32,16 @@ class PromptHistorySnapshot internal constructor(val revision: HistoryRevision, 
  * cancellation and stale replies. No UI callback, watcher or filesystem driver lives here.
  */
 class EditingService(private val library: LibraryService) {
+    val accessSnapshot: GroupAccessSnapshot get() = library.accessSnapshot
+    fun captureWritePermit(job: Job? = null): LibraryWritePermit = library.captureWritePermit(job)
+
     fun load(path: String): PromptLoadResult = library.mutations.run { library.checkedLoad(path) }
 
-    fun create(source: String, path: String): EditResult = writeSource(source, path, null) { EditResult.Saved(library.create(it, path)) }
+    fun create(source: String, path: String, permit: LibraryWritePermit = library.currentWritePermit()): EditResult =
+        writeSource(source, path, null) { EditResult.Saved(library.create(it, path, permit = permit)) }
 
-    fun save(source: String, path: String, expectedStamp: FileStamp?): EditResult = writeSource(source, path, expectedStamp) { document ->
+    fun save(source: String, path: String, expectedStamp: FileStamp?, permit: LibraryWritePermit = library.currentWritePermit()): EditResult =
+        writeSource(source, path, expectedStamp) { document ->
         val current = library.checkedLoad(path)
         when (current) {
             is PromptLoadResult.Loaded -> {
@@ -47,7 +53,7 @@ class EditingService(private val library: LibraryService) {
             PromptLoadResult.Missing -> if (expectedStamp != null) return@writeSource EditResult.Missing
             is PromptLoadResult.Failed -> return@writeSource EditResult.Failed(current.error)
         }
-        EditResult.Saved(library.save(document, path, expectedStamp))
+        EditResult.Saved(library.save(document, path, expectedStamp, permit = permit))
     }
 
     /** Always return the actual result, including publication that outlives its assistant/editor. */
@@ -72,31 +78,36 @@ class EditingService(private val library: LibraryService) {
         }
     }
 
-    fun rename(path: String, filename: String, expectedStamp: FileStamp): EditResult {
+    fun rename(path: String, filename: String, expectedStamp: FileStamp, permit: LibraryWritePermit = library.currentWritePermit()): EditResult {
         val folder = path.substringBeforeLast('/', "")
         val destination = (if (folder.isEmpty()) "" else "$folder/") + filename
         return command(path, expectedStamp, validate = {
             if (filename.isEmpty() || '/' in filename) throw StoreError.InvalidPath
             LibraryPath.validate(destination)
-        }) { moved(path, destination, expectedStamp) }
+        }) { moved(path, destination, expectedStamp, permit) }
     }
 
-    fun move(path: String, folder: String, expectedStamp: FileStamp): EditResult {
+    fun move(path: String, folder: String, expectedStamp: FileStamp, permit: LibraryWritePermit = library.currentWritePermit()): EditResult {
         val destination = (if (folder.isEmpty()) "" else "$folder/") + LibraryPath.filename(path)
         return command(path, expectedStamp, validate = {
             if (folder.isNotEmpty()) StorePath.validate(folder)
             LibraryPath.validate(destination)
-        }) { moved(path, destination, expectedStamp) }
+        }) { moved(path, destination, expectedStamp, permit) }
     }
 
-    fun delete(path: String, expectedStamp: FileStamp): EditResult = command(path, expectedStamp) {
-        library.delete(path, expectedStamp)
+    fun delete(path: String, expectedStamp: FileStamp, permit: LibraryWritePermit = library.currentWritePermit()): EditResult = command(path, expectedStamp) {
+        library.delete(path, expectedStamp, permit)
         EditResult.Deleted
     }
 
-    fun restore(revision: HistoryRevision, path: String, expectedStamp: FileStamp): EditResult = command(path, expectedStamp) {
-        try { EditResult.Saved(library.restore(revision, path, expectedStamp)) }
+    fun restore(revision: HistoryRevision, path: String, expectedStamp: FileStamp, permit: LibraryWritePermit = library.currentWritePermit()): EditResult = command(path, expectedStamp) {
+        try { EditResult.Saved(library.restore(revision, path, expectedStamp, permit)) }
         catch (error: PromptWriteError) { EditResult.ForensicRestoreBlocked(error) }
+    }
+
+    fun createPrivateCopy(source: String, original: LibraryEntry, destination: String,
+                          permit: LibraryWritePermit = library.currentWritePermit()): EditResult = writeSource(source, destination, null) {
+        EditResult.Saved(library.createPrivateCopy(it, original, destination, permit))
     }
 
     /** Captured original bytes for preview/forensics; history reads never sample the clipboard. */
@@ -109,8 +120,8 @@ class EditingService(private val library: LibraryService) {
         }
     }
 
-    private fun moved(source: String, destination: String, stamp: FileStamp): EditResult =
-        when (val move = library.move(source, destination, stamp)) {
+    private fun moved(source: String, destination: String, stamp: FileStamp, permit: LibraryWritePermit): EditResult =
+        when (val move = library.move(source, destination, stamp, permit)) {
             is LibraryMoveResult.Moved -> EditResult.Saved(LibrarySaveResult(move.entry))
             is LibraryMoveResult.Relocated -> EditResult.Relocated(move.baseline, move.current)
         }
@@ -144,6 +155,7 @@ class EditingService(private val library: LibraryService) {
     }
 
     private fun outcome(error: Exception, path: String, expectedStamp: FileStamp?): EditResult {
+        if (error is CancellationException) throw error
         if (error is LibraryError.DestinationOccupied) return EditResult.DestinationOccupied
         if (error is LibraryError.Conflict || error is StoreError.NotFound) {
             return when (val current = library.checkedLoad(path)) {

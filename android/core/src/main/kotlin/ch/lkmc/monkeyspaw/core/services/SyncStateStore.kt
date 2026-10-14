@@ -6,9 +6,12 @@ import ch.lkmc.monkeyspaw.core.ports.SyncFileFlushing
 
 /** One active private state, checked against its account/root on every ordinary operation. */
 class SyncStateStore(files: StateStore, operations: SyncFileFlushing) {
-    private val persistence = SyncPersistence(files, operations, "sync/state.json", SyncStateJson.codec)
+    private val persistence = SyncPersistence(files, operations, "sync/state.json", SyncStateJson.codec) { state ->
+        state?.let { listOf(it.binding, it.groups, it.prompts.mapValues { prompt -> prompt.value.scope }) }
+    }
 
     internal val snapshot: SyncStoreSnapshot<SyncState> get() = persistence.snapshot
+    internal fun observeChanges(observer: () -> Unit) = persistence.observeChanges(observer)
 
     /** Stopped account transitions alone may inspect the previous binding. */
     internal fun loadForAccountTransition(): SyncState? = persistence.load()

@@ -20,7 +20,8 @@ data class PromptSearchResult(
 /** Pure ranking of indexed snapshots. The caller samples its clock once and owns usage persistence. */
 object PromptRanking {
     /** Retained events are supplied in recording order, after resolving the prompt's identity. */
-    class Input(val relativePath: String, val document: PromptDocument, useEvents: List<Instant> = emptyList()) {
+    class Input(val relativePath: String, val document: PromptDocument, useEvents: List<Instant> = emptyList(),
+                val favorite: Boolean = document.frontMatter.favorite) {
         internal val content = PromptSearchContent(relativePath, document)
         internal val useEvents = useEvents.toList()
         internal val titleBytes = document.frontMatter.title.encodeToByteArray(throwOnInvalidSequence = true)
@@ -32,15 +33,15 @@ object PromptRanking {
         val results = prompts.mapNotNull { input ->
             val match = input.content.match(parsed) ?: return@mapNotNull null
             val frecency = frecency(input.useEvents, at)
-            val boost = if (input.document.frontMatter.favorite) Limits.favoriteBoost else 1.0
+            val boost = if (input.favorite) Limits.favoriteBoost else 1.0
             val score = if (parsed.isEmpty) frecency else match.score * (1 + frecency) * boost
             PromptSearchResult(input, score, match.fields)
         }
         return results.sortedWith { left, right ->
             if (left.score != right.score) return@sortedWith right.score.compareTo(left.score)
             if (parsed.isEmpty) {
-                val leftFavorite = left.input.document.frontMatter.favorite
-                val rightFavorite = right.input.document.frontMatter.favorite
+                val leftFavorite = left.input.favorite
+                val rightFavorite = right.input.favorite
                 if (leftFavorite != rightFavorite) return@sortedWith if (leftFavorite) -1 else 1
             }
             val titles = Utf8Order.compare(left.input.titleBytes, right.input.titleBytes)

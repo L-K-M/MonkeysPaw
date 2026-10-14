@@ -8,9 +8,10 @@ import ch.lkmc.monkeyspaw.core.ports.SyncFileFlushing
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.serialization.json.*
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.withLock
 
-internal data class SyncStoreSnapshot<T>(val value: T?, val error: SyncError?)
+internal data class SyncStoreSnapshot<T>(val value: T?, val error: SyncError?, val accessVersion: Long = 0)
 
 /** One instance per document. The lock owns IO/cache/latches; edit closures must not reenter. */
 internal class SyncPersistence<T>(
@@ -18,38 +19,42 @@ internal class SyncPersistence<T>(
     private val operations: SyncFileFlushing,
     private val path: String,
     private val codec: SyncDocumentCodec<T>,
+    private val accessKey: (T?) -> Any? = { null },
 ) {
     private enum class FlushMode { PUBLICATION, DELETION }
     private data class Loaded<T>(val document: T?, val objectValue: SyncObject)
     private val lock = ReentrantLock()
-    private var cached = SyncStoreSnapshot<T>(null, null)
+    @Volatile private var cached = SyncStoreSnapshot<T>(null, null)
+    private val observers = CopyOnWriteArrayList<() -> Unit>()
     private var hasDocument = false
     private var uncertainFlush: FlushMode? = null
 
     init { try { load() } catch (_: SyncError) { /* load latched a sanitized error */ } }
 
-    val snapshot: SyncStoreSnapshot<T> get() = lock.withLock { cached }
+    // Access admission reads committed memory without acquiring a persistence lock.
+    val snapshot: SyncStoreSnapshot<T> get() = cached
+    fun observeChanges(observer: () -> Unit) { observers.add(observer) }
 
-    fun blockForRecovery(retaining: T?) = lock.withLock {
-        cached = SyncStoreSnapshot(retaining, SyncError.DurabilityUncertain)
+    fun blockForRecovery(retaining: T?) = observed {
+        publishCache(retaining, SyncError.DurabilityUncertain)
         uncertainFlush = FlushMode.PUBLICATION
     }
 
-    fun load(): T? = lock.withLock {
+    fun load(): T? = observed {
         val loaded = loadCurrent()
-        cached = SyncStoreSnapshot(loaded.document, null)
+        publishCache(loaded.document, null)
         hasDocument = loaded.document != null
         loaded.document
     }
 
     /** Only explicit replay can revalidate and reflush uncertain publication/deletion. */
-    fun recover(validate: (T?) -> Unit = {}): T? = lock.withLock {
+    fun recover(validate: (T?) -> Unit = {}): T? = observed {
         if (cached.error != SyncError.DurabilityUncertain) {
             val loaded = loadCurrent()
             validate(loaded.document)
-            cached = SyncStoreSnapshot(loaded.document, null)
+            publishCache(loaded.document, null)
             hasDocument = loaded.document != null
-            return@withLock loaded.document
+            return@observed loaded.document
         }
         val loaded = try {
             read().also {
@@ -65,21 +70,21 @@ internal class SyncPersistence<T>(
         }
         validate(loaded.document)
         flush(if (loaded.document == null) FlushMode.DELETION else FlushMode.PUBLICATION)
-        cached = SyncStoreSnapshot(loaded.document, null)
+        publishCache(loaded.document, null)
         hasDocument = loaded.document != null
         loaded.document
     }
 
-    fun update(change: (T?) -> T): Unit = lock.withLock {
+    fun update(change: (T?) -> T): Unit = observed {
         val loaded = loadCurrent()
         val next = change(loaded.document)
         write(next, loaded.objectValue)
-        cached = SyncStoreSnapshot(next, null)
+        publishCache(next, null)
         hasDocument = true
     }
 
     /** Explicit reset only, after journal/ownership preparation. Never reads an unreadable old file. */
-    fun reset(next: T?): Unit = lock.withLock {
+    fun reset(next: T?): Unit = observed {
         if (next != null) write(next, syncObject())
         else {
             val deleted = try { files.delete(path); true }
@@ -87,14 +92,30 @@ internal class SyncPersistence<T>(
             catch (error: Exception) { throw SyncError.WriteFailed(error as? StoreError ?: StoreError.IOFailure) }
             if (deleted || hasDocument || cached.error == SyncError.DurabilityUncertain) flush(FlushMode.DELETION)
         }
-        cached = SyncStoreSnapshot(next, null)
+        publishCache(next, null)
         hasDocument = next != null
+    }
+
+    private fun <R> observed(work: () -> R): R {
+        val before = cached
+        try { return lock.withLock(work) }
+        finally {
+            // Notifications never hold the IO lock or turn a committed write into a failure.
+            if (cached != before) observers.forEach { observer -> try { observer() } catch (_: Exception) { } }
+        }
+    }
+
+    private fun publishCache(value: T?, error: SyncError?) {
+        val previous = cached
+        // Keep intervening policy changes even if notifications observe only a later publication.
+        val changed = previous.error != error || accessKey(previous.value) != accessKey(value)
+        cached = SyncStoreSnapshot(value, error, previous.accessVersion + if (changed) 1 else 0)
     }
 
     private fun loadCurrent(): Loaded<T> {
         cached.error?.let { throw it }
         return try { read() } catch (error: SyncError) {
-            cached = SyncStoreSnapshot(null, error)
+            publishCache(null, error)
             throw error
         }
     }
@@ -138,7 +159,7 @@ internal class SyncPersistence<T>(
             operations.flushDirectory("sync")
             operations.flushDirectory(null)
         } catch (_: Exception) {
-            cached = SyncStoreSnapshot(cached.value, SyncError.DurabilityUncertain)
+            publishCache(cached.value, SyncError.DurabilityUncertain)
             uncertainFlush = mode
             throw SyncError.DurabilityUncertain
         }
