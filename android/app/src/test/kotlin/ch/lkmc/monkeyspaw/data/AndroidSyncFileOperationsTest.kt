@@ -395,6 +395,23 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
     }
 
     @Test
+    fun `consumed staging inode proves applied replacement even if the final name disappears`() {
+        val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
+            override fun replace(temporary: Path, destination: Path) {
+                super.replace(temporary, destination)
+                Files.delete(destination)
+                throw IOException("postpublication failure")
+            }
+        }, io).also { it.prepareRoot() }
+        prompts.create(original, "p.md")
+        val error = failure(SyncFileFailureCode.IO_FAILURE, SyncFileMutationEffect.APPLIED) {
+            prompts.syncOperations.publish(replacement, "p.md", matching(prompts, "p.md"), SyncFileMode.NORMAL)
+        }
+        assertContentEquals(original, error.displacedBytes)
+        assertNull(prompts.stamp("p.md"))
+    }
+
+    @Test
     fun `checked staging cleanup failure after exclusive publication is applied`() {
         val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
             override fun removeTemporary(temporary: Path) { throw IOException("private cleanup error") }
@@ -574,6 +591,25 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
     }
 
     @Test
+    fun `postnative rename failure stays applied when destination inspection also fails`() {
+        val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
+            override fun renameDirectory(source: Path, destination: Path) {
+                super.renameDirectory(source, destination)
+                io.onFlush = { path -> if (path == destination) throw IOException("destination flush failure") }
+                throw IOException("postrename native failure")
+            }
+        }, io).also { it.prepareRoot() }
+        prompts.syncOperations.createDirectory("Source")
+        val identity = prompts.syncOperations.directoryIdentity("Source")
+        failure(SyncFileFailureCode.IO_FAILURE, SyncFileMutationEffect.APPLIED) {
+            prompts.syncOperations.renameDirectory("Source", "Destination")
+        }
+        io.onFlush = { }
+        assertNull(prompts.syncOperations.directoryIdentity("Source"))
+        assertEquals(identity, prompts.syncOperations.directoryIdentity("Destination"))
+    }
+
+    @Test
     fun `empty removal never recursively deletes late hidden unowned files or subdirectories`() {
         sync.createDirectory("Group")
         val identity = assertNotNull(sync.directoryIdentity("Group"))
@@ -647,8 +683,8 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
     private fun failure(code: SyncFileFailureCode, effect: SyncFileMutationEffect = SyncFileMutationEffect.UNCHANGED,
                         work: () -> Any?): SyncFileOperationError {
         val error = assertFailsWith<SyncFileOperationError> { work() }
-        assertEquals(code, error.code)
         assertEquals(effect, error.effect)
+        assertEquals(code, error.code)
         assertNull(error.cause)
         return error
     }

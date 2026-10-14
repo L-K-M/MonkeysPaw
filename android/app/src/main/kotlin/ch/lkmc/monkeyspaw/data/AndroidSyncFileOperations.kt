@@ -39,8 +39,10 @@ internal class AndroidSyncFileOperations(
                 }
                 effect.applied = true
             } catch (error: Exception) {
-                if (files.attributes(destination)?.isRegularFile == true && files.nodeIdentity(destination) == stagedIdentity) {
-                    effect.applied = true
+                effect.observeFailure {
+                    // Atomic replacement consumes the staging name, even if a later writer removes the result.
+                    expecting is SyncFileExpectation.Matching && files.attributes(temporary) == null ||
+                        files.attributes(destination)?.isRegularFile == true && files.nodeIdentity(destination) == stagedIdentity
                 }
                 throw error
             }
@@ -91,7 +93,7 @@ internal class AndroidSyncFileOperations(
         val destination = regular(path)
         try { files.publication.unlink(destination); effect.applied = true }
         catch (error: Exception) {
-            if (files.attributes(destination) == null) effect.applied = true
+            effect.observeFailure { files.attributes(destination) == null }
             throw error
         }
         flushParents(path)
@@ -131,7 +133,7 @@ internal class AndroidSyncFileOperations(
         val to = vacant(destination)
         try { files.publication.renameDirectory(from, to); effect.applied = true }
         catch (error: Exception) {
-            if (files.attributes(from) == null && directoryStamp(destination) == identity) effect.applied = true
+            effect.observeFailure { files.attributes(from) == null }
             throw error
         }
         if (directoryStamp(destination) != identity) throw SyncFileOperationError(SyncFileFailureCode.CHANGED)
@@ -263,6 +265,11 @@ internal class AndroidSyncFileOperations(
     private class Effect {
         var applied = false
         var displaced: ByteArray? = null
+
+        fun observeFailure(probe: () -> Boolean) {
+            // Failed inspection cannot establish unchanged state or replace the original failure.
+            if (!applied) applied = try { probe() } catch (_: Exception) { true }
+        }
     }
 
     private fun <T> checked(work: (Effect) -> T): T {
