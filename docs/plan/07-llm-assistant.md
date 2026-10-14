@@ -152,6 +152,12 @@ re-entry or Clear before it can be used.
     of the early response-cap refusal contract. A separate monotonic deadline
     cancels the task even while bytes keep arriving; caller cancellation does
     the same.
+    Kotlin retains the first observed typed transport failure. Coroutine or
+    adapter-work cancellation throws `CancellationException` with that
+    failure as its cause. The cause is `HttpTransportError.Cancelled` when
+    cancellation won; an earlier cap, deadline or redirect failure survives.
+    This preserves the typed outcome without reporting routine cancellation
+    to `CoroutineExceptionHandler` as an unhandled failure.
     Every 3xx response is refused with a typed error, including responses
     without a usable Location header. No automatic retry is performed.
   - Provider error bodies are never shown or logged; the user sees a typed

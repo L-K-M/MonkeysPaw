@@ -190,9 +190,13 @@ dependencies {
     implementation(libs.androidx.datastore)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.coroutines)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.tls)
 }
 
 val graphSources = layout.projectDirectory.dir("src/main")
@@ -205,6 +209,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("monkeyspaw.appSources", graphSources.asFile.absolutePath)
     inputs.files(graphSources.file("AndroidManifest.xml"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/di/AppModule.kt"),
+        graphSources.file("res/xml/network_security_config.xml"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/MonkeysPawApplication.kt"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/MainActivity.kt"))
         .withPropertyName("appGraphSources").withPathSensitivity(PathSensitivity.RELATIVE)

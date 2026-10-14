@@ -36,3 +36,29 @@ Record the commit, APK SHA-256, device/API level, tester and results. This
 checks Android class/resource loading and any required Java library
 desugaring on the actual minimum API; static APK inspection cannot prove
 runtime execution.
+
+## Assistant transport device checks: NOT RUN
+
+M11 L7 supplies the shared `app/data/OkHttpHttpTransport` and Hilt binding.
+M10 should extend this driver with its deployment-bound sync URL policy.
+Assistant HTTP remains limited to literal localhost, canonical 127/8 and
+IPv6 ::1. The static network config permits cleartext because it cannot
+describe 127/8; the driver validates the policy before network work. Only
+system trust anchors apply to assistant TLS.
+
+JVM MockWebServer tests exercise request counts, caps, deadlines and
+cancellation. The Android gate builds debug and minified release APKs.
+Neither establishes runtime TLS or cancellation behavior on a phone.
+Once an assistant production caller exists, record the commit, APK SHA-256,
+device/API, signer fingerprint, tester/date and results for these checks:
+
+| Check | Expected result |
+|---|---|
+| Normally trusted HTTPS | Request succeeds using system trust |
+| Self-signed or user-installed-CA-only HTTPS | Typed network failure, no trust bypass |
+| Redirect to another host | Typed redirect refusal; target receives no request or credentials |
+| HTTP device loopback, including USB reverse forwarding | Allowed; a plaintext LAN or `.local` endpoint is refused |
+| Cancel during connect or stalled/continuous body receipt | Prompt typed cancellation and closed receipt |
+| Absolute deadline during queued work or continuous receipt | Typed deadline failure within the original intent budget |
+
+No device or emulator was used for L7. All checks above remain NOT RUN.
