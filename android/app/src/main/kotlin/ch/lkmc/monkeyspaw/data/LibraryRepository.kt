@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.data
 import ch.lkmc.monkeyspaw.core.ports.StoreError
 import ch.lkmc.monkeyspaw.core.services.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,8 @@ internal class LibraryRepository(
     private val io: CoroutineDispatcher,
 ) {
     private val mutex = Mutex()
+    private val refreshLock = Any()
+    private var refreshFlight: CompletableDeferred<LibraryState>? = null
     private var rootPrepared = false
     private var indexLoaded = false
     private val mutableState = MutableStateFlow(LibraryState(LibrarySnapshot(0, emptyList())))
@@ -38,7 +41,23 @@ internal class LibraryRepository(
     }
 
     /** Startup/foreground rescan stages a complete index; failure retains the last good snapshot. */
-    suspend fun refresh(): LibraryState = withContext(io) {
+    suspend fun refresh(): LibraryState {
+        // Register before dispatch so callers queued on the same IO worker join this scan too.
+        val candidate = CompletableDeferred<LibraryState>()
+        val flight = synchronized(refreshLock) { refreshFlight ?: candidate.also { refreshFlight = it } }
+        if (flight !== candidate) return flight.await()
+
+        try {
+            return scan().also { flight.complete(it) }
+        } catch (error: Throwable) {
+            flight.completeExceptionally(error)
+            throw error
+        } finally {
+            synchronized(refreshLock) { refreshFlight = null }
+        }
+    }
+
+    private suspend fun scan(): LibraryState = withContext(io) {
         mutex.withLock {
             mutableState.value = mutableState.value.copy(refreshing = true, error = null)
             try {

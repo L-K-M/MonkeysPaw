@@ -7,7 +7,10 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 internal class LibraryRepositoryTest : TemporaryFiles() {
@@ -51,6 +54,85 @@ internal class LibraryRepositoryTest : TemporaryFiles() {
             assertEquals(versions.max(), repository.state.value.snapshot.version)
             val restarted = repository(worker)
             assertEquals(30, restarted.refresh().snapshot.prompts.single().useEvents.size)
+        }
+    }
+
+    @Test
+    fun `startup and entry refreshes queued on one worker share one scan and result`() = runTest {
+        val prompts = AndroidPromptStore(libraryDir.toFile())
+        var scans = 0
+        val counted = object : PromptStore by prompts {
+            override fun listFiles(): List<StoredFile> {
+                scans++
+                return prompts.listFiles()
+            }
+        }
+        val library = library(prompts = counted)
+        val repository = LibraryRepository(library, EditingService(library), prompts, StandardTestDispatcher(testScheduler))
+        val startup = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+        val entry = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+        assertSame(startup.await(), entry.await())
+        assertEquals(1, scans)
+
+        put(libraryDir.resolve("new.md"))
+        assertEquals(listOf("new.md"), repository.refresh().snapshot.prompts.map { it.entry.relativePath })
+        assertEquals(2, scans, "A later foreground refresh must still rescan disk")
+    }
+
+    @Test
+    fun `queued refreshes share a sanitized failure and a later retry scans again`() = runTest {
+        val prompts = AndroidPromptStore(libraryDir.toFile())
+        var scans = 0
+        var fail = true
+        val counted = object : PromptStore by prompts {
+            override fun listFiles(): List<StoredFile> {
+                scans++
+                if (fail) error("SECRET prompt body")
+                return prompts.listFiles()
+            }
+        }
+        val library = library(prompts = counted)
+        val repository = LibraryRepository(library, EditingService(library), prompts, StandardTestDispatcher(testScheduler))
+        val startup = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+        val entry = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+        val failed = startup.await()
+        assertSame(failed, entry.await())
+        assertEquals(1, scans)
+        assertSame(LibraryError.OperationFailed, failed.error)
+        assertFalse(failed.refreshing)
+        fail = false
+        assertNull(repository.refresh().error)
+        assertEquals(2, scans)
+    }
+
+    @Test
+    fun `cancelling a joined entry refresh leaves the startup scan and other callers running`() = runBlocking {
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { worker ->
+            val prompts = AndroidPromptStore(libraryDir.toFile())
+            val started = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val scans = AtomicInteger()
+            val counted = object : PromptStore by prompts {
+                override fun listFiles(): List<StoredFile> {
+                    scans.incrementAndGet()
+                    started.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                    return prompts.listFiles()
+                }
+            }
+            val library = library(prompts = counted)
+            val repository = LibraryRepository(library, EditingService(library), prompts, worker)
+            val startup = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+            try {
+                assertTrue(started.await(5, TimeUnit.SECONDS))
+                val cancelled = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+                val entry = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+                cancelled.cancelAndJoin()
+                release.countDown()
+                assertSame(startup.await(), entry.await())
+                assertEquals(1, scans.get())
+                assertFalse(repository.state.value.refreshing)
+            } finally { release.countDown() }
         }
     }
 
