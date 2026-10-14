@@ -36,6 +36,13 @@ final class FakeMainThread: MainThread {
         while !pending.isEmpty { execute(pending.removeFirst()) }
     }
 
+    @discardableResult
+    func drainOne() -> Bool {
+        guard !pending.isEmpty else { return false }
+        execute(pending.removeFirst())
+        return true
+    }
+
     private func execute(_ work: () -> Void) {
         let previous = isRunning
         isRunning = true

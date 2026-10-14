@@ -385,7 +385,14 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
         catch { finish(operation, review(resolved.entry, .sourceChanged)); return }
         let mode: DeliveryMode = snapshot.record.copyOnly ? .copyOnly : .paste(pasteChord(invocation))
         delivery.deliver(text, mode: mode, invocation: invocation, isValid: {
-            self.current(operation) && !self.isOwnWindowActive()
+            guard self.current(operation), !self.isOwnWindowActive(), let entry = operation.entry else { return false }
+            // Validation replies take another UI hop in DeliveryService. Live
+            // access can change in that gap, before writing or sending a chord.
+            guard self.canAccess(entry) else {
+                operation.refusal = self.review(entry, .sourceUnavailable)
+                return false
+            }
+            return true
         }, validate: { ready in
             self.work.run {
                 let result = Result { try self.resolve(snapshot) }

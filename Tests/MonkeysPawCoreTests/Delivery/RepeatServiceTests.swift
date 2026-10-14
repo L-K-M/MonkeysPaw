@@ -261,6 +261,30 @@ final class RepeatServiceTests: XCTestCase {
         }
     }
 
+    func testAccessRevokedAfterValidationCallbackCannotWriteClipboard() throws {
+        let h = try RepeatHarness()
+        _ = try h.put("repeat body")
+        try h.deliver()
+        h.flow.delivery.clipboard.replaceText("new owner's clipboard")
+        h.flow.delivery.main.mode = .deferred
+        var reads = 0
+        h.flow.library.onRead = { _ in reads += 1 }
+        var results: [RepeatResult] = []
+        h.service.repeatLast { results.append($0) }
+        // Resolve once, then the queued write validation reads the source.
+        for _ in 0..<20 where reads < 2 { XCTAssertTrue(h.flow.delivery.main.drainOne()) }
+        XCTAssertEqual(reads, 2)
+        // The validation publishes its allowed result; the side effect still
+        // waits for DeliveryService's own UI hop.
+        XCTAssertTrue(h.flow.delivery.main.drainOne())
+        h.access.allowed = false
+        h.flow.delivery.main.drain()
+        h.flow.settle()
+        XCTAssertEqual(h.flow.delivery.clipboard.text, "new owner's clipboard")
+        XCTAssertEqual(results, [.reviewRequired(RepeatPromptReference(
+            identity: PromptIdentity(path: "a.md", id: nil), relativePath: "a.md"), .sourceUnavailable)])
+    }
+
     func testQueuedRepeatRevalidatesSourceBeforeClipboardWrite() throws {
         let h = try RepeatHarness()
         let entry = try h.put(assigned + "body")
