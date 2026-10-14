@@ -1,7 +1,7 @@
 import Foundation
 
 public enum LibrarySectionID: Hashable, Sendable {
-    case all, favourites, recent
+    case all, favourites, recent, conflicts
     /// Exact relative path bytes, including each ancestor of a nested folder.
     case folder(RelativePath)
     /// Normalized like the picker's exact #tag filter.
@@ -45,6 +45,11 @@ public struct LibraryBrowserRow: Equatable, Sendable {
     public let stamp: FileStamp
     public let lastUsedAt: Date?
     public let access: PromptAccessState
+    public let conflictOrigin: SyncPromptOrigin?
+    public var conflictOf: ULID? {
+        if case .conflictOf(let id) = conflictOrigin { return id }
+        return nil
+    }
 
     init(_ entry: LibraryEntry, lastUsedAt: Date?) {
         let front = entry.document.frontMatter
@@ -61,6 +66,7 @@ public struct LibraryBrowserRow: Equatable, Sendable {
         stamp = entry.stamp
         self.lastUsedAt = lastUsedAt
         access = entry.access
+        conflictOrigin = entry.access == .local ? try? SyncConflictMetadata.origin(in: entry.document) : nil
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -69,6 +75,7 @@ public struct LibraryBrowserRow: Equatable, Sendable {
             && lhs.previewLine == rhs.previewLine && lhs.issues == rhs.issues
             && lhs.isReadOnly == rhs.isReadOnly && lhs.canRender == rhs.canRender
             && lhs.stamp == rhs.stamp && lhs.lastUsedAt == rhs.lastUsedAt && lhs.access == rhs.access
+            && lhs.conflictOrigin == rhs.conflictOrigin
     }
 }
 

@@ -244,7 +244,9 @@ public final class LibraryBrowserModel: @unchecked Sendable {
     private func makeSections(_ all: [LibraryBrowserRow], recentCount: Int) -> [LibraryBrowserSection] {
         var result = [LibraryBrowserSection(id: .all, title: "All", count: all.count, parent: nil, depth: 0),
             LibraryBrowserSection(id: .favourites, title: "Favourites", count: all.filter(\.favorite).count, parent: nil, depth: 0),
-            LibraryBrowserSection(id: .recent, title: "Recent", count: recentCount, parent: nil, depth: 0)]
+            LibraryBrowserSection(id: .recent, title: "Recent", count: recentCount, parent: nil, depth: 0),
+            LibraryBrowserSection(id: .conflicts, title: "Conflicts", count: all.filter { $0.conflictOrigin != nil }.count,
+                parent: nil, depth: 0)]
         let groups = index.accessSnapshot.groups.values.sorted {
             if !$0.name.utf8.elementsEqual($1.name.utf8) { return $0.name.utf8.lexicographicallyPrecedes($1.name.utf8) }
             return $0.id.rawValue < $1.id.rawValue
@@ -289,6 +291,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         case .all: return true
         case .favourites: return row.favorite
         case .recent: return recentPaths.contains(row.relativePath)
+        case .conflicts: return row.conflictOrigin != nil
         case .folder(let folder): return row.access == .local && Self.folderAncestors(row.relativePath).contains(folder)
         case .tag(let tag): return row.tags.contains { FuzzyText.normalize($0) == tag }
         case .group(let id):
