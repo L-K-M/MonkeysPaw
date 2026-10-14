@@ -63,7 +63,7 @@ internal class AppGraphTest {
     }
 
     @Test
-    fun `manifest disables backups and permits only local M8 entry components in one process`() {
+    fun `manifest disables backups and permits only declared local entries in one process`() {
         val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
         val document = factory.newDocumentBuilder().parse(File(sources, "AndroidManifest.xml"))
         validateManifest(document)
@@ -108,7 +108,7 @@ internal class AppGraphTest {
         assertFalse(application.hasAttributeNS(androidNamespace, "fullBackupContent"))
         assertFalse(application.hasAttributeNS(androidNamespace, "dataExtractionRules"))
         val allowed = setOf(".MainActivity", ".entry.FillActivity", ".entry.PromptTileService", ".entry.PromptWidgetProvider",
-            ".entry.PromptShortcutActivity")
+            ".entry.PromptShortcutActivity", ".entry.ProcessTextActivity")
         val elements = document.getElementsByTagName("*")
         for (index in 0 until elements.length) {
             val element = elements.item(index) as org.w3c.dom.Element
