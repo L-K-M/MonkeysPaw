@@ -36,7 +36,7 @@ internal open class JvmCheckedSyncIO : CheckedSyncIO() {
         if (created) view.write(attribute, ByteBuffer.wrap(UUID.randomUUID().toString().encodeToByteArray()))
         val buffer = ByteBuffer.allocate(view.size(attribute))
         view.read(attribute, buffer)
-        DirectoryToken(buffer.array().decodeToString(), created)
+        decodeDirectoryToken(buffer.array(), created)
     }
 
     private companion object {

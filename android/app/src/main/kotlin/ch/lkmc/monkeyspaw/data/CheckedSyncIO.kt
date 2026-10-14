@@ -5,6 +5,7 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import ch.lkmc.monkeyspaw.core.ports.*
+import java.nio.charset.CharacterCodingException
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Files
 import java.nio.file.Path
@@ -22,6 +23,14 @@ internal abstract class CheckedSyncIO {
     abstract fun flushDirectory(path: Path)
     /** Persistent per-directory UUID. Inodes alone can be reused after deletion. */
     abstract fun directoryToken(path: Path): DirectoryToken
+
+    protected fun decodeDirectoryToken(bytes: ByteArray, created: Boolean): DirectoryToken {
+        val token = try { bytes.decodeToString(throwOnInvalidSequence = true) }
+        catch (_: CharacterCodingException) { throw SyncFileOperationError(SyncFileFailureCode.INVALID_STATE) }
+        val valid = try { UUID.fromString(token).toString() == token } catch (_: IllegalArgumentException) { false }
+        if (!valid) throw SyncFileOperationError(SyncFileFailureCode.INVALID_STATE)
+        return DirectoryToken(token, created)
+    }
 
     open fun setMode(path: Path, mode: SyncFileMode) {
         Files.getFileAttributeView(path, PosixFileAttributeView::class.java, NOFOLLOW_LINKS)
@@ -61,10 +70,7 @@ internal class AndroidCheckedSyncIO : CheckedSyncIO() {
                 catch (race: ErrnoException) { if (race.errno != OsConstants.EEXIST) throw race }
                 Os.getxattr(name, incarnationAttribute)
             }
-            val token = bytes.decodeToString(throwOnInvalidSequence = true)
-            val valid = try { UUID.fromString(token).toString() == token } catch (_: IllegalArgumentException) { false }
-            if (!valid) throw SyncFileOperationError(SyncFileFailureCode.INVALID_STATE)
-            return DirectoryToken(token, created)
+            return decodeDirectoryToken(bytes, created)
         } catch (error: Exception) {
             throw SyncFileOperationError((error as? SyncFileOperationError)?.code ?: SyncFileFailureCode.IO_FAILURE,
                 if (created) SyncFileMutationEffect.APPLIED else SyncFileMutationEffect.UNCHANGED)

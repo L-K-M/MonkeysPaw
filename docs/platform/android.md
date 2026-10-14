@@ -534,7 +534,7 @@ and best-effort local writes keep their existing contracts.
 | Full inventory includes hidden, unknown, empty and unowned entries; links block unsafe sync | NOT RUN |
 | Exact-byte exclusive publication and replacement; modes 0444 and 0600 survive replay | NOT RUN |
 | Read-only descriptor file fsync and checked directory/ancestor fsync succeed | NOT RUN |
-| Persistent incarnation marker survives restart/rename/child edits; delete/recreate changes it | NOT RUN |
+| Persistent incarnation marker survives restart/rename/child edits; recreation changes it; corrupt bytes fail permanently | NOT RUN |
 | Exclusive directory rename preserves unknown contents and refuses occupied destinations | NOT RUN |
 | Interrupt both case-rename steps, recreate the graph and replay twice without losing either version | NOT RUN |
 | Inject file/parent flush failures; applied effects retain losing bytes and no cursor commits early | NOT RUN |

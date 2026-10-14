@@ -3,8 +3,10 @@ package ch.lkmc.monkeyspaw.data
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.nio.file.*
 import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -674,6 +676,20 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
             override fun directoryToken(path: Path): DirectoryToken { throw UnsupportedOperationException("private filesystem details") }
         }).syncOperations
         failure(SyncFileFailureCode.IO_FAILURE) { unsupported.listFiles() }
+        assertTrue(store.listFiles().isEmpty())
+    }
+
+    @Test
+    fun `non UTF8 incarnation marker is a permanent consistency error and remains intact`() {
+        store.prepareRoot()
+        val attribute = "monkeyspaw.sync-incarnation"
+        val corrupt = byteArrayOf(-1, -2)
+        val view = Files.getFileAttributeView(libraryDir, UserDefinedFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS)
+        view.write(attribute, ByteBuffer.wrap(corrupt))
+        failure(SyncFileFailureCode.INVALID_STATE) { sync.listFiles() }
+        val retained = ByteBuffer.allocate(view.size(attribute))
+        view.read(attribute, retained)
+        assertContentEquals(corrupt, retained.array())
         assertTrue(store.listFiles().isEmpty())
     }
 
