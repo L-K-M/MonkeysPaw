@@ -52,7 +52,7 @@ object StorePath {
     fun validate(path: String) {
         val bytes = try { path.encodeToByteArray(throwOnInvalidSequence = true) }
         catch (_: CharacterCodingException) { throw StoreError.InvalidPath }
-        if (bytes.isEmpty() || bytes.size > Limits.maxPathBytes || '\\' in path ||
+        if (bytes.isEmpty() || bytes.size > Limits.maxRootedPathBytes || '\\' in path ||
             path.codePoints().anyMatch(UnicodeText::isControlOrFormat) ||
             path.split('/').any { it.isEmpty() || it == "." || it == ".." }) throw StoreError.InvalidPath
     }

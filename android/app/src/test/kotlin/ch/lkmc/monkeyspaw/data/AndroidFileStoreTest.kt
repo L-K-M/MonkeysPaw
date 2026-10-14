@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.data
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.ports.StoreError
 import java.io.File
 import java.io.IOException
@@ -131,11 +132,26 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
     fun `raw invalid paths cannot create parents or escape`() {
         val store = AndroidPromptStore(libraryDir.toFile())
         for (path in listOf("", "/outside.md", "../outside.md", "a/../p.md", "a//p.md", "a/./p.md",
-            "a\\p.md", "a/\u0000.md", "a/\u202E.md", "\uD800.md", "a".repeat(1025))) {
+            "a\\p.md", "a/\u0000.md", "a/\u202E.md", "\uD800.md", "a".repeat(Limits.maxRootedPathBytes + 1))) {
             assertFailsWith<StoreError.InvalidPath> { store.create(byteArrayOf(1), path) }
             assertFailsWith<StoreError.InvalidPath> { store.read(path) }
         }
         assertFalse(Files.exists(filesDir))
+    }
+
+    @Test
+    fun `full group wrapper fits the rooted cap and preserves exact bytes`() {
+        val store = AndroidPromptStore(libraryDir.toFile())
+        val wire = listOf("a".repeat(255), "b".repeat(255), "c".repeat(255), "x", "d".repeat(251) + ".md").joinToString("/")
+        val path = "Groups/" + "f".repeat(255) + "/" + wire
+        assertEquals(Limits.maxPathBytes, wire.encodeToByteArray().size)
+        assertEquals(Limits.maxRootedPathBytes, path.encodeToByteArray().size)
+        val bytes = byteArrayOf(0, -1, 13, 10)
+        store.create(bytes, path)
+        assertContentEquals(bytes, store.read(path))
+        assertEquals(listOf(path), store.listFiles().map { it.relativePath })
+        assertFailsWith<StoreError.InvalidPath> { store.create(bytes, path + "x") }
+        assertContentEquals(bytes, store.read(path))
     }
 
     @Test

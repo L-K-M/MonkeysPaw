@@ -1,6 +1,9 @@
 package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.sync.*
+import ch.lkmc.monkeyspaw.core.ports.StorePath
+import ch.lkmc.monkeyspaw.core.ports.StoreError
+import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathValidator
 import ch.lkmc.monkeyspaw.core.syncapi.Role
 import kotlin.test.*
 
@@ -90,5 +93,28 @@ class SyncDomainTest {
             original.copy(scope = v.groupScope), original.copy(accessGeneration = 1), original.copy(operation = SyncOperation.MOVE))
         for (candidate in changed) assertNotEquals(original, candidate)
         assertFailsWith<SyncError.InvalidState> { original.copy(accessGeneration = -1) }
+    }
+
+    @Test fun rootedGroupWrapperSupportsSwiftPendingAndHeldPathsWithoutWideningWirePaths() {
+        val wire = listOf("a".repeat(255), "b".repeat(255), "c".repeat(255), "x", "d".repeat(251) + ".md").joinToString("/")
+        val rooted = "Groups/" + "f".repeat(255) + "/" + wire
+        assertEquals(1024, wire.encodeToByteArray().size)
+        assertEquals(1287, rooted.encodeToByteArray().size)
+        assertEquals(wire, SyncPathValidator.validate(wire, SyncPathValidator.Scope.GROUP).path)
+        StorePath.validate(rooted)
+        assertFailsWith<StoreError.InvalidPath> { StorePath.validate(rooted + "x") }
+        val pending = SyncPromptState(v.groupScope, rooted, 0)
+        val held = SyncHeldPrompt(v.personalID, rooted, v.accountIdentity(), v.hash)
+        val state = v.state().copy(prompts = mapOf(v.groupID to pending))
+        val files = MemoryStore()
+        SyncStateStore(files, SyncFlushes()).update(state.binding) { state }
+        val ownership = v.ownership().copy(holds = listOf(held))
+        SyncAccountStore(files, SyncFlushes()).updateBinding(ownership.root) { ownership }
+        assertEquals(state, SyncStateStore(files, SyncFlushes()).load(state.binding))
+        assertEquals(ownership, SyncAccountStore(files, SyncFlushes()).binding(ownership.root))
+        SyncPromptState(v.groupScope, wire, 1, v.hash)
+        assertFailsWith<SyncError.InvalidState> { SyncPromptState(v.groupScope, wire + "x", 1, v.hash) }
+        assertFailsWith<SyncError.InvalidState> { SyncPromptState(v.groupScope, rooted + "x", 0) }
+        assertFailsWith<SyncError.InvalidState> { held.copy(path = rooted + "x") }
     }
 }

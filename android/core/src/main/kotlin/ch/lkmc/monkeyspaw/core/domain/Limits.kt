@@ -12,6 +12,8 @@ object Limits {
     const val usageEventCap = 1024
     const val valuesFileCapBytes = 1_048_576
     const val maxPathBytes = 1024
+    // Wire path plus Groups/<255-byte folder>/, without shortening the server path.
+    const val maxRootedPathBytes = maxPathBytes + 7 + 255 + 1
     const val libraryRecentCap = 100
     const val frecencyHalfLifeDays = 14.0
     const val frecencyCap = 32.0
