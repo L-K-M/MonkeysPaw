@@ -20,7 +20,7 @@ extension SyncGroupFolders {
         })
         let files = try inventory.local.files.filter { file in
             let identity = try file.identity
-            let inFolder = folders.contains { contains(RelativePath(file.path), in: $0) || RelativePath(file.path) == $0 }
+            let inFolder = try folders.contains { try contains(RelativePath(file.path), in: $0) || RelativePath(file.path) == $0 }
             let recorded = state.prompts[identity]
             if retainingIDs.contains(identity) {
                 guard !inFolder, recorded.map({ !scopes.contains($0.scope) }) ?? true else {
@@ -61,21 +61,23 @@ extension SyncGroupFolders {
         let old = try state ?? SyncState(binding: binding)
         var next = old
         var owned = try ownership ?? SyncLibraryBinding(root: binding.root, owner: binding.account)
-        let legitimate = Set(old.groups.compactMap { id, group -> RelativePath? in
+        let legitimate = try Set(old.groups.compactMap { id, group -> String? in
             if let retained = owned.managedFolders[id], retained.owner != binding.account || retained.folder != group.folder { return nil }
             if owned.managedFolders.contains(where: { $0.key != id && $0.value.folder == group.folder }) { return nil }
-            return RelativePath("Groups/" + group.folder)
+            return try SyncNaming.pathKey(RelativePath("Groups/" + group.folder))
         })
-        let roots = Set(inventory.directories.keys.filter { path in
+        let roots = try Set(inventory.directories.keys.filter { path in
             let parts = path.string.utf8.split(separator: 47)
             guard let first = parts.first, SyncPathCaseFold.fold(String(decoding: first, as: UTF8.self)) == "groups" else { return false }
-            return (parts.count == 2 && !legitimate.contains(path)) || (parts.count == 1 && path.string != "Groups")
+            return try (parts.count == 2 && !legitimate.contains(SyncNaming.pathKey(path)))
+                || (parts.count == 1 && path.string != "Groups")
         })
-        let files = inventory.local.files.filter { file in
+        let files = try inventory.local.files.filter { file in
             let parts = file.path.utf8.split(separator: 47)
             guard let first = parts.first, SyncPathCaseFold.fold(String(decoding: first, as: UTF8.self)) == "groups" else { return false }
             if parts.count >= 3, parts[0].elementsEqual("Groups".utf8) {
-                return !legitimate.contains(RelativePath(parts.prefix(2).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")))
+                let folder = RelativePath(parts.prefix(2).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/"))
+                return try !legitimate.contains(SyncNaming.pathKey(folder))
             }
             return true
         }
@@ -89,7 +91,7 @@ extension SyncGroupFolders {
         next = try SyncState(binding: old.binding, databaseID: old.databaseID, cursors: cursors,
             groups: old.groups, prompts: old.prompts.filter { !retired.contains($0.key) },
             favorites: old.favorites.filter { !retired.contains($0.key) })
-        for (id, folder) in owned.managedFolders where !legitimate.contains(RelativePath("Groups/" + folder.folder)) {
+        for (id, folder) in owned.managedFolders where try !legitimate.contains(SyncNaming.pathKey(RelativePath("Groups/" + folder.folder))) {
             owned.managedFolders[id] = nil
         }
         let edits = try rescue(files, clean: { _ in false }, inventory: inventory, ownership: &owned,
@@ -172,7 +174,7 @@ extension SyncGroupFolders {
                 let destination = try SyncNaming.rescue(source: RelativePath(file.path), at: date, occupiedPaths: occupied)
                 // An occupied ancestor cannot become a directory. Fail before
                 // source retirement rather than partly applying an impossible plan.
-                guard !inventory.local.files.contains(where: { contains(destination, in: RelativePath($0.path)) }) else {
+                guard try !inventory.local.files.contains(where: { try contains(destination, in: RelativePath($0.path)) }) else {
                     throw SyncGroupFolderError.rescueRequired
                 }
                 let edit = try mutations.rescue(file, at: destination, freshID: id)
@@ -180,8 +182,8 @@ extension SyncGroupFolders {
                 occupied.append(destination)
                 let held = inventory.local.heldPaths.contains(RelativePath(file.path)) || edit.heldIssue != nil
                 let identity = edit.heldIssue == nil ? PromptIdentity.assigned(id) : PromptIdentity(path: destination.string, id: nil)
-                let sourceAccount = previousOwnership?.managedFolders.values.first(where: {
-                    contains(RelativePath(file.path), in: RelativePath("Groups/" + $0.folder))
+                let sourceAccount = try previousOwnership?.managedFolders.values.first(where: {
+                    try contains(RelativePath(file.path), in: RelativePath("Groups/" + $0.folder))
                 })?.owner ?? inventory.local.binding.account
                 try migrateHold(from: file, to: destination, identity: identity, hash: edit.hash!,
                     sourceAccount: sourceAccount, ownership: &ownership,
@@ -204,9 +206,14 @@ extension SyncGroupFolders {
             $0.path == RelativePath(file.path) || $0.identity == originalIdentity || $0.contentHash == file.hash
         }
         guard alwaysHold || !matches.isEmpty else { return }
-        ownership.holds.removeAll { $0.path == RelativePath(file.path) || $0.path == path }
+        // Equal bytes keep moved idless files held, but cannot establish provenance.
+        let source = matches.first { $0.path == RelativePath(file.path) || $0.identity == originalIdentity }
+        ownership.holds.removeAll {
+            $0.path == RelativePath(file.path) || $0.path == path
+                || ($0.identity != originalIdentity && $0.contentHash == file.hash)
+        }
         ownership.holds.append(try SyncHeldPrompt(identity: identity, path: path,
-            sourceAccount: matches.first?.sourceAccount ?? sourceAccount, contentHash: hash))
+            sourceAccount: source?.sourceAccount ?? sourceAccount, contentHash: hash))
     }
 
     private static func dropping(_ scopes: Set<SyncScopeKey>, from state: SyncState) throws -> SyncState {
@@ -220,7 +227,10 @@ extension SyncGroupFolders {
     private static func removalPlan(state: SyncState?, next: SyncState, ownership: SyncLibraryBinding?,
                                     nextOwnership: SyncLibraryBinding, folders: Set<RelativePath>,
                                     inventory: SyncGroupFolderInventory, edits: [SyncLibraryEdit]) throws -> SyncApplyPlan {
-        let paths = inventory.directories.keys.filter { path in folders.contains(path) || folders.contains { contains(path, in: $0) } }
+        let keys = try Set(folders.map(SyncNaming.pathKey))
+        let paths = try inventory.directories.keys.filter { path in
+            try keys.contains(SyncNaming.pathKey(path)) || folders.contains { try contains(path, in: $0) }
+        }
             .sorted { $0.string.utf8.count == $1.string.utf8.count ? $1 < $0 : $0.string.utf8.count > $1.string.utf8.count }
         let directories = try paths.map { try SyncDirectoryEdit(removing: $0, identity: inventory.directories[$0]!) }
         try next.validate()

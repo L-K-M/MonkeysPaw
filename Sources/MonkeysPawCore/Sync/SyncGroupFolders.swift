@@ -61,8 +61,18 @@ enum SyncGroupFolders {
             guard retained == nil || retained?.owner == binding.account else { throw SyncGroupFolderError.rescueRequired }
             let priorFolder = previous?.folder ?? retained?.folder
             if let previous, let retained, previous.folder != retained.folder { throw SyncGroupFolderError.rescueRequired }
-            let source = priorFolder.map { RelativePath("Groups/" + $0) }
-            if let source, inventory.local.files.contains(where: { RelativePath($0.path) == source }) {
+            let canonicalSource = priorFolder.map { RelativePath("Groups/" + $0) }
+            let existingDirectory = try canonicalSource.flatMap { source -> (key: RelativePath, value: FileStamp)? in
+                let key = try SyncNaming.pathKey(source)
+                let matches = try inventory.directories.filter { try SyncNaming.pathKey($0.key) == key }
+                guard matches.count <= 1 else { throw SyncGroupFolderError.invalidInventory }
+                return matches.first
+            }
+            // State keeps its allocation; mutations use the actual disk spelling.
+            let source = existingDirectory?.key ?? canonicalSource
+            if let source, try inventory.local.files.contains(where: {
+                try SyncNaming.pathKey(RelativePath($0.path)) == SyncNaming.pathKey(source)
+            }) {
                 throw SyncGroupFolderError.rescueRequired
             }
             let folder: String
@@ -70,13 +80,16 @@ enum SyncGroupFolders {
             if let priorFolder, previous == nil || previous?.name.utf8.elementsEqual(membership.name.utf8) == true {
                 folder = priorFolder
             } else {
-                let otherNames = occupied.filter { $0 != source }.compactMap(childFolder)
+                let otherNames = try occupied.filter {
+                    guard let source else { return true }
+                    return try SyncNaming.pathKey($0) != SyncNaming.pathKey(source)
+                }.compactMap(childFolder)
                 folder = try SyncNaming.groupFolder(membership.name, occupied: otherNames)
             }
             let group = try SyncGroupState(name: membership.name, folder: folder, role: membership.role)
             let destination = RelativePath("Groups/" + folder)
             try FileStorePath.validate(destination.string)
-            if let source, source != destination, let identity = inventory.directories[source] {
+            if let source, source != destination, let identity = existingDirectory?.value {
                 let intermediate: RelativePath?
                 if try SyncNaming.pathKey(source) == SyncNaming.pathKey(destination) {
                     let candidate = RelativePath("Groups/_sync-" + UUID().uuidString.lowercased())
@@ -85,12 +98,12 @@ enum SyncGroupFolders {
                     }
                     intermediate = candidate
                 } else { intermediate = nil }
-                for path in occupied where contains(path, in: source) {
+                for path in occupied where try contains(path, in: source) {
                     try FileStorePath.validate(relocated(path, from: source, to: destination).string)
                     if let intermediate { try FileStorePath.validate(relocated(path, from: source, to: intermediate).string) }
                 }
                 let localFiles = try inventory.local.files.filter {
-                    guard contains(RelativePath($0.path), in: source) else { return false }
+                    guard try contains(RelativePath($0.path), in: source) else { return false }
                     if case .local = try $0.identity { return true }
                     return false
                 }
@@ -103,7 +116,7 @@ enum SyncGroupFolders {
                         to: SyncIdentifiers.promptIdentity(transition.destination))
                 }
                 owned.holds = try owned.holds.map { hold in
-                    guard contains(hold.path, in: source) else { return hold }
+                    guard try contains(hold.path, in: source) else { return hold }
                     let path = relocated(hold.path, from: source, to: destination)
                     let identity: PromptIdentity
                     if case .local = hold.identity { identity = PromptIdentity(path: path.string, id: nil) }
@@ -115,7 +128,7 @@ enum SyncGroupFolders {
                 directories.append(try SyncDirectoryEdit(reserving: destination))
             }
             if let source, previous?.role != membership.role || membership.role == .viewer {
-                for file in inventory.local.files where contains(RelativePath(file.path), in: source) {
+                for file in inventory.local.files where try contains(RelativePath(file.path), in: source) {
                     let path = relocated(RelativePath(file.path), from: source, to: destination)
                     let moved = try SyncLibraryFile(path: path.string, stamp: file.stamp, bytes: file.bytes)
                     edits.append(try mutations.mode(membership.role == .viewer ? .readOnly : .normal, for: moved))
@@ -152,17 +165,20 @@ enum SyncGroupFolders {
         for path in inventory.directories.keys { try FileStorePath.validate(path.string) }
     }
 
-    static func contains(_ path: RelativePath, in directory: RelativePath) -> Bool {
-        path.string.utf8.starts(with: (directory.string + "/").utf8)
+    static func contains(_ path: RelativePath, in directory: RelativePath) throws -> Bool {
+        try SyncNaming.pathKey(path).utf8.starts(with: (SyncNaming.pathKey(directory) + "/").utf8)
     }
 
     static func relocated(_ path: RelativePath, from source: RelativePath, to destination: RelativePath) -> RelativePath {
-        RelativePath(destination.string + String(decoding: path.string.utf8.dropFirst(source.string.utf8.count), as: UTF8.self))
+        let depth = source.string.utf8.split(separator: 47).count
+        let suffix = path.string.utf8.split(separator: 47).dropFirst(depth).joined(separator: [47])
+        return RelativePath(destination.string + "/" + String(decoding: Array(suffix), as: UTF8.self))
     }
 
-    static func childFolder(_ path: RelativePath) -> String? {
+    static func childFolder(_ path: RelativePath) throws -> String? {
         let parts = path.string.utf8.split(separator: 47)
-        guard parts.count == 2, parts[0].elementsEqual("Groups".utf8) else { return nil }
+        guard parts.count == 2,
+              try SyncNaming.pathKey(RelativePath(String(decoding: parts[0], as: UTF8.self))) == "groups" else { return nil }
         return String(decoding: parts[1], as: UTF8.self)
     }
 }

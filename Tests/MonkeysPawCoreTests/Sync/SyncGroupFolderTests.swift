@@ -134,6 +134,75 @@ final class SyncGroupFolderTests: XCTestCase {
         XCTAssertEqual(try restarted.state().groups[group]?.folder, "TEAM")
     }
 
+    func testCaseDriftedManagedFolderIsNeverRescuedAsStale() throws {
+        let rig = try Rig(files: MemoryFileStore(pathMatching: .caseInsensitive))
+        let bytes = SyncApplyTestRig.bytes("keep", id: id(30))
+        try rig.base.files.write(bytes, at: "Groups/Alpha/f.md")
+        let owned = try rig.seed(groups: [group: SyncGroupState(name: "Alpha", folder: "alpha", role: .editor)],
+            prompts: [.assigned(id(30)): try record("f.md", bytes: bytes)])
+        let old = try rig.state()
+        let plan = try SyncGroupFolders.stale(state: old, ownership: owned, inventory: rig.inventory(),
+            at: date, freshID: generator(), mutations: rig.base.mutations)
+        XCTAssertTrue(plan.edits.isEmpty)
+        XCTAssertTrue(plan.directories.isEmpty)
+        XCTAssertNil(plan.bindingChange)
+        XCTAssertEqual(plan.nextState, old)
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/alpha/f.md"), bytes)
+        XCTAssertTrue(rig.base.libraryOperations.trashed.isEmpty)
+        XCTAssertEqual(try rig.state().groups[group]?.folder, "alpha")
+    }
+
+    func testCaseDriftedFolderRenameMigratesLocalKeysHoldsAndModes() throws {
+        let rig = try Rig(files: MemoryFileStore(pathMatching: .caseInsensitive))
+        let source: RelativePath = "Groups/Alpha/f.md"
+        let target: RelativePath = "Groups/Beta/f.md"
+        try rig.base.files.put("{{name}}", at: source.string)
+        let identity = PromptIdentity(path: source.string, id: nil)
+        try rig.base.values.record(identity: identity, values: ["name": "remembered"])
+        let pending = try SyncPromptState(scope: .group(group), path: "f.md", rev: 0)
+        var owned = try rig.seed(groups: [group: SyncGroupState(name: "Alpha", folder: "alpha", role: .editor)],
+            prompts: [identity: pending])
+        owned.holds = [try SyncHeldPrompt(identity: identity, path: source, sourceAccount: owned.owner,
+            contentHash: SyncHash(bytes: Data("{{name}}".utf8)))]
+        try rig.accounts.updateBinding(for: owned.root) { _ in owned }
+        let plan = try SyncGroupFolders.update([member("Beta", role: .viewer)], state: rig.state(), ownership: owned,
+            inventory: rig.inventory(), mutations: rig.base.mutations)
+        let rename = try XCTUnwrap(plan.directories.first)
+        XCTAssertEqual(rename.kind, .rename)
+        XCTAssertEqual(rename.source, "Groups/Alpha")
+        XCTAssertEqual(rename.localFiles.map(\.path), [source.string])
+        XCTAssertEqual(plan.edits.map(\.path), [target.string])
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        let migrated = PromptIdentity(path: target.string, id: nil)
+        XCTAssertEqual(try rig.base.values.rememberedValues(for: migrated), ["name": "remembered"])
+        XCTAssertTrue(try rig.base.values.rememberedValues(for: identity).isEmpty)
+        XCTAssertEqual(try rig.state().prompts[migrated], pending)
+        XCTAssertNil(try rig.state().prompts[identity])
+        XCTAssertEqual(try rig.accounts.binding(for: owned.root)?.holds.first?.path, target)
+        XCTAssertEqual(rig.base.libraryOperations.modes[target], .readOnly)
+        XCTAssertEqual(try rig.base.files.text(at: target.string), "{{name}}")
+    }
+
+    func testFolderContainmentUsesSharedFoldAndRelocationKeepsWholeSuffix() throws {
+        XCTAssertTrue(try SyncGroupFolders.contains("Groups/STRASSE/sub/f.md", in: "Groups/Straße"))
+        XCTAssertFalse(try SyncGroupFolders.contains("Groups/Alpha2/f.md", in: "Groups/alpha"))
+        XCTAssertEqual(try SyncGroupFolders.childFolder("groups/Beta"), "Beta")
+        XCTAssertNil(try SyncGroupFolders.childFolder("Groups/Beta/sub"))
+        XCTAssertTrue(try SyncGroupFolders.contains("Groups/Kelvin/sub/f.md", in: "Groups/Kelvin"))
+        XCTAssertEqual(SyncGroupFolders.relocated("Groups/Kelvin/sub/f.md",
+            from: "Groups/Kelvin", to: "Groups/New"), "Groups/New/sub/f.md")
+    }
+
+    func testAllocationIncludesCaseDriftedReservedRootChildren() throws {
+        let rig = try Rig(files: MemoryFileStore(pathMatching: .caseInsensitive))
+        let owned = try rig.seed(groups: [:])
+        try rig.base.libraryOperations.createDirectory(at: "groups/Beta")
+        let plan = try SyncGroupFolders.update([member("Beta")], state: rig.state(), ownership: owned,
+            inventory: rig.inventory(), mutations: rig.base.mutations)
+        XCTAssertEqual(plan.nextState.groups[group]?.folder, "Beta (2)")
+    }
+
     func testEmptyRenameRejectsReplacementDirectoryOnReplay() throws {
         let rig = try Rig()
         try rig.base.libraryOperations.createDirectory(at: "Groups/Team")
@@ -540,6 +609,49 @@ final class SyncGroupFolderTests: XCTestCase {
             ownership: rig.accounts.binding(for: rig.base.binding.root), availability: .available,
             freshID: generator(300), mutations: rig.base.mutations)
         XCTAssertTrue(scan.changes.isEmpty)
+    }
+
+    func testHashOnlyHoldMigratesWithoutInheritingAnotherAccount() throws {
+        let rig = try Rig()
+        try rig.base.files.put("held idless", at: "Groups/Old/moved.md")
+        var owned = try rig.seed(groups: [:])
+        owned.holds = [try SyncHeldPrompt(identity: PromptIdentity(path: "old.md", id: nil), path: "old.md",
+            sourceAccount: SyncTestValues.account(userID: SyncTestValues.otherUser),
+            contentHash: SyncHash(bytes: Data("held idless".utf8)))]
+        try rig.accounts.updateBinding(for: owned.root) { _ in owned }
+        let plan = try SyncGroupFolders.stale(state: rig.state(), ownership: owned, inventory: rig.inventory(),
+            at: date, freshID: generator(), mutations: rig.base.mutations)
+        let copy = try XCTUnwrap(plan.edits.first { $0.kind == .rescue })
+        let holds = try XCTUnwrap(plan.bindingChange).next.holds
+        XCTAssertEqual(holds.count, 1)
+        XCTAssertEqual(holds.first?.path, RelativePath(copy.path))
+        XCTAssertEqual(holds.first?.sourceAccount, owned.owner)
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        XCTAssertEqual(try rig.accounts.binding(for: owned.root)?.holds, holds)
+    }
+
+    func testHoldProvenanceUsesPathOrIdentityAndRetainsOtherInstallation() throws {
+        let rig = try Rig()
+        let bytes = SyncApplyTestRig.bytes("held", id: id(30))
+        try rig.base.files.write(bytes, at: "Groups/Old/f.md")
+        var owned = try rig.seed(groups: [:])
+        let origin = try SyncTestValues.account(userID: SyncTestValues.otherUser)
+        owned.holds = [
+            try SyncHeldPrompt(identity: .assigned(id(31)), path: "twin.md", sourceAccount: owned.owner,
+                contentHash: SyncHash(bytes: bytes)),
+            try SyncHeldPrompt(identity: .assigned(id(30)), path: "Groups/Old/f.md", sourceAccount: origin,
+                contentHash: SyncHash(bytes: bytes)),
+            try SyncHeldPrompt(identity: .assigned(id(30)), path: "other-installation.md", sourceAccount: origin,
+                contentHash: SyncHash(bytes: bytes))
+        ]
+        try rig.accounts.updateBinding(for: owned.root) { _ in owned }
+        let plan = try SyncGroupFolders.stale(state: rig.state(), ownership: owned, inventory: rig.inventory(),
+            at: date, freshID: generator(), mutations: rig.base.mutations)
+        let copy = try XCTUnwrap(plan.edits.first { $0.kind == .rescue })
+        let holds = try XCTUnwrap(plan.bindingChange).next.holds
+        XCTAssertEqual(Set(holds.map(\.path)), [RelativePath(copy.path), "other-installation.md"])
+        XCTAssertEqual(holds.first { $0.path == RelativePath(copy.path) }?.sourceAccount, origin)
+        XCTAssertEqual(holds.first { $0.path == "other-installation.md" }, owned.holds.last)
     }
 
     func testIdlessFolderRenameKeepsRememberedValuesAndPendingLocalKey() throws {
