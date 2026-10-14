@@ -42,7 +42,11 @@ internal class LibraryViewModel @Inject constructor(
         if (refreshJob?.isActive == true) return
         actionFailure = null
         mutableState.value = mutableState.value.copy(failure = null, historyMaintenanceFailed = false)
-        refreshJob = viewModelScope.launch { repository.refresh() }
+        refreshJob = viewModelScope.launch {
+            repository.refresh()
+            // An identical retry failure can be conflated by StateFlow; always reconcile it.
+            load()
+        }
     }
 
     fun setQuery(query: String) {

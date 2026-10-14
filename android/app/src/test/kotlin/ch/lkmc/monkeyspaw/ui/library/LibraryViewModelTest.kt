@@ -376,6 +376,11 @@ internal class LibraryViewModelTest : TemporaryFiles() {
         assertEquals(LibraryFailure.DATA, model.state.value.failure)
         assertEquals(4, model.state.value.rows.size)
         assertFalse(model.state.value.refreshing)
+        // StateFlow can conflate the transient busy state and the same final error on retry.
+        model.refresh()
+        runCurrent()
+        assertEquals(LibraryFailure.DATA, model.state.value.failure)
+        assertEquals(4, model.state.value.rows.size)
         model.setQuery("rvw")
         model.setFilter(LibraryFilter.Favourites)
         runCurrent()
