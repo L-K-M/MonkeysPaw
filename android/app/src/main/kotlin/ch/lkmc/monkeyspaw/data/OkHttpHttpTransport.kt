@@ -120,6 +120,12 @@ internal class OkHttpHttpTransport(
                     else -> HttpTransportError.InvalidURL
                 }
             }
+            // Z6 adds the sync TLS trust factory; until then only system trust is honoured.
+            is HttpUrlPolicy.Sync -> {
+                val policy = request.urlPolicy as HttpUrlPolicy.Sync
+                if (policy.trust != SyncTLSTrust.SYSTEM) throw HttpTransportError.InvalidRequest
+                policy.server.validatedRequestURL(raw)
+            }
         }
         val url = raw.toHttpUrlOrNull() ?: throw HttpTransportError.InvalidURL
         return url.newBuilder().host(url.host.removeSuffix(".")).build()
