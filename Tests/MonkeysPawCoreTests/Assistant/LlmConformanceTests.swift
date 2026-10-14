@@ -61,7 +61,7 @@ final class LlmConformanceTests: XCTestCase {
 
     func testUnknownKindsFalseSchemasAndUnconsumedExpectationsCannotPass() throws {
         let mutations: [(String, (inout [String: LlmFixtureJSON]) throws -> Void)] = [
-            ("unknown kind", { $0["kind"] = .string("exchange") }),
+            ("unknown kind", { $0["kind"] = .string("future-exchange") }),
             ("false schema", { $0["schema"] = .boolean(false) }),
             ("future schema", { $0["schema"] = .integer(2) }),
             ("unknown output", { $0["outputKind"] = .string("other") }),

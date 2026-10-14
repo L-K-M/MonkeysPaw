@@ -1,0 +1,233 @@
+{
+  "actions": [
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com.evil.example/v1/messages"
+          },
+          "response": {
+            "body": "1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "1-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.anthropic.com.evil.example/v1/messages",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "2-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://custom.api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "2-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "2-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "2-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://custom.api.anthropic.com/v1/models",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "3-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "http://127.0.0.1:9000/v1/messages"
+          },
+          "response": {
+            "body": "3-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "3-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "3-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "http://127.0.0.1:9000/v1",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "4-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com:8443/prefix/v1/messages"
+          },
+          "response": {
+            "body": "4-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "4-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "4-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "https://api.anthropic.com:8443/prefix/v1",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    }
+  ],
+  "category": "llm",
+  "kind": "exchange",
+  "schema": 1,
+  "setup": {
+    "capabilityState": null,
+    "nowMonotonicMs": 9000,
+    "nowUTC": "2026-10-13T00:00:00Z"
+  }
+}

@@ -1,0 +1,1181 @@
+{
+  "actions": [
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 400
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 400
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "1-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "2-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "2-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 401
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "2-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "3-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "3-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 403
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "3-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "4-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "4-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 404
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "modelNotFound"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "4-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "5-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "5-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 429
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "rateLimited",
+          "retryAfter": null
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "5-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "6-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "6-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 529
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "overloaded"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "6-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "7-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "7-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 500
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 500
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "7-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "8-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "8-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 201
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 201
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "8-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "9-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "9-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 204
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 204
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "9-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "10-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "10-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 405
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 405
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "10-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "11-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-beta": "server-side-fallback-2026-07-01",
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/messages"
+          },
+          "response": {
+            "body": "11-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 501
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 501
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "11-brief.txt",
+        "effort": null,
+        "feedback": null,
+        "kind": "write",
+        "transcript": []
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "12-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 400
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 400
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "13-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 401
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "14-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 403
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "authentication"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "15-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 404
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "modelNotFound"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "16-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 429
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "rateLimited",
+          "retryAfter": null
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "17-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 529
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "overloaded"
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "18-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 500
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 500
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "19-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 201
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 201
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "20-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 204
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 204
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "21-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 405
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 405
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    },
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": null,
+            "deadlineMs": 15000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "GET",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://api.anthropic.com/v1/models"
+          },
+          "response": {
+            "body": "22-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 501
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": {
+          "code": "providerFailure",
+          "status": 501
+        },
+        "output": null,
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "afterID": null,
+        "kind": "models"
+      },
+      "profile": {
+        "baseURL": "HTTPS://API.ANTHROPIC.COM.:443/v1/messages/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    }
+  ],
+  "category": "llm",
+  "kind": "exchange",
+  "schema": 1,
+  "setup": {
+    "capabilityState": null,
+    "nowMonotonicMs": 9000,
+    "nowUTC": "2026-10-13T00:00:00Z"
+  }
+}

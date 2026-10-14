@@ -3,14 +3,15 @@ import Yams
 @testable import MonkeysPawCore
 
 /// JSONDecoder preserves scalar spelling in golden strings without NSString bridging.
-indirect enum LlmFixtureJSON: Codable {
-    case object([String: LlmFixtureJSON]), array([LlmFixtureJSON]), string(String), integer(Int), boolean(Bool), null
+indirect enum LlmFixtureJSON: Codable, Sendable {
+    case object([String: LlmFixtureJSON]), array([LlmFixtureJSON]), string(String), integer(Int), number(Double), boolean(Bool), null
 
     init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer()
         if value.decodeNil() { self = .null }
         else if let decoded = try? value.decode(Bool.self) { self = .boolean(decoded) }
         else if let decoded = try? value.decode(Int.self) { self = .integer(decoded) }
+        else if let decoded = try? value.decode(Double.self) { self = .number(decoded) }
         else if let decoded = try? value.decode(String.self) { self = .string(decoded) }
         else if let decoded = try? value.decode([LlmFixtureJSON].self) { self = .array(decoded) }
         else { self = .object(try value.decode([String: LlmFixtureJSON].self)) }
@@ -23,6 +24,7 @@ indirect enum LlmFixtureJSON: Codable {
         case .array(let array): try value.encode(array)
         case .string(let string): try value.encode(string)
         case .integer(let integer): try value.encode(integer)
+        case .number(let number): try value.encode(number)
         case .boolean(let boolean): try value.encode(boolean)
         case .null: try value.encodeNil()
         }
@@ -83,6 +85,16 @@ enum LlmFixtureCorpus {
             let envelope = try JSONDecoder().decode(LlmFixtureJSON.self,
                 from: Data(contentsOf: directory.appendingPathComponent("case.json"))).object
             let kind = try member(envelope, "kind").string
+            if kind == "exchange" {
+                let exchange = try LlmExchangeFixtureCorpus.consume(envelope, at: directory)
+                guard Set(exchange.files.map { RelativePath($0) }).count == exchange.files.count,
+                      Set(files.map { RelativePath($0) }) == Set((["case.json"] + exchange.files).map { RelativePath($0) }) else {
+                    throw Failure.invalidCorpus
+                }
+                consumed += (["case.json"] + exchange.files).map { name + "/" + $0 }
+                expectations += exchange.expectations
+                continue
+            }
             let outputKind = try envelope["outputKind"]?.string ?? ""
             guard (kind == "merge" || ["artifact", "review"].contains(outputKind)),
                   try member(envelope, "schema").integer == 1,
@@ -169,8 +181,14 @@ enum LlmFixtureCorpus {
 
     static func snapshot(_ output: String, source: String, outputKind: String) throws -> LlmFixtureJSON {
         do {
-            if outputKind == "artifact" {
-                let value = try LlmOutputDecoder.artifact(from: output)
+            return snapshot(outputKind == "artifact" ? .artifact(try LlmOutputDecoder.artifact(from: output))
+                : .review(try LlmOutputDecoder.review(from: output, source: source)))
+        } catch AssistantError.invalidOutput { return .object(["error": .string("invalidOutput")]) }
+    }
+
+    static func snapshot(_ output: AssistantOutput) -> LlmFixtureJSON {
+        switch output {
+            case .artifact(let value):
                 let fields = value.fields.map { field in LlmFixtureJSON.object([
                     "name": .string(field.name), "type": .string(field.type.rawValue), "label": .string(field.label),
                     "description": .string(field.description), "default": .string(field.defaultValue),
@@ -192,8 +210,7 @@ enum LlmFixtureCorpus {
                     return .object(["code": .string(issue.code.rawValue), "severity": .string(issue.severity.rawValue), "location": location])
                 }
                 return .object(["artifact": artifact, "issues": .array(issues)])
-            }
-            let value = try LlmOutputDecoder.review(from: output, source: source)
+            case .review(let value):
             let findings = value.findings.map { finding -> LlmFixtureJSON in
                 let match: LlmFixtureJSON
                 switch finding.quoteMatch {
@@ -204,10 +221,10 @@ enum LlmFixtureCorpus {
                     "quote": .string(finding.quote), "problem": .string(finding.problem), "suggestion": .string(finding.suggestion), "quoteMatch": match])
             }
             return .object(["review": .object(["summary": .string(value.summary), "findings": .array(findings)])])
-        } catch AssistantError.invalidOutput { return .object(["error": .string("invalidOutput")]) }
+        }
     }
 
-    private static func validateResult(_ result: LlmFixtureJSON, outputKind: String) throws {
+    static func validateResult(_ result: LlmFixtureJSON, outputKind: String) throws {
         let members = try result.object
         if let error = members["error"] {
             try keys(members, ["error"])
@@ -253,14 +270,14 @@ enum LlmFixtureCorpus {
         }
     }
 
-    private static func member(_ object: [String: LlmFixtureJSON], _ key: String) throws -> LlmFixtureJSON {
+    static func member(_ object: [String: LlmFixtureJSON], _ key: String) throws -> LlmFixtureJSON {
         guard let value = object[key] else { throw Failure.invalidCorpus }
         return value
     }
-    private static func keys(_ object: [String: LlmFixtureJSON], _ required: Set<String>, optional: Set<String> = []) throws {
+    static func keys(_ object: [String: LlmFixtureJSON], _ required: Set<String>, optional: Set<String> = []) throws {
         guard required.isSubset(of: Set(object.keys)), Set(object.keys).isSubset(of: required.union(optional)) else { throw Failure.invalidCorpus }
     }
-    private static func sourceName(_ value: LlmFixtureJSON, extensions: [String]) throws -> String {
+    static func sourceName(_ value: LlmFixtureJSON, extensions: [String]) throws -> String {
         let name = try value.string
         guard !name.hasPrefix("."), !name.contains("/"), !name.contains("\\"), name != "case.json",
               extensions.contains(where: name.hasSuffix) else { throw Failure.invalidCorpus }

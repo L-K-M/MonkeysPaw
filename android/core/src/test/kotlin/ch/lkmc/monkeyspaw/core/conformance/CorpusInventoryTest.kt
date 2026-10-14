@@ -181,7 +181,7 @@ class CorpusInventoryTest {
             }
         }
         mutateRejects(Category.DTO, "unknown DTO") { this["dto"] = JsonPrimitive("UnknownDTO") }
-        mutateRejects(Category.LLM, "unknown kind") { this["kind"] = JsonPrimitive("exchange") }
+        mutateRejects(Category.LLM, "unknown kind") { this["kind"] = JsonPrimitive("future-exchange") }
         mutateRejects(Category.LLM, "false schema") { this["schema"] = JsonPrimitive(false) }
         mutateRejects(Category.LLM, "unknown output kind") { this["outputKind"] = JsonPrimitive("unknown") }
         mutateRejects(Category.LLM, "boolean parser golden") {
