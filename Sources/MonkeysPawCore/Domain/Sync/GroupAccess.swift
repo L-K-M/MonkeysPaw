@@ -74,7 +74,9 @@ public struct GroupAccessSnapshot: Equatable, Sendable {
     func favorite(for entry: LibraryEntry) -> Bool {
         switch access(at: entry.relativePath, identity: entry.identity) {
         case .local: return entry.document.frontMatter.favorite
-        case .group: return favorites[entry.identity] == true
+        case .group:
+            guard case .group? = prompts[entry.identity]?.scope else { return entry.document.frontMatter.favorite }
+            return favorites[entry.identity] == true
         case .unavailable: return false
         }
     }

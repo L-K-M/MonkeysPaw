@@ -773,8 +773,10 @@ public final class LibraryService: PromptFavoriteEditing {
 
     func finishEmptySyncRecovery() {
         lock.lock()
-        defer { lock.unlock() }
         syncWriteGate.finishEmptyRecovery()
+        let finished = syncWriteGate.pendingPermit == nil && !syncWriteGate.hasUnreadableJournal
+        lock.unlock()
+        if finished { publishAccessChange(.sync) }
     }
 
     /// No caller-supplied async/network closure enters this seam. Sync's only

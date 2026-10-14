@@ -70,6 +70,7 @@ private struct SyncBindingDocument: Codable {
 public final class SyncAccountStore: @unchecked Sendable {
     private let connection: SyncPersistence<SyncConnectionDocument>
     private let ownership: SyncPersistence<SyncBindingDocument>
+    private let observers = ChangeObservers<Void>()
 
     public init(files: FileStore, operations: SyncFileOperations) {
         connection = SyncPersistence(files: files, operations: operations,
@@ -89,6 +90,7 @@ public final class SyncAccountStore: @unchecked Sendable {
     }
 
     func loadConnection() throws -> SyncConnectionDocument {
+        defer { notify() }
         _ = try ownership.load()
         return try connection.load() ?? SyncConnectionDocument(account: nil)
     }
@@ -96,6 +98,7 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// An explicit login may reflush uncertain metadata on the same live graph.
     /// This does not release the library's journal recovery gate.
     func recoverConnection() throws -> SyncConnectionDocument {
+        defer { notify() }
         _ = try ownership.recover()
         return try connection.recover() ?? SyncConnectionDocument(account: nil)
     }
@@ -103,11 +106,13 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// Sign-out must still locate credentials when independent ownership is
     /// corrupt. This grants no permission to sync, reset ownership or edit files.
     func connectionForSignOut() throws -> SyncConnectionDocument {
-        try connection.load() ?? SyncConnectionDocument(account: nil)
+        defer { notify() }
+        return try connection.load() ?? SyncConnectionDocument(account: nil)
     }
 
     func setAccount(_ account: SyncAccount?, activation: SyncAccountActivation = .enabled,
                     retiring ids: [UUID] = []) throws {
+        defer { notify() }
         _ = try ownership.load()
         try connection.update { current in
             let cleanup = Set((current?.cleanupConnections ?? []) + ids)
@@ -119,6 +124,7 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// Persist this before destructive transitions or remote logout. A surviving
     /// environment token cannot turn an inactive connection back on at startup.
     func disableAutomaticResume() throws {
+        defer { notify() }
         try connection.update { current in
             SyncConnectionDocument(account: current?.account, activation: .inactive,
                                    cleanupConnections: current?.cleanupConnections ?? [])
@@ -128,6 +134,7 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// Explicit compensation/sign-out can recover uncertain connection metadata;
     /// independent library ownership and a pending apply journal stay untouched.
     func saveInactive(_ account: SyncAccount?, retiring ids: [UUID]) throws {
+        defer { notify() }
         let cached = connection.snapshot.value
         _ = try connection.recover()
         try connection.update { current in
@@ -138,6 +145,7 @@ public final class SyncAccountStore: @unchecked Sendable {
     }
 
     func finishSecretCleanup(_ id: UUID) throws {
+        defer { notify() }
         try connection.update { current in
             SyncConnectionDocument(account: current?.account, activation: current?.activation ?? .inactive,
                 cleanupConnections: (current?.cleanupConnections ?? []).filter { $0 != id })
@@ -145,14 +153,16 @@ public final class SyncAccountStore: @unchecked Sendable {
     }
 
     func binding(for root: SyncLibraryRoot) throws -> SyncLibraryBinding? {
+        defer { notify() }
         // Ownership reads ignore connection health so recovery can still find
         // holds after sign-out or corrupt metadata. Account reads/edits and
         // ownership edits require both records to be healthy.
-        try ownership.load()?.libraries.first { $0.root == root }
+        return try ownership.load()?.libraries.first { $0.root == root }
     }
 
     func updateBinding(for root: SyncLibraryRoot,
                        _ change: (SyncLibraryBinding?) throws -> SyncLibraryBinding) throws {
+        defer { notify() }
         _ = try connection.load()
         try ownership.update { current in
             var libraries = current?.libraries ?? []
@@ -166,7 +176,17 @@ public final class SyncAccountStore: @unchecked Sendable {
     }
 
     /// Explicit metadata reset leaves the independent ownership file intact.
-    func resetAccount() throws { try connection.reset(SyncConnectionDocument(account: nil)) }
+    func resetAccount() throws {
+        defer { notify() }
+        try connection.reset(SyncConnectionDocument(account: nil))
+    }
     /// Destructive ownership recovery requires an explicit intent of its own.
-    func resetBindings() throws { try ownership.reset(SyncBindingDocument(libraries: [])) }
+    func resetBindings() throws {
+        defer { notify() }
+        try ownership.reset(SyncBindingDocument(libraries: []))
+    }
+
+    func observeChanges(_ observer: @escaping @Sendable () -> Void) -> UUID { observers.add(observer) }
+    func removeObserver(_ token: UUID) { observers.remove(token) }
+    private func notify() { observers.publish(observers.capture()) }
 }

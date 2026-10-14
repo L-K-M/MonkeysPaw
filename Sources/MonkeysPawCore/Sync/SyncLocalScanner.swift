@@ -180,13 +180,14 @@ enum SyncLocalScanner {
             let pending = try SyncPromptState(scope: recorded?.scope ?? location.scope,
                 path: recorded?.path ?? RelativePath(wire.path), rev: recorded?.rev ?? 0,
                 canonicalHash: recorded?.canonicalHash, origin: transferring ? recorded?.origin : origin,
-                lastError: recorded?.lastError)
+                lastError: recorded?.lastError, favoriteInput: transferring ? recorded?.favoriteInput : nil)
             if !duplicate, stateSource != identity {
                 next = try migrating(next, from: stateSource, to: identity)
             }
             next.prompts[identity] = pending
             if location.scope.pathScope == .group, pending.scope.pathScope == .group {
-                try next.applyGroupFavorite(canonical.favorite, for: identity)
+                let favorite = SyncFavoriteInput.preferred(canonical.favorite, after: recorded?.favoriteInput)
+                try next.applyGroupFavorite(favorite, for: identity)
             }
             // Until /move commits, the overlay still belongs to the old scope.
             // Keep extracted personal keys on disk for ingest after that ack.
@@ -255,7 +256,7 @@ enum SyncLocalScanner {
                 path: location.path, scope: location.scope, accessGeneration: accessGeneration, operation: .put))
             next.prompts[key] = try SyncPromptState(scope: existing?.scope ?? location.scope,
                 path: existing?.path ?? location.path, rev: existing?.rev ?? 0, canonicalHash: existing?.canonicalHash,
-                origin: existing?.origin, lastError: error)
+                origin: existing?.origin, lastError: error, favoriteInput: existing?.favoriteInput)
         }
         snapshot = SyncReconciliationSnapshot(binding: binding, files: files, heldPaths: held)
         try next.validate()

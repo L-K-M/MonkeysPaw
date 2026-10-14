@@ -150,7 +150,10 @@ enum SyncAdoption {
             canonicalHash: remote.hash, origin: markers.origin,
             lastError: try markers.issue.map { SyncPromptError(code: $0, fingerprint: try SyncInputFingerprint(
                 bytes: remote.bytes, path: remote.path, scope: remote.scope, accessGeneration: 0, operation: .put)) })
-        if remote.scope.pathScope == .group { try next.applyGroupFavorite(form.favorite, for: destination) }
+        if remote.scope.pathScope == .group {
+            try next.applyGroupFavorite(SyncFavoriteInput.preferred(form.favorite, after: state?.prompts[identity]?.favoriteInput),
+                for: destination)
+        }
         else {
             next = try SyncState(binding: next.binding, databaseID: next.databaseID, cursors: next.cursors,
                 groups: next.groups, prompts: next.prompts, favorites: next.favorites.filter { $0.key != destination })
