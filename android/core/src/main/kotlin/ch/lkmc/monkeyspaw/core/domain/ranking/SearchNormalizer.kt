@@ -6,7 +6,7 @@ import com.ibm.icu.lang.UCharacterCategory
 import com.ibm.icu.text.Normalizer2
 
 /** §5.4: search owns its transform; only Unicode 17 C/F mapping data is shared with sync. */
-internal object SearchNormalizer {
+object SearchNormalizer {
     fun normalize(text: String): String {
         // ASCII has only the A–Z fold and is already NFC.
         if (text.all { it.code < 0x80 }) return buildString(text.length) {
@@ -31,7 +31,7 @@ internal object SearchNormalizer {
         return nfc.normalize(folded)
     }
 
-    fun isWordScalar(scalar: Int): Boolean = when (UCharacter.getType(scalar)) {
+    internal fun isWordScalar(scalar: Int): Boolean = when (UCharacter.getType(scalar)) {
         UCharacterCategory.UPPERCASE_LETTER.toInt(),
         UCharacterCategory.LOWERCASE_LETTER.toInt(),
         UCharacterCategory.TITLECASE_LETTER.toInt(),

@@ -11,17 +11,21 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
+import ch.lkmc.monkeyspaw.ui.library.LibraryScreen
+import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferScreen
+import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferUiState
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private val seedOffer: SeedOfferViewModel by viewModels()
+    private val library: LibraryViewModel by viewModels()
 
     override fun onStart() {
         super.onStart()
-        seedOffer.refresh()
+        if (seedOffer.state.value == SeedOfferUiState.Ready) library.refresh() else seedOffer.refresh()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,14 +36,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Scaffold { padding ->
-                    SeedOfferScreen(
-                        state = seedOffer.state.collectAsStateWithLifecycle().value,
-                        promptCount = seedOffer.libraryState.collectAsStateWithLifecycle().value.snapshot.prompts.size,
-                        onAccept = seedOffer::accept,
-                        onDecline = seedOffer::decline,
-                        onRefresh = seedOffer::refresh,
-                        modifier = Modifier.padding(padding),
-                    )
+                    val startup = seedOffer.state.collectAsStateWithLifecycle().value
+                    if (startup == SeedOfferUiState.Ready) {
+                        LibraryScreen(
+                            state = library.state.collectAsStateWithLifecycle().value,
+                            onQuery = library::setQuery, onFilter = library::setFilter, onSelect = library::select,
+                            onToggleFavorite = library::toggleFavorite, onClearFilters = library::clearFilters,
+                            onRefresh = library::refresh, modifier = Modifier.padding(padding),
+                        )
+                    } else {
+                        SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,
+                            onRefresh = seedOffer::refresh, modifier = Modifier.padding(padding))
+                    }
                 }
             }
         }

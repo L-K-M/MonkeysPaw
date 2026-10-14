@@ -103,7 +103,7 @@ internal class SeedOfferViewModelTest : TemporaryFiles() {
     }
 
     @Test
-    fun `a rescan failure after successful installation reports a library failure and keeps the completed decision`() = runTest {
+    fun `a rescan failure after successful installation routes to the library with the completed decision and error`() = runTest {
         var creates = 0
         var failRescan = true
         val model = model { prompts -> object : PromptStore by prompts {
@@ -121,12 +121,50 @@ internal class SeedOfferViewModelTest : TemporaryFiles() {
         assertEquals(SeedProgress.COMPLETE, settings.data.value.seedProgress)
         assertEquals(10, model.libraryState.value.snapshot.prompts.size)
         assertNotNull(model.libraryState.value.error)
-        assertEquals(SeedOfferUiState.Failed(), model.state.value)
+        assertEquals(SeedOfferUiState.Ready, model.state.value)
         failRescan = false
         model.refresh()
         runCurrent()
         assertEquals(SeedOfferUiState.Ready, model.state.value)
         assertEquals(10, creates)
+    }
+
+    @Test
+    fun `an already declined choice routes initial data failure to the library`() = runTest {
+        settings.data.value = AndroidSettings(SeedProgress.DECLINED)
+        val model = model { prompts -> object : PromptStore by prompts {
+            override fun listFiles() = throw StoreError.IOFailure
+        } }
+        model.refresh()
+        runCurrent()
+        assertEquals(SeedOfferUiState.Ready, model.state.value)
+        assertNotNull(model.libraryState.value.error)
+        assertEquals(SeedProgress.DECLINED, settings.data.value.seedProgress)
+    }
+
+    @Test
+    fun `a partial install still requires continuation and then lets the library own a rescan failure`() = runTest {
+        var creates = 0
+        val model = model { prompts -> object : PromptStore by prompts {
+            override fun create(bytes: ByteArray, path: String) {
+                if (++creates == 2) throw StoreError.IOFailure
+                prompts.create(bytes, path)
+            }
+
+            override fun listFiles() = if (creates == 2) throw StoreError.IOFailure else prompts.listFiles()
+        } }
+        model.refresh()
+        runCurrent()
+        model.accept()
+        runCurrent()
+        assertEquals(SeedOfferUiState.Failed(SeedSummary(1)), model.state.value)
+        model.refresh()
+        runCurrent()
+        assertEquals(SeedOfferUiState.Ready, model.state.value)
+        assertNotNull(model.libraryState.value.error)
+        assertEquals(1, model.libraryState.value.snapshot.prompts.size)
+        assertEquals(SeedProgress.INSTALLING, settings.data.value.seedProgress)
+        assertEquals(2, creates)
     }
 
     @Test
