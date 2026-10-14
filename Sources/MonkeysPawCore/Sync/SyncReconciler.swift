@@ -143,6 +143,11 @@ enum SyncReconciler {
                     operations.append(.localVisibility(remote))
                     continue
                 }
+                // An unchanged acknowledged snapshot is a baseline, not a new
+                // remote edit. Adopt its rev without replaying over later intent.
+                if mode == .normal, headMode == .snapshot, let previous, previous.rev > 0,
+                   previous.scope == remote.scope, previous.path == remote.path,
+                   previous.canonicalHash == remote.hash { continue }
                 let occupants = files.byFoldedPath[try folded(remote.libraryPath)] ?? []
                 if occupants.count > 1 {
                     for occupant in occupants { operations.append(.pathClash(remote: remote, occupant: occupant)) }
