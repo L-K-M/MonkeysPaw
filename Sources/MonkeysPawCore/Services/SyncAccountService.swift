@@ -94,6 +94,9 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         self.transport = transport
         root = try SyncLibraryRoot(libraryRoot)
         connectionID = UUID.init
+        // Saved metadata stays visible even when native root recovery prevents
+        // startup. This grants no authenticated session, tier or sync admission.
+        cached.account = accounts.cachedAccount
     }
 
     init(sync: SyncService, accounts: SyncAccountStore, secrets: SecretStore,
@@ -104,6 +107,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         self.transport = transport
         self.root = root
         self.connectionID = connectionID
+        cached.account = accounts.cachedAccount
     }
 
     var snapshot: SyncAccountSnapshot { locked { cached } }

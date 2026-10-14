@@ -3,6 +3,25 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncAccountServiceTests: XCTestCase {
+    func testReconstructedServiceExposesCachedMetadataWithoutResumingOrReadingSecrets() async throws {
+        let rig = try SyncAccountRig()
+        let signedIn = try await rig.login()
+        await rig.sync.settle()
+        let requests = rig.sync.transport.requests.count
+        let reads = rig.secrets.reads.count
+        let reconstructed = rig.reopenAccount()
+        XCTAssertEqual(reconstructed.snapshot.account, signedIn.account)
+        XCTAssertFalse(reconstructed.snapshot.enabled)
+        XCTAssertNil(reconstructed.snapshot.me)
+        XCTAssertNil(reconstructed.snapshot.tier)
+        let native = try SyncAccountService(sync: rig.sync.service, accounts: rig.sync.accounts, secrets: rig.secrets,
+            transport: rig.sync.transport, libraryRoot: rig.sync.base.binding.root.path)
+        XCTAssertEqual(native.snapshot.account, signedIn.account)
+        XCTAssertFalse(native.snapshot.enabled)
+        XCTAssertEqual(rig.sync.transport.requests.count, requests)
+        XCTAssertEqual(rig.secrets.reads.count, reads)
+    }
+
     func testLoginConsumesPasswordAndPersistsOnlyBoundTokenAndMetadata() async throws {
         let rig = try SyncAccountRig()
         var password = rig.password
