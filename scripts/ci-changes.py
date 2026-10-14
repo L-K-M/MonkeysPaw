@@ -47,6 +47,7 @@ FILES = {
     "scripts/make-linux-icons.sh": frozenset({"deb"}),
     "scripts/build.sh": frozenset({"core-linux", "deb", "macos-artifacts", "android"}),
     "scripts/package-android.sh": frozenset({"core-linux", "android"}),
+    "scripts/verify-android-release.py": frozenset({"core-linux", "android"}),
     "scripts/release.sh": ALL_JOBS,
     "scripts/generate-seeds.py": SWIFT_JOBS,
     "scripts/generate-assistant-prompts.py": ALL_JOBS,
@@ -63,6 +64,8 @@ FILES = {
     "scripts/tests/test_check_version.py": frozenset({"core-linux"}),
     "scripts/tests/test_android_version.py": frozenset({"core-linux"}),
     "scripts/tests/test_package_android.py": frozenset({"core-linux"}),
+    "scripts/tests/test_verify_android_release.py": frozenset({"core-linux"}),
+    "scripts/tests/test_release_workflow.py": frozenset({"core-linux"}),
     # The Flatpak job repacks the deb job's tested artifact.
     "scripts/build-flatpak.sh": frozenset({"deb", "flatpak"}),
     "scripts/tests/test-build-flatpak.sh": frozenset({"deb", "flatpak"}),
