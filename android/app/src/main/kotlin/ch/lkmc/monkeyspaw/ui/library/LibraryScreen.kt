@@ -26,6 +26,8 @@ internal fun LibraryScreen(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     onOpen: (LibrarySelection) -> Unit = {},
+    onEdit: ((LibrarySelection) -> Unit)? = null,
+    onCreate: (() -> Unit)? = null,
 ) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -34,6 +36,7 @@ internal fun LibraryScreen(
                 TextButton(onClick = onRefresh, enabled = !state.refreshing) { Text(stringResource(R.string.library_refresh)) }
             }
             if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
+            onCreate?.let { TextButton(onClick = it) { Text(stringResource(R.string.editor_new)) } }
         }
         item {
             OutlinedTextField(value = state.query, onValueChange = onQuery, singleLine = true,
@@ -62,6 +65,7 @@ internal fun LibraryScreen(
             item {
                 Text(stringResource(R.string.library_selected, selected.title), style = MaterialTheme.typography.titleSmall)
                 TextButton(onClick = { onSelect(null) }) { Text(stringResource(R.string.library_clear_selection)) }
+                onEdit?.let { edit -> TextButton(onClick = { edit(selected.selection) }) { Text(stringResource(R.string.editor_edit)) } }
             }
         }
         when (state.content) {
