@@ -1,5 +1,10 @@
 import Foundation
 
+struct SyncOwnWriteExpectation {
+    let path: RelativePath
+    let hash: SyncHash?
+}
+
 /// Admission and revocation share a lock. An admitted synchronous journal
 /// transaction finishes durably; revocation prevents all later admissions.
 /// No lock is held across HTTP, or while callers drain an async task.
@@ -51,33 +56,50 @@ final class SyncWorkPermit: @unchecked Sendable {
         guard binding == self.binding else { throw SyncError.bindingMismatch }
     }
 
-    func ownPaths(edits: [SyncLibraryEdit], directories: [SyncDirectoryEdit],
-                  library: SyncLibraryMutations) throws -> Set<RelativePath> {
-        var paths = Set(edits.map { RelativePath($0.path) })
-        for edit in edits { if let source = edit.adoptingSource { paths.insert(RelativePath(source.path)) } }
+    func intendedWrites(edits: [SyncLibraryEdit], directories: [SyncDirectoryEdit],
+                        library: SyncLibraryMutations) throws -> [SyncOwnWriteExpectation] {
+        var paths: [RelativePath: SyncOwnWriteExpectation] = [:]
         if !directories.isEmpty {
             for file in try library.listedFiles() {
                 let path = RelativePath(file.path)
                 for edit in directories where edit.kind == .rename {
                     if try SyncGroupFolders.contains(path, in: edit.source) {
-                        paths.insert(path)
-                        paths.insert(SyncGroupFolders.relocated(path, from: edit.source, to: edit.destination!))
-                    } else if try SyncGroupFolders.contains(path, in: edit.destination!) {
-                        paths.insert(path)
-                        paths.insert(SyncGroupFolders.relocated(path, from: edit.destination!, to: edit.source))
+                        let target = SyncGroupFolders.relocated(path, from: edit.source, to: edit.destination!)
+                        paths[path] = SyncOwnWriteExpectation(path: path, hash: nil)
+                        paths[target] = SyncOwnWriteExpectation(path: target, hash: file.hash)
                     }
                 }
             }
+            // On replay, only journaled baselines prove the renamed bytes.
+            for edit in directories where edit.kind == .rename {
+                for file in edit.localFiles {
+                    let path = RelativePath(file.path)
+                    let target = SyncGroupFolders.relocated(path, from: edit.source, to: edit.destination!)
+                    paths[path] = SyncOwnWriteExpectation(path: path, hash: nil)
+                    paths[target] = SyncOwnWriteExpectation(path: target, hash: file.hash)
+                }
+            }
         }
-        return paths
+        for edit in edits {
+            let path = RelativePath(edit.path)
+            paths[path] = SyncOwnWriteExpectation(path: path, hash: edit.hash)
+        }
+        return Array(paths.values)
     }
 
-    func remember(_ paths: Set<RelativePath>, library: SyncLibraryMutations) throws {
+    /// Capture verified intended bytes before state I/O. A subsequent external
+    /// incarnation must never be attributed to the earlier journaled write.
+    func capture(_ intended: [SyncOwnWriteExpectation], library: SyncLibraryMutations) throws -> [SyncFileChange] {
         var changes: [SyncFileChange] = []
-        for path in paths.sorted() {
-            let file = try library.read(at: path)
-            changes.append(SyncFileChange(path: path, stamp: file?.stamp, hash: file?.hash.rawValue))
+        for expected in intended.sorted(by: { $0.path < $1.path }) {
+            let file = try library.read(at: expected.path)
+            guard file?.hash == expected.hash else { continue }
+            changes.append(SyncFileChange(path: expected.path, stamp: file?.stamp, hash: file?.hash.rawValue))
         }
+        return changes
+    }
+
+    func remember(_ changes: [SyncFileChange]) {
         lock.lock()
         defer { lock.unlock() }
         guard !revoked else { return }
@@ -270,6 +292,10 @@ final class SyncCoordinator {
                 case .replan: result.rerun = true
                 case .unchanged, .held, .skipped: break
                 }
+                let committed = try currentState()
+                result.details = try errorDetails(committed)
+                result.counts.fileErrors = result.details.count
+                result.counts.conflicts = committed?.prompts.values.filter { $0.origin != nil }.count ?? 0
                 progress(result)
                 // Membership refresh precedes any further push after a denial.
                 if outcome == .refreshMemberships { break }
@@ -278,10 +304,9 @@ final class SyncCoordinator {
             let final = try scan(currentState())
             result.details = final.issues.sorted { $0.key < $1.key }.map { SyncFileDetail(path: $0.key, code: $0.value.rawValue) }
             let state = try currentState()
-            for (_, record) in state?.prompts ?? [:] where record.lastError != nil {
-                let path = try SyncLocalScanner.rooted(record.path, scope: record.scope, groups: state!.groups)
-                if !result.details.contains(where: { $0.path == path }) {
-                    result.details.append(SyncFileDetail(path: path, code: record.lastError!.code.rawValue))
+            for detail in try errorDetails(state) {
+                if !result.details.contains(where: { $0.path == detail.path }) {
+                    result.details.append(detail)
                 }
             }
             result.details.sort { $0.path < $1.path }
@@ -320,6 +345,15 @@ final class SyncCoordinator {
     }
 
     private func ownership() throws -> SyncLibraryBinding? { try accounts.binding(for: permit.binding.root) }
+
+    private func errorDetails(_ state: SyncState?) throws -> [SyncFileDetail] {
+        guard let state else { return [] }
+        return try state.prompts.values.compactMap { record in
+            guard let error = record.lastError else { return nil }
+            return try SyncFileDetail(path: SyncLocalScanner.rooted(record.path, scope: record.scope, groups: state.groups),
+                code: error.code.rawValue)
+        }.sorted { $0.path < $1.path }
+    }
 
     private func performingPush(_ operation: () async throws -> SyncPushResult) async throws -> SyncPushResult {
         do { return try await operation() }
@@ -492,6 +526,11 @@ final class SyncCoordinator {
                     try commit(SyncAdoption.application(decision, state: plan.expectedState, local: local,
                         groups: plan.nextState.groups, device: device, at: date(), freshID: freshID, mutations: mutations))
                 case .clash(_, let occupant): try relocate(occupant, remote: remote, plan: plan, local: local)
+                case .held(let path):
+                    guard let occupant = local.files.first(where: { RelativePath($0.path) == path }) else {
+                        throw SyncCoordinatorError.recoveryRequired
+                    }
+                    try relocate(occupant, remote: remote, plan: plan, local: local)
                 default: throw SyncReconciliationError.requiresPolicy
                 }
                 return true
@@ -515,7 +554,8 @@ final class SyncCoordinator {
         let location = SyncLocalScanner.location(of: path, binding: permit.binding, groups: plan.nextState.groups)
         var next = try plan.expectedState ?? SyncState(binding: permit.binding, groups: plan.nextState.groups)
         let held = local.heldPaths.contains(path)
-        if held || location == nil || (location?.scope.pathScope == .group &&
+        if held || !LibraryPath.isPrompt(file.path) || SyncLocalScanner.contentIssue(file) != nil
+            || location == nil || (location?.scope.pathScope == .group &&
             (try? SyncGroupFolders.mode(for: location!.scope, groups: plan.nextState.groups)) == .readOnly) {
             let inventory = try SyncGroupFolders.inventory(binding: permit.binding, availability: .available,
                 heldPaths: local.heldPaths, mutations: mutations)
@@ -528,7 +568,20 @@ final class SyncCoordinator {
                 groups: plan.nextState.groups), otherLocation.scope == location!.scope else { return nil }
             return otherLocation.path
         }
-        let destination = try SyncNaming.clash(location!.path, scope: location!.scope.pathScope, occupiedPaths: occupied)
+        let destination: RelativePath
+        do { destination = try SyncNaming.clash(location!.path, scope: location!.scope.pathScope, occupiedPaths: occupied) }
+        catch SyncNamingError.exhausted {
+            let identity = try file.identity
+            let record = next.prompts[identity]
+            let issue = try SyncPromptError(code: .pathClash, fingerprint: SyncInputFingerprint(bytes: file.bytes,
+                path: location!.path, scope: location!.scope, accessGeneration: accessGeneration, operation: .put))
+            next.prompts[identity] = try SyncPromptState(scope: record?.scope ?? location!.scope,
+                path: record?.path ?? location!.path, rev: record?.rev ?? 0,
+                canonicalHash: record?.canonicalHash, origin: record?.origin, lastError: issue)
+            let diagnostics = SyncApplyPlan(expectedState: plan.expectedState, nextState: next, edits: [])
+            if changed(diagnostics) { try commit(diagnostics) }
+            throw SyncCoordinatorError.fileErrors
+        }
         let rooted = try SyncLocalScanner.rooted(destination, scope: location!.scope, groups: plan.nextState.groups)
         let identity = try file.identity
         let target = PromptIdentity(path: rooted.string, id: PromptCodec.parseFile(file.bytes,

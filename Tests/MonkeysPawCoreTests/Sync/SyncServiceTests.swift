@@ -617,6 +617,101 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(rig.transport.requests.filter { $0.url.path.hasSuffix("/me") }.count, 1)
         XCTAssertEqual(rig.service.report.status, .hasConflicts)
     }
+
+    func testExternalEditDuringStateCommitIsNeverRecordedAsOwnWrite() async throws {
+        let rig = try SyncServiceRig()
+        let server = SyncScanTestSupport.bytes("Server")
+        let external = SyncScanTestSupport.bytes("External")
+        let probe = SyncStopProbe()
+        rig.base.data.onWrite = { path in
+            if path == "sync/state.json", (try? rig.base.files.stamp(at: "a.md")) != nil, probe.once() {
+                do { try rig.base.files.write(external, at: "a.md") }
+                catch { XCTFail("External fixture write failed") }
+            }
+        }
+        rig.transport.handler = { index, request in
+            if request.method == .post {
+                return index == 0 ? try SyncServiceRig.pull(items: [.upsert(seq: 1,
+                    prompt: .init(id: SyncTestValues.personalPrompt.rawValue, rev: 1, path: "a.md",
+                        content: String(decoding: server, as: UTF8.self)))]) : try SyncServiceRig.pull(mode: .delta)
+            }
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 2, seq: 2))
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertTrue(probe.fired)
+        let actual = try XCTUnwrap(rig.base.mutations.read(at: "a.md"))
+        XCTAssertEqual(actual.bytes, external)
+        let requests = rig.transport.requests.count
+        rig.service.filesChanged([SyncFileChange(path: "a.md", stamp: actual.stamp, hash: actual.hash.rawValue)])
+        rig.scheduler.advance(.seconds(3))
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.count, requests + 1)
+    }
+
+    func testExhaustedIncomingClashRemainsRepairableWithoutCursorCommit() async throws {
+        let rig = try SyncServiceRig()
+        try rig.base.files.write(SyncScanTestSupport.bytes("Occupant", id: SyncTestValues.groupPrompt), at: "a.md")
+        for number in 2...20 { try rig.base.files.write(SyncScanTestSupport.bytes("Other", id: nil), at: "a (\(number)).md") }
+        rig.transport.handler = { _, request in
+            XCTAssertEqual(request.method, .post)
+            return try SyncServiceRig.pull(items: [.upsert(seq: 1,
+                prompt: .init(id: SyncTestValues.personalPrompt.rawValue, rev: 1, path: "a.md",
+                    content: String(decoding: SyncScanTestSupport.bytes(), as: UTF8.self)))])
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(rig.service.report.status, .syncError)
+        XCTAssertNil(rig.service.report.blockingIssue)
+        XCTAssertEqual(rig.service.report.details.first?.code, "sync.path_clash")
+        XCTAssertNil(rig.base.states.snapshot.value?.databaseID)
+        rig.service.syncNow()
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.count, 2)
+        XCTAssertNil(rig.service.report.lastSuccess)
+    }
+
+    func testPartialPassRetainsFileErrorDetails() async throws {
+        let rig = try SyncServiceRig()
+        try rig.base.files.write(SyncScanTestSupport.bytes(), at: "a.md")
+        try rig.base.files.write(SyncScanTestSupport.bytes("Second", id: SyncTestValues.groupPrompt), at: "b.md")
+        rig.transport.handler = { index, request in
+            if request.method == .post { return try SyncServiceRig.pull() }
+            if index == 1 { return try SyncServiceRig.failure(.notFound) }
+            throw HTTPTransportError.networkFailure
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(rig.service.report.status, .offline)
+        XCTAssertEqual(rig.service.report.counts.fileErrors, 1)
+        XCTAssertEqual(rig.service.report.details.first?.path, "a.md")
+        XCTAssertEqual(rig.service.report.details.first?.code, "not_found")
+        XCTAssertNil(rig.service.report.lastSuccess)
+    }
+
+    func testMalformedIncomingOccupantIsHeldRawBeforeServerPublication() async throws {
+        let rig = try SyncServiceRig()
+        let raw = Data([0xff, 0x00, 0xfe])
+        let server = SyncScanTestSupport.bytes("Server")
+        try rig.base.files.write(raw, at: "a.md")
+        rig.transport.handler = { _, request in
+            XCTAssertEqual(request.method, .post)
+            return try SyncServiceRig.pull(items: [.upsert(seq: 1,
+                prompt: .init(id: SyncTestValues.personalPrompt.rawValue, rev: 1, path: "a.md",
+                    content: String(decoding: server, as: UTF8.self)))])
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(try rig.base.files.read(at: "a.md"), server)
+        let copies = try rig.base.files.listFiles().filter { $0.relativePath.hasPrefix("Conflicts/") }
+        XCTAssertEqual(copies.count, 1)
+        let copy = try XCTUnwrap(copies.first)
+        XCTAssertEqual(try rig.base.files.read(at: copy.relativePath), raw)
+        XCTAssertEqual(rig.service.report.status, .syncError)
+        XCTAssertEqual(rig.service.report.counts.held, 1)
+        XCTAssertNil(rig.service.report.lastSuccess)
+        XCTAssertEqual(rig.transport.requests.count, 1)
+    }
 }
 
 final class SyncServiceRig {
