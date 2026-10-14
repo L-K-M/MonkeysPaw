@@ -50,16 +50,17 @@ K10 established nine categories with 1,032 cases and 2,168 visible files:
 format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
 paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 489 invalid).
-M11 L2 adds LLM schemas and decoding as the tenth category, with counts and
-case shapes below. These are reported counts, not fixed enumeration limits.
+M11 L2 adds 285 LLM schema and decoding cases with 908 files as the tenth
+category, bringing the corpus to 1,317 cases and 3,076 visible files. Case
+shapes are below. These are reported counts, not fixed enumeration limits.
 Sync-engine scenarios arrive with their implementations under the
 move-together rule.
 
 `fixtures/` contains exactly ten categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical`, `dto` and
-`llm`. Each consumer enumerates all directories and files, rejects unknown categories,
-files, schema versions and case members, and requires every input and
-expectation to be consumed once. Symlinks and
+`llm`. Each consumer enumerates all directories and files, rejects unknown
+categories, files, schema versions and case members, and requires every
+input and expectation to be consumed once. Symlinks and
 unexpected nested directories are rejected. The corpus itself is the
 enumeration; there is no hand-selected case list.
 
@@ -739,12 +740,13 @@ types/enums, numeric boundaries, malformed identifiers/timestamps, explicit
 nullable/omitted fields and nested response secrecy.
 
 
-M11 L2 adds `llm/<case>/case.json`, dispatched by Swift's `LlmFixtureCorpus`
-and Kotlin's `LlmConformanceTest`. Both enumerate the entire category and
-compare every expectation. The initial corpus has 285 cases, 908 visible
-files and 2,794 expectation members, with zero pending LLM cases. All prior
-categories stay registered; this does not complete any earlier pending DTO
-port. Run `swift test --filter 'PromptConformance|Llm|Assistant'` and the
+M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
+and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
+`EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
+`LlmConformanceTest` uses the same adapter. Both languages compare every
+expectation. The LLM corpus has 285 cases, 908 visible files and 2,794
+expectation members, with zero pending cases. All ten categories stay
+registered. Run `swift test --filter 'PromptConformance|Llm|Assistant'` and the
 existing `:core:test` command. On the implementation host use `swift64` and
 the configured display/private-bus wrapper in AGENTS.md.
 
