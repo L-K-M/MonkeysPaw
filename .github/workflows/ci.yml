@@ -603,11 +603,11 @@ jobs:
           retention-days: 3
 
   android-sync:
-    name: Android sync live server smoke (Z15)
+    name: Android sync acceptance
     needs: changes
     if: needs.changes.outputs.android-sync == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -631,16 +631,19 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/tests -p test_android_sync_ci.py -v
           python3 -m unittest discover -s scripts/tests -p test_ci_changes.py -v
-      - name: Run production Kotlin round trip against this revision's server
-        run: python3 scripts/android-sync-ci.py -- android/gradlew -p android :core:syncIntegrationTest --no-daemon --max-workers=2
-      - name: Upload sanitized JVM test reports on failure
+      - name: Run all Kotlin content and sync scenarios against this revision's server
+        run: |
+          python3 scripts/android-sync-ci.py -- android/gradlew -p android :core:test :core:syncIntegrationTest --no-daemon --max-workers=2
+          python3 scripts/android-sync-ci.py --verify-reports
+      - name: Produce numeric acceptance evidence
+        if: always()
+        run: python3 scripts/android-sync-ci.py --reports
+      - name: Upload sanitized acceptance counts on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: MonkeysPaw-android-sync-smoke-reports
-          path: |
-            android/core/build/reports/tests/syncIntegrationTest/
-            android/core/build/test-results/syncIntegrationTest/*.xml
+          name: MonkeysPaw-android-sync-acceptance
+          path: android/core/build/reports/sync-acceptance.json
           if-no-files-found: ignore
           retention-days: 3
 

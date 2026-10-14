@@ -80,7 +80,7 @@ PREFIXES = (
     (".github/workflows/", ALL_JOBS),
     (".github/actions/", ALL_JOBS),
     ("Sources/MonkeysPawCore/", SWIFT_JOBS | {"android-sync"}),
-    ("Tests/MonkeysPawCoreTests/", SWIFT_JOBS),
+    ("Tests/MonkeysPawCoreTests/", SWIFT_JOBS | {"android-sync"}),
     ("Assistant/Prompts/", ALL_JOBS),
     ("spec/", ALL_JOBS),
     ("seed/", ALL_JOBS),

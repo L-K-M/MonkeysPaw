@@ -11,7 +11,7 @@
 | Server | Hummingbird's test client against an in-memory SQLite:<br>• every endpoint and every row of the §8.2 permission matrix (allowed and denied)<br>• compare-and-swap conflicts; per-scope feeds after moves and membership changes (a non-member never receives a row)<br>• snapshot mode for new and stale cursors; login backoff; invite single-use; migrations from an empty database |
 | Sync integration | `server/Tests/MonkeysPawSyncIntegrationTests/`, compiled in Swift 5 mode. §13.1 scenarios execute through Core's HTTP port into the real Hummingbird router, authentication, services and repositories on migrated temporary file SQLite. Each device owns independent disk/secret roots and a Core graph. The suite enumerates and executes every `spec/fixtures/sync/*.json` case exactly once; unknown or unused inputs/expectations fail. |
 | Deployment | CI job `compose-smoke`:<br>• `docker compose config --quiet` (default and `--profile tls`; TLS configuration only)<br>• local image build; `compose up --wait --wait-timeout 120`; unauthenticated `/api/health`<br>• bootstrap login, private PUT + GET, initial snapshot, second PUT + GET and delta from the snapshot cursor, asserting id/rev/path/content and database identity<br>• `shellcheck`, Bash syntax and fake-command smoke tests; `shellcheck update.sh` when S19 supplies it |
-| Conformance | Ten content categories in `spec/fixtures/` run by `MonkeysPawCoreTests` and Android `:core`; each suite fails on an unconsumed file in its owned categories. Both explicitly delegate `sync/` to the server integration target; Kotlin sync-engine replay arrives in M10. Server Schema tests call `MonkeysPawServer.SchemaRenderer` directly, check deterministic bytes and complete catalog coverage, and validate every DTO fixture against the emitted keywords plus documented contract annotations, comparing with strict Codable. One CLI test runs the built `dump-schema` executable with a deadline. These schema tests need no database, GTK or network. CI regenerates `spec/schema/` into a fresh directory and compares recursively, including missing and extra files. |
+| Conformance | Ten content categories in `spec/fixtures/` run by `MonkeysPawCoreTests` and Android `:core`; each suite fails on an unconsumed file in its owned categories. Swift delegates `sync/` to the server integration target; Kotlin delegates it to `:core:syncIntegrationTest`. Mandatory CI combines successful Kotlin content and sync semantic ownership, without counting structural reads as execution. Server Schema tests call `MonkeysPawServer.SchemaRenderer` directly, check deterministic bytes and complete catalog coverage, and validate every DTO fixture against the emitted keywords plus documented contract annotations, comparing with strict Codable. One CLI test runs the built `dump-schema` executable with a deadline. These schema tests need no database, GTK or network. CI regenerates `spec/schema/` into a fresh directory and compares recursively, including missing and extra files. |
 | Android | `:core` JVM tests with fakes, including the `sync/*.json` scenarios and the §13.1 suite against the real server in CI. App JVM tests for ViewModels, the IME `inputType` decision table, and the entry activities' intent handling. No emulator job (HalloMiao decision). |
 | End-to-end, manual | A per-release checklist in `docs/platform/`: macOS (Safari, Chrome, Terminal, full-screen Space), GNOME Wayland, KDE Wayland, X11, Android (Chrome, ChatGPT, Claude, Termux; Gboard and Samsung Keyboard). Run the §6.5 self-test plus a browser chat box and a terminal. Two devices and two users syncing a group prompt, one of them a phone. |
 
@@ -77,6 +77,20 @@ Fresh workers recover the same roots; all child paths have bounded cleanup and
 stdin-only credentials. Retention and restore scenarios use the production
 services, including closing database users for offline restore. Bulk snapshot
 paging and expiry assertions exercise Core's collector without applying files.
+Kotlin executes the same complete language through the shared OkHttp driver and
+production engine in `:core:syncIntegrationTest`. From the repository root run
+`python3 scripts/android-sync-ci.py -- android/gradlew -p android :core:test :core:syncIntegrationTest --no-daemon --max-workers=2`,
+then `python3 scripts/android-sync-ci.py --verify-reports`. CI's mandatory
+`android-sync` job builds this revision's server image, checks every family and
+requires successful content plus sync accounting. Missing infrastructure fails;
+integration cache/up-to-date reuse and local skip fallbacks are disabled.
+External Kotlin time controls age only timestamps while serve is stopped under
+its exclusive flock, then observe real startup retention effects. Production
+backup/restore lowers actual heads and rotates the UUID. Forked JVMs pause at
+durable file/state boundaries, receive SIGKILL, are reaped and replay twice;
+state file/directory flush interruptions are separate boundary regressions.
+Only numeric evidence is uploaded on failure. The private runtime, labeled
+containers and children are cleaned on success, failure and interruption.
 Scenarios:
 
 - a basic round trip; our own pushes echoed back are no-ops

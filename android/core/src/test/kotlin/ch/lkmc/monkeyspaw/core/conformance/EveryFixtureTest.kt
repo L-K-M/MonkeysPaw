@@ -39,8 +39,9 @@ internal object EveryFixtures {
         }
         assertEquals(corpus.enumeratedFiles, consumed, "Full semantic consumption must equal the visible inventory")
         println("Full gate llm: ${llm.expectations} expectations; pending 0.")
-        println("Full semantic conformance: ${corpus.cases.size} cases / ${consumed.size} files / ${byCategory.size} categories; " +
+        println("Kotlin content semantic conformance: ${corpus.cases.size} cases / ${consumed.size} files / ${byCategory.size} categories; " +
             "DTOs ${DtoRegistry.entries.size} contracts, ${dto.validCases} valid / ${dto.invalidCases} invalid; pending 0.")
+        println("Kotlin sync ownership: :core:syncIntegrationTest; ${corpus.delegatedFiles.getValue("syncIntegrationTest").size} structurally enumerated files, no local execution claim.")
         return consumed
     }
 }

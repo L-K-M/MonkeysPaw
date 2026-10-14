@@ -2,18 +2,23 @@
 
 The Swift `PromptConformanceTests` and Kotlin `EveryFixtureTest` both
 semantically consume every case and visible file in the ten content categories.
-The separate server-package `MonkeysPawSyncIntegrationTests` owns `sync/` and
-executes its entire corpus against the real router. Content consumers explicitly
-delegate that directory; they do not claim sync execution. Kotlin engine replay
-arrives in M10 (§20 E34).
+The server-package `MonkeysPawSyncIntegrationTests` and Kotlin
+`:core:syncIntegrationTest` each execute the entire `sync/` corpus against the
+same-head real server. Content consumers explicitly delegate that directory;
+structural enumeration does not count as sync execution. The mandatory
+`android-sync` CI job combines successful content and sync ownership.
 From the repository root:
 
 ```sh
 swift test --filter PromptConformanceTests
 swift test --package-path server
 android/gradlew -p android --max-workers=2 :core:test
-# Run only the Kotlin full-corpus gate:
+# Run only the Kotlin content gate (sync requires the separate task):
 android/gradlew -p android --max-workers=2 :core:test --tests '*EveryFixtureTest'
+# Complete Kotlin acceptance, using a fresh same-head production server image:
+python3 scripts/android-sync-ci.py -- android/gradlew -p android \
+    :core:test :core:syncIntegrationTest --no-daemon --max-workers=2
+python3 scripts/android-sync-ci.py --verify-reports
 # Android CI gate, including lint, R8 and both APKs:
 android/gradlew -p android --max-workers=2 :core:test testDebugUnitTest \
     lintDebug assembleDebug assembleRelease
@@ -28,6 +33,40 @@ From `android/`, the equivalent Kotlin command is
 `./gradlew --max-workers=2 :core:test`. Gradle supplies absolute fixture/schema
 paths from its root project and tracks both directories as test inputs;
 neither is copied into resources or packaged in the app.
+
+The integration task requires a private version-1 `MONKEYSPAW_SYNC_MANIFEST`
+and fails when the server or Docker is missing. It never reuses an up-to-date
+or cached integration success. The wrapper creates 0700 disposable roots,
+0600 password/manifest files, loopback-only containers and fresh databases for
+each case. A native local proof may set `MONKEYSPAW_SYNC_SERVER_EXECUTABLE` to
+the absolute same-head `monkeyspaw-server` executable and use the same private
+manifest shape; it still provisions real users and separate case databases.
+Set `MONKEYSPAW_REQUIRE_SYNC_SERVER=1` for required local runs. Secrets are
+runtime-only; never print the manifest's password files or issued tokens.
+
+Kotlin's external controls stop serve and acquire its nonblocking database
+flock before aging only `changes.at`, `prompts.deleted_at`, or snapshot
+creation/expiry timestamps. Immutable triggers are temporarily removed and
+restored within that exclusive transaction; a fingerprint proves all other
+columns and triggers unchanged. Disposable audit triggers count actual
+committed retention deletes and floor raises, including multiple batches;
+startup production maintenance performs every purge. Controls do not write
+heads, floors, sequences, revisions, prompt bytes or frozen manifests. Restore
+uses the shipped offline admin CLI and checks UUID rotation/recovery copy.
+The forked JVM pauses at checked disk operations, is killed with SIGKILL and
+reaped, then two fresh JVMs replay the same roots. Additional state-file and
+state-directory flush interruptions complement row 17. These tests prove
+process death and portable checked NIO operations; Android Os, Keystore,
+hardware and power-loss behavior retain their owner checks.
+
+Every file, case, action (including hooks and series) and expectation must be
+consumed. Wrong/unknown checkpoints, unknown actions/members, duplicate IDs,
+missing families, unconsumed hooks and unrecovered killed devices fail. On
+failure CI uploads only `sync-acceptance.json` numeric counts, produced by
+`python3 scripts/android-sync-ci.py --reports`; raw JUnit text, roots, databases,
+passwords, tokens and request bodies are excluded. All child and container
+paths have deadlines and cleanup; labeled case/admin containers are also
+removed if the runner is interrupted.
 
 The Kotlin full gate reuses the category tests' semantic adapters. Content
 checks cover metadata, tokens, first-use fields, ordered issues, rendering,
