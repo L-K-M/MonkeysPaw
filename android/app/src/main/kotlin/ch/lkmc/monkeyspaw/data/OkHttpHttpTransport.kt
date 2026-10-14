@@ -9,6 +9,8 @@ import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.coroutines.executeAsync
 import okio.BufferedSink
+import okio.GzipSource
+import okio.buffer
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.Locale
@@ -177,23 +179,30 @@ internal class OkHttpHttpTransport(
             checkActive()
             val body = ByteArrayOutputStream()
             val chunk = ByteArray(8192)
-            val source = response.body.byteStream()
-            while (true) {
-                checkActive()
-                // Read at most one byte past the selected cap and check before appending.
-                val count = source.read(chunk, 0, minOf(chunk.size.toLong(), request.responseByteCap.toLong() - body.size() + 1).toInt())
-                if (count == -1) break
-                // Observe and claim a cap failure under the same lock as cancel/deadline.
-                transition {
-                    when {
-                        request.deadlineNanos - clock.nowNanos() <= 0 -> Result.failure(HttpTransportError.DeadlineExceeded)
-                        count > request.responseByteCap - body.size() -> Result.failure(HttpTransportError.ResponseTooLarge)
-                        else -> { body.write(chunk, 0, count); null }
+            // Bridge skips decoding when callers supply Accept-Encoding or Range.
+            val gzip = response.code != 204 && response.code != 205 &&
+                response.header("Content-Encoding").equals("gzip", ignoreCase = true)
+            val source = if (gzip) GzipSource(response.body.source()).buffer().inputStream() else response.body.byteStream()
+            source.use {
+                while (true) {
+                    checkActive()
+                    // Read at most one byte past the selected cap and check before appending.
+                    val count = it.read(chunk, 0, minOf(chunk.size.toLong(), request.responseByteCap.toLong() - body.size() + 1).toInt())
+                    if (count == -1) break
+                    // Observe and claim a cap failure under the same lock as cancel/deadline.
+                    transition {
+                        when {
+                            request.deadlineNanos - clock.nowNanos() <= 0 -> Result.failure(HttpTransportError.DeadlineExceeded)
+                            count > request.responseByteCap - body.size() -> Result.failure(HttpTransportError.ResponseTooLarge)
+                            else -> { body.write(chunk, 0, count); null }
+                        }
                     }
+                    if (failure != null) return
                 }
-                if (failure != null) return
             }
-            val headers = response.headers.names().associate { it.lowercase(Locale.ROOT) to response.headers.values(it).joinToString(", ") }
+            val decodedHeaders = if (gzip) response.headers.newBuilder().removeAll("Content-Encoding").removeAll("Content-Length").build()
+                else response.headers
+            val headers = decodedHeaders.names().associate { it.lowercase(Locale.ROOT) to decodedHeaders.values(it).joinToString(", ") }
             finish(Result.success(HttpResponse(wireStatus ?: response.code, headers, body.toByteArray())))
         }
 

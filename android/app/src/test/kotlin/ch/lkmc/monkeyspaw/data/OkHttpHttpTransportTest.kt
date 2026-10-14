@@ -229,6 +229,58 @@ internal class OkHttpHttpTransportTest {
         assertEquals(128, transport.send(request(server, cap = 128)).bodyByteCount)
     }
 
+    @Test fun `explicit encoding and range headers still receive bounded decoded bytes`() = runBlocking {
+        val server = server()
+        for (headers in listOf(mapOf("Accept-Encoding" to "gzip"), mapOf("Accept-Encoding" to "identity"), mapOf("Range" to "bytes=0-"))) {
+            val oversized = Buffer()
+            GzipSink(oversized).buffer().use { it.writeUtf8("a".repeat(1025)) }
+            assertTrue(oversized.size < 128)
+            server.enqueue(MockResponse.Builder().body(oversized).addHeader("Content-Encoding", "gzip").build())
+            assertEquals(HttpTransportError.ResponseTooLarge,
+                errorOf { transport.send(request(server, headers = headers, cap = 128)) })
+            val observed = server.takeRequest(2, SECONDS)!!
+            headers.forEach { (name, value) -> assertEquals(value, observed.headers[name]) }
+
+            val exact = Buffer()
+            GzipSink(exact).buffer().use { it.writeUtf8("a".repeat(128)) }
+            server.enqueue(MockResponse.Builder().code(503).addHeader("Retry-After", "0")
+                .body(exact).addHeader("Content-Encoding", "gzip").build())
+            val response = transport.send(request(server, headers = headers, cap = 128))
+            assertEquals(503, response.statusCode)
+            assertEquals("0", response.headers["retry-after"])
+            assertContentEquals("a".repeat(128).encodeToByteArray(), response.body)
+            assertNull(response.headers["content-encoding"])
+            assertNull(response.headers["content-length"])
+            assertNotNull(server.takeRequest(2, SECONDS))
+        }
+        assertEquals(6, server.requestCount)
+    }
+
+    @Test fun `gzip cap closes incomplete chunked receipts with automatic or explicit decoding`() = runBlocking {
+        for (headers in listOf(emptyMap(), mapOf("Accept-Encoding" to "gzip"))) {
+            val closed = CountDownLatch(1)
+            val compressed = Buffer()
+            GzipSink(compressed).buffer().use { it.writeUtf8("a".repeat(1025)) }
+            assertTrue(compressed.size < 128)
+            val server = server()
+            server.enqueue(MockResponse.Builder().addHeader("Content-Encoding", "gzip")
+                .addHeader("Transfer-Encoding", "chunked").removeHeader("Content-Length")
+                .socketHandler(object : SocketHandler {
+                    override fun handle(socket: Socket) {
+                        socket.sink.buffer().apply {
+                            writeHexadecimalUnsignedLong(compressed.size).writeUtf8("\r\n")
+                            writeAll(compressed)
+                            writeUtf8("\r\n").flush() // Withhold the final HTTP chunk.
+                        }
+                        observeClose(socket, closed)
+                    }
+                }).build())
+            assertEquals(HttpTransportError.ResponseTooLarge,
+                errorOf { transport.send(request(server, headers = headers, cap = 128)) })
+            assertTrue(closed.await(2, SECONDS))
+        }
+    }
+
     @Test fun `absolute deadline interrupts a stalled body and closes receipt`() = runBlocking {
         val closed = CountDownLatch(1)
         val server = server()
