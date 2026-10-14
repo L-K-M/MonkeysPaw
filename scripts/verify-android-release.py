@@ -18,9 +18,6 @@ import sys
 
 # Fixed by docs/decisions/0001-android-zero-secret-signing.md, not the build's key.
 SIGNER_SHA256 = "76a19df68d562789f6ea990b23232875b70a98c9996ba81e794ccab063edd765"
-spec = importlib.util.spec_from_file_location("check_version", Path(__file__).with_name("check-version.py"))
-versions = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(versions)
 
 
 def tool_output(tool, arguments):
@@ -32,6 +29,9 @@ def tool_output(tool, arguments):
 
 
 def verify(apk, version, root, tools):
+    spec = importlib.util.spec_from_file_location("check_version", Path(__file__).with_name("check-version.py"))
+    versions = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(versions)
     versions.check_versions(root, f"v{version}", quiet=True)
     _, code = versions.android_version_declarations((root / "android/app/build.gradle.kts").read_text())
     if apk.name != f"monkeyspaw-v{version}.apk" or not apk.is_file() or apk.stat().st_size == 0:
@@ -77,7 +77,7 @@ def main():
         evidence = verify(arguments.apk, arguments.version, Path(__file__).resolve().parents[1],
                           Path(sdk) / "build-tools/36.0.0")
         print(f"==> Verified Android {evidence}")
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+    except (OSError, SyntaxError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"!! {error}", file=sys.stderr)
         return 1
     return 0

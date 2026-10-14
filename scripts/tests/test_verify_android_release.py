@@ -76,6 +76,33 @@ sys.exit(int(os.environ.get('FAKE_{tool.upper()}_EXIT', '0')))
                 self.assertIn(f"{version} (code 7)", result.stdout)
                 self.assertIn(f"signer {FINGERPRINT}", result.stdout)
 
+    def test_help_does_not_load_the_version_checker(self):
+        checker = self.root / "scripts/check-version.py"
+        for contents in (None, "raise AssertionError('Version checker loaded for help')\n"):
+            with self.subTest(contents=contents):
+                if contents is None:
+                    checker.unlink()
+                else:
+                    checker.write_text(contents)
+                result = subprocess.run([sys.executable, str(self.root / "scripts/verify-android-release.py"),
+                                         "--help"], cwd=self.root, env=self.env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("usage:", result.stdout)
+
+    def test_missing_or_invalid_version_checker_reports_a_cli_error(self):
+        checker = self.root / "scripts/check-version.py"
+        for contents in (None, "invalid syntax here\n"):
+            with self.subTest(contents=contents):
+                if contents is None:
+                    checker.unlink()
+                else:
+                    checker.write_text(contents)
+                result = self.run_verifier()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertTrue(result.stderr.startswith("!! "), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("==> Verified", result.stdout)
+
     def test_wrong_or_invalid_release_version_is_rejected(self):
         for version in ("0.2.0", "v0.1.0", "0.1.0+build", "0.1.0-beta.01", "0.1", "0.1.0\n"):
             with self.subTest(version=version):
