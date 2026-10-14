@@ -3,6 +3,15 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class AssistantTranscriptTests: XCTestCase {
+    func testTranscriptBytesPinTheExistingFoundationEscapingProfile() throws {
+        let special = "/\u{8}\u{c}\u{0}\u{1f}\r\n\t\u{7f}\u{85}\u{2028}\u{2029}é e\u{301} 😀"
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("spec/fixtures/llm/transcript-review-escaping/output.txt")
+        let message = try AssistantResponse(output: .review(LlmReview(summary: special, findings: []))).transcriptMessage()
+        XCTAssertEqual(Data(message.content.utf8), try Data(contentsOf: fixture))
+    }
+
     func testArtifactTranscriptRoundTripsEmptyValuesAndEveryFieldKind() throws {
         let special = "\"\\\n\t\u{0} <data> Cafe\u{301} 🐒"
         let fields = [FieldKind.text, .multiline, .choice].map {
