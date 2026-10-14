@@ -1,0 +1,84 @@
+{
+  "actions": [
+    {
+      "budgetMs": null,
+      "exchanges": [
+        {
+          "elapsedMs": 0,
+          "request": {
+            "body": "1-request.json",
+            "deadlineMs": 300000,
+            "headers": {
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": "fixture-only-api-key"
+            },
+            "method": "POST",
+            "requestByteCap": 2097152,
+            "responseByteCap": 2097152,
+            "url": "https://proxy.example/anthropic/v1/messages"
+          },
+          "response": {
+            "body": "1-response.bin",
+            "elapsedMs": 0,
+            "headers": {},
+            "status": 200
+          }
+        }
+      ],
+      "expected": {
+        "cache": {
+          "format": "json_schema",
+          "writes": 0
+        },
+        "error": null,
+        "output": {
+          "kind": "artifact",
+          "source": "1-expected.json"
+        },
+        "page": null,
+        "requestCount": 1,
+        "usage": null
+      },
+      "intent": {
+        "brief": "1-brief.txt",
+        "effort": "max",
+        "feedback": "1-feedback.txt",
+        "kind": "write",
+        "transcript": [
+          {
+            "role": "user",
+            "source": "1-turn-0.txt"
+          },
+          {
+            "role": "user",
+            "source": "1-turn-1.txt"
+          },
+          {
+            "role": "assistant",
+            "source": "1-turn-2.txt"
+          },
+          {
+            "role": "assistant",
+            "source": "1-turn-3.txt"
+          }
+        ]
+      },
+      "profile": {
+        "baseURL": "https://proxy.example/anthropic/v1/models/",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "key": "fixture-only-api-key",
+        "kind": "anthropic",
+        "modelID": "claude-opus-5-5"
+      }
+    }
+  ],
+  "category": "llm",
+  "kind": "exchange",
+  "schema": 1,
+  "setup": {
+    "capabilityState": null,
+    "nowMonotonicMs": 9000,
+    "nowUTC": "2026-10-13T00:00:00Z"
+  }
+}

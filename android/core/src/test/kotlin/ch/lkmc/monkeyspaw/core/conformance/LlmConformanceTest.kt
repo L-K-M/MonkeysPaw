@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.conformance
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueLocation
 import ch.lkmc.monkeyspaw.core.domain.llm.AssistantError
+import ch.lkmc.monkeyspaw.core.domain.llm.AssistantOutput
 import ch.lkmc.monkeyspaw.core.domain.llm.LlmArtifact
 import ch.lkmc.monkeyspaw.core.domain.llm.LlmReview
 import ch.lkmc.monkeyspaw.core.llm.LlmJsonParser
@@ -38,6 +39,10 @@ internal object LlmFixtureConsumer {
                 return file.bytes()
             }
             val envelope = fixture.envelope
+            if (envelope["kind"].stringValue() == "exchange") {
+                expectations += LlmExchangeConsumer.consume(envelope, ::bytes)
+                continue
+            }
             val expected = fixture.expected
             val kind = envelope["kind"].stringValue()
             if (kind == "merge") {
@@ -82,8 +87,13 @@ internal object LlmFixtureConsumer {
     }
 
     private fun snapshot(output: String, reviewed: String, outputKind: String): JsonObject = try {
-        if (outputKind == "artifact") {
-            val artifact = LlmOutputDecoder.artifact(output)
+        snapshot(if (outputKind == "artifact") AssistantOutput.Artifact(LlmOutputDecoder.artifact(output))
+            else AssistantOutput.Review(LlmOutputDecoder.review(output, reviewed)))
+    } catch (_: AssistantError.InvalidOutput) { buildJsonObject { put("error", "invalidOutput") } }
+
+    fun snapshot(output: AssistantOutput): JsonObject = when (output) {
+        is AssistantOutput.Artifact -> {
+            val artifact = output.value
             buildJsonObject {
                 put("artifact", buildJsonObject {
                     put("title", artifact.title); put("description", artifact.description)
@@ -107,8 +117,9 @@ internal object LlmFixtureConsumer {
                     })
                 } }))
             }
-        } else {
-            val review = LlmOutputDecoder.review(output, reviewed)
+        }
+        is AssistantOutput.Review -> {
+            val review = output.value
             buildJsonObject { put("review", buildJsonObject {
                 put("summary", review.summary)
                 put("findings", JsonArray(review.findings.map { finding -> buildJsonObject {
@@ -123,7 +134,7 @@ internal object LlmFixtureConsumer {
                 } }))
             }) }
         }
-    } catch (_: AssistantError.InvalidOutput) { buildJsonObject { put("error", "invalidOutput") } }
+    }
 
     // Swift's typed Int decoding accepts integer-valued numeric spellings such as 1.0.
     private fun typedIntegers(value: JsonElement): JsonElement = when (value) {

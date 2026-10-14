@@ -13,7 +13,17 @@ internal sealed class LlmSchema {
     class Array(val item: LlmSchema) : LlmSchema()
     class Object(val properties: List<Pair<kotlin.String, LlmSchema>>) : LlmSchema()
 
-    val jsonSchema: ByteArray get() = json().toByteArray(Charsets.UTF_8)
+    val jsonSchema: ByteArray get() = AssistantJson.encode(wireValue).toByteArray(Charsets.UTF_8)
+
+    internal val wireValue: Any get() = when (this) {
+        String -> mapOf("type" to "string")
+        Boolean -> mapOf("type" to "boolean")
+        is Enumeration -> mapOf("type" to "string", "enum" to values)
+        is Array -> mapOf("type" to "array", "items" to item.wireValue)
+        is Object -> mapOf("type" to "object", "additionalProperties" to false,
+            "properties" to properties.associate { it.first to it.second.wireValue },
+            "required" to properties.map { it.first })
+    }
 
     fun validate(value: LlmJsonValue) {
         val valid = when (this) {
@@ -27,21 +37,7 @@ internal sealed class LlmSchema {
         if (!valid) throw AssistantError.InvalidOutput
     }
 
-    // The descriptor vocabulary is ASCII. Sorted keys match Foundation without a second schema snapshot.
-    private fun json(): kotlin.String = when (this) {
-        String -> "{\"type\":\"string\"}"
-        Boolean -> "{\"type\":\"boolean\"}"
-        is Enumeration -> "{\"enum\":[${values.joinToString(",") { quoted(it) }}],\"type\":\"string\"}"
-        is Array -> "{\"items\":${item.json()},\"type\":\"array\"}"
-        is Object -> "{\"additionalProperties\":false,\"properties\":{${properties.sortedBy { it.first }.joinToString(",") {
-            (key, schema) -> "${quoted(key)}:${schema.json()}"
-        }}},\"required\":[${properties.joinToString(",") { quoted(it.first) }}],\"type\":\"object\"}"
-    }
 
-    private fun quoted(value: kotlin.String): kotlin.String {
-        check(value.all { it in 'a'..'z' || it == '_' })
-        return "\"$value\""
-    }
 }
 
 internal object LlmSchemas {

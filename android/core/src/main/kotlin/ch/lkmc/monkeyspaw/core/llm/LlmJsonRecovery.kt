@@ -9,8 +9,9 @@ internal sealed interface LlmJsonValue {
     class Object(val members: Map<String, LlmJsonValue>) : LlmJsonValue
     class Array(val items: List<LlmJsonValue>) : LlmJsonValue
     class Text(val value: String) : LlmJsonValue
+    class EncodedText(val decode: () -> String) : LlmJsonValue
     class Boolean(val value: kotlin.Boolean) : LlmJsonValue
-    data object Number : LlmJsonValue
+    class Number(val token: String) : LlmJsonValue
     data object Null : LlmJsonValue
 }
 
@@ -18,8 +19,11 @@ internal fun LlmJsonValue.member(key: String): LlmJsonValue =
     (this as? LlmJsonValue.Object)?.members?.get(key) ?: throw AssistantError.InvalidOutput
 internal fun LlmJsonValue.array(): List<LlmJsonValue> =
     (this as? LlmJsonValue.Array)?.items ?: throw AssistantError.InvalidOutput
-internal fun LlmJsonValue.string(): String =
-    (this as? LlmJsonValue.Text)?.value ?: throw AssistantError.InvalidOutput
+internal fun LlmJsonValue.string(): String = when (this) {
+    is LlmJsonValue.Text -> value
+    is LlmJsonValue.EncodedText -> decode()
+    else -> throw AssistantError.InvalidOutput
+}
 internal fun LlmJsonValue.boolean(): Boolean =
     (this as? LlmJsonValue.Boolean)?.value ?: throw AssistantError.InvalidOutput
 
@@ -93,7 +97,16 @@ private fun ByteArray.matches(position: Int, ascii: String): Boolean =
     position + ascii.length <= size && ascii.indices.all { this[position + it].toInt() == ascii[it].code }
 
 /** Separate from SyncAPI's reader: decoded duplicate keys and 32 open containers are strict. */
-internal class LlmJsonParser(private val bytes: ByteArray, private var position: Int = 0) {
+internal enum class AssistantJsonMode { OUTPUT, ENVELOPE }
+
+internal class LlmJsonParser(private val bytes: ByteArray, private var position: Int = 0,
+                            private val mode: AssistantJsonMode = AssistantJsonMode.OUTPUT) {
+    init {
+        // JSONDecoder accepts a document BOM; output recovery has its own pinned rules.
+        if (mode == AssistantJsonMode.ENVELOPE && position == 0 && bytes.size >= 3 &&
+            bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) position = 3
+    }
+
     fun parse(): LlmJsonValue {
         val value = parsePrefix().first
         whitespace()
@@ -106,7 +119,8 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
     private fun value(depth: Int): LlmJsonValue {
         whitespace()
         if (position >= bytes.size) throw AssistantError.InvalidOutput
-        if ((peek() == 123 || peek() == 91) && depth >= Limits.llmJSONNestingCap) throw AssistantError.InvalidOutput
+        val cap = if (mode == AssistantJsonMode.OUTPUT) Limits.llmJSONNestingCap else Limits.assistantEnvelopeNestingCap
+        if ((peek() == 123 || peek() == 91) && depth >= cap) throw AssistantError.InvalidOutput
         return when (peek()) {
             123 -> {
                 position++
@@ -116,11 +130,14 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                     do {
                         whitespace()
                         // Swift Dictionary<String, ...> uses canonical String equality.
-                        val key = UnicodeText.nfc(string())
-                        if (key in members) throw AssistantError.InvalidOutput
+                        val decoded = string()
+                        val key = if (mode == AssistantJsonMode.OUTPUT) UnicodeText.nfc(decoded) else decoded
+                        if (key in members && mode == AssistantJsonMode.OUTPUT) throw AssistantError.InvalidOutput
                         whitespace()
                         if (!consume(58)) throw AssistantError.InvalidOutput
-                        members[key] = value(depth + 1)
+                        val item = value(depth + 1)
+                        // JSONDecoder's envelope keyed containers retain the first duplicate.
+                        if (key !in members) members[key] = item
                         whitespace()
                     } while (consume(44))
                     if (!consume(125)) throw AssistantError.InvalidOutput
@@ -137,7 +154,7 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 }
                 LlmJsonValue.Array(items)
             }
-            34 -> LlmJsonValue.Text(string())
+            34 -> if (mode == AssistantJsonMode.ENVELOPE) encodedText() else LlmJsonValue.Text(string())
             116 -> { literal("true"); LlmJsonValue.Boolean(true) }
             102 -> { literal("false"); LlmJsonValue.Boolean(false) }
             110 -> { literal("null"); LlmJsonValue.Null }
@@ -146,14 +163,32 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 while (position < bytes.size && peek() !in listOf(9, 10, 13, 32, 44, 93, 125)) position++
                 val token = String(bytes, start, position - start, Charsets.UTF_8)
                 // Swift's fragment reader accepts a leading UTF-8 BOM, including NSNumber booleans.
-                val fragment = token.removePrefix("\uFEFF")
-                val bomBoolean = token.startsWith("\uFEFF") && fragment in setOf("true", "false")
-                if (!bomBoolean && (!number.matches(fragment) || fragment.toDoubleOrNull()?.isFinite() != true)) {
+                val fragment = if (mode == AssistantJsonMode.OUTPUT) token.removePrefix("\uFEFF") else token
+                val bomBoolean = mode == AssistantJsonMode.OUTPUT && token.startsWith("\uFEFF") && fragment in setOf("true", "false")
+                if (!bomBoolean && (!number.matches(fragment) ||
+                    (mode == AssistantJsonMode.OUTPUT && fragment.toDoubleOrNull()?.isFinite() != true))) {
                     throw AssistantError.InvalidOutput
                 }
-                LlmJsonValue.Number
+                LlmJsonValue.Number(fragment)
             }
         }
+    }
+
+    // JSONDecoder defers unused values: malformed optional text cannot override a stop outcome.
+    private fun encodedText(): LlmJsonValue {
+        val start = position++
+        while (position < bytes.size) {
+            val byte = peek()
+            position++
+            if (byte == 34) {
+                val end = position
+                return LlmJsonValue.EncodedText {
+                    LlmJsonParser(bytes.copyOfRange(start, end), mode = AssistantJsonMode.ENVELOPE).string()
+                }
+            }
+            if (byte == 92) position++
+        }
+        throw AssistantError.InvalidOutput
     }
 
     private fun string(): String {
@@ -165,7 +200,10 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
             if (byte < 32) throw AssistantError.InvalidOutput
             if (byte == 34 || byte == 92) {
                 // The reference strips one literal BOM per raw UTF-8 run; escaped BOMs remain.
-                try { text.append(bytes.decodeToString(start, position, throwOnInvalidSequence = true).removePrefix("\uFEFF")) }
+                try {
+                    val run = bytes.decodeToString(start, position, throwOnInvalidSequence = true)
+                    text.append(if (mode == AssistantJsonMode.OUTPUT) run.removePrefix("\uFEFF") else run)
+                }
                 catch (_: CharacterCodingException) { throw AssistantError.InvalidOutput }
                 position++
                 if (byte == 34) return text.toString()

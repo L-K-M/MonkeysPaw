@@ -14,6 +14,7 @@ internal object LlmFixtureContracts {
         corpusRequire(envelope["schema"].integerValue() == BigInteger.ONE, "Unknown LLM schema version")
         corpusRequire(envelope["category"].stringValue() == "llm", "Wrong LLM category")
         if (envelope["kind"].stringValue() == "merge") return merge(envelope)
+        if (envelope["kind"].stringValue() == "exchange") return LlmExchangeContracts.read(envelope)
         val outputKind = envelope["outputKind"].stringValue()
         corpusRequire(outputKind in setOf("artifact", "review"), "Unknown LLM output kind")
         val expected = envelope["expected"].objectValue()
@@ -127,7 +128,7 @@ internal object LlmFixtureContracts {
         }
     }
 
-    private fun result(result: JsonObject, outputKind: String) {
+    fun result(result: JsonObject, outputKind: String) {
         if ("error" in result) {
             result.members(setOf("error"))
             corpusRequire(result["error"].stringValue() == "invalidOutput", "Unknown LLM error")

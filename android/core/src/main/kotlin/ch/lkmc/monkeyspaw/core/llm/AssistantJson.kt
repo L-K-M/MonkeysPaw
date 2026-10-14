@@ -10,6 +10,7 @@ internal object AssistantJson {
         when (value) {
             is String -> appendQuoted(value)
             is Boolean -> append(value)
+            is Int, is Long -> append(value)
             is List<*> -> {
                 append('[')
                 value.forEachIndexed { index, item ->

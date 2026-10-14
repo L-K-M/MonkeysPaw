@@ -5,11 +5,17 @@ import Foundation
 public struct AnthropicClient: AssistantClient, CustomStringConvertible,
     CustomDebugStringConvertible, CustomReflectable {
     private let transport: HTTPTransporting
+    private let clock: AssistantClock
 
-    public init(transport: HTTPTransporting) { self.transport = transport }
+    public init(transport: HTTPTransporting) { self.init(transport: transport, clock: .live) }
+
+    init(transport: HTTPTransporting, clock: AssistantClock) {
+        self.transport = transport
+        self.clock = clock
+    }
 
     public func perform(_ request: AssistantRequest, using connection: ProviderConnection) async throws -> AssistantResponse {
-        try await perform(request, using: connection, deadline: ContinuousClock.now.advanced(by: Limits.llmBudget))
+        try await perform(request, using: connection, deadline: clock.monotonic().advanced(by: Limits.llmBudget))
     }
 
     public func perform(_ request: AssistantRequest, using connection: ProviderConnection,
@@ -45,7 +51,7 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
         }
         let httpRequest = try httpRequest(url: connection.completionURL, method: .post,
             headers: headers, body: encoded, deadline: deadline)
-        let response = try await AssistantHTTP.send(httpRequest, through: transport)
+        let response = try await AssistantHTTP.send(httpRequest, through: transport, nowUTC: clock.utc)
         let text = try outputText(from: response.body)
         let output: AssistantOutput
         switch request.action {
@@ -62,7 +68,7 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
 
     public func listModels(using connection: ProviderConnection) async throws -> AssistantModelPage {
         try await listModels(using: connection, afterID: nil,
-                             deadline: ContinuousClock.now.advanced(by: Limits.modelListTimeout))
+                             deadline: clock.monotonic().advanced(by: Limits.modelListTimeout))
     }
 
     public func listModels(using connection: ProviderConnection, afterID: String?,
@@ -70,7 +76,7 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
         try checkActive(until: deadline)
         let request = try httpRequest(url: AssistantModelList.url(for: connection, afterID: afterID), method: .get,
             headers: headers(for: connection, operation: .models), deadline: deadline)
-        let response = try await AssistantHTTP.send(request, through: transport)
+        let response = try await AssistantHTTP.send(request, through: transport, nowUTC: clock.utc)
         try checkActive(until: deadline)
         guard let page = try? JSONDecoder().decode(ModelPage.self, from: response.body),
               page.data.allSatisfy({ AssistantModelList.validID($0.id) }),
@@ -84,7 +90,7 @@ public struct AnthropicClient: AssistantClient, CustomStringConvertible,
 
     private func checkActive(until deadline: ContinuousClock.Instant) throws {
         guard !Task.isCancelled else { throw AssistantError.transport(.cancelled) }
-        guard ContinuousClock.now < deadline else { throw AssistantError.transport(.deadlineExceeded) }
+        guard clock.monotonic() < deadline else { throw AssistantError.transport(.deadlineExceeded) }
     }
 
     private enum Operation { case messages, models }
