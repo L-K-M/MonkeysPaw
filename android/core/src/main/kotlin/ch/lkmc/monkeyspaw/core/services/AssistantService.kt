@@ -79,9 +79,9 @@ class AssistantService(
     }
 
     /** One intent budget covers credential resolution and all pages, with no persistence. */
-    fun testConnection(draft: ProviderDraft): AssistantConnectionTest {
+    fun testConnection(draft: ProviderDraft): AssistantConnectionOperation {
         val deadline = monotonic.nowNanos() + Limits.modelListTimeoutNanos
-        return AssistantConnectionTest(operation(deadline) {
+        return AssistantConnectionOperation(operation(deadline) {
             checkDeadline(deadline)
             val connection = providerSettings.resolveForTesting(draft)
             currentCoroutineContext().ensureActive()
@@ -188,7 +188,7 @@ class AssistantService(
     override fun toString(): String = "<assistant service>"
 }
 
-class AssistantConnectionTest internal constructor(private val operation: AssistantOperation<List<ModelDescriptor>>) {
+class AssistantConnectionOperation internal constructor(private val operation: AssistantOperation<List<ModelDescriptor>>) {
     fun cancel() = operation.cancel()
 
     suspend fun await(): ConnectionTestResult = try { ConnectionTestResult.Ok(operation.await()) }
