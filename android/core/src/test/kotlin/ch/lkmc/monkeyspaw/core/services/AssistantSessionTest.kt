@@ -13,6 +13,58 @@ import kotlinx.coroutines.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantSessionTest {
+    @Test fun deactivationUsesCapturedContextAndKeepsFooterWithoutProbingRetiredGraph() = runTest {
+        val h = AssistantHarness(this)
+        h.configure()
+        var retired = false
+        val session = AssistantSession(h.service, backgroundScope, {
+            check(!retired) { "Graph retired" }
+            h.context
+        }, h.monotonic)
+        val reply = h.client.hold()
+        session.write("Brief")
+        runCurrent()
+        val idleStates = mutableListOf<AssistantState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            session.state.collect { if (it.phase == AssistantPhase.IDLE) idleStates.add(it) }
+        }
+        retired = true
+        session.deactivate()
+        reply.complete(assistantResponse())
+        runCurrent()
+        assertEquals(AssistantPhase.IDLE, session.state.value.phase)
+        assertTrue(idleStates.isNotEmpty())
+        assertTrue(idleStates.all { it.providerHost == "api.openai.com" && it.modelID == "manual-model" &&
+            it.mutationAccess == AssistantMutationAccess.CURRENT_SCOPE })
+        session.write("Inactive")
+        runCurrent()
+        assertEquals(1, h.client.calls.size)
+        h.session.deactivate()
+    }
+
+    @Test fun missingSourceKeepsPreciseReadOnlyAndAvailabilityFailuresThroughSession() = runTest {
+        val h = AssistantHarness(this, source = "Original")
+        h.configure()
+        for (reason in listOf(SourceReadOnlyReason.INVALID_UTF8, SourceReadOnlyReason.SOURCE_TOO_LARGE)) {
+            h.context = h.context.copy(editor = h.context.editor?.copy(source = null, readOnlyReason = reason))
+            for (review in listOf(false, true)) {
+                if (review) h.session.review() else h.session.improve()
+                runCurrent()
+                assertEquals(AssistantFailure.ReadOnly(reason), h.session.state.value.failure)
+                assertTrue(h.session.state.value.transcript.isEmpty())
+            }
+        }
+        for ((availability, failure) in listOf(AssistantEditorAvailability.BUSY to AssistantFailure.EditorBusy,
+            AssistantEditorAvailability.CONFLICTED to AssistantFailure.EditorConflict)) {
+            h.context = h.context.copy(editor = h.context.editor?.copy(availability = availability))
+            h.session.review()
+            runCurrent()
+            assertEquals(failure, h.session.state.value.failure)
+        }
+        assertTrue(h.client.calls.isEmpty())
+        h.session.deactivate()
+    }
+
     @Test fun footerSupportsEveryValidatedHostSpellingWithoutReparsingWithJavaURI() = runTest {
         val h = AssistantHarness(this)
         h.configure()

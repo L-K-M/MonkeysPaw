@@ -168,8 +168,6 @@ class AssistantSession(
     fun cancel() {
         if (!active) return
         reset()
-        context = currentContext()
-        publish(footer(state.value))
     }
 
     fun reject() = cancel()
@@ -313,7 +311,7 @@ class AssistantSession(
         attempt = null
         reviewContext = null
         retainedID = null
-        publish(AssistantState())
+        publish(footer(AssistantState()))
     }
 
     private fun footer(state: AssistantState): AssistantState = state.copy(

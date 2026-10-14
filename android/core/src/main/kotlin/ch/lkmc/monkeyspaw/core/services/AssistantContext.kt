@@ -80,8 +80,20 @@ sealed class AssistantCommand {
 
     internal fun action(context: AssistantContext): AssistantAction = when (this) {
         is Write -> AssistantAction.Write(brief)
-        Review -> AssistantAction.Review(context.editor?.source ?: throw AssistantFailure.NoEditor)
-        is Improve -> AssistantAction.Improve(context.editor?.source ?: throw AssistantFailure.NoEditor, instruction, selectedFindings)
+        Review -> AssistantAction.Review(source(context))
+        is Improve -> AssistantAction.Improve(source(context), instruction, selectedFindings)
+    }
+
+    private fun source(context: AssistantContext): String {
+        val editor = context.editor ?: throw AssistantFailure.NoEditor
+        editor.source?.let { return it }
+        when (editor.availability) {
+            AssistantEditorAvailability.BUSY -> throw AssistantFailure.EditorBusy
+            AssistantEditorAvailability.CONFLICTED -> throw AssistantFailure.EditorConflict
+            AssistantEditorAvailability.AVAILABLE -> Unit
+        }
+        editor.readOnlyReason?.let { throw AssistantFailure.ReadOnly(it) }
+        throw AssistantFailure.NoEditor
     }
 
     final override fun toString(): String = "<assistant command redacted>"
