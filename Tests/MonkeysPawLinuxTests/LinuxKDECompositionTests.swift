@@ -113,7 +113,7 @@ final class LinuxKDECompositionTests: XCTestCase {
             self.service.calls.count > count && self.row(.hotkey)?.registration?.status == .registered
         })
         XCTAssertEqual(row(.hotkey)?.registration?.detail, "Ctrl+E")
-        XCTAssertEqual(service.calls.filter { $0.method == "doRegister" }.count, 1)
+        XCTAssertEqual(service.calls.filter { $0.method == "doRegister" }.map(\.actionName), ["toggle", "repeat"])
         XCTAssertTrue(portal.calls.isEmpty)
     }
 
