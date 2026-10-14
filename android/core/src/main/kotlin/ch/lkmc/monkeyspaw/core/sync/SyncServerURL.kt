@@ -20,7 +20,7 @@ sealed class SyncServerURLError private constructor(code: String) : Exception(co
 
 /** Canonical deployment base without /api/v1. HTTP exemptions never consult DNS. */
 class SyncServerURL(input: String) {
-    private val components = parse(input, queryAllowed = false)
+    private val components = parse(input, URLUse.DEPLOYMENT)
     val baseURL: String
     val apiURL: String get() = "$baseURL/api/v1"
     val usesPlaintextHTTP: Boolean get() = components.scheme == "http"
@@ -34,7 +34,7 @@ class SyncServerURL(input: String) {
     /** Drivers call this before dispatch, including anonymous requests. */
     fun validatedRequestURL(url: String): String {
         val request = try {
-            parse(url, queryAllowed = true)
+            parse(url, URLUse.REQUEST)
         } catch (error: SyncServerURLError) {
             throw when (error) {
                 SyncServerURLError.CredentialsInURL -> HttpTransportError.CredentialsInURL
@@ -53,6 +53,7 @@ class SyncServerURL(input: String) {
     override fun toString(): String = "<sync server URL>"
 
     private data class Components(val scheme: String, val origin: String, val path: String, val encodedPath: String, val query: String)
+    private enum class URLUse { DEPLOYMENT, REQUEST }
 
     private companion object {
         const val apiSuffix = "/api/v1"
@@ -61,7 +62,7 @@ class SyncServerURL(input: String) {
         const val hex = "0123456789ABCDEF"
         val idna: IDNA = IDNA.getUTS46Instance(IDNA.NONTRANSITIONAL_TO_ASCII)
 
-        fun parse(raw: String, queryAllowed: Boolean): Components {
+        fun parse(raw: String, use: URLUse): Components {
             val input = raw.trimProviderWhitespace()
             if (input.isEmpty() || '\\' in input || input.hasControls()) throw SyncServerURLError.InvalidURL
             try { input.encodeToByteArray(throwOnInvalidSequence = true) }
@@ -87,7 +88,7 @@ class SyncServerURL(input: String) {
             val port = rawPort.drop(1).takeIf { it.isNotEmpty() }?.toIntOrNull()
             if (rawPort.length > 1 && port == null || port != null && port !in 1..65535) throw SyncServerURLError.InvalidURL
             if ('@' in authority) throw SyncServerURLError.CredentialsInURL
-            if ((!queryAllowed && input.indexOf('?', end) >= 0) || input.indexOf('#', end) >= 0) {
+            if ((use == URLUse.DEPLOYMENT && input.indexOf('?', end) >= 0) || input.indexOf('#', end) >= 0) {
                 throw SyncServerURLError.QueryOrFragmentInURL
             }
             if ('%' in authority) throw SyncServerURLError.InvalidURL
