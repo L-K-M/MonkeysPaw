@@ -92,8 +92,11 @@ final class SyncWorkPermit: @unchecked Sendable {
     func capture(_ intended: [SyncOwnWriteExpectation], library: SyncLibraryMutations) throws -> [SyncFileChange] {
         var changes: [SyncFileChange] = []
         for expected in intended.sorted(by: { $0.path < $1.path }) {
+            // Absence has no incarnation; a reused path's later user deletion
+            // cannot be distinguished from this journal's deletion.
+            guard let hash = expected.hash else { continue }
             let file = try library.read(at: expected.path)
-            guard file?.hash == expected.hash else { continue }
+            guard file?.hash == hash else { continue }
             changes.append(SyncFileChange(path: expected.path, stamp: file?.stamp, hash: file?.hash.rawValue))
         }
         return changes
