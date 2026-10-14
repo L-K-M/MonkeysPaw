@@ -24,10 +24,14 @@ internal class ShareIntentDecoderTest {
 
     @Test fun `unsupported action and exact MIME are rejected before reading extras`() {
         for (action in listOf(null, "", ACTION_PROCESS_TEXT, ACTION_SEND_MULTIPLE, ACTION_VIEW, "ACTION_SEND")) {
-            assertNull(ShareIntentDecoder.decode(action, "text/plain") { error("Must not read extras") })
+            var read = false
+            assertNull(ShareIntentDecoder.decode(action, "text/plain") { read = true; error("Must not read extras") })
+            assertFalse(read, "Extras read for unsupported action: $action")
         }
         for (mime in listOf(null, "", "text/*", "text/html", "TEXT/PLAIN", "text/plain; charset=utf-8")) {
-            assertNull(ShareIntentDecoder.decode(ACTION_SEND, mime) { error("Must not read extras") })
+            var read = false
+            assertNull(ShareIntentDecoder.decode(ACTION_SEND, mime) { read = true; error("Must not read extras") })
+            assertFalse(read, "Extras read for unsupported MIME: $mime")
         }
     }
 
@@ -69,10 +73,15 @@ internal class ShareIntentDecoderTest {
             assertTrue(decode(boundary)?.text == boundary)
             assertNull(decode(boundary + "a"))
         }
+        var snapshotted = false
         assertNull(decode(object : CharSequence by "small" {
             override val length = cap + 1
-            override fun toString(): String = error("Must reject before snapshotting")
+            override fun toString(): String {
+                snapshotted = true
+                error("Must reject before snapshotting")
+            }
         }))
+        assertFalse(snapshotted, "Oversized sequence copied before rejection")
         assertNull(decode(object : CharSequence by "small" {
             override fun toString() = "a".repeat(cap + 1)
         }))
