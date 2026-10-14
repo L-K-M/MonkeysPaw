@@ -425,6 +425,12 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
         guard phase != .stopped else { return }
         registrations[action] = HotkeyRegistration(id: registration.id, mechanism: mechanism,
             status: .unbound, detail: SetupStrings.unboundShortcut, configuration: .unavailable)
+        if effective == .portal, !portal.isAttached, !onFire.isEmpty {
+            // Shared-session retirement invalidates the peer's activation proof.
+            select(.none)
+            publishPortalOffer()
+            return
+        }
         guard onFire.isEmpty else { return }
         operation += 1
         select(.none)

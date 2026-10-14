@@ -161,6 +161,12 @@ Hotkey notes:
     resume after verified cleanup. Removing one callback never reactivates a
     suspended peer; removing both only retires presence. Persistent keys survive
     every cleanup.
+    The composite portal route inherits shared-session Close on unregister:
+    remaining callbacks and ids survive, but readiness and activation proof
+    require explicit fresh attachment. Re-declaration alone never starts consent.
+    If the removed action still has a saved daemon row, the full-catalogue guard
+    blocks a destructive subset Bind until that action is re-declared. The native
+    route retains its independent action lifetimes.
     After portal owner loss, explicit attachment may recover through a definite
     replacement session. Preserve departed-owner cleanup markers on failed
     Close, including loss during a pending Close; they never authorize native

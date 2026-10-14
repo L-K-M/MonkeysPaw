@@ -381,7 +381,7 @@ final class KDEPortalHotkeyTests: XCTestCase {
         service.releaseSessionCloses()
     }
 
-    func testBothPortalEventsTokensAndRestartPreserveMechanismAndIndependentLifetimes() throws {
+    func testBothPortalEventsTokensAndRestartRequireExplicitReconfigurationAfterRemoval() throws {
         daemon.actionNames = ["toggle", "repeat"]
         daemon.additionalKeys["repeat"] = "@a(ai) [([67108933],)]"
         start(bothActions: true)
@@ -400,8 +400,19 @@ final class KDEPortalHotkeyTests: XCTestCase {
         let calls = service.calls.count
         let revision = backend.activationRevision
         let nativeRegistrationsBeforeRemoval = daemon.calls.filter { $0.method == "doRegister" }.count
+        service.holdSessionClose = true
         backend.unregister(repeatAction)
-        _ = declareRepeat()
+        XCTAssertFalse(portal.isAttached)
+        XCTAssertNotEqual(backend.activationRevision, revision)
+        XCTAssertEqual(backend.currentRegistration.id, picker.id)
+        XCTAssertEqual(backend.currentRegistration.status, .needsAction)
+        XCTAssertEqual(backend.currentRegistration.configuration, .attachPortal)
+        let replacement = declareRepeat()
+        XCTAssertEqual(replacement.id, repeatAction.id)
+        XCTAssertEqual(replacement.status, .needsAction)
+        XCTAssertEqual(replacement.configuration, .attachPortal)
+        daemon.emit()
+        daemon.emit(body: "('ch.lkmc.monkeyspaw', 'repeat', int64 42)")
         var inspected = false
         native.inspect { _ in inspected = true }
         XCTAssertTrue(GTKTestSupport.spin { inspected })
@@ -410,10 +421,40 @@ final class KDEPortalHotkeyTests: XCTestCase {
         try activateRepeat(7)
         XCTAssertEqual(repeatFires, 1)
         try activateRepeat(8)
-        XCTAssertEqual(repeatFires, 2)
+        try activate(8)
+        XCTAssertEqual(repeatFires, 1)
+        XCTAssertEqual(fires, 1)
+        XCTAssertNil(backend.consumeActivationToken())
+        XCTAssertNil(backend.consumeActivationToken(for: .repeatLast))
         XCTAssertEqual(service.calls.count, calls)
+        XCTAssertTrue(service.closedPaths.contains(oldSession))
+        var completions = 0
+        backend.configure { completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(completions, 0)
+        XCTAssertEqual(service.calls.count, calls, "Fresh configuration must wait for acknowledged Close.")
+        service.holdSessionClose = false
+        service.releaseSessionCloses()
+        XCTAssertTrue(GTKTestSupport.spin { completions == 1 })
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(service.calls.suffix(3).map(\.method), ["CreateSession", "ListShortcuts", "BindShortcuts"])
         XCTAssertEqual(backend.currentRegistration, picker)
-        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(backend.registration(for: .repeatLast), repeatAction)
+        XCTAssertEqual(daemon.portalPresentActions, ["toggle", "repeat"])
+        XCTAssertTrue(daemon.presentActions.isEmpty)
+        XCTAssertTrue(daemon.removedActions.isEmpty)
+        XCTAssertEqual(daemon.savedKeys, "@a(ai) [([201326672],)]")
+        XCTAssertEqual(daemon.keys(for: "repeat"), "@a(ai) [([67108933],)]")
+        try activate(7)
+        try activateRepeat(7)
+        try activate(7)
+        try activateRepeat(7)
+        XCTAssertEqual(fires, 2)
+        XCTAssertEqual(repeatFires, 2)
+        XCTAssertEqual(tokens.last!, "fixture-token")
+        XCTAssertEqual(repeatTokens.last!, "repeat-token")
+        let callsAfterReconfiguration = service.calls.count
         backend.shutdown()
         XCTAssertTrue(GTKTestSupport.spin { !self.daemon.portalPresent })
         backend = nil
@@ -421,11 +462,82 @@ final class KDEPortalHotkeyTests: XCTestCase {
         start(bothActions: true)
         XCTAssertEqual(backend.registration(for: .repeatLast).mechanism, .globalShortcutsPortal)
         XCTAssertEqual(backend.registration(for: .repeatLast).configuration, .attachPortal)
-        XCTAssertEqual(service.calls.count, calls)
+        XCTAssertEqual(service.calls.count, callsAfterReconfiguration)
         XCTAssertEqual(daemon.calls.filter { $0.method == "doRegister" }.count, nativeRegistrations)
         try activateRepeat(9, session: oldSession)
         XCTAssertEqual(repeatFires, 2)
         XCTAssertNil(backend.consumeActivationToken(for: .repeatLast))
+    }
+
+    func testRemovingEitherPortalActionBlocksDestructiveSubsetBindUntilRedeclaration() throws {
+        for version: UInt32 in [1, 2] {
+            service.versions["org.freedesktop.portal.GlobalShortcuts"] = version
+            for removed in HotkeyAction.allCases {
+                daemon.actionNames = ["toggle", "repeat"]
+                daemon.additionalKeys["repeat"] = "@a(ai) [([67108939, 67108931, 0, 0],), ([268435538],), ([],)]"
+                let pickerKeys = daemon.savedKeys
+                let repeatKeys = daemon.keys(for: "repeat")
+                start(bothActions: true)
+                configure()
+                let oldSession = try session()
+                let remaining: HotkeyAction = removed == .togglePicker ? .repeatLast : .togglePicker
+                let remainingID = backend.registration(for: remaining).id
+                let removedID = backend.registration(for: removed).id
+                let binds = service.calls.filter { $0.method == "BindShortcuts" }.count
+                let calls = service.calls.count
+                let nativeRegistrations = daemon.calls.filter { $0.method == "doRegister" }.count
+                backend.unregister(backend.registration(for: removed))
+                XCTAssertTrue(GTKTestSupport.spin { !self.daemon.portalPresent })
+                XCTAssertTrue(service.closedPaths.contains(oldSession))
+                XCTAssertFalse(portal.isAttached)
+                XCTAssertEqual(service.calls.count, calls)
+                XCTAssertEqual(backend.registration(for: removed).status, .unbound)
+                XCTAssertEqual(backend.registration(for: removed).configuration, .unavailable)
+                XCTAssertEqual(backend.registration(for: remaining).id, remainingID)
+                XCTAssertEqual(backend.registration(for: remaining).status, .needsAction)
+                XCTAssertEqual(backend.registration(for: remaining).configuration, .attachPortal)
+                configure()
+                XCTAssertEqual(service.calls.filter { $0.method == "BindShortcuts" }.count, binds)
+                XCTAssertEqual(backend.registration(for: remaining).status, .failed)
+                XCTAssertTrue(daemon.presentActions.isEmpty)
+                XCTAssertTrue(daemon.portalPresentActions.isEmpty)
+                XCTAssertTrue(daemon.removedActions.isEmpty)
+                XCTAssertEqual(daemon.savedKeys, pickerKeys)
+                XCTAssertEqual(daemon.keys(for: "repeat"), repeatKeys)
+                XCTAssertEqual(daemon.calls.filter { $0.method == "doRegister" }.count, nativeRegistrations)
+                if removed == .repeatLast { _ = declareRepeat() }
+                else {
+                    _ = backend.register(.togglePicker, accelerator: nil) { [weak self] in
+                        guard let self else { return }
+                        self.fires += 1
+                        self.tokens.append(self.backend.consumeActivationToken())
+                    }
+                }
+                XCTAssertEqual(backend.registration(for: removed).id, removedID)
+                configure()
+                let bind = try XCTUnwrap(service.calls.last { $0.method == "BindShortcuts" })
+                XCTAssertEqual(service.calls.filter { $0.method == "BindShortcuts" }.count, binds + 1)
+                XCTAssertTrue(bind.text(1).contains("'toggle'"))
+                XCTAssertTrue(bind.text(1).contains("'repeat'"))
+                XCTAssertFalse(bind.text(1).contains("preferred_trigger"))
+                XCTAssertTrue(HotkeyAction.allCases.allSatisfy { backend.registration(for: $0).status == .registered })
+                let pickerFires = fires
+                let repeats = repeatFires
+                try activate(17)
+                try activateRepeat(17)
+                XCTAssertEqual(fires, pickerFires + 1)
+                XCTAssertEqual(repeatFires, repeats + 1)
+                XCTAssertEqual(daemon.savedKeys, pickerKeys)
+                XCTAssertEqual(daemon.keys(for: "repeat"), repeatKeys)
+                backend.shutdown()
+                XCTAssertTrue(GTKTestSupport.spin { self.daemon.portalPresentActions.isEmpty && self.daemon.presentActions.isEmpty })
+                XCTAssertTrue(daemon.removedActions.isEmpty)
+                XCTAssertFalse(daemon.calls.contains { $0.method == "doUnregister" || $0.method == "cleanUp" })
+                XCTAssertEqual(daemon.savedKeys, pickerKeys)
+                XCTAssertEqual(daemon.keys(for: "repeat"), repeatKeys)
+                backend = nil
+            }
+        }
     }
 
     func testPortalIntentRestartStillObservesDaemonLossWithoutNativeRegistrations() throws {
@@ -565,8 +677,10 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertNotEqual(repeatAction.id, picker.id)
         XCTAssertEqual(backend.registration(for: .repeatLast).id, repeatAction.id)
         XCTAssertEqual(backend.currentRegistration, picker)
+        let revision = backend.activationRevision
         backend.unregister(repeatAction)
         XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(backend.activationRevision, revision)
         XCTAssertGreaterThan(daemon.calls.count, calls)
         XCTAssertEqual(daemon.calls.filter { $0.method == "doRegister" }.map(\.actionName), ["toggle", "repeat"])
         XCTAssertTrue(service.calls.isEmpty)
