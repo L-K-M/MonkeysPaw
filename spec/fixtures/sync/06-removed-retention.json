@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "06-removed-after-real-retention",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "editor"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\noriginal\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nclean\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/P.md",
+          "content": "---\nid: ${prompt.p}\n---\noffline edit\n"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Unknown.md",
+          "content": "Unknown local bytes.\n"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "DELETE",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200
+        },
+        {
+          "action": "advance_server",
+          "device": "a",
+          "server": "main",
+          "seconds": 7862400
+        },
+        {
+          "action": "retention",
+          "device": "a",
+          "server": "main",
+          "expected": {
+            "changes": 2,
+            "floors": 1,
+            "tombstones": 0,
+            "revisions": 0
+          }
+        },
+        {
+          "action": "server_expect",
+          "device": "a",
+          "server": "main",
+          "scope": "group:${group.team}",
+          "expected": {
+            "head": 2,
+            "floor": 3,
+            "changes": 0
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/rescued-2026-10-14/Groups/Team/P.md",
+          "name": "dirty"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/rescued-2026-10-14/Groups/Team/Unknown.md",
+          "name": "unknown"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2,
+            "prompt_count": 2,
+            "group_count": 0,
+            "cursor_count": 1,
+            "held_count": 0,
+            "trash_count": 3,
+            "absent": [
+              "Groups/Team/P.md",
+              "Groups/Team/Q.md",
+              "Groups/Team/Unknown.md"
+            ],
+            "files": [
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/P.md",
+                "content": "---\nid: ${prompt.dirty}\nx-monkeyspaw-rescued: true\n---\noffline edit\n"
+              },
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Unknown.md",
+                "content": "---\nid: ${prompt.unknown}\nx-monkeyspaw-rescued: true\n---\nUnknown local bytes.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.dirty}",
+                "scope": "user:${user.main.bob}",
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/P.md",
+                "rev": 1,
+                "origin": "rescued"
+              },
+              {
+                "id": "${prompt.unknown}",
+                "scope": "user:${user.main.bob}",
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/Unknown.md",
+                "rev": 1,
+                "origin": "rescued"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.q}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 1,
+            "/content": "---\nid: ${prompt.p}\n---\noriginal\n"
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2,
+            "prompt_count": 2,
+            "group_count": 0
+          }
+        }
+      ]
+    }
+  ]
+}

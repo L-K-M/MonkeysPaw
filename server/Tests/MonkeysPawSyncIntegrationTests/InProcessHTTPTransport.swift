@@ -1,4 +1,5 @@
 import Foundation
+@testable import SyncScenarioSupport
 import HummingbirdTesting
 import HTTPTypes
 import NIOCore
@@ -25,11 +26,13 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     private var afterHooks: [(method: String, path: String, run: () async throws -> Void)] = []
     private var interruptions: [(method: String, path: String, phase: ScenarioInterruption)] = []
     private var networkMode = ScenarioNetworkMode.online
+    private var failedMutation: ScenarioFailure?
     var library: ScenarioDisk?
 
     init(clients: [String: any TestClientProtocol]) { self.clients = clients }
     var traces: [ScenarioRequestTrace] { locked { recorded } }
     var pendingRewrites: Int { locked { rewrites.count + hooks.count + afterHooks.count + interruptions.count } }
+    var mutationFailure: ScenarioFailure? { locked { failedMutation } }
     func resetMetrics() { locked { recorded.removeAll() } }
     func setNetworkMode(_ value: ScenarioNetworkMode) { locked { networkMode = value } }
     func rewrite(_ value: ScenarioRewrite) { locked { rewrites.append(value) } }
@@ -44,6 +47,14 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     }
 
     func send(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
+        do { return try await sendIntoRouter(request) }
+        catch let failure as ScenarioFailure {
+            locked { if failedMutation == nil { failedMutation = failure } }
+            throw failure
+        }
+    }
+
+    private func sendIntoRouter(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
         try Task.checkCancellation()
         guard ContinuousClock.now < request.deadline else { throw HTTPTransportError.deadlineExceeded }
         guard case .sync(let server) = request.urlPolicy,
@@ -55,7 +66,7 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         guard (request.body?.count ?? 0) <= request.requestByteCap else { throw HTTPTransportError.requestTooLarge }
         let components = URLComponents(url: request.url, resolvingAgainstBaseURL: false)!
         let uri = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
-        if let hook = takeHook(method: request.method.rawValue, path: uri) { try await hook() }
+        if let hook = takeHook(method: request.method.rawValue, path: uri) { try await runHook(hook) }
         let requestRewrite = takeRewrite(phase: .request, method: request.method.rawValue, path: uri)
         let responseRewrite = takeRewrite(phase: .response, method: request.method.rawValue, path: uri)
         var bytes = request.body
@@ -91,7 +102,7 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
             body: safeBody, localPaths: localPaths, pull: pull, responseBytes: received.count)) }
         if let hook = takeAfterHook(method: request.method.rawValue, path: uri) {
             guard response.status == .ok else { throw ScenarioFailure.invalid("after hook requires real success") }
-            try await hook()
+            try await runHook(hook)
         }
         if takeInterruption(method: request.method.rawValue, path: uri, phase: .afterCommit) {
             guard response.status == .ok else { throw ScenarioFailure.invalid("acknowledgement loss requires real success") }
@@ -112,6 +123,15 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         locked {
             guard let index = rewrites.firstIndex(where: { $0.phase == phase && $0.method.rawValue == method && $0.path == path }) else { return nil }
             return rewrites.remove(at: index)
+        }
+    }
+
+    private func runHook(_ hook: () async throws -> Void) async throws {
+        do { try await hook() }
+        catch {
+            let failure = (error as? ScenarioFailure) ?? .invalid("network hook failed (" + String(describing: type(of: error)) + ")")
+            locked { if failedMutation == nil { failedMutation = failure } }
+            throw failure
         }
     }
 

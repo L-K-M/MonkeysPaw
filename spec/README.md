@@ -47,22 +47,23 @@ error HTTP status and Retry-After header values. Constructed-invalid values
 fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
-At K10 completion, the corpus contains 1,032 cases and 2,168 visible files:
-format 16/32, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
-paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
+The nine content categories contain 1,034 cases and 2,172 visible files:
+format 17/34, grammar 22/44, render 22/44, validation 113/226, canonical 19/50,
+paths 141/282, ranking 36/164, import 15/30 and DTOs 649/1,298 (160 valid,
 489 invalid).
 These are reported counts, not fixed enumeration limits. LLM and sync-engine
 scenarios arrive with their implementations under the move-together rule.
 
-The delegated sync corpus has 71 executable variants in 19 JSON files: Y12's
-26 variants in seven files and Y13's 45 variants in twelve additional files.
-Together with the nine content categories, that is 1,103 cases and 2,187
+The delegated sync corpus has 87 executable variants in 24 JSON files: Y12's
+26 variants in seven files, Y13's 45 variants in twelve additional files and
+Y14's 16 variants in five additional files.
+Together with the nine content categories, that is 1,121 cases and 2,196
 visible files, with separate semantic owners.
-Ledger variant counts are 01:1, 02:6, 03:6, 04:9, 05:7, 06:1, 07:2, 09:2,
-10:3, 11:5, 12:10, 13:4, 14:3, 15:1, 16:2, 18:2, 19:2, 20:3 and 21:2.
+Ledger variant counts are 01:1, 02:6, 03:6, 04:9, 05:7, 06:2, 07:2, 08:7,
+09:2, 10:3, 11:5, 12:10, 13:4, 14:3, 15:1, 16:2, 17:4, 18:2, 19:2,
+20:3, 21:2, 22:3 and 23:1.
 The root content gate reports delegated file accounting separately; the server
 owner requires each acceptance file and compares all decoded and executed IDs.
-Y14 adds the post-retention removal, restore and crash variants.
 
 `fixtures/` contains nine content categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical` and `dto`, plus
@@ -766,7 +767,7 @@ An envelope has exactly `schema: 1`, `category: "sync"` and a nonempty
 |---|---|
 | `id` | Stable unique case ID starting with the file's two-digit ledger number and `-`; variants add a descriptive suffix. |
 | `now` | Exact UTC seconds, `YYYY-MM-DDTHH:mm:ssZ`. Both server and device wall clocks start here. |
-| `servers` | Nonempty array of unique symbolic deployment names, such as `main` or `other`. Each uses its own migrated SQLite database at `https://<name>.test`. No DNS or sockets are used. |
+| `servers` | Nonempty array of unique symbolic deployment names, such as `main` or `other`. Each uses its own migrated SQLite database at `https://<name>.test`. Router scenarios use no DNS or sockets. Killed-client scenarios alone map the logical deployment to a live loopback server on an ephemeral port. |
 | `users` | At least two distinct symbolic usernames. Each deployment seeds them through the real account repository with a test-only bcrypt password. Login still exercises the real login route, device issuance and bearer middleware. |
 | `devices` | At least two objects containing only `name` and `entropy_seed`. Seeds are distinct positive integers below 2^32. Each device owns separate library/data/secret disk roots, clock, entropy and services. |
 | `prompts` | Map of symbolic names to hand-authored canonical ULIDs; may be empty when IDs are bound from local files. |
@@ -808,11 +809,20 @@ Every action requires `action` and `device`. The additional members are:
 | `http` | `method`, `path`, `status`; optional `body`, `expected`, `bind`. Send through the device's authenticated transport into the real router. `expected` maps JSON pointers to exact values; `bind` maps symbolic names to pointers returning strings. Every supplied assertion/binding is consumed. |
 | `rewrite_next_request` / `rewrite_next_response` | `method`, `path`, nonempty `patch` map of JSON pointers to replacement values. One matching real request/response is altered; response patches require an actual 200. They never fabricate successful server mutations. |
 | `before_next_request` | `method`, `path`, `then` (a complete `http`, `write` or `expect` action); optional nonnegative `skip` defaults to zero. Skip that many matching requests, then run the action before dispatch. A peer HTTP action establishes a deterministic race; a checkpoint before page two proves no partial application. |
-| `after_next_response` | `method`, `path`, `then` (`http`, `write` or `expect`); run after a real 200 and before returning its bytes, including before acknowledgement loss. |
+| `after_next_response` | `method`, `path`, `then`: one `http`, `write` or `expect` action, or a nonempty array of `http`, `expect`, `advance_server`, `retention` or `server_expect` actions. Execute once after a real 200 and before returning its bytes, including before acknowledgement loss. An unused hook fails. This permits expiry/purge between actual snapshot pages and checks that no page has yet been applied. |
 | `drop_next_response` | `method`, `path`; require a real router 200, record it, then throw network failure before the client receives the acknowledgement. |
 | `fail_next_request` | `method`, `path`; fail one matching request before dispatch. The trace's status is zero, so it cannot count as a server rejection or committed write. |
 | `http_series` | All `http` fields plus `ids`, one to 200 distinct canonical ULIDs. Bindings are forbidden. Substitute `${item.id}` and zero-based `${item.index}` in path, body and expectations; send/check every request individually through the router. |
 | `race_http` | `writers`: exactly two objects containing `device`, `method`, `path`, `body`. The action's device must be one writer. Concurrent PUTs target one ID with equal CAS baselines. Require exactly one 200 and one 409 conflict, whose head matches the successful content/path/scope/rev. Bind `${race.winner}`, `${race.loser}`, `${race.content}` and `${race.losing_content}`; device references may use these symbols. |
+| `advance_server` | `server`, positive `seconds`; advance that deployment's injected wall clock, without advancing independent device clocks. |
+| `retention` | `server`, nonempty `expected` count map (`changes`, `floors`, `tombstones`, `revisions`); invoke the production RetentionService and check every supplied committed count. Optional nonnegative `clock_offset_seconds` advances only this maintenance run's clock. This explicitly tests purge while the feed clock still considers a frozen manifest live. |
+| `server_expect` | `server`, `scope`, nonempty `expected` map (`head`, `floor`, `changes`, `tombstones`, `revisions`, `retired_ids`, `snapshots`); read the actual database without mutation and check exact scope counts/high-water marks. |
+| `backup` | `server`, unique lowercase `name`; run ServerBackupService's consistent backup, storing it within the disposable scenario root. |
+| `restore` | `server`, existing backup `name`, `bind`; stop/drain device graphs, close all database users, run the production offline restore, require a rotated UUID and recovery copy, reopen/migrate the database and replace the router. Bind the new wire UUID. A later `restart` reopens the device graph. Live deployments refuse restore. |
+| `set_cursor` | `scope`, `value` (nonempty opaque string or null for absence); durably edit the device's real state, for missing/zero/above-head trigger tests. |
+| `collect` | `expected` object requiring `scope`, `head`, `cursor`, `item_count`; optional `prompts` (exact `id`, `rev`, `path`, `content`) and `absent` IDs. Run the real Core pull collector against the router without applying a bulk library plan. Enumerate every collected snapshot page, reject repeated IDs, check every expectation, require unchanged state and clean up private staging. Paging, purge and manifest restart use this seam; full SyncService file/state recovery is exercised by row 17. |
+| `kill_client` | `checkpoint` (`after_files`, `before_state`, `after_state`), positive `file_count`; stop/drain the parent graph and start the required debug SyncCrashWorker on the same roots. Require a live pause marker, inspect the persisted journal/files/state, send SIGKILL and require signal termination. `after_files` proves exactly that many publications and an incomplete plan with old state; state checkpoints prove all planned publications, then old or intended state respectively. |
+| `resume_client` | No additional members; require a preceding killed worker and recover its roots in a fresh worker. Require successful exit, durable journal removal, the journal's intended UUID/cursors and byte-identical copies with stable IDs. Reopen the parent's disk graph. Unrecovered killed clients fail. |
 | `expect` | Nonempty `expected` object with the checkpoint members below. |
 
 Methods are `GET`, `POST`, `PUT`, `DELETE` or `PATCH`. HTTP paths are rooted
@@ -826,7 +836,7 @@ Device checkpoints support:
 - `files`: objects with required `path` and byte-exact `content`, optional
   `mode` (`normal` or `readOnly`). `absent`: paths that must have no file.
 - `file_count`, `prompt_count`, `cursor_count`, `held_count`, `history_count`,
-  `writes` and `trash_count`: exact nonnegative counts. History counts concern
+  `group_count`, `writes` and `trash_count`: exact nonnegative counts. History counts concern
   persisted history files; writes concern library publications only.
 - `unique_ids`: boolean comparing all live file IDs for uniqueness.
   `state_absent`: IDs that must have no prompt record.
@@ -835,7 +845,7 @@ Device checkpoints support:
   instant, as well as final uniqueness and exact destination bytes. Managed
   relocation uses checked publication then test trash for the old source;
   `trash_count` still reports that source retirement.
-- `group_count`: exact count; `groups`: nonempty objects requiring `id`,
+- `groups`: nonempty objects requiring `id`,
   `name`, `folder`, `role`, checked against persisted mappings.
 - `pages`: nonempty ordered list corresponding exactly to all real successful
   pull traces since reset. Require `item_count` across scopes and `has_more`
@@ -845,6 +855,9 @@ Device checkpoints support:
   Traces precede rewrites and never print content or credentials.
 - `status`: Core sync status; `blocking_issue`: a fixed issue or `none`;
   `account_user`: a symbolic user ID or `none`.
+- `database_id`: exact opaque wire UUID or `none`; `cursors`: scope-to-opaque
+  cursor map whose supplied entries are all checked; `journal_present`: boolean
+  presence of the persisted apply journal.
 - `state`: objects requiring `id`, `scope`, `path`, `rev`; optional `hash`,
   `favorite`, `error` (fixed code or `none`), `origin` (`rescued`,
   `conflict_of <ID>` or `none`), `history`, `uses` and `values`. Keyed-store
@@ -854,13 +867,21 @@ Device checkpoints support:
   (a byte-exact file path present before router dispatch). Method/path `*`
   match all. Authentication headers and login bodies never enter traces.
 
-The nineteen files own ledger rows 01–07, 09–16 and 18–21. Later slices extend
-this version-1 action/checkpoint vocabulary and add their files without changing
-existing semantics or bypassing the full-corpus executor. Y13 adds conflicts,
+The twenty-four files own ledger rows 01–23, with two files for row 06,
+before and after retention. Y12's seven files, including row 14, stay unchanged.
+Later slices extend this version-1 action/checkpoint vocabulary and add their
+files without changing existing semantics or bypassing the full-corpus executor. Y13 adds conflicts,
 permissions, transfers and group lifecycle, including in-flight role downgrades
 that receive real 403s. Known viewer access blocks unauthorized pushes before
-dispatch; direct HTTP actions separately verify router denial. Y14 adds real retention/restore and
-killed-worker proof. Platform store modes, native system trash and hardware
+dispatch; direct HTTP actions separately verify router denial. Y14 adds real
+retention/restore and killed-worker proof. Workers receive credentials only
+through a closed stdin pipe; argv and environment contain no credentials, stderr is discarded and
+stdout contains only fixed checkpoint/completion markers. A hard watchdog
+kills stalled children; failure and success paths reap them. The worker shares
+the portable checked disk adapter in the test-only SyncScenarioSupport target
+and is not copied into the deployed server image. The tests prove process death, while
+power loss still belongs to native storage validation.
+Platform store modes, native system trash and hardware
 behavior stay with their native suites. Adding protocol/format behavior still
 requires the Swift/Kotlin/fixture move-together rule; this test-only language is
 ported with the Kotlin sync engine in M10.

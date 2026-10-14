@@ -44,6 +44,27 @@ let package = Package(
             name: "dump-schema",
             dependencies: ["MonkeysPawServer"]
         ),
+        // Test-only disk adapters are shared with the genuinely killed client.
+        .target(
+            name: "SyncScenarioSupport",
+            dependencies: [.product(name: "MonkeysPawCore", package: "MonkeysPaw")],
+            path: "Tests/MonkeysPawSyncIntegrationTests",
+            exclude: ["InProcessHTTPTransport.swift", "ScenarioDecoder.swift", "SyncScenarioTests.swift",
+                      "SyncServerHarness.swift", "SyncRestoreRetentionScenarioTests.swift", "SyncCrashScenarioTests.swift",
+                      "SyncConflictMoveScenarioTests.swift", "SyncGroupScenarioTests.swift", "ConflictResolutionTests.swift",
+                      "SyncGroupIntegrationTests.swift", "SyncInviteIntegrationTests.swift"],
+            sources: ["ScenarioAdapters.swift"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "SyncCrashWorker",
+            dependencies: [
+                "SyncScenarioSupport",
+                .product(name: "MonkeysPawCore", package: "MonkeysPaw"),
+            ],
+            path: "Tests/SyncCrashWorker",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "MonkeysPawServerTests",
             dependencies: [
@@ -54,10 +75,12 @@ let package = Package(
         .testTarget(
             name: "MonkeysPawSyncIntegrationTests",
             dependencies: [
+                "SyncScenarioSupport", "SyncCrashWorker",
                 "MonkeysPawServer",
                 .product(name: "MonkeysPawCore", package: "MonkeysPaw"),
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
             ],
+            exclude: ["ScenarioAdapters.swift"],
             // Client services use the desktop's Swift 5 language mode (E34).
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
