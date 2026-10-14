@@ -291,6 +291,119 @@ class SyncLibraryMutationsTest {
         assertFailsWith<LibraryError.Conflict> { mutations.listedFiles() }
     }
 
+    @Test fun unchangedDirectoryWalkRacesAreConflictsAndAFreshWalkCanFinish() {
+        for (operation in listOf("directories:Groups", "directory-identity:Groups/nested")) {
+            for (code in listOf(SyncFileFailureCode.NOT_FOUND, SyncFileFailureCode.CHANGED)) {
+                val h = SyncMutationHarness()
+                h.operations.putDirectory("Groups/nested")
+                h.operations.onOperation = { if (it == operation) throw SyncFileOperationError(code) }
+                assertFailsWith<LibraryError.Conflict> { h.mutations.directoryIdentities() }
+                assertTrue(operation in h.operations.calls)
+                h.operations.onOperation = null
+                assertEquals(setOf("Groups", "Groups/nested"), h.mutations.directoryIdentities().keys)
+            }
+        }
+    }
+
+    @Test fun directoryWalkPreservesInvalidStateIOAndAppliedFailures() {
+        for (operation in listOf("directories:Groups", "directory-identity:Groups/nested")) {
+            for (code in SyncFileFailureCode.entries) for (effect in SyncFileMutationEffect.entries) {
+                if (effect == SyncFileMutationEffect.UNCHANGED &&
+                    code in listOf(SyncFileFailureCode.NOT_FOUND, SyncFileFailureCode.CHANGED)) continue
+                val h = SyncMutationHarness()
+                h.operations.putDirectory("Groups/nested")
+                val error = SyncFileOperationError(code, effect, byteArrayOf(1, 2))
+                h.operations.onOperation = { if (it == operation) throw error }
+                assertSame(error, assertFailsWith<SyncFileOperationError> { h.mutations.directoryIdentities() })
+            }
+        }
+    }
+
+    @Test fun malformedDirectoryListingsFailAsInvalidState() {
+        val h = SyncMutationHarness()
+        h.operations.putDirectory("Groups")
+        for (invalid in listOf(listOf("Groups/child"), listOf("Groups", "Groups"))) {
+            val operations = object : SyncFileOperations by h.operations {
+                override fun directories(path: String?): List<String> = if (path == null) invalid else emptyList()
+            }
+            val mutations = SyncLibraryMutations(h.local.library, operations)
+            assertFailsWith<SyncError.InvalidState> { mutations.directoryIdentities() }
+        }
+    }
+
+    @Test fun aDirectoryVanishingBeforeItsIdentityIsReadAbortsTheScan() {
+        val h = SyncMutationHarness()
+        h.operations.putDirectory("Groups/race")
+        val identity = h.operations.directoryIdentity("Groups/race")!!
+        h.operations.onOperation = { operation ->
+            if (operation == "directory-identity:Groups/race") {
+                h.operations.onOperation = null
+                h.operations.removeEmptyDirectory("Groups/race", identity)
+            }
+        }
+        assertFailsWith<LibraryError.Conflict> { h.mutations.directoryIdentities() }
+        assertEquals(setOf("Groups"), h.mutations.directoryIdentities().keys)
+    }
+
+    @Test fun unencodableCurrentStampsPreserveConflictsAndUntouchedMigrations() {
+        val h = SyncMutationHarness()
+        val old = h.put("idless")
+        h.local.values.record(old.identity, mapOf("field" to "remembered"))
+        val edit = publication(h, old, kind = SyncLibraryEdit.Kind.ADOPT)
+        val migrations = h.mutations.prepareMigrations(edit)
+        val opaque = FileStamp("x".repeat(Limits.syncStampMaxBytes + 1))
+        val files = object : PromptStore by h.local.prompts {
+            override fun stamp(path: String): FileStamp? = h.local.prompts.stamp(path)?.let { opaque }
+        }
+        h.operations.inventory = { h.local.prompts.listFiles().map { it.copy(stamp = opaque) } }
+        val library = LibraryService(files, h.local.state, h.local.clock, h.local.entropy)
+        val mutations = SyncLibraryMutations(library, h.operations)
+        assertEquals(SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT, mutations.apply(edit, SyncLibraryMutations.Attempt.FIRST).outcome)
+        assertEquals(SyncLibraryMutationOutcome.REPLAN_AS_CONFLICT, mutations.verify(edit))
+        assertTrue(mutations.canReplan(edit, migrations, false))
+        assertEquals(opaque, mutations.listedFiles().single().stamp)
+        assertContentEquals(old.bytes, h.local.prompts.read(old.path))
+        assertTrue(h.local.prompts.writes.isEmpty())
+        assertFalse(h.operations.calls.any { it.startsWith("publish-") })
+    }
+
+    @Test fun unencodablePostPublicationStampsRemainOpaqueThroughRecovery() {
+        for (token in listOf("", "é".repeat(Limits.syncStampMaxBytes / 2) + "a", "\ud800")) {
+            val h = SyncMutationHarness()
+            val old = h.put("idless")
+            h.local.values.record(old.identity, mapOf("field" to "remembered"))
+            var opaque: FileStamp? = null
+            val files = object : PromptStore by h.local.prompts {
+                override fun stamp(path: String): FileStamp? = h.local.prompts.stamp(path)?.let { opaque ?: it }
+            }
+            val library = LibraryService(files, h.local.state, h.local.clock, h.local.entropy)
+            val mutations = SyncLibraryMutations(library, h.operations)
+            val edit = mutations.publication(source().encodeToByteArray(), old.path, old,
+                SyncIdentityTransition(old.identity, v.personalID), kind = SyncLibraryEdit.Kind.ADOPT)
+            val migrations = mutations.prepareMigrations(edit)
+            assertTrue(migrations.isNotEmpty())
+            h.operations.afterPublish = { opaque = FileStamp(token) }
+            h.operations.inventory = { h.local.prompts.listFiles().map { it.copy(stamp = opaque ?: it.stamp) } }
+            val result = mutations.apply(edit, SyncLibraryMutations.Attempt.FIRST)
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, result.outcome)
+            assertEquals(SyncFileMutationEffect.APPLIED, result.effect)
+            assertContentEquals(old.bytes, result.displacedBytes)
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, mutations.verify(edit))
+            assertFalse(mutations.canReplan(edit, migrations, false))
+            assertEquals(opaque, mutations.listedFiles().single().stamp)
+            val writes = h.local.prompts.writes.size
+            repeat(2) {
+                assertEquals(SyncLibraryMutationOutcome.APPLIED, mutations.apply(edit, SyncLibraryMutations.Attempt.REPLAY).outcome)
+            }
+            val mode = mutations.mode(SyncFileMode.READ_ONLY, mutations.read(old.path)!!)
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, mutations.apply(mode, SyncLibraryMutations.Attempt.FIRST).outcome)
+            assertEquals(SyncFileMode.READ_ONLY, h.operations.modes[old.path])
+            assertEquals(writes, h.local.prompts.writes.size)
+            assertContentEquals(edit.bytes, h.local.prompts.read(old.path))
+            assertFailsWith<SyncFileOperationError> { opaque!!.journalToken() }
+        }
+    }
+
     @Test fun alternativeSpellingAdoptionAndRelocationCheckTheSourceBeforeRetiringIt() {
         val h = SyncMutationHarness()
         val old = h.put("idless\n", "Cafe\u0301.md")

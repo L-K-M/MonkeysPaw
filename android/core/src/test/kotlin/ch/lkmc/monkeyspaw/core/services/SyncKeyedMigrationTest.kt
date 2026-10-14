@@ -339,6 +339,38 @@ class SyncKeyedMigrationTest {
         assertEquals(SyncHash.of(expectedReplacement), move.destinationHash)
     }
 
+    @Test fun journaledHistoryMovesReplayBeyondThePreparationLimit() {
+        val oversized = ByteArray(Limits.syncRecordMaxBytes + 1) { (it % 251).toByte() }
+        val small = byteArrayOf(1, 2, 3)
+        for ((original, replacement) in listOf(oversized to small, small to oversized)) {
+            val h = SyncMutationHarness()
+            val old = h.put("idless")
+            val edit = h.mutations.publication("---\nid: '${v.personal.rawValue}'\n---\nbody".encodeToByteArray(), old.path, old,
+                SyncIdentityTransition(old.identity, v.personalID), kind = SyncLibraryEdit.Kind.ADOPT)
+            val move = SyncKeyedFileMove("history/${old.identityKey}/opaque.bin", "history/${v.personalID.storageKey}/opaque.bin",
+                original, replacement)
+            val migration = SyncKeyedMigration(SyncKeyedStoreKind.HISTORY, SyncKeyedMigration.Change.File(move))
+            h.local.state.put(original, move.source)
+            assertTrue(h.local.history.sync.isSyncMigrationUnstarted(migration))
+            assertTrue(h.mutations.canReplan(edit, listOf(migration), false))
+            val flushes = SyncFlushes().also { it.failAt = 1 }
+            assertFailsWith<StoreError.IOFailure> { h.mutations.migrate(migration, flushes) }
+            assertContentEquals(original, h.local.state.read(move.source))
+            assertContentEquals(replacement, h.local.state.read(move.destination))
+            assertFalse(h.mutations.canReplan(edit, listOf(migration), false))
+            val reconstructed = LibraryService(h.local.prompts, h.local.state, h.local.clock, h.local.entropy)
+            val mutations = SyncLibraryMutations(reconstructed, h.operations)
+            flushes.failAt = null
+            val writes = h.local.state.writes.size
+            repeat(2) { mutations.migrate(migration, flushes) }
+            assertEquals(writes, h.local.state.writes.size)
+            assertNull(h.local.state.stamp(move.source))
+            assertContentEquals(replacement, h.local.state.read(move.destination))
+            assertTrue(h.local.state.isPrivate(move.destination))
+            assertFalse(reconstructed.history.sync.isSyncMigrationUnstarted(migration))
+        }
+    }
+
     @Test fun aChangedSourceDuringCopyOrAnOccupiedDestinationIsNeverDiscarded() {
         val files = MemoryStore()
         val move = SyncKeyedFileMove("history/${v.personalID.storageKey}/file", "history/${v.groupID.storageKey}/file", "old".encodeToByteArray())

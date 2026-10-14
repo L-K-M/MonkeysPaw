@@ -10,7 +10,7 @@ import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.util.UUID
 
-/** Exact immutable baseline, including a restartable incarnation stamp. */
+/** Exact immutable baseline. Stamps stay opaque; the journal codec checks their encoding. */
 internal class SyncLibraryFile(
     val path: String,
     val stamp: FileStamp,
@@ -24,7 +24,6 @@ internal class SyncLibraryFile(
 
     fun validate() {
         StorePath.validate(path)
-        stamp.journalToken()
         val document = PromptCodec.parseFile(bytes, LibraryPath.filename(path))
         if (hash != SyncHash.of(bytes) || identityKey != PromptIdentity.at(path, document.frontMatter.id).storageKey) {
             throw SyncError.InvalidState
@@ -170,14 +169,20 @@ internal class SyncLibraryMutations(private val library: LibraryService, private
     fun directoryIdentities(): Map<String, FileStamp> = library.withSyncLock {
         val result = linkedMapOf<String, FileStamp>()
         val parents = mutableListOf<String?>(null)
-        while (parents.isNotEmpty()) {
-            val parent = parents.removeAt(parents.lastIndex)
-            for (child in operations.directories(parent)) {
-                StorePath.validate(child)
-                if (parent(child) != parent || child in result) throw LibraryError.Conflict
-                result[child] = operations.directoryIdentity(child) ?: throw LibraryError.Conflict
-                parents.add(child)
+        try {
+            while (parents.isNotEmpty()) {
+                val parent = parents.removeAt(parents.lastIndex)
+                for (child in operations.directories(parent)) {
+                    StorePath.validate(child)
+                    if (parent(child) != parent || child in result) throw SyncError.InvalidState
+                    result[child] = operations.directoryIdentity(child) ?: throw LibraryError.Conflict
+                    parents.add(child)
+                }
             }
+        } catch (error: SyncFileOperationError) {
+            if (error.effect == SyncFileMutationEffect.UNCHANGED &&
+                error.code in listOf(SyncFileFailureCode.NOT_FOUND, SyncFileFailureCode.CHANGED)) throw LibraryError.Conflict
+            throw error
         }
         result.toMap()
     }
