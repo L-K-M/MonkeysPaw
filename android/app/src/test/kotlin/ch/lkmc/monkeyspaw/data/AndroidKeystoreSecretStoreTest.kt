@@ -4,6 +4,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.core.Serializer
 import ch.lkmc.monkeyspaw.core.domain.llm.*
+import ch.lkmc.monkeyspaw.core.services.ProviderSettingsService
+import ch.lkmc.monkeyspaw.core.services.ProviderSettingsStore
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
@@ -485,6 +487,78 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
         withStore(keys) { _, store ->
             assertSecret(providerKey, store.read(first, SecretReadSource.PERSISTED))
             assertNull(store.read(device, SecretReadSource.PERSISTED))
+        }
+    }
+
+    @Test
+    fun `explicit provider Replace recovers a sole missing invalidated or wrong alias`() = runBlocking {
+        for (failure in listOf("missing", "invalidated", "wrong")) {
+            val keys = TestKeys()
+            val originalKey = keys.key!!
+            withStore(keys) { data, store ->
+                val metadata = RootedFileStore(stateDir.resolve(failure).toFile(), RootedFileStore.Scan.STATE)
+                val service = ProviderSettingsService(ProviderSettingsStore(metadata), store, Dispatchers.IO)
+                val old = SecretValue(UUID.randomUUID().toString())
+                val replacement = SecretValue(UUID.randomUUID().toString())
+                val draft = ProviderDraft(key = ProviderKeyEdit.Replace(old))
+                service.save(draft)
+                when (failure) {
+                    "missing" -> keys.key = null
+                    "invalidated" -> keys.failure = SecretStoreError.Unavailable
+                    else -> keys.key = newKey()
+                }
+                val bytes = Files.readAllBytes(path)
+                val expected = if (failure == "wrong") SecretStoreError.ReadFailed else SecretStoreError.Unavailable
+                assertEquals(ProviderSettingsError.Secret(expected), assertFailsWith<ProviderSettingsError> {
+                    service.connection(draft.id)
+                })
+                assertContentEquals(bytes, Files.readAllBytes(path))
+                assertEquals(0, keys.creates)
+                assertEquals(0, keys.replacements)
+
+                service.save(draft.copy(key = ProviderKeyEdit.Replace(replacement)))
+
+                assertTrue(service.connection(draft.id).key == replacement, "Replacement credential must resolve")
+                assertEquals(setOf(SecretAccount.provider(draft.id).rawValue), data.data.first().entries.keys)
+                assertEquals(if (failure == "wrong") 0 else 1, keys.creates)
+                assertEquals(if (failure == "invalidated") 1 else 0, keys.replacements)
+                val reopened = ProviderSettingsService(ProviderSettingsStore(metadata), store, Dispatchers.IO)
+                assertTrue(reopened.connection(draft.id).key == replacement, "Reconstructed settings must resolve replacement")
+                assertNoPlaintext(old, originalKey)
+                assertNoPlaintext(replacement, keys.key!!)
+                service.deleteProfile(draft.id)
+            }
+        }
+    }
+
+    @Test
+    fun `provider recovery never replaces a lost shared alias while another account remains`() = runBlocking {
+        val keys = TestKeys()
+        val originalKey = keys.key!!
+        withStore(keys) { data, store ->
+            val metadata = RootedFileStore(stateDir.toFile(), RootedFileStore.Scan.STATE)
+            val service = ProviderSettingsService(ProviderSettingsStore(metadata), store, Dispatchers.IO)
+            val draft = ProviderDraft(key = ProviderKeyEdit.Replace(SecretValue(UUID.randomUUID().toString())))
+            val token = sentinel()
+            val replacement = SecretValue(UUID.randomUUID().toString())
+            service.save(draft)
+            store.write(token, second)
+            val retained = data.data.first().entries.getValue(second.rawValue)
+            val before = service.snapshot
+            keys.key = null
+
+            assertEquals(ProviderSettingsError.Secret(SecretStoreError.Unavailable), assertFailsWith<ProviderSettingsError> {
+                service.save(draft.copy(key = ProviderKeyEdit.Replace(replacement)))
+            })
+
+            assertEquals(before, service.snapshot)
+            assertEquals(mapOf(second.rawValue to retained), data.data.first().entries)
+            assertEquals(0, keys.creates)
+            assertEquals(0, keys.replacements)
+            keys.key = originalKey
+            assertSecret(token, store.read(second, SecretReadSource.PERSISTED))
+            assertNoPlaintext(token, originalKey)
+            assertNoPlaintext(replacement, originalKey)
         }
     }
 

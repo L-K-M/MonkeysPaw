@@ -346,22 +346,115 @@ class ProviderKeyRulesTest {
         }
     }
 
-    @Test fun clearAndDeleteFailClosedWhenTheOpaquePayloadCannotBeReadForCompensation() = runTest {
-        val h = ProviderSettingsHarness()
-        val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-key"))
-        h.service.save(draft)
-        val before = h.service.snapshot
-        val bytes = h.files.read("provider-settings.json")
-        h.secrets.readError = SecretStoreError.Unavailable
-        assertEquals(ProviderSettingsError.Secret(SecretStoreError.Unavailable), assertFailsWith<ProviderSettingsError> {
-            h.service.save(draft.copy(key = ProviderKeyEdit.Clear))
-        })
-        assertEquals(ProviderSettingsError.Secret(SecretStoreError.Unavailable), assertFailsWith<ProviderSettingsError> {
-            h.service.deleteProfile(draft.id)
-        })
-        assertEquals(before, h.service.snapshot)
-        assertContentEquals(bytes, h.files.read("provider-settings.json"))
-        assertTrue(h.secrets.deletions.isEmpty())
+    @Test fun unreadableKeyClearUsesDecryptFreeDelete() = runTest { recoverUnreadableKey("clear") }
+
+    @Test fun unreadableKeyDeleteUsesDecryptFreeDelete() = runTest { recoverUnreadableKey("delete") }
+
+    @Test fun unreadableKeyReplaceUsesDecryptFreeDelete() = runTest { recoverUnreadableKey("replace") }
+
+    private suspend fun recoverUnreadableKey(operation: String) {
+        for (failure in listOf(SecretStoreError.Unavailable, SecretStoreError.ReadFailed)) {
+            val h = ProviderSettingsHarness()
+            val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-old"))
+            val other = ProviderDraft(displayName = "Other", key = ProviderKeyEdit.typed("fixture-other"))
+            h.service.save(draft)
+            h.service.save(other)
+            h.service.selectProfile(other.id)
+            val account = SecretAccount.provider(draft.id)
+            val retained = h.secrets.persisted.getValue(SecretAccount.provider(other.id))
+            val bytes = h.files.read("provider-settings.json")
+            h.secrets.readError = failure
+            assertEquals(ProviderSettingsError.Secret(failure), assertFailsWith<ProviderSettingsError> {
+                h.service.connection(draft.id)
+            })
+            assertContentEquals(bytes, h.files.read("provider-settings.json"))
+            assertTrue(h.secrets.deletions.isEmpty())
+
+            recover(h.service, draft, operation)
+
+            assertEquals(listOf(account), h.secrets.deletions)
+            assertEquals(retained, h.secrets.persisted[SecretAccount.provider(other.id)])
+            assertEquals(other.id, h.service.snapshot.settings.selectedProfileID)
+            h.secrets.readError = null
+            val reopened = h.reopen().service
+            when (operation) {
+                "delete" -> assertFalse(reopened.snapshot.settings.profiles.any { it.id == draft.id })
+                "replace" -> assertEquals(SecretValue("fixture-new"), reopened.connection(draft.id).key)
+                else -> {
+                    assertNull(reopened.connection(draft.id).key)
+                    assertNull(reopened.snapshot.settings.profiles.first { it.id == draft.id }.secretReference)
+                }
+            }
+            if (operation != "replace") assertNull(h.secrets.persisted[account])
+        }
+    }
+
+    @Test fun unreadableRecoveryMetadataFailureLeavesNoReplacementAndAllowsExplicitRetry() = runTest {
+        for (operation in listOf("clear", "delete", "replace")) {
+            for (failure in listOf(SecretStoreError.Unavailable, SecretStoreError.ReadFailed)) {
+                val h = ProviderSettingsHarness()
+                val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-old"))
+                h.service.save(draft)
+                val before = h.service.snapshot
+                val bytes = h.files.read("provider-settings.json")
+                val writes = h.secrets.writes.size
+                h.secrets.readError = failure
+                h.files.failNextWrite = true
+                assertFailsWith<ProviderSettingsError.WriteFailed> { recover(h.service, draft, operation) }
+                assertEquals(before, h.service.snapshot)
+                assertContentEquals(bytes, h.files.read("provider-settings.json"))
+                assertNull(h.secrets.persisted[SecretAccount.provider(draft.id)])
+                assertEquals(writes + if (operation == "replace") 1 else 0, h.secrets.writes.size)
+                h.secrets.readError = null
+                assertNull(h.reopen().service.connection(draft.id).key)
+                recover(h.service, draft, operation)
+                assertFalse(h.service.snapshot.isReadOnly)
+            }
+        }
+    }
+
+    @Test fun failedRecoveryDeletePreservesSettingsAndNeverWritesReplacement() = runTest {
+        for (operation in listOf("clear", "delete", "replace")) {
+            val h = ProviderSettingsHarness()
+            val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-old"))
+            h.service.save(draft)
+            val before = h.service.snapshot
+            val previous = h.secrets.persisted.toMap()
+            h.secrets.readError = SecretStoreError.Unavailable
+            h.secrets.deleteError = SecretStoreError.DeleteFailed
+            assertEquals(ProviderSettingsError.Secret(SecretStoreError.DeleteFailed),
+                assertFailsWith<ProviderSettingsError> { recover(h.service, draft, operation) })
+            assertEquals(before, h.service.snapshot)
+            assertEquals(previous, h.secrets.persisted)
+            assertEquals(1, h.secrets.writes.size)
+        }
+    }
+
+    @Test fun lockedReadOnlyAndCancelledReadsNeverTriggerRecoveryDeletion() = runTest {
+        for (operation in listOf("clear", "delete", "replace")) {
+            for (failure in listOf(SecretStoreError.Locked, SecretStoreError.ReadOnly, CancellationException())) {
+                val h = ProviderSettingsHarness()
+                val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-old"))
+                h.service.save(draft)
+                val before = h.service.snapshot
+                val previous = h.secrets.persisted.toMap()
+                h.secrets.readError = failure
+                val actual = assertFailsWith<Exception> { recover(h.service, draft, operation) }
+                if (failure is SecretStoreError) assertEquals(ProviderSettingsError.Secret(failure), actual)
+                else assertIs<CancellationException>(actual)
+                assertEquals(before, h.service.snapshot)
+                assertEquals(previous, h.secrets.persisted)
+                assertTrue(h.secrets.deletions.isEmpty())
+            }
+        }
+    }
+
+    private suspend fun recover(service: ProviderSettingsService, draft: ProviderDraft, operation: String) {
+        when (operation) {
+            "delete" -> service.deleteProfile(draft.id)
+            "replace" -> service.save(draft.copy(displayName = "Recovered", key = ProviderKeyEdit.typed("fixture-new")))
+            else -> service.save(draft.copy(key = ProviderKeyEdit.Clear))
+        }
     }
 
     @Test fun invalidDraftsNeverTouchMetadataOrSecrets() = runTest {

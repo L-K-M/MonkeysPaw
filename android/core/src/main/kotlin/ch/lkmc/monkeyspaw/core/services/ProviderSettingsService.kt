@@ -130,10 +130,18 @@ class ProviderSettingsService(private val store: ProviderSettingsStore, private 
     }
 
     private suspend fun editSecret(account: SecretAccount, value: SecretValue?): suspend () -> Unit {
-        val previous = readSecret(account, SecretReadSource.PERSISTED)
-        if (value == null && previous == null) return {}
+        var unreadable = false
+        val previous = try { readSecret(account, SecretReadSource.PERSISTED) }
+        catch (error: ProviderSettingsError.Secret) {
+            if (error.error != SecretStoreError.Unavailable && error.error != SecretStoreError.ReadFailed) throw error
+            unreadable = true
+            null
+        }
+        if (value == null && previous == null && !unreadable) return {}
         try {
-            if (value != null) secrets.write(value, account) else secrets.delete(account)
+            // Explicit recovery discards only this account; an unreadable payload cannot be restored.
+            if (unreadable || value == null) secrets.delete(account)
+            if (value != null) secrets.write(value, account)
         } catch (error: CancellationException) { throw error }
         catch (error: Exception) {
             System.err.println("Provider secret update failed.")
@@ -141,7 +149,10 @@ class ProviderSettingsService(private val store: ProviderSettingsStore, private 
                 ?: if (value == null) SecretStoreError.DeleteFailed else SecretStoreError.WriteFailed)
         }
         // Restore the exact opaque payload, including legacy/unknown fields and whitespace.
-        return { if (previous != null) secrets.write(previous.value, account) else secrets.delete(account) }
+        return {
+            if (previous != null) secrets.write(previous.value, account)
+            else if (value != null) secrets.delete(account)
+        }
     }
 
     override fun toString(): String = "<provider settings service>"

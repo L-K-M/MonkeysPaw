@@ -27,6 +27,16 @@ instance. The unreadable old payload cannot be restored. Driver permissions and
 unreadable shared maps still fail closed: recovery must preserve other accounts
 and never reset an entire secret map to remove one credential (§12).
 
+On Android, an explicit Clear, Delete or Replace can recover a credential
+whose persisted read reports `unavailable` or `readFailed`: delete only that
+account's ciphertext without decryption, then write the replacement if supplied.
+There is no recoverable old payload to restore. If metadata cannot commit,
+report typed `writeFailed`, retain the old metadata and remove any replacement;
+failed replacement cleanup still reports `secretRollbackFailed` and blocks the
+instance. Locked/read-only reads do not take this path. Other accounts remain
+intact; a lost shared alias can be regenerated only after explicit removal of
+all retained ciphertext (§22 J7/J9). Reads and Keep never trigger recovery.
+
 | Kind | Covers | Request | Auth |
 |---|---|---|---|
 | `anthropic` | Anthropic API | `POST {base}/v1/messages` | `x-api-key`, `anthropic-version: 2023-06-01` |
