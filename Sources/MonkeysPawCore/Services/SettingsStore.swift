@@ -11,6 +11,7 @@ public final class SettingsStore: @unchecked Sendable {
         let delivery: DeliveryPreferences
         let automaticUpdateChecks: AutomaticUpdateChecks
         let carbonShortcuts: CarbonShortcutChoices
+        let readOnlyError: SettingsError?
 
         private enum CodingKeys: String, CodingKey {
             case version, libraryFolderPath, firstRun, delivery, automaticUpdateChecks, carbonShortcuts
@@ -25,8 +26,16 @@ public final class SettingsStore: @unchecked Sendable {
                 ? try values.decode(DeliveryPreferences.self, forKey: .delivery) : DeliveryPreferences()
             automaticUpdateChecks = values.contains(.automaticUpdateChecks)
                 ? try values.decode(AutomaticUpdateChecks.self, forKey: .automaticUpdateChecks) : .enabled
-            carbonShortcuts = values.contains(.carbonShortcuts)
-                ? try values.decode(CarbonShortcutChoices.self, forKey: .carbonShortcuts) : CarbonShortcutChoices()
+            do {
+                carbonShortcuts = values.contains(.carbonShortcuts)
+                    ? try values.decode(CarbonShortcutChoices.self, forKey: .carbonShortcuts) : CarbonShortcutChoices()
+                readOnlyError = nil
+            } catch {
+                // Invalid optional choices forbid writes, without hiding the
+                // library and onboarding settings decoded above.
+                carbonShortcuts = CarbonShortcutChoices()
+                readOnlyError = .corruptFile
+            }
         }
     }
 
@@ -34,6 +43,7 @@ public final class SettingsStore: @unchecked Sendable {
         let document: SettingsDocument
         let object: [String: Any]
         let needsRewrite: Bool
+        let readOnlyError: SettingsError?
     }
 
     private let files: FileStore
@@ -54,7 +64,8 @@ public final class SettingsStore: @unchecked Sendable {
         self.legacyFirstRun = legacyFirstRun
         loader = SettingsLoader(currentVersion: SettingsDocument.currentVersion, migrations: migrations)
         do {
-            cached = SettingsSnapshot(document: try read().document, readOnlyError: nil)
+            let loaded = try read()
+            cached = SettingsSnapshot(document: loaded.document, readOnlyError: loaded.readOnlyError)
         } catch {
             failClosed(error)
         }
@@ -78,6 +89,10 @@ public final class SettingsStore: @unchecked Sendable {
         let loaded: Loaded
         do { loaded = try read() }
         catch { throw failClosed(error) }
+        if let error = loaded.readOnlyError {
+            cached = SettingsSnapshot(document: loaded.document, readOnlyError: error)
+            throw error
+        }
 
         let next = try change(loaded.document)
         if next != loaded.document || loaded.needsRewrite {
@@ -93,7 +108,7 @@ public final class SettingsStore: @unchecked Sendable {
             let alreadyInstalled = legacyFirstRun == .setupPresented
             let progress = FirstRunProgress(setupPresented: alreadyInstalled, tourCompleted: alreadyInstalled)
             let defaults = try SettingsDocument(libraryFolderPath: nil, firstRun: progress)
-            return Loaded(document: defaults, object: [:], needsRewrite: true)
+            return Loaded(document: defaults, object: [:], needsRewrite: true, readOnlyError: nil)
         }
         catch let error as FileStoreError { throw SettingsError.readFailed(error) }
         catch { throw SettingsError.readFailed(.ioFailure) }
@@ -107,7 +122,8 @@ public final class SettingsStore: @unchecked Sendable {
                 firstRun: payload.firstRun, delivery: payload.delivery,
                 automaticUpdateChecks: payload.automaticUpdateChecks, carbonShortcuts: payload.carbonShortcuts)
             return Loaded(document: document, object: object,
-                          needsRewrite: sourceVersion != SettingsDocument.currentVersion)
+                          needsRewrite: sourceVersion != SettingsDocument.currentVersion,
+                          readOnlyError: payload.readOnlyError)
         } catch { throw SettingsError.corruptFile }
     }
 

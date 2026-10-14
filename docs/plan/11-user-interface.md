@@ -70,6 +70,9 @@ behavior are activated by the Core preference/model slice. `carbonShortcuts`
 contains parsed Carbon-compatible accelerator strings or explicit null for an
 unbound action. Missing actions use picker/unbound defaults. Present invalid
 types, unsupported translations and in-app collisions make settings read-only.
+Invalid Carbon choices fall back to the Carbon defaults while the valid library,
+first-run and other preferences still load; no write may overwrite the invalid
+or future choices.
 Unknown nested members survive edits, and every settings setter preserves both
 choices. Registration and save failures never publish a requested key as saved.
 

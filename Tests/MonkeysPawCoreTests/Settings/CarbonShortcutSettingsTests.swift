@@ -41,6 +41,61 @@ final class CarbonShortcutSettingsTests: XCTestCase {
         }
     }
 
+    func testInvalidCarbonChoicesPreserveOtherSettingsWhileRemainingReadOnly() throws {
+        let invalid: [Any] = [NSNull(), 7, [], "future format",
+            ["togglePicker": false], ["repeatLast": "FutureKey"],
+            ["repeatLast": "Ctrl++R"], ["repeatLast": "Insert"], ["repeatLast": "F21"],
+            ["repeatLast": "Cmd+Super+R"], ["repeatLast": "Ctrl+Alt+P"],
+            ["togglePicker": "Cmd+Plus", "repeatLast": "Super+Shift+Equal"]]
+        for choices in invalid {
+            let files = try fixture(choices)
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: "settings.json")) as? [String: Any])
+            object["libraryFolderPath"] = "/chosen/library"
+            object["firstRun"] = ["setupPresented": true, "libraryFolderCompleted": true,
+                "seedsOffered": true, "tourCompleted": true]
+            object["delivery"] = ["linuxDefaultPasteChord": "terminal", "clipboardRestore": "previousText"]
+            object["automaticUpdateChecks"] = "disabled"
+            let original = try JSONSerialization.data(withJSONObject: object)
+            try files.write(original, at: "settings.json")
+
+            let settings = SettingsService(store: SettingsStore(files: files))
+
+            XCTAssertEqual(settings.snapshot.readOnlyError, .corruptFile)
+            XCTAssertEqual(settings.snapshot.document.libraryFolderPath, "/chosen/library")
+            XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true,
+                libraryFolderCompleted: true, seedsOffered: true, tourCompleted: true))
+            XCTAssertEqual(settings.snapshot.document.delivery.linuxDefaultPasteChord, .terminal)
+            XCTAssertEqual(settings.snapshot.document.delivery.clipboardRestore, .previousText)
+            XCTAssertEqual(settings.snapshot.document.automaticUpdateChecks, .disabled)
+            XCTAssertEqual(settings.snapshot.document.carbonShortcuts, CarbonShortcutChoices())
+            XCTAssertFalse(settings.snapshot.allowsAutomaticUpdateChecks)
+            XCTAssertThrowsError(try settings.setLibraryFolder("/replacement"))
+            XCTAssertEqual(try files.read(at: "settings.json"), original)
+        }
+    }
+
+    func testRereadOfInvalidCarbonChoicesPreservesOtherSettingsAndRefusesWrite() throws {
+        let files = try fixture(nil)
+        let settings = SettingsService(store: SettingsStore(files: files))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: "settings.json")) as? [String: Any])
+        object["libraryFolderPath"] = "/externally/chosen"
+        object["firstRun"] = ["setupPresented": true, "libraryFolderCompleted": true,
+            "seedsOffered": false, "tourCompleted": true]
+        object["carbonShortcuts"] = ["repeatLast": "FutureKey"]
+        let original = try JSONSerialization.data(withJSONObject: object)
+        try files.write(original, at: "settings.json")
+
+        XCTAssertThrowsError(try settings.markSeedsOffered()) {
+            XCTAssertEqual($0 as? SettingsError, .corruptFile)
+        }
+
+        XCTAssertEqual(settings.snapshot.readOnlyError, .corruptFile)
+        XCTAssertEqual(settings.snapshot.document.libraryFolderPath, "/externally/chosen")
+        XCTAssertEqual(settings.snapshot.document.firstRun, FirstRunProgress(setupPresented: true,
+            libraryFolderCompleted: true, seedsOffered: false, tourCompleted: true))
+        XCTAssertEqual(try files.read(at: "settings.json"), original)
+    }
+
     func testEverySetterPreservesBothChoicesAndUnknownJSON() throws {
         let files = try fixture(["togglePicker": "Cmd+F20", "repeatLast": "Ctrl+Alt+R", "future": ["keep": 7]])
         let settings = SettingsService(store: SettingsStore(files: files))

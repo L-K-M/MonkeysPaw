@@ -1,6 +1,7 @@
 import Foundation
 
-/// App-owned choices only. System-owned bindings are always read from drivers.
+/// Persisted macOS choices, validated portably before any native mutation.
+/// System-owned Linux bindings are always read from drivers.
 public struct CarbonShortcutChoices: Equatable, Sendable, Decodable {
     public let togglePicker: Accelerator?
     public let repeatLast: Accelerator?
