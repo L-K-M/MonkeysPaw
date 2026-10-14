@@ -66,6 +66,16 @@ android/app    ch.lkmc.monkeyspaw
   `android.*` import does not compile, the way the Linux CI job guards the
   Swift core. It is tested on the JVM with fakes, so there is no
   `androidTest` and no emulator job, as in HalloMiao.
+- **Assistant contracts (M11).** `domain/llm` owns immutable provider,
+  action, output and body-free error values. `ports` owns suspend
+  `HttpTransport` and `SecretStore`, plus an injected nanosecond monotonic
+  clock. Request construction validates headers and byte caps before a driver
+  can consume them. URL values are canonical strings so JVM URI parsing cannot
+  reinterpret or reject Foundation's authority spellings. Only `app/data`
+  implements networking and Keystore access;
+  Core has no network client, Android, AndroidX or DI dependency. L7/L8 supply
+  shared drivers if M10 has not already supplied them
+  ([§20 J1/J2](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
 - **Unicode parity.** `core` ships catalog-pinned ICU4J for NFC and Unicode
   properties, independent of Android's runtime Unicode version. Sync keys
   use the frozen Swift C/F table (§19 B4); search normalization remains a
@@ -201,6 +211,11 @@ constants.
   - An opt-in setting trusts user-installed CAs for self-signed LAN TLS.
   - That setting lives in the OkHttp trust manager, because the network
     security config is static.
+  - Assistant endpoints retain §7.1's separate policy: HTTP permits only
+    literal `localhost`, canonical decimal IPv4 `127/8`, or IPv6 `::1`,
+    without DNS classification. Sync's LAN and user-CA exceptions do not
+    apply. Device-loopback forwarding or normally trusted HTTPS is required
+    for a desktop Ollama endpoint ([§20 J5](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
 - **Manifest.**
   - It requests `INTERNET` and `POST_NOTIFICATIONS`. Notifications are asked
     for during onboarding; without them, the §9.3 and §9.6 notices appear
@@ -234,11 +249,16 @@ risk, so it is contained by contract:
   - canonical form
   - path validation and `path_key`
   - ranking order
-  - LLM request bodies and response parsing
+  - pure import conversions and reports
   - SyncAPI DTO JSON
-  The Swift tests (`MonkeysPawCoreTests`) and the Kotlin tests
-  (`core` JVM tests) both run every fixture. CI fails if either side
-  diverges.
+  The Swift `PromptConformanceTests` (`MonkeysPawCoreTests`) and Kotlin
+  `EveryFixtureTest` (`core` JVM tests) both run every case and visible file
+  in all nine current categories: format, grammar, render, validation,
+  canonical, paths, ranking, import and DTOs. Import and all 54 wire DTOs,
+  including admin contracts, are parity requirements even though Android
+  has no import, Account or admin UI. CI fails if either side diverges. Future
+  LLM and sync-engine fixtures land with both consumers under the
+  move-together rule.
 - **Wire contract.** SyncAPI DTOs are defined once in Swift (`SyncAPI`).
   - A `dump-schema` executable in the server package writes JSON Schemas to
     `spec/schema/`: `swift run --package-path server dump-schema <output-dir>`.
@@ -247,7 +267,10 @@ risk, so it is contained by contract:
     CI regenerates into a fresh directory and recursively compares every
     file, including the generated README, failing on changed, missing or
     extra files. No database, GTK or running server is required.
-  - The Kotlin DTOs are validated against those schemas in tests.
+  - Every Kotlin DTO fixture runs typed decoding and independent schema
+    validation. Accepted cases compare byte-exact canonical JSON and error
+    HTTP status/Retry-After headers; invalid cases must fail decoding.
+    Encoding also rejects constructed-invalid values and nested relations.
     The [schema README](../../spec/schema/README.md) documents the additional
     UTF-8, Gregorian calendar and cross-field checks required by the `x-`
     annotations; a generic schema validator alone does not enforce them.
@@ -258,7 +281,10 @@ risk, so it is contained by contract:
   core, so a drifting Android client fails loudly with `422` instead of
   corrupting a shared library.
 - **Every fixture is consumed.** Both suites enumerate `spec/fixtures/` and
-  fail on any fixture they do not consume (the HalloMiao drift-gate pattern).
+  fail on any fixture they do not semantically consume, including orphans,
+  unsupported categories/schemas and wrong goldens. Kotlin's mandatory full
+  gate reuses every category adapter and requires its consumed files to
+  equal the independently enumerated inventory; no skipped or stub adapters.
 - **Sync scenarios are written once.** Every §13.1 scenario is encoded once
   as a `spec/fixtures/sync/*.json` case: server events, plus the expected
   request log and final state. Both engines run every case, and the

@@ -24,7 +24,14 @@ import kotlinx.serialization.json.put
 /** Every expectation in the four content categories is executed, including writer refusals. */
 internal class PromptConformanceTest {
     @Test fun everyContentExpectationIsAccounted() {
-        val corpus = Corpus.load()
+        PromptFixtures.consume(Corpus.load())
+    }
+}
+
+internal object PromptFixtures {
+    val categories = setOf(Category.FORMAT, Category.GRAMMAR, Category.RENDER, Category.VALIDATION)
+
+    fun consume(corpus: Corpus): Set<String> {
         val registrations = corpus.cases.filter { it.category in categories }
             .map(::registration)
         assertEquals(categories.sumOf { corpus.cases(it).size }, registrations.size)
@@ -45,6 +52,7 @@ internal class PromptConformanceTest {
         }
         println("Content conformance: ${registrations.size} cases / ${checkedFiles.size} files; " +
             "${registrations.count { "issues" in it.completed }} complete issue lists; pending 0.")
+        return checkedFiles
     }
 
     private data class Registration(val fixture: FixtureCase, val completed: Set<String>)
@@ -165,7 +173,4 @@ internal class PromptConformanceTest {
         }
     }
 
-    private companion object {
-        val categories = setOf(Category.FORMAT, Category.GRAMMAR, Category.RENDER, Category.VALIDATION)
-    }
 }

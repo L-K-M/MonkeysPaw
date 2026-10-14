@@ -16,7 +16,13 @@ import kotlinx.serialization.json.put
 
 internal class ImportConformanceTest {
     @Test fun everyImportExpectationAndRefusalIsExecuted() {
-        val fixtures = Corpus.load().cases(Category.IMPORT)
+        ImportFixtures.consume(Corpus.load())
+    }
+}
+
+internal object ImportFixtures {
+    fun consume(corpus: Corpus): Set<String> {
+        val fixtures = corpus.cases(Category.IMPORT)
         var expectations = 0
         var converted = 0
         var copied = 0
@@ -74,6 +80,7 @@ internal class ImportConformanceTest {
         assertEquals(fixtures.flatMap { it.files }.map { it.relativePath }.toSet(), consumed)
         println("import: ${fixtures.size} cases / ${consumed.size} files; $expectations expectations; " +
             "$converted conversions / $copied native copies / $refusals refusals; pending 0.")
+        return consumed
     }
 
     private fun warningJson(warning: ImportWarning) = buildJsonObject {

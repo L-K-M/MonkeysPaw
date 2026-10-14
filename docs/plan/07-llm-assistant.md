@@ -160,6 +160,9 @@ re-entry or Clear before it can be used.
     stay in drivers and UI work uses `MainThread`
     ([§19 B1](19-m4-m5-decisions.md)). Request envelopes default to 2 MiB,
     separately from response caps ([§19 B3](19-m4-m5-decisions.md)).
+    Kotlin's `HttpTransport` carries JVM-only immutable values and the same
+    bounds; its network adapter lives exclusively in `app/data`
+    ([§20 J2](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
 
 ### 7.2 Structured output
 

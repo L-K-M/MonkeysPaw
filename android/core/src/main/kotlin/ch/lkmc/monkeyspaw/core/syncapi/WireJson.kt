@@ -113,6 +113,17 @@ internal class WireObject(value: WireValue) {
     fun optionalLong(key: String, minimum: Long = Long.MIN_VALUE, maximum: Long = Long.MAX_VALUE): Long? =
         if (contains(key)) long(key, minimum, maximum) else null
 
+    fun nullableLong(key: String, minimum: Long = Long.MIN_VALUE): Long? =
+        if (value(key) == WireValue.Null) null else long(key, minimum)
+
+    fun strings(key: String, validate: (String) -> Unit = {}): List<String> =
+        ((value(key) as? WireValue.ArrayValue)?.values ?: throw WireContractException())
+            .map { it.stringValue().also(validate) }
+
+    fun stringMap(key: String, validateKey: (String) -> Unit, validateValue: (String) -> Unit): Map<String, String> =
+        ((value(key) as? WireValue.ObjectValue)?.fields ?: throw WireContractException())
+            .map { (name, value) -> name.also(validateKey) to value.stringValue().also(validateValue) }.toMap()
+
     fun boolean(key: String): Boolean =
         (value(key) as? WireValue.BooleanValue)?.value ?: throw WireContractException()
 

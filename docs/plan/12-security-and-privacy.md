@@ -21,6 +21,10 @@ environment variables; deletion removes persisted account copies and leaves
 the environment untouched ([§19 B23](19-m4-m5-decisions.md)). Secret values,
 drafts, resolved connections, HTTP envelopes and assistant errors have redacted
 descriptions and reflection output.
+Android reports `keystore` and uses redacted `toString` and static typed-error
+messages, with no underlying exception cause or provider diagnostic. A storage
+tier alone does not establish hardware backing; L8 and owner checks establish
+that separately ([§20 J2](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
 Persisted provider secrets also carry the destination binding from §7.6;
 metadata edits cannot rebind a stored key to another kind or origin.
 Environment values are raw operator overrides without destination bindings;
