@@ -150,7 +150,13 @@ class SyncEngine internal constructor(
         var completion: DisposableHandle? = null
         continuation.invokeOnCancellation {
             completion?.dispose()
-            lock.withLock { if (owned != null && active === owned) stopWork() }
+            lock.withLock {
+                if (owned != null && active === owned) {
+                    stopWork()
+                    // Native dispatch must still see interrupted work, including a durable sent intent.
+                    if (eligible) { markDirty(); publishScheduling() }
+                }
+            }
         }
         val run = lock.withLock {
             if (!continuation.isActive || expectedEpoch != null && expectedEpoch != epoch || !eligible) return@withLock null
@@ -212,22 +218,27 @@ class SyncEngine internal constructor(
     }
 
     /** Recover exact old-graph intents only. This never collects or scans unrelated files. */
-    suspend fun recoverJournal() {
+    suspend fun recoverJournal(): Unit = suspendCancellableCoroutine { continuation ->
+        var owned: Active? = null
+        var completion: DisposableHandle? = null
+        continuation.invokeOnCancellation {
+            completion?.dispose()
+            lock.withLock { if (owned != null && active === owned) stopWork() }
+        }
         val run = lock.withLock {
+            if (!continuation.isActive) return@withLock null
             val session = session ?: throw SyncError.InvalidAccount
             requireStoppedGraph(session.binding.root)
             if (reports.value.needsSignIn) throw SyncPushError.Busy
             invalidateTimers()
             epoch++
             mutableReport.value = reports.value.copy(enabled = false)
-            newActive(RunKind.RECOVERY)
+            newActive(RunKind.RECOVERY).also { owned = it }
+        } ?: return@suspendCancellableCoroutine
+        completion = run.task.invokeOnCompletion { error ->
+            if (error == null) continuation.resume(Unit)
+            else continuation.resumeWithException(error)
         }
-        try { run.task.await() }
-        catch (error: CancellationException) {
-            lock.withLock { if (active === run) stopWork() }
-            throw error
-        }
-        if (reports.value.blockingIssue != null) throw SyncCoordinatorError.RecoveryRequired
     }
 
     /** Account services use these same capabilities only after stop/drain. */

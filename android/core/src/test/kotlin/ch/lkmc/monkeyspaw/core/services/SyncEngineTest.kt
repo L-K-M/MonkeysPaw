@@ -495,4 +495,45 @@ class SyncEngineTest {
         assertEquals(before, h.engine.reports.value)
         assertTrue(h.requests.isEmpty())
     }
+
+    @Test fun nextWorkerCanResumeCancelledPendingIntentOnTheSameGraph() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(rev = 0)
+        val sent = CompletableDeferred<Unit>()
+        h.respond = { request -> if (request.method == HttpMethod.PUT) {
+            val put = PutPromptRequest.codec.decode(request.body!!)
+            h.remote[SyncTestValues.personal.rawValue] = EngineHarness.prompt(put.content.encodeToByteArray())
+            sent.complete(Unit)
+            awaitCancellation()
+        } else null }
+        h.start()
+        val worker = launch { h.engine.runBackground() }
+        sent.await()
+        worker.cancelAndJoin(); h.engine.drain()
+        assertNotNull(h.pending.load(h.binding))
+        h.respond = null
+        val due = h.engine.scheduling.value
+        val before = h.requests.size
+        val result = h.engine.runBackground(due.epoch, due.triggerVersion)
+        assertNotNull(result.lastSuccess)
+        assertNull(h.pending.load(h.binding))
+        assertEquals(HttpMethod.GET, h.requests[before].method)
+        assertEquals(1, h.writes.size)
+        h.engine.stop()
+    }
+
+    @Test fun cancelledRecoveryBeforeAdmissionCannotDispatchHTTP() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(rev = 0)
+        h.respond = { if (it.method == HttpMethod.PUT) throw HttpTransportError.NetworkFailure else null }
+        h.start(); h.engine.runBackground(); h.engine.stop(); h.engine.drain()
+        assertNotNull(h.pending.load(h.binding))
+        h.respond = null
+        val before = h.requests.size
+        val recovery = launch(start = CoroutineStart.UNDISPATCHED) { h.engine.recoverJournal() }
+        recovery.cancelAndJoin(); h.engine.drain()
+        assertEquals(before, h.requests.size)
+        assertNotNull(h.pending.load(h.binding))
+        assertNull(h.engine.reports.value.lastSuccess)
+    }
 }
