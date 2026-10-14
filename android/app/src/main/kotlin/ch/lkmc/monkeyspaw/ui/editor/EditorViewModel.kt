@@ -330,7 +330,8 @@ internal class EditorViewModel @Inject constructor(
         if (acceptance == DraftAcceptance.REPLACE) acceptBaseline(loaded)
         else mutableState.value = state.value.copy(selection = selection(entry), stamp = entry.stamp,
             isNew = false, conflict = null, dirty = state.value.source != loaded.source)
-        mutableState.value = state.value.copy(historyMaintenanceFailed = saved.historyMaintenanceFailed)
+        mutableState.value = state.value.copy(historyMaintenanceFailed = saved.historyMaintenanceFailed,
+            provenanceMaintenanceFailed = saved.provenanceMaintenanceFailed)
         onSelectionChanged?.invoke(selection(entry))
         if (identityChanged) {
             historyGeneration++
@@ -343,10 +344,12 @@ internal class EditorViewModel @Inject constructor(
     private fun applyFailure(result: EditResult) {
         when (result) {
             is EditResult.Conflict -> {
-                mutableState.value = state.value.copy(conflict = EditorConflict(false, result.currentStamp, loading = true))
+                mutableState.value = state.value.copy(conflict = EditorConflict(false, result.currentStamp, loading = true),
+                    history = state.value.history.copy(currentProvenance = null))
                 load(LoadPurpose.RECONCILE)
             }
-            EditResult.Missing -> mutableState.value = state.value.copy(conflict = EditorConflict(deleted = true))
+            EditResult.Missing -> mutableState.value = state.value.copy(conflict = EditorConflict(deleted = true),
+                history = state.value.history.copy(currentProvenance = null))
             EditResult.DestinationOccupied -> mutableState.value = state.value.copy(failure = EditorFailure.OCCUPIED)
             // The submitted draft may be older than the current live validation.
             is EditResult.Invalid -> mutableState.value = state.value.copy(failure = EditorFailure.INVALID, saveIssues = result.issues)
@@ -399,14 +402,16 @@ internal class EditorViewModel @Inject constructor(
                     val previous = state.value.selection
                     acceptBaseline(Baseline(loaded.entry, loaded.source, loaded.readOnlyReason, checkNotNull(observed.projection)))
                     if (previous != state.value.selection) onSelectionChanged?.invoke(state.value.selection)
+                    if (historyRequested) loadHistory()
                     if (pending != null) finishDecision()
                 } else if (purpose == LoadPurpose.RELOCATED || loaded.entry.stamp != state.value.stamp || state.value.conflict != null) {
                     mutableState.value = state.value.copy(conflict = EditorConflict(false, loaded.entry.stamp,
-                        loaded.source, loaded.readOnlyReason))
+                        loaded.source, loaded.readOnlyReason), history = state.value.history.copy(currentProvenance = null))
                 }
             }
             PromptLoadResult.Missing -> if (state.value.dirty || state.value.conflict != null || purpose == LoadPurpose.RELOCATED) {
-                mutableState.value = state.value.copy(conflict = EditorConflict(deleted = true))
+                mutableState.value = state.value.copy(conflict = EditorConflict(deleted = true),
+                    history = state.value.history.copy(currentProvenance = null))
             } else { reset(); if (pending != null) finishDecision() }
             is PromptLoadResult.Failed -> mutableState.value = state.value.copy(failure = failure(load.error),
                 conflict = state.value.conflict?.copy(loading = false, failure = failure(load.error)))
@@ -417,23 +422,29 @@ internal class EditorViewModel @Inject constructor(
         if (!active) return
         historyRequested = true
         val selection = state.value.selection ?: return
+        val stamp = state.value.stamp ?: return
         if (state.value.writing) return
         val epoch = session
         val token = ++historyGeneration
-        mutableState.value = state.value.copy(history = state.value.history.copy(loading = true, failure = null))
+        mutableState.value = state.value.copy(history = state.value.history.copy(loading = true, failure = null,
+            currentProvenance = null))
         viewModelScope.launch {
             try {
-                val revisions = repository.withLibrary { _, editing ->
-                    editing.history(selection.identity, selection.relativePath.substringAfterLast('/')).map { snapshot ->
+                val history = repository.withLibrary { library, editing ->
+                    val current = try { library.provenance(selection.relativePath, stamp) }
+                    catch (_: LibraryError.InvalidProvenance) { null }
+                    val revisions = editing.history(selection.identity, selection.relativePath.substringAfterLast('/')).map { snapshot ->
                         val document = snapshot.document
                         val unavailable = document.issues.any { it.code == PromptIssueCode.INVALID_UTF8 || it.code == PromptIssueCode.SOURCE_TOO_LARGE }
                         EditorRevision(snapshot.revision, snapshot.sourceBytes.size,
-                            if (unavailable) null else document.source, document.canRender)
+                            if (unavailable) null else document.source, document.canRender, snapshot.provenance)
                     }
+                    EditorHistoryState(revisions = revisions, currentProvenance = current)
                 }
-                if (!active || epoch != session || token != historyGeneration || state.value.selection != selection) return@launch
-                mutableState.value = state.value.copy(history = EditorHistoryState(revisions,
-                    state.value.history.selected?.takeIf { selected -> revisions.any { it.revision == selected } }))
+                if (!active || epoch != session || token != historyGeneration || state.value.selection != selection ||
+                    state.value.stamp != stamp) return@launch
+                mutableState.value = state.value.copy(history = history.copy(
+                    selected = state.value.history.selected?.takeIf { selected -> history.revisions.any { it.revision == selected } }))
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (!active || epoch != session || token != historyGeneration) return@launch
@@ -455,7 +466,8 @@ internal class EditorViewModel @Inject constructor(
         mutableState.value = state.value.copy(relativePath = loaded.entry.relativePath,
             selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
             readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
-            conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false)
+            conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
+            provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
         applyProjection(loaded.projection)
     }
 

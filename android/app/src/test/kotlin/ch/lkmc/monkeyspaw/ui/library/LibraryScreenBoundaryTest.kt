@@ -42,7 +42,8 @@ internal class LibraryScreenBoundaryTest {
         val imports = Regex("(?m)^import (.+)$").findAll(source).map { it.groupValues[1] }
         assertTrue(imports.all { it.startsWith("androidx.compose.") || it == "androidx.activity.compose.BackHandler" ||
             it == "ch.lkmc.monkeyspaw.R" || it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
-                "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview") })
+                "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",
+                "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance") })
         val forbidden = Regex("\\b(?:File|Files|Path|Context|LocalContext|Clipboard|LibraryRepository|LibraryService|EditingService|SeedInstaller|DataStore|Dispatchers|viewModelScope|LaunchedEffect|HttpTransport|URL|InputStream|OutputStream)\\b")
         assertFalse(forbidden.containsMatchIn(source))
     }

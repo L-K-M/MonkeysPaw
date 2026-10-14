@@ -57,4 +57,9 @@
     <string name="editor_recovery">State recovery is required. Reload and check your library before retrying. Your draft is kept.</string>
     <string name="editor_unverified">The file may have been saved, but could not be verified. Reload before retrying. Your draft is kept.</string>
     <string name="editor_history_warning">Saved, but older history could not be cleaned up.</string>
+    <string name="editor_provenance_warning">Saved, but assistant attribution could not be fully maintained.</string>
+    <string name="editor_current_revision">Current saved prompt</string>
+    <string name="editor_provenance_unrecorded">No recorded assistant attribution.</string>
+    <string name="editor_provenance_llm">Assistant: %1$s · %2$s</string>
+    <string name="editor_provenance_usage">Input tokens: %1$d · Output tokens: %2$d</string>
 </resources>

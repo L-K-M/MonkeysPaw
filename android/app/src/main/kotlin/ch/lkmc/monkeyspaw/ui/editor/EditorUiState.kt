@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.ui.editor
 
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.ports.FileStamp
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
@@ -38,10 +39,11 @@ internal data class EditorSnapshot(val session: Long, val revision: Long, val re
     val source: String, val stamp: FileStamp?, val identity: PromptIdentity?, val isNew: Boolean)
 
 internal data class EditorRevision(val revision: HistoryRevision, val byteCount: Int,
-    val source: String?, val canRestore: Boolean)
+    val source: String?, val canRestore: Boolean, val provenance: PromptProvenance? = null)
 
 internal data class EditorHistoryState(val revisions: List<EditorRevision> = emptyList(),
-    val selected: HistoryRevision? = null, val loading: Boolean = false, val failure: EditorFailure? = null) {
+    val selected: HistoryRevision? = null, val loading: Boolean = false, val failure: EditorFailure? = null,
+    val currentProvenance: PromptProvenance? = null) {
     val selectedRevision: EditorRevision? get() = revisions.firstOrNull { it.revision == selected }
 }
 
@@ -68,6 +70,7 @@ internal data class EditorUiState(
     val queuedActions: List<EditorAction> = emptyList(),
     val history: EditorHistoryState = EditorHistoryState(),
     val historyMaintenanceFailed: Boolean = false,
+    val provenanceMaintenanceFailed: Boolean = false,
 ) {
     val isOpen: Boolean get() = relativePath != null
     val writing: Boolean get() = status == EditorStatus.SAVING || status == EditorStatus.COMMAND
