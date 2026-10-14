@@ -153,9 +153,10 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
     func unregister(_ registration: HotkeyRegistration) {
         if unboundActions.unregister(registration) { return }
         guard currentRegistration.id == registration.id else { return }
-        // The compositor-owned row survives app exit. Remove only our callback;
-        // the binding can still cold-start the app through its D-Bus service.
+        // The compositor-owned row survives app exit. Clear our callback and
+        // requested key; the stored binding can still cold-start the app.
         onFire = nil
+        accelerator = nil
     }
 
     func fire(_ action: HotkeyAction) -> Bool {

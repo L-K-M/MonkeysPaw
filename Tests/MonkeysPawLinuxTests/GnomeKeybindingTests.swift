@@ -26,6 +26,14 @@ final class GnomeKeybindingTests: XCTestCase {
             XCTAssertEqual(backend.currentRegistration, picker)
             XCTAssertTrue(backend.fire(.togglePicker))
             XCTAssertEqual(fires, 1)
+            let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Cleared picker fired") }
+            XCTAssertEqual(cleared.status, .unbound)
+            XCTAssertEqual(backend.currentRegistration, cleared)
+            XCTAssertFalse(backend.fire(.togglePicker))
+            var completions = 0
+            backend.configure { completions += 1 }
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(fires, 1)
             backend.shutdown()
         }
         XCTAssertTrue(tools.arguments.isEmpty)
