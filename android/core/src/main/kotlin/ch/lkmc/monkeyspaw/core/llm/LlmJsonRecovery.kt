@@ -9,6 +9,7 @@ internal sealed interface LlmJsonValue {
     class Object(val members: Map<String, LlmJsonValue>) : LlmJsonValue
     class Array(val items: List<LlmJsonValue>) : LlmJsonValue
     class Text(val value: String) : LlmJsonValue
+    class EncodedText(val decode: () -> String) : LlmJsonValue
     class Boolean(val value: kotlin.Boolean) : LlmJsonValue
     class Number(val token: String) : LlmJsonValue
     data object Null : LlmJsonValue
@@ -18,8 +19,11 @@ internal fun LlmJsonValue.member(key: String): LlmJsonValue =
     (this as? LlmJsonValue.Object)?.members?.get(key) ?: throw AssistantError.InvalidOutput
 internal fun LlmJsonValue.array(): List<LlmJsonValue> =
     (this as? LlmJsonValue.Array)?.items ?: throw AssistantError.InvalidOutput
-internal fun LlmJsonValue.string(): String =
-    (this as? LlmJsonValue.Text)?.value ?: throw AssistantError.InvalidOutput
+internal fun LlmJsonValue.string(): String = when (this) {
+    is LlmJsonValue.Text -> value
+    is LlmJsonValue.EncodedText -> decode()
+    else -> throw AssistantError.InvalidOutput
+}
 internal fun LlmJsonValue.boolean(): Boolean =
     (this as? LlmJsonValue.Boolean)?.value ?: throw AssistantError.InvalidOutput
 
@@ -150,7 +154,7 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 }
                 LlmJsonValue.Array(items)
             }
-            34 -> LlmJsonValue.Text(string())
+            34 -> if (mode == AssistantJsonMode.ENVELOPE) encodedText() else LlmJsonValue.Text(string())
             116 -> { literal("true"); LlmJsonValue.Boolean(true) }
             102 -> { literal("false"); LlmJsonValue.Boolean(false) }
             110 -> { literal("null"); LlmJsonValue.Null }
@@ -168,6 +172,23 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 LlmJsonValue.Number(fragment)
             }
         }
+    }
+
+    // JSONDecoder defers unused values: malformed optional text cannot override a stop outcome.
+    private fun encodedText(): LlmJsonValue {
+        val start = position++
+        while (position < bytes.size) {
+            val byte = peek()
+            position++
+            if (byte == 34) {
+                val end = position
+                return LlmJsonValue.EncodedText {
+                    LlmJsonParser(bytes.copyOfRange(start, end), mode = AssistantJsonMode.ENVELOPE).string()
+                }
+            }
+            if (byte == 92) position++
+        }
+        throw AssistantError.InvalidOutput
     }
 
     private fun string(): String {

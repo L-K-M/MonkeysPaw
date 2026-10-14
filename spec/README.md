@@ -57,8 +57,8 @@ paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 M11 L2 adds 287 LLM schema and decoding cases with 915 files as the tenth
 category. L3 adds one Foundation transcript-escaping golden using the same
 decode contract. L11 adds 74 merge cases with 250 files, and L4 adds 48
-Anthropic exchange cases with 731 files and 196 ordered actions, bringing the
-corpus to 1,442 cases and 4,068 visible files. Case shapes are below. These
+Anthropic exchange cases with 756 files and 203 ordered actions, bringing the
+corpus to 1,442 cases and 4,093 visible files. Case shapes are below. These
 are reported counts, not fixed enumeration limits.
 Sync-engine scenarios arrive with their implementations under the
 move-together rule.
@@ -751,7 +751,7 @@ M11 L2 adds `llm/<case>/case.json`, consumed by Swift's `LlmFixtureCorpus`
 and Kotlin's `LlmFixtureConsumer`. The full `PromptConformanceTests` and
 `EveryFixtureTest` gates dispatch the entire category; Kotlin's focused
 `LlmConformanceTest` uses the same adapter. Both languages compare every
-expectation. The LLM corpus has 410 cases, 1,900 visible files and 10,738
+expectation. The LLM corpus has 410 cases, 1,925 visible files and 11,025
 expectation members, with zero pending cases. All ten categories stay
 registered. L3's transcript-escaping output is also a byte golden for both
 languages' session transcript helpers. Run
@@ -907,7 +907,7 @@ repeat inputs. Full-gate mutations independently prove merge checks execute.
 
 
 L4 adds the closed `kind: "exchange"` envelope. Both semantic consumers execute
-all 48 cases and 196 ordered actions through the production Anthropic client.
+all 48 cases and 203 ordered actions through the production Anthropic client.
 The envelope has exactly `schema`, `category`, `kind`, `setup` and `actions`:
 
 ```json
@@ -980,7 +980,7 @@ while an already received action response still finishes output validation.
 Every frame compares method, normalized URL bytes, the exact lowercase header
 map, both caps, absolute relative deadline and nullable raw body bytes.
 GET's body is null. No decoded-object equality substitutes for body comparison.
-The 136 body goldens were captured through the unchanged Swift client at
+The 143 body goldens were captured through the unchanged Swift client at
 `a6fbb4b`; identical-input compatibility cases reuse those captured bytes.
 Goldens pin sorted keys, slash/control escaping, Unicode, CRLF, no terminal
 newline, all actions and efforts, transcript coalescing and data escaping.
@@ -1008,10 +1008,13 @@ Expected cache is exactly `{format: "json_schema", writes: 0}` in L4.
 The response families pin text after thinking, concatenated text blocks, every
 stop outcome before strict output parsing, malformed/empty envelopes, output
 recovery and validation, optional invalid usage, one-page names/cursors,
-HTTP status mapping, decimal/date Retry-After and one attempt on 400.
+HTTP status mapping, delta seconds and date Retry-After and one attempt on 400.
 Envelope parsing follows JSONDecoder separately from strict output parsing:
 it accepts an initial UTF-8 BOM, keeps the first duplicate member, ignores
 unknown values including numeric overflow and retains raw string BOMs.
+Envelope text decodes only when needed, so malformed unused/optional text
+cannot override a stop or invalidate an otherwise valid output. Malformed
+required text still fails before strict artifact/review decoding.
 Strict output keeps its existing 32-container, duplicate and finite-number
 rules; the envelope parser has a separate 512-container safety bound.
 Mutation tests cover unknown nested members, boolean numeric fields, unsafe
