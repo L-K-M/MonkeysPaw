@@ -29,7 +29,12 @@ re-entry or Clear before it can be used.
   - Full Anthropic `…/v1/messages` and either protocol's model-list endpoint
     are also trimmed. Scheme/host case and default ports normalize; queries,
     fragments, userinfo, dot path segments and encoded path separators are
-    rejected. HTTP is allowed only for `localhost`, canonical decimal IPv4
+    rejected. Bracketed hosts must be valid IPv6 or IPvFuture literals;
+    nonempty ports must be decimal values in `1...65535`, even when the
+    lexeme exceeds a machine integer. Empty ports normalize to absent ports.
+    Percent-escaped paths must decode as UTF-8; undecodable paths are rejected
+    rather than replaced with an empty base path. HTTP is allowed only for
+    `localhost`, canonical decimal IPv4
     `127.0.0.0/8`, and IPv6 `::1`, matched literally without name resolution
     ([§19 B23](19-m4-m5-decisions.md)).
 - **Models.** "Test connection" lists models with
