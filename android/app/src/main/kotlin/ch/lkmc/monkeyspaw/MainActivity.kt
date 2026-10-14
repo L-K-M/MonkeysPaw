@@ -20,6 +20,8 @@ import ch.lkmc.monkeyspaw.ui.editor.EditorViewModel
 import ch.lkmc.monkeyspaw.ui.library.LibraryScreen
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
+import ch.lkmc.monkeyspaw.ui.settings.AssistantSettingsScreen
+import ch.lkmc.monkeyspaw.ui.settings.AssistantSettingsViewModel
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferScreen
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferUiState
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferViewModel
@@ -36,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private val editor: EditorViewModel by viewModels()
     private val setup: KeyboardTileSetupViewModel by viewModels()
     private val keyboardTileSetup by lazy { AndroidKeyboardTileSetup(this) }
+    private val assistantSettings: AssistantSettingsViewModel by viewModels()
     private val fillLauncher = FillLauncher { path ->
         startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
     }
@@ -84,7 +87,18 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(padding))
                     } else if (startup == SeedOfferUiState.Ready) {
                         val editing = editor.state.collectAsStateWithLifecycle().value
-                        if (editing.isOpen) EditorScreen(
+                        val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
+                        if (assistant.isOpen) AssistantSettingsScreen(
+                            state = assistant, onBack = assistantSettings::close, onAdd = { assistantSettings.addProfile() },
+                            onSelect = assistantSettings::selectProfile, onDelete = assistantSettings::deleteProfile,
+                            onRename = assistantSettings::renameProfile, onKind = assistantSettings::setKind,
+                            onBaseURL = assistantSettings::setBaseURL, onModelID = assistantSettings::setModelID,
+                            onKeyInput = assistantSettings::setKeyInput, onKeepKey = assistantSettings::keepKey,
+                            onClearKey = assistantSettings::clearKey, onKeyInputDiscarded = assistantSettings::discardTypedKey,
+                            onSave = assistantSettings::save, onRefresh = assistantSettings::refresh,
+                            onTest = assistantSettings::testConnection, onCancelTest = assistantSettings::cancelTest,
+                            modifier = Modifier.padding(padding),
+                        ) else if (editing.isOpen) EditorScreen(
                             state = editing, onEdit = editor::edit, onNewPath = editor::setNewPath,
                             onTab = editor::setTab, onSave = editor::save, onBack = editor::close,
                             onReload = editor::reload, onRename = editor::rename, onMove = editor::move,
@@ -103,6 +117,7 @@ class MainActivity : ComponentActivity() {
                             onEdit = { editor.open(it) },
                             onCreate = { editor.createDraft() },
                             onSettings = setup::openSettings,
+                            onAssistantSettings = assistantSettings::open,
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,

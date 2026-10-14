@@ -38,13 +38,33 @@ internal class LibraryScreenBoundaryTest {
         assertFalse(Regex("name=\"library_(?:account|group|conflict|fill|editor|copy)").containsMatchIn(resources))
     }
 
+    @Test
+    fun `assistant settings stays behind setup and seeds and is offered only in browser mode`() {
+        val activity = packageRoot.resolve("MainActivity.kt").readText()
+        val setup = activity.indexOf("if (setupState.loading")
+        val settings = activity.indexOf("else if (setupState.settingsOpen)")
+        val ready = activity.indexOf("else if (startup == SeedOfferUiState.Ready)")
+        val assistant = activity.indexOf("if (assistant.isOpen)")
+        assertTrue(setup >= 0 && settings > setup && ready > settings && assistant > ready)
+        assertTrue(activity.contains("onSettings = setup::openSettings"))
+        assertTrue(activity.contains("onAssistantSettings = assistantSettings::open"))
+        val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
+        assertTrue(screen.contains("if (mode == LibraryMode.BROWSER) {\n                onAssistantSettings?.let"))
+        val ime = packageRoot.resolve("ime/ImeScreen.kt").readText()
+        assertTrue(ime.contains("mode = LibraryMode.IME_PICKER"))
+        assertFalse(ime.contains("onAssistantSettings"))
+    }
+
     private fun validateView(source: String) {
         val imports = Regex("(?m)^import (.+)$").findAll(source).map { it.groupValues[1] }
         assertTrue(imports.all { it.startsWith("androidx.compose.") || it == "androidx.activity.compose.BackHandler" ||
             it == "ch.lkmc.monkeyspaw.R" || it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
                 "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",
                 "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance",
-                "ch.lkmc.monkeyspaw.core.ports.DeliveryMode") })
+                "ch.lkmc.monkeyspaw.core.ports.DeliveryMode",
+                "ch.lkmc.monkeyspaw.core.domain.llm.ConnectionTestResult", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderKind",
+                "ch.lkmc.monkeyspaw.core.domain.llm.ProviderProfileID", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderSettingsError",
+                "ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError") })
         val forbidden = Regex("\\b(?:File|Files|Path|Context|LocalContext|Clipboard|LibraryRepository|LibraryService|EditingService|SeedInstaller|DataStore|Dispatchers|viewModelScope|LaunchedEffect|HttpTransport|URL|InputStream|OutputStream)\\b")
         assertFalse(forbidden.containsMatchIn(source))
     }
