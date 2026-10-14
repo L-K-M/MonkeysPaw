@@ -57,6 +57,149 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(rig.service.report.status, .idle)
     }
 
+    func testKnownViewerChangesRestoreHeadAndPreservePrivateCopiesWithoutGroupWrites() async throws {
+        for intent in ["edit", "late-edit", "delete", "move", "clean-move", "create", "idless-create"] {
+            let rig = try SyncServiceRig()
+            let id = SyncTestValues.groupPrompt
+            let server = try CanonicalForm.group(SyncScanTestSupport.bytes("Server", id: id), filename: "a.md").bytes
+            let record = try SyncScanTestSupport.record(server, scope: SyncScanTestSupport.team)
+            let state = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+                cursors: [SyncScanTestSupport.personal: "old", SyncScanTestSupport.team: "group-old"],
+                groups: SyncScanTestSupport.groups(role: .viewer), prompts: [.assigned(id): record])
+            try rig.base.states.update(for: rig.base.binding) { $0 = state }
+            let creating = intent == "create" || intent == "idless-create"
+            let moved = intent == "move" || intent == "clean-move"
+            let path = creating ? "Groups/Team/new.md" : moved ? "private.md" : "Groups/Team/a.md"
+            let local = intent == "clean-move" ? server : SyncScanTestSupport.bytes("Local", id:
+                intent == "idless-create" ? nil : creating ? SyncTestValues.personalPrompt : id,
+                extra: intent == "edit" ? "favorite: true\n# Preserve this comment\n" : "")
+            let latest = intent == "late-edit" ? SyncScanTestSupport.bytes("Saved during GET", id: id) : local
+            if creating { try rig.base.files.write(server, at: "Groups/Team/a.md") }
+            if intent != "delete" { try rig.base.files.write(local, at: path) }
+            let group = SyncAPI.SyncScope(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .viewer),
+                mode: .delta, head: 3, cursor: "group", hasMore: false, items: [])
+            rig.transport.handler = { _, request in
+                if request.method == .post { return try SyncServiceRig.pull(mode: .delta, groups: [group]) }
+                if request.method == .get {
+                    if intent == "late-edit" { try rig.base.files.write(latest, at: path) }
+                    return try SyncServiceRig.http(SyncAPI.Prompt(id: id.rawValue,
+                        rev: record.rev, scope: .group(groupID: SyncTestValues.group.rawValue), path: "a.md",
+                        content: String(decoding: server, as: UTF8.self)))
+                }
+                XCTAssertEqual(request.method, .put)
+                let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: XCTUnwrap(request.body))
+                XCTAssertEqual(put.scope, .user)
+                XCTAssertEqual(put.baseRev, 0)
+                return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 1, seq: 4))
+            }
+            try rig.start()
+            await rig.settle()
+            XCTAssertNil(rig.service.report.blockingIssue, intent)
+            XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/a.md"), server, intent)
+            XCTAssertEqual(rig.base.libraryOperations.modes["Groups/Team/a.md"], .readOnly, intent)
+            let copies = try rig.base.files.listFiles().filter { $0.relativePath.hasPrefix("Conflicts/") }
+            XCTAssertEqual(copies.count, intent == "delete" ? 0 : 1, intent)
+            XCTAssertEqual(rig.base.states.snapshot.value?.prompts.count, intent == "delete" ? 1 : 2, intent)
+            if let copy = copies.first {
+                let bytes = try rig.base.files.read(at: copy.relativePath)
+                let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(copy.relativePath))
+                XCTAssertNotEqual(document.frontMatter.id, id)
+                XCTAssertEqual(document.body, PromptCodec.parseFile(latest, filename: LibraryPath.filename(path)).body)
+                XCTAssertEqual(rig.base.libraryOperations.modes[RelativePath(copy.relativePath)], .normal)
+                let retained = try rig.base.data.listFiles().filter { $0.relativePath.hasSuffix(".bin") }
+                XCTAssertTrue(try retained.contains { try rig.base.data.read(at: $0.relativePath) == latest })
+            }
+            XCTAssertEqual(rig.transport.requests.filter { $0.method == .delete }.count, 0)
+            XCTAssertEqual(rig.transport.requests.filter { $0.method == .put }.count, intent == "delete" ? 0 : 1)
+            let writes = rig.base.files.writeCount
+            let requests = rig.transport.requests.count
+            rig.service.syncNow()
+            await rig.settle()
+            XCTAssertEqual(rig.base.files.writeCount, writes, intent)
+            XCTAssertEqual(rig.transport.requests.dropFirst(requests).filter { $0.method == .put }.count, 0)
+        }
+    }
+
+    func testViewerDenialHeadFailureKeepsLocalVersionAndBaseline() async throws {
+        let rig = try SyncServiceRig()
+        let id = SyncTestValues.groupPrompt
+        let server = try CanonicalForm.group(SyncScanTestSupport.bytes("Server", id: id), filename: "a.md").bytes
+        let local = SyncScanTestSupport.bytes("Local", id: id, extra: "# Exact local comment\n")
+        let record = try SyncScanTestSupport.record(server, scope: SyncScanTestSupport.team)
+        let state = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "old", SyncScanTestSupport.team: "group-old"],
+            groups: SyncScanTestSupport.groups(role: .viewer), prompts: [.assigned(id): record])
+        try rig.base.states.update(for: rig.base.binding) { $0 = state }
+        try rig.base.files.write(local, at: "Groups/Team/a.md")
+        let group = SyncAPI.SyncScope(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .viewer),
+            mode: .delta, head: 3, cursor: "group", hasMore: false, items: [])
+        rig.transport.handler = { _, request in
+            if request.method == .post { return try SyncServiceRig.pull(mode: .delta, groups: [group]) }
+            XCTAssertEqual(request.method, .get)
+            throw HTTPTransportError.networkFailure
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(rig.service.report.status, .offline)
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/a.md"), local)
+        XCTAssertEqual(rig.base.states.snapshot.value?.prompts[.assigned(id)]?.canonicalHash, record.canonicalHash)
+        XCTAssertEqual(rig.base.states.snapshot.value?.prompts[.assigned(id)]?.rev, record.rev)
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .put || $0.method == .delete }.count, 0)
+        XCTAssertEqual(try rig.base.files.listFiles().count, 1)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertNil(try rig.pending.load(for: rig.base.binding))
+    }
+
+    func testViewerDenialInterruptedInstallationReplaysOnePrivateCopy() async throws {
+        let rig = try SyncServiceRig()
+        let id = SyncTestValues.groupPrompt
+        let server = try CanonicalForm.group(SyncScanTestSupport.bytes("Server", id: id), filename: "a.md").bytes
+        let local = SyncScanTestSupport.bytes("Local", id: id)
+        let record = try SyncScanTestSupport.record(server, scope: SyncScanTestSupport.team)
+        let state = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "old", SyncScanTestSupport.team: "group-old"],
+            groups: SyncScanTestSupport.groups(role: .viewer), prompts: [.assigned(id): record])
+        try rig.base.states.update(for: rig.base.binding) { $0 = state }
+        try rig.base.files.write(local, at: "Groups/Team/a.md")
+        let group = SyncAPI.SyncScope(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .viewer),
+            mode: .delta, head: 3, cursor: "group", hasMore: false, items: [])
+        rig.transport.handler = { _, request in
+            if request.method == .post { return try SyncServiceRig.pull(mode: .delta, groups: [group]) }
+            XCTAssertEqual(request.method, .get)
+            rig.base.libraryOperations.beforePublish = { path in
+                if path == "Groups/Team/a.md" { throw SyncFileOperationError(.ioFailure) }
+            }
+            return try SyncServiceRig.http(SyncAPI.Prompt(id: id.rawValue, rev: record.rev,
+                scope: .group(groupID: SyncTestValues.group.rawValue), path: "a.md", content: String(decoding: server, as: UTF8.self)))
+        }
+        try rig.start()
+        await rig.settle()
+        let journal = try XCTUnwrap(rig.journal.pending)
+        let copyID = try XCTUnwrap(journal.steps.first?.edit.copyID)
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/a.md"), local)
+        XCTAssertEqual(try rig.base.files.listFiles().filter { $0.relativePath.hasPrefix("Conflicts/") }.count, 1)
+        _ = rig.service.stop()
+        await rig.service.drain()
+        rig.base.libraryOperations.beforePublish = nil
+        let restarted = try SyncServiceRig(base: rig.base)
+        restarted.transport.handler = { _, request in
+            XCTAssertNil(restarted.journal.pending)
+            XCTAssertEqual(try restarted.base.files.read(at: "Groups/Team/a.md"), server)
+            if request.method == .post { return try SyncServiceRig.pull(mode: .delta, groups: [group]) }
+            XCTAssertEqual(request.method, .put)
+            let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: XCTUnwrap(request.body))
+            XCTAssertEqual(put.scope, .user)
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 1, seq: 4))
+        }
+        try restarted.start()
+        await restarted.settle()
+        XCTAssertNil(restarted.journal.pending)
+        XCTAssertEqual(try restarted.base.files.listFiles().count, 2)
+        XCTAssertEqual(restarted.base.states.snapshot.value?.prompts[try SyncIdentifiers.promptIdentity(copyID)]?.rev, 1)
+        XCTAssertEqual(restarted.base.libraryOperations.modes["Groups/Team/a.md"], .readOnly)
+        XCTAssertEqual(restarted.transport.requests.filter { $0.method == .get || $0.method == .delete }.count, 0)
+    }
+
     func testRemovedGroupInstallsAccessibleMoveBeforeRescue() async throws {
         let rig = try SyncServiceRig()
         let bytes = SyncScanTestSupport.bytes("Moved", id: SyncTestValues.groupPrompt)
