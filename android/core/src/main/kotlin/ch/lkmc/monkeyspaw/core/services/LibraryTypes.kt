@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.ULIDGenerationError
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncError
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.security.MessageDigest
@@ -11,7 +12,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-/** The graph shares this lock across prompt IO, keyed state, editing, fill learning and publication. */
+/** Library commands share one boundary; each keyed store also owns a separate boundary. */
 internal class MutationBoundary {
     private val lock = ReentrantLock()
 
@@ -23,7 +24,7 @@ internal class MutationBoundary {
 internal fun sanitized(error: Exception): Exception = when (error) {
     is InterruptedException -> error.also { Thread.currentThread().interrupt() }
     StoreError.RecoveryRequired -> LibraryError.RecoveryRequired
-    is StoreError, is LibraryError, is PromptWriteError, is ULIDGenerationError,
+    is StoreError, is LibraryError, is SyncError, is SyncFileOperationError, is PromptWriteError, is ULIDGenerationError,
     is CancellationException -> error
     else -> LibraryError.OperationFailed
 }
@@ -35,7 +36,8 @@ sealed class LibraryError private constructor(message: String) : Exception(messa
     object KeyedStateConflict : LibraryError("Destination already has prompt state.")
     object Conflict : LibraryError("Prompt changed. Reload before saving.")
     object DestinationOccupied : LibraryError("Destination is occupied.")
-    object RecoveryRequired : LibraryError("State rollback failed. Reload and recover before retrying.")
+    object RecoveryRequired : LibraryError("Local recovery is required before reading or editing.")
+    object InvalidProvenance : LibraryError("Invalid prompt provenance.")
     object InvalidTimestamp : LibraryError("Timestamp is outside the supported range.")
     object HistoryCollisionLimitReached : LibraryError("History sequence is exhausted.")
     object RevisionNotFound : LibraryError("History revision is unavailable.")
