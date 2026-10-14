@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.core.sync
 
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
@@ -57,7 +58,8 @@ class SyncAdoptionTest {
             assertTrue(h.rig.local.values.rememberedValues(source).isEmpty())
             val migrated = h.rig.local.state.text("history/${v.personalID.storageKey}/head.json")
             assertTrue(migrated.contains(head.hash.rawValue))
-            assertTrue(migrated.contains("kept"))
+            assertEquals(PromptProvenance(Instant.parse("2026-10-14T01:02:03.000Z"), "example.test", "model", null),
+                h.rig.local.library.provenance("a.md"))
             assertNull(h.states.snapshot.value!!.prompts[source])
             assertTrue(h.scan().changes.isEmpty())
         }
