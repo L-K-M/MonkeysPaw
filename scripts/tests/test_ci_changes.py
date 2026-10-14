@@ -18,13 +18,13 @@ changes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(changes)
 
 ALL = frozenset({
-    "core-linux", "linux-app", "deb", "flatpak", "android", "core-macos", "macos-app",
+    "core-linux", "linux-app", "deb", "flatpak", "android", "android-sync", "core-macos", "macos-app",
     "macos-artifacts", "server", "server-image", "compose-smoke",
 })
-SWIFT = ALL - {"android"}
+SWIFT = ALL - {"android", "android-sync"}
 LINUX = frozenset({"linux-app", "deb"})
 MACOS = frozenset({"macos-app", "macos-artifacts"})
-SERVER = frozenset({"server", "server-image", "compose-smoke"})
+SERVER = frozenset({"server", "server-image", "compose-smoke", "android-sync"})
 
 
 def with_flatpak(jobs):
@@ -35,9 +35,9 @@ def with_flatpak(jobs):
 class SelectionTests(unittest.TestCase):
     def test_path_rules(self):
         cases = {
-            "Package.swift": SWIFT,
-            "Package.resolved": SWIFT,
-            "Sources/MonkeysPawCore/Domain/Prompt.swift": SWIFT,
+            "Package.swift": SWIFT | {"android-sync"},
+            "Package.resolved": SWIFT | {"android-sync"},
+            "Sources/MonkeysPawCore/Domain/Prompt.swift": SWIFT | {"android-sync"},
             "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL,
             "Tests/MonkeysPawCoreTests/PromptTests.swift": SWIFT,
             "Assistant/Prompts/write.md": ALL,
@@ -69,14 +69,14 @@ class SelectionTests(unittest.TestCase):
             ".env.example": SERVER,
             "Caddyfile": SERVER,
             "deploy/caddy/Caddyfile.example": SERVER,
-            ".dockerignore": frozenset({"server-image", "compose-smoke"}),
+            ".dockerignore": frozenset({"server-image", "compose-smoke", "android-sync"}),
             "update.sh": SERVER | {"deb"},
             "media-sources/icon.png": LINUX | MACOS,
-            "android/app/src/main/AndroidManifest.xml": frozenset({"android"}),
-            "android/core/build.gradle.kts": frozenset({"android"}),
-            "android/app/build.gradle.kts": frozenset({"android", "core-linux", "deb"}),
+            "android/app/src/main/AndroidManifest.xml": frozenset({"android", "android-sync"}),
+            "android/core/build.gradle.kts": frozenset({"android", "android-sync"}),
+            "android/app/build.gradle.kts": frozenset({"android", "android-sync", "core-linux", "deb"}),
             "android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/llm/AssistantPrompts.generated.kt":
-                frozenset({"android", "core-linux"}),
+                frozenset({"android", "android-sync", "core-linux"}),
             "scripts/sync-android-version.sh": frozenset({"core-linux", "android"}),
             "scripts/check-pbxproj.py": frozenset({"core-linux"}),
             "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),
@@ -91,7 +91,11 @@ class SelectionTests(unittest.TestCase):
             "scripts/generate-seeds.py": SWIFT,
             "scripts/generate-assistant-prompts.py": ALL,
             "scripts/tests/test_generate_assistant_prompts.py": frozenset({"core-linux"}),
-            "scripts/generate-kotlin-sync-fold.py": frozenset({"android"}),
+            "scripts/generate-kotlin-sync-fold.py": frozenset({"android", "android-sync"}),
+            "scripts/android-sync-ci.py": frozenset({"core-linux", "android-sync"}),
+            "scripts/tests/test_android_sync_ci.py": frozenset({"core-linux", "android-sync"}),
+            "android/app/src/main/kotlin/ch/lkmc/monkeyspaw/data/OkHttpHttpTransport.kt": frozenset({"android", "android-sync"}),
+            "android/app/src/main/kotlin/ch/lkmc/monkeyspaw/data/RootedFileStore.kt": frozenset({"android", "android-sync"}),
             "scripts/backup.sh": SERVER | {"deb"},
             "scripts/compose-smoke.sh": SERVER | {"core-linux"},
             "scripts/tests/test-backup.sh": frozenset({"core-linux", "deb"}),
@@ -174,7 +178,7 @@ class SelectionTests(unittest.TestCase):
     def test_multiple_trees_union_their_jobs(self):
         self.assertEqual(changes.select_jobs("pull_request", [
             "android/core/build.gradle.kts", "MonkeysPaw/AppDelegate.swift",
-        ]), MACOS | {"android"})
+        ]), MACOS | {"android", "android-sync"})
 
     def test_output_format(self):
         output = changes.format_outputs({"android", "server-image"})
@@ -222,8 +226,8 @@ class GitAndCLITests(unittest.TestCase):
 
     def test_renames_include_both_trees_and_docs_boundaries(self):
         pairs = (
-            ("android/old.kt", "MonkeysPaw/new.swift", MACOS | {"android"}),
-            ("android/into-docs.kt", "docs/new.md", frozenset({"android"})),
+            ("android/old.kt", "MonkeysPaw/new.swift", MACOS | {"android", "android-sync"}),
+            ("android/into-docs.kt", "docs/new.md", frozenset({"android", "android-sync"})),
             ("docs/out.md", "MonkeysPaw/new.md", MACOS),
             ("unknown/old.txt", "android/new.kt", ALL),
         )
@@ -266,7 +270,7 @@ class GitAndCLITests(unittest.TestCase):
         output.write_text("existing=value\n")
         result = self.run_script("pull_request", output, base, head)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(output.read_text(), "existing=value\n" + changes.format_outputs({"android"}))
+        self.assertEqual(output.read_text(), "existing=value\n" + changes.format_outputs({"android", "android-sync"}))
         output = self.root / "empty-output"
         result = self.run_script("pull_request", output, head, head)
         self.assertEqual(result.returncode, 0, result.stderr)
