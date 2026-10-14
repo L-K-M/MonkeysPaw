@@ -37,7 +37,7 @@ class SyncReviewClaimsTest {
             val record = workers.submit<List<Instant>> { h.usage.recordUse(entry.identity, at) }
             assertTrue(writing.await(5, TimeUnit.SECONDS))
             val save = workers.submit<LibrarySaveResult> { h.library.save(h.draft(source("new")), "a.md", entry.stamp) }
-            save.get(5, TimeUnit.SECONDS)
+            assertEquals("new", save.get(5, TimeUnit.SECONDS).entry.document.body)
             assertEquals(listOf(at), record.get(5, TimeUnit.SECONDS))
             assertEquals(listOf(at), h.index.snapshot().prompts.single().useEvents)
             h.usage.recordUse(entry.identity, at)
