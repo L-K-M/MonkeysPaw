@@ -25,6 +25,7 @@ internal fun LibraryScreen(
     onClearFilters: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpen: (LibrarySelection) -> Unit = {},
 ) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -79,7 +80,7 @@ internal fun LibraryScreen(
         items(state.rows, key = { it.selection.relativePath }) { row ->
             PromptRow(row, selected = state.selectedPrompt?.selection == row.selection,
                 favoriteEnabled = state.favoritePending == null && !row.isReadOnly,
-                onSelect = { onSelect(row.selection) }, onToggleFavorite = { onToggleFavorite(row.selection) })
+                onSelect = { onSelect(row.selection); onOpen(row.selection) }, onToggleFavorite = { onToggleFavorite(row.selection) })
         }
         item { Spacer(Modifier.height(12.dp)) }
     }
