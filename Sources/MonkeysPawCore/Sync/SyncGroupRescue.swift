@@ -79,6 +79,16 @@ extension SyncGroupFolders {
             }
             return true
         }
+        let retired = Set(try files.map { try $0.identity })
+        var cursors = old.cursors
+        for (identity, record) in old.prompts where retired.contains(identity) {
+            // A cleanup is not a user deletion. Refetch the accessible original
+            // instead of letting its internal retirement produce a DELETE.
+            cursors[record.scope] = SyncState.snapshotResetCursor
+        }
+        next = try SyncState(binding: old.binding, databaseID: old.databaseID, cursors: cursors,
+            groups: old.groups, prompts: old.prompts.filter { !retired.contains($0.key) },
+            favorites: old.favorites.filter { !retired.contains($0.key) })
         for (id, folder) in owned.managedFolders where !legitimate.contains(RelativePath("Groups/" + folder.folder)) {
             owned.managedFolders[id] = nil
         }

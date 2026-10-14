@@ -305,6 +305,7 @@ final class SyncApplyJournal {
                     return .replanAsConflict(operationID: record.id)
                 }
             }
+            if state != record.nextState, let conflict = try runDirectories(&record, kind: .reserve) { return conflict }
             if let conflict = try runDirectories(&record, kind: .rename) { return conflict }
             for index in record.steps.indices {
                 let step = record.steps[index]
@@ -354,6 +355,9 @@ final class SyncApplyJournal {
             }
             if let conflict = try runDirectories(&record, kind: .removeEmpty) { return conflict }
             for step in record.directorySteps {
+                // Once the mapping committed, this reserved namespace is owned
+                // even if files arrived while final journal removal was pending.
+                if step.edit.kind == .reserve, state == record.nextState, step.completed { continue }
                 if case .replanAsConflict = try mutations.verify(step.edit) {
                     return .replanAsConflict(operationID: step.edit.id)
                 }

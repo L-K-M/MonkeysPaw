@@ -74,7 +74,7 @@ final class SyncGroupFolderTests: XCTestCase {
             state: rig.state(), ownership: owned, inventory: rig.inventory(), mutations: rig.base.mutations)
         XCTAssertEqual(plan.nextState.groups[group]?.folder, "Team (2)")
         XCTAssertEqual(plan.nextState.groups[id(20)]?.folder, "Other (2)")
-        XCTAssertTrue(plan.directories.isEmpty)
+        XCTAssertTrue(plan.directories.allSatisfy { $0.kind == .reserve })
         XCTAssertEqual(try rig.journal.apply(plan), .committed)
         XCTAssertEqual(try rig.base.files.text(at: "Groups/Other"), "unknown")
         XCTAssertTrue(try rig.base.mutations.directoryIdentities().keys.contains("Groups/Team"))
@@ -629,6 +629,124 @@ final class SyncGroupFolderTests: XCTestCase {
         XCTAssertEqual(try rig.journal.apply(plan), .committed)
         XCTAssertNil(try rig.base.files.stamp(at: "moved.md"))
         XCTAssertTrue(try XCTUnwrap(rig.accounts.binding(for: rig.base.binding.root)).holds.contains { $0.path == RelativePath(copy.path) })
+    }
+
+    func testTruncatedNumberedStemStillFindsAFreeFolder() throws {
+        let base = String(repeating: "a", count: 251)
+        let stem = base + " (2)"
+        XCTAssertEqual(stem.utf8.count, 255)
+        XCTAssertEqual(try SyncNaming.groupFolder(stem, occupied: [stem]), base + " (3)")
+        XCTAssertEqual(try SyncNaming.groupFolder(stem, occupied: [stem, base + " (3)"]), base + " (4)")
+    }
+
+    func testNewAllocationRechecksVacancyBeforeClaimingAnUnownedDirectory() throws {
+        let rig = try Rig()
+        let bytes = SyncApplyTestRig.bytes("private", id: id(30))
+        try rig.base.files.write(bytes, at: "Private.md")
+        let prompt = try SyncPromptState(scope: .user(SyncTestValues.user), path: "Private.md", rev: 1,
+            canonicalHash: SyncHash(bytes: bytes))
+        let owned = try rig.seed(groups: [:], prompts: [.assigned(id(30)): prompt])
+        let old = try rig.state()
+        let plan = try SyncGroupFolders.update([member("Team")], state: old, ownership: owned,
+            inventory: rig.inventory(), mutations: rig.base.mutations)
+        try rig.base.libraryOperations.createDirectory(at: "Groups/Team")
+        try rig.base.files.move(from: "Private.md", to: "Groups/Team/Private.md")
+        if case .replanAsConflict = try rig.journal.apply(plan) {} else { XCTFail("Unowned folder was claimed") }
+        XCTAssertEqual(try rig.state(), old)
+        XCTAssertEqual(try rig.accounts.binding(for: owned.root), owned)
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/Private.md"), bytes)
+    }
+
+    func testStaleRescueCannotTurnInternalRetirementIntoSharedDelete() throws {
+        let rig = try Rig()
+        let bytes = SyncApplyTestRig.bytes("shared", id: id(30))
+        try rig.base.files.write(bytes, at: "Groups/Team/A.md")
+        let owned = try rig.seed(groups: [group: groupState()], prompts: [.assigned(id(30)): try record("A.md", bytes: bytes)])
+        try rig.base.files.move(from: "Groups/Team/A.md", to: "Groups/Unmapped/A.md")
+        let plan = try SyncGroupFolders.stale(state: rig.state(), ownership: owned, inventory: rig.inventory(),
+            at: date, freshID: generator(), mutations: rig.base.mutations)
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        let current = try rig.state()
+        XCTAssertNil(current.prompts[.assigned(id(30))])
+        XCTAssertEqual(current.cursors[.group(group)], "0")
+        let scan = try SyncLocalScanner.scan(binding: rig.base.binding, state: current,
+            ownership: rig.accounts.binding(for: owned.root), availability: .available,
+            freshID: generator(300), mutations: rig.base.mutations)
+        XCTAssertFalse(scan.changes.contains { if case .delete(.assigned(let value), _) = $0 { return value == self.id(30) }; return false })
+        XCTAssertTrue(scan.changes.contains { if case .create(let value) = $0 { return value.identity != .assigned(self.id(30)) }; return false })
+    }
+
+    func testResetScopeCannotAcknowledgeAnAlreadyCollectedDelta() throws {
+        let rig = try Rig()
+        _ = try rig.seed(groups: [group: groupState()])
+        var state = try rig.state()
+        state.cursors[.group(group)] = "0"
+        let scopes: [SyncAPI.SyncScope] = [
+            .init(identity: .user(userID: SyncTestValues.user.rawValue), mode: .delta, head: 0,
+                cursor: "private next", hasMore: false, items: []),
+            .init(identity: .group(groupID: group.rawValue, name: "Team", role: .editor), mode: .delta, head: 1,
+                cursor: "old collected delta", hasMore: false, items: [])
+        ]
+        let staging = SyncPullStaging(files: MemoryFileStore())
+        try staging.append(.init(databaseID: SyncTestValues.uuid.uuidString.lowercased(), scopes: scopes, removed: []))
+        let pull = SyncCollectedPull(databaseID: SyncTestValues.uuid,
+            scopes: try Dictionary(uniqueKeysWithValues: scopes.map { (try SyncScopeKey($0.identity), SyncCollectedScope(page: $0, snapshotHead: nil, firstPage: 0)) }),
+            removed: [], staging: staging)
+        defer { try? pull.discard() }
+        XCTAssertThrowsError(try SyncReconciler.plan(pull, state: state, local: rig.inventory().local)) {
+            XCTAssertEqual($0 as? SyncReconciliationError, .snapshotRequired(.group(self.group)))
+        }
+    }
+
+    func testOwnedReservationReplaysAfterUncertainJournalRemoval() throws {
+        let rig = try Rig()
+        let owned = try rig.seed(groups: [:])
+        let plan = try SyncGroupFolders.update([member("Team")], state: rig.state(), ownership: owned,
+            inventory: rig.inventory(), mutations: rig.base.mutations)
+        rig.base.data.failNextDelete = true
+        XCTAssertThrowsError(try rig.journal.apply(plan))
+        // State/binding already committed; this namespace now belongs to Team.
+        try rig.base.libraryOperations.createDirectory(at: "Groups/Team")
+        try rig.base.files.put("arrived", at: "Groups/Team/A.md")
+        let restarted = try Rig(files: rig.base.files, data: rig.base.data)
+        XCTAssertEqual(try restarted.journal.replay(), .committed)
+        XCTAssertEqual(try restarted.journal.replay(), .committed)
+        XCTAssertEqual(try restarted.state(), plan.nextState)
+        XCTAssertEqual(try restarted.base.files.text(at: "Groups/Team/A.md"), "arrived")
+    }
+
+    func testStaleRescueSnapshotRestoresOriginalWithoutLosingPrivateCopy() throws {
+        let rig = try Rig()
+        let bytes = SyncApplyTestRig.bytes("shared", id: id(30))
+        let head = try CanonicalForm.group(bytes, filename: "A.md").bytes
+        try rig.base.files.write(bytes, at: "Groups/Team/A.md")
+        let owned = try rig.seed(groups: [group: groupState()], prompts: [.assigned(id(30)): try record("A.md", bytes: bytes)])
+        try rig.base.files.move(from: "Groups/Team/A.md", to: "Groups/Unmapped/A.md")
+        let rescue = try SyncGroupFolders.stale(state: rig.state(), ownership: owned, inventory: rig.inventory(),
+            at: date, freshID: generator(), mutations: rig.base.mutations)
+        let copy = try XCTUnwrap(rescue.edits.first { $0.kind == .rescue })
+        XCTAssertEqual(try rig.journal.apply(rescue), .committed)
+        let scopes: [SyncAPI.SyncScope] = [
+            .init(identity: .user(userID: SyncTestValues.user.rawValue), mode: .delta, head: 0,
+                cursor: "private next", hasMore: false, items: []),
+            .init(identity: .group(groupID: group.rawValue, name: "Team", role: .editor), mode: .snapshot, head: 1,
+                cursor: "1", hasMore: false, items: [.upsert(seq: 1,
+                    prompt: .init(id: id(30).rawValue, rev: 1, path: "A.md", content: String(decoding: head, as: UTF8.self)))])
+        ]
+        let staging = SyncPullStaging(files: MemoryFileStore())
+        try staging.append(.init(databaseID: SyncTestValues.uuid.uuidString.lowercased(), scopes: scopes, removed: []))
+        let pull = SyncCollectedPull(databaseID: SyncTestValues.uuid,
+            scopes: try Dictionary(uniqueKeysWithValues: scopes.map { (try SyncScopeKey($0.identity),
+                SyncCollectedScope(page: $0, snapshotHead: $0.mode == .snapshot ? $0.head : nil, firstPage: 0)) }),
+            removed: [], staging: staging)
+        defer { try? pull.discard() }
+        let reconciliation = try SyncReconciler.plan(pull, state: rig.state(), local: rig.inventory().local)
+        XCTAssertEqual(try rig.journal.apply(SyncReconciler.application(reconciliation, mutations: rig.base.mutations)), .committed)
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/A.md"), head)
+        XCTAssertEqual(try rig.base.files.read(at: copy.path), copy.bytes)
+        XCTAssertEqual(try rig.state().prompts[.assigned(id(30))]?.scope, .group(group))
+        XCTAssertEqual(try rig.state().prompts[.assigned(id(30))]?.rev, 1)
+        XCTAssertEqual(try rig.state().cursors[.group(group)], "1")
     }
 
     private func id(_ number: Int) -> ULID {

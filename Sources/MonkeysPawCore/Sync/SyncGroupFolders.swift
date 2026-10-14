@@ -13,8 +13,8 @@ struct SyncGroupFolderInventory {
     let directories: [RelativePath: FileStamp]
 }
 
-/// Preparatory folder policy only. These plans retain the old UUID/cursors;
-/// Y10 replans the complete pull after their journal commits.
+/// Preparatory folder policy. Renames retain the old UUID/cursors; cleanup can
+/// drop/reset scope cursors. Y10 finishes collection after these plans commit.
 enum SyncGroupFolders {
     static func inventory(binding: SyncLibraryIdentity, availability: SyncReconciliationSnapshot.Availability,
                           heldPaths: Set<RelativePath> = [], mutations: SyncLibraryMutations) throws -> SyncGroupFolderInventory {
@@ -111,6 +111,8 @@ enum SyncGroupFolders {
                     return try SyncHeldPrompt(identity: identity, path: path, sourceAccount: hold.sourceAccount,
                         contentHash: hold.contentHash)
                 }
+            } else if priorFolder == nil || source != destination {
+                directories.append(try SyncDirectoryEdit(reserving: destination))
             }
             if let source, previous?.role != membership.role || membership.role == .viewer {
                 for file in inventory.local.files where contains(RelativePath(file.path), in: source) {
