@@ -39,6 +39,7 @@ sealed class LibraryError private constructor(message: String) : Exception(messa
     object InvalidTimestamp : LibraryError("Timestamp is outside the supported range.")
     object HistoryCollisionLimitReached : LibraryError("History sequence is exhausted.")
     object RevisionNotFound : LibraryError("History revision is unavailable.")
+    object InvalidProvenance : LibraryError("Prompt attribution is corrupt or unsupported.")
     object CommitUnverified : LibraryError("File committed but could not be verified. Reload before retrying.")
     object OperationFailed : LibraryError("Local operation failed.")
 
@@ -82,7 +83,9 @@ data class LibraryEntry internal constructor(val relativePath: String, val docum
 
 data class HistoryRevision(val identity: PromptIdentity, val filename: String, val timestamp: Instant)
 
-data class LibrarySaveResult(val entry: LibraryEntry, val historyMaintenanceFailed: Boolean = false)
+/** Both maintenance flags describe an already committed file; callers adopt it without retrying. */
+data class LibrarySaveResult(val entry: LibraryEntry, val historyMaintenanceFailed: Boolean = false,
+    val provenanceMaintenanceFailed: Boolean = false)
 
 enum class SourceReadOnlyReason { FUTURE_FORMAT, INVALID_UTF8, SOURCE_TOO_LARGE }
 

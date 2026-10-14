@@ -1,8 +1,14 @@
 package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.domain.llm.AssistantTokenUsage
 import ch.lkmc.monkeyspaw.core.domain.ranking.Utf8Order
 import ch.lkmc.monkeyspaw.core.ports.*
+import ch.lkmc.monkeyspaw.core.syncapi.*
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -15,6 +21,8 @@ class HistoryStore internal constructor(private val files: StateStore, private v
     private val formatter = DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss.SSS'Z'", Locale.ROOT)
         .withResolverStyle(ResolverStyle.STRICT).withZone(ZoneOffset.UTC)
     private val filenamePattern = Regex("[0-9]{8}T[0-9]{6}\\.[0-9]{3}Z-[0-9]{6}\\.md")
+    private val provenanceFormatter = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT)
+        .withResolverStyle(ResolverStyle.STRICT).withZone(ZoneOffset.UTC)
 
     fun revisions(identity: PromptIdentity): List<HistoryRevision> = mutations.run {
         val prefix = directory(identity) + "/"
@@ -46,11 +54,78 @@ class HistoryStore internal constructor(private val files: StateStore, private v
     internal fun remove(revision: HistoryRevision) = mutations.run {
         val path = path(revision)
         try { files.delete(path) } catch (_: StoreError.NotFound) { throw LibraryError.RevisionNotFound }
-        // Older desktop histories may carry attribution sidecars; keep them if revision deletion fails.
-        if (files.stamp("$path.json") != null) {
-            try { files.delete("$path.json") } catch (_: StoreError.NotFound) { /* Concurrent cleanup. */ }
-        }
+        // A failed revision deletion must leave its attribution intact.
+        removeProvenance("$path.json")
     }
+
+    internal fun headProvenance(identity: PromptIdentity, bytes: ByteArray): PromptProvenance? = mutations.run {
+        provenance(directory(identity) + "/head.json", bytes)
+    }
+
+    internal fun provenance(revision: HistoryRevision, bytes: ByteArray): PromptProvenance? = mutations.run {
+        provenance(path(revision) + ".json", bytes)
+    }
+
+    internal fun setHeadProvenance(provenance: PromptProvenance?, identity: PromptIdentity, bytes: ByteArray) = mutations.run {
+        setProvenance(provenance, directory(identity) + "/head.json", bytes)
+    }
+
+    internal fun archiveProvenance(provenance: PromptProvenance?, revision: HistoryRevision, bytes: ByteArray) = mutations.run {
+        setProvenance(provenance, path(revision) + ".json", bytes)
+    }
+
+    private fun provenance(path: String, bytes: ByteArray): PromptProvenance? {
+        if (files.stamp(path) == null) return null
+        // Read errors retain their type. Only readable, malformed metadata is invalid provenance.
+        val stored = files.read(path)
+        return try {
+            val record = WireJson.parse(stored) as? WireValue.ObjectValue ?: throw LibraryError.InvalidProvenance
+            val objectValue = WireObject(record)
+            if (objectValue.long("version") != 1L || objectValue.string("origin") != PromptProvenance.Origin.LLM.rawValue) {
+                throw LibraryError.InvalidProvenance
+            }
+            val timestamp = objectValue.string("timestamp")
+            val date = LocalDateTime.parse(timestamp, provenanceFormatter).toInstant(ZoneOffset.UTC)
+            if (provenanceFormatter.format(date) != timestamp) throw LibraryError.InvalidProvenance
+            val host = objectValue.string("providerHost")
+            val model = objectValue.string("model")
+            if (host.isEmpty() || model.isEmpty()) throw LibraryError.InvalidProvenance
+            val usage = record.fields["usage"]?.takeUnless { it == WireValue.Null }?.let {
+                val value = WireObject(it)
+                AssistantTokenUsage(value.long("inputTokens", minimum = 0), value.long("outputTokens", minimum = 0))
+            }
+            if (objectValue.string("contentSHA256") != hash(bytes)) null
+            else PromptProvenance(date, host, model, usage)
+        } catch (_: Exception) { throw LibraryError.InvalidProvenance }
+    }
+
+    private fun setProvenance(provenance: PromptProvenance?, path: String, bytes: ByteArray) {
+        if (provenance == null) return removeProvenance(path)
+        if (provenance.timestamp.epochSecond < 0 || provenance.timestamp.epochSecond >= Limits.historyMaxUnixSeconds ||
+            provenance.providerHost.isEmpty() || provenance.model.isEmpty() ||
+            provenance.usage?.let { it.inputTokens < 0 || it.outputTokens < 0 } == true) {
+            throw LibraryError.InvalidProvenance
+        }
+        val record = mutableMapOf<String, JsonElement>(
+            "version" to JsonPrimitive(1), "contentSHA256" to JsonPrimitive(hash(bytes)),
+            "origin" to JsonPrimitive(provenance.origin.rawValue),
+            "timestamp" to JsonPrimitive(provenanceFormatter.format(provenance.timestamp)),
+            "providerHost" to JsonPrimitive(provenance.providerHost), "model" to JsonPrimitive(provenance.model),
+        )
+        provenance.usage?.let { record["usage"] = StateJson.objectOf(mapOf(
+            "inputTokens" to JsonPrimitive(it.inputTokens), "outputTokens" to JsonPrimitive(it.outputTokens))) }
+        val encoded = StateJson.objectOf(record).toString().replace("/", "\\/")
+            .encodeToByteArray(throwOnInvalidSequence = true)
+        files.writePrivate(encoded, path)
+    }
+
+    private fun removeProvenance(path: String) {
+        if (files.stamp(path) == null) return
+        try { files.delete(path) } catch (_: StoreError.NotFound) { /* Concurrent cleanup. */ }
+    }
+
+    private fun hash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { "%02x".format(it.toInt() and 255) }
 
     internal fun prune(identity: PromptIdentity) = mutations.run {
         revisions(identity).drop(Limits.historyCapPerPrompt).asReversed().forEach(::remove)

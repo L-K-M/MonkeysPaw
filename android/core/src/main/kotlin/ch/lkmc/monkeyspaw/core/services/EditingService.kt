@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.ports.*
 
 sealed interface EditResult {
@@ -17,7 +18,8 @@ sealed interface EditResult {
     data class Failed(val error: Exception) : EditResult
 }
 
-class PromptHistorySnapshot internal constructor(val revision: HistoryRevision, bytes: ByteArray, filename: String) {
+class PromptHistorySnapshot internal constructor(val revision: HistoryRevision, bytes: ByteArray, filename: String,
+    val provenance: PromptProvenance?) {
     private val bytes = bytes.copyOf()
     val sourceBytes: ByteArray get() = bytes.copyOf()
     val document = PromptCodec.parseFile(this.bytes, filename)
@@ -76,7 +78,12 @@ class EditingService(private val library: LibraryService) {
 
     /** Captured original bytes for preview/forensics; history reads never sample the clipboard. */
     fun history(identity: PromptIdentity, filename: String): List<PromptHistorySnapshot> = library.mutations.run {
-        library.history.revisions(identity).map { PromptHistorySnapshot(it, library.history.read(it), filename) }
+        library.history.revisions(identity).map { revision ->
+            val bytes = library.history.read(revision)
+            val provenance = try { library.history.provenance(revision, bytes) }
+            catch (_: LibraryError.InvalidProvenance) { null }
+            PromptHistorySnapshot(revision, bytes, filename, provenance)
+        }
     }
 
     private fun moved(source: String, destination: String, stamp: FileStamp): EditResult =
