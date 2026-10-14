@@ -3,7 +3,7 @@ import CGtk
 import Foundation
 import MonkeysPawCore
 
-/// GNOME capability selection and both portal registration phases share one id.
+/// Both actions share a connection/session, with independent registration ids.
 final class PortalHotkeyBackend: LinuxHotkeyBackend {
     let unboundActions = UnboundHotkeyActions()
     private enum Selection: Equatable { case probing, portal(UInt32), fallback, stopped }
@@ -15,8 +15,11 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     var mechanism: HotkeyMechanism { currentRegistration.mechanism }
     private(set) var activationRevision: UUID? = UUID()
     var onChange: (() -> Void)?
-    private(set) var currentRegistration = HotkeyRegistration(
-        mechanism: .globalShortcutsPortal, status: .needsAction, detail: LinuxStrings.shortcutAllow)
+    var currentRegistration: HotkeyRegistration { registration(for: .togglePicker) }
+    private var registrations: [HotkeyAction: HotkeyRegistration] = [
+        .togglePicker: HotkeyRegistration(mechanism: .globalShortcutsPortal,
+            status: .needsAction, detail: LinuxStrings.shortcutAllow),
+    ]
 
     private let transport: LinuxPortalTransport
     private let fallback: LinuxHotkeyBackend
@@ -34,21 +37,24 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private var configuring = false
     private var watchdog: guint = 0
     private var configurationDone: (() -> Void)?
-    private var onFire: (() -> Void)?
-    private var accelerator: Accelerator?
-    private var activationToken: String?
-    private var tokenRevision = 0
+    private var onFire: [HotkeyAction: () -> Void] = [:]
+    private var accelerators: [HotkeyAction: Accelerator] = [:]
+    private var sessionActions = Set<HotkeyAction>()
+    private var removedActions = Set<HotkeyAction>()
+    private var sessionShortcuts: [PortalShortcut] = []
+    private var activationTokens: [HotkeyAction: String] = [:]
+    private var tokenRevisions: [HotkeyAction: UUID] = [:]
     private var parentLease: PortalParent?
     private var creating = false
     private var uncertainCreation = false
-    private enum Cleanup { case pending, failed }
+    private enum Cleanup { case pending, failed, ownerLost }
     private struct Retirement {
         let id = UUID()
         var state: Cleanup
     }
     private var retiring: [String: Retirement] = [:]
     private var cleanupWaiters: [(Bool) -> Void] = []
-    private var lastActivation: UInt64?
+    private var lastActivation: [HotkeyAction: UInt64] = [:]
     /// KDE rechecks owned daemon state after List and immediately before Bind.
     var beforeBind: (([PortalShortcut], @escaping (Bool) -> Void) -> Void)?
 
@@ -60,7 +66,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         completeConfiguration()
         guard selection != .stopped else { done(false); return }
         cleanupWaiters.append(done)
-        for (session, entry) in retiring where entry.state == .failed { retire(session) }
+        for (session, entry) in retiring where entry.state != .pending { retire(session) }
         finishCleanup()
     }
 
@@ -100,26 +106,42 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
-        guard action == .togglePicker, let accelerator else {
-            if action == .togglePicker {
-                unregister(currentRegistration)
-                self.accelerator = nil
-            }
+        if self.onFire[action] != nil {
+            close(.close)
+            completeConfiguration()
             guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
-            let registration = unboundActions.registration(for: action, mechanism: mechanism)
-            if action == .togglePicker { currentRegistration = registration }
-            return registration
+            offerRegistration()
+            guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         }
         unboundActions.retire(action)
-        close(.close)
-        completeConfiguration()
-        guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
-        self.onFire = onFire
-        self.accelerator = accelerator
-        currentRegistration = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .needsAction,
-                                                 detail: LinuxStrings.shortcutAllow)
-        probe()
-        return currentRegistration
+        removedActions.remove(action)
+        self.onFire[action] = onFire
+        accelerators[action] = accelerator
+        registrations[action] = HotkeyRegistration(mechanism: .globalShortcutsPortal,
+            status: accelerator == nil ? .unbound : .needsAction,
+            detail: accelerator == nil ? SetupStrings.unboundShortcut : LinuxStrings.shortcutAllow)
+        switch selection {
+        case .probing where self.onFire.count == 1: probe()
+        case .fallback: registerFallback(action)
+        case .portal(let version) where isAttached && sessionActions.contains(action):
+            apply(sessionShortcuts, version: version)
+        default: break
+        }
+        return registration(for: action)
+    }
+
+    func registration(for action: HotkeyAction) -> HotkeyRegistration {
+        registrations[action] ?? unboundActions.registration(for: action,
+            mechanism: registrations[.togglePicker]?.mechanism ?? .globalShortcutsPortal)
+    }
+
+    private func offerRegistration() {
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            let unbound = accelerators[action] == nil
+            update(action, unbound ? .unbound : .needsAction,
+                   unbound ? SetupStrings.unboundShortcut : LinuxStrings.shortcutAllow)
+        }
+        onChange?()
     }
 
     /// Probing never binds, creates sessions or reads/writes gsettings.
@@ -130,11 +152,11 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         selection = .probing
         calls.insert(transport.call(.property(.globalShortcuts, .version),
             deadline: ContinuousClock.now.advanced(by: Limits.portalCallTimeout)) { [weak self] result in
-                guard let self, self.revision == revision, self.onFire != nil else { return }
+                guard let self, self.revision == revision, !self.onFire.isEmpty else { return }
                 switch result {
                 case .property(let version) where version >= 1:
                     self.selection = .portal(version)
-                    self.update(.needsAction, LinuxStrings.shortcutAllow)
+                    self.offerRegistration()
                 case .property, .failed(.unavailable), .failed(.busFailure), .failed(.timedOut):
                     self.selection = .fallback
                     self.registerFallback()
@@ -142,21 +164,31 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                     self.selection = .portal(1)
                     self.update(.failed, LinuxStrings.shortcutSessionLost)
                 }
+                guard self.revision == revision, self.selection != .stopped else { return }
                 done?()
             })
     }
 
     private func registerFallback() {
-        guard let accelerator else { return }
-        _ = fallback.register(.togglePicker, accelerator: accelerator) { [weak self] in self?.onFire?() }
+        for action in HotkeyAction.allCases where onFire[action] != nil { registerFallback(action) }
+    }
+
+    private func registerFallback(_ action: HotkeyAction) {
+        _ = fallback.register(action, accelerator: accelerators[action]) { [weak self] in
+            guard let self, self.selection == .fallback else { return }
+            self.onFire[action]?()
+        }
         fallbackChanged()
     }
 
     private func fallbackChanged() {
         guard case .fallback = selection else { return }
-        let registration = fallback.currentRegistration
-        currentRegistration = HotkeyRegistration(id: currentRegistration.id,
-            mechanism: registration.mechanism, status: registration.status, detail: registration.detail)
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            let registration = fallback.registration(for: action)
+            registrations[action] = HotkeyRegistration(id: self.registration(for: action).id,
+                mechanism: registration.mechanism, status: registration.status, detail: registration.detail,
+                configuration: registration.configuration, alternativeConfiguration: registration.alternativeConfiguration)
+        }
         onChange?()
     }
 
@@ -165,7 +197,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     /// A KDE retry rechecks capability without attaching a session. The caller
     /// has already acknowledged old-session cleanup before invoking this seam.
     func prepareAttachment(done: @escaping (UInt32?) -> Void) {
-        guard selection != .stopped, !configuring, !isAttached, onFire != nil else { done(nil); return }
+        guard selection != .stopped, !configuring, !isAttached, !onFire.isEmpty else { done(nil); return }
         probe { [weak self] in
             if let self, case .portal(let version) = self.selection { done(version) }
             else { done(nil) }
@@ -177,7 +209,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func configure(until deadline: ContinuousClock.Instant, done: @escaping () -> Void) {
-        guard selection != .stopped, !configuring, onFire != nil else { done(); return }
+        guard selection != .stopped, !configuring, !onFire.isEmpty else { done(); return }
         switch selection {
         case .probing:
             configuring = true
@@ -198,7 +230,10 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 self.watchdog = 0
                 self.failed(.timedOut)
             }
-            if let sessionHandle, bindAttempted, version >= 2 {
+            if let sessionHandle, bindAttempted, Set(onFire.keys).isSubset(of: sessionActions) {
+                // v1 already opened desktop settings. A complete attached
+                // catalogue never gets another Bind or a replacement session.
+                guard version >= 2 else { completeConfiguration(); return }
                 let revision = revision
                 parent { [weak self] parent in
                     guard let self, self.revision == revision, self.configuring else { parent.close(); return }
@@ -207,6 +242,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                         deadline: ContinuousClock.now.advanced(by: Limits.portalCallTimeout)) { [weak self] result in
                             guard let self, self.revision == revision, self.configuring else { return }
                             if result != .success { self.update(.failed, LinuxStrings.shortcutSessionLost) }
+                            guard self.revision == revision, self.configuring else { return }
                             self.completeConfiguration()
                         })
                 }
@@ -218,7 +254,19 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             // the new consent and never automatically installs another mechanism.
             configuring = true
             configurationDone = done
-            migrate(deadline: deadline, version: version)
+            let revision = revision
+            cleanupWaiters.append { [weak self] safe in
+                guard let self, self.revision == revision, self.configuring else { return }
+                // A replacement portal owner cannot close the departed owner's
+                // sessions. Explicit attachment may retry; native quiescence
+                // also stays strict after an unanswered Create, until a definite
+                // new session supplies a handle we can close.
+                guard safe || self.retiring.values.allSatisfy({ $0.state == .ownerLost })
+                else { self.failed(.methodError); return }
+                self.migrate(deadline: deadline, version: version)
+            }
+            for (session, entry) in retiring where entry.state == .failed { retire(session) }
+            finishCleanup()
         case .stopped: done()
         }
     }
@@ -234,9 +282,11 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                 case .ready: self.create(deadline: deadline, version: version)
                 case .editedBinding:
                     self.update(.needsAction, LinuxStrings.shortcutMigrationBlocked)
+                    guard self.revision == revision, self.configuring else { return }
                     self.completeConfiguration()
                 case .unavailable:
                     self.update(.failed, LinuxStrings.shortcutMigrationFailed)
+                    guard self.revision == revision, self.configuring else { return }
                     self.completeConfiguration()
                 }
             }
@@ -250,10 +300,14 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             options: ["session_handle_token": .string(Self.sessionToken)], deadline: ipcDeadline(deadline)) { [weak self] result in
                 guard let self, self.revision == revision, self.configuring else { return }
                 guard case .success(let response) = result, let session = response.sessionHandle else {
+                    // A terminal refusal confirms that no session was created;
+                    // a timeout or malformed success still has uncertain effects.
+                    if result == .cancelled || result == .denied { self.creating = false }
                     self.failed(result)
                     return
                 }
                 self.creating = false
+                self.uncertainCreation = false
                 self.sessionHandle = session
                 self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "ListShortcuts",
                     arguments: [.objectPath(session)], deadline: self.ipcDeadline(deadline)) { [weak self] result in
@@ -269,27 +323,41 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     private func bind(session: String, previous: [PortalShortcut],
                       deadline: ContinuousClock.Instant, version: UInt32) {
-        guard !bindAttempted, let accelerator, let trigger = Self.trigger(accelerator) else {
+        guard !bindAttempted else {
             failed(.invalidArguments)
             return
         }
-        var properties = ["description": "Open Monkey's Paw"]
-        if let saved = previous.first(where: { $0.id == ActionName.toggle.rawValue }) {
-            if let description = saved.properties["trigger_description"], !description.isEmpty {
-                update(.needsAction, "Previously selected: " + description + ". " + LinuxStrings.shortcutAllow)
-            }
-        } else { properties["preferred_trigger"] = trigger }
         let revision = revision
+        var shortcuts: [PortalShortcut] = []
+        // Include saved owned actions even if a caller has not declared their
+        // callback yet: omitted actions can be deleted by a portal backend.
+        for action in HotkeyAction.allCases {
+            let id = Self.shortcutID(action)
+            let saved = previous.first { $0.id == id }
+            guard !removedActions.contains(action), onFire[action] != nil || saved != nil else { continue }
+            var properties = ["description": action == .togglePicker ? "Open Monkey's Paw" : "Repeat last prompt"]
+            if let saved {
+                if let description = saved.properties["trigger_description"], !description.isEmpty, onFire[action] != nil {
+                    update(action, .needsAction, "Previously selected: " + description + ". " + LinuxStrings.shortcutAllow)
+                }
+            } else if let accelerator = accelerators[action] {
+                guard let trigger = Self.trigger(accelerator) else { failed(.invalidArguments); return }
+                properties["preferred_trigger"] = trigger
+            }
+            shortcuts.append(PortalShortcut(id: id, properties: properties))
+        }
+        onChange?()
+        guard self.revision == revision, configuring else { return }
         parent { [weak self] parent in
             guard let self, self.revision == revision, self.configuring else { parent.close(); return }
             self.parentLease = parent
             let send: (Bool) -> Void = { [weak self] allowed in
-                guard let self, self.revision == revision, self.configuring else { return }
+                guard let self, self.revision == revision, self.configuring, !self.bindAttempted else { return }
                 guard allowed else { self.failed(.invalidArguments); return }
                 self.bindAttempted = true
+                self.sessionActions = Set(shortcuts.compactMap { Self.action(for: $0.id) })
                 self.calls.insert(self.transport.request(interface: .globalShortcuts, method: "BindShortcuts",
-                    arguments: [.objectPath(session), .shortcuts([PortalShortcut(id: ActionName.toggle.rawValue,
-                        properties: properties)]),
+                    arguments: [.objectPath(session), .shortcuts(shortcuts),
                         .string(parent.identifier)], deadline: deadline) { [weak self] result in
                             guard let self, self.revision == revision, self.configuring else { return }
                             guard case .success(let response) = result, let shortcuts = response.shortcuts else {
@@ -297,6 +365,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
                                 return
                             }
                             self.apply(shortcuts, version: version)
+                            guard self.revision == revision, self.configuring else { return }
                             self.completeConfiguration()
                         })
             }
@@ -312,65 +381,93 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             ? LinuxStrings.shortcutCancelled : LinuxStrings.shortcutSessionLost
         let interactionStarted = bindAttempted
         close(.close)
+        let revision = revision
         if !interactionStarted, result == .unavailable || result == .busFailure {
             // Capability can vanish between the probe and session setup. Offer
             // the fallback's explicit Setup action; do not install it here.
             selection = .fallback
             registerFallback()
         } else { update(.failed, detail) }
+        guard self.revision == revision, selection != .stopped else { return }
         completeConfiguration()
     }
 
     private func apply(_ shortcuts: [PortalShortcut], version: UInt32) {
-        let trigger = shortcuts.first { $0.id == ActionName.toggle.rawValue }?.properties["trigger_description"]
-        let bound = trigger?.isEmpty == false
-        update(bound ? .registered : .unbound, bound ? trigger! : SetupStrings.unboundShortcut,
-               configuration: version >= 2 ? .systemSettings : nil)
+        sessionShortcuts = shortcuts
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            let trigger = sessionActions.contains(action)
+                ? shortcuts.first { $0.id == Self.shortcutID(action) }?.properties["trigger_description"] : nil
+            let bound = trigger?.isEmpty == false
+            update(action, bound ? .registered : .unbound, bound ? trigger! : SetupStrings.unboundShortcut,
+                   configuration: version >= 2 ? .systemSettings : nil)
+            if !bound { invalidateToken(action) }
+        }
+        onChange?()
     }
 
     private func update(_ status: RegistrationStatus, _ detail: String,
                         configuration: HotkeyConfiguration? = nil) {
-        currentRegistration = HotkeyRegistration(id: currentRegistration.id,
-            mechanism: .globalShortcutsPortal, status: status, detail: detail, configuration: configuration)
+        for action in HotkeyAction.allCases where onFire[action] != nil {
+            update(action, status, detail, configuration: configuration)
+        }
         onChange?()
+    }
+
+    private func update(_ action: HotkeyAction, _ status: RegistrationStatus, _ detail: String,
+                        configuration: HotkeyConfiguration? = nil) {
+        registrations[action] = HotkeyRegistration(id: registration(for: action).id,
+            mechanism: .globalShortcutsPortal, status: status, detail: detail, configuration: configuration)
     }
 
     private func signal(_ signal: PortalSignal) {
         switch signal {
-        case .activated(let session, let action, let timestamp, let token):
-            guard session == sessionHandle, action == ActionName.toggle.rawValue, bindAttempted,
-                  currentRegistration.status == .registered else { return }
-            guard lastActivation != timestamp else { return }
-            lastActivation = timestamp
-            activationToken = token
-            tokenRevision += 1
-            let tokenRevision = tokenRevision
-            onFire?()
+        case .activated(let session, let id, let timestamp, let token):
+            guard session == sessionHandle, let action = Self.action(for: id), bindAttempted,
+                  sessionActions.contains(action), registration(for: action).status == .registered,
+                  let onFire = onFire[action], lastActivation[action] != timestamp else { return }
+            lastActivation[action] = timestamp
+            activationTokens[action] = token
+            let tokenRevision = UUID()
+            tokenRevisions[action] = tokenRevision
+            onFire()
             // ShortcutService marshals its callback through MainThread first.
             // Clear an unconsumed token after that hop (e.g. a debounced toggle).
             GTK.onMainLoop { [weak self] in
-                guard let self, self.tokenRevision == tokenRevision else { return }
-                self.activationToken = nil
+                guard let self, self.tokenRevisions[action] == tokenRevision else { return }
+                self.invalidateToken(action)
             }
         case .shortcutsChanged(let session, let shortcuts):
             guard session == sessionHandle, bindAttempted, case .portal(let version) = selection else { return }
             apply(shortcuts, version: version)
         case .closed(let session) where session == sessionHandle:
             close(.alreadyClosed)
+            let revision = revision
             update(.failed, LinuxStrings.shortcutSessionLost)
+            guard self.revision == revision, selection != .stopped else { return }
             completeConfiguration()
         case .lost:
             guard case .portal = selection else { return }
             close(.ownerLost)
+            let revision = revision
             update(.failed, LinuxStrings.shortcutSessionLost)
+            guard self.revision == revision, selection != .stopped else { return }
             completeConfiguration()
         default: break
         }
     }
 
     func consumeActivationToken() -> String? {
-        defer { activationToken = nil }
-        return activationToken
+        consumeActivationToken(for: .togglePicker)
+    }
+
+    func consumeActivationToken(for action: HotkeyAction) -> String? {
+        defer { invalidateToken(action) }
+        return activationTokens[action]
+    }
+
+    private func invalidateToken(_ action: HotkeyAction) {
+        activationTokens.removeValue(forKey: action)
+        tokenRevisions.removeValue(forKey: action)
     }
 
     /// A manual action opens the panel through LinuxEnvironment, but it cannot
@@ -383,20 +480,28 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     func unregister(_ registration: HotkeyRegistration) {
         guard selection != .stopped else { return }
         if unboundActions.unregister(registration) { return }
-        guard registration.id == currentRegistration.id else { return }
-        onFire = nil
-        accelerator = nil
-        revision += 1
-        fallback.shutdown()
-        close(.close)
-        completeConfiguration()
+        guard let action = registrations.first(where: { $0.value.id == registration.id })?.key else { return }
+        onFire.removeValue(forKey: action)
+        accelerators.removeValue(forKey: action)
+        removedActions.insert(action)
+        invalidateToken(action)
+        fallback.unregister(fallback.registration(for: action))
+        update(action, .unbound, SetupStrings.unboundShortcut, configuration: .unavailable)
+        // Bind is once per session; Close releases a removed action's grab.
+        if onFire.isEmpty || sessionActions.contains(action) || configuring {
+            close(.close)
+            let revision = revision
+            offerRegistration()
+            guard self.revision == revision, selection != .stopped else { return }
+            completeConfiguration()
+        }
     }
 
     func shutdown() {
         guard selection != .stopped else { return }
         selection = .stopped
-        onFire = nil
-        accelerator = nil
+        onFire.removeAll()
+        accelerators.removeAll()
         if let observation { transport.removeObserver(observation); self.observation = nil }
         fallback.shutdown()
         close(.close)
@@ -418,12 +523,16 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         if creating { uncertainCreation = true; creating = false }
         if let sessionHandle {
             if mode == .close { retire(sessionHandle) }
-            else if mode == .ownerLost { retiring[sessionHandle] = Retirement(state: .failed) }
+            else if mode == .ownerLost { retiring[sessionHandle] = Retirement(state: .ownerLost) }
             else { retiring.removeValue(forKey: sessionHandle) }
         }
         sessionHandle = nil
         // Deduplication belongs to the retired session, even if its path is reused.
-        lastActivation = nil
+        lastActivation.removeAll()
+        activationTokens.removeAll()
+        tokenRevisions.removeAll()
+        sessionActions.removeAll()
+        sessionShortcuts.removeAll()
         bindAttempted = false
         parentLease?.close()
         parentLease = nil
@@ -441,6 +550,17 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     private func ipcDeadline(_ deadline: ContinuousClock.Instant) -> ContinuousClock.Instant {
         min(deadline, ContinuousClock.now.advanced(by: Limits.portalCallTimeout))
+    }
+
+    private static func shortcutID(_ action: HotkeyAction) -> String {
+        switch action {
+        case .togglePicker: return ActionName.toggle.rawValue
+        case .repeatLast: return "repeat"
+        }
+    }
+
+    private static func action(for id: String) -> HotkeyAction? {
+        HotkeyAction.allCases.first { shortcutID($0) == id }
     }
 
     private static func trigger(_ accelerator: Accelerator) -> String? {

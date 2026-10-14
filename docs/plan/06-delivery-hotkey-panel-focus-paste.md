@@ -96,11 +96,17 @@ Hotkey notes:
   bindings from `ListShortcuts` and offers "Change in system settings"
   (`ConfigureShortcuts`, v2). A saved action from List is shown and rebound
   without another preferred trigger; the XDG default is only a suggestion
-  for a new action.
+  for a new toggle. An action absent from List may propose an explicitly
+  supplied accelerator, including repeat; nil repeat never gets a suggestion.
   Startup only probes capability. Setup creates/lists/binds the session,
   with at most one Bind attempt per session. A cancelled, denied or unbound
   interaction stays actionable; it never silently installs gsettings.
   A new explicit Setup action may retry with a new session.
+  Explicitly unregistering an included action closes the shared session to
+  release its grab. Remaining callbacks and registration identities survive,
+  but need explicit fresh configuration to regain readiness. The next Bind
+  omits the removed action even if List still returns it; re-declaring the
+  action makes its saved choice eligible again. Unregister never starts consent.
 - **GNOME fallback migration (M1c).** Before portal binding, inspect the
   custom rows. Retire only the exact untouched M1b default (owned name,
   exact toggle command, default GTK trigger), by removing its list entry
