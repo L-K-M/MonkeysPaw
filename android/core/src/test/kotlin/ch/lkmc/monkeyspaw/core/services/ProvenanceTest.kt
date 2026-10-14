@@ -59,7 +59,7 @@ class ProvenanceTest {
             providerHost = "例.example", model = "model/\"e\u0301👋\n\\", usage = null)
         val entry = save(h, "Body", attribution).entry
         val path = head(entry.identity)
-        assertEquals(attribution.copy(timestamp = Instant.parse("2026-10-14T12:13:14.567Z")), h.library.provenance("a.md"))
+        assertEquals(attribution.copy(timestamp = Instant.parse("2026-10-14T12:13:14.568Z")), h.library.provenance("a.md"))
         assertFalse("usage" in record(h, path))
         assertTrue(h.state.text(path).contains("model\\/"))
         change(h, path, "usage", JsonNull)
@@ -400,5 +400,23 @@ class ProvenanceTest {
         save(h, "After", origin(2000))
         h.state.onRead = { fail("Stale editor must not read current attribution") }
         assertFailsWith<LibraryError.Conflict> { h.library.provenance("a.md", old.stamp) }
+    }
+
+    @Test fun timestampRoundsToMillisecondsIncludingTheUTCSecondRolloverLikeFoundation() {
+        // Expected strings were checked against Swift ISO8601DateFormatter with fractional seconds.
+        val cases = listOf(
+            "1970-01-01T00:00:01.2344Z" to "1970-01-01T00:00:01.234Z",
+            "1970-01-01T00:00:01.2345Z" to "1970-01-01T00:00:01.235Z",
+            "1970-01-01T00:00:01.2349Z" to "1970-01-01T00:00:01.235Z",
+            "1970-01-01T00:00:01.9999Z" to "1970-01-01T00:00:02.000Z",
+            "1970-01-01T00:00:00.9999Z" to "1970-01-01T00:00:01.000Z",
+            "1970-01-01T00:00:00.0009Z" to "1970-01-01T00:00:00.001Z",
+        )
+        for ((timestamp, expected) in cases) {
+            val h = ServiceHarness()
+            val saved = save(h, "Body", metadata.copy(timestamp = Instant.parse(timestamp))).entry
+            assertEquals(expected, record(h, head(saved.identity))["timestamp"]?.jsonPrimitive?.content)
+            assertEquals(Instant.parse(expected), h.library.provenance("a.md")?.timestamp)
+        }
     }
 }

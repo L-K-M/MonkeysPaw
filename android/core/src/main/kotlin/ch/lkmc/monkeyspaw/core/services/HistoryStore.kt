@@ -106,10 +106,12 @@ class HistoryStore internal constructor(private val files: StateStore, private v
             provenance.usage?.let { it.inputTokens < 0 || it.outputTokens < 0 } == true) {
             throw LibraryError.InvalidProvenance
         }
+        // Foundation ISO8601DateFormatter rounds fractional seconds to the nearest millisecond.
+        val timestamp = provenanceFormatter.format(provenance.timestamp.plusNanos(500_000))
         val record = mutableMapOf<String, JsonElement>(
             "version" to JsonPrimitive(1), "contentSHA256" to JsonPrimitive(hash(bytes)),
             "origin" to JsonPrimitive(provenance.origin.rawValue),
-            "timestamp" to JsonPrimitive(provenanceFormatter.format(provenance.timestamp)),
+            "timestamp" to JsonPrimitive(timestamp),
             "providerHost" to JsonPrimitive(provenance.providerHost), "model" to JsonPrimitive(provenance.model),
         )
         provenance.usage?.let { record["usage"] = StateJson.objectOf(mapOf(
