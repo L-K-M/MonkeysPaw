@@ -100,6 +100,12 @@ public final class SyncAccountStore: @unchecked Sendable {
         return try connection.recover() ?? SyncConnectionDocument(account: nil)
     }
 
+    /// Sign-out must still locate credentials when independent ownership is
+    /// corrupt. This grants no permission to sync, reset ownership or edit files.
+    func connectionForSignOut() throws -> SyncConnectionDocument {
+        try connection.load() ?? SyncConnectionDocument(account: nil)
+    }
+
     func setAccount(_ account: SyncAccount?, activation: SyncAccountActivation = .enabled) throws {
         _ = try ownership.load()
         try connection.update { current in
