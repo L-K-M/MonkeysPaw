@@ -56,7 +56,7 @@ public final class InviteModel: CustomStringConvertible, CustomDebugStringConver
         mainThread.run { [weak self] in
             guard let self, self.active, self.request == nil else { return }
             self.staged = nil
-            self.change { $0 = InviteState() }
+            self.state = InviteState()
             self.perform(.staging) { service in .staged(try service.stage(supplied.withValue { $0 }, server: server)) }
         }
     }
@@ -71,7 +71,8 @@ public final class InviteModel: CustomStringConvertible, CustomDebugStringConver
             // Drop the staged bearer before sending; uncertain/failed requests
             // require explicit re-entry rather than automatic single-use retry.
             self.staged = nil
-            self.change { $0.hasStagedInvite = false; $0.inputReset = UUID() }
+            self.state.hasStagedInvite = false
+            self.state.inputReset = UUID()
             self.perform(.accepting) { service in
                 var transient = supplied.withValue { $0 }
                 return .accepted(try await service.accept(staged, as: mode, username: username,
@@ -84,7 +85,7 @@ public final class InviteModel: CustomStringConvertible, CustomDebugStringConver
         mainThread.run { [weak self] in
             guard let self, self.active, self.request == nil else { return }
             self.staged = nil
-            self.change { $0 = InviteState() }
+            self.state = InviteState()
             self.perform(.creating) { .created(try await $0.create(groupID: groupID, role: role)) }
         }
     }
@@ -105,7 +106,11 @@ public final class InviteModel: CustomStringConvertible, CustomDebugStringConver
             guard let self, self.active else { return }
             self.visibility &+= 1
             self.staged = nil
-            self.change { $0 = InviteState() }
+            self.change {
+                let operation = $0.operation
+                $0 = InviteState()
+                $0.operation = operation
+            }
         }
     }
 
@@ -132,6 +137,8 @@ public final class InviteModel: CustomStringConvertible, CustomDebugStringConver
             catch { result = nil; issue = error as? InviteIssue ?? .account(.invalidResponse) }
             mainThread.run { [weak self] in self?.complete(result, issue: issue, request: id, visibility: epoch) }
         }
+        // Admission precedes callbacks: a reentrant close revokes this epoch
+        // instead of letting the original intent start after the close.
         taskLock.lock(); task = next; taskLock.unlock()
         publish(from: previous)
     }
@@ -139,7 +146,7 @@ public final class InviteModel: CustomStringConvertible, CustomDebugStringConver
     private func complete(_ result: Result?, issue: InviteIssue?, request id: UUID, visibility epoch: UInt64) {
         guard active, request == id else { return }
         request = nil
-        guard visibility == epoch else { return }
+        guard visibility == epoch else { change { $0.operation = nil }; return }
         change { current in
             current.operation = nil
             current.error = issue
