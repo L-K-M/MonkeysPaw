@@ -70,7 +70,8 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         if let source = adoptingSource {
             let pathMatches = kind == .relocate ? true
                 : try SyncNaming.pathKey(RelativePath(source.path)) == SyncNaming.pathKey(RelativePath(path))
-            guard (kind == .adopt || kind == .relocate), expected == nil, RelativePath(source.path) != RelativePath(path),
+            let alias = kind == .adopt && expected?.stamp == source.stamp && expected?.bytes == source.bytes
+            guard (kind == .adopt || kind == .relocate), (expected == nil || alias), RelativePath(source.path) != RelativePath(path),
                   pathMatches,
                   retainedBytes == source.bytes, retainedSourcePath.map({ RelativePath($0) }) == RelativePath(source.path) else {
                 throw SyncError.invalidState
@@ -101,7 +102,7 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         let assignedExternally = kind == .adopt && adoptingSource == nil && expected != nil
             && expected?.identityKey == transition.destination
             && transition.source == localKey
-        guard transition.source == (expected ?? adoptingSource)?.identityKey || assignedExternally else {
+        guard transition.source == (adoptingSource ?? expected)?.identityKey || assignedExternally else {
             throw SyncError.invalidState
         }
         let document = PromptCodec.parseFile(bytes, filename: LibraryPath.filename(path))
@@ -321,7 +322,7 @@ final class SyncLibraryMutations {
                      transition: SyncIdentityTransition, mode: SyncFileMode = .normal,
                      kind: SyncLibraryEdit.Kind = .apply, markerIssue: SyncIssueCode? = nil,
                      adoptingSource: SyncLibraryFile? = nil, id: UUID = UUID()) throws -> SyncLibraryEdit {
-        let source = expected ?? adoptingSource
+        let source = adoptingSource ?? expected
         var edit = SyncLibraryEdit(id: id, kind: kind, path: path.string, expected: expected, bytes: bytes,
             hash: SyncHash(bytes: bytes), transition: transition, mode: mode, retainedBytes: source?.bytes,
             retainedSourcePath: source?.path, copyID: nil, heldIssue: markerIssue)

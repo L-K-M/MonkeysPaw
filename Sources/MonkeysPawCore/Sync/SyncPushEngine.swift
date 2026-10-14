@@ -29,6 +29,9 @@ final class SyncPushEngine {
     private let permit: SyncWorkPermit?
     private let lock = NSLock()
     private var running = false
+    /// A validated head requiring folder/occupant preparation, retained only
+    /// until this serialized invocation returns. The exact request stays durable.
+    private(set) var policyHead: SyncConflictHead?
 
     init(binding: SyncLibraryIdentity, client: SyncHTTPClient, states: SyncStateStore,
          pending: SyncPendingOperationStore, mutations: SyncLibraryMutations, journal: SyncApplyJournal,
@@ -314,7 +317,9 @@ final class SyncPushEngine {
         let expected = try states.load(for: binding)
         let state = try expected ?? SyncState(binding: binding)
         let snapshot = try snapshot(state)
-        let path = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups)
+        let path: RelativePath
+        do { path = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups) }
+        catch SyncError.invalidScope { policyHead = head; throw SyncReconciliationError.requiresPolicy }
         let remote = SyncReconciliationRemote(id: head.id, scope: head.scope, path: head.path, libraryPath: path,
             rev: head.rev, bytes: head.bytes, hash: head.hash, mode: mode(head.scope, state: state))
         let local = try live(head.id, in: snapshot)
@@ -322,8 +327,11 @@ final class SyncPushEngine {
         let targets = try snapshot.files.filter { try SyncNaming.pathKey(RelativePath($0.path)) == pathKey }
         guard targets.count <= 1, targets.allSatisfy({
             RelativePath($0.path) == path && $0.identityKey == head.id.rawValue && !snapshot.heldPaths.contains(path)
-        }) else { throw SyncReconciliationError.requiresPolicy }
-        if targets.isEmpty, try mutations.read(at: path) != nil { throw SyncReconciliationError.requiresPolicy }
+        }) else { policyHead = head; throw SyncReconciliationError.requiresPolicy }
+        if targets.isEmpty, try mutations.read(at: path) != nil {
+            policyHead = head
+            throw SyncReconciliationError.requiresPolicy
+        }
         let installation = SyncReconciliationInstall(remote: remote, source: local, target: targets.first)
         let record = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
                                         canonicalHash: head.hash, origin: head.origin, lastError: error)
@@ -499,6 +507,7 @@ final class SyncPushEngine {
         defer { lock.unlock() }
         guard !running else { throw SyncPushError.busy }
         running = true
+        policyHead = nil
     }
 
     private func end() {

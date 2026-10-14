@@ -516,6 +516,107 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(rig.service.report.status, .idle)
         XCTAssertEqual(rig.base.libraryOperations.modes["Groups/Team/a.md"], .readOnly)
     }
+
+    func testCaseInsensitiveAdoptionPublishesExactSpellingAndMigratesLocalKey() async throws {
+        let rig = try SyncServiceRig(base: SyncApplyTestRig(files: MemoryFileStore(pathMatching: .caseInsensitive)))
+        let local = SyncScanTestSupport.bytes("Copied", id: nil)
+        let remote = SyncScanTestSupport.bytes("Copied")
+        try rig.base.files.write(local, at: "a.md")
+        let key = PromptIdentity(path: "a.md", id: nil)
+        try rig.base.values.record(identity: key, values: ["name": "kept"])
+        rig.transport.handler = { _, request in
+            XCTAssertEqual(request.method, .post)
+            return try SyncServiceRig.pull(items: [.upsert(seq: 1,
+                prompt: .init(id: SyncTestValues.personalPrompt.rawValue, rev: 1, path: "A.md",
+                    content: String(decoding: remote, as: UTF8.self)))])
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(rig.service.report.status, .idle)
+        XCTAssertEqual(try rig.base.files.listFiles().map(\.relativePath), ["A.md"])
+        XCTAssertEqual(try rig.base.files.read(at: "A.md"), remote)
+        XCTAssertEqual(try rig.base.values.rememberedValues(for: .assigned(SyncTestValues.personalPrompt)), ["name": "kept"])
+    }
+
+    func testPushConflictRelocatesOccupiedHeadBeforeResumingExactIntent() async throws {
+        let rig = try SyncServiceRig()
+        let baseline = SyncScanTestSupport.bytes("Baseline")
+        let losing = SyncScanTestSupport.bytes("Saved")
+        let winner = SyncScanTestSupport.bytes("Winning head")
+        let occupant = SyncScanTestSupport.bytes("Other", id: SyncTestValues.groupPrompt)
+        try rig.base.files.write(losing, at: "a.md")
+        try rig.base.files.write(occupant, at: "b.md")
+        let old = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "old"], prompts: [.assigned(SyncTestValues.personalPrompt):
+                SyncPromptState(scope: SyncScanTestSupport.personal, path: "a.md", rev: 1, canonicalHash: SyncHash(bytes: baseline))])
+        try rig.base.states.update(for: rig.base.binding) { $0 = old }
+        rig.transport.handler = { _, request in
+            if request.method == .post { return try SyncServiceRig.pull(mode: .delta) }
+            if request.method == .get { return try SyncServiceRig.http(SyncAPI.Prompt(id: SyncTestValues.personalPrompt.rawValue,
+                rev: 2, scope: .user, path: "b.md", content: String(decoding: winner, as: UTF8.self))) }
+            if request.url.path.hasSuffix(SyncTestValues.personalPrompt.rawValue) {
+                return HTTPResponse(statusCode: 409, body: try JSONEncoder().encode(SyncAPI.ErrorResponse.conflict(
+                    head: .init(rev: 2, scope: .user, path: "b.md", content: String(decoding: winner, as: UTF8.self)))))
+            }
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 1, seq: 10))
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(try rig.base.files.read(at: "b.md"), winner)
+        XCTAssertEqual(try rig.base.files.read(at: "b (2).md"), occupant)
+        XCTAssertNil(try rig.base.files.stamp(at: "a.md"))
+        XCTAssertEqual(rig.base.states.snapshot.value?.prompts[.assigned(SyncTestValues.personalPrompt)]?.rev, 2)
+        XCTAssertNil(try rig.pending.load(for: rig.base.binding))
+        XCTAssertEqual(rig.service.report.status, .hasConflicts)
+        XCTAssertNotNil(rig.service.report.lastSuccess)
+    }
+
+    func testPendingConflictAllocatesNewHeadGroupBeforeCollectingAgain() async throws {
+        let rig = try SyncServiceRig()
+        let baseline = SyncScanTestSupport.bytes("Baseline")
+        let winning = try CanonicalForm.group(SyncScanTestSupport.bytes("Moved head"), filename: "a.md").bytes
+        try rig.base.files.write(SyncScanTestSupport.bytes("Saved"), at: "a.md")
+        let old = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "before"], prompts: [.assigned(SyncTestValues.personalPrompt):
+                SyncPromptState(scope: SyncScanTestSupport.personal, path: "a.md", rev: 1, canonicalHash: SyncHash(bytes: baseline))])
+        try rig.base.states.update(for: rig.base.binding) { $0 = old }
+        let scope: SyncAPI.PromptScope = .group(groupID: SyncTestValues.group.rawValue)
+        rig.transport.handler = { _, request in
+            if request.url.path.hasSuffix("/me") {
+                XCTAssertNotNil(try rig.pending.load(for: rig.base.binding))
+                return try SyncServiceRig.http(SyncAPI.MeResponse(user: .init(id: SyncTestValues.user.rawValue,
+                    username: "alice", displayName: nil, accountKind: .member,
+                    createdAt: "2026-10-14T00:00:00.000Z", disabledAt: nil),
+                    groups: [.init(groupID: SyncTestValues.group.rawValue, name: "Team", role: .editor)], devices: []))
+            }
+            if request.method == .post {
+                let group: [SyncAPI.SyncScope]
+                if rig.base.states.snapshot.value?.groups[SyncTestValues.group] == nil { group = [] }
+                else {
+                    XCTAssertNil(try rig.pending.load(for: rig.base.binding))
+                    group = [.init(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .editor),
+                        mode: .snapshot, head: 2, cursor: "group", hasMore: false,
+                        items: [.upsert(seq: 2, prompt: .init(id: SyncTestValues.personalPrompt.rawValue, rev: 2, path: "a.md",
+                            content: String(decoding: winning, as: UTF8.self)))])]
+                }
+                return try SyncServiceRig.pull(mode: .delta, groups: group)
+            }
+            if request.method == .get { return try SyncServiceRig.http(SyncAPI.Prompt(id: SyncTestValues.personalPrompt.rawValue,
+                rev: 2, scope: scope, path: "a.md", content: String(decoding: winning, as: UTF8.self))) }
+            if request.url.path.hasSuffix(SyncTestValues.personalPrompt.rawValue) {
+                return HTTPResponse(statusCode: 409, body: try JSONEncoder().encode(SyncAPI.ErrorResponse.conflict(
+                    head: .init(rev: 2, scope: scope, path: "a.md", content: String(decoding: winning, as: UTF8.self)))))
+            }
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 1, seq: 10))
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/Team/a.md"), winning)
+        XCTAssertEqual(rig.base.states.snapshot.value?.prompts[.assigned(SyncTestValues.personalPrompt)]?.scope, SyncScanTestSupport.team)
+        XCTAssertNil(try rig.pending.load(for: rig.base.binding))
+        XCTAssertEqual(rig.transport.requests.filter { $0.url.path.hasSuffix("/me") }.count, 1)
+        XCTAssertEqual(rig.service.report.status, .hasConflicts)
+    }
 }
 
 final class SyncServiceRig {
