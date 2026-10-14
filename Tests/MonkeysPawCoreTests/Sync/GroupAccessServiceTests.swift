@@ -84,6 +84,25 @@ final class GroupAccessServiceTests: XCTestCase {
         XCTAssertEqual(try rig.base.files.read(at: "outside.md"), rig.bytes)
     }
 
+    func testExternallyMovedEditorPromptHonorsViewerOrUnmappedDestination() throws {
+        for destination in ["Groups/ReadOnly/a.md", "Groups/Unmapped/a.md"] {
+            let rig = try GroupAccessRig(role: .editor)
+            try rig.base.states.update(for: rig.base.binding) {
+                $0.groups[SyncTestValues.otherUser] = try SyncGroupState(name: "ReadOnly", folder: "ReadOnly", role: .viewer)
+            }
+            try rig.base.files.move(from: rig.path, to: destination)
+            let entry = try rig.base.library.load(at: destination)
+            XCTAssertNotNil(entry.access.readOnlyReason)
+            XCTAssertThrowsError(try rig.base.library.save(entry.document, at: destination)) {
+                XCTAssertEqual($0 as? LibraryError, .accessDenied)
+            }
+            XCTAssertThrowsError(try rig.base.library.delete(at: destination)) {
+                XCTAssertEqual($0 as? LibraryError, .accessDenied)
+            }
+            XCTAssertEqual(try rig.base.files.read(at: destination), rig.bytes)
+        }
+    }
+
     func testViewerFavoritePersistsWithoutByteModeStampOrHistoryWrites() throws {
         let rig = try GroupAccessRig(role: .viewer)
         try rig.base.libraryOperations.setMode(.readOnly, at: RelativePath(rig.path))

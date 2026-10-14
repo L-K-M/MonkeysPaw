@@ -45,16 +45,26 @@ public struct GroupAccessSnapshot: Equatable, Sendable {
 
     public func access(at path: String, identity: PromptIdentity? = nil) -> PromptAccessState {
         guard !isBlocked else { return .unavailable }
+        let destination = accessForPath(path)
+        guard destination != .unavailable else { return .unavailable }
         if let identity {
             if case .group(let id)? = prompts[identity]?.scope {
-                return groups[id].map(PromptAccessState.group) ?? .unavailable
+                guard let source = groups[id] else { return .unavailable }
+                // External moves do not grant either source or destination rights.
+                if source.role == .viewer { return .group(source) }
+                if case .group(let group) = destination, group.role == .viewer { return destination }
+                return .group(source)
             }
             if unavailableIDs.contains(identity) { return .unavailable }
         }
+        return destination
+    }
+
+    private func accessForPath(_ path: String) -> PromptAccessState {
         guard managesGroups else { return .local }
         let parts = path.unicodeScalars.split(separator: "/").map(String.init)
         guard parts.first.map(SyncPathCaseFold.fold) == SyncPathCaseFold.fold("Groups") else { return .local }
-        guard parts.count >= 2,
+        guard parts.count >= 3,
               let group = groups.values.first(where: {
                   SyncPathCaseFold.fold($0.folder.string) == SyncPathCaseFold.fold(parts[1])
               }) else { return .unavailable }
