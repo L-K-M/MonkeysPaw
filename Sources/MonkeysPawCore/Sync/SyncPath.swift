@@ -107,7 +107,7 @@ public enum SyncPathIssueCode: String, Sendable {
     case invalidExtension = "path.invalid_extension"
     case reservedGroupsPrefix = "path.reserved_groups_prefix"
 
-    fileprivate var message: String {
+    var message: String {
         switch self {
         case .emptyPath: return "Supply a relative prompt path."
         case .normalizationFailed: return "The sync path could not be normalized."
