@@ -89,7 +89,7 @@ final class SyncPushEngine {
         guard let request = try pending.load(for: binding) else { return .unchanged }
         let state = try currentState()
         let local = try live(request.intent.id, in: snapshot(state))
-        if try held(request, local: local) { return .held }
+        if try held(request, local: local) { try retireHeld(request); return .held }
         let result: SyncPushResult
         do {
             let prompt = try await client.prompt(id: request.intent.id)
@@ -165,7 +165,7 @@ final class SyncPushEngine {
         // Journaling/GET may race a save. Never send the earlier captured bytes.
         let state = try currentState()
         let local = try live(request.intent.id, in: snapshot(state))
-        if try held(request, local: local) { try clearPending(); return .held }
+        if try held(request, local: local) { try retireHeld(request); return .held }
         let current = try mutations.read(at: request.libraryPath)
         guard state.prompts[.assigned(request.intent.id)] == request.recorded,
               same(current, request.file), request.intent.operation != .delete || local == nil else {
@@ -206,7 +206,7 @@ final class SyncPushEngine {
         let state = try currentState()
         let snapshot = try snapshot(state)
         let local = try live(request.intent.id, in: snapshot)
-        if try held(request, local: local) { return .held }
+        if try held(request, local: local) { try retireHeld(request); return .held }
         let occupied = snapshot.files.compactMap { file -> RelativePath? in
             guard let location = SyncLocalScanner.location(of: RelativePath(file.path), binding: binding, groups: state.groups),
                   location.scope == request.intent.scope else { return nil }
@@ -524,5 +524,11 @@ final class SyncPushEngine {
     private func clearPending() throws {
         if let permit { try permit.mutate { try pending.clear() } }
         else { try pending.clear() }
+    }
+
+    private func retireHeld(_ request: SyncPendingOperation) throws {
+        let retire = { try self.pending.retainHeld(request); try self.pending.clear() }
+        if let permit { try permit.mutate(retire) }
+        else { try retire() }
     }
 }

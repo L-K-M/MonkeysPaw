@@ -234,4 +234,24 @@ final class SyncSchedulingTests: XCTestCase {
         XCTAssertEqual(rig.service.report.counts.pending, 1)
         XCTAssertNil(rig.service.report.lastSuccess)
     }
+
+    func testDirtyTriggerRerunsEvenWithUnchangedFileErrors() async throws {
+        let rig = try SyncServiceRig()
+        try rig.base.files.write(SyncScanTestSupport.bytes(), at: "a.md")
+        let gate = SyncTransportGate()
+        rig.transport.handler = { index, request in
+            if index == 0 { await gate.wait() }
+            if request.method == .post { return try SyncServiceRig.pull() }
+            return try SyncServiceRig.failure(.notFound)
+        }
+        try rig.start()
+        await rig.waitRequests(1)
+        rig.service.localSave()
+        rig.scheduler.advance(.seconds(3))
+        await gate.open()
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .post }.count, 2)
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .put }.count, 1)
+        XCTAssertEqual(rig.service.report.status, .syncError)
+    }
 }

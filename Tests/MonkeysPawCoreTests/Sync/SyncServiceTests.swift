@@ -760,6 +760,100 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(rig.transport.requests.filter { $0.method == .delete }.count, 1)
         XCTAssertNil(rig.base.states.snapshot.value?.prompts[.assigned(SyncTestValues.groupPrompt)])
     }
+
+    func testHeldPendingIntentIsRetainedPrivatelyWithoutBlockingOtherFiles() async throws {
+        let rig = try SyncServiceRig()
+        try rig.base.files.write(SyncScanTestSupport.bytes(), at: "a.md")
+        try rig.base.files.write(SyncScanTestSupport.bytes("Other", id: SyncTestValues.groupPrompt), at: "b.md")
+        rig.transport.handler = { _, request in
+            if request.method == .post { return try SyncServiceRig.pull() }
+            throw HTTPTransportError.networkFailure
+        }
+        try rig.start()
+        await rig.settle()
+        let original = try XCTUnwrap(rig.pending.load(for: rig.base.binding))
+        _ = rig.service.stop()
+        try holdFirstFile(rig)
+        rig.transport.handler = { _, request in
+            if request.method == .post { return try SyncServiceRig.pull(mode: .delta) }
+            XCTAssertTrue(request.url.path.hasSuffix(SyncTestValues.groupPrompt.rawValue))
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: 1, seq: 2))
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertNil(rig.service.report.blockingIssue)
+        XCTAssertNil(try rig.pending.load(for: rig.base.binding))
+        XCTAssertEqual(rig.base.states.snapshot.value?.prompts[.assigned(SyncTestValues.groupPrompt)]?.rev, 1)
+        XCTAssertEqual(try rig.base.files.read(at: "a.md"), original.file?.bytes)
+        let archive = try XCTUnwrap(rig.base.data.listFiles().first { $0.relativePath.hasPrefix("sync/retained/push-") })
+        let retained = try JSONDecoder().decode(SyncPendingOperation.self, from: rig.base.data.read(at: archive.relativePath))
+        XCTAssertEqual(retained.intent.sentBytes, original.intent.sentBytes)
+        XCTAssertEqual(retained.intent.fingerprint, original.intent.fingerprint)
+        XCTAssertTrue(rig.base.data.isPrivate(at: archive.relativePath))
+        XCTAssertTrue(rig.base.dataOperations.flushedFiles.contains(RelativePath(archive.relativePath)))
+        XCTAssertEqual(rig.service.retire(), .stopped)
+    }
+
+    func testFailedHeldIntentRetentionKeepsActiveIntentAndCanRecover() async throws {
+        let rig = try SyncServiceRig()
+        try rig.base.files.write(SyncScanTestSupport.bytes(), at: "a.md")
+        rig.transport.handler = { _, request in
+            if request.method == .post { return try SyncServiceRig.pull() }
+            throw HTTPTransportError.networkFailure
+        }
+        try rig.start()
+        await rig.settle()
+        _ = rig.service.stop()
+        try holdFirstFile(rig)
+        rig.base.dataOperations.failFlushNumber = rig.base.dataOperations.flushCount + 1
+        let requests = rig.transport.requests.count
+        try rig.start()
+        await rig.settle()
+        XCTAssertNotNil(try rig.pending.load(for: rig.base.binding))
+        XCTAssertNotNil(rig.service.report.blockingIssue)
+        XCTAssertNil(rig.service.report.lastSuccess)
+        XCTAssertEqual(rig.transport.requests.count, requests)
+        rig.base.dataOperations.failFlushNumber = nil
+        _ = rig.service.stop()
+        try await rig.service.recoverJournal()
+        XCTAssertNil(try rig.pending.load(for: rig.base.binding))
+        XCTAssertEqual(rig.service.retire(), .stopped)
+    }
+
+    private func holdFirstFile(_ rig: SyncServiceRig) throws {
+        let hash = try XCTUnwrap(rig.base.mutations.read(at: "a.md")).hash
+        try rig.accounts.updateBinding(for: rig.base.binding.root) { current in
+            var next = try XCTUnwrap(current)
+            next.holds.append(try SyncHeldPrompt(identity: .assigned(SyncTestValues.personalPrompt), path: "a.md",
+                sourceAccount: rig.base.binding.account, contentHash: hash))
+            return next
+        }
+    }
+
+    func testAcknowledgedAdoptionOccupantUsesLocalPreparation() async throws {
+        let rig = try SyncServiceRig()
+        let local = SyncScanTestSupport.bytes("Equivalent", id: SyncTestValues.groupPrompt)
+        let server = SyncScanTestSupport.bytes("Equivalent")
+        try rig.base.files.write(local, at: "a.md")
+        let old = try SyncState(binding: rig.base.binding, prompts: [.assigned(SyncTestValues.groupPrompt):
+            SyncPromptState(scope: SyncScanTestSupport.personal, path: "a.md", rev: 1, canonicalHash: SyncHash(bytes: local))])
+        try rig.base.states.update(for: rig.base.binding) { $0 = old }
+        rig.transport.handler = { _, request in
+            XCTAssertEqual(request.method, .post)
+            return try SyncServiceRig.pull(items: [
+                .upsert(seq: 2, prompt: .init(id: SyncTestValues.personalPrompt.rawValue, rev: 1, path: "a.md",
+                    content: String(decoding: server, as: UTF8.self))),
+                .upsert(seq: 2, prompt: .init(id: SyncTestValues.groupPrompt.rawValue, rev: 2, path: "other.md",
+                    content: String(decoding: local, as: UTF8.self)))])
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertNil(rig.service.report.blockingIssue)
+        XCTAssertEqual(rig.service.report.status, .idle)
+        XCTAssertEqual(try rig.base.files.read(at: "a.md"), server)
+        XCTAssertEqual(try rig.base.files.read(at: "other.md"), local)
+        XCTAssertNotNil(rig.service.report.lastSuccess)
+    }
 }
 
 final class SyncServiceRig {
