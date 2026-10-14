@@ -89,6 +89,36 @@ final class SyncConflictMetadataTests: XCTestCase {
         XCTAssertEqual(plan.nextState.prompts[.assigned(copy)]?.lastError?.code, .content(.invalidMetadataType))
     }
 
+    func testInvalidMatchingEchoPreservesExistingCopyOrigin() throws {
+        let rig = try SyncApplyTestRig()
+        let invalid = bytes("x-monkeyspaw-conflict-of: bogus")
+        let marked = bytes("x-monkeyspaw-conflict-of: '\(original.rawValue)'")
+        try rig.files.write(marked, at: "a.md")
+        let local = try XCTUnwrap(rig.mutations.read(at: "a.md"))
+        let previous = try SyncPromptState(scope: .user(SyncTestValues.user), path: "a.md", rev: 3,
+            canonicalHash: SyncHash(bytes: invalid), origin: .conflictOf(original))
+        let old = try SyncState(binding: rig.binding, databaseID: SyncTestValues.uuid,
+            cursors: [.user(SyncTestValues.user): "old"], prompts: [.assigned(copy): previous])
+        try rig.states.update(for: rig.binding) { $0 = old }
+        let pull = try collected(invalid)
+        defer { try? pull.discard() }
+        let writes = rig.files.writeCount
+        let plan = try SyncReconciler.plan(pull, state: old, local: .init(binding: rig.binding, files: [local]))
+        XCTAssertTrue(plan.operations.isEmpty)
+        XCTAssertEqual(try SyncReconciler.apply(plan, mutations: rig.mutations, journal: rig.journal), .committed)
+        let record = try XCTUnwrap(rig.states.snapshot.value?.prompts[.assigned(copy)])
+        XCTAssertEqual(record.origin, .conflictOf(original))
+        XCTAssertEqual(record.scope, previous.scope)
+        XCTAssertEqual(record.path, previous.path)
+        XCTAssertEqual(record.rev, previous.rev)
+        XCTAssertEqual(record.canonicalHash, previous.canonicalHash)
+        XCTAssertEqual(record.lastError?.code, .content(.invalidMetadataType))
+        XCTAssertEqual(record.lastError?.fingerprint, try SyncInputFingerprint(bytes: invalid, path: "a.md",
+            scope: .user(SyncTestValues.user), accessGeneration: 0, operation: .put))
+        XCTAssertEqual(try rig.files.read(at: "a.md"), marked)
+        XCTAssertEqual(rig.files.writeCount, writes)
+    }
+
     func testInvalidRemoteMarkerInstallsExactBytesWithPerFileError() throws {
         let rig = try SyncApplyTestRig()
         let invalid = bytes("x-monkeyspaw-rescued: 'true'")
