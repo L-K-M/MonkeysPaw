@@ -9,6 +9,7 @@ final class MacSyncComposition {
     let accounts: SyncAccountStore
     let states: SyncStateStore
     let access: GroupAccessService
+    let rootIssue: MacSyncRootIssue?
     private(set) var status: SyncStatusModel
     private(set) var conflicts: ConflictModel
     var onAccountChange: (() -> Void)?
@@ -29,11 +30,13 @@ final class MacSyncComposition {
 
     init(sync: SyncService, accounts: SyncAccountStore, states: SyncStateStore, access: GroupAccessService,
          accountService: SyncAccountService, inviteService: SyncInviteService, groupService: SyncGroupService,
-         conflictService: ConflictResolutionService, scheduler: DispatchSyncScheduler, main: MainThread) {
+         conflictService: ConflictResolutionService, scheduler: DispatchSyncScheduler, main: MainThread,
+         rootIssue: MacSyncRootIssue?) {
         self.sync = sync
         self.accounts = accounts
         self.states = states
         self.access = access
+        self.rootIssue = rootIssue
         self.accountService = accountService
         self.inviteService = inviteService
         self.groupService = groupService
@@ -88,7 +91,7 @@ final class MacSyncComposition {
     /// Production launch calls this. Hosted tests explicitly opt into network
     /// startup on their injected graph; ordinary hosted launch does not.
     func startup() {
-        guard active else { return }
+        guard active, rootIssue == nil, sync.report.blockingIssue != .rootUnavailable else { return }
         startupPending = true
         if let account, !account.state.isBusy {
             startupPending = false

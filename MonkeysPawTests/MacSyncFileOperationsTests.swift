@@ -128,6 +128,17 @@ final class MacSyncFileOperationsTests: XCTestCase {
         XCTAssertEqual(try mode("one.md"), 0o444)
     }
 
+    func testFinalDirectoryBarrierFailureRetainsAnAppliedVersion() throws {
+        try files.write(Data("Before".utf8), at: "one.md")
+        let old = try expectation("one.md")
+        let faulty = try RootedFileStore(root: root, syncIO: .init(fullFlush: { _ in false }))
+        failure(.durabilityFailed, effect: .applied) {
+            _ = try faulty.publish(Data("After".utf8), at: "one.md", expecting: old, mode: .normal)
+        }
+        XCTAssertEqual(try files.read(at: "one.md"), Data("After".utf8))
+        try files.flushDirectory(at: nil)
+    }
+
     func testTrashFailurePreservesSourceAndSuccessfulMoveRemainsRecoverableAfterFlushFailure() throws {
         let bytes = Data("Recoverable".utf8)
         try files.write(bytes, at: "one.md")
@@ -219,6 +230,7 @@ final class MacSyncFileOperationsTests: XCTestCase {
         try files.write(Data("Cached".utf8), at: "one.md")
         try FileManager.default.moveItem(at: root, to: directory.appendingPathComponent("old"))
         XCTAssertThrowsError(try files.listFiles())
+        XCTAssertThrowsError(try files.stamp(at: "one.md"), "Root loss cannot masquerade as a missing prompt during pending DELETE recovery")
         XCTAssertThrowsError(try files.write(Data(), at: "late.md"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
         let replacement = try RootedFileStore(root: root)
@@ -227,5 +239,29 @@ final class MacSyncFileOperationsTests: XCTestCase {
         XCTAssertThrowsError(try files.listFiles())
         failure(.notFound) { _ = try files.publish(Data(), at: "late.md", expecting: .absent, mode: .normal) }
         XCTAssertEqual(try replacement.listFiles().map(\.relativePath), ["new.md"])
+    }
+
+    func testPersistedRootProofSurvivesGraphReconstructionAndRefusesARecreatedDirectory() throws {
+        let data = try RootedFileStore(root: directory.appendingPathComponent("data"))
+        let binding = MacSyncRootBinding(data: data)
+        try binding.prepare(library: files, lexicalRoot: root.path, mode: .freshLibrary)
+        let record = try data.read(at: "sync/macos-roots.json")
+        let reopened = try RootedFileStore(root: root)
+        try reopened.pinRoot()
+        try MacSyncRootBinding(data: data).prepare(library: reopened, lexicalRoot: root.path, mode: .recordedLibrary)
+        XCTAssertEqual(try data.read(at: "sync/macos-roots.json"), record)
+        try FileManager.default.moveItem(at: root, to: directory.appendingPathComponent("detached"))
+        let replacement = try RootedFileStore(root: root)
+        try replacement.createRoot()
+        try replacement.pinRoot()
+        XCTAssertThrowsError(try binding.prepare(library: replacement, lexicalRoot: root.path, mode: .recordedLibrary)) {
+            XCTAssertEqual($0 as? MacSyncRootIssue, .changed)
+        }
+        XCTAssertEqual(try data.read(at: "sync/macos-roots.json"), record)
+        let emptyData = try RootedFileStore(root: directory.appendingPathComponent("empty-data"))
+        XCTAssertThrowsError(try MacSyncRootBinding(data: emptyData).prepare(library: replacement, lexicalRoot: root.path, mode: .recordedLibrary)) {
+            XCTAssertEqual($0 as? MacSyncRootIssue, .unverified)
+        }
+        XCTAssertNil(try emptyData.stamp(at: "sync/macos-roots.json"))
     }
 }

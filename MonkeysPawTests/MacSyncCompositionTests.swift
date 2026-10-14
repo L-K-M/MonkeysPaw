@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import MonkeysPawCore
 import XCTest
@@ -210,6 +211,113 @@ final class MacSyncCompositionTests: XCTestCase {
         XCTAssertEqual(delegate.syncStatusModel?.state.blockingIssue, .rootUnavailable)
     }
 
+    func testColdStartupRefusesARecreatedRootWithRecordedCursors() throws {
+        transport.includePersonalPrompt = true
+        try start()
+        try login()
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateNow)
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        try FileManager.default.moveItem(at: root, to: directory.appendingPathComponent("original"))
+        let replacement = try RootedFileStore(root: root)
+        try replacement.createRoot()
+        let before = transport.requests.count
+        try start()
+        XCTAssertEqual(delegate.syncComposition?.rootIssue, .changed)
+        XCTAssertFalse(delegate.pickerModel?.libraryAvailable == true)
+        delegate.startSync()
+        delegate.syncComposition?.sync.syncNow()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(transport.requests.count, before)
+        XCTAssertFalse(transport.requests.contains { $0.method == .delete })
+        XCTAssertEqual(try replacement.listFiles(), [])
+    }
+
+    func testColdConfiguredDefaultRootIsNeverAutomaticallyRecreated() throws {
+        transport.includePersonalPrompt = true
+        try start()
+        try login()
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateNow)
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        try FileManager.default.moveItem(at: root, to: directory.appendingPathComponent("original"))
+        let before = transport.requests.count
+        try start()
+        delegate.startSync()
+        XCTAssertNotNil(delegate.syncComposition)
+        XCTAssertFalse(delegate.pickerModel?.libraryAvailable == true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertEqual(transport.requests.count, before)
+        XCTAssertFalse(transport.requests.contains { $0.method == .delete })
+    }
+
+    func testNativeOwnWriteStampAndRawHashSuppressOnlyTheCommittedVersion() throws {
+        transport.includePersonalPrompt = true
+        try start()
+        let account = try XCTUnwrap(delegate.accountModel)
+        XCTAssertTrue(spin { !account.state.isBusy })
+        var password = "Runtime-password-" + UUID().uuidString
+        account.login(server: "https://example.test/paw", username: "person", password: &password, deviceName: "Mac")
+        XCTAssertTrue(spin { !account.state.isBusy && self.delegate.syncStatusModel?.state.lastSuccess != nil })
+        let before = transport.requests.count
+        watchers[0].emit(.file(FileStoreEvent(relativePath: "incoming.md", kind: .modified)))
+        RunLoop.current.run(until: Date().addingTimeInterval(4))
+        XCTAssertEqual(transport.requests.count, before, "Native stamp/raw hash must match the committed receipt")
+        let files = try RootedFileStore(root: root)
+        var edited = try files.read(at: "incoming.md")
+        edited.append(Data("\nExternal change".utf8))
+        try files.write(edited, at: "incoming.md")
+        watchers[0].emit(.file(FileStoreEvent(relativePath: "incoming.md", kind: .modified)))
+        XCTAssertTrue(spin { self.transport.requests.count > before })
+    }
+
+    func testNativeAppliedButUnflushedJournalRecoversExactServerAndLosingBytes() throws {
+        let fault = MacSyncPublicationFault()
+        let files = try RootedFileStore(root: root, syncIO: .init(flush: { fault.flush($0) }, rename: {
+            fault.rename(from: $0, name: $1, to: $2, name: $3)
+        }))
+        try files.createRoot()
+        try files.pinRoot()
+        let losing = Data(("---\nid: " + MacSyncTransport.prompt.rawValue + "\n---\nLocal losing version").utf8)
+        try files.write(losing, at: "incoming.md")
+        let appData = try RootedFileStore(root: data)
+        let library = LibraryService(library: files, data: appData, clock: SystemClock(), entropy: SystemEntropy())
+        let states = SyncStateStore(files: appData, operations: appData)
+        let accounts = SyncAccountStore(files: appData, operations: appData)
+        let scheduler = DispatchSyncScheduler()
+        let main = DispatchMainThread()
+        let sync = try SyncService(library: library, libraryOperations: files, dataFiles: appData, dataOperations: appData,
+            states: states, accounts: accounts, scheduler: scheduler, mainThread: main, clock: SystemClock(), entropy: SystemEntropy())
+        let service = try SyncAccountService(sync: sync, accounts: accounts, secrets: secrets, transport: transport, libraryRoot: root.path)
+        let account = AccountModel(account: service, mainThread: main)
+        transport.includePersonalPrompt = true
+        XCTAssertTrue(spin { !account.state.isBusy })
+        var password = "Runtime-password-" + UUID().uuidString
+        account.login(server: "https://example.test/paw", username: "person", password: &password, deviceName: "Mac")
+        XCTAssertTrue(spin { !account.state.isBusy && sync.report.blockingIssue == .recoveryRequired })
+        XCTAssertNotNil(try appData.stamp(at: "sync/apply.json"))
+        XCTAssertThrowsError(try library.entries(), "Ordinary reads remain blocked until the apply journal settles")
+        fault.disable()
+        account.retire()
+        let recovered = expectation(description: "The original journal drains and replays")
+        Task.detached {
+            await account.drain()
+            sync.stop()
+            await sync.drain()
+            do { try await sync.recoverJournal() }
+            catch { XCTFail("Native journal recovery failed") }
+            XCTAssertEqual(sync.retire(), .stopped)
+            scheduler.tearDown()
+            main.run { recovered.fulfill() }
+        }
+        wait(for: [recovered], timeout: 5)
+        XCTAssertNil(try appData.stamp(at: "sync/apply.json"))
+        XCTAssertEqual(try files.read(at: "incoming.md"), MacSyncTransport.incomingBytes)
+        let copies = try library.entries().filter { $0.relativePath.hasPrefix("Conflicts/") }
+        XCTAssertEqual(copies.count, 1)
+        XCTAssertTrue(copies.first?.document.body.contains("Local losing version") == true)
+        let retained = try appData.listFiles().filter { $0.relativePath.hasPrefix("sync/retained/") && $0.relativePath.hasSuffix(".bin") }
+        XCTAssertTrue(try retained.contains { try appData.read(at: $0.relativePath) == losing })
+    }
+
     func testQuitWaitsForAnAdmittedPullAndRepliesExactlyOnce() throws {
         try start()
         try login()
@@ -269,6 +377,24 @@ final class MacSyncCompositionTests: XCTestCase {
 
 private final class MacSyncTimerCapture {}
 
+private final class MacSyncPublicationFault {
+    private let lock = NSLock()
+    private var armed = true
+    private var applied = false
+    func flush(_ descriptor: Int32) -> Bool {
+        lock.lock(); let reject = armed && applied; lock.unlock()
+        return !reject && fsync(descriptor) == 0
+    }
+    func rename(from source: Int32, name sourceName: String, to destination: Int32, name destinationName: String) -> Bool {
+        let result = renameat(source, sourceName, destination, destinationName) == 0
+        lock.lock()
+        if result && destinationName == "incoming.md" { applied = true }
+        lock.unlock()
+        return result
+    }
+    func disable() { lock.lock(); armed = false; lock.unlock() }
+}
+
 private final class MacSyncWatcher: FileStoreWatcher {
     private var callback: (@Sendable (FileStoreWatchEvent) -> Void)?
     private(set) var stopped = false
@@ -318,6 +444,7 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
     static let device = ULID("01ARZ3NDEKTSV4RRFFQ69G5FAW")!
     static let prompt = ULID("01ARZ3NDEKTSV4RRFFQ69G5FAX")!
     static let group = ULID("01ARZ3NDEKTSV4RRFFQ69G5FAY")!
+    static var incomingBytes: Data { Data(("---\nid: " + prompt.rawValue + "\n---\nIncoming").utf8) }
     let token = String(repeating: "a", count: 42) + "A"
     private let lock = NSLock()
     private var stored: [HTTPRequest] = []
@@ -347,7 +474,7 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
             }
             if request.url.path.hasSuffix("/sync/pull") {
                 let personalItems: [SyncAPI.FeedItem] = personal ? [.upsert(seq: 1, prompt: .init(id: Self.prompt.rawValue,
-                    rev: 1, path: "incoming.md", content: "---\nid: " + Self.prompt.rawValue + "\n---\nIncoming"))] : []
+                    rev: 1, path: "incoming.md", content: String(decoding: Self.incomingBytes, as: UTF8.self)))] : []
                 var scopes = [SyncAPI.SyncScope(identity: .user(userID: Self.user.rawValue), mode: .snapshot, head: personal ? 1 : 0,
                     cursor: "opaque-user", hasMore: false, items: personalItems)]
                 if let role = storedRole {
@@ -359,7 +486,13 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
                 }
                 return try http(SyncAPI.PullResponse(databaseID: "11111111-1111-4111-8111-111111111111", scopes: scopes, removed: []))
             }
-            if request.method == .put { return try http(SyncAPI.WriteResponse(rev: 1, seq: 2)) }
+            if request.method == .put {
+                let object: [String: Any]
+                if let bytes = request.body, let body = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] { object = body }
+                else { object = [:] }
+                let base = (object["base_rev"] as? NSNumber)?.int64Value ?? 0
+                return try http(SyncAPI.WriteResponse(rev: base + 1, seq: 2))
+            }
             return try http(SyncAPI.EmptyResponse())
         }
         let shouldHold = locked { request.url.path.hasSuffix("/sync/pull") && pullHeld || request.url.path.hasSuffix("/login") && loginHeld }

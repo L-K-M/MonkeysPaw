@@ -18,6 +18,7 @@ final class RootedFileStore: FileStore, SyncFileOperations {
     /// Fault seams never substitute an unlink for failed Trash or durability.
     struct SyncIO {
         var flush: (Int32) -> Bool = { RootedFileStore.flushDescriptor($0) }
+        var fullFlush: (Int32) -> Bool = { fcntl($0, F_FULLFSYNC) == 0 }
         var rename: (Int32, String, Int32, String) -> Bool = { renameat($0, $1, $2, $3) == 0 }
         var trash: ((URL) throws -> URL)?
     }
@@ -61,6 +62,18 @@ final class RootedFileStore: FileStore, SyncFileOperations {
         rootLock.unlock()
     }
 
+    func rootIdentity() throws -> FileStamp {
+        guard let descriptor = try openRoot(parents: .existing) else { throw FileStoreError.notFound }
+        defer { _ = Darwin.close(descriptor) }
+        let info = try descriptorInfo(descriptor)
+        // Device numbers may change after reboot; native persisted root proof
+        // uses the filesystem's stable volume UUID instead.
+        guard let volume = try root.resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString else {
+            throw FileStoreError.ioFailure
+        }
+        return FileStamp("\(volume):\(info.st_ino):\(info.st_gen):\(info.st_birthtimespec.tv_sec):\(info.st_birthtimespec.tv_nsec)")
+    }
+
     func listFiles() throws -> [StoredFile] {
         try fileOperation {
             guard let descriptor = try openRoot(parents: .existing) else { return [] }
@@ -80,7 +93,10 @@ final class RootedFileStore: FileStore, SyncFileOperations {
                     try requireRegular(info)
                     return fileStamp(info)
                 }
-            } catch FileStoreError.notFound { return nil }
+            } catch FileStoreError.notFound {
+                try verifyPinnedRoot()
+                return nil
+            }
         }
     }
 
@@ -227,6 +243,9 @@ final class RootedFileStore: FileStore, SyncFileOperations {
                     guard syncIO.flush(descriptor) else { throw SyncFileOperationError(.durabilityFailed) }
                 }
             }
+            // This barrier follows the directory fsyncs, including deletions
+            // whose file no longer exists. Do not full-flush a read-only OS ancestor.
+            guard syncIO.fullFlush(descriptor) else { throw SyncFileOperationError(.durabilityFailed) }
         }
     }
 
@@ -278,9 +297,24 @@ final class RootedFileStore: FileStore, SyncFileOperations {
                     guard directory >= 0 else { throw SyncFileOperationError(.durabilityFailed) }
                     defer { _ = Darwin.close(directory) }
                     guard syncIO.flush(directory) else { throw SyncFileOperationError(.durabilityFailed) }
+                    try flushTrashDirectory(destination.deletingLastPathComponent())
                 } catch { throw SyncFileOperationError(.durabilityFailed, effect: .applied) }
             }
         }
+    }
+
+    private func flushTrashDirectory(_ url: URL) throws {
+        var descriptor = Darwin.open("/", O_RDONLY | Self.directoryFlags)
+        guard descriptor >= 0 else { throw SyncFileOperationError(.durabilityFailed) }
+        defer { _ = Darwin.close(descriptor) }
+        guard syncIO.flush(descriptor) else { throw SyncFileOperationError(.durabilityFailed) }
+        for part in url.pathComponents.dropFirst() {
+            guard let child = try openDirectory(part, in: descriptor, parents: .existing) else { throw FileStoreError.notFound }
+            _ = Darwin.close(descriptor)
+            descriptor = child
+            guard syncIO.flush(descriptor) else { throw SyncFileOperationError(.durabilityFailed) }
+        }
+        guard syncIO.fullFlush(descriptor) else { throw SyncFileOperationError(.durabilityFailed) }
     }
 
     private func systemTrash(_ name: String, in parent: Int32) throws -> URL {
@@ -595,7 +629,7 @@ final class RootedFileStore: FileStore, SyncFileOperations {
     }
 
     private func directoryStamp(_ info: Darwin.stat) -> FileStamp {
-        FileStamp("\(info.st_dev):\(info.st_ino):\(info.st_birthtimespec.tv_sec):\(info.st_birthtimespec.tv_nsec)")
+        FileStamp("\(info.st_dev):\(info.st_ino):\(info.st_gen):\(info.st_birthtimespec.tv_sec):\(info.st_birthtimespec.tv_nsec)")
     }
     private func fileStamp(_ info: Darwin.stat) -> FileStamp {
         FileStamp("\(info.st_dev):\(info.st_ino):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):"
