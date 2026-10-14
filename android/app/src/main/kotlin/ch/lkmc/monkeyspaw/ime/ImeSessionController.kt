@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /** Identity is compared only; no target text or editor/package history is retained. */
 internal class ImeEditor(val inputType: Int?, val imeOptions: Int, private val connection: Any?) {
+    val connectionReady: Boolean get() = connection != null
+    fun matchesConnection(other: Any?): Boolean = connection === other
+
     fun matches(other: ImeEditor): Boolean = inputType == other.inputType &&
         imeOptions == other.imeOptions && connection === other.connection
 }
