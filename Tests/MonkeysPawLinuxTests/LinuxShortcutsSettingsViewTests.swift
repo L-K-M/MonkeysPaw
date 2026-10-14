@@ -105,6 +105,65 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         XCTAssertEqual(setupModel.rows.first { $0.kind == .hotkey }?.registration, model.togglePicker.registration)
     }
 
+    func testRepeatRowShowsLiveBindingAndRoutesChangeAndVerificationIndependently() throws {
+        backend.repeatRegistration = HotkeyRegistration(mechanism: .kglobalaccel, status: .registered,
+            detail: "Alt+R", configuration: .systemSettings)
+        setupModel.refresh()
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.registration == self.backend.repeatRegistration })
+        XCTAssertEqual(try text("settings-repeat-binding"), "Alt+R")
+        XCTAssertTrue(try text("settings-repeat-registration").contains("KDE global shortcut"))
+        try click("settings-change-repeat-shortcut")
+        XCTAssertTrue(GTKTestSupport.spin { self.probe.actionFixes == [.repeatLast] })
+        XCTAssertEqual(model.repeatLast.verification, .notStarted)
+        try click("settings-verify-repeat-shortcut")
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.verification == .waiting })
+        backend.repeatFire?()
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.verification == .verified })
+        XCTAssertEqual(model.togglePicker.verification, .notStarted)
+        XCTAssertEqual(try text("settings-repeat-verification"), LinuxStrings.shortcutVerification(.verified))
+    }
+
+    func testRepeatFactsSurviveReopenAndHandoffClearsOnlyItsVerification() throws {
+        backend.repeatRegistration = HotkeyRegistration(mechanism: .kglobalaccel, status: .registered,
+            detail: "Ctrl+K, Ctrl+R; Alt+F10", configuration: .systemSettings)
+        setupModel.refresh()
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.registration == self.backend.repeatRegistration })
+        model.beginVerification(.repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.verification == .waiting })
+        backend.repeatFire?()
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.verification == .verified })
+        let pickerID = model.togglePicker.registration?.id
+        view.hide()
+        view.show()
+        XCTAssertEqual(try text("settings-repeat-binding"), "Ctrl+K, Ctrl+R; Alt+F10")
+        XCTAssertEqual(model.repeatLast.verification, .verified)
+        backend.repeatRegistration = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .unbound,
+            detail: "Choose a repeat key", configuration: .systemSettings)
+        setupModel.refresh()
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.registration == self.backend.repeatRegistration })
+        XCTAssertEqual(model.repeatLast.verification, .notStarted)
+        XCTAssertEqual(model.togglePicker.registration?.id, pickerID)
+        XCTAssertEqual(try text("settings-repeat-binding"), SetupStrings.unboundShortcut)
+        XCTAssertTrue(try text("settings-repeat-registration").contains("Choose a repeat key"))
+        XCTAssertEqual(gtk_widget_get_sensitive(try widget("settings-verify-repeat-shortcut")), 0)
+    }
+
+    func testRepeatManualInstructionsAndErrorsAreVisibleWithoutConfiguringPicker() throws {
+        let command = GnomeKeybindingInstaller.command(for: .repeatLast)
+        backend.repeatRegistration = HotkeyRegistration(mechanism: .manual, status: .unbound, detail: command)
+        setupModel.refresh()
+        XCTAssertTrue(GTKTestSupport.spin { self.model.repeatLast.registration == self.backend.repeatRegistration })
+        XCTAssertEqual(try text("settings-repeat-shortcut-instructions"), command)
+        try click("settings-change-repeat-shortcut")
+        XCTAssertTrue(GTKTestSupport.spin { self.model.instructions(for: .repeatLast) == command })
+        XCTAssertTrue(probe.fixes.isEmpty)
+        model.setAccelerator("Alt+R", for: .repeatLast)
+        XCTAssertTrue(GTKTestSupport.spin { self.model.error(for: .repeatLast) == .unavailable })
+        XCTAssertEqual(try text("settings-repeat-shortcut-error"), LinuxStrings.shortcutError(.unavailable))
+        XCTAssertNotEqual(gtk_widget_get_visible(try widget("settings-repeat-shortcut-error")), 0)
+        XCTAssertNil(model.error)
+    }
+
     func testManualAndSystemGuidanceRenderInstructionsWithoutRunningAConfigureAction() throws {
         let instructions = "Bind gapplication action ch.lkmc.monkeyspaw toggle in your desktop's settings."
         try refresh(.manual, status: .needsAction, detail: instructions)
@@ -202,13 +261,15 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
         detail: "Ctrl+K, Ctrl+P; Alt+F9", configuration: .systemSettings)
     var mechanism: HotkeyMechanism { registration.mechanism }
     var fire: (() -> Void)?
+    var repeatFire: (() -> Void)?
     private(set) var pickerCleared = false
     let unboundRepeat = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
         detail: SetupStrings.unboundShortcut, configuration: .unavailable)
     let unboundPicker = HotkeyRegistration(mechanism: .kglobalaccel, status: .unbound,
         detail: SetupStrings.unboundShortcut, configuration: .unavailable)
+    var repeatRegistration: HotkeyRegistration?
     func register(_ action: HotkeyAction, accelerator: Accelerator?, onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard action == .togglePicker else { return unboundRepeat }
+        guard action == .togglePicker else { repeatFire = onFire; return repeatRegistration ?? unboundRepeat }
         guard accelerator != nil else { fire = nil; pickerCleared = true; return unboundPicker }
         pickerCleared = false
         fire = onFire
@@ -222,16 +283,19 @@ private final class SettingsHotkeyBackend: HotkeyBackend {
 private final class SettingsSetupProbe: SetupProbe {
     private let backend: SettingsHotkeyBackend
     private(set) var fixes: [SetupRow.Kind] = []
+    private(set) var actionFixes: [HotkeyAction] = []
     init(backend: SettingsHotkeyBackend) { self.backend = backend }
     func accessibilityStatus() -> SetupStatus { .notApplicable }
     func portalStatus() -> SetupStatus { .notApplicable }
     func ydotoolStatus() -> SetupStatus { .notApplicable }
     func kdeStatus() -> SetupStatus { .needsAction(fix: SetupStrings.kdeShortcut) }
     func hotkeyRegistration(for action: HotkeyAction) -> HotkeyRegistration {
-        guard action == .togglePicker else { return backend.unboundRepeat }
+        guard action == .togglePicker else { return backend.repeatRegistration ?? backend.unboundRepeat }
         return backend.pickerCleared ? backend.unboundPicker : backend.registration
     }
-    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) { fixes.append(kind); done() }
+    func performFix(for kind: SetupRow.Kind, action: HotkeyAction, done: @escaping () -> Void) {
+        fixes.append(kind); actionFixes.append(action); done()
+    }
 }
 
 /// Shortcuts never uses delivery ports. Fail if the view accidentally does.

@@ -136,6 +136,14 @@ Per OS:
   Without a tray watcher, the hotkey, desktop actions and picker Settings button
   remain the entry points.
 
+  Linux's **Repeat Last Prompt** desktop action and repeat shortcut share the
+  resident application's `repeat` action. Repeat uses the current target and
+  preserves hidden picker drafts. Refusals and repeat persistence warnings
+  appear in a reusable **Repeat last** window; review-required results offer
+  **Open prompt…** through the existing Library editor. Shortcuts renders both
+  actions' live bindings, verification, change instructions and errors.
+  Repeat has no default key; GNOME/manual guidance uses the repeat command.
+
 ### 11.2 Picker and fill form
 
 M2f supplies the Linux picker and fill view, bound to Core `PickerModel` and

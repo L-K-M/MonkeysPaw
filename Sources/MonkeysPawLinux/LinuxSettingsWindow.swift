@@ -27,14 +27,16 @@ final class LinuxSettingsWindow {
     private var forgetConfirmation: GTK.Widget!
     private var forgetCancelButton: GTK.Widget!
     private var forgetMessage: GTK.Widget!
-    private var toggleBinding: GTK.Widget!
-    private var toggleRegistration: GTK.Widget!
-    private var toggleVerification: GTK.Widget!
-    private var shortcutInstructions: GTK.Widget!
-    private var shortcutError: GTK.Widget!
-    private var changeButton: GTK.Widget!
-    private var verifyButton: GTK.Widget!
-    private var repeatBinding: GTK.Widget!
+    private struct ShortcutRow {
+        let binding: GTK.Widget
+        let registration: GTK.Widget
+        let verification: GTK.Widget
+        let instructions: GTK.Widget
+        let error: GTK.Widget
+        let change: GTK.Widget
+        let verify: GTK.Widget
+    }
+    private var shortcutRows: [HotkeyAction: ShortcutRow] = [:]
 
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
 
@@ -175,35 +177,40 @@ final class LinuxSettingsWindow {
 
     private func shortcutsPage() -> GTK.Widget {
         let page = pageBox()
-        gtk_box_append(mp_box(page), GTK.label(LinuxStrings.togglePicker))
-        toggleBinding = namedLabel("settings-toggle-binding", in: page)
-        toggleRegistration = namedLabel("settings-toggle-registration", in: page)
-        toggleVerification = namedLabel("settings-toggle-verification", in: page)
-        shortcutInstructions = namedLabel("settings-shortcut-instructions", in: page)
-        shortcutError = namedLabel("settings-shortcut-error", in: page)
-        let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        changeButton = GTK.button("") { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.shortcuts.performPlatformChange()
+        for action in HotkeyAction.allCases {
+            let isPicker = action == .togglePicker
+            let name = isPicker ? "toggle" : "repeat"
+            let control = isPicker ? "shortcut" : "repeat-shortcut"
+            gtk_box_append(mp_box(page), GTK.label(isPicker ? LinuxStrings.togglePicker : LinuxStrings.repeatLast))
+            let binding = namedLabel("settings-\(name)-binding", in: page)
+            let registration = namedLabel("settings-\(name)-registration", in: page)
+            let verification = namedLabel("settings-\(name)-verification", in: page)
+            let instructions = namedLabel("settings-\(control)-instructions", in: page)
+            let error = namedLabel("settings-\(control)-error", in: page)
+            let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+            let change = GTK.button("") { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.shortcuts.performPlatformChange(for: action)
+            }
+            gtk_widget_set_name(change, "settings-change-\(control)")
+            let verify = GTK.button(LinuxStrings.verifyShortcut) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.shortcuts.beginVerification(action)
+            }
+            gtk_widget_set_name(verify, "settings-verify-\(control)")
+            gtk_box_append(mp_box(buttons), change)
+            gtk_box_append(mp_box(buttons), verify)
+            gtk_box_append(mp_box(page), buttons)
+            shortcutRows[action] = ShortcutRow(binding: binding, registration: registration,
+                verification: verification, instructions: instructions, error: error, change: change, verify: verify)
         }
-        gtk_widget_set_name(changeButton, "settings-change-shortcut")
-        verifyButton = GTK.button(LinuxStrings.verifyShortcut) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.shortcuts.beginVerification()
-        }
-        gtk_widget_set_name(verifyButton, "settings-verify-shortcut")
-        gtk_box_append(mp_box(buttons), changeButton)
-        gtk_box_append(mp_box(buttons), verifyButton)
         let setupButton = GTK.button(LinuxStrings.openSetup) { [weak self] in
             guard let self, self.isVisible else { return }
             self.openSetup()
         }
         gtk_widget_set_name(setupButton, "settings-open-setup")
-        gtk_box_append(mp_box(buttons), setupButton)
-        gtk_box_append(mp_box(page), buttons)
-        gtk_box_append(mp_box(page), GTK.label(LinuxStrings.repeatLast))
-        repeatBinding = namedLabel("settings-repeat-binding", in: page)
-        gtk_box_append(mp_box(page), GTK.label(LinuxStrings.repeatUnavailable))
+        gtk_widget_set_halign(setupButton, GTK_ALIGN_START)
+        gtk_box_append(mp_box(page), setupButton)
         return scrolled(page)
     }
 
@@ -225,29 +232,31 @@ final class LinuxSettingsWindow {
 
     private func renderShortcuts() {
         guard !isDestroyed else { return }
-        let state = shortcuts.togglePicker
-        gtk_label_set_text(mp_label(toggleBinding), LinuxStrings.shortcutBinding(state.binding))
-        gtk_label_set_text(mp_label(toggleRegistration), LinuxStrings.shortcutRegistration(state.registration))
-        gtk_label_set_text(mp_label(toggleVerification), LinuxStrings.shortcutVerification(state.verification))
-        gtk_label_set_text(mp_label(repeatBinding), LinuxStrings.shortcutBinding(shortcuts.repeatLast.binding))
-        setMessage(shortcutError, shortcuts.error.map(LinuxStrings.shortcutError))
+        for action in HotkeyAction.allCases {
+            guard let row = shortcutRows[action] else { continue }
+            let state = shortcuts.state(for: action)
+            gtk_label_set_text(mp_label(row.binding), LinuxStrings.shortcutBinding(state.binding))
+            gtk_label_set_text(mp_label(row.registration), LinuxStrings.shortcutRegistration(state.registration))
+            gtk_label_set_text(mp_label(row.verification), LinuxStrings.shortcutVerification(state.verification))
+            setMessage(row.error, shortcuts.error(for: action).map(LinuxStrings.shortcutError))
 
-        var instructions = shortcuts.instructions
-        let title: String?
-        switch state.changePath {
-        case .systemSettings: title = LinuxStrings.configureShortcuts
-        case .setup: title = LinuxStrings.setupShortcut
-        case .systemSettingsGuidance(let text), .manualInstructions(let text):
-            instructions = instructions ?? text
-            title = LinuxStrings.showInstructions
-        // Carbon is the only in-app mechanism. Linux has no recorder.
-        case .inApp, .unavailable: title = nil
+            var instructions = shortcuts.instructions(for: action)
+            let title: String?
+            switch state.changePath {
+            case .systemSettings: title = LinuxStrings.configureShortcuts
+            case .setup: title = LinuxStrings.setupShortcut
+            case .systemSettingsGuidance(let text), .manualInstructions(let text):
+                instructions = instructions ?? text
+                title = LinuxStrings.showInstructions
+            // Carbon is the only in-app mechanism. Linux has no recorder.
+            case .inApp, .unavailable: title = nil
+            }
+            gtk_button_set_label(mp_button(row.change), title ?? "")
+            gtk_widget_set_visible(row.change, title == nil ? 0 : 1)
+            setMessage(row.instructions, instructions)
+            let canVerify = state.registrationStatus == .registered || state.registrationStatus == .needsAction
+            gtk_widget_set_sensitive(row.verify, canVerify ? 1 : 0)
         }
-        gtk_button_set_label(mp_button(changeButton), title ?? "")
-        gtk_widget_set_visible(changeButton, title == nil ? 0 : 1)
-        setMessage(shortcutInstructions, instructions)
-        let canVerify = state.registrationStatus == .registered || state.registrationStatus == .needsAction
-        gtk_widget_set_sensitive(verifyButton, canVerify ? 1 : 0)
     }
 
     private func renderRememberedValues() {

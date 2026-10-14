@@ -123,7 +123,6 @@ enum LinuxStrings {
     static let openFolder = "Open Folder"
     static let togglePicker = "Toggle picker"
     static let repeatLast = "Repeat last"
-    static let repeatUnavailable = "Inactive. Unavailable for configuration."
     static let openRepeatPrompt = "Open prompt…"
 
     static func repeatMessage(_ result: RepeatResult) -> String? {
