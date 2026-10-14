@@ -289,6 +289,40 @@ public final class SyncService {
         await active?.value
     }
 
+    /// Resolve through the same admission, credential, epoch and journal as a
+    /// sync pass. Stop/root replacement can revoke and drain this task too.
+    func resolvingConflict<Value>(epoch expected: UInt64? = nil,
+        _ operation: @escaping (ConflictResolutionContext) async throws -> Value) async throws -> Value {
+        try await withCheckedThrowingContinuation { completion in
+            locked {
+                do {
+                    guard eligible, let session, let coordinator else { throw ConflictResolutionFailure.inactive }
+                    guard !running else { throw ConflictResolutionFailure.busy }
+                    guard expected == nil || expected == epoch else { throw ConflictResolutionFailure.staleSession }
+                    guard recoveryState() == .stopped else { throw ConflictResolutionFailure.recoveryRequired }
+                    let context = ConflictResolutionContext(binding: session.binding, permit: coordinator.permit,
+                        client: session.client.permitting(coordinator.permit), states: states, accounts: accounts,
+                        mutations: mutations, journal: journal)
+                    running = true
+                    let generation = epoch
+                    task = Task { [self] in
+                        let result: Result<Value, Error>
+                        do { result = .success(try await operation(context)) }
+                        catch { result = .failure(error) }
+                        locked {
+                            running = false
+                            task = nil
+                            if epoch == generation, case .failure(let error as SyncHTTPClientError) = result,
+                               error == .unauthorized { requireSignIn() }
+                            if eligible && dirty { launch() }
+                        }
+                        completion.resume(with: result)
+                    }
+                } catch { completion.resume(throwing: error) }
+            }
+        }
+    }
+
     /// After stop/drain, recover on the original root before attempting retire
     /// again. A 401 still requires Y11 reauthentication; this cannot bypass it.
     public func recoverJournal() async throws {
