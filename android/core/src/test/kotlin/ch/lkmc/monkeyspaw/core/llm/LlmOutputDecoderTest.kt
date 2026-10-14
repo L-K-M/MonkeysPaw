@@ -46,7 +46,7 @@ class LlmOutputDecoderTest {
     }
 
     @Test fun schemaBytesAreFreshDefensiveValues() {
-        val expected = LlmArtifact.jsonSchema
+        val expected = LlmArtifact.jsonSchema.copyOf()
         LlmArtifact.jsonSchema.fill(0)
         assertContentEquals(expected, LlmArtifact.jsonSchema)
     }
