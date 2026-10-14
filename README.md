@@ -310,6 +310,18 @@ after saving or stored in provider settings, command arguments or logs.
 Prompt content, fill values and provider error bodies are also excluded from
 logs. Remembered values stay local in private `values.json` and are not synced.
 
+Android encrypts saved API keys with AES-256-GCM using AndroidKeyStore and
+keeps only account names, IVs and ciphertext in a separate app-private secrets
+DataStore. Provider settings contain references, never keys. StrongBox is
+preferred when available; actual hardware backing depends on your device and
+is not established by the **keystore** label. There is no plaintext fallback.
+The Android assistant follows the explicit request and privacy rules above,
+shows the provider host and model before sending, and shows token usage when
+the provider returns it. It has no telemetry or HTTP logging. Real Keystore
+and Anthropic/Ollama checks remain **NOT RUN (owner)** in the
+[Android assistant checklist](docs/platform/android.md#android-assistant-m11-not-run-owner);
+M11 remains open until those checks and the final main CI evidence are recorded.
+
 Sync sends prompts to your configured server, with the operator-access limits
 described above. See the [security and privacy plan](docs/plan/12-security-and-privacy.md)
 and [assistant owner checklist](docs/platform/assistant.md). Full SECURITY.md
