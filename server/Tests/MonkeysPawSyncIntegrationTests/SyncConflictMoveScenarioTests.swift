@@ -13,7 +13,8 @@ extension ScenarioRunner {
             try check((Set(ids).count == ids.count) == value.boolean(), "unique live file identities")
         case "protected_ids":
             for id in try value.array() {
-                try check(!device.files.unprotectedTrashIDs.contains(expand(id.string())), "winning identity retired before publication")
+                let id = try SyncIdentifiers.ulid(expand(id.string()))
+                try check(!device.files.unprotectedTrashIDs.contains(id.rawValue), "winning identity retired before publication")
             }
         case "state_absent":
             for id in try value.array() {
@@ -70,6 +71,38 @@ private actor ScenarioCASBarrier {
 }
 
 final class SyncConflictMoveScenarioTests: XCTestCase {
+    func testNegativeIdentityCheckpointsRejectInvalidIDsAfterRealHTTP() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("spec/fixtures/sync")
+        for key in ["protected_ids", "absent_ids"] {
+            let file = key == "protected_ids" ? "01-round-trip.json" : "20-move-echo-pages.json"
+            var scenario = try JSONDecoder().decode(ScenarioValue.self, from: Data(contentsOf: root.appendingPathComponent(file)))
+                .at("/cases/0").object()
+            var steps = try scenario["steps"]!.array()
+            if key == "protected_ids" {
+                steps.append(.object(["action": .string("expect"), "device": .string("a"),
+                    "expected": .object([key: .array([.string("not-a-canonical-id")])])]))
+            } else {
+                let index = try XCTUnwrap(steps.firstIndex { (try? $0.at("/expected/pages")) != nil })
+                var step = try steps[index].object()
+                var expected = try step["expected"]!.object()
+                var pages = try expected["pages"]!.array()
+                var page = try pages[0].object()
+                page[key] = .array([.string("not-a-canonical-id")])
+                pages[0] = .object(page)
+                expected["pages"] = .array(pages)
+                step["expected"] = .object(expected)
+                steps[index] = .object(step)
+            }
+            scenario["steps"] = .array(steps)
+            let envelope = ScenarioValue.object(["schema": .integer(1), "category": .string("sync"), "cases": .array([.object(scenario)])])
+            do {
+                try await SyncServerHarness.run(ScenarioDecoder.decode(JSONEncoder().encode(envelope))[0])
+                XCTFail("Invalid negative identity passed: " + key)
+            } catch is ScenarioFailure { }
+        }
+    }
+
     func testNetworkHooksRejectUnsupportedStepsAndExpansionBudgets() throws {
         let then = ScenarioValue.object(["action": .string("sync"), "device": .string("b")])
         for action in ["before_next_request", "after_next_response"] {
