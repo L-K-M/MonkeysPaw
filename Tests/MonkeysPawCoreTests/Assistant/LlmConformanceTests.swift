@@ -13,6 +13,52 @@ final class LlmConformanceTests: XCTestCase {
         print("llm: \(coverage.cases) cases / \(coverage.files.count) files; \(coverage.expectations) expectations; pending 0.")
     }
 
+    func testEveryMergeExpectationAndClosedContractIsEnforced() throws {
+        let mutations: [(String, (inout [String: LlmFixtureJSON]) throws -> Void)] = [
+            ("id", { $0["id"] = .string("01K6Z4V9KQWZX7MPQ4T8ZNB2PD") }),
+            ("operation", { $0["operation"] = .string("copy") }),
+            ("false repeat", { $0["originalRepeat"] = .boolean(false) }),
+            ("zero repeat", { $0["artifactBodyRepeat"] = .integer(0) }),
+            ("oversize repeat", { $0["artifactBodyRepeat"] = .integer(262146) }),
+            ("wrong identity", { envelope in
+                var expected = try envelope["expected"]!.object
+                var ready = try expected["ready"]!.object
+                ready["id"] = .null
+                expected["ready"] = .object(ready)
+                envelope["expected"] = .object(expected)
+            }),
+            ("wrong preservation", { envelope in
+                var expected = try envelope["expected"]!.object
+                var ready = try expected["ready"]!.object
+                ready["preserved"] = .array([])
+                expected["ready"] = .object(ready)
+                envelope["expected"] = .object(expected)
+            }),
+            ("unread typed data", { envelope in
+                var expected = try envelope["expected"]!.object
+                var ready = try expected["ready"]!.object
+                var pairs = try ready["preserved"]!.array
+                var pair = try pairs[0].object
+                var node = try pair["value"]!.object
+                node["unconsumed"] = .boolean(true)
+                pair["value"] = .object(node)
+                pairs[0] = .object(pair)
+                ready["preserved"] = .array(pairs)
+                expected["ready"] = .object(ready)
+                envelope["expected"] = .object(expected)
+            })
+        ]
+        for (label, mutate) in mutations {
+            try withTemporaryCorpus { directory in
+                let url = directory.appendingPathComponent("merge-improve-typed-metadata/case.json")
+                var envelope = try JSONDecoder().decode(LlmFixtureJSON.self, from: Data(contentsOf: url)).object
+                try mutate(&envelope)
+                try LlmFixtureJSON.object(envelope).bytes().write(to: url)
+                XCTAssertThrowsError(try LlmFixtureCorpus.consume(at: directory), label)
+            }
+        }
+    }
+
     func testUnknownKindsFalseSchemasAndUnconsumedExpectationsCannotPass() throws {
         let mutations: [(String, (inout [String: LlmFixtureJSON]) throws -> Void)] = [
             ("unknown kind", { $0["kind"] = .string("exchange") }),

@@ -183,6 +183,15 @@ final class ArtifactMergeTests: XCTestCase {
         try assertInvalid(ArtifactMerge.write(try decode(root), id: id))
     }
 
+    func testFinalValidationAlsoRejectsDirectlyConstructedDuplicateFields() throws {
+        let decoded = try decode()
+        let artifact = LlmArtifact(title: decoded.title, description: decoded.description, tags: decoded.tags,
+                                   fields: [decoded.fields[0], decoded.fields[0]], body: decoded.body, notes: decoded.notes)
+        XCTAssertFalse(artifact.issues.contains { $0.severity == .error })
+        guard case .invalid(let issues) = ArtifactMerge.write(artifact, id: id) else { return XCTFail("Final bytes must be validated") }
+        XCTAssertTrue(issues.contains { $0.code == .duplicateKey })
+    }
+
     private func node(_ key: String, in document: PromptDocument) -> Node? {
         document.preservedHeader?.mapping?.first { PortableYAML.string($0.key) == key }?.value
     }

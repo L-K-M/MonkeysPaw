@@ -1,0 +1,28 @@
+{
+  "title": "New title",
+  "description": "New description",
+  "tags": [
+    "on",
+    "010",
+    "true"
+  ],
+  "fields": [
+    {
+      "name": "tone",
+      "type": "text",
+      "label": "tone",
+      "description": "",
+      "default": "",
+      "options": [
+        {
+          "label": "Rust",
+          "value": "Rust"
+        }
+      ],
+      "optional": false,
+      "remember": true
+    }
+  ],
+  "body": "New {{tone}} {{context}} {{name}}",
+  "notes": "Session-only artifact notes"
+}

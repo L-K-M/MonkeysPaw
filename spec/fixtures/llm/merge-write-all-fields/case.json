@@ -1,0 +1,1 @@
+{"artifact":"artifact.json","category":"llm","expected":{"ready":{"candidate":"candidate.md","id":"01K6Z4V9KQWZX7MPQ4T8ZNB2PD","issues":[],"preserved":[{"key":{"tag":"str","value":"id"},"value":{"tag":"str","value":"01K6Z4V9KQWZX7MPQ4T8ZNB2PD"}}]}},"filename":"Unsaved source.md","id":"01K6Z4V9KQWZX7MPQ4T8ZNB2PD","kind":"merge","operation":"write","original":null,"schema":1}

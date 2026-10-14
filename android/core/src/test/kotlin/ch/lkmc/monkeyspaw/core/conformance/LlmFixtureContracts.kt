@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.core.conformance
 
 import java.math.BigInteger
+import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueCode
 import ch.lkmc.monkeyspaw.core.domain.llm.LlmReviewSeverity
 import ch.lkmc.monkeyspaw.core.domain.llm.LlmRubricCriterion
@@ -12,6 +13,7 @@ internal object LlmFixtureContracts {
     fun read(envelope: JsonObject): List<String> {
         corpusRequire(envelope["schema"].integerValue() == BigInteger.ONE, "Unknown LLM schema version")
         corpusRequire(envelope["category"].stringValue() == "llm", "Wrong LLM category")
+        if (envelope["kind"].stringValue() == "merge") return merge(envelope)
         val outputKind = envelope["outputKind"].stringValue()
         corpusRequire(outputKind in setOf("artifact", "review"), "Unknown LLM output kind")
         val expected = envelope["expected"].objectValue()
@@ -43,6 +45,85 @@ internal object LlmFixtureContracts {
                 references
             }
             else -> throw CorpusException("Unknown LLM fixture kind")
+        }
+    }
+
+    private fun merge(envelope: JsonObject): List<String> {
+        envelope.members(setOf("schema", "category", "kind", "operation", "artifact", "original", "filename", "id", "expected"),
+            setOf("originalRepeat", "artifactBodyRepeat"))
+        val operation = envelope["operation"].stringValue()
+        corpusRequire(operation in setOf("write", "improve"), "Unknown merge operation")
+        envelope["filename"].stringValue()
+        val references = mutableListOf(sourceName(envelope["artifact"], setOf(".json")))
+        if (operation == "write") {
+            corpusRequire(envelope["original"] == JsonNull && ULID.parse(envelope["id"].stringValue()) != null &&
+                "originalRepeat" !in envelope, "Invalid write inputs")
+        } else {
+            corpusRequire(envelope["id"] == JsonNull, "Improve must retain original identity")
+            references.add(sourceName(envelope["original"], setOf(".md", ".bin")))
+        }
+        listOf("originalRepeat", "artifactBodyRepeat").forEach { key -> envelope[key]?.let { positiveCount(it, 262_145) } }
+        val expected = envelope["expected"].objectValue()
+        when {
+            "ready" in expected -> {
+                expected.members(setOf("ready"))
+                val ready = expected["ready"].objectValue()
+                ready.members(setOf("candidate", "id", "issues", "preserved"))
+                references.add(sourceName(ready["candidate"], setOf(".md")))
+                corpusRequire(ready["id"] == JsonNull || ULID.parse(ready["id"].stringValue()) != null, "Invalid candidate ID")
+                issues(ready["issues"])
+                ready["preserved"].arrayValue().forEach(::yamlPair)
+            }
+            "invalid" in expected -> { expected.members(setOf("invalid")); issues(expected["invalid"]) }
+            "failed" in expected -> {
+                expected.members(setOf("failed"))
+                val failed = expected["failed"].objectValue()
+                val error = failed["error"].stringValue()
+                failed.members(setOf("error") + if (error == "unsupportedFormat") setOf("format") else emptySet())
+                corpusRequire(error in setOf("invalidPrompt", "serializationFailed", "sourceTooLarge", "unsupportedFormat"), "Unknown write error")
+                if (error == "unsupportedFormat") failed["format"].stringValue()
+            }
+            else -> {
+                expected.members(setOf("error"))
+                corpusRequire(expected["error"].stringValue() == "invalidOutput", "Unknown merge decoding error")
+            }
+        }
+        return references
+    }
+
+    private fun issues(value: JsonElement?) {
+        value.arrayValue().forEach {
+            val issue = it.objectValue()
+            issue.members(setOf("code", "severity", "location"))
+            corpusRequire(issue["code"].stringValue() in PromptIssueCode.entries.map { code -> code.rawValue }, "Unknown merge issue")
+            corpusRequire(issue["severity"].stringValue() in setOf("error", "warning"), "Unknown merge issue severity")
+            if (issue["location"] != JsonNull) {
+                val location = issue["location"].objectValue()
+                if ("bodyByteOffset" in location) {
+                    location.members(setOf("bodyByteOffset")); nonnegative(location["bodyByteOffset"])
+                } else {
+                    location.members(setOf("line", "column"))
+                    corpusRequire(location["line"].integerValue().signum() > 0 && location["column"].integerValue().signum() > 0,
+                        "Invalid merge issue location")
+                }
+            }
+        }
+    }
+
+    private fun yamlPair(value: JsonElement) {
+        val pair = value.objectValue()
+        pair.members(setOf("key", "value"))
+        yamlNode(pair["key"]); yamlNode(pair["value"])
+    }
+
+    private fun yamlNode(value: JsonElement?) {
+        val node = value.objectValue()
+        node.members(setOf("tag", "value"))
+        when (node["tag"].stringValue()) {
+            "map" -> node["value"].arrayValue().forEach(::yamlPair)
+            "seq" -> node["value"].arrayValue().forEach(::yamlNode)
+            "str", "int", "float", "bool", "null" -> node["value"].stringValue()
+            else -> throw CorpusException("Unknown preserved YAML tag")
         }
     }
 

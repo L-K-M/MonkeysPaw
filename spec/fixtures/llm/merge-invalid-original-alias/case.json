@@ -1,0 +1,1 @@
+{"artifact":"artifact.json","category":"llm","expected":{"invalid":[{"code":"yaml.anchor_or_alias","location":{"column":8,"line":2},"severity":"error"},{"code":"yaml.anchor_or_alias","location":{"column":8,"line":2},"severity":"error"}]},"filename":"Unsaved source.md","id":null,"kind":"merge","operation":"improve","original":"original.md","schema":1}

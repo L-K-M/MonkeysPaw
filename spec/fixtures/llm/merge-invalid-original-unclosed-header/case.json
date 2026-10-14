@@ -1,0 +1,1 @@
+{"artifact":"artifact.json","category":"llm","expected":{"invalid":[{"code":"front_matter.unclosed","location":{"column":1,"line":1},"severity":"error"}]},"filename":"Unsaved source.md","id":null,"kind":"merge","operation":"improve","original":"original.md","schema":1}

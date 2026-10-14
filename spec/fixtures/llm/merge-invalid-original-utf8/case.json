@@ -1,0 +1,1 @@
+{"artifact":"artifact.json","category":"llm","expected":{"invalid":[{"code":"source.invalid_utf8","location":null,"severity":"error"}]},"filename":"Unsaved source.md","id":null,"kind":"merge","operation":"improve","original":"original.bin","schema":1}

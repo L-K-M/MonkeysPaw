@@ -39,11 +39,15 @@ internal object LlmFixtureConsumer {
             }
             val envelope = fixture.envelope
             val expected = fixture.expected
-            val outputKind = envelope["outputKind"].stringValue()
-            if (envelope["kind"].stringValue() == "schema") {
+            val kind = envelope["kind"].stringValue()
+            if (kind == "merge") {
+                assertEquals(typedIntegers(expected), LlmMergeFixtures.consume(envelope, ::bytes), "$label merge result")
+            } else if (kind == "schema") {
+                val outputKind = envelope["outputKind"].stringValue()
                 val actual = if (outputKind == "artifact") LlmArtifact.jsonSchema else LlmReview.jsonSchema
                 assertBytesEqual(bytes(expected["bytes"].stringValue()), actual, "$label schema bytes")
             } else {
+                val outputKind = envelope["outputKind"].stringValue()
                 val sourceName = envelope["source"].stringValue()
                 val sourceBytes = bytes(sourceName)
                 var output = if (sourceName.endsWith(".bin")) swiftReplacementUtf8(sourceBytes) else strictUtf8(sourceBytes)
@@ -140,6 +144,41 @@ internal class LlmConformanceTest {
     @Test fun everyLlmExpectationAndByteGoldenIsExecuted() {
         val coverage = LlmFixtureConsumer.consume(Corpus.load().cases(Category.LLM))
         println("llm: ${coverage.cases} cases / ${coverage.files.size} files; ${coverage.expectations} expectations; pending 0.")
+    }
+
+    @Test fun everyMergeExpectationAndClosedContractIsEnforced() {
+        val fixtures = Corpus.load().cases(Category.LLM)
+        val original = fixtures.single { it.name == "merge-improve-typed-metadata" }
+        val ready = original.expected["ready"].objectValue()
+        val pair = ready["preserved"].arrayValue().first().objectValue()
+        val badNode = JsonObject(pair["value"].objectValue() + ("unconsumed" to JsonPrimitive(true)))
+        val badPair = JsonObject(pair + ("value" to badNode))
+        for ((altered, structural) in listOf(
+            JsonObject(ready + ("id" to JsonNull)) to false,
+            JsonObject(ready + ("issues" to JsonArray(listOf(buildJsonObject {
+                put("code", "field.unused"); put("severity", "warning"); put("location", JsonNull)
+            })))) to false,
+            JsonObject(ready + ("preserved" to JsonArray(emptyList()))) to false,
+            JsonObject(ready + ("preserved" to JsonArray(listOf(badPair)))) to true,
+        )) {
+            val expected = JsonObject(mapOf("ready" to altered))
+            val mutation = original.copy(envelope = JsonObject(original.envelope + ("expected" to expected)))
+            if (structural) assertFailsWith<CorpusException> { LlmFixtureConsumer.consume(listOf(mutation)) }
+            else assertFailsWith<AssertionError> { LlmFixtureConsumer.consume(listOf(mutation)) }
+        }
+        for ((key, value) in listOf("id" to JsonPrimitive("01K6Z4V9KQWZX7MPQ4T8ZNB2PD"),
+            "operation" to JsonPrimitive("copy"), "originalRepeat" to JsonPrimitive(false),
+            "artifactBodyRepeat" to JsonPrimitive(0), "artifactBodyRepeat" to JsonPrimitive(262146))) {
+            assertFailsWith<CorpusException> { LlmFixtureContracts.read(JsonObject(original.envelope + (key to value))) }
+        }
+        for ((name, altered) in listOf(
+            "merge-invalid-original-priority" to buildJsonObject { put("invalid", JsonArray(emptyList())) },
+            "merge-write-cap-header" to buildJsonObject { put("failed", buildJsonObject { put("error", "serializationFailed") }) },
+        )) {
+            val fixture = fixtures.single { it.name == name }
+            val mutation = fixture.copy(envelope = JsonObject(fixture.envelope + ("expected" to altered)))
+            assertFailsWith<AssertionError> { LlmFixtureConsumer.consume(listOf(mutation)) }
+        }
     }
 
     @Test fun unconsumedNestedExpectationsAndChangedGoldensCannotPass() {

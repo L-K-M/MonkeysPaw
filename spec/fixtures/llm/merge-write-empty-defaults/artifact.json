@@ -1,0 +1,48 @@
+{
+  "title": "New title",
+  "description": "New description",
+  "tags": [
+    "on",
+    "010",
+    "true"
+  ],
+  "fields": [
+    {
+      "name": "tone",
+      "type": "choice",
+      "label": "tone",
+      "description": "",
+      "default": "",
+      "options": [
+        {
+          "label": "Rust",
+          "value": "Rust"
+        }
+      ],
+      "optional": false,
+      "remember": true
+    },
+    {
+      "name": "context",
+      "type": "multiline",
+      "label": "context",
+      "description": "",
+      "default": "",
+      "options": [],
+      "optional": false,
+      "remember": true
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "label": "name",
+      "description": "",
+      "default": "",
+      "options": [],
+      "optional": false,
+      "remember": true
+    }
+  ],
+  "body": "New {{tone}} {{context}} {{name}}",
+  "notes": "Session-only artifact notes"
+}

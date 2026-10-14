@@ -20,6 +20,25 @@ final class PromptConformanceTests: XCTestCase {
         print("Consumed \(cases) prompt fixtures (\(files) files).")
     }
 
+    func testMergePreservationAndCandidateBytesCannotBypassFullGate() throws {
+        try withTemporaryCorpus { root in
+            let directory = root.appendingPathComponent("llm/merge-improve-typed-metadata")
+            let url = directory.appendingPathComponent("case.json")
+            let original = try Data(contentsOf: url)
+            var envelope = try JSONDecoder().decode(LlmFixtureJSON.self, from: original).object
+            var expected = try envelope["expected"]!.object
+            var ready = try expected["ready"]!.object
+            ready["preserved"] = .array([])
+            expected["ready"] = .object(ready)
+            envelope["expected"] = .object(expected)
+            try LlmFixtureJSON.object(envelope).bytes().write(to: url)
+            XCTAssertThrowsError(try consumeCorpus(at: root), "preserved metadata")
+            try original.write(to: url)
+            try Data("wrong bytes".utf8).write(to: directory.appendingPathComponent("candidate.md"))
+            XCTAssertThrowsError(try consumeCorpus(at: root), "candidate bytes")
+        }
+    }
+
     func testHiddenMetadataIsIgnoredAtEveryCorpusLevel() throws {
         let baseline = try consumeCorpus(at: fixtureRoot)
         try withTemporaryCorpus { root in
@@ -239,6 +258,7 @@ final class PromptConformanceTests: XCTestCase {
 
             if category == "llm" {
                 let llm = try LlmFixtureCorpus.consume(at: directory)
+                print("Full gate llm: \(llm.cases) cases / \(llm.files.count) files / \(llm.expectations) expectations; pending 0.")
                 for file in llm.files {
                     let path = "llm/" + file
                     allFiles.insert(RelativePath(path))
