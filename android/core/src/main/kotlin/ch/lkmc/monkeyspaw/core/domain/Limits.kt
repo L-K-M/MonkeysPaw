@@ -30,6 +30,8 @@ object Limits {
     const val syncCollectionBudgetNanos = 300_000_000_000L
     const val syncCollectionRestartLimit = 1
 
+    internal const val syncStampMaxBytes = 4096
+
     const val llmBudgetNanos = 300_000_000_000L
     const val modelListTimeoutNanos = 15_000_000_000L
     const val anthropicMaxTokens = 16_000

@@ -30,6 +30,22 @@ class FileStamp(private val token: String) {
     override fun equals(other: Any?): Boolean = other is FileStamp && token == other.token
     override fun hashCode(): Int = token.hashCode()
     override fun toString(): String = "<file stamp>"
+
+    /** Private journal representation only; never include it in diagnostics. */
+    internal fun journalToken(): String = checkedToken(token)
+
+    companion object {
+        internal fun fromJournalToken(token: String): FileStamp = FileStamp(checkedToken(token))
+
+        private fun checkedToken(token: String): String {
+            val bytes = try { token.encodeToByteArray(throwOnInvalidSequence = true) }
+            catch (_: CharacterCodingException) { throw SyncFileOperationError(SyncFileFailureCode.INVALID_STATE) }
+            if (bytes.isEmpty() || bytes.size > Limits.syncStampMaxBytes) {
+                throw SyncFileOperationError(SyncFileFailureCode.INVALID_STATE)
+            }
+            return token
+        }
+    }
 }
 
 data class StoredFile(val relativePath: String, val stamp: FileStamp)
