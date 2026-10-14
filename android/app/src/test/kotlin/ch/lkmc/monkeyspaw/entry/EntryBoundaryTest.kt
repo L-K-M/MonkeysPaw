@@ -23,7 +23,9 @@ internal class EntryBoundaryTest {
         assertEquals(expected.keys, components.map { it.attr("name") }.toSet())
         for (component in components) assertEquals(expected.getValue(component.attr("name")), component.attr("exported"))
         for (tag in listOf("activity-alias", "provider")) assertTrue(children(manifest, tag).isEmpty())
+        // Only the assistant/sync transport's INTERNET permission is requested; anything merged in is removed.
         for (permission in children(manifest, "uses-permission")) {
+            if (permission.attr("name") == "android.permission.INTERNET") continue
             assertEquals("remove", permission.getAttributeNS("http://schemas.android.com/tools", "node"))
         }
         val tile = components.single { it.attr("name") == ".entry.PromptTileService" }
