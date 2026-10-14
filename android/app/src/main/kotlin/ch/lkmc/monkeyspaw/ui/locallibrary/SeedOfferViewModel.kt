@@ -36,7 +36,8 @@ internal class SeedOfferViewModel @Inject constructor(
         mutableState.value = SeedOfferUiState.Loading
         work = viewModelScope.launch {
             try {
-                library.refresh().error?.let { throw it }
+                // A resolved seed choice enters the browser, which owns rescan failures and retry.
+                library.refresh()
                 mutableState.value = if (installer.shouldOffer()) SeedOfferUiState.Offer else SeedOfferUiState.Ready
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -50,10 +51,9 @@ internal class SeedOfferViewModel @Inject constructor(
         mutableState.value = SeedOfferUiState.Installing
         work = viewModelScope.launch {
             val result = installer.install()
-            val refreshed = library.refresh()
+            library.refresh()
             mutableState.value = when {
                 result.error != null -> SeedOfferUiState.Failed(result.summary)
-                refreshed.error != null -> SeedOfferUiState.Failed()
                 else -> SeedOfferUiState.Ready
             }
         }

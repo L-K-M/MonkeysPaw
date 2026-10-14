@@ -14,7 +14,6 @@ import ch.lkmc.monkeyspaw.R
 @Composable
 internal fun SeedOfferScreen(
     state: SeedOfferUiState,
-    promptCount: Int,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
     onRefresh: () -> Unit,
@@ -33,9 +32,7 @@ internal fun SeedOfferScreen(
                 Button(onClick = onAccept) { Text(stringResource(R.string.seeds_accept)) }
                 TextButton(onClick = onDecline) { Text(stringResource(R.string.seeds_decline)) }
             }
-            SeedOfferUiState.Ready -> {
-                Text(pluralStringResource(R.plurals.local_prompt_count, promptCount, promptCount))
-            }
+            SeedOfferUiState.Ready -> Unit // MainActivity routes the completed offer to LibraryScreen.
             is SeedOfferUiState.Failed -> {
                 Text(stringResource(if (state.partial == null) R.string.library_load_failed else R.string.seeds_failed))
                 state.partial?.let { Text(pluralStringResource(R.plurals.seeds_added_count, it.seededCount, it.seededCount)) }

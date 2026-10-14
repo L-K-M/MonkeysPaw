@@ -192,4 +192,6 @@ tasks.withType<Test>().configureEach {
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/MonkeysPawApplication.kt"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/MainActivity.kt"))
         .withPropertyName("appGraphSources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/ui"), graphSources.file("res/values/strings.xml"))
+        .withPropertyName("libraryUiSources").withPathSensitivity(PathSensitivity.RELATIVE)
 }
