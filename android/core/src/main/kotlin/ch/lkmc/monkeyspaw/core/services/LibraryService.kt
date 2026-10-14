@@ -5,6 +5,7 @@ import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.sync.SyncState
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.domain.library.PromptCreation
 import ch.lkmc.monkeyspaw.core.domain.ranking.Utf8Order
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.util.UUID
@@ -19,6 +20,7 @@ class LibraryService(
     state: StateStore,
     internal val clock: Clock,
     private val entropy: Entropy,
+    private val assistantAccess: AssistantAccess = AssistantAccess.LOCAL,
 ) {
     internal val mutations = MutationBoundary()
     private val syncGate = SyncRecoveryGate()
@@ -65,6 +67,83 @@ class LibraryService(
     /** Exclusive create never reads or snapshots an occupied prompt destination. */
     fun create(document: PromptDocument, path: String, provenance: PromptProvenance? = null): LibrarySaveResult = locked {
         saveDocument(document, path, SaveMode.CREATE, null, provenance).also { index.acceptCommitted(it.entry, path) }
+    }
+
+    /** Checked assistant saves use the existing history/migration/publication path and exact preview. */
+    internal fun acceptAssistant(acceptance: AssistantAcceptance, permit: AssistantSavePermit): LibrarySaveResult = locked {
+        permit.check()
+        checkAssistantAccess(acceptance)
+        val source = acceptance.candidate.context.editor
+        val current = checkAssistantSource(source)
+        val document = acceptance.candidate.content.document
+        PromptCodec.write(document)
+        val result = if (acceptance.destination == AssistantSaveDestination.IMPROVE) {
+            if (source == null || source.isNew || source.stamp == null) throw LibraryError.InvalidPromptPath
+            saveDocument(document, source.relativePath, SaveMode.REPLACE, source.stamp, null, acceptance, permit)
+        } else {
+            val id = document.frontMatter.id ?: throw LibraryError.PreviewMismatch
+            if (entries().any { it.document.frontMatter.id == id }) throw LibraryError.IdentityMismatch
+            val folder = if (acceptance.destination == AssistantSaveDestination.PRIVATE_COPY) "" else current?.entry?.folder.orEmpty()
+            val name = PromptCreation.relativePath(document.frontMatter.title, clock.now())
+            val preferred = (if (folder.isEmpty()) "" else "$folder/") + name
+            var suffix = 1
+            var created: LibrarySaveResult? = null
+            for (attempt in 0 until Limits.libraryCreateAttemptCap) {
+                val candidate = availablePath(preferred, suffix)
+                try {
+                    created = saveDocument(document, candidate.first, SaveMode.CREATE, null, null, acceptance, permit, source)
+                    break
+                } catch (_: LibraryError.DestinationOccupied) { suffix = candidate.second + 1 }
+            }
+            created ?: throw LibraryError.CopyLimitReached
+        }
+        // Later external replacement/deletion cannot hide the commit or resurrect stale index bytes.
+        when (val latest = checkedLoad(result.entry.relativePath)) {
+            is PromptLoadResult.Loaded -> index.acceptCommitted(latest.prompt.entry, result.entry.relativePath)
+            PromptLoadResult.Missing -> index.acceptDeleted(result.entry.relativePath)
+            is PromptLoadResult.Failed -> index.acceptCommitted(result.entry, result.entry.relativePath)
+        }
+        result
+    }
+
+    private fun checkAssistantSource(source: AssistantEditorSnapshot?): LoadedFile? {
+        if (source == null) return null
+        val current = readCurrent(source.relativePath)
+        if (current == null && source.stamp != null) throw AssistantSaveRefusal(
+            AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.Deleted))
+        if (current?.entry?.stamp != source.stamp) throw AssistantSaveRefusal(
+            AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.Modified(checkNotNull(current).entry.stamp)))
+        if (current == null && !source.isNew) throw AssistantSaveRefusal(
+            AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.Deleted))
+        current?.let { LoadedPrompt(it.bytes, it.entry).readOnlyReason }?.let { reason ->
+            throw AssistantSaveRefusal(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.ReadOnly(reason)))
+        }
+        return current
+    }
+
+    private fun checkAssistantAccess(acceptance: AssistantAcceptance) {
+        val expected = acceptance.candidate.context.access
+        val actual = assistantAccess.current(acceptance.candidate.context.editor?.relativePath)
+        if (actual == AssistantAccessState.UNAVAILABLE || expected.mutationAccess != acceptance.candidate.mutationAccess ||
+            acceptance.destination == AssistantSaveDestination.IMPROVE && actual.mutationAccess != AssistantMutationAccess.CURRENT_SCOPE ||
+            actual.mutationAccess == AssistantMutationAccess.PRIVATE_COPY && acceptance.destination != AssistantSaveDestination.PRIVATE_COPY) {
+            throw AssistantSaveRefusal(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.AccessDenied))
+        }
+        if (actual != expected) throw AssistantSaveRefusal(
+            AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.StaleContext))
+    }
+
+    private fun availablePath(path: String, startingSuffix: Int): Pair<String, Int> {
+        LibraryPath.validate(path)
+        if (startingSuffix == 1 && isAvailable(path)) return path to 1
+        val directory = path.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
+        val stem = LibraryPath.filename(path).removeSuffix(".md")
+        for (suffix in maxOf(2, startingSuffix) until 2 + Limits.libraryCopyCandidateCap) {
+            val candidate = directory + PromptCreation.copyFilename(stem, suffix)
+            LibraryPath.validate(candidate)
+            if (isAvailable(candidate)) return candidate to suffix
+        }
+        throw LibraryError.CopyLimitReached
     }
 
     fun assignIdentity(path: String, expectedStamp: FileStamp? = null): LibrarySaveResult = locked {
@@ -165,7 +244,10 @@ class LibraryService(
     }
 
     private fun saveDocument(draft: PromptDocument, path: String, mode: SaveMode,
-                             expectedStamp: FileStamp?, provenance: PromptProvenance?): LibrarySaveResult {
+                             expectedStamp: FileStamp?, provenance: PromptProvenance?,
+                             acceptance: AssistantAcceptance? = null, permit: AssistantSavePermit? = null,
+                             creationSource: AssistantEditorSnapshot? = null): LibrarySaveResult {
+        permit?.check()
         LibraryPath.validate(path)
         PromptCodec.write(draft)
         val current = if (mode == SaveMode.REPLACE) readCurrent(path) else null
@@ -178,6 +260,13 @@ class LibraryService(
             ?: ULID.generate(date, entropy.bytes(Limits.ulidEntropyBytes))
         val document = PromptMutations.assigningIdentity(id, draft, LibraryPath.filename(path))
         val bytes = PromptCodec.write(document).encodeToByteArray(throwOnInvalidSequence = true)
+        if (acceptance != null && !bytes.contentEquals(acceptance.candidate.content.canonicalBytes)) throw LibraryError.PreviewMismatch
+        val attribution = if (acceptance == null) provenance else {
+            val profile = acceptance.candidate.context.profile ?: throw LibraryError.PreviewMismatch
+            val authority = profile.baseURL.substringAfter("://").substringBefore('/')
+            val host = if (authority.startsWith('[')) authority.substringBefore(']') + "]" else authority.substringBefore(':')
+            PromptProvenance(date, host, profile.modelID, acceptance.usage)
+        }
         val sourceIdentity = current?.entry?.identity ?: PromptIdentity.at(path)
         val targetIdentity = PromptIdentity.at(path, document.frontMatter.id)
         val migrated = mutableListOf<PromptKeyedStore>()
@@ -195,10 +284,19 @@ class LibraryService(
             when (mode) {
                 SaveMode.REPLACE -> {
                     if (prompts.stamp(path) != current?.entry?.stamp) throw LibraryError.Conflict
+                    if (acceptance != null) checkAssistantAccess(acceptance)
+                    permit?.check()
                     prompts.write(bytes, path)
                 }
-                SaveMode.CREATE -> try { prompts.create(bytes, path) }
+                SaveMode.CREATE -> {
+                    if (acceptance != null) {
+                        checkAssistantSource(creationSource)
+                        checkAssistantAccess(acceptance)
+                    }
+                    permit?.check()
+                    try { prompts.create(bytes, path) }
                     catch (_: StoreError.AlreadyExists) { throw LibraryError.DestinationOccupied }
+                }
             }
         } catch (error: Exception) {
             var recovered = true
@@ -214,7 +312,7 @@ class LibraryService(
         catch (_: Exception) { throw LibraryError.CommitUnverified }
         if (!committed.bytes.contentEquals(bytes)) throw LibraryError.Conflict
         // Attribution and retention happen after publication; failures never request another file write.
-        try { history.setHeadProvenance(provenance, targetIdentity, bytes) }
+        try { history.setHeadProvenance(attribution, targetIdentity, bytes) }
         catch (_: Exception) { provenanceFailed = true }
         val maintenanceFailed = try { history.prune(targetIdentity); false } catch (_: Exception) { true }
         return LibrarySaveResult(committed.entry, maintenanceFailed, provenanceFailed)

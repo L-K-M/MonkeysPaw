@@ -9,6 +9,9 @@ object Limits {
     const val ulidEntropyBytes = 10
     const val historyCapPerPrompt = 50
     const val historySequenceMax = 999_999
+    const val libraryCopyCandidateCap = 1_000
+    const val libraryCreateAttemptCap = 64
+    const val promptFilenameMaxBytes = 255
     const val historyMaxUnixSeconds = 253_402_300_800L
     const val usageEventCap = 1024
     const val valuesFileCapBytes = 1_048_576

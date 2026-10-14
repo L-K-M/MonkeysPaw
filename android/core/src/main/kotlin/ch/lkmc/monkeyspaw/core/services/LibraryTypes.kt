@@ -25,7 +25,7 @@ internal fun sanitized(error: Exception): Exception = when (error) {
     is InterruptedException -> error.also { Thread.currentThread().interrupt() }
     StoreError.RecoveryRequired -> LibraryError.RecoveryRequired
     is StoreError, is LibraryError, is SyncError, is SyncFileOperationError, is PromptWriteError, is ULIDGenerationError,
-    is CancellationException -> error
+    is AssistantSaveRefusal, is CancellationException -> error
     else -> LibraryError.OperationFailed
 }
 
@@ -42,6 +42,8 @@ sealed class LibraryError private constructor(message: String) : Exception(messa
     object RevisionNotFound : LibraryError("History revision is unavailable.")
     object InvalidProvenance : LibraryError("Prompt attribution is corrupt or unsupported.")
     object CommitUnverified : LibraryError("File committed but could not be verified. Reload before retrying.")
+    object PreviewMismatch : LibraryError("Saved bytes must match the assistant preview.")
+    object CopyLimitReached : LibraryError("No available prompt name within the creation limit.")
     object OperationFailed : LibraryError("Local operation failed.")
 
     final override fun toString(): String = message.orEmpty()
