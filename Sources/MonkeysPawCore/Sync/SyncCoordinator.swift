@@ -281,7 +281,7 @@ final class SyncCoordinator {
             try collected.discard()
             pull = nil
             phase(.scanning)
-            let finalScan = try preparedScan(phase: phase)
+            let finalScan = try await preparedScan(phase: phase)
             phase(.pushing)
             for change in finalScan.changes {
                 try permit.check()
@@ -445,7 +445,7 @@ final class SyncCoordinator {
             accessGeneration: accessGeneration, freshID: freshID, mutations: mutations)
     }
 
-    private func preparedScan(phase: (SyncPhase) -> Void) throws -> SyncLocalScan {
+    private func preparedScan(phase: (SyncPhase) -> Void) async throws -> SyncLocalScan {
         for _ in 0..<Limits.syncPreparationLimit {
             let state = try currentState()
             let local = try scan(state)
@@ -455,11 +455,104 @@ final class SyncCoordinator {
                     heldPaths: local.snapshot.heldPaths, mutations: mutations)
                 try commit(SyncGroupFolders.stale(state: state, ownership: ownership(), inventory: inventory,
                     at: date(), freshID: freshID, mutations: mutations))
-            } else if let preparation = local.preparation { try commit(preparation) }
-            else { return local }
+            } else if let preparation = local.preparation {
+                try commit(preparation)
+            } else if let path = local.issues.keys.sorted().first(where: { local.issues[$0] == .forbidden }), let state {
+                try await restoreDenied(path, state: state, local: local.snapshot)
+            } else { return local }
             phase(.scanning)
         }
         throw SyncCoordinatorError.noProgress
+    }
+
+    /// A known viewer denial needs the same preservation as a server 403,
+    /// without dispatching an unauthorized mutation to obtain that response.
+    private func restoreDenied(_ path: RelativePath, state: SyncState, local: SyncReconciliationSnapshot) async throws {
+        let source = local.files.first { RelativePath($0.path) == path }
+        let identity = try source?.identity ?? state.prompts.first(where: {
+            (try? SyncLocalScanner.rooted($0.value.path, scope: $0.value.scope, groups: state.groups)) == path
+        })?.key
+        guard let identity else { throw SyncCoordinatorError.noProgress }
+        let recorded = state.prompts[identity]
+        var head: SyncConflictHead?
+        if case .assigned(let id) = identity, let recorded, recorded.rev > 0 {
+            do {
+                let prompt = try await client.prompt(id: id)
+                let accessible = try SyncConflictHead(prompt, userID: permit.binding.account.userID)
+                if accessible.id == id, accessible.scope == recorded.scope, accessible.path == recorded.path {
+                    head = accessible
+                }
+            } catch let error as SyncHTTPClientError {
+                guard error == .notFound || error == .deleted || error == .forbidden else { throw error }
+            }
+        }
+        try permit.check()
+        // GET can race an external save or move. Preserve the fresh incarnation;
+        // the journal rechecks it again before publishing or retiring anything.
+        let fresh = try snapshot(state)
+        let matching = try fresh.files.filter { try $0.identity == identity }
+        let sources = matching.filter { !fresh.heldPaths.contains(RelativePath($0.path)) }
+        guard sources.count <= 1 else { throw SyncReconciliationError.invalidLocalSnapshot }
+        let file = sources.first
+        if file == nil, !matching.isEmpty { return }
+        var next = state
+        next.prompts[identity] = nil
+        var installation: SyncReconciliationInstall?
+        if let head {
+            let rooted = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups)
+            let remote = SyncReconciliationRemote(id: head.id, scope: head.scope, path: head.path, libraryPath: rooted,
+                rev: head.rev, bytes: head.bytes, hash: head.hash, mode: try SyncGroupFolders.mode(for: head.scope, groups: state.groups))
+            let key = try SyncNaming.pathKey(rooted)
+            let targets = try fresh.files.filter { try SyncNaming.pathKey(RelativePath($0.path)) == key }
+            if let occupant = targets.first(where: {
+                RelativePath($0.path) != rooted || $0.identityKey != head.id.rawValue || fresh.heldPaths.contains(rooted)
+            }) {
+                let plan = SyncReconciliationPlan(mode: .normal, expectedState: state, nextState: state, operations: [],
+                    occupiedPaths: Set(fresh.files.map { RelativePath($0.path) }), localIdentities: try Set(fresh.files.map { try $0.identity }))
+                try relocate(occupant, remote: remote, plan: plan, local: fresh)
+                return
+            }
+            installation = SyncReconciliationInstall(remote: remote, source: file, target: targets.first)
+            next.prompts[identity] = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
+                canonicalHash: head.hash, origin: head.origin)
+        }
+        next = try SyncState(binding: state.binding, databaseID: state.databaseID, cursors: state.cursors,
+            groups: state.groups, prompts: next.prompts, favorites: state.favorites.filter {
+                next.prompts[$0.key]?.scope.pathScope == .group
+            })
+        if case .assigned(let id) = identity {
+            var operations: [SyncReconciliationOperation] = []
+            if let file {
+                let unchanged = installation.map { install in
+                    RelativePath(file.path) == install.remote.libraryPath
+                        && (try? SyncLocalScanner.canonical(file.bytes, path: install.remote.path,
+                                                           scope: install.remote.scope).bytes) == install.remote.bytes
+                } ?? false
+                if unchanged, let installation { operations.append(.install(installation)) }
+                else { operations.append(.preserve(.init(id: id, reason: .dirtyUpsert, local: file, installation: installation))) }
+            } else if let installation { operations.append(.install(installation)) }
+            let plan = SyncReconciliationPlan(mode: .normal, expectedState: state, nextState: next, operations: operations,
+                occupiedPaths: Set(fresh.files.map { RelativePath($0.path) }), localIdentities: try Set(fresh.files.map { try $0.identity }))
+            try commit(application(plan, local: fresh))
+            return
+        }
+        // Idless viewer creates receive their first identity only in a private
+        // rescue; they never become group upload candidates.
+        var edits: [SyncLibraryEdit] = []
+        if let file {
+            let copy = try SyncConflictPolicy.copy(file, origin: .rescued, userID: permit.binding.account.userID,
+                device: device, at: date(), freshID: freshID(), occupiedPaths: fresh.files.map { RelativePath($0.path) }, mutations: mutations)
+            if let rawID = copy.edit.copyID {
+                let id = try SyncIdentifiers.ulid(rawID)
+                guard next.prompts[.assigned(id)] == nil, !fresh.files.contains(where: { $0.identityKey == rawID }) else {
+                    throw SyncError.invalidState
+                }
+                next.prompts[.assigned(id)] = try SyncPromptState(scope: .user(permit.binding.account.userID),
+                    path: RelativePath(copy.edit.path), rev: 0, origin: copy.origin)
+            }
+            edits = [copy.edit, try mutations.trash(file)]
+        }
+        try commit(SyncApplyPlan(expectedState: state, nextState: next, edits: edits))
     }
 
     private func changed(_ plan: SyncApplyPlan) -> Bool {
