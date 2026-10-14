@@ -97,13 +97,13 @@ private fun ByteArray.matches(position: Int, ascii: String): Boolean =
     position + ascii.length <= size && ascii.indices.all { this[position + it].toInt() == ascii[it].code }
 
 /** Separate from SyncAPI's reader: decoded duplicate keys and 32 open containers are strict. */
-internal enum class AssistantJsonMode { OUTPUT, ENVELOPE }
+internal enum class AssistantJsonMode { OUTPUT, ENVELOPE, SERIALIZATION }
 
 internal class LlmJsonParser(private val bytes: ByteArray, private var position: Int = 0,
                             private val mode: AssistantJsonMode = AssistantJsonMode.OUTPUT) {
     init {
         // JSONDecoder accepts a document BOM; output recovery has its own pinned rules.
-        if (mode == AssistantJsonMode.ENVELOPE && position == 0 && bytes.size >= 3 &&
+        if (mode != AssistantJsonMode.OUTPUT && position == 0 && bytes.size >= 3 &&
             bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) position = 3
     }
 
@@ -137,7 +137,8 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                         if (!consume(58)) throw AssistantError.InvalidOutput
                         val item = value(depth + 1)
                         // JSONDecoder's envelope keyed containers retain the first duplicate.
-                        if (key !in members) members[key] = item
+                        // JSONSerialization eagerly decodes values and keeps the last duplicate.
+                        if (key !in members || mode == AssistantJsonMode.SERIALIZATION) members[key] = item
                         whitespace()
                     } while (consume(44))
                     if (!consume(125)) throw AssistantError.InvalidOutput
@@ -166,7 +167,7 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 val fragment = if (mode == AssistantJsonMode.OUTPUT) token.removePrefix("\uFEFF") else token
                 val bomBoolean = mode == AssistantJsonMode.OUTPUT && token.startsWith("\uFEFF") && fragment in setOf("true", "false")
                 if (!bomBoolean && (!number.matches(fragment) ||
-                    (mode == AssistantJsonMode.OUTPUT && fragment.toDoubleOrNull()?.isFinite() != true))) {
+                    (mode != AssistantJsonMode.ENVELOPE && fragment.toDoubleOrNull()?.isFinite() != true))) {
                     throw AssistantError.InvalidOutput
                 }
                 LlmJsonValue.Number(fragment)
@@ -202,7 +203,7 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 // The reference strips one literal BOM per raw UTF-8 run; escaped BOMs remain.
                 try {
                     val run = bytes.decodeToString(start, position, throwOnInvalidSequence = true)
-                    text.append(if (mode == AssistantJsonMode.OUTPUT) run.removePrefix("\uFEFF") else run)
+                    text.append(if (mode == AssistantJsonMode.ENVELOPE) run else run.removePrefix("\uFEFF"))
                 }
                 catch (_: CharacterCodingException) { throw AssistantError.InvalidOutput }
                 position++
