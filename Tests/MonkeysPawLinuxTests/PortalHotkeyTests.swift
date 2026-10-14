@@ -54,6 +54,7 @@ final class PortalHotkeyTests: XCTestCase {
         var completions = 0
         backend.configure { completions += 1 }
         XCTAssertTrue(GTKTestSupport.spin { completions > 0 })
+        PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(completions, 1)
     }
 
@@ -66,8 +67,7 @@ final class PortalHotkeyTests: XCTestCase {
     }
 
     func testTwoActionBindUsesCompleteCatalogueWithoutInventingRepeatPreference() throws {
-        // Even an app-supplied repeat accelerator must not suggest a portal key.
-        try registerBoth(repeatAccelerator: Accelerator("Alt+R"))
+        try registerBoth()
         let picker = backend.registration(for: .togglePicker)
         let repeatAction = backend.registration(for: .repeatLast)
         XCTAssertNotEqual(picker.id, repeatAction.id)
@@ -91,6 +91,16 @@ final class PortalHotkeyTests: XCTestCase {
         XCTAssertEqual(Set(portal.calls.map(\.sender) + portal.ordinaryCalls.map(\.sender)).count, 1)
     }
 
+    func testExplicitRepeatAcceleratorIsProposedOnlyWhenNoPortalChoiceExists() throws {
+        try registerBoth(repeatAccelerator: Accelerator("Alt+R"))
+        configure()
+        let bind = try XCTUnwrap(portal.calls.last { $0.method == "BindShortcuts" })
+        let repeatShortcut = try XCTUnwrap(portal.shortcuts(bind).first { $0.id == "repeat" })
+        XCTAssertEqual(repeatShortcut.properties["preferred_trigger"], "ALT+r")
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound,
+                       "A proposed key does not confirm a portal binding.")
+    }
+
     func testSavedTwoActionChoicesAreAuthoritativeAndNeverGetPreferredTriggers() throws {
         for saved in ["[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]",
                       "[('toggle', {'trigger_description': <''>}), ('repeat', @a{sv} {})]"] {
@@ -98,7 +108,7 @@ final class PortalHotkeyTests: XCTestCase {
             backend = makeBackend()
             portal.restoredShortcuts = saved
             portal.boundShortcuts = saved
-            try registerBoth()
+            try registerBoth(repeatAccelerator: Accelerator("Alt+R"))
             configure()
             let requested = portal.shortcuts(try XCTUnwrap(portal.calls.last))
             XCTAssertEqual(requested.map(\.id), ["toggle", "repeat"])
@@ -159,10 +169,9 @@ final class PortalHotkeyTests: XCTestCase {
     func testBothNilDeclarationsCanRestoreSavedChoicesWithoutSuggestions() throws {
         portal.restoredShortcuts = "[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
         portal.boundShortcuts = portal.restoredShortcuts
+        var events: [HotkeyAction] = []
         for action in HotkeyAction.allCases {
-            _ = backend.register(action, accelerator: nil) { [weak self] in
-                if action == .togglePicker { self?.fires += 1 } else { self?.repeatFires += 1 }
-            }
+            _ = backend.register(action, accelerator: nil) { events.append(action) }
         }
         PortalSessionTestSupport.barrier(transport)
         XCTAssertTrue(portal.calls.isEmpty)
@@ -170,9 +179,15 @@ final class PortalHotkeyTests: XCTestCase {
         configure()
         let requested = portal.shortcuts(try XCTUnwrap(portal.calls.last))
         XCTAssertEqual(requested.map(\.id), ["toggle", "repeat"])
+        XCTAssertEqual(Set(requested.map(\.id)).count, HotkeyAction.allCases.count)
         XCTAssertTrue(requested.allSatisfy { $0.properties["preferred_trigger"] == nil })
         XCTAssertEqual(backend.registration(for: .togglePicker).detail, "Super+K")
         XCTAssertEqual(backend.registration(for: .repeatLast).detail, "Alt+R")
+        for shortcut in requested {
+            portal.emit(member: "Activated", body: "(objectpath '\(try session())', '\(shortcut.id)', uint64 17, @a{sv} {})")
+        }
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(events, HotkeyAction.allCases)
     }
 
     func testSavedRepeatSurvivesBindingBeforeItsCallbackIsDeclared() throws {
@@ -241,7 +256,7 @@ final class PortalHotkeyTests: XCTestCase {
         XCTAssertEqual(events.count, 2)
     }
 
-    func testUnregisterOneActionKeepsOtherRouteAndReleasesCallback() throws {
+    func testUnregisterBoundActionRetiresSessionAndReleasesCallback() throws {
         portal.boundShortcuts = "[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
         try register()
         weak var callbackOwner: NSObject?
@@ -258,19 +273,67 @@ final class PortalHotkeyTests: XCTestCase {
         backend.unregister(repeatAction)
         XCTAssertNil(callbackOwner)
         XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound)
-        XCTAssertEqual(backend.currentRegistration, picker)
+        XCTAssertEqual(backend.currentRegistration.id, picker.id)
+        XCTAssertEqual(backend.currentRegistration.status, .needsAction)
+        XCTAssertFalse(backend.isAttached)
         XCTAssertEqual(portal.calls.map(\.method), methods)
-        XCTAssertTrue(portal.closedPaths.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin { !self.portal.closedPaths.isEmpty })
         let handle = try session()
         for action in ["repeat", "toggle"] {
             portal.emit(member: "Activated", body: "(objectpath '\(handle)', '\(action)', uint64 17, @a{sv} {})")
         }
         PortalSessionTestSupport.barrier(transport)
-        XCTAssertEqual(fires, 1)
+        XCTAssertEqual(fires, 0)
         XCTAssertEqual(repeatFires, 0)
     }
 
-    func testRedeclarationKeepsDuplicateSuppressionForTheRetainedSession() throws {
+    func testUnregisterSavedActionClosesBeforeFreshBindAndDoesNotResurrectIt() throws {
+        for removed in HotkeyAction.allCases {
+            backend.shutdown()
+            backend = makeBackend()
+            portal.restoredShortcuts = "[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
+            portal.boundShortcuts = portal.restoredShortcuts
+            try registerBoth()
+            configure()
+            let remainingID = removed == .togglePicker ? "repeat" : "toggle"
+            let handle = try session()
+            let closes = portal.closedPaths.count
+            let binds = portal.calls.filter { $0.method == "BindShortcuts" }.count
+            let methods = portal.calls.map(\.method)
+            portal.holdSessionClose = true
+            backend.unregister(backend.registration(for: removed))
+            XCTAssertFalse(backend.isAttached)
+            XCTAssertTrue(GTKTestSupport.spin { self.portal.closedPaths.count > closes })
+            XCTAssertEqual(portal.calls.map(\.method), methods, "Removal must not start consent.")
+            portal.boundShortcuts = "[('\(remainingID)', {'trigger_description': <'Saved key'>})]"
+            var completions = 0
+            backend.configure { completions += 1 }
+            PortalSessionTestSupport.barrier(transport)
+            XCTAssertEqual(completions, 0, "Replacement must wait for acknowledged Close.")
+            XCTAssertEqual(portal.calls.filter { $0.method == "BindShortcuts" }.count, binds)
+            portal.holdSessionClose = false
+            portal.releaseSessionCloses()
+            XCTAssertTrue(GTKTestSupport.spin { completions > 0 })
+            PortalSessionTestSupport.barrier(transport)
+            XCTAssertEqual(completions, 1)
+            XCTAssertEqual(portal.calls.filter { $0.method == "BindShortcuts" }.count, binds + 1)
+            let bind = try XCTUnwrap(portal.calls.last { $0.method == "BindShortcuts" })
+            let shortcuts = portal.shortcuts(bind)
+            XCTAssertEqual(shortcuts.map(\.id), [remainingID])
+            XCTAssertNil(shortcuts.first?.properties["preferred_trigger"])
+            XCTAssertEqual(backend.registration(for: removed).status, .unbound)
+            for id in ["toggle", "repeat"] {
+                portal.emit(member: "Activated", body: "(objectpath '\(handle)', '\(id)', uint64 17, @a{sv} {})")
+            }
+            PortalSessionTestSupport.barrier(transport)
+            XCTAssertEqual(fires, removed == .togglePicker ? 0 : 1)
+            XCTAssertEqual(repeatFires, removed == .repeatLast ? 0 : 1)
+            fires = 0
+            repeatFires = 0
+        }
+    }
+
+    func testRedeclarationAfterRemovalRequiresExplicitFreshSession() throws {
         portal.boundShortcuts = "[('toggle', {'trigger_description': <'Super+K'>}), ('repeat', {'trigger_description': <'Alt+R'>})]"
         try registerBoth()
         configure()
@@ -285,17 +348,45 @@ final class PortalHotkeyTests: XCTestCase {
         backend.unregister(repeatAction)
         let replacement = backend.register(.repeatLast, accelerator: nil) { [weak self] in self?.repeatFires += 1 }
         XCTAssertNotEqual(replacement.id, repeatAction.id)
-        XCTAssertEqual(replacement.status, .registered)
-        XCTAssertEqual(backend.currentRegistration, picker)
-        XCTAssertEqual(backend.activationRevision, revision)
+        XCTAssertEqual(replacement.status, .unbound)
+        XCTAssertEqual(backend.currentRegistration.id, picker.id)
+        XCTAssertNotEqual(backend.activationRevision, revision)
         XCTAssertEqual(portal.calls.map(\.method), methods)
         portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 17, @a{sv} {})")
         PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(repeatFires, 1, "An old duplicate must not reach the replacement callback.")
+        configure()
+        XCTAssertEqual(backend.registration(for: .repeatLast).status, .registered)
+        portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 18, @a{sv} {})")
         portal.emit(member: "Activated", body: "(objectpath '\(handle)', 'repeat', uint64 18, @a{sv} {})")
         PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(repeatFires, 2)
         XCTAssertEqual(fires, 0)
+    }
+
+    func testUnregisterDuringBindParentWaitCompletesOnceAndRejectsLateBind() throws {
+        var parents: [(PortalParent) -> Void] = []
+        backend.shutdown()
+        backend = PortalHotkeyBackend(transport: transport, fallback: ManualHotkeyBackend(),
+            runner: tools.runner, migration: .none, mainThread: GLibMainThread()) { parents.append($0) }
+        try registerBoth()
+        var completions = 0
+        backend.configure { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { parents.count == 1 })
+        backend.unregister(backend.registration(for: .repeatLast))
+        XCTAssertEqual(completions, 1)
+        parents[0](PortalParent("x11:1111"))
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertFalse(portal.calls.contains { $0.method == "BindShortcuts" })
+        backend.configure { completions += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { parents.count == 2 })
+        parents[1](PortalParent("x11:2222"))
+        XCTAssertTrue(GTKTestSupport.spin { completions > 1 })
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(completions, 2)
+        let binds = portal.calls.filter { $0.method == "BindShortcuts" }
+        XCTAssertEqual(binds.count, 1)
+        XCTAssertEqual(portal.shortcuts(try XCTUnwrap(binds.last)).map(\.id), ["toggle"])
     }
 
     func testDuplicateBeforeBindAcknowledgementStillSendsOnlyOneBind() throws {
@@ -332,6 +423,9 @@ final class PortalHotkeyTests: XCTestCase {
             configure()
             XCTAssertEqual(backend.registration(for: .togglePicker).status, .failed)
             XCTAssertEqual(backend.registration(for: .repeatLast).status, .failed)
+            var quiescence: [Bool] = []
+            backend.quiesce { quiescence.append($0) }
+            XCTAssertEqual(quiescence, [true], "A first refusal leaves no uncertain creation.")
             let binds = portal.calls.filter { $0.method == "BindShortcuts" }.count
             portal.responses["CreateSession"] = nil
             PortalSessionTestSupport.barrier(transport)
@@ -358,10 +452,19 @@ final class PortalHotkeyTests: XCTestCase {
         backend.quiesce { quiescence.append($0) }
         XCTAssertEqual(quiescence, [false], "An unanswered Create cannot authorize native activation.")
         portal.handleCall = nil
+        for response in ["(uint32 1, @a{sv} {})", "(uint32 2, @a{sv} {})"] {
+            portal.responses["CreateSession"] = response
+            configure()
+            var refused: [Bool] = []
+            backend.quiesce { refused.append($0) }
+            XCTAssertEqual(refused, [false], "Refusing a retry cannot resolve the earlier unanswered Create.")
+        }
+        portal.responses["CreateSession"] = nil
         PortalSessionTestSupport.barrier(transport)
-        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession"], "Recovery must require an explicit gesture.")
+        XCTAssertEqual(portal.calls.map(\.method), Array(repeating: "CreateSession", count: 3),
+                       "Recovery must require an explicit gesture.")
         configure()
-        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession", "CreateSession", "ListShortcuts", "BindShortcuts"])
+        XCTAssertEqual(portal.calls.map(\.method), Array(repeating: "CreateSession", count: 4) + ["ListShortcuts", "BindShortcuts"])
         XCTAssertEqual(backend.registration(for: .togglePicker).status, .registered)
         XCTAssertEqual(backend.registration(for: .repeatLast).status, .unbound)
         let bind = try XCTUnwrap(portal.calls.last { $0.method == "BindShortcuts" })
@@ -616,6 +719,36 @@ final class PortalHotkeyTests: XCTestCase {
         XCTAssertTrue(portal.ordinaryCalls.allSatisfy { $0.signature == "(osa{sv})" && $0.sender == portal.calls[0].sender })
         XCTAssertTrue(portal.ordinaryCalls.allSatisfy { $0.option("handle_token") == nil })
         XCTAssertEqual(parentCloses, 3)
+        portal.methodError = "org.freedesktop.portal.Error.NotAllowed"
+        configure()
+        XCTAssertEqual(backend.currentRegistration.status, .failed)
+        XCTAssertEqual(parentCloses, 4)
+    }
+
+    func testConfigurationWithoutDeclarationsAndDuringProbeCompletesOnce() throws {
+        configure()
+        XCTAssertTrue(portal.calls.isEmpty)
+        _ = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) { }
+        configure()
+        XCTAssertEqual(portal.calls.map(\.method), ["CreateSession", "ListShortcuts", "BindShortcuts"])
+    }
+
+    func testAttachedConfigurationBusyAndTimeoutCompleteEachCallerOnce() throws {
+        try registerBoth()
+        configure()
+        portal.handleCall = { $0.method == "ConfigureShortcuts" }
+        var first = 0
+        var busy = 0
+        backend.configure(until: ContinuousClock.now.advanced(by: .milliseconds(100))) { first += 1 }
+        XCTAssertTrue(GTKTestSupport.spin { !self.portal.ordinaryCalls.isEmpty })
+        backend.configure { busy += 1 }
+        XCTAssertEqual(busy, 1)
+        XCTAssertTrue(GTKTestSupport.spin { first > 0 })
+        portal.reply(try XCTUnwrap(portal.ordinaryCalls.last))
+        PortalSessionTestSupport.barrier(transport)
+        XCTAssertEqual(first, 1)
+        XCTAssertEqual(busy, 1)
+        XCTAssertEqual(portal.calls.filter { $0.method == "BindShortcuts" }.count, 1)
     }
 
     func testSignalsFilterSenderSessionAndActionAndPublishChangedBinding() throws {
@@ -722,8 +855,9 @@ final class PortalHotkeyTests: XCTestCase {
         let oldOwner = portal!
         defer { oldOwner.shutdown() }
         oldOwner.dropName()
-        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .failed })
-        XCTAssertEqual(backend.registration(for: .repeatLast).status, .failed)
+        XCTAssertTrue(GTKTestSupport.spin {
+            HotkeyAction.allCases.allSatisfy { self.backend.registration(for: $0).status == .failed }
+        })
         XCTAssertTrue(backend.consumeActivationToken(for: .togglePicker) == nil)
         XCTAssertTrue(backend.consumeActivationToken(for: .repeatLast) == nil)
         portal = try FakePortal(address: FakePortal.requirePrivateBus())
@@ -931,8 +1065,9 @@ final class PortalHotkeyTests: XCTestCase {
         let ids = HotkeyAction.allCases.map { backend.registration(for: $0).id }
         let old = try session()
         portal.emit(member: "Closed", body: "(@a{sv} {},)", path: old)
-        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .failed })
-        XCTAssertEqual(backend.registration(for: .repeatLast).status, .failed)
+        XCTAssertTrue(GTKTestSupport.spin {
+            HotkeyAction.allCases.allSatisfy { self.backend.registration(for: $0).status == .failed }
+        })
         for action in ["toggle", "repeat"] {
             portal.emit(member: "Activated", body: "(objectpath '\(old)', '\(action)', uint64 17, @a{sv} {})")
         }
@@ -942,8 +1077,9 @@ final class PortalHotkeyTests: XCTestCase {
         configure()
         XCTAssertEqual(HotkeyAction.allCases.map { backend.registration(for: $0).id }, ids)
         portal.dropName()
-        XCTAssertTrue(GTKTestSupport.spin { self.backend.currentRegistration.status == .failed })
-        XCTAssertEqual(backend.registration(for: .repeatLast).status, .failed)
+        XCTAssertTrue(GTKTestSupport.spin {
+            HotkeyAction.allCases.allSatisfy { self.backend.registration(for: $0).status == .failed }
+        })
         try portal.ownName()
         configure()
         let session = try session()

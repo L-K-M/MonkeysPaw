@@ -40,6 +40,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     private var onFire: [HotkeyAction: () -> Void] = [:]
     private var accelerators: [HotkeyAction: Accelerator] = [:]
     private var sessionActions = Set<HotkeyAction>()
+    private var removedActions = Set<HotkeyAction>()
     private var sessionShortcuts: [PortalShortcut] = []
     private var activationTokens: [HotkeyAction: String] = [:]
     private var tokenRevisions: [HotkeyAction: UUID] = [:]
@@ -113,6 +114,7 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
             guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         }
         unboundActions.retire(action)
+        removedActions.remove(action)
         self.onFire[action] = onFire
         accelerators[action] = accelerator
         registrations[action] = HotkeyRegistration(mechanism: .globalShortcutsPortal,
@@ -332,13 +334,13 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         for action in HotkeyAction.allCases {
             let id = Self.shortcutID(action)
             let saved = previous.first { $0.id == id }
-            guard onFire[action] != nil || saved != nil else { continue }
+            guard !removedActions.contains(action), onFire[action] != nil || saved != nil else { continue }
             var properties = ["description": action == .togglePicker ? "Open Monkey's Paw" : "Repeat last prompt"]
             if let saved {
                 if let description = saved.properties["trigger_description"], !description.isEmpty, onFire[action] != nil {
                     update(action, .needsAction, "Previously selected: " + description + ". " + LinuxStrings.shortcutAllow)
                 }
-            } else if action == .togglePicker, let accelerator = accelerators[action] {
+            } else if let accelerator = accelerators[action] {
                 guard let trigger = Self.trigger(accelerator) else { failed(.invalidArguments); return }
                 properties["preferred_trigger"] = trigger
             }
@@ -481,11 +483,16 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         guard let action = registrations.first(where: { $0.value.id == registration.id })?.key else { return }
         onFire.removeValue(forKey: action)
         accelerators.removeValue(forKey: action)
+        removedActions.insert(action)
         invalidateToken(action)
         fallback.unregister(fallback.registration(for: action))
         update(action, .unbound, SetupStrings.unboundShortcut, configuration: .unavailable)
-        if onFire.isEmpty {
+        // Bind is once per session; Close releases a removed action's grab.
+        if onFire.isEmpty || sessionActions.contains(action) || configuring {
             close(.close)
+            let revision = revision
+            offerRegistration()
+            guard self.revision == revision, selection != .stopped else { return }
             completeConfiguration()
         }
     }
@@ -546,7 +553,10 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     private static func shortcutID(_ action: HotkeyAction) -> String {
-        action == .togglePicker ? ActionName.toggle.rawValue : "repeat"
+        switch action {
+        case .togglePicker: return ActionName.toggle.rawValue
+        case .repeatLast: return "repeat"
+        }
     }
 
     private static func action(for id: String) -> HotkeyAction? {
