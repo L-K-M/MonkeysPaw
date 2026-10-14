@@ -33,6 +33,11 @@ Android reports `keystore` and uses redacted `toString` and static typed-error
 messages, with no underlying exception cause or provider diagnostic. A storage
 tier alone does not establish hardware backing; L8 and owner checks establish
 that separately ([§20 J2](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
+Its separate singleton secrets DataStore holds only account/IV/ciphertext-tag
+records. GCM authenticates the storage domain, version and exact namespaced
+account; account swaps fail. StrongBox preference, restricted fallback and
+failure/explicit-Clear behavior follow [§10.6](10-android-client.md#106-storage-and-sync)
+and §22 J7. No settings, diagnostic or plaintext file receives a key or secret.
 Persisted provider secrets also carry the destination binding from §7.6;
 metadata edits cannot rebind a stored key to another kind or origin.
 Environment values are raw operator overrides without destination bindings;

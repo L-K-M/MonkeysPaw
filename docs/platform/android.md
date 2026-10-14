@@ -62,3 +62,33 @@ device/API, signer fingerprint, tester/date and results for these checks:
 | Absolute deadline during queued work or continuous receipt | Typed deadline failure within the original intent budget |
 
 No device or emulator was used for L7. All checks above remain NOT RUN.
+
+## Android native secret-store checks (M11 L8): NOT RUN
+
+The implementation host ran JVM AES-GCM with injected test keys and real
+DataStore files. Those tests do not exercise AndroidKeyStore, establish
+hardware backing, or prove behavior after a device reboot. No device or
+emulator was used. Keep this item NOT RUN until the owner records evidence
+through the production settings path supplied by L9/L14.
+
+Use the final signed minified APK. Record the commit, APK SHA-256, signer
+fingerprint, device/model/API, tester/date, alias/key security information and
+results. Inspect `KeyInfo` with the API-supported security-level or hardware
+backing accessor; do not infer backing from the `keystore` tier or a successful
+JVM test. Follow the [Android Keystore guidance](https://developer.android.com/privacy-and-security/keystore).
+
+| Check | Evidence required | Status |
+|---|---|---|
+| API 26-27 ordinary AndroidKeyStore | Save/read/Clear without StrongBox APIs; actual backing recorded | NOT RUN |
+| API 28+ StrongBox-capable device | StrongBox requested; actual security level/backing recorded | NOT RUN |
+| StrongBox unavailable | Ordinary AndroidKeyStore fallback only on unavailability; other failures retain ciphertext | NOT RUN |
+| Restart and reboot | Save two synthetic credentials; force-stop/reopen and reboot; both remain readable without per-read authentication | NOT RUN |
+| Account and provider destination binding | Swapped account record rejects decryption; kind/origin changes require explicit re-entry or Clear in L9 | NOT RUN |
+| Alias loss or invalidation | Read/Save fail with typed static errors, ciphertext remains; Clear affects only the chosen account; no silent regeneration | NOT RUN |
+| Disk/publication failure | Save/Clear failure retains the previous credential and unrelated account; retry is explicit | NOT RUN |
+| Persistence and diagnostics | Runtime synthetic sentinel absent in raw/base64/percent/JSON forms from settings, logs and temporary outputs; only encrypted payload persists; no raw key export | NOT RUN |
+
+Do not put real credentials, sentinel contents, raw key material or platform
+exception bodies in this checklist or bug reports. Hardware that is
+unavailable remains a validation gap for K17/L20; an unchecked row does not
+satisfy milestone acceptance.

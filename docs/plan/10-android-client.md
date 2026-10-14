@@ -217,13 +217,38 @@ constants.
     grant is deferred.
 - **Local state.** M8 uses `filesDir/state/` for remembered values, usage and
   history, separate from the library and `filesDir/datastore/`. DataStore
-  holds versioned settings and seed progress (§20 F11). From M11 it also
-  holds provider metadata and capability state (§7, §22 J8) as namespaced
-  `provider-settings` and `provider-state` records: the `StateStore` driver
-  maps the logical `.json` paths to these atomic records, preserving the
-  desktop version-1 JSON shapes and unknown members. Encrypted credentials
-  use a separate singleton secrets DataStore. M10 owns sync state under the
-  §9.2 contract.
+  holds versioned settings and seed progress in `settings.json` (§20 F11).
+  From M11 it also holds provider metadata and capability state (§7, §22 J8)
+  as namespaced `provider-settings` and `provider-state` records: the
+  `StateStore` driver maps the logical `.json` paths to these atomic records,
+  preserving the desktop version-1 JSON shapes and unknown members. M10 owns
+  sync state under the §9.2 contract.
+  L8 supplies the shared `SecretStore` for M10 and M11 in `app/data`, wired
+  once by Hilt to a separate singleton `datastore/secrets.json` DataStore.
+  Provider metadata remains separate from ciphertext (§22 J8).
+  - One alias, `ch.lkmc.monkeyspaw.secrets.v1`, holds a non-exportable
+    AES-256-GCM key. Version-1 records contain only the namespaced account,
+    base64 IV and ciphertext including the 128-bit authentication tag.
+    Encryption lets the provider generate a fresh 96-bit IV. AAD binds the
+    app's secrets domain, format version and exact account. L9 places its
+    provider kind/origin binding inside the encrypted credential payload;
+    the storage driver does not reinterpret that payload.
+  - Prefer StrongBox on API 28+ when the device advertises it. Only
+    `StrongBoxUnavailableException` permits a retry in ordinary
+    AndroidKeyStore. API 26-27 and devices without StrongBox use ordinary
+    AndroidKeyStore directly. Other access/generation failures fail closed.
+    Neither path exports a key or creates a plaintext/software-key file.
+    The `keystore` tier describes storage, not proven hardware backing.
+  - Keys require no user authentication, so background reads are supported.
+    All operations serialize on injected IO. Reads do not create keys; Save
+    creates one only when the entire ciphertext store is empty and no alias
+    exists. Replacement authenticates the previous record first. Missing or
+    invalidated keys, altered ciphertext, corrupt/future documents and failed
+    atomic publication retain the prior data and report typed errors.
+    Explicit Clear removes only that account without decrypting it or
+    deleting the shared alias; repeated Clear is harmless. Corrupt/future
+    documents block Clear as well and are never silently reset. Clearing all
+    retained ciphertext permits a new key on the next explicit Save.
 - **Backups.** The manifest sets `android:allowBackup="false"` and nothing
   else. There is no settings-only backup or backup exception (§20 F11).
   - Auto Backup would otherwise upload the library and the remembered values
