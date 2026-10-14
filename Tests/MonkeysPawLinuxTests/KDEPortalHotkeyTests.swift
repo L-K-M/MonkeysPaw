@@ -123,7 +123,11 @@ final class KDEPortalHotkeyTests: XCTestCase {
                 do {
                     let owner = NSObject()
                     callbackOwner = owner
-                    XCTAssertEqual(backend.register(action, accelerator: accelerator) { _ = owner.description }, stopped)
+                    let rejected = backend.register(action, accelerator: accelerator) { _ = owner.description }
+                    XCTAssertEqual(rejected.status, .unbound)
+                    XCTAssertEqual(rejected.configuration, .unavailable)
+                    XCTAssertEqual(rejected, backend.unboundActions.registration(for: action, mechanism: backend.mechanism))
+                    if action == .repeatLast { XCTAssertNotEqual(rejected.id, stopped.id) }
                 }
                 XCTAssertNil(callbackOwner)
             }
@@ -161,6 +165,31 @@ final class KDEPortalHotkeyTests: XCTestCase {
         XCTAssertEqual(daemon.calls.count, nativeCalls)
         XCTAssertEqual(service.calls.count, portalCalls)
         XCTAssertEqual(fires, 0)
+    }
+
+    func testRepeatedUnregisterBeforeUnboundDeclarationDoesNotRepeatNativeOrPortalCalls() throws {
+        start()
+        configure()
+        let handle = try session()
+        let picker = backend.currentRegistration
+        backend.unregister(picker)
+        XCTAssertTrue(GTKTestSupport.spin { self.service.closedPaths.contains(handle) && !self.daemon.present })
+        PortalSessionTestSupport.barrier(transport)
+        let nativeMethods = daemon.calls.map(\.method)
+        let portalMethods = service.calls.map(\.method)
+        let closes = service.closedPaths
+
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        var completions = 0
+        backend.configure { completions += 1 }
+        PortalSessionTestSupport.barrier(transport)
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertEqual(daemon.calls.map(\.method), nativeMethods)
+        XCTAssertEqual(service.calls.map(\.method), portalMethods)
+        XCTAssertEqual(service.closedPaths, closes)
+        XCTAssertFalse(daemon.present)
     }
 
     func testShutdownFromPendingCompletionPreventsClearFromRetainingCompositeCallback() {
@@ -712,6 +741,8 @@ final class KDEPortalHotkeyTests: XCTestCase {
             return true
         }
         configure()
+        XCTAssertTrue(service.calls.contains { $0.method == "CreateSession" },
+            "The uncertain-Create case requires CreateSession; methods: \(service.calls.map(\.method))")
         fallback()
         XCTAssertFalse(daemon.present)
         XCTAssertEqual(backend.currentRegistration.status, .failed)

@@ -110,7 +110,11 @@ final class PortalHotkeyTests: XCTestCase {
                 do {
                     let owner = NSObject()
                     callbackOwner = owner
-                    XCTAssertEqual(backend.register(action, accelerator: accelerator) { _ = owner.description }, stopped)
+                    let rejected = backend.register(action, accelerator: accelerator) { _ = owner.description }
+                    XCTAssertEqual(rejected.status, .unbound)
+                    XCTAssertEqual(rejected.configuration, .unavailable)
+                    XCTAssertEqual(rejected, backend.unboundActions.registration(for: action, mechanism: backend.mechanism))
+                    if action == .repeatLast { XCTAssertNotEqual(rejected.id, stopped.id) }
                 }
                 XCTAssertNil(callbackOwner)
             }
@@ -178,7 +182,9 @@ final class PortalHotkeyTests: XCTestCase {
         do {
             let owner = NSObject()
             callbackOwner = owner
-            _ = backend.register(.togglePicker, accelerator: nil) { _ = owner.description }
+            let rejected = backend.register(.togglePicker, accelerator: nil) { _ = owner.description }
+            XCTAssertEqual(rejected.status, .unbound)
+            XCTAssertEqual(rejected.configuration, .unavailable)
         }
 
         XCTAssertEqual(completions, 1)
@@ -187,6 +193,21 @@ final class PortalHotkeyTests: XCTestCase {
         backend.configure { completions += 1 }
         XCTAssertEqual(completions, 2)
         XCTAssertEqual(backend.currentRegistration, stopped)
+    }
+
+    func testShutdownFromPendingCompletionReturnsUnboundForBoundReplacement() throws {
+        try register()
+        var completions = 0
+        backend.configure { self.backend.shutdown(); completions += 1 }
+
+        let rejected = backend.register(.togglePicker, accelerator: try Accelerator("Alt+R")) {
+            XCTFail("Stopped replacement fired")
+        }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(rejected.status, .unbound)
+        XCTAssertEqual(rejected.configuration, .unavailable)
+        XCTAssertEqual(rejected, backend.unboundActions.registration(for: .togglePicker, mechanism: backend.mechanism))
     }
 
     func testQuietProbeThenBindingUsesStableTokenSameConnectionAndActualTrigger() throws {

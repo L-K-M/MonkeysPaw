@@ -99,21 +99,21 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
 
     func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard selection != .stopped else { return currentRegistration }
+        guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         guard action == .togglePicker, let accelerator else {
             if action == .togglePicker {
                 unregister(currentRegistration)
                 self.accelerator = nil
             }
-            guard selection != .stopped else { return currentRegistration }
-            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
         unboundActions.retire(action)
         close(.close)
         completeConfiguration()
-        guard selection != .stopped else { return currentRegistration }
+        guard selection != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         self.onFire = onFire
         self.accelerator = accelerator
         currentRegistration = HotkeyRegistration(mechanism: .globalShortcutsPortal, status: .needsAction,
@@ -397,7 +397,6 @@ final class PortalHotkeyBackend: LinuxHotkeyBackend {
         selection = .stopped
         onFire = nil
         accelerator = nil
-        unboundActions.clearCallbacks()
         if let observation { transport.removeObserver(observation); self.observation = nil }
         fallback.shutdown()
         close(.close)

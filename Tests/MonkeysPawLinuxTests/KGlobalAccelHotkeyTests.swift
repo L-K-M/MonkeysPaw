@@ -163,6 +163,28 @@ final class KGlobalAccelHotkeyTests: XCTestCase {
         }
     }
 
+    func testFirstBindingRotatesRevisionAndRepeatedClearStartsNoNativeWork() throws {
+        backend = KGlobalAccelHotkeyBackend(busAddress: address)
+        let revision = backend.activationRevision
+        let picker = backend.register(.togglePicker, accelerator: try Accelerator("Ctrl+Alt+P")) {
+            XCTFail("Retired picker fired")
+        }
+        XCTAssertNotEqual(backend.activationRevision, revision)
+        ready()
+        backend.unregister(picker)
+        XCTAssertTrue(GTKTestSupport.spin { !self.service.present })
+        let methods = service.calls.map(\.method)
+
+        let cleared = backend.register(.togglePicker, accelerator: nil) { XCTFail("Unbound picker fired") }
+        var completions = 0
+        backend.configure { completions += 1 }
+
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(cleared.status, .unbound)
+        XCTAssertEqual(backend.currentRegistration, cleared)
+        XCTAssertEqual(service.calls.map(\.method), methods)
+    }
+
     func testAuthoritativeV2ShapesAndOneOwnedActionLifetime() throws {
         start()
         ready()

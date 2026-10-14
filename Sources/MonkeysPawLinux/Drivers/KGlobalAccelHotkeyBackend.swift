@@ -155,7 +155,7 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
                 }
                 suggestion = KGlobalAccelKeys(sequences: [])
             }
-            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
@@ -198,7 +198,6 @@ final class KGlobalAccelHotkeyBackend: LinuxHotkeyBackend {
 
     func shutdown() {
         precondition(Thread.isMainThread)
-        unboundActions.clearCallbacks()
         guard state != .stopped else { return }
         state = .stopped
         onFire = nil

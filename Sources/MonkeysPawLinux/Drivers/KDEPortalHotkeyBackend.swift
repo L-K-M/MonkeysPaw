@@ -62,14 +62,14 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
 
     func register(_ action: HotkeyAction, accelerator: Accelerator?,
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
-        guard phase != .stopped else { return currentRegistration }
+        guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         guard action == .togglePicker, let accelerator else {
             if action == .togglePicker {
                 unregister(currentRegistration)
                 self.accelerator = nil
             }
-            guard phase != .stopped else { return currentRegistration }
-            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
@@ -83,7 +83,7 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
             self.tokenRevision = self.activationRevision
             self.onFire?()
         }
-        guard phase != .stopped else { return currentRegistration }
+        guard phase != .stopped else { return unboundActions.registration(for: action, mechanism: mechanism) }
         operation += 1
         let operation = operation
         phase = .busy
@@ -381,7 +381,6 @@ final class KDEPortalHotkeyBackend: LinuxHotkeyBackend {
     }
 
     func shutdown() {
-        unboundActions.clearCallbacks()
         guard phase != .stopped else { return }
         phase = .stopped
         onFire = nil

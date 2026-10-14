@@ -23,14 +23,13 @@ extension LinuxHotkeyBackend {
     func configure(done: @escaping () -> Void) { done() }
     func configureNative(done: @escaping () -> Void) { configure(done: done) }
     func consumeActivationToken() -> String? { nil }
-    func shutdown() { unregister(currentRegistration); unboundActions.clearCallbacks() }
+    func shutdown() { unregister(currentRegistration) }
 }
 
 /// Catalogue entries for actions these adapters cannot bind yet (D9–D11).
-/// Retain callbacks without making unsupported actions appear effective.
+/// Keep stable identities; unsupported adapters cannot consume callbacks.
 final class UnboundHotkeyActions {
     private var registrations: [HotkeyAction: HotkeyRegistration] = [:]
-    private var callbacks: [HotkeyAction: () -> Void] = [:]
 
     func registration(for action: HotkeyAction, mechanism: HotkeyMechanism) -> HotkeyRegistration {
         let registration = HotkeyRegistration(id: registrations[action]?.id ?? UUID(),
@@ -39,26 +38,15 @@ final class UnboundHotkeyActions {
         return registration
     }
 
-    func register(_ action: HotkeyAction, mechanism: HotkeyMechanism,
-                  onFire: @escaping () -> Void) -> HotkeyRegistration {
-        callbacks[action] = onFire
-        return registration(for: action, mechanism: mechanism)
-    }
-
     func unregister(_ registration: HotkeyRegistration) -> Bool {
-        guard let action = registrations.first(where: { $0.value.id == registration.id })?.key else { return false }
-        callbacks.removeValue(forKey: action)
-        return true
+        registrations.values.contains { $0.id == registration.id }
     }
 
     /// A live registration may keep its initial id. Relinquish catalogue
     /// ownership so unregister reaches the live driver's teardown.
     func retire(_ action: HotkeyAction) {
-        callbacks.removeValue(forKey: action)
         registrations.removeValue(forKey: action)
     }
-
-    func clearCallbacks() { callbacks.removeAll() }
 }
 
 final class ManualHotkeyBackend: LinuxHotkeyBackend {
@@ -73,7 +61,7 @@ final class ManualHotkeyBackend: LinuxHotkeyBackend {
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         guard action == .togglePicker, accelerator != nil else {
             if action == .togglePicker { unregister(currentRegistration) }
-            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
@@ -119,7 +107,7 @@ final class GnomeKeybindingBackend: LinuxHotkeyBackend {
                   onFire: @escaping () -> Void) -> HotkeyRegistration {
         guard action == .togglePicker, let accelerator else {
             if action == .togglePicker { unregister(currentRegistration) }
-            let registration = unboundActions.register(action, mechanism: mechanism, onFire: onFire)
+            let registration = unboundActions.registration(for: action, mechanism: mechanism)
             if action == .togglePicker { currentRegistration = registration }
             return registration
         }
