@@ -477,6 +477,9 @@ Also record these cases for each OS/keyboard pair:
   activity, with the prior typing keyboard or system picker shown first.
   Cancel the picker and select our IME in the Fill editor: Switch keyboard
   stays available; no recursive handoff or insertion into our own editor.
+  In split-screen on API 29+, leave Fill resumed and focus the other app:
+  the external picker must work, while dialogs/focus loss alone never enable
+  prompts in an already identified own-editor session.
 - Previous-keyboard failure falls back to the picker; unavailable picker
   leaves a visible Switch keyboard action and navigation-bar instructions.
   API 26/27 uses the IME window token. If only 28–33 hardware is tested,

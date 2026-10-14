@@ -24,6 +24,12 @@ internal class ImeEditor(val inputType: Int?, val imeOptions: Int, private val c
 
     fun matches(other: ImeEditor): Boolean = inputType == other.inputType &&
         imeOptions == other.imeOptions && connection === other.connection && inFillActivity == other.inFillActivity
+
+    fun retainOwnConnection(previous: ImeEditor?): ImeEditor {
+        // Local focus loss alone cannot release a connection identified as our Fill editor.
+        if (inFillActivity || previous?.inFillActivity != true || connection !== previous.connection) return this
+        return ImeEditor(inputType, imeOptions, connection, inFillActivity = true)
+    }
 }
 
 internal interface ImeSessionRoot {
@@ -203,7 +209,7 @@ internal class ImeSessionController(
 
     private fun isCurrent(epoch: Long): Boolean {
         if (epoch != generation || destroyed || !inputStarted || !shown || root == null) return false
-        val latest = currentEditor()
+        val latest = currentEditor().retainOwnConnection(editor)
         if (editor?.matches(latest) == true) return true
         targetVersion++
         retire()

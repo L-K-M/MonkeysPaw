@@ -138,7 +138,10 @@ Before this explicit Search/Fill handoff, switch to the previous keyboard or
 open the system picker. If both are unavailable, keep the keyboard controls
 and switching instructions visible. A process-local foreground FillActivity
 guard gives its editors only Switch keyboard in our IME, so cancelling the
-picker cannot recursively hand off or insert into that activity. This guard
+picker cannot recursively hand off or insert into that activity. On API 29+
+it follows top-resumed status, since several activities can be resumed in
+multi-window mode; API 26-28 uses resume/pause. A known own connection stays
+blocked until a new input start or connection change. This guard
 reads no target package, field identity or text. An accepted Insert/Copy
 finishes permitted bookkeeping before switching; persistence warnings wait
 for Done, and a retired input session never switches a later target.

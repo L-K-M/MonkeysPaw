@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.entry
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -42,7 +43,7 @@ class FillActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        imeActivityGuard.resume(this)
+        imeActivityGuard.resume(this, Build.VERSION.SDK_INT)
         fill.setForeground(true)
     }
 
@@ -50,6 +51,12 @@ class FillActivity : ComponentActivity() {
         imeActivityGuard.pause(this)
         fill.setForeground(false)
         super.onPause()
+    }
+
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        imeActivityGuard.topResumed(this, isTopResumedActivity)
     }
 
     override fun onDestroy() {

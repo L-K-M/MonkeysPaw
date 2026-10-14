@@ -510,6 +510,39 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
         assertEquals(2, switches)
     }
 
+    @Test fun `own editor remains blocked through local focus loss until a new input start`() = runTest {
+        graph()
+        val connection = Any()
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, connection, inFillActivity = true)
+        show()
+        val ownEpoch = epoch()
+        assertNull(controller.state.value.models)
+        // Losing top-resumed status does not itself prove that this connection changed editors.
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, connection, inFillActivity = false)
+        controller.switch(ownEpoch)
+        assertNull(controller.state.value.models)
+        assertTrue(controller.state.value.inFillActivity)
+        assertEquals(1, switches)
+        controller.handoff(ownEpoch)
+        assertTrue(launchedTokens.isEmpty())
+        current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, connection, inFillActivity = false)
+        controller.switch(ownEpoch)
+        assertNotEquals(ownEpoch, epoch())
+        assertTrue(controller.state.value.inFillActivity)
+        assertNull(controller.state.value.models)
+        assertEquals(1, switches)
+        controller.startInput(current)
+        controller.show(current)
+        advanceUntilIdle()
+        assertFalse(controller.state.value.inFillActivity)
+        assertEquals(1, created)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+        assertEquals(LearningPolicy.EPHEMERAL, models().fill.state.value.learningPolicy)
+        assertEquals(0, clipboard.reads)
+        assertEquals(0, clipboard.writes)
+        assertTrue(commits.isEmpty())
+    }
+
     @Test fun `Fill handoff waits for builtin completion and preserves held values and ephemeral Copy policy`() = runTest {
         graph("{{text}}/{{clipboard}}")
         current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, Any())
