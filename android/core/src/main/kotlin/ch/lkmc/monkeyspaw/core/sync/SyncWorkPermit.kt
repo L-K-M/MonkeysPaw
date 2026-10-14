@@ -12,7 +12,8 @@ import kotlin.concurrent.withLock
  * An admitted transaction finishes its durable work even after retirement/cancellation.
  * The lock never spans IO, HTTP, or draining the owning coroutine.
  */
-internal class SyncWorkPermit(val binding: SyncLibraryIdentity, val epoch: Long, private val job: Job? = null) {
+internal class SyncWorkPermit(val binding: SyncLibraryIdentity, val epoch: Long, private val job: Job? = null,
+                              private val graphJob: Job? = null) {
     private val lock = ReentrantLock()
     private var retired = false
     private var admitted = 0
@@ -37,7 +38,7 @@ internal class SyncWorkPermit(val binding: SyncLibraryIdentity, val epoch: Long,
     }
 
     private fun requireAdmission() {
-        if (retired || job?.isActive == false || Thread.currentThread().isInterrupted) {
+        if (retired || job?.isActive == false || graphJob?.isActive == false || Thread.currentThread().isInterrupted) {
             throw CancellationException("Sync work was cancelled.")
         }
     }
