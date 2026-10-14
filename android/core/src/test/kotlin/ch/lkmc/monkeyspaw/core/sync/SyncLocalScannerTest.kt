@@ -416,6 +416,58 @@ class SyncLocalScannerTest {
         assertTrue(h.scan(ids = emptyList()).changes.isEmpty())
     }
 
+    @Test fun viewerDeniedEditKeepsRawBytesForRecovery() = assertViewerDenialInput("edit")
+
+    @Test fun viewerDeniedSameContentRenameKeepsRawBytesForRecovery() = assertViewerDenialInput("rename")
+
+    @Test fun viewerDeniedCreateKeepsRawBytesForRecovery() = assertViewerDenialInput("create")
+
+    @Test fun viewerDeniedMovesDeleteAndIdlessCreateKeepRecoveryInputs() {
+        for (intent in listOf("move", "clean-move", "delete", "idless-create")) assertViewerDenialInput(intent)
+    }
+
+    private fun assertViewerDenialInput(intent: String) {
+        val h = ScanHarness()
+        val server = CanonicalForm.group(ScanHarness.bytes("Server", v.groupPrompt), "a.md").bytes
+        val recorded = ScanHarness.record(server, v.groupScope)
+        val old = h.state(ScanHarness.groups(Role.VIEWER), mapOf(v.groupID to recorded))
+        val creating = intent == "create" || intent == "idless-create"
+        val path = when (intent) {
+            "create", "idless-create" -> "Groups/Team/new.md"
+            "move", "clean-move" -> "private.md"
+            "rename" -> "Groups/Team/b.md"
+            else -> "Groups/Team/a.md"
+        }
+        val local = if (intent == "clean-move") server else ScanHarness.bytes(
+            if (intent == "rename") "Server" else "Local\r\n",
+            if (intent == "idless-create") null else if (creating) v.personal else v.groupPrompt,
+            "favorite: true\nprivate: true\n# Preserve this comment\n")
+        if (creating) h.put(server, "Groups/Team/a.md")
+        if (intent != "delete") h.put(local, path)
+        val scan = h.scan(ids = emptyList())
+        assertEquals(SyncIssueCode.Forbidden, scan.issues[path])
+        assertTrue(scan.changes.isEmpty())
+        if (intent != "delete") assertContentEquals(local, scan.snapshot.files.single { it.path == path }.bytes)
+        val preparation = assertNotNull(scan.preparation)
+        assertTrue(preparation.edits.isEmpty(), "Viewer denial canonicalized local $intent before preservation")
+        assertEquals(old.databaseID, preparation.nextState.databaseID)
+        assertEquals(old.cursors, preparation.nextState.cursors)
+        val nextRecord = preparation.nextState.prompts.getValue(v.groupID)
+        assertEquals(recorded.scope, nextRecord.scope)
+        assertEquals(recorded.path, nextRecord.path)
+        assertEquals(recorded.rev, nextRecord.rev)
+        assertEquals(recorded.canonicalHash, nextRecord.canonicalHash)
+        h.files.writes.clear()
+        assertEquals(SyncApplyOutcome.Committed, h.journal.apply(preparation))
+        assertTrue(h.files.writes.isEmpty())
+        if (intent != "delete") assertContentEquals(local, h.files.read(path))
+        val rescanned = h.scan(ids = emptyList())
+        assertNull(rescanned.preparation)
+        assertEquals(SyncIssueCode.Forbidden, rescanned.issues[path])
+        assertTrue(rescanned.changes.isEmpty())
+        if (intent != "delete") assertContentEquals(local, rescanned.snapshot.files.single { it.path == path }.bytes)
+    }
+
     @Test fun missingRawRescuePathCannotAuthorizeDelete() {
         val h = ScanHarness()
         h.state(prompts = mapOf(v.personalID to ScanHarness.record(path = "Conflicts/raw.md")))

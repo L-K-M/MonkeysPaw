@@ -184,6 +184,13 @@ internal object SyncLocalScanner {
             if (location.scope is SyncScopeKey.Group && pending.scope is SyncScopeKey.Group) {
                 canonical.favorite?.let { if (it) favorites[identity] = true else favorites.remove(identity) }
             }
+            if (viewer && (recorded == null || recorded.canonicalHash?.rawValue != canonical.canonicalHash ||
+                    recorded.scope != location.scope || recorded.path != wire.path)) {
+                issues[file.path] = SyncIssueCode.Forbidden
+                // Denial recovery must retain the original bytes before group
+                // canonicalization can strip the user's local metadata.
+                continue
+            }
             // Preserve personal keys on disk until a scope transfer acknowledges their new owner.
             if (!transferring && (externalAssignment || !bytes.contentEquals(file.bytes) ||
                     location.scope is SyncScopeKey.Group && !canonical.bytes.contentEquals(file.bytes))) {
@@ -194,11 +201,7 @@ internal object SyncLocalScanner {
                     if (isViewer(location.scope, old.groups)) SyncFileMode.READ_ONLY else SyncFileMode.NORMAL, kind))
             }
             val prompt = SyncLocalPrompt(file, identity, location.scope, wire.path, canonical, origin)
-            if (viewer) {
-                if (recorded == null || recorded.canonicalHash?.rawValue != canonical.canonicalHash ||
-                    recorded.scope != prompt.scope || recorded.path != prompt.path) issues[file.path] = SyncIssueCode.Forbidden
-                continue
-            }
+            if (viewer) continue
             val baseline = recorded
             changes.add(when {
                 baseline == null || baseline.rev == 0L -> SyncLocalChange.Create(prompt)
