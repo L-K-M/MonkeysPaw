@@ -5,6 +5,44 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class LinuxFocusTrackerTests: XCTestCase {
+    func testParsedClassSelectsOnlyExactAliasesAcrossNativeX11Sessions() throws {
+        let tools = try FakeLinuxTools()
+        try tools.install("xdotool", script: Self.activeWindowScript)
+        try tools.install("xprop", script: FakeLinuxTools.recordArguments + "\nprintf '%s\\n' \"$FAKE_WM_CLASS\"")
+        for (desktop, detected): (String, DesktopSession) in [("GNOME", .gnomeX11), ("KDE", .kdeX11), ("", .otherX11)] {
+            let session = LinuxSessionProbe(environment: ["XDG_SESSION_TYPE": "x11", "XDG_CURRENT_DESKTOP": desktop], flatpakInfoExists: false)
+            for windowClass in ["GNOME-TERMINAL", "gnome-terminal-server", "KONSOLE", "XFCE4-TERMINAL",
+                                "MATE-TERMINAL", "TILIX", "ALACRITTY", "KITTY", "kitty-editor", "XTerm", "Firefox"] {
+                // A terminal-looking instance must not classify a nonterminal class.
+                tools.environment["FAKE_WM_CLASS"] = "WM_CLASS(STRING) = \"kitty\", \"\(windowClass)\""
+                let tracker = LinuxFocusTracker(session: session, runner: tools.runner)
+                let target = tracker.captureTarget()
+                XCTAssertEqual(target, .linux(session: detected, x11WindowClass: windowClass))
+                let expected: PasteChord = ["kitty-editor", "XTerm", "Firefox"].contains(windowClass) ? .standard : .terminal
+                XCTAssertEqual(TerminalPolicy.recommendedChord(for: target, session: detected), expected)
+            }
+        }
+    }
+
+    func testFlatpakAndWaylandNeverProbeClassesAndKeepManualDefault() throws {
+        let tools = try FakeLinuxTools()
+        try tools.install("xdotool", script: FakeLinuxTools.recordArguments + "\nprintf 12345")
+        try tools.install("xprop", script: FakeLinuxTools.recordArguments + "\nexit 1")
+        for environment in [
+            ["XDG_CURRENT_DESKTOP": "GNOME", "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"],
+            ["XDG_CURRENT_DESKTOP": "KDE", "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"],
+            ["WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"],
+            ["FLATPAK_ID": AppIdentity.linuxAppID, "XDG_SESSION_TYPE": "x11", "DISPLAY": ":0"],
+        ] {
+            let session = LinuxSessionProbe(environment: environment, flatpakInfoExists: false)
+            let target = LinuxFocusTracker(session: session, runner: tools.runner).captureTarget()
+            XCTAssertNil(target)
+            XCTAssertEqual(TerminalPolicy.recommendedChord(for: target, session: session.currentSession(),
+                                                          defaultChord: .terminal), .terminal)
+        }
+        XCTAssertTrue(tools.log.isEmpty)
+    }
+
     func testX11CapturesClassAndSkipsOurOwnClass() throws {
         let tools = try FakeLinuxTools()
         let session = LinuxSessionProbe(environment: ["DISPLAY": ":0"], flatpakInfoExists: false)

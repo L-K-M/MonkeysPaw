@@ -8,9 +8,15 @@ import XCTest
 final class LinuxFocusTrackerX11SmokeTests: XCTestCase {
     func testCapturesXtermClass() throws {
         let tracker = try smokeTracker()
+        let target = tracker.captureTarget()
         // Keep the observed property out of failure diagnostics too.
-        XCTAssertTrue(tracker.captureTarget() == .linux(session: .otherX11, x11WindowClass: "XTerm"),
+        XCTAssertTrue(target == .linux(session: .otherX11, x11WindowClass: "XTerm"),
                       "Capture should return the active xterm's class.")
+        // The smoke customizes XTerm's binding. It proves explicit delivery,
+        // never stock XTerm support or automatic terminal classification.
+        XCTAssertEqual(TerminalPolicy.recommendedChord(for: target, session: .otherX11), .standard)
+        XCTAssertEqual(TerminalPolicy.recommendedChord(for: target, session: .otherX11,
+                                                      defaultChord: .terminal), .terminal)
     }
 
     func testSkipsOurOwnWindow() throws {

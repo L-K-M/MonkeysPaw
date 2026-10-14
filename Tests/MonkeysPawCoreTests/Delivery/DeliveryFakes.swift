@@ -443,7 +443,8 @@ final class DeliveryHarness {
     let service: DeliveryService
 
     init(session: DesktopSession = .macOS, available: [PasteBackend] = PasteBackend.allCases,
-         clipboardRestore: ClipboardRestoreMode = .off) {
+         clipboardRestore: ClipboardRestoreMode = .off,
+         linuxDefaultPasteChord: @escaping () -> PasteChord = { .standard }) {
         let recorder = self.recorder
         self.session = FakeSession(session)
         scheduler = FakeScheduler(recorder)
@@ -457,7 +458,7 @@ final class DeliveryHarness {
             panel: FakePanel(recorder), focus: focus, clipboard: clipboard,
             injectors: Array(injectors.values), notifier: FakeNotifier(recorder),
             session: self.session, scheduler: scheduler, mainThread: main, failureCache: cache,
-            clipboardRestore: clipboardRestore
+            clipboardRestore: clipboardRestore, linuxDefaultPasteChord: linuxDefaultPasteChord
         )
     }
 

@@ -58,6 +58,35 @@ final class FillModelTests: XCTestCase {
         XCTAssertNil(try h.store.load())
     }
 
+    func testPreferredFillModeIsChosenAtOpenAndSurvivesDefaultChange() throws {
+        for windowClass in ["kitty", "Firefox"] {
+            for explicit: DeliveryMode? in [nil, .paste(.standard), .paste(.terminal), .copyOnly] {
+                var saved = PasteChord.terminal
+                let h = PromptFlowHarness(session: .otherX11, linuxDefaultPasteChord: { saved })
+                h.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: windowClass)
+                _ = try h.put("---\nfields:\n  f:\n    default: text\n---\n{{f}}")
+                try h.open()
+                if let explicit { h.picker.use(mode: explicit) }
+                else { h.picker.usePreferred() }
+                let form = try XCTUnwrap(h.picker.fillModel)
+                let chosen = explicit ?? .paste(.terminal)
+                XCTAssertEqual(form.preferredMode, chosen)
+                saved = .standard
+                form.setValue("Changed", name: "f")
+                XCTAssertEqual(form.preferredMode, chosen)
+                let targetHint = windowClass == "kitty" ? "X11 terminal" : "X11 target"
+                let action = chosen == .copyOnly ? "Copy only" : (chosen == .paste(.terminal) ? "Ctrl+Shift+V" : "Ctrl+V")
+                XCTAssertEqual(form.deliveryHint, targetHint + " · " + action)
+                form.deliver(mode: form.preferredMode)
+                h.settle()
+                switch chosen {
+                case .paste(let chord): XCTAssertEqual(h.delivery.injectors[.xdotool]?.chords, [chord])
+                case .copyOnly: XCTAssertTrue(h.delivery.injectors.values.allSatisfy { $0.chords.isEmpty })
+                }
+            }
+        }
+    }
+
     func testRepeatProjectionFailureRemainsVisibleAfterRealFillDelivery() throws {
         let h = try RepeatHarness()
         let entry = try h.put("{{field}}")

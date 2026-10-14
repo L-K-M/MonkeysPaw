@@ -41,6 +41,7 @@ public final class FillModel: @unchecked Sendable {
     /// The picker carries a terminal/copy selection into the form. Views use
     /// this for the primary Deliver action; explicit chords pass their mode.
     public let preferredMode: DeliveryMode
+    public var deliveryHint: String { delivery.hint(for: preferredMode) }
     public let issues: [PromptIssue]
     public let canRender: Bool
     public let isReadOnly: Bool

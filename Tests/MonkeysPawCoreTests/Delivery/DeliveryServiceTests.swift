@@ -90,6 +90,76 @@ final class DeliveryServiceTests: XCTestCase {
         XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
     }
 
+    func testDeliveryFromPreferredPublicationWaitsForPanelShow() {
+        for mode: FakeCompletionMode in [.immediate, .deferred] {
+            let h = DeliveryHarness(session: .otherX11)
+            let target = DeliveryTarget.linux(session: .otherX11, x11WindowClass: "kitty")
+            h.focus.target = target
+            h.main.mode = mode
+            h.service.show {
+                h.deliver(mode: .paste(h.service.preferredChord))
+            }
+            h.main.drain()
+            XCTAssertEqual(h.recorder.events, [
+                .capture, .show, .write("test"), .hideForDelivery, .wait(Limits.settleDelayLinux),
+            ])
+            h.settle()
+            h.main.drain()
+            XCTAssertEqual(h.recorder.events, [
+                .capture, .show, .write("test"), .hideForDelivery, .wait(Limits.settleDelayLinux),
+                .restore(target), .paste(.xdotool, .terminal), .done(.pasted(.xdotool)),
+            ])
+        }
+    }
+
+    func testTerminalPreferredChordUsesArmedTargetAndPreservesDeliveryOrder() throws {
+        let h = DeliveryHarness(session: .otherX11)
+        let target = DeliveryTarget.linux(session: .otherX11, x11WindowClass: "kitty")
+        h.focus.target = target
+        h.arm()
+        h.focus.target = .linux(session: .otherX11, x11WindowClass: "Firefox")
+        XCTAssertEqual(h.service.preferredChord, .terminal)
+        h.deliver(mode: .paste(h.service.preferredChord))
+        XCTAssertEqual(h.recorder.events, [.write("test"), .hideForDelivery, .wait(Limits.settleDelayLinux)])
+        h.settle()
+        XCTAssertEqual(h.recorder.events, [
+            .write("test"), .hideForDelivery, .wait(Limits.settleDelayLinux), .restore(target),
+            .paste(.xdotool, .terminal), .done(.pasted(.xdotool)),
+        ])
+    }
+
+    func testPreferredCurrentInvocationDoesNotReuseOrChangeArmedPickerTarget() throws {
+        let h = DeliveryHarness(session: .otherX11)
+        h.focus.target = .linux(session: .otherX11, x11WindowClass: "kitty")
+        h.arm()
+        h.focus.target = .linux(session: .otherX11, x11WindowClass: "Firefox")
+        var captured: DeliveryInvocation?
+        h.service.captureInvocation(source: .currentTarget) { captured = $0 }
+        let invocation = try XCTUnwrap(captured)
+        h.focus.target = .linux(session: .otherX11, x11WindowClass: "konsole")
+        XCTAssertEqual(h.service.preferredChord(for: invocation), .standard)
+        XCTAssertEqual(h.service.preferredChord, .terminal)
+    }
+
+    func testPreferredFallbackRetainsTerminalChordAcrossLadderAndCache() {
+        let h = DeliveryHarness(session: .otherX11)
+        h.focus.target = .linux(session: .otherX11, x11WindowClass: "Tilix")
+        h.injectors[.xdotool]?.result = .failed(.toolMissing)
+        h.injectors[.ydotool]?.result = .failed(.timeout)
+        h.arm()
+        for _ in 0..<2 {
+            h.deliver(mode: .paste(h.service.preferredChord))
+            h.settle()
+        }
+        let reason = CopyReason.backendsFailed([
+            BackendFailure(backend: .xdotool, reason: .toolMissing),
+            BackendFailure(backend: .ydotool, reason: .timeout),
+        ])
+        XCTAssertEqual(h.injectors[.xdotool]?.chords, [.terminal])
+        XCTAssertEqual(h.injectors[.ydotool]?.chords, [.terminal])
+        XCTAssertEqual(h.recorder.events.filter { $0 == .pressPaste(.terminal, reason) }.count, 2)
+    }
+
     func testClipboardHideSettleRestoreInjectOrder() throws {
         let h = DeliveryHarness()
         h.arm()

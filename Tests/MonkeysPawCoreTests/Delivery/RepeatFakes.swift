@@ -19,8 +19,9 @@ final class RepeatHarness {
     let picker: PickerModel
     let model: RepeatModel
 
-    init(heldWork: Bool = false, session: DesktopSession = .macOS) throws {
-        flow = PromptFlowHarness(session: session)
+    init(heldWork: Bool = false, session: DesktopSession = .macOS,
+         linuxDefaultPasteChord: @escaping () -> PasteChord = { .standard }) throws {
+        flow = PromptFlowHarness(session: session, linuxDefaultPasteChord: linuxDefaultPasteChord)
         held = HeldBackgroundWork(marker)
         store = LastDeliveryStore(files: flow.data)
         binding = try RepeatBinding(root: "/library")

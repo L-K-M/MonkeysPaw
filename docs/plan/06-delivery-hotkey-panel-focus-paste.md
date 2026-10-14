@@ -354,9 +354,14 @@ DeliveryService.deliver(text, mode)
   (mutter#1974) or KWin (KDE bug 502882).
 - **Terminals.**
   - macOS terminals accept Cmd+V.
-  - On Linux, Ctrl+V in a shell is readline quoted-insert, so the user picks
-    the chord per delivery: `Return` sends the standard chord,
-    `Ctrl+Shift+Return` sends Ctrl+Shift+V.
+  - On Linux, Ctrl+V in a shell is readline quoted-insert. The primary picker
+    action (Return, Use, or row activation) uses the preferred chord: a known
+    native-X11 terminal recommends Ctrl+Shift+V; other targets use the saved
+    default. `Ctrl+Shift+Return` explicitly selects Terminal, `Alt+Return`
+    selects Copy, and picker `Ctrl+Return` remains Edit. Fill retains the mode
+    chosen when opened; its primary action and plain Return in text/choice
+    fields use that mode. Fill `Ctrl+Return` explicitly selects Standard.
+    Plain Return in a multiline field remains editing input.
   - Settings has a "default chord" option for users who mostly paste into
     terminals. Version-1 settings records it as
     `delivery.linuxDefaultPasteChord`: `standard` (the missing-field default)
@@ -365,8 +370,20 @@ DeliveryService.deliver(text, mode)
     macOS keeps Cmd+V regardless of this Linux preference.
   - On X11 the target's class is read at `arm()` with
     `xdotool getactivewindow`, then `xprop -id <id> WM_CLASS` (`x11-utils`).
-    The class is matched against a terminal list, and the terminal chord is
-    chosen automatically in M7.
+    Capture stays native-X11-only with one shared 250 ms budget; missing,
+    malformed, timed-out or own-window data is unknown. Case-insensitive exact
+    ASCII aliases are `Gnome-terminal`, `gnome-terminal-server`, `konsole`,
+    `Xfce4-terminal`, `mate-terminal`, `Tilix`, `Alacritty` and `kitty` (G11).
+    No substring, title, shell or prompt-content matching occurs. XTerm,
+    URxvt, st and embedded VS Code remain outside this list. The smoke's
+    customized XTerm proves explicit delivery only; each allowlisted alias
+    still requires real WM_CLASS and stock-chord readback in D20.
+  - Linux Picker/Fill show the chosen chord and a generic target hint before
+    delivery; Linux copy fallback shows the same captured-target hint and
+    chord. A known class proves neither restored focus nor receipt. Repeat
+    recomputes paste from its immutable current target/session and current
+    default, preserving Copy intent and the hidden picker's target/draft.
+    Wayland/Flatpak keep default and explicit choices without class probing.
 - **Typing is never automatic.** Typing multi-line text sends Enter: it
   submits chat boxes and runs shell commands. An opt-in typing mode is
   deferred past v1.

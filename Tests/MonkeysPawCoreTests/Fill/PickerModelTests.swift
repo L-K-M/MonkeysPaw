@@ -48,6 +48,64 @@ final class PickerModelTests: XCTestCase {
         XCTAssertNil(try h.store.load())
     }
 
+    func testPreferredTerminalModeAndHintPublishAfterDeferredTargetCapture() throws {
+        let h = PromptFlowHarness(mainMode: .deferred, session: .otherX11)
+        _ = try h.put("Body")
+        try h.index.rebuild()
+        h.delivery.main.drain()
+        h.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: "Gnome-terminal")
+        var modes: [DeliveryMode] = []
+        h.picker.onChange = { modes.append(h.picker.preferredMode) }
+        h.picker.open()
+        XCTAssertEqual(h.picker.preferredMode, .paste(.standard))
+        h.delivery.main.drain()
+        XCTAssertEqual(h.picker.preferredMode, .paste(.terminal))
+        XCTAssertEqual(h.picker.deliveryHint, "X11 terminal · Ctrl+Shift+V")
+        XCTAssertTrue(modes.contains(.paste(.terminal)))
+        XCTAssertEqual(h.delivery.recorder.events.filter { $0 == .capture }.count, 1)
+    }
+
+    func testPreferredModeUsesSavedDefaultAndExplicitModesOverrideRecommendation() throws {
+        for windowClass in ["konsole", "Firefox"] {
+            for saved: PasteChord in [.standard, .terminal] {
+                for explicit: DeliveryMode? in [nil, .paste(.standard), .paste(.terminal), .copyOnly] {
+                    let h = PromptFlowHarness(session: .otherX11, linuxDefaultPasteChord: { saved })
+                    h.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: windowClass)
+                    _ = try h.put("Body")
+                    try h.open()
+                    let preferred: DeliveryMode = .paste(windowClass == "konsole" ? .terminal : saved)
+                    XCTAssertEqual(h.picker.preferredMode, preferred)
+                    if let explicit { h.picker.use(mode: explicit) }
+                    else { h.picker.usePreferred() }
+                    h.settle()
+                    switch explicit ?? preferred {
+                    case .paste(let chord): XCTAssertEqual(h.delivery.injectors[.xdotool]?.chords, [chord])
+                    case .copyOnly: XCTAssertTrue(h.delivery.injectors.values.allSatisfy { $0.chords.isEmpty })
+                    }
+                }
+            }
+        }
+    }
+
+    func testPreferredChordAndTargetAreFixedBeforeAsyncBuiltinRead() throws {
+        var saved = PasteChord.terminal
+        let h = PromptFlowHarness(session: .otherX11, linuxDefaultPasteChord: { saved })
+        let target = DeliveryTarget.linux(session: .otherX11, x11WindowClass: "Firefox")
+        h.delivery.focus.target = target
+        h.delivery.clipboard.readMode = .deferred
+        _ = try h.put("{{clipboard}}")
+        try h.open()
+        h.picker.usePreferred()
+        XCTAssertTrue(h.picker.isResolvingBuiltins)
+        saved = .standard
+        h.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: "kitty")
+        h.delivery.service.arm()
+        h.delivery.clipboard.completeRead("Snapshot")
+        h.settle()
+        XCTAssertEqual(h.delivery.injectors[.xdotool]?.chords, [.terminal])
+        XCTAssertTrue(h.delivery.recorder.events.contains(.restore(target)))
+    }
+
     func testFieldlessInvocationKeepsOriginalArmedTargetDuringBuiltinRead() throws {
         let h = PromptFlowHarness()
         _ = try h.put("{{clipboard}}")

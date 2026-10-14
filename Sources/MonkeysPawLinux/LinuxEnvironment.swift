@@ -274,7 +274,10 @@ final class LinuxEnvironment {
         clipboard: clipboard,
         injectors: [remoteDesktop, XdotoolPasteInjector(runner: runner), YdotoolPasteInjector(runner: runner)],
         notifier: notifier, session: session,
-        scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache())
+        scheduler: scheduler, mainThread: mainThread, failureCache: SessionPasteFailureCache(),
+        linuxDefaultPasteChord: { [weak self] in
+            self?.settingsModel.deliveryPreferences.linuxDefaultPasteChord ?? .standard
+        })
     private lazy var selfTest = SelfTest(
         target: GTKSelfTestTarget(application: application), delivery: delivery,
         session: session, scheduler: scheduler, mainThread: mainThread)

@@ -234,6 +234,56 @@ final class RepeatServiceTests: XCTestCase {
         XCTAssertEqual(h.flow.delivery.injectors[.xdotool]?.chords.count, count)
     }
 
+    func testTerminalPolicyRepeatUsesCurrentInvocationInsteadOfLastOrArmedTarget() throws {
+        let h = try RepeatHarness(session: .otherX11)
+        _ = try h.put("body")
+        h.flow.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: "kitty")
+        try h.deliver(mode: .paste(.terminal))
+        // The picker keeps a separately armed terminal target and query.
+        try h.open()
+        h.picker.setQuery("body")
+        let current = DeliveryTarget.linux(session: .otherX11, x11WindowClass: "Firefox")
+        h.flow.delivery.focus.target = current
+        let repeater = RepeatService(binding: h.binding, store: h.store, library: h.flow.service,
+            index: h.flow.index, fill: h.flow.fill, delivery: h.flow.delivery.service,
+            work: h.held, main: h.flow.delivery.main, isOwnWindowActive: { false })
+        var results: [RepeatResult] = []
+        XCTAssertTrue(repeater.repeatLast { results.append($0) })
+        h.flow.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: "konsole")
+        h.held.releaseAll()
+        h.flow.settle()
+        h.held.releaseAll()
+        h.flow.delivery.main.drain()
+        XCTAssertEqual(results, [.delivered(.pasted(.xdotool), [])])
+        XCTAssertEqual(h.flow.delivery.injectors[.xdotool]?.chords, [.terminal, .standard])
+        XCTAssertTrue(h.flow.delivery.recorder.events.contains(.restore(current)))
+        XCTAssertEqual(h.flow.delivery.service.preferredChord, .terminal)
+        XCTAssertEqual(h.picker.query, "body")
+    }
+
+    func testTerminalPolicyRepeatUsesLiveDefaultAndCopyIntentStillWins() throws {
+        var saved = PasteChord.standard
+        let h = try RepeatHarness(session: .otherX11, linuxDefaultPasteChord: { saved })
+        _ = try h.put("body")
+        h.flow.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: "Firefox")
+        try h.deliver(mode: .paste(.standard))
+        let repeater = RepeatService(binding: h.binding, store: h.store, library: h.flow.service,
+            index: h.flow.index, fill: h.flow.fill, delivery: h.flow.delivery.service,
+            work: InlineBackgroundWork(h.marker), main: h.flow.delivery.main, isOwnWindowActive: { false })
+        saved = .terminal
+        XCTAssertEqual(h.repeatNow(using: repeater), [.delivered(.pasted(.xdotool), [])])
+        h.flow.delivery.focus.target = .linux(session: .otherX11, x11WindowClass: "Alacritty")
+        saved = .standard
+        XCTAssertEqual(h.repeatNow(using: repeater), [.delivered(.pasted(.xdotool), [])])
+        XCTAssertEqual(h.flow.delivery.injectors[.xdotool]?.chords, [.standard, .terminal, .terminal])
+        try h.deliver(mode: .copyOnly)
+        let restarted = RepeatService(binding: h.binding, store: h.store, library: h.flow.service,
+            index: h.flow.index, fill: h.flow.fill, delivery: h.flow.delivery.service,
+            work: InlineBackgroundWork(h.marker), main: h.flow.delivery.main, isOwnWindowActive: { false })
+        XCTAssertEqual(h.repeatNow(using: restarted), [.delivered(.copiedOnly(.requested), [])])
+        XCTAssertEqual(h.flow.delivery.injectors[.xdotool]?.chords.count, 3)
+    }
+
     func testAssignedIdentityFollowsMoveAndRejectsReusedHintAndDuplicateID() throws {
         let h = try RepeatHarness()
         let entry = try h.put(assigned + "body")
