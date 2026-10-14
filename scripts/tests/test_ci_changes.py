@@ -75,6 +75,8 @@ class SelectionTests(unittest.TestCase):
             "android/app/src/main/AndroidManifest.xml": frozenset({"android"}),
             "android/core/build.gradle.kts": frozenset({"android"}),
             "android/app/build.gradle.kts": frozenset({"android", "core-linux", "deb"}),
+            "android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/llm/AssistantPrompts.generated.kt":
+                frozenset({"android", "core-linux"}),
             "scripts/sync-android-version.sh": frozenset({"core-linux", "android"}),
             "scripts/check-pbxproj.py": frozenset({"core-linux"}),
             "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),

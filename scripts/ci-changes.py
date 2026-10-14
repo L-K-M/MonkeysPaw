@@ -26,6 +26,9 @@ FILES = {
     "Package.resolved": SWIFT_JOBS,
     # Android's JVM conformance test reads the frozen Swift table directly.
     "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL_JOBS,
+    # The Kotlin snapshot checks prompt bytes; core-linux checks generated source bytes too.
+    "android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/llm/AssistantPrompts.generated.kt":
+        frozenset({"android", "core-linux"}),
     # This is a check-version.py input, despite its Markdown extension.
     "README.md": frozenset({"core-linux", "deb"}),
     # The version checker also reads the committed Android literals.
