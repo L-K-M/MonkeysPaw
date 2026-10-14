@@ -459,7 +459,7 @@ final class LibraryServiceTests: XCTestCase {
         try library.put("Original", at: "a.md")
         let paths = ["", "/a.md", "../a.md", "./a.md", "a//b.md", "a/../b.md", "a/./b.md",
                      "a\\b.md", "a\0.md", "a\n.md", "README.md", "_a.md", "_dir/a.md",
-                     ".git/a.md", "a.MD", "a.txt", String(repeating: "é", count: 511) + ".md"]
+                     ".git/a.md", "a.MD", "a.txt", String(repeating: "é", count: Limits.maxRootedPathBytes / 2 + 1) + ".md"]
         for path in paths {
             XCTAssertThrowsError(try service.save(PromptCodec.parse("Body", filename: "a.md"), at: path))
             XCTAssertThrowsError(try service.availablePath(for: path))

@@ -7,7 +7,7 @@ import Foundation
 /// Share one instance per app-data root, including identity migration callers.
 /// Read/modify operations fail closed on corrupt, unsupported or over-cap state.
 /// Explicit removeAll() discards existing state without requiring it to decode.
-public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
+public final class ValuesStore: PromptKeyedStore, SyncKeyedStore, @unchecked Sendable {
     private struct Payload: Codable {
         var values: [String: [String: String]]
         let version: Int
@@ -16,6 +16,7 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     private let files: FileStore
     private let lock = NSLock()
     private let path = "values.json"
+    private var syncWriteGates = SyncKeyedWriteGates()
 
     public init(files: FileStore) { self.files = files }
 
@@ -31,6 +32,7 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     public func record(identity: PromptIdentity, values: [String: String]) throws {
         guard !values.isEmpty else { return }
         try locked {
+            try syncWriteGates.requireEditable()
             let key = try identity.storageKey
             var payload = try read()
             payload.values[key, default: [:]].merge(values) { _, delivered in delivered }
@@ -42,6 +44,7 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     /// Missing identities are a no-op; rejected state remains untouched.
     public func remove(identity: PromptIdentity) throws {
         try locked {
+            try syncWriteGates.requireEditable()
             let key = try identity.storageKey
             var payload = try read()
             guard payload.values.removeValue(forKey: key) != nil else { return }
@@ -55,12 +58,16 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
     /// Explicit recovery also works when existing state cannot be read or decoded.
     /// The private writer retains the driver's rooted path and file checks.
     public func removeAll() throws {
-        try locked { try write(Payload(values: [:], version: Self.formatVersion)) }
+        try locked {
+            try syncWriteGates.requireEditable()
+            try write(Payload(values: [:], version: Self.formatVersion))
+        }
     }
 
     @discardableResult
     public func migrateKey(from source: PromptIdentity, to destination: PromptIdentity) throws -> PromptKeyMigration {
         try locked {
+            try syncWriteGates.requireEditable()
             let sourceKey = try source.storageKey
             let destinationKey = try destination.storageKey
             var payload = try read()
@@ -81,6 +88,58 @@ public final class ValuesStore: PromptKeyedStore, @unchecked Sendable {
         let payload = try JSONDecoder().decode(Payload.self, from: bytes)
         guard payload.version == Self.formatVersion else { throw LibraryError.operationFailed }
         return payload
+    }
+
+    var syncKind: SyncKeyedStoreKind { .values }
+
+    func bindSyncWriteGate(_ gate: SyncLibraryWriteGate) {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGates.bind(gate)
+    }
+
+    func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
+        try migration.validate()
+        guard migration.store == syncKind, case .values(let source, let destination, let fields) = migration.change else {
+            throw SyncError.invalidState
+        }
+        return try locked {
+            let payload = try read()
+            return payload.values[source] == fields && payload.values[destination] == nil
+        }
+    }
+
+    func prepareSyncMigration(from source: PromptIdentity, to destination: PromptIdentity,
+                              rebindingHeadTo: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration] {
+        try locked {
+            let from = try source.storageKey
+            let to = try destination.storageKey
+            let payload = try read()
+            guard let fields = payload.values[from] else { return [] }
+            guard payload.values[to] == nil else { throw LibraryError.keyedStateConflict }
+            return [SyncKeyedMigration(store: .values, change: .values(source: from, destination: to, fields: fields))]
+        }
+    }
+
+    func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
+        try migration.validate()
+        guard migration.store == syncKind, case .values(let source, let destination, let fields) = migration.change else {
+            throw SyncError.invalidState
+        }
+        try locked {
+            var payload = try read()
+            if payload.values[source] == nil, payload.values[destination] == fields {
+                try SyncDurability.flushFileAndParents(path, operations: operations)
+                return
+            }
+            guard payload.values[source] == fields, payload.values[destination] == nil else {
+                throw LibraryError.keyedStateConflict
+            }
+            payload.values[source] = nil
+            payload.values[destination] = fields
+            try write(payload)
+            try SyncDurability.flushFileAndParents(path, operations: operations)
+        }
     }
 
     private func write(_ payload: Payload) throws {

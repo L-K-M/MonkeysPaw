@@ -6,6 +6,15 @@ import Foundation
 final class MemorySyncFileOperations: SyncFileOperations {
     let files: MemoryFileStore
     var failFlushNumber: Int?
+    var failOperationNumber: Int?
+    var failMode = false
+    var beforePublish: ((RelativePath) throws -> Void)?
+    /// Simulate the documented noncooperating-writer window after the last
+    /// expectation check; the driver still retains the actual losing bytes.
+    /// Applies to each publication until explicitly cleared.
+    var racingBytesAfterCheck: Data?
+    var onOperation: ((String) -> Void)?
+    private(set) var operationCount = 0
     private(set) var flushCount = 0
     private(set) var flushedFiles: [RelativePath] = []
     private(set) var flushedDirectories: [RelativePath?] = []
@@ -17,13 +26,27 @@ final class MemorySyncFileOperations: SyncFileOperations {
 
     func publish(_ bytes: Data, at path: RelativePath, expecting: SyncFileExpectation,
                  mode: SyncFileMode) throws -> SyncFilePublication {
+        try checkpoint("publish:" + path.string)
+        try beforePublish?(path)
         try checkParents(of: path)
         let known = try allDirectories()
         guard !known.contains(path) else { throw SyncFileOperationError(.occupied) }
-        let displaced = try check(path, expecting: expecting)
-        try fileStoreOperation { try files.write(bytes, at: path.string) }
+        var displaced = try check(path, expecting: expecting)
+        if let racingBytesAfterCheck {
+            try fileStoreOperation { try files.write(racingBytesAfterCheck, at: path.string) }
+            if case .absent = expecting { throw SyncFileOperationError(.occupied, displacedBytes: racingBytesAfterCheck) }
+            displaced = racingBytesAfterCheck
+        }
+        guard !failMode else { throw SyncFileOperationError(.ioFailure) }
+        switch expecting {
+        case .absent: try fileStoreOperation { try files.create(bytes, at: path.string) }
+        case .matching: try fileStoreOperation { try files.write(bytes, at: path.string) }
+        }
         modes[path] = mode
         do {
+            guard try fileStoreOperation({ try files.read(at: path.string) }) == bytes else {
+                throw SyncFileOperationError(.changed, effect: .applied, displacedBytes: displaced)
+            }
             try flushFile(at: path)
             // Creating an ancestor also changes its parent's directory entry.
             var directory = parent(of: path)
@@ -32,6 +55,8 @@ final class MemorySyncFileOperations: SyncFileOperations {
                 guard let current = directory, !known.contains(current) else { break }
                 directory = parent(of: current)
             }
+        } catch let error as SyncFileOperationError where error.code == .changed {
+            throw error
         } catch {
             throw SyncFileOperationError(.durabilityFailed, effect: .applied, displacedBytes: displaced)
         }
@@ -39,12 +64,14 @@ final class MemorySyncFileOperations: SyncFileOperations {
     }
 
     func flushFile(at path: RelativePath) throws {
+        try checkpoint("file:" + path.string)
         _ = try fileStoreOperation { try files.read(at: path.string) }
         flushedFiles.append(path)
         try flush()
     }
 
     func flushDirectory(at path: RelativePath?) throws {
+        try checkpoint("directory:" + (path?.string ?? "/"))
         let known = try allDirectories()
         if let path {
             try fileStoreOperation { try FileStorePath.validate(path.string) }
@@ -56,6 +83,8 @@ final class MemorySyncFileOperations: SyncFileOperations {
     }
 
     func setMode(_ mode: SyncFileMode, at path: RelativePath) throws {
+        try checkpoint("mode:" + path.string)
+        guard !failMode else { throw SyncFileOperationError(.ioFailure) }
         _ = try fileStoreOperation { try files.read(at: path.string) }
         modes[path] = mode
         do { try flushFile(at: path) }
@@ -63,6 +92,7 @@ final class MemorySyncFileOperations: SyncFileOperations {
     }
 
     func trash(at path: RelativePath, expecting: SyncFileExpectation) throws {
+        try checkpoint("trash:" + path.string)
         guard let bytes = try check(path, expecting: expecting) else { throw SyncFileOperationError(.notFound) }
         try fileStoreOperation { try files.delete(at: path.string) }
         trashed[path] = bytes
@@ -72,6 +102,7 @@ final class MemorySyncFileOperations: SyncFileOperations {
     }
 
     func createDirectory(at path: RelativePath) throws {
+        try checkpoint("create-directory:" + path.string)
         try fileStoreOperation { try FileStorePath.validate(path.string) }
         try checkParents(of: path)
         guard try !allDirectories().contains(path), try fileStoreOperation({ try files.stamp(at: path.string) }) == nil else {
@@ -83,11 +114,13 @@ final class MemorySyncFileOperations: SyncFileOperations {
             folders.insert(directory)
             ancestor = parent(of: directory)
         }
+        files.directories.formUnion(folders)
         do { try flushDirectory(at: parent(of: path)) }
         catch { throw SyncFileOperationError(.durabilityFailed, effect: .applied) }
     }
 
     func renameDirectory(from source: RelativePath, to destination: RelativePath) throws {
+        try checkpoint("rename-directory:" + source.string)
         try fileStoreOperation { try FileStorePath.validate(source.string) }
         try fileStoreOperation { try FileStorePath.validate(destination.string) }
         try checkParents(of: destination)
@@ -121,6 +154,8 @@ final class MemorySyncFileOperations: SyncFileOperations {
             let suffix = folder.string.utf8.dropFirst(source.string.utf8.count)
             folders.insert(RelativePath(destination.string + String(decoding: suffix, as: UTF8.self)))
         }
+        files.directories.subtract(moved)
+        files.directories.formUnion(folders)
         do {
             try flushDirectory(at: parent(of: source))
             try flushDirectory(at: parent(of: destination))
@@ -128,12 +163,13 @@ final class MemorySyncFileOperations: SyncFileOperations {
     }
 
     func directories(at path: RelativePath?) throws -> [RelativePath] {
+        try checkpoint("directories:" + (path?.string ?? "/"))
         if let path { try fileStoreOperation { try FileStorePath.validate(path.string) } }
         return try allDirectories().filter { parent(of: $0) == path }.sorted()
     }
 
     private func allDirectories() throws -> Set<RelativePath> {
-        var known = folders
+        var known = folders.union(files.directories)
         for file in try fileStoreOperation({ try files.listFiles() }) {
             var ancestor = parent(of: RelativePath(file.relativePath))
             while let directory = ancestor {
@@ -151,7 +187,8 @@ final class MemorySyncFileOperations: SyncFileOperations {
             guard stamp == nil else { throw SyncFileOperationError(.occupied) }
             return nil
         case .matching(let expected, let bytes):
-            guard let stamp, stamp == expected, try fileStoreOperation({ try files.read(at: path.string) }) == bytes else {
+            guard let stamp, stamp == expected, try fileStoreOperation({ try files.read(at: path.string) }) == bytes,
+                  try fileStoreOperation({ try files.stamp(at: path.string) }) == stamp else {
                 throw SyncFileOperationError(.changed)
             }
             return bytes
@@ -171,6 +208,12 @@ final class MemorySyncFileOperations: SyncFileOperations {
     private func flush() throws {
         flushCount += 1
         if flushCount == failFlushNumber { throw SyncFileOperationError(.durabilityFailed) }
+    }
+
+    private func checkpoint(_ operation: String) throws {
+        operationCount += 1
+        onOperation?(operation)
+        if operationCount == failOperationNumber { throw SyncFileOperationError(.ioFailure) }
     }
 
     private func fileStoreOperation<Value>(effect: SyncFileMutationEffect = .unchanged,
@@ -235,5 +278,60 @@ enum SyncTestValues {
 
     static func write(_ object: [String: Any], to files: MemoryFileStore, path: String) throws {
         try files.writePrivate(JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), at: path)
+    }
+}
+
+final class SyncApplyTestRig {
+    let files: MemoryFileStore
+    let data: MemoryFileStore
+    let libraryOperations: MemorySyncFileOperations
+    let dataOperations: MemorySyncFileOperations
+    let usage: UsageStore
+    let values: ValuesStore
+    let library: LibraryService
+    let mutations: SyncLibraryMutations
+    let states: SyncStateStore
+    let journal: SyncApplyJournal
+    let binding: SyncLibraryIdentity
+
+    init(files: MemoryFileStore = MemoryFileStore(), data: MemoryFileStore = MemoryFileStore()) throws {
+        self.files = files
+        self.data = data
+        binding = try SyncTestValues.binding()
+        libraryOperations = MemorySyncFileOperations(files: files)
+        dataOperations = MemorySyncFileOperations(files: data)
+        usage = UsageStore(files: data, clock: LibraryClock())
+        values = ValuesStore(files: data)
+        library = LibraryService(library: files, data: data, clock: LibraryClock(), entropy: LibraryEntropy(),
+            keyedStores: [usage, values])
+        mutations = SyncLibraryMutations(library: library, operations: libraryOperations)
+        states = SyncStateStore(files: data, operations: dataOperations)
+        journal = try SyncApplyJournal(files: data, operations: dataOperations, mutations: mutations, states: states)
+    }
+
+    static func bytes(_ body: String, id: ULID = SyncTestValues.personalPrompt) -> Data {
+        Data(("---\nid: '" + id.rawValue + "'\n# keep this comment\ntitle: 'Exact'\n---\n" + body).utf8)
+    }
+
+    func replacement(at path: RelativePath = "a.md", body: String = "Server\r\n") throws -> SyncLibraryEdit {
+        let current = try mutations.read(at: path)
+        let bytes = Self.bytes(body)
+        return try mutations.publication(bytes, at: path, expecting: current,
+            transition: SyncIdentityTransition(from: current?.identity, to: .assigned(SyncTestValues.personalPrompt)))
+    }
+
+    func plan(_ edits: [SyncLibraryEdit]) throws -> SyncApplyPlan {
+        let old = try states.load(for: binding)
+        var next = try old ?? SyncState(binding: binding)
+        next.cursors[.user(SyncTestValues.user)] = "committed cursor"
+        for edit in edits {
+            if let expected = edit.expected { next.prompts[try expected.identity] = nil }
+            if let transition = edit.transition, edit.heldIssue == nil {
+                next.prompts[try SyncIdentifiers.promptIdentity(transition.destination)] = try SyncPromptState(
+                    scope: .user(SyncTestValues.user), path: RelativePath(edit.path), rev: edit.kind == .rescue ? 0 : 1,
+                    canonicalHash: edit.kind == .rescue ? nil : edit.hash, origin: edit.kind == .rescue ? .rescued : nil)
+            }
+        }
+        return SyncApplyPlan(expectedState: old, nextState: next, edits: edits)
     }
 }

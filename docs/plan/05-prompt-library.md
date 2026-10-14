@@ -92,8 +92,11 @@ Library rules:
 
 M2b library paths are relative POSIX paths within the selected root. Reject
 absolute/empty paths, empty segments, `.`/`..` segments, backslashes, NUL or
-control characters, and paths exceeding `Limits.maxPathBytes` (1,024 UTF-8
-bytes). Mutation targets must also obey the prompt/ignored-path rules.
+control characters, and paths exceeding `Limits.maxRootedPathBytes` (1,287 UTF-8
+bytes). M6 extends the former 1,024-byte local cap to accommodate a full
+1,024-byte scope path below `Groups/<255-byte folder>/` (§20 E37). The wire
+cap remains `Limits.maxPathBytes = 1,024`; existing local spellings stay valid.
+Mutation targets must also obey the prompt/ignored-path rules.
 Reads and writes reject symlinked components, and enumeration never follows
 symlinks. M5's NFC, segment-length, case-folded clash and reserved-scope
 policies are deferred; this slice does not silently normalize local paths.

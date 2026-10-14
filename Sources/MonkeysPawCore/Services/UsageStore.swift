@@ -7,7 +7,7 @@ import Foundation
 /// Corrupt/unsupported state is an error, never silently reset or merged.
 /// One lock serializes every operation, including each read/append/write
 /// cycle, so the store is safe to share across threads as @unchecked Sendable.
-public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
+public final class UsageStore: PromptKeyedStore, SyncKeyedStore, @unchecked Sendable {
     private struct Payload: Codable {
         let events: [Double]
         let version: Int
@@ -20,6 +20,7 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     // Populated by the index's validated reads and successful writes. Browsing
     // never scans app data or performs usage I/O on a presentation refresh.
     private var cachedEvents: [PromptIdentity: [Date]] = [:]
+    private var syncWriteGates = SyncKeyedWriteGates()
 
     public init(files: FileStore, clock: WallClock) {
         self.files = files
@@ -40,6 +41,7 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     func recordUseDeferringNotification(identity: PromptIdentity, at date: Date?) throws
         -> (events: [Date], notify: () -> Void) {
         let (events, subscribers) = try locked {
+            try syncWriteGates.requireEditable()
             let timestamp = date ?? clock.now()
             guard timestamp.timeIntervalSince1970.isFinite else { throw LibraryError.invalidTimestamp }
             let path = try path(for: identity)
@@ -84,6 +86,7 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
     @discardableResult
     public func migrateKey(from source: PromptIdentity, to destination: PromptIdentity) throws -> PromptKeyMigration {
         try locked {
+            try syncWriteGates.requireEditable()
             let sourcePath = try path(for: source)
             let destinationPath = try path(for: destination)
             guard source != destination, try files.stamp(at: sourcePath) != nil else { return .unchanged }
@@ -99,10 +102,59 @@ public final class UsageStore: PromptKeyedStore, @unchecked Sendable {
         "usage/" + (try identity.storageKey)
     }
 
+    var syncKind: SyncKeyedStoreKind { .usage }
+
+    func bindSyncWriteGate(_ gate: SyncLibraryWriteGate) {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGates.bind(gate)
+    }
+
+    func isSyncMigrationUnstarted(_ migration: SyncKeyedMigration) throws -> Bool {
+        try migration.validate()
+        guard migration.store == syncKind, case .file(let move) = migration.change else { throw SyncError.invalidState }
+        return try locked {
+            return try move.isUnstarted(files: files)
+        }
+    }
+
+    func prepareSyncMigration(from source: PromptIdentity, to destination: PromptIdentity,
+                              rebindingHeadTo: Data?, originalBytes: Data?) throws -> [SyncKeyedMigration] {
+        try locked {
+            let from = try path(for: source)
+            let to = try path(for: destination)
+            guard from != to else { return [] }
+            guard let bytes = try SyncDurability.readIfPresent(from, files: files) else { return [] }
+            _ = try Self.decodeEvents(bytes)
+            guard try files.stamp(at: to) == nil else { throw LibraryError.keyedStateConflict }
+            return [SyncKeyedMigration(store: .usage,
+                change: .file(SyncKeyedFileMove(source: from, destination: to, bytes: bytes)))]
+        }
+    }
+
+    func applySyncMigration(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
+        try migration.validate()
+        guard migration.store == syncKind, case .file(let move) = migration.change else { throw SyncError.invalidState }
+        let source = try SyncIdentifiers.promptIdentity(String(move.source.dropFirst("usage/".count)))
+        let destination = try SyncIdentifiers.promptIdentity(String(move.destination.dropFirst("usage/".count)))
+        try locked {
+            let events = try Self.decodeEvents(move.destinationBytes)
+            try move.apply(files: files, operations: operations)
+            cachedEvents[source] = nil
+            cachedEvents[destination] = events
+        }
+    }
+
     private func readEvents(at path: String) throws -> [Date] {
         let bytes: Data
         do { bytes = try files.read(at: path) }
         catch FileStoreError.notFound { return [] }
+        return try Self.decodeEvents(bytes)
+    }
+
+    // Journal validation shares the decoder to reject invalid usage bytes
+    // before publishing the library edit that carries their migration.
+    static func decodeEvents(_ bytes: Data) throws -> [Date] {
         let payload = try JSONDecoder().decode(Payload.self, from: bytes)
         guard payload.version == 1, payload.events.count <= Limits.usageEventCap,
               payload.events.allSatisfy(\.isFinite) else { throw LibraryError.operationFailed }

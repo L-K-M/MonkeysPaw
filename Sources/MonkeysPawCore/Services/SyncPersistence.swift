@@ -8,7 +8,7 @@ struct SyncStoreSnapshot<Value> {
 /// One instance per app-data document. Its lock owns I/O, cache and the fail-closed
 /// latch. Edit closures must not re-enter. FileStore has no filesystem-wide CAS.
 final class SyncPersistence<Document: Codable> {
-    private enum FlushMode { case publication, deletion }
+    private enum FlushMode: Equatable { case publication, deletion }
     private struct Version: Decodable { let version: Int }
     private struct Loaded {
         let document: Document?
@@ -22,6 +22,7 @@ final class SyncPersistence<Document: Codable> {
     private let lock = NSLock()
     private var cached = SyncStoreSnapshot<Document>(value: nil, error: nil)
     private var hasDocument = false
+    private var uncertainFlush: FlushMode?
 
     init(files: FileStore, operations: SyncFileOperations, path: String, version: Int) {
         self.files = files
@@ -37,10 +38,53 @@ final class SyncPersistence<Document: Codable> {
         return cached
     }
 
+    /// A surrounding transaction failed after this document became durable.
+    /// Keep its pre-transaction cache and block acknowledgement until recovery.
+    func blockForRecovery(retaining value: Document?) {
+        lock.lock()
+        defer { lock.unlock() }
+        cached = SyncStoreSnapshot(value: value, error: .durabilityUncertain)
+        uncertainFlush = .publication
+    }
+
     func load() throws -> Document? {
         lock.lock()
         defer { lock.unlock() }
         let loaded = try loadCurrent()
+        cached = SyncStoreSnapshot(value: loaded.document, error: nil)
+        hasDocument = loaded.document != nil
+        return loaded.document
+    }
+
+    /// Explicit journal replay may retry uncertain durability, never corruption
+    /// or unsupported formats. Revalidate disk bytes before reestablishing flushes.
+    func recover(validating validate: (Document?) throws -> Void = { _ in }) throws -> Document? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard cached.error == .durabilityUncertain else {
+            let loaded = try loadCurrent()
+            try validate(loaded.document)
+            cached = SyncStoreSnapshot(value: loaded.document, error: nil)
+            hasDocument = loaded.document != nil
+            return loaded.document
+        }
+        let loaded: Loaded
+        do {
+            let current = try read()
+            if case .publication? = uncertainFlush, current.document == nil {
+                throw SyncError.readFailed(.notFound)
+            }
+            loaded = current
+        } catch SyncError.readFailed(.notFound) where uncertainFlush == .deletion {
+            loaded = Loaded(document: nil, object: [:])
+        } catch {
+            let safe = error as? SyncError ?? .corruptFile
+            // Report the read error without replacing the recovery latch.
+            cached = SyncStoreSnapshot(value: cached.value, error: .durabilityUncertain)
+            throw safe
+        }
+        try validate(loaded.document)
+        try flush(loaded.document == nil ? .deletion : .publication)
         cached = SyncStoreSnapshot(value: loaded.document, error: nil)
         hasDocument = loaded.document != nil
         return loaded.document
@@ -137,8 +181,10 @@ final class SyncPersistence<Document: Codable> {
             // The atomic write/delete may have committed already. Keep the old
             // value for diagnostics, but never authorize another edit/acknowledgment.
             cached = SyncStoreSnapshot(value: cached.value, error: .durabilityUncertain)
+            uncertainFlush = mode
             throw SyncError.durabilityUncertain
         }
+        uncertainFlush = nil
     }
 
     /// Dynamic map entries are authoritative: preserve unknown fields *inside*

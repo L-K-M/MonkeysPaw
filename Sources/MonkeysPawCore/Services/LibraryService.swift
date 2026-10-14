@@ -48,6 +48,8 @@ public final class LibraryService: PromptFavoriteEditing {
     private let clock: WallClock
     private let entropy: EntropySource
     private let lock = NSLock()
+    // Held by a pending durable journal, not by an HTTP request or an await.
+    private let syncWriteGate = SyncLibraryWriteGate()
 
     public init(library: FileStore, data: FileStore, clock: WallClock, entropy: EntropySource,
                 keyedStores: [PromptKeyedStore] = []) {
@@ -57,6 +59,9 @@ public final class LibraryService: PromptFavoriteEditing {
         self.keyedStores = [history] + keyedStores
         self.clock = clock
         self.entropy = entropy
+        for store in self.keyedStores.compactMap({ $0 as? SyncKeyedStore }) {
+            store.bindSyncWriteGate(syncWriteGate)
+        }
     }
 
     /// Exact-case .md files, in relative POSIX path order. Invalid content stays
@@ -656,6 +661,7 @@ public final class LibraryService: PromptFavoriteEditing {
     private func locked<T>(_ work: () throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
+        try syncWriteGate.requireEditable()
         do { return try work() }
         catch let error as CommittedMaintenanceFailure {
             throw error.provenance ? LibraryError.provenanceMaintenanceFailed : LibraryError.historyMaintenanceFailed
@@ -668,5 +674,70 @@ public final class LibraryService: PromptFavoriteEditing {
         catch let error as ImportSkipReason { throw error }
         catch let error as AssistantSaveRefusal { throw error }
         catch { throw LibraryError.operationFailed }
+    }
+
+    func beginSyncApply(_ id: UUID, nextState: SyncState) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try syncWriteGate.begin(id, nextState: nextState)
+    }
+
+    func endSyncApply(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.finish(id)
+    }
+
+    func replaceSyncApply(_ previous: UUID, with next: UUID, nextState: SyncState) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try syncWriteGate.replace(previous, with: next, nextState: nextState)
+    }
+
+    func blockSyncApplyForRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.blockForRecovery()
+    }
+
+    func resumeSyncApply(_ id: UUID, nextState: SyncState) {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.resume(id, nextState: nextState)
+    }
+
+    var pendingSyncApplyPermit: (id: UUID, nextState: SyncState)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return syncWriteGate.pendingPermit
+    }
+
+    var hasUnreadableSyncJournal: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return syncWriteGate.hasUnreadableJournal
+    }
+
+    func finishEmptySyncRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+        syncWriteGate.finishEmptyRecovery()
+    }
+
+    /// No caller-supplied async/network closure enters this seam. Sync's only
+    /// users perform a checked read, hash, publication or verification.
+    /// The closure must not re-enter LibraryService's non-reentrant lock.
+    func withSyncLock<T>(_ work: (FileStore) throws -> T) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try work(files)
+    }
+
+    func syncKeyedStores() throws -> [SyncKeyedStore] {
+        let stores = keyedStores.compactMap { $0 as? SyncKeyedStore }
+        guard stores.count == keyedStores.count, Set(stores.map(\.syncKind)).count == stores.count else {
+            throw LibraryError.recoveryRequired
+        }
+        return stores
     }
 }

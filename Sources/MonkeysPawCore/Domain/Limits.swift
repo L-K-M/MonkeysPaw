@@ -190,6 +190,9 @@ public enum Limits {
     /// §8.4: bound a complete relative prompt path to 1,024 UTF-8 bytes.
     public static let maxPathBytes: Int = kibibyte
 
+    /// §5.1/§9.1: a full wire path below Groups/<255-byte folder>/.
+    public static let maxRootedPathBytes: Int = maxPathBytes + 7 + 255 + 1
+
     /// §8.4: bound each NFC sync path segment, including a filename's suffix.
     public static let syncPathSegmentMaxBytes: Int = 255
 
@@ -197,6 +200,7 @@ public enum Limits {
     static let syncStateVersion: Int = 1
     static let syncAccountVersion: Int = 1
     static let syncBindingVersion: Int = 1
+    static let syncApplyJournalVersion: Int = 1
 
     /// §9.2: fail closed rather than truncate oversized state/ownership records.
     static let syncRecordMaxBytes: Int = 16 * mebibyte

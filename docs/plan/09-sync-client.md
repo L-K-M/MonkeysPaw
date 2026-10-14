@@ -12,9 +12,17 @@
   level are reserved. If either already exists when sync is enabled, setup
   asks to rename it.
 - **Group folders.**
+  - Wire scope paths remain capped at 1,024 UTF-8 bytes. Joined library
+    paths use the compatible 1,287-byte rooted cap (1,024 + 7 + 255 + 1), including
+    `Groups/<255-byte folder>/` (§5.1, §20 E37). Private conflict/rescue
+    destinations still fit the 1,024-byte wire cap; their planners safely
+    shorten/flatten long source names and retain source mappings.
   - A folder is keyed by `group_id` in sync state. Its name is the group
     name, sanitized: path-validation rules applied, then de-duplicated
-    with ` (2)`.
+    with numbered suffixes starting at ` (2)`. For each candidate, reserve
+    its suffix's actual UTF-8 bytes, including multi-digit counters, before
+    safely shortening the sanitized stem so the complete folder name stays
+    within 255 bytes.
   - A group rename renames the folder.
   - A folder under `Groups/` that maps to no current group, or a file
     sitting loose directly under `Groups/`, is never pushed. It is rescued
@@ -71,6 +79,47 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   Best-effort directory fsync is not a successful sync commit. Scope cursors
   commit only after the journaled pull's files and affected directories are
   on disk (§9.3).
+  Version-1 `<data>/sync/apply.json` records the account/root, old and intended
+  state, stable operation/copy IDs, exact intended and losing bytes/hashes,
+  incarnation baselines and resumable identity migrations before any mutation.
+  Recovery blocks ordinary library reads and edits while identity/data may be
+  partly migrated, until replay completes or a planner resolves a typed conflict.
+  Direct usage/value writes, removals and ordinary key migrations check the same
+  recovery gate under their own store locks; in-flight writes finish before
+  preparation snapshots their store. Ordinary library reads and edits check
+  the recovery gate under the LibraryService lock and fail immediately with
+  typed recovery-required. Internal recovery's checked read/hash/mutation
+  uses that lock without the ordinary gate; journal, state and keyed-store
+  I/O never hold that lock. Explicit replay revalidates and reflushes uncertain
+  journal/state records on the same live graph before releasing the permit.
+  A replacement journal instance may resume the validated on-disk plan after
+  abandoning its predecessor; each graph still serializes one journal.
+  The live permit retains the intended state across journal-object replacement.
+  If the journal is already absent, recovery verifies that intended state and
+  reflushes state and deletion before releasing the permit; a missing intent
+  with uncommitted state stays recovery-required until restored or resolved.
+  Corrupt/future journals stay blocked until explicitly restored or reset;
+  a reset's deletion must be flushed before ordinary access resumes.
+  Ordinary begin/finish cannot clear this block, including an existing permit;
+  only validated recovery resumption or durable empty recovery releases it.
+  Failed recovery reads preserve the durability-uncertain latch while reporting
+  their typed error, so a retry still revalidates and reflushes the document.
+  Publish exact server bytes, verify the result, flush files and affected
+  directories, durably commit state, then durably remove the journal. Replay
+  rechecks installed bytes and modes even for completed steps; an uncertain
+  post-rename flush cannot acknowledge a cursor. Private raw retention plus
+  source/copy/hold metadata survives journal removal under `sync/retained/`.
+  Unsupported/forensic rescues retain exact bytes and a typed hold issue;
+  valid copies receive the journaled fresh ID before upload. Adoption migrates
+  history, usage, values and content-bound provenance without changing ordinary
+  editor identity rules. Cooperating writers are serialized; §4.6's documented
+  noncooperating-writer/check-then-act limitation remains.
+  Untouched migration preparations can replan a rejected publication. A changed
+  external keyed record or partially applied identity migration instead reports
+  typed recovery-required and retains its journal; it never promises a conflict
+  replan that would discard migration. A secondary raw-retention failure preserves
+  the original applied effect and displaced bytes in its returned typed error.
+  Conflicting retained bytes report permanent invalid-state, never retryable I/O.
 - **Connection metadata.** `<data>/sync/account.json` is a version-1 optional
   connection: normalized server URL, user ID, username, device ID/name and a
   local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;

@@ -10,8 +10,13 @@ final class MemoryFileStore: FileStore {
     }
     private var files = [Data: File]()
     private var generation = 0
+    var directories = Set<RelativePath>()
     var failNextWrite = false
+    var failWriteNumber: Int?
+    private(set) var writeCount = 0
     var failNextDelete = false
+    var failDeleteNumber: Int?
+    private(set) var deleteCount = 0
     var failMoveNumber: Int?
     var moveCount = 0
     var onStamp: ((String, FileStamp?) throws -> Void)?
@@ -66,11 +71,13 @@ final class MemoryFileStore: FileStore {
     private func store(_ data: Data, at path: String, isPrivate: Bool) throws {
         accessCount += 1
         try FileStorePath.validate(path)
-        if failNextWrite {
+        writeCount += 1
+        if failNextWrite || writeCount == failWriteNumber {
             failNextWrite = false
             throw FileStoreError.ioFailure
         }
         generation += 1
+        rememberParents(of: path)
         files[Data(path.utf8)] = File(path: path, bytes: data, stamp: FileStamp("memory-\(generation)"),
                                        isPrivate: isPrivate)
         onWrite?(path)
@@ -79,7 +86,8 @@ final class MemoryFileStore: FileStore {
     func delete(at path: String) throws {
         accessCount += 1
         try FileStorePath.validate(path)
-        if failNextDelete {
+        deleteCount += 1
+        if failNextDelete || deleteCount == failDeleteNumber {
             failNextDelete = false
             throw FileStoreError.ioFailure
         }
@@ -95,6 +103,7 @@ final class MemoryFileStore: FileStore {
         try onMove?(source, destination)
         guard files[Data(destination.utf8)] == nil else { throw FileStoreError.alreadyExists }
         guard let file = files[Data(source.utf8)] else { throw FileStoreError.notFound }
+        rememberParents(of: destination)
         files[Data(destination.utf8)] = File(path: destination, bytes: file.bytes, stamp: file.stamp,
                                               isPrivate: file.isPrivate)
         files[Data(source.utf8)] = nil
@@ -102,6 +111,14 @@ final class MemoryFileStore: FileStore {
 
     func put(_ source: String, at path: String) throws { try write(Data(source.utf8), at: path) }
     func text(at path: String) throws -> String { String(decoding: try read(at: path), as: UTF8.self) }
+
+    private func rememberParents(of path: String) {
+        var bytes = Array(path.utf8)
+        while let slash = bytes.lastIndex(of: 47) {
+            bytes.removeSubrange(slash...)
+            directories.insert(RelativePath(String(decoding: bytes, as: UTF8.self)))
+        }
+    }
 }
 
 final class LibraryClock: WallClock {

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SyncFileMode: Equatable, Sendable {
+public enum SyncFileMode: Equatable, Sendable, Codable {
     case readOnly
     /// Ordinary writable permissions, 0666 & ~umask, without changing umask.
     case normal
@@ -27,6 +27,8 @@ public struct SyncFilePublication: Sendable, CustomStringConvertible, CustomRefl
 
 public enum SyncFileFailureCode: String, Sendable {
     case changed, invalidPath, notFound, occupied, ioFailure, durabilityFailed
+    /// Permanent consistency failure; retrying I/O cannot resolve it.
+    case invalidState
 }
 
 public enum SyncFileMutationEffect: Equatable, Sendable {
