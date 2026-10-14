@@ -81,6 +81,16 @@ class CommandTests(unittest.TestCase):
 
 
 class PrivateFileTests(unittest.TestCase):
+    def test_private_file_mode_is_exact_even_with_a_restrictive_umask(self):
+        with tempfile.TemporaryDirectory(prefix="android-sync-mode-test-") as directory:
+            path = Path(directory) / "password"
+            previous = os.umask(0o777)
+            try:
+                smoke.private_file(path, "synthetic secret")
+            finally:
+                os.umask(previous)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
     def test_private_file_is_exclusive_0600_and_never_overwrites_a_link(self):
         with tempfile.TemporaryDirectory(prefix="android-sync-private-test-") as directory:
             root = Path(directory)
@@ -180,6 +190,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(calls[-2][:2], ["rm", "--force"])
         self.assertEqual(calls[-1][:3], ["image", "rm", "--force"])
         self.assertFalse(Path(json.loads(self.observation.read_text())["root"]).exists())
+        self.assert_clean()
+
+    def test_runtime_directories_and_files_are_private_with_a_restrictive_umask(self):
+        self.calls.touch(mode=0o600)
+        self.observation.touch(mode=0o600)
+        previous = os.umask(0o777)
+        try:
+            self.run_smoke()
+        finally:
+            os.umask(previous)
         self.assert_clean()
 
     def test_command_and_runner_failures_always_attempt_bounded_cleanup(self):

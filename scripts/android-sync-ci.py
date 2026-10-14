@@ -91,6 +91,7 @@ def run_command(arguments, timeout=COMMAND_TIMEOUT, *, capture=False, env=None):
 def private_file(path, contents):
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        os.fchmod(file.fileno(), 0o600)
         file.write(contents)
 
 
@@ -172,7 +173,9 @@ def smoke(command):
         root = Path(directory)
         root.chmod(0o700)
         for child in ("data", "secrets", "devices"):
-            (root / child).mkdir(mode=0o700)
+            path = root / child
+            path.mkdir(mode=0o700)
+            path.chmod(0o700)
         for user in ("admin", "alice", "bob"):
             private_file(root / "secrets" / user, secrets.token_hex(32))
         cleanup_failed = False
