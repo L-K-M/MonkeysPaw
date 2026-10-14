@@ -156,6 +156,12 @@ final class MemorySyncFileOperations: SyncFileOperations {
         }
         files.directories.subtract(moved)
         files.directories.formUnion(folders)
+        for folder in moved {
+            if let identity = files.directoryIdentities.removeValue(forKey: folder) {
+                let suffix = folder.string.utf8.dropFirst(source.string.utf8.count)
+                files.directoryIdentities[RelativePath(destination.string + String(decoding: suffix, as: UTF8.self))] = identity
+            }
+        }
         do {
             try flushDirectory(at: parent(of: source))
             try flushDirectory(at: parent(of: destination))
@@ -166,6 +172,34 @@ final class MemorySyncFileOperations: SyncFileOperations {
         try checkpoint("directories:" + (path?.string ?? "/"))
         if let path { try fileStoreOperation { try FileStorePath.validate(path.string) } }
         return try allDirectories().filter { parent(of: $0) == path }.sorted()
+    }
+
+    func directoryIdentity(at path: RelativePath) throws -> FileStamp? {
+        try checkpoint("directory-identity:" + path.string)
+        try fileStoreOperation { try FileStorePath.validate(path.string) }
+        guard try fileStoreOperation({ try files.stamp(at: path.string) }) == nil else {
+            throw SyncFileOperationError(.invalidPath)
+        }
+        guard try allDirectories().contains(path) else { return nil }
+        if let identity = files.directoryIdentities[path] { return identity }
+        let identity = FileStamp("directory-" + UUID().uuidString)
+        files.directoryIdentities[path] = identity
+        return identity
+    }
+
+    func removeEmptyDirectory(at path: RelativePath, expecting: FileStamp) throws {
+        try checkpoint("remove-directory:" + path.string)
+        guard try directoryIdentity(at: path) == expecting else { throw SyncFileOperationError(.changed) }
+        let prefix = path.string + "/"
+        guard try !allDirectories().contains(where: { $0.string.utf8.starts(with: prefix.utf8) }),
+              try !fileStoreOperation({ try files.listFiles() }).contains(where: { $0.relativePath.utf8.starts(with: prefix.utf8) }) else {
+            throw SyncFileOperationError(.occupied)
+        }
+        folders.remove(path)
+        files.directories.remove(path)
+        files.directoryIdentities[path] = nil
+        do { try flushDirectory(at: parent(of: path)) }
+        catch { throw SyncFileOperationError(.durabilityFailed, effect: .applied) }
     }
 
     private func allDirectories() throws -> Set<RelativePath> {

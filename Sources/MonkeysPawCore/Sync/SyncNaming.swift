@@ -8,6 +8,22 @@ enum SyncNamingError: Error, Equatable {
 
 /// Sync naming never changes the editor/import copy-name convention.
 enum SyncNaming {
+    static func groupFolder(_ name: String, occupied: [String]) throws -> String {
+        let stem = try component(name, fallback: "Group", maxBytes: Limits.syncPathSegmentMaxBytes)
+        let keys = try Set(occupied.map { try pathKey(RelativePath($0)) })
+        // At most N occupied names can block these N+1 distinct candidates.
+        for number in 1...(keys.count + 1) {
+            let suffix = number == 1 ? "" : " (\(number))"
+            let budget = Limits.syncPathSegmentMaxBytes - suffix.utf8.count
+            let shortened = prefix(stem, maxBytes: budget)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+            let folder = (shortened.isEmpty ? "Group" : shortened) + suffix
+            try SyncIdentifiers.folder(folder)
+            if !keys.contains(try pathKey(RelativePath(folder))) { return folder }
+        }
+        throw SyncNamingError.exhausted
+    }
+
     static func pathKey(_ path: RelativePath) throws -> String {
         guard FileStorePath.isValid(path.string, mode: .relative),
               let nfc = path.string.applyingTransform(StringTransform("Any-NFC"), reverse: false),

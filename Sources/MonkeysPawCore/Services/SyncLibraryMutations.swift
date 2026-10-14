@@ -40,7 +40,7 @@ struct SyncIdentityTransition: Codable {
 }
 
 struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
-    enum Kind: String, Codable { case apply, adopt, repairDuplicate, rescue, trash }
+    enum Kind: String, Codable { case apply, adopt, repairDuplicate, rescue, trash, mode }
     let id: UUID
     let kind: Kind
     let path: String
@@ -76,6 +76,12 @@ struct SyncLibraryEdit: Codable, CustomStringConvertible, CustomReflectable {
         }
         if let expected, RelativePath(expected.path) != RelativePath(path) { throw SyncError.invalidState }
         if let retainedSourcePath { try FileStorePath.validate(retainedSourcePath) }
+        if kind == .mode {
+            guard let expected, bytes == expected.bytes, hash == expected.hash,
+                  transition == nil, adoptingSource == nil, retainedBytes == nil, retainedSourcePath == nil,
+                  copyID == nil, heldIssue == nil, copyOrigin == nil else { throw SyncError.invalidState }
+            return // Modes also cover nonprompt and forensic regular files.
+        }
         if kind == .trash {
             guard expected != nil, bytes == nil, hash == nil, transition == nil,
                   retainedBytes == expected?.bytes,
@@ -178,6 +184,112 @@ final class SyncLibraryMutations {
         }
     }
 
+    func directoryIdentities() throws -> [RelativePath: FileStamp] {
+        try library.withSyncLock { _ in try Self.directoryIdentities(operations) }
+    }
+
+    private static func directoryIdentities(_ operations: SyncFileOperations) throws -> [RelativePath: FileStamp] {
+        var result: [RelativePath: FileStamp] = [:]
+        var parents: [RelativePath?] = [nil]
+        while let parent = parents.popLast() {
+            for child in try operations.directories(at: parent) {
+                try FileStorePath.validate(child.string)
+                guard Self.parent(of: child) == parent, result[child] == nil,
+                      let identity = try operations.directoryIdentity(at: child) else { throw LibraryError.conflict }
+                result[child] = identity
+                parents.append(child)
+            }
+        }
+        return result
+    }
+
+    /// A rename preserves the complete subtree, including unknown files. Fresh
+    /// joined-path checks precede native mutation; occupied aliases never merge.
+    func apply(_ edit: SyncDirectoryEdit) throws -> SyncLibraryMutationOutcome {
+        try edit.validate()
+        return try library.withSyncLock { files in
+            if edit.kind == .removeEmpty {
+                let actual = try Self.directoryIdentities(operations)
+                guard let identity = actual[edit.source] else {
+                    guard try files.stamp(at: edit.source.string) == nil else { return .replanAsConflict }
+                    try flushSurvivingParents(of: edit.source)
+                    return .applied
+                }
+                guard identity == edit.identity else { return .replanAsConflict }
+                do { try operations.removeEmptyDirectory(at: edit.source, expecting: identity) }
+                catch let error as SyncFileOperationError where error.code == .changed || error.code == .occupied {
+                    return .replanAsConflict
+                }
+                return .applied
+            }
+            guard let destination = edit.destination else { throw SyncError.invalidState }
+            let positions = [edit.source] + (edit.intermediate.map { [$0] } ?? []) + [destination]
+            let directories = try Self.directoryIdentities(operations)
+            let matches = positions.filter { directories[$0] == edit.identity }
+            guard matches.count == 1, let current = matches.first else { return .replanAsConflict }
+            // Refuse any second incarnation, even if it is an empty directory.
+            guard positions.allSatisfy({ $0 == current || directories[$0] == nil }) else { return .replanAsConflict }
+            let index = positions.firstIndex(of: current)!
+            if index < positions.count - 1 {
+                for target in positions[(index + 1)...] {
+                    let key = try SyncNaming.pathKey(target)
+                    let occupants = try files.listFiles().map { RelativePath($0.relativePath) }
+                        + Array(directories.keys)
+                    guard try !occupants.contains(where: {
+                        guard $0 != current else { return false }
+                        return try SyncNaming.pathKey($0) == key
+                    }) else { return .replanAsConflict }
+                }
+                // Validate against the longest final wrapper, not the shorter
+                // temporary name. No valid remote path is shortened here.
+                for child in try files.listFiles().map({ RelativePath($0.relativePath) }) + Array(directories.keys)
+                    where child.string.utf8.starts(with: (current.string + "/").utf8) {
+                    let suffix = String(decoding: child.string.utf8.dropFirst(current.string.utf8.count), as: UTF8.self)
+                    for target in positions[(index + 1)...] { try FileStorePath.validate(target.string + suffix) }
+                }
+                var source = current
+                for target in positions[(index + 1)...] {
+                    do { try operations.renameDirectory(from: source, to: target) }
+                    catch let error as SyncFileOperationError where error.effect == .unchanged
+                        && (error.code == .changed || error.code == .occupied) { return .replanAsConflict }
+                    guard try operations.directoryIdentity(at: target) == edit.identity else { return .replanAsConflict }
+                    source = target
+                }
+            }
+            try operations.flushDirectory(at: destination)
+            try flushSurvivingParents(of: edit.source)
+            return .applied
+        }
+    }
+
+    func verify(_ edit: SyncDirectoryEdit) throws -> SyncLibraryMutationOutcome {
+        try edit.validate()
+        return try library.withSyncLock { files in
+            let directories = try Self.directoryIdentities(operations)
+            if edit.kind == .removeEmpty {
+                return try directories[edit.source] == nil && files.stamp(at: edit.source.string) == nil ? .applied : .replanAsConflict
+            }
+            guard let destination = edit.destination, directories[destination] == edit.identity,
+                  directories[edit.source] == nil,
+                  edit.intermediate.map({ directories[$0] == nil }) ?? true else { return .replanAsConflict }
+            return .applied
+        }
+    }
+
+    private static func parent(of path: RelativePath) -> RelativePath? {
+        guard let slash = path.string.utf8.lastIndex(of: 47) else { return nil }
+        return RelativePath(String(decoding: path.string.utf8[..<slash], as: UTF8.self))
+    }
+
+    private func flushSurvivingParents(of path: RelativePath) throws {
+        var parent = Self.parent(of: path)
+        while let directory = parent {
+            if try operations.directoryIdentity(at: directory) != nil { try operations.flushDirectory(at: directory) }
+            parent = Self.parent(of: directory)
+        }
+        try operations.flushDirectory(at: nil)
+    }
+
     func publication(_ bytes: Data, at path: RelativePath, expecting expected: SyncLibraryFile?,
                      transition: SyncIdentityTransition, mode: SyncFileMode = .normal,
                      kind: SyncLibraryEdit.Kind = .apply, markerIssue: SyncIssueCode? = nil,
@@ -195,6 +307,14 @@ final class SyncLibraryMutations {
         let edit = SyncLibraryEdit(id: id, kind: .trash, path: file.path, expected: file, bytes: nil,
             hash: nil, transition: nil, mode: .normal, retainedBytes: file.bytes,
             retainedSourcePath: file.path, copyID: nil, heldIssue: nil)
+        try edit.validate()
+        return edit
+    }
+
+    func mode(_ mode: SyncFileMode, for file: SyncLibraryFile, id: UUID = UUID()) throws -> SyncLibraryEdit {
+        let edit = SyncLibraryEdit(id: id, kind: .mode, path: file.path, expected: file, bytes: file.bytes,
+            hash: file.hash, transition: nil, mode: mode, retainedBytes: nil, retainedSourcePath: nil,
+            copyID: nil, heldIssue: nil)
         try edit.validate()
         return edit
     }
@@ -252,6 +372,17 @@ final class SyncLibraryMutations {
         }
     }
 
+    func prepareMigrations(for edit: SyncDirectoryEdit) throws -> [SyncKeyedMigration] {
+        try edit.validate()
+        return try edit.identityTransitions().flatMap { transition in
+            guard let source = transition.source else { throw SyncError.invalidState }
+            return try library.syncKeyedStores().flatMap {
+                try $0.prepareSyncMigration(from: SyncIdentifiers.promptIdentity(source),
+                    to: SyncIdentifiers.promptIdentity(transition.destination), rebindingHeadTo: nil, originalBytes: nil)
+            }
+        }
+    }
+
     func migrate(_ migration: SyncKeyedMigration, operations: SyncFileOperations) throws {
         guard let store = try library.syncKeyedStores().first(where: { $0.syncKind == migration.store }) else {
             throw SyncError.invalidState
@@ -274,6 +405,17 @@ final class SyncLibraryMutations {
         return true
     }
 
+    func canReplan(_ step: SyncDirectoryStep) throws -> Bool {
+        if step.completed || step.edit.kind == .removeEmpty { return true }
+        guard try directoryIdentities()[step.edit.source] == step.edit.identity else { return false }
+        let stores = try library.syncKeyedStores()
+        for migration in step.migrations {
+            guard let store = stores.first(where: { $0.syncKind == migration.store }),
+                  try store.isSyncMigrationUnstarted(migration) else { return false }
+        }
+        return true
+    }
+
     func apply(_ edit: SyncLibraryEdit, attempt: Attempt) throws -> SyncLibraryMutationResult {
         try edit.validate()
         return try library.withSyncLock { files in
@@ -282,7 +424,7 @@ final class SyncLibraryMutations {
             catch LibraryError.conflict { return SyncLibraryMutationResult(outcome: .replanAsConflict, displacedBytes: nil) }
             if case .replay = attempt, Self.isPublished(edit, current: current) {
                 if edit.kind == .trash {
-                    try SyncDurability.flushParents(of: edit.path, operations: operations)
+                    try flushSurvivingParents(of: RelativePath(edit.path))
                 } else {
                     // A post-rename/mode flush may have failed. Reestablish mode
                     // and checked durability instead of treating it as unchanged.
@@ -308,6 +450,8 @@ final class SyncLibraryMutations {
             do {
                 if edit.kind == .trash {
                     try operations.trash(at: RelativePath(edit.path), expecting: expectation)
+                } else if edit.kind == .mode {
+                    try operations.setMode(edit.mode, at: RelativePath(edit.path))
                 } else {
                     // Validation parses only for safety/identity; these exact
                     // server bytes never pass through PromptCodec.write.
@@ -344,6 +488,9 @@ final class SyncLibraryMutations {
     private static func isPublished(_ edit: SyncLibraryEdit, current: SyncLibraryFile?) -> Bool {
         if edit.kind == .trash { return current == nil }
         guard let current else { return false }
+        if edit.kind == .mode {
+            return current.identityKey == edit.expected?.identityKey && current.hash == edit.hash && current.bytes == edit.bytes
+        }
         return current.identityKey == edit.transition?.destination && current.hash == edit.hash && current.bytes == edit.bytes
     }
 
