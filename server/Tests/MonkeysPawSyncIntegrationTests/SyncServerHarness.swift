@@ -36,6 +36,7 @@ enum SyncServerHarness {
 
     static func withServers(_ scenario: SyncScenario, root: URL, clock: ScenarioClock, index: Int,
                                    clients: [String: ScenarioDeployment], symbols: [String: String],
+                                   configureDatabase: ((ServerDatabase, [String: String]) async throws -> Void)? = nil,
                                    operation: @escaping ([String: ScenarioDeployment], [String: String]) async throws -> Void) async throws {
         guard index < scenario.servers.count else { try await operation(clients, symbols); return }
         let name = scenario.servers[index]
@@ -54,6 +55,7 @@ enum SyncServerHarness {
                 try await accounts.repository.write { accounts, _ in try await accounts.insert(user) }
                 symbols["user." + name + "." + username] = id.rawValue
             }
+            try await configureDatabase?(database, symbols)
             let app = makeApplication(configuration: try .init(environment: ["MONKEYSPAW_LOG_LEVEL": "critical"]),
                                       accounts: accounts, sessions: sessions)
             let deployment = ScenarioDeployment(database: database, directory: directory, clock: clock)
@@ -65,7 +67,7 @@ enum SyncServerHarness {
                     var clients = clients
                     clients[name + ".test"] = deployment
                     try await withServers(scenario, root: root, clock: clock, index: index + 1, clients: clients,
-                                          symbols: boundSymbols, operation: operation)
+                                          symbols: boundSymbols, configureDatabase: configureDatabase, operation: operation)
                 }
                 await deployment.shutdown()
             } catch {

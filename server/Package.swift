@@ -52,7 +52,7 @@ let package = Package(
             exclude: ["InProcessHTTPTransport.swift", "ScenarioDecoder.swift", "SyncScenarioTests.swift",
                       "SyncServerHarness.swift", "SyncRestoreRetentionScenarioTests.swift", "SyncCrashScenarioTests.swift",
                       "SyncConflictMoveScenarioTests.swift", "SyncGroupScenarioTests.swift", "ConflictResolutionTests.swift",
-                      "SyncInviteIntegrationTests.swift"],
+                      "SyncInviteIntegrationTests.swift", "SyncGroupIntegrationTests.swift"],
             sources: ["ScenarioAdapters.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
