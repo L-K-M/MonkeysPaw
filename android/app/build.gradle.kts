@@ -200,6 +200,15 @@ dependencies {
 }
 
 val graphSources = layout.projectDirectory.dir("src/main")
+// JVM integration tests inspect Core keyed stores; production uses service intents.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    if (name.endsWith("UnitTestKotlin")) {
+        compilerOptions.freeCompilerArgs.add(project(":core").layout.buildDirectory.file("libs/core.jar").map {
+            "-Xfriend-paths=${it.asFile.absolutePath}"
+        })
+    }
+}
+
 tasks.withType<Test>().configureEach {
     dependsOn(generateSeedAssets)
     systemProperty("monkeyspaw.seedSources", generateSeedAssets.get().seedDirectory.get().asFile.absolutePath)
