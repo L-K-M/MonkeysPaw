@@ -14,6 +14,8 @@ internal class FillBoundaryTest {
         val main = root.resolve("MainActivity.kt").readText()
         assertTrue(main.contains("onOpen = ::openFill"))
         assertTrue(main.contains("Intent(this, FillActivity::class.java)"))
+        assertTrue(main.contains("fillLauncher.open(selection.relativePath)"))
+        assertTrue(main.contains("fillLauncher.resumed()"))
         val library = root.resolve("ui/library/LibraryScreen.kt").readText()
         assertTrue(library.contains("onOpen(row.selection)"))
         val activity = root.resolve("entry/FillActivity.kt").readText()

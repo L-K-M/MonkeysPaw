@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
 import ch.lkmc.monkeyspaw.entry.FillActivity
+import ch.lkmc.monkeyspaw.entry.FillLauncher
 import ch.lkmc.monkeyspaw.ui.library.LibraryScreen
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
@@ -25,6 +26,14 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private val seedOffer: SeedOfferViewModel by viewModels()
     private val library: LibraryViewModel by viewModels()
+    private val fillLauncher = FillLauncher { path ->
+        startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        fillLauncher.resumed()
+    }
 
     override fun onStart() {
         super.onStart()
@@ -58,6 +67,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openFill(selection: LibrarySelection) {
-        startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, selection.relativePath))
+        fillLauncher.open(selection.relativePath)
     }
 }
