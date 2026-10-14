@@ -141,6 +141,15 @@ public enum Limits {
     /// §7.1: one explicit model-list operation has a 15-second deadline.
     public static let modelListTimeout: Duration = .seconds(15)
 
+    /// §21 G16: one public release request, with no retries or redirects.
+    public static let updateRequestTimeout: Duration = .seconds(15)
+    public static let updateResponseCap: Int = mebibyte
+    public static let updateCheckInterval: TimeInterval = 24 * 60 * 60
+    public static let updateStateFileCap: Int = 4 * kibibyte
+    public static let releaseVersionMaxBytes: Int = 256
+    /// GitHub's minimum wait when a rate-limit response supplies no usable delay.
+    public static let updateRateLimitMinimumDelay: TimeInterval = 60
+
     /// §7.1: platform idle/resource timeouts never replace the monotonic deadline.
     public static let httpSessionTimeoutFloor: TimeInterval = 300
     /// §7.1: bound accumulated model lists even on a fast loopback endpoint.
