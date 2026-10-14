@@ -37,7 +37,6 @@ sealed class LibraryError private constructor(message: String) : Exception(messa
     object Conflict : LibraryError("Prompt changed. Reload before saving.")
     object DestinationOccupied : LibraryError("Destination is occupied.")
     object RecoveryRequired : LibraryError("Local recovery is required before reading or editing.")
-    object InvalidProvenance : LibraryError("Invalid prompt provenance.")
     object InvalidTimestamp : LibraryError("Timestamp is outside the supported range.")
     object HistoryCollisionLimitReached : LibraryError("History sequence is exhausted.")
     object RevisionNotFound : LibraryError("History revision is unavailable.")

@@ -1,6 +1,8 @@
 package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.domain.llm.AssistantTokenUsage
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.util.UUID
@@ -12,6 +14,40 @@ import kotlin.test.*
 
 class SyncKeyedMigrationTest {
     private val v = SyncTestValues
+
+    @Test fun provenanceReadsWritesAndCleanupRefusePendingAndBlockedRecoveryBeforeIO() {
+        for (blocked in listOf(false, true)) {
+            val h = ServiceHarness()
+            val entry = h.put("body")
+            val bytes = "body".encodeToByteArray()
+            val metadata = PromptProvenance(h.clock.date, "example.test", "model", null)
+            val revision = h.history.snapshot(bytes, entry.identity, h.clock.date)
+            h.history.setHeadProvenance(metadata, entry.identity, bytes)
+            h.history.archiveProvenance(metadata, revision, bytes)
+            val id = UUID.randomUUID()
+            if (blocked) h.library.blockSyncApplyForRecovery()
+            else h.library.beginSyncApply(id, v.state())
+            val before = h.state.bytesSnapshot()
+            val accesses = h.prompts.accesses + h.state.accesses
+            val commands: List<() -> Any?> = listOf(
+                { h.library.provenance("a.md") }, { h.library.provenance(revision) },
+                { h.library.save(h.draft("new"), "a.md", entry.stamp, metadata) },
+                { h.library.create(h.draft("new"), "new.md", metadata) },
+                { h.history.headProvenance(entry.identity, bytes) }, { h.history.provenance(revision, bytes) },
+                { h.history.setHeadProvenance(metadata, entry.identity, bytes) },
+                { h.history.setHeadProvenance(null, entry.identity, bytes) },
+                { h.history.archiveProvenance(metadata, revision, bytes) },
+                { h.history.archiveProvenance(null, revision, bytes) },
+                { h.history.remove(revision) }, { h.history.prune(entry.identity) },
+            )
+            commands.forEach { assertFailsWith<LibraryError.RecoveryRequired> { it() } }
+            assertEquals(accesses, h.prompts.accesses + h.state.accesses)
+            assertEquals(before, h.state.bytesSnapshot())
+            if (blocked) h.library.finishEmptySyncRecovery() else h.library.endSyncApply(id)
+            assertEquals(metadata, h.library.provenance("a.md"))
+            assertEquals(metadata, h.library.provenance(revision))
+        }
+    }
 
     @Test fun everyOrdinaryLibraryReadAndMutationRefusesTheRecoveryGateBeforeIO() {
         val h = ServiceHarness()
@@ -188,6 +224,29 @@ class SyncKeyedMigrationTest {
         val stale = (h.history.sync.prepareSyncMigration(from, v.personalID, replacement, original)
             .first { (it.change as SyncKeyedMigration.Change.File).move.source == head }.change as SyncKeyedMigration.Change.File).move
         assertContentEquals(stale.bytes, stale.destinationBytes)
+    }
+
+    @Test fun historyAdoptionAcceptsTheSameNumericTokensAndBOMAsOrdinaryProvenanceReads() {
+        for ((token, bom) in listOf("1.0" to false, "1e0" to false, "1" to true)) {
+            val h = ServiceHarness()
+            val from = PromptIdentity.at("a.md")
+            val original = "old bytes".encodeToByteArray()
+            val replacement = "exact server bytes".encodeToByteArray()
+            val metadata = PromptProvenance(h.clock.date, "example.test", "model", AssistantTokenUsage(1, 2))
+            h.history.setHeadProvenance(metadata, from, original)
+            val path = "history/${from.storageKey}/head.json"
+            val record = h.state.text(path).replace("\"inputTokens\":1", "\"inputTokens\":$token")
+            h.state.put((if (bom) "\uFEFF" else "") + record, path)
+            assertEquals(metadata, h.history.headProvenance(from, original))
+            val id = UUID.randomUUID()
+            h.library.beginSyncApply(id, v.state())
+            val migration = h.history.sync.prepareSyncMigration(from, v.personalID, replacement, original).single()
+            repeat(2) { h.history.sync.applySyncMigration(migration, SyncFlushes()) }
+            h.library.endSyncApply(id)
+            assertNull(h.state.stamp(path))
+            assertEquals(metadata, h.history.headProvenance(v.personalID, replacement))
+            assertNull(h.history.headProvenance(v.personalID, original))
+        }
     }
 
     @Test fun usagePreparationValidatesBothIdentityAndCapturedEventsBeforeAnyPublication() {

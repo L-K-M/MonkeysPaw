@@ -86,27 +86,28 @@ class HistoryStore internal constructor(private val files: StateStore, private v
     private fun provenance(path: String, bytes: ByteArray): PromptProvenance? {
         if (files.stamp(path) == null) return null
         // Read errors retain their type. Only readable, malformed metadata is invalid provenance.
-        val stored = files.read(path)
-        return try {
-            val record = WireJson.parse(stored) as? WireValue.ObjectValue ?: throw LibraryError.InvalidProvenance
-            val objectValue = WireObject(record)
-            if (objectValue.long("version") != 1L || objectValue.string("origin") != PromptProvenance.Origin.LLM.rawValue) {
-                throw LibraryError.InvalidProvenance
-            }
-            val timestamp = objectValue.string("timestamp")
-            val date = LocalDateTime.parse(timestamp, provenanceFormatter).toInstant(ZoneOffset.UTC)
-            if (provenanceFormatter.format(date) != timestamp) throw LibraryError.InvalidProvenance
-            val host = objectValue.string("providerHost")
-            val model = objectValue.string("model")
-            if (host.isEmpty() || model.isEmpty()) throw LibraryError.InvalidProvenance
-            val usage = record.fields["usage"]?.takeUnless { it == WireValue.Null }?.let {
-                val value = WireObject(it)
-                AssistantTokenUsage(value.long("inputTokens", minimum = 0), value.long("outputTokens", minimum = 0))
-            }
-            if (objectValue.string("contentSHA256") != hash(bytes)) null
-            else PromptProvenance(date, host, model, usage)
-        } catch (_: Exception) { throw LibraryError.InvalidProvenance }
+        return decodeProvenance(files.read(path), bytes)
     }
+
+    private fun decodeProvenance(stored: ByteArray, bytes: ByteArray): PromptProvenance? = try {
+        val record = WireJson.parse(stored) as? WireValue.ObjectValue ?: throw LibraryError.InvalidProvenance
+        val objectValue = WireObject(record)
+        if (objectValue.long("version") != 1L || objectValue.string("origin") != PromptProvenance.Origin.LLM.rawValue) {
+            throw LibraryError.InvalidProvenance
+        }
+        val timestamp = objectValue.string("timestamp")
+        val date = LocalDateTime.parse(timestamp, provenanceFormatter).toInstant(ZoneOffset.UTC)
+        if (provenanceFormatter.format(date) != timestamp) throw LibraryError.InvalidProvenance
+        val host = objectValue.string("providerHost")
+        val model = objectValue.string("model")
+        if (host.isEmpty() || model.isEmpty()) throw LibraryError.InvalidProvenance
+        val usage = record.fields["usage"]?.takeUnless { it == WireValue.Null }?.let {
+            val value = WireObject(it)
+            AssistantTokenUsage(value.long("inputTokens", minimum = 0), value.long("outputTokens", minimum = 0))
+        }
+        if (objectValue.string("contentSHA256") != hash(bytes)) null
+        else PromptProvenance(date, host, model, usage)
+    } catch (_: Exception) { throw LibraryError.InvalidProvenance }
 
     private fun setProvenance(provenance: PromptProvenance?, path: String, bytes: ByteArray) {
         if (provenance == null) return removeProvenance(path)
@@ -115,6 +116,10 @@ class HistoryStore internal constructor(private val files: StateStore, private v
             provenance.usage?.let { it.inputTokens < 0 || it.outputTokens < 0 } == true) {
             throw LibraryError.InvalidProvenance
         }
+        files.writePrivate(encodeProvenance(provenance, bytes), path)
+    }
+
+    private fun encodeProvenance(provenance: PromptProvenance, bytes: ByteArray): ByteArray {
         // Foundation ISO8601DateFormatter rounds fractional seconds to the nearest millisecond.
         val timestamp = provenanceFormatter.format(provenance.timestamp.plusNanos(500_000))
         val record = mutableMapOf<String, JsonElement>(
@@ -125,9 +130,8 @@ class HistoryStore internal constructor(private val files: StateStore, private v
         )
         provenance.usage?.let { record["usage"] = StateJson.objectOf(mapOf(
             "inputTokens" to JsonPrimitive(it.inputTokens), "outputTokens" to JsonPrimitive(it.outputTokens))) }
-        val encoded = StateJson.objectOf(record).toString().replace("/", "\\/")
+        return StateJson.objectOf(record).toString().replace("/", "\\/")
             .encodeToByteArray(throwOnInvalidSequence = true)
-        files.writePrivate(encoded, path)
     }
 
     private fun removeProvenance(path: String) {
@@ -222,29 +226,8 @@ class HistoryStore internal constructor(private val files: StateStore, private v
 
     /** Swift version-1 sidecars: only current head attribution follows adoption's new bytes. */
     private fun reboundHead(record: ByteArray, original: ByteArray, replacement: ByteArray): ByteArray {
-        val root = try {
-            StateJson.read(record).also { root ->
-                fun text(key: String) = StateJson.text(root[key] ?: throw LibraryError.InvalidProvenance)
-                val timestamp = text("timestamp")
-                if (text("origin") != "llm" || text("providerHost").isEmpty() || text("model").isEmpty() ||
-                    !Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z").matches(timestamp)) {
-                    throw LibraryError.InvalidProvenance
-                }
-                Instant.parse(timestamp)
-                val usage = root["usage"]
-                if (usage != null && usage != JsonNull) {
-                    val fields = StateJson.fields(usage)
-                    for (key in listOf("inputTokens", "outputTokens")) {
-                        val count = fields[key] as? JsonPrimitive ?: throw LibraryError.InvalidProvenance
-                        if (count.isString || count.content.toLongOrNull()?.let { it < 0 } != false) throw LibraryError.InvalidProvenance
-                    }
-                }
-                text("contentSHA256")
-            }
-        } catch (_: Exception) { throw LibraryError.InvalidProvenance }
-        if (StateJson.text(root.getValue("contentSHA256")) != SyncHash.of(original).rawValue) return record
-        return StateJson.objectOf(root + ("contentSHA256" to JsonPrimitive(SyncHash.of(replacement).rawValue)))
-            .toString().encodeToByteArray(throwOnInvalidSequence = true)
+        val provenance = decodeProvenance(record, original) ?: return record
+        return encodeProvenance(provenance, replacement)
     }
 
     private fun directory(identity: PromptIdentity): String = "history/" + identity.storageKey

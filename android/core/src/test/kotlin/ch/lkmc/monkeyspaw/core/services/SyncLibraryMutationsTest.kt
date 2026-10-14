@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.paths.*
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
@@ -538,5 +539,49 @@ class SyncLibraryMutationsTest {
         h.mutations.finish(planID)
         assertEquals(v.personalID, h.local.library.load(old.path).identity)
         assertEquals(mapOf("field" to "value"), h.local.values.rememberedValues(v.personalID))
+    }
+
+    @Test fun checkedAdoptionAndRelocationPreserveOnlyLiveHeadAndExactRevisionAttribution() {
+        for (idless in listOf(false, true)) for (stale in listOf(false, true)) {
+            val h = SyncMutationHarness()
+            val old = h.put(if (idless) "local\r\n" else source(v.groupPrompt.rawValue))
+            val metadata = PromptProvenance(h.local.clock.date, "example.test", "model", null)
+            val archived = "archived\r\n".encodeToByteArray()
+            val revision = h.local.history.snapshot(archived, old.identity, h.local.clock.date)
+            h.local.history.archiveProvenance(metadata, revision, archived)
+            h.local.history.setHeadProvenance(metadata, old.identity, if (stale) archived else old.bytes)
+            val oldHead = h.local.state.read("history/${old.identityKey}/head.json")
+            val oldSidecar = h.local.state.read(h.local.statePath(revision) + ".json")
+            val edit = publication(h, old, kind = SyncLibraryEdit.Kind.ADOPT)
+            val id = UUID.randomUUID()
+            h.mutations.begin(id, v.state())
+            val migrations = h.mutations.prepareMigrations(edit)
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, h.mutations.apply(edit, SyncLibraryMutations.Attempt.FIRST).outcome)
+            repeat(2) { migrations.forEach { h.mutations.migrate(it, SyncFlushes()) } }
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, h.mutations.apply(edit, SyncLibraryMutations.Attempt.REPLAY).outcome)
+            assertFailsWith<LibraryError.RecoveryRequired> { h.local.library.provenance(old.path) }
+            h.mutations.finish(id)
+            val expected = if (stale) null else metadata
+            assertEquals(expected, h.local.library.provenance(old.path))
+            val migrated = h.local.history.revisions(v.personalID).single()
+            assertContentEquals(archived, h.local.history.read(migrated))
+            assertContentEquals(oldSidecar, h.local.state.read(h.local.statePath(migrated) + ".json"))
+            assertEquals(metadata, h.local.library.provenance(migrated))
+            assertNull(h.local.state.stamp("history/${old.identityKey}/head.json"))
+            if (stale) assertContentEquals(oldHead, h.local.state.read("history/${v.personalID.storageKey}/head.json"))
+
+            val current = h.mutations.read(old.path)!!
+            val relocate = h.mutations.publication(current.bytes, "nested/moved.md", null,
+                SyncIdentityTransition(current.identity, current.identity), kind = SyncLibraryEdit.Kind.RELOCATE, adoptingSource = current)
+            val moving = UUID.randomUUID()
+            h.mutations.begin(moving, v.state())
+            assertTrue(h.mutations.prepareMigrations(relocate).isEmpty())
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, h.mutations.apply(relocate, SyncLibraryMutations.Attempt.FIRST).outcome)
+            assertEquals(SyncLibraryMutationOutcome.APPLIED, h.mutations.apply(h.mutations.trash(current), SyncLibraryMutations.Attempt.FIRST).outcome)
+            h.mutations.finish(moving)
+            assertNull(h.local.prompts.stamp(current.path))
+            assertEquals(expected, h.local.library.provenance(relocate.path))
+            assertEquals(metadata, h.local.library.provenance(migrated))
+        }
     }
 }
