@@ -245,26 +245,28 @@ final class SyncApplyJournal {
     /// No new names or IDs are generated on replay. Safe to call twice.
     func replay(permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
         if let permit {
-            return try permit.mutate {
-                let record = pending
-                if let record { try permit.validate(record.nextState.binding) }
-                let intended = try permit.intendedWrites(edits: record?.steps.map(\.edit) ?? [],
-                    directories: record?.directorySteps.map(\.edit) ?? [], library: mutations)
-                var receipts: [SyncFileChange] = []
-                let result = try replayPlan { receipts = try permit.capture(intended, library: self.mutations) }
-                if result == .committed { permit.remember(receipts) }
-                return result
-            }
+            return try permit.mutate { try replayPlan(permit: permit) }
         }
         return try replayPlan()
     }
 
-    private func replayPlan(captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
+    private func replayPlan(permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
-        if let record = try persistence.recover() {
+        // An uncertain publication can leave the cache nil or on an older intent.
+        if let record = try persistence.recover(validating: { record in
+            if let record { try permit?.validate(record.nextState.binding) }
+        }) {
             mutations.resume(record.id, nextState: record.nextState)
             _ = try states.recover(for: record.nextState.binding)
+            let intended = try permit?.intendedWrites(edits: record.steps.map(\.edit),
+                directories: record.directorySteps.map(\.edit), library: mutations) ?? []
+            var receipts: [SyncFileChange] = []
+            let result = try run {
+                if let permit { receipts = try permit.capture(intended, library: self.mutations) }
+            }
+            if result == .committed { permit?.remember(receipts) }
+            return result
         } else {
             if let permit = mutations.pendingPermit { try settleRemovedJournal(permit) }
             else if mutations.hasUnreadableJournal {
@@ -273,7 +275,6 @@ final class SyncApplyJournal {
             }
             return .committed
         }
-        return try run(captureReceipts: captureReceipts)
     }
 
     /// Replace a conflicted plan only after accounting for its committed steps.

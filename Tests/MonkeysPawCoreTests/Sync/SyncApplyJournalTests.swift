@@ -2,6 +2,58 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncApplyJournalTests: XCTestCase {
+    func testPermittedReplayCapturesRecoveredIntentAfterJournalFlushFailure() throws {
+        for replacingIntent in [false, true] {
+            let rig = try SyncApplyTestRig()
+            let first = try rig.plan([rig.replacement()])
+            if replacingIntent {
+                try rig.files.write(SyncApplyTestRig.bytes("Changed"), at: "a.md")
+                XCTAssertEqual(try rig.journal.apply(first), .replanAsConflict(operationID: first.edits[0].id))
+            }
+            let recovered = replacingIntent ? try rig.plan([rig.replacement(at: "b.md")]) : first
+            rig.dataOperations.onOperation = { operation in
+                if operation == "file:sync/apply.json" {
+                    rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+                }
+            }
+            XCTAssertThrowsError(try replacingIntent ? rig.journal.replan(recovered) : rig.journal.apply(recovered)) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+            }
+            XCTAssertEqual(rig.journal.pending?.id, replacingIntent ? first.id : nil)
+            rig.dataOperations.onOperation = nil
+            rig.dataOperations.failOperationNumber = nil
+            let permit = SyncWorkPermit(binding: rig.binding, epoch: 1)
+            XCTAssertEqual(try rig.journal.replay(permit: permit), .committed)
+            let edit = recovered.edits[0]
+            let file = try XCTUnwrap(rig.mutations.read(at: RelativePath(edit.path)))
+            let own = SyncFileChange(path: RelativePath(file.path), stamp: file.stamp, hash: file.hash.rawValue)
+            XCTAssertEqual(file.bytes, edit.bytes)
+            XCTAssertEqual(rig.states.snapshot.value, recovered.nextState)
+            XCTAssertTrue(permit.owns(own, library: rig.mutations), "Recovered intent must supply its own receipts")
+            XCTAssertEqual(try rig.journal.replay(permit: permit), .committed)
+            XCTAssertTrue(permit.owns(own, library: rig.mutations), "Empty replay must preserve earlier receipts")
+        }
+    }
+
+    func testPermittedReplayValidatesRecoveredBindingBeforeAnyFlushOrMutation() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.dataOperations.failFlushNumber = rig.dataOperations.flushCount + 1
+        XCTAssertThrowsError(try rig.journal.apply(plan)) { XCTAssertEqual($0 as? SyncError, .durabilityUncertain) }
+        XCTAssertNil(rig.journal.pending)
+        rig.dataOperations.failFlushNumber = nil
+        let record = try rig.data.read(at: "sync/apply.json")
+        let operations = rig.dataOperations.operationCount
+        let writes = rig.files.writeCount
+        let permit = SyncWorkPermit(binding: try SyncTestValues.binding(userID: SyncTestValues.otherUser), epoch: 1)
+        XCTAssertThrowsError(try rig.journal.replay(permit: permit)) { XCTAssertEqual($0 as? SyncError, .bindingMismatch) }
+        XCTAssertEqual(rig.dataOperations.operationCount, operations)
+        XCTAssertEqual(rig.files.writeCount, writes)
+        XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), record)
+        XCTAssertNil(rig.states.snapshot.value)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+    }
+
     func testRecordRejectsRenameWithoutPreparedDirectorySteps() throws {
         let rig = try SyncApplyTestRig()
         try rig.files.put("{{name}}", at: "Groups/Old/f.md")
