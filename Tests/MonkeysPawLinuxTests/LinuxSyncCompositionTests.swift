@@ -156,6 +156,69 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertTrue(tools.environment[Self.deviceVariable(connection.connectionID)] == transport.token)
     }
 
+    func testConfiguredLaunchBeforeInitialGLibLoadStartsSyncExactlyOnce() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        compose()
+        let model = try XCTUnwrap(environment.accountModel)
+        // No GLib iteration has admitted the model's initial read yet.
+        XCTAssertEqual(model.state.operation, .loading)
+        XCTAssertNil(model.state.connection)
+        XCTAssertTrue(transport.requests.isEmpty)
+        environment.start()
+        environment.start()
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin {
+            model.state.enabled && self.environment.syncService?.report.lastSuccess != nil
+        })
+        XCTAssertEqual(transport.requests.filter { $0.url.lastPathComponent == "me" }.count, 1)
+        XCTAssertEqual(transport.pullCount, 1)
+    }
+
+    func testConfiguredLaunchAfterInitialGLibLoadStartsSyncExactlyOnce() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        compose()
+        let model = try XCTUnwrap(environment.accountModel)
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy })
+        XCTAssertTrue(transport.requests.isEmpty)
+        environment.start()
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin {
+            model.state.enabled && self.environment.syncService?.report.lastSuccess != nil
+        })
+        XCTAssertEqual(transport.requests.filter { $0.url.lastPathComponent == "me" }.count, 1)
+        XCTAssertEqual(transport.pullCount, 1)
+    }
+
+    func testToolDeadlineReleasesSerialWorkerWithClosedOutputOrBlockedInput() throws {
+        let worker = LinuxBackgroundWork()
+        let cases: [(String, Data?)] = [
+            ("exec 1>&-\nexec /bin/sleep 10", nil),
+            ("exec /bin/sleep 10", Data(repeating: 1, count: 128 * 1_024))
+        ]
+        for (script, input) in cases {
+            try tools.install("blocked", script: script)
+            let runner = tools.runner
+            let drained = LinuxSyncTestFlag()
+            let started = ContinuousClock.now
+            worker.run {
+                let result = runner.run("blocked", arguments: [], timeout: .milliseconds(100), input: input)
+                guard case .failure(.timeout) = result else {
+                    XCTFail("A stalled child must return the deadline failure")
+                    return
+                }
+            }
+            // Graph replacement uses this same serial-worker barrier.
+            worker.run { drained.set() }
+            let heartbeat = LinuxSyncTestFlag()
+            GTK.onMainLoop { heartbeat.set() }
+            XCTAssertTrue(GTKTestSupport.spin { heartbeat.value })
+            XCTAssertTrue(GTKTestSupport.spin { drained.value })
+            XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+        }
+    }
+
     func testLockedConfiguredAccountSuppressesSeedsAndDoesNotSendHTTP() throws {
         _ = try seedConnection()
         try tools.install("secret-tool", script: #"if [ "$1" = search ]; then printf '[locked item]'; exit 0; fi; exit 1"#)
@@ -258,6 +321,15 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
         let oldAccount = try XCTUnwrap(environment.accountModel)
         let oldSync = try XCTUnwrap(environment.syncService)
+        let oldStatus = try XCTUnwrap(environment.syncStatusModel)
+        let oldStatusState = oldStatus.state
+        var statusNotifications = 0
+        oldStatus.onChange = { statusNotifications += 1 }
+        oldStatus.addObserver { _ in statusNotifications += 1 }
+        // Queue both UI intents and service-report publications before retirement.
+        oldStatus.showErrorDetails()
+        oldStatus.refresh()
+        oldStatus.syncNow()
         let oldTimers = timer.take(.seconds(60))
         let oldRoot = libraryRoot
         let target = tools.directory.appendingPathComponent("second")
@@ -272,9 +344,13 @@ final class LinuxSyncCompositionTests: XCTestCase {
         let requestCount = transport.requests.count
         oldTimers.forEach { $0() }
         oldAccount.startup()
+        oldStatus.refresh()
+        oldStatus.syncNow()
         oldSync.syncNow()
         waitForGLib(.milliseconds(100))
         XCTAssertEqual(transport.requests.count, requestCount)
+        XCTAssertEqual(oldStatus.state, oldStatusState)
+        XCTAssertEqual(statusNotifications, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("late.md").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
         XCTAssertEqual(environment.settingsModel.libraryFolderPath, target.path)
