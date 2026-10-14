@@ -14,6 +14,8 @@ before packaging. Once S20's compose smoke job lands in `ci.yml`, this existing
 undrafting on that job from the release commit, without another workflow edit.
 `scripts/check-version.py --check-tag <tag>` requires the tag's numeric core
 to match every committed `MARKETING_VERSION` and the README version marker.
+It also checks Android's single numeric `versionName` and literal positive
+Int `versionCode`. Stable tags match exactly; prereleases match by numeric core.
 The tag supplies the artifact version without editing the checkout.
 Release tags use `vX.Y.Z[-prerelease]`; the gate rejects build metadata
 (`+...`) before either packager runs, matching the macOS packager's format.
@@ -83,19 +85,41 @@ current main with:
 scripts/release.sh 0.1.0 --push
 ```
 
-The unchanged release stub delegates to the installed `lkm-release` engine
+The release stub delegates to the installed `lkm-release` engine
 from [release-tool](https://github.com/L-K-M/release-tool). It bumps the Xcode
-version and README marker, commits and tags, and pushes the commit and tag.
+version, runs `scripts/sync-android-version.sh` with `RELEASE_NEW_VERSION`,
+updates the README marker, commits and tags, and pushes the commit and tag.
+The hook sets Android's numeric `versionName` and increments `versionCode`
+once when the version changes. An aligned retry does nothing; malformed input,
+duplicate declarations and code overflow leave the Gradle file untouched.
+The engine rolls back tracked bump edits if the hook fails.
 Monitor both the main CI run and tag release run. If publishing fails after
 draft creation, inspect the draft and failed check before deleting the draft
 and rerunning; the workflow refuses to overwrite an existing release.
 Check the ghcr tags too, since image promotion precedes GitHub publishing.
 
-Local builds use `scripts/build.sh [mac|deb ...] [--no-open]`, with outputs in
+`scripts/release.sh --check` reports configuration and skips the hook. Running
+without `--push` still commits and tags, so integration tests use disposable
+repositories rather than an implementation checkout.
+
+Local builds use `scripts/build.sh [mac|deb|android ...] [--no-open]`, with outputs in
 `dist/`. The default skips targets this host cannot build; explicitly named
 targets fail when requirements are missing. `scripts/build.sh app [flags]`
 retains the app-only `lkm-build` path. Download each platform's checksum file
 with its archives and verify it before installing.
+
+`scripts/package-android.sh [version]` builds the signed release APK via the
+checked-in wrapper with two workers. It requires JDK 17+, SDK platform
+`android-37.0` and build tools `36.0.0`; SDK downloads are disabled. Set `JAVA_HOME`
+and `ANDROID_HOME`, or use `sdk.dir` in `android/local.properties`. `--check`
+checks configuration without running Gradle. The optional version accepts
+`[v]X.Y.Z[-prerelease]` with the committed numeric core. It passes the full
+normalized version through Gradle's validated `releaseVersion` property and
+stages `dist/monkeyspaw-v<full-version>.apk` plus `.apk.sha256`. The APK's
+`versionName` retains the suffix and `versionCode` stays the committed integer,
+never a CI run number. Repeated same-core prereleases need increasing committed
+codes and engine support before owner use (§20 F20). APK release-workflow
+wiring follows in K19.
 
 The workflow uses pinned action SHAs, credential-free checkouts, job timeouts
 and read-only build tokens. Release concurrency is `release-${{ github.ref }}`

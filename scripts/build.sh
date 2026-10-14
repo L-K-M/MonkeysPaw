@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Build every Monkey's Paw artifact this host can produce, into dist/.
 #
-# Usage: scripts/build.sh [mac|deb ...] [--no-open]
+# Usage: scripts/build.sh [mac|deb|android ...] [--no-open]
 #   No targets: build every feasible target; skip unavailable toolchains.
 #   Named targets: an unavailable toolchain fails the run.
 #   mac        universal Release dmg, zip and .sha256 (macOS, Xcode, create-dmg)
 #   deb        Ubuntu 24.04+ deb and .deb.sha256 (Linux, Swift 6.4, GTK 4, dpkg-dev)
+#   android    signed release APK and .apk.sha256 (wrapper, JDK 17+, Android SDK)
 #   --no-open  do not open dist/ in Finder after a successful macOS build
 #   --help     print this header
 #
 # Versions come from the committed Xcode settings; packaging needs no lkm-build.
 # Set SWIFT to another Swift executable for deb builds. Install Linux tooling
 # as described in docs/plan/14-repository-packaging-ci-release.md.
-# Server and APK packaging will join this target list in later milestones.
+# Set JAVA_HOME/ANDROID_HOME for Android, or configure android/local.properties.
 #
 # App-only compatibility path: scripts/build.sh app [lkm-build flags]
 # Delegates to the installed lkm-build engine, preserving --clean, --debug,
@@ -46,7 +47,7 @@ explicit=false
 no_open=false
 for argument in "$@"; do
   case "$argument" in
-    mac|deb) targets+=("$argument"); explicit=true ;;
+    mac|deb|android) targets+=("$argument"); explicit=true ;;
     --no-open) no_open=true ;;
     -h|--help) usage; exit 0 ;;
     --clean|--debug|--run|--install|--zip|--dmg)
@@ -55,7 +56,7 @@ for argument in "$@"; do
   esac
 done
 if [[ ${#targets[@]} -eq 0 ]]; then
-  targets=(mac deb)
+  targets=(mac deb android)
 fi
 
 repo_root="$(cd "$(dirname "$script_path")/.." && pwd)" || exit 1
@@ -87,6 +88,11 @@ feasible() {
       done
       pkg-config --exists gtk4 || { reason='requires libgtk-4-dev'; return 1; }
       ;;
+    android)
+      reason="$(/bin/bash scripts/package-android.sh --check 2>&1)" || {
+        reason="${reason#!! }"; return 1;
+      }
+      ;;
   esac
 }
 
@@ -108,6 +114,7 @@ for target in "${targets[@]}"; do
   case "$target" in
     mac) build_command=(/bin/bash scripts/package-macos.sh) ;;
     deb) build_command=(/bin/bash packaging/build-deb.sh "$version") ;;
+    android) build_command=(/bin/bash scripts/package-android.sh "$version") ;;
   esac
   if "${build_command[@]}"; then
     results+=("$target: ok (dist/)")

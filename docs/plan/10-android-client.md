@@ -380,20 +380,41 @@ risk, so it is contained by contract:
     installed copy. That is a product decision, and Q12 records it.
 - **Release.** The same `v*` tag as the desktop apps and the server. An
   `android-build` job:
-  1. checks the tag against `versionName`
-  2. runs `testDebugUnitTest lintDebug assembleRelease`
-  3. stages `monkeyspaw-vX.Y.Z.apk` + `.sha256`
+  1. checks the tag against the committed numeric `versionName` (§20 F20):
+     stable tags match exactly; prerelease tags match by numeric core
+  2. runs `testDebugUnitTest lintDebug assembleRelease` with the full validated
+     tag version as `-PreleaseVersion=X.Y.Z[-prerelease]`
+  3. stages `monkeyspaw-v<full-version>.apk` + `.apk.sha256`
   The publish job attaches them to the same GitHub Release.
 - **Versioning.**
   - `scripts/release.sh` keeps `RELEASE_KIND=xcode` and sets
-    `RELEASE_POST_BUMP=scripts/sync-android-version.sh`. That script sets
-    `versionName` to the new version and increments `versionCode` by
-    exactly 1.
+    `RELEASE_POST_BUMP=scripts/sync-android-version.sh`. The hook reads
+    `RELEASE_NEW_VERSION` as numeric `X.Y.Z`, validates exactly one literal
+    declaration of each version and a positive Int code, then replaces both
+    values together. A changed version sets `versionName` and increments
+    `versionCode` by exactly 1; an aligned retry writes nothing. Malformed
+    input or code overflow leaves the file untouched.
+  - Committed `versionName` equals every desktop `MARKETING_VERSION` and
+    the README marker, enforced by `scripts/check-version.py`. Packaging's
+    `releaseVersion` override accepts the same numeric core with an optional
+    validated prerelease suffix, without source edits or build metadata.
+    Both the APK name and packaged `versionName` retain the full suffix.
+    The packaged code is the committed integer, never a CI run number.
+  - Repeated prereleases with the same numeric core need increasing
+    committed codes and release-engine support before owner use (§20 F20).
+    The current hook does not claim that upgrade path.
   - `versionCode` is never hand-edited, and `v*` tags are never created by
     hand.
-  - Before the first tag, a dry run of `scripts/release.sh` (no `--push`)
-    proves the post-bump hook against `android/app/build.gradle.kts`. No
-    fleet repo has exercised the xcode kind with this hook yet.
-- **`scripts/build.sh`** becomes the multi-target orchestrator: per-target
-  feasibility (skip Android without an SDK, fail when it is named) and one
-  summary block. It stages into `dist/`.
+  - `scripts/release.sh --check` reports engine configuration only and
+    never executes the hook. Omitting `--push` still creates a commit and
+    annotated tag. Hook/commit/tag and rollback proofs run in disposable
+    fixture repositories, never in an implementation checkout (§20 F19).
+- **Local packaging.** `scripts/package-android.sh [version]` uses the
+  checked-in wrapper, JDK 17+, SDK platform `android-37.0`, and build tools
+  `36.0.0`, with two workers and SDK downloads disabled. Set `JAVA_HOME` and
+  `ANDROID_HOME`, or use `android/local.properties`'s `sdk.dir`. It stages
+  the signed release APK and checksum under `dist/`; `--check` validates
+  configuration without invoking Gradle. `scripts/build.sh android` names
+  this target. The default all-targets build skips unavailable Android
+  tooling; a named target fails with the missing requirement and all targets
+  share one Summary block (§20 F22).
