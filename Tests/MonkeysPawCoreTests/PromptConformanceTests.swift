@@ -17,8 +17,8 @@ final class PromptConformanceTests: XCTestCase {
     }
 
     func testEveryFixture() throws {
-        let (cases, files) = try consumeCorpus(at: fixtureRoot)
-        print("Consumed \(cases) prompt fixtures (\(files) files).")
+        let corpus = try consumeCorpus(at: fixtureRoot)
+        print("Consumed \(corpus.cases) prompt fixtures (\(corpus.files) files); delegated \(corpus.delegatedFiles) sync files to the server executor.")
     }
 
     func testHiddenMetadataIsIgnoredAtEveryCorpusLevel() throws {
@@ -42,6 +42,7 @@ final class PromptConformanceTests: XCTestCase {
             let actual = try consumeCorpus(at: root)
             XCTAssertEqual(actual.cases, baseline.cases)
             XCTAssertEqual(actual.files, baseline.files)
+            XCTAssertEqual(actual.delegatedFiles, baseline.delegatedFiles)
         }
     }
 
@@ -195,7 +196,7 @@ final class PromptConformanceTests: XCTestCase {
         try work(root)
     }
 
-    private func consumeCorpus(at root: URL) throws -> (cases: Int, files: Int) {
+    private func consumeCorpus(at root: URL) throws -> (cases: Int, files: Int, delegatedFiles: Int) {
         let manager = FileManager.default
         let directories = try manager.contentsOfDirectory(atPath: root.path)
             .filter { !$0.hasPrefix(".") }.sorted()
@@ -203,6 +204,7 @@ final class PromptConformanceTests: XCTestCase {
         var consumed = Set<RelativePath>()
         var allFiles = Set<RelativePath>()
         var cases = 0
+        var delegatedFiles = 0
 
         for category in directories {
             let directory = root.appendingPathComponent(category)
@@ -215,6 +217,7 @@ final class PromptConformanceTests: XCTestCase {
                 for file in files {
                     guard file.hasSuffix(".json") else { throw CorpusError.unrecognizedFile }
                     try require(.file, at: directory.appendingPathComponent(file))
+                    delegatedFiles += 1
                 }
                 continue
             }
@@ -377,7 +380,7 @@ final class PromptConformanceTests: XCTestCase {
         }
 
         guard cases > 0, consumed == allFiles else { throw CorpusError.unconsumedFiles }
-        return (cases, consumed.count)
+        return (cases, consumed.count, delegatedFiles)
     }
 
     private func consumeRanking(at directory: URL, relative: String,

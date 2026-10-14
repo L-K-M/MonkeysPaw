@@ -54,6 +54,13 @@ paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 These are reported counts, not fixed enumeration limits. LLM and sync-engine
 scenarios arrive with their implementations under the move-together rule.
 
+At Y14 completion, the delegated sync corpus contains 42 cases in 12 files:
+the 26 Y12 cases remain unchanged; Y14 adds 16 cases for removed membership
+after retention, snapshot triggers, real backup restore and process death.
+Root conformance reports the delegated file inventory separately. The server
+executor checks its required files and compares executed IDs with the entire
+decoded inventory, including later slices' files.
+
 `fixtures/` contains nine content categories: `format`, `grammar`,
 `render`, `validation`, `ranking`, `import`, `paths`, `canonical` and `dto`, plus
 the delegated `sync` category. Each owning
@@ -753,7 +760,7 @@ An envelope has exactly `schema: 1`, `category: "sync"` and a nonempty
 |---|---|
 | `id` | Stable unique case ID starting with the file's two-digit ledger number and `-`; variants add a descriptive suffix. |
 | `now` | Exact UTC seconds, `YYYY-MM-DDTHH:mm:ssZ`. Both server and device wall clocks start here. |
-| `servers` | Nonempty array of unique symbolic deployment names, such as `main` or `other`. Each uses its own migrated SQLite database at `https://<name>.test`. No DNS or sockets are used. |
+| `servers` | Nonempty array of unique symbolic deployment names, such as `main` or `other`. Each uses its own migrated SQLite database at `https://<name>.test`. Router scenarios use no DNS or sockets. Killed-client scenarios alone map the logical deployment to a live loopback server on an ephemeral port. |
 | `users` | At least two distinct symbolic usernames. Each deployment seeds them through the real account repository with a test-only bcrypt password. Login still exercises the real login route, device issuance and bearer middleware. |
 | `devices` | At least two objects containing only `name` and `entropy_seed`. Seeds are distinct positive integers below 2^32. Each device owns separate library/data/secret disk roots, clock, entropy and services. |
 | `prompts` | Map of symbolic names to hand-authored canonical ULIDs; may be empty when IDs are bound from local files. |
@@ -765,6 +772,8 @@ contain passwords, issued tokens or actual host paths. `${user.main.alice}`,
 `${prompt.example}` and names created by `bind` expand in strings at execution.
 Bindings cannot change value. User IDs, group IDs and other scalar response
 values can be bound symbolically; cursors and database UUIDs remain opaque.
+Substitution also applies to object keys, including scope-keyed cursor maps;
+two keys expanding to the same value fail.
 Checkpoint bytes and hashes are specification expectations, not recordings of
 implementation output. When using symbolic IDs, fixed hashes must account for
 the resulting bytes; generated IDs can instead be compared through exact
@@ -791,6 +800,16 @@ Every action requires `action` and `device`. The additional members are:
 | `http` | `method`, `path`, `status`; optional `body`, `expected`, `bind`. Send through the device's authenticated transport into the real router. `expected` maps JSON pointers to exact values; `bind` maps symbolic names to pointers returning strings. Every supplied assertion/binding is consumed. |
 | `rewrite_next_request` / `rewrite_next_response` | `method`, `path`, nonempty `patch` map of JSON pointers to replacement values. One matching real request/response is altered; response patches require an actual 200. They never fabricate successful server mutations. |
 | `before_next_request` | `method`, `path`, `then` (a complete `http` action). Execute the peer request through the real router before sending the matched request, to establish a deterministic race. |
+| `after_next_response` | `method`, `path`, nonempty `then` array of complete `http`, `expect`, `advance_server`, `retention` or `server_expect` actions. Execute once after a matching real 200, before returning it to the collector. An unused hook fails. This permits expiry/purge between actual snapshot pages and checks that no page has yet been applied. |
+| `advance_server` | `server`, positive `seconds`; advance that deployment's injected wall clock, without advancing independent device clocks. |
+| `retention` | `server`, nonempty `expected` count map (`changes`, `floors`, `tombstones`, `revisions`); invoke the production RetentionService and check every supplied committed count. Optional nonnegative `clock_offset_seconds` advances only this maintenance run's clock. This explicitly tests purge while the feed clock still considers a frozen manifest live. |
+| `server_expect` | `server`, `scope`, nonempty `expected` map (`head`, `floor`, `changes`, `tombstones`, `revisions`, `retired_ids`, `snapshots`); read the actual database without mutation and check exact scope counts/high-water marks. |
+| `backup` | `server`, unique lowercase `name`; run ServerBackupService's consistent backup, storing it within the disposable scenario root. |
+| `restore` | `server`, existing backup `name`, `bind`; stop/drain device graphs, close all database users, run the production offline restore, require a rotated UUID and recovery copy, reopen/migrate the database and replace the router. Bind the new wire UUID. A later `restart` reopens the device graph. Live deployments refuse restore. |
+| `set_cursor` | `scope`, `value` (nonempty opaque string or null for absence); durably edit the device's real state, for missing/zero/above-head trigger tests. |
+| `collect` | `expected` object requiring `scope`, `head`, `cursor`, `item_count`; optional `prompts` (exact `id`, `rev`, `path`, `content`) and `absent` IDs. Run the real Core pull collector against the router without applying a bulk library plan. Enumerate every collected snapshot page, reject repeated IDs, check every expectation, require unchanged state and clean up private staging. Paging, purge and manifest restart use this seam; full SyncService file/state recovery is exercised by row 17. |
+| `kill_client` | `checkpoint` (`after_files`, `before_state`, `after_state`), positive `file_count`; stop/drain the parent graph and start the required debug SyncCrashWorker on the same roots. Require a live pause marker, inspect the persisted journal/files/state, send SIGKILL and require signal termination. `after_files` proves exactly that many publications and an incomplete plan with old state; state checkpoints prove all planned publications, then old or intended state respectively. |
+| `resume_client` | No additional members; require a preceding killed worker and recover its roots in a fresh worker. Require successful exit, durable journal removal, the journal's intended UUID/cursors and byte-identical copies with stable IDs. Reopen the parent's disk graph. Unrecovered killed clients fail. |
 | `expect` | Nonempty `expected` object with the checkpoint members below. |
 
 Methods are `GET`, `POST`, `PUT`, `DELETE` or `PATCH`. HTTP paths are rooted
@@ -804,10 +823,13 @@ Device checkpoints support:
 - `files`: objects with required `path` and byte-exact `content`, optional
   `mode` (`normal` or `readOnly`). `absent`: paths that must have no file.
 - `file_count`, `prompt_count`, `cursor_count`, `held_count`, `history_count`,
-  `writes` and `trash_count`: exact nonnegative counts. History counts concern
+  `group_count`, `writes` and `trash_count`: exact nonnegative counts. History counts concern
   persisted history files; writes concern library publications only.
 - `status`: Core sync status; `blocking_issue`: a fixed issue or `none`;
   `account_user`: a symbolic user ID or `none`.
+- `database_id`: exact opaque wire UUID or `none`; `cursors`: scope-to-opaque
+  cursor map whose supplied entries are all checked; `journal_present`: boolean
+  presence of the persisted apply journal.
 - `state`: objects requiring `id`, `scope`, `path`, `rev`; optional `hash`,
   `favorite`, `error` (fixed code or `none`), `origin` (`rescued`,
   `conflict_of <ID>` or `none`), `history`, `uses` and `values`. Keyed-store
@@ -817,11 +839,20 @@ Device checkpoints support:
   (a byte-exact file path present before router dispatch). Method/path `*`
   match all. Authentication headers and login bodies never enter traces.
 
-The seven initial files own ledger rows 01 and 11–16. Later slices extend
+The seven initial files own ledger rows 01 and 11–16. Y14 adds
+`06-removed-retention.json` alongside Y13's before-retention row 06 fixture,
+and files 08/17/22/23. Existing row 14 stays unchanged. Later slices extend
 this version-1 action/checkpoint vocabulary and add their files without changing
 existing semantics or bypassing the full-corpus executor. Y13 adds conflicts,
 permissions, transfers and group lifecycle; Y14 adds real retention/restore and
-killed-worker proof. Platform store modes, native system trash and hardware
+killed-worker proof. Workers receive credentials only through a closed stdin
+pipe; argv and environment contain no credentials, stderr is discarded and
+stdout contains only fixed checkpoint/completion markers. A hard watchdog
+kills stalled children; failure and success paths reap them. The worker shares
+the portable checked disk adapter in the test-only SyncScenarioSupport target
+and is not copied into the deployed server image. The tests prove process death, while
+power loss still belongs to native storage validation.
+Platform store modes, native system trash and hardware
 behavior stay with their native suites. Adding protocol/format behavior still
 requires the Swift/Kotlin/fixture move-together rule; this test-only language is
 ported with the Kotlin sync engine in M10.
