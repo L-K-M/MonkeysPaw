@@ -17,7 +17,9 @@ enum SyncServerHarness {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let clock = ScenarioClock(scenario.now)
-        try await withScenarioDeadline(ContinuousClock.now.advanced(by: .seconds(120))) {
+        // The 200-item acceptance case performs real setup writes and then
+        // durably applies the complete page on debug builds of the shared host.
+        try await withScenarioDeadline(ContinuousClock.now.advanced(by: .seconds(300))) {
             try await withServers(scenario, root: root, clock: clock, index: 0, clients: [:], symbols: [:]) { clients, symbols in
                 let runner = try ScenarioRunner(scenario: scenario, root: root, clients: clients, symbols: symbols)
                 do {
@@ -128,7 +130,9 @@ final class ScenarioDevice {
     }
 
     func settle() async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        // A complete byte-boundary page also journals and verifies its files.
+        // Keep a bounded drain without treating that disk work as HTTP latency.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(180))
         try await withScenarioDeadline(deadline) { [self] in
             repeat {
                 await sync.drain()

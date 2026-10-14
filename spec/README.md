@@ -755,6 +755,9 @@ rejects symlinks, directories, orphan files, missing acceptance files and
 repeated case IDs, and executes every case exactly once. Parsing a scenario
 is not execution. Unknown members, versions, actions and expectations fail;
 every checkpoint field is checked, and unused network mutations fail.
+Scenarios have a five-minute total deadline and a three-minute device drain
+deadline for real 200-item/byte-page setup and durable file application on
+debug hosts. Individual HTTP deadlines remain unchanged.
 
 An envelope has exactly `schema: 1`, `category: "sync"` and a nonempty
 `cases` array. A case has exactly these fields:
