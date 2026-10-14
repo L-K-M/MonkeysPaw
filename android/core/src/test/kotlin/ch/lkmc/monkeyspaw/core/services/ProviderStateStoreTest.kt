@@ -256,6 +256,46 @@ class ProviderStateStoreTest {
         assertEquals(OpenAIResponseFormat.JSON_OBJECT, ProviderStateStore(files).format(connection))
     }
 
+    @Test fun deeplyNestedCorruptStateFallsBackWithoutLosingTheActionAndCanBeRepaired() {
+        val connection = connection()
+        for (arrays in listOf(10_000, 512)) {
+            val files = CapabilityFiles()
+            val original = payload(listOf(entry(connection, OpenAIResponseFormat.JSON_OBJECT))).dropLast(1) +
+                ",\"deep\":" + "[".repeat(arrays) + "0" + "]".repeat(arrays) + "}"
+            files.memory.put(original, path)
+            val store = ProviderStateStore(files)
+            assertEquals(OpenAIResponseFormat.JSON_SCHEMA, store.format(connection))
+            assertEquals(original, files.memory.text(path))
+            assertTrue(files.attemptedWrites.isEmpty())
+            val response = AssistantResponse(AssistantOutput.Review(LlmReview("checked", emptyList())))
+            val result = run { store.recordSuccess(OpenAIResponseFormat.NONE, connection); response }
+            assertSame(response, result)
+            assertEquals(OpenAIResponseFormat.NONE, ProviderStateStore(files).format(connection))
+            assertEquals(setOf("version", "profiles"), json(files).keys)
+        }
+    }
+
+    @Test fun swiftDepthBoundaryAndQuotedContainersRetainValidUnknownMetadata() {
+        val connection = connection()
+        val files = CapabilityFiles()
+        // Root + 511 arrays = Foundation's maximum 512 open containers.
+        files.memory.put(payload(listOf(entry(connection, OpenAIResponseFormat.JSON_OBJECT))).dropLast(1) +
+            ",\"deep\":" + "[".repeat(511) + "0" + "]".repeat(511) + "}", path)
+        val store = ProviderStateStore(files)
+        assertEquals(OpenAIResponseFormat.JSON_OBJECT, store.format(connection))
+        store.recordSuccess(OpenAIResponseFormat.NONE, connection)
+        assertEquals(OpenAIResponseFormat.NONE, ProviderStateStore(files).format(connection))
+        assertTrue(json(files).containsKey("deep"))
+
+        val quoted = "\\\"[{{".repeat(10_000) + "\\]}}\""
+        files.memory.put(payload(listOf(entry(connection, OpenAIResponseFormat.JSON_OBJECT)),
+            mapOf("quoted" to JsonPrimitive(quoted))), path)
+        val reopened = ProviderStateStore(files)
+        assertEquals(OpenAIResponseFormat.JSON_OBJECT, reopened.format(connection))
+        reopened.recordSuccess(OpenAIResponseFormat.NONE, connection)
+        assertEquals(JsonPrimitive(quoted), json(files)["quoted"])
+    }
+
     @Test fun readFailuresRetainStateNeverWriteAndRetryOnLaterActionsWithStaticWarnings() {
         val files = CapabilityFiles()
         val connection = connection()

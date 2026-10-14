@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.core.services
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.ports.StoreError
@@ -80,8 +81,9 @@ class ProviderStateStore(private val files: StateStore) {
         catch (_: Exception) { throw ProviderSettingsError.ReadFailed }
 
         val objectValue = try {
-            (Json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true).removePrefix("\uFEFF")) as? JsonObject)
-                ?.also(::validateJson)
+            val text = bytes.decodeToString(throwOnInvalidSequence = true).removePrefix("\uFEFF")
+            checkDepth(text)
+            (Json.parseToJsonElement(text) as? JsonObject)?.also(::validateJson)
         } catch (_: Exception) { null } ?: JsonObject(emptyMap())
         val entries = try {
             val version = objectValue["version"] as? JsonPrimitive ?: throw ProviderSettingsError.CorruptFile
@@ -94,6 +96,34 @@ class ProviderStateStore(private val files: StateStore) {
             }
         } catch (_: Exception) { null }
         return Loaded(entries, objectValue)
+    }
+
+    private fun checkDepth(text: String) {
+        // Bound the recursive tree reader before parsing; brackets in strings do not count.
+        var depth = 0
+        var quoted = false
+        var escaped = false
+        for (character in text) {
+            if (quoted) {
+                when {
+                    escaped -> escaped = false
+                    character == '\\' -> escaped = true
+                    character == '"' -> quoted = false
+                }
+                continue
+            }
+            when (character) {
+                '"' -> quoted = true
+                '{', '[' -> {
+                    depth++
+                    if (depth > Limits.providerStateJSONNestingCap) throw ProviderSettingsError.CorruptFile
+                }
+                '}', ']' -> {
+                    depth--
+                    if (depth < 0) throw ProviderSettingsError.CorruptFile
+                }
+            }
+        }
     }
 
     private fun validateJson(value: JsonElement) {
