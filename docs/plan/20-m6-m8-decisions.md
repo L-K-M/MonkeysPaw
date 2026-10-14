@@ -1,9 +1,9 @@
-## 20. M6 and M8 decisions
+## 20. M6, M8 and M11 decisions
 
-These defaults resolve ambiguities found while planning the sync client (M6)
-and the Android foundation (M8), the same way §19 records owner-overridable
+These defaults resolve ambiguities found while planning the sync client (M6),
+Android foundation (M8) and Android assistant (M11), as §19 records owner-overridable
 defaults. The plan proceeds on them unless the owner says otherwise. Each
-row names the slices it gates (Y = sync client, K = Android); a slice that
+row names the slices it gates (Y = sync client, K = Android, L = assistant); a slice that
 changes a contract amends the referenced section in the same PR.
 
 ### M6: sync client
@@ -163,3 +163,15 @@ prerequisites; the decision rows above also gate their named slices.
 | K18 | Android version and packaging | K1 |
 | K19 | APK release integration | K10/K13–K18 |
 | K20 | Android docs and closure | K19, owner evidence |
+
+### M11: portable assistant contracts
+
+The first Android assistant slice settles these contracts from the M11 plan.
+L2 adds decoding, schemas and shared fixtures to L1's output values; L4/L6 add
+protocol clients. No driver or app graph is part of L1.
+
+| ID / gates | Ambiguity or conflict | Decision |
+|---|---|---|
+| J1 · L1/L7/L8 | M10 drivers and the M8 editor are not present at the L1 baseline. | Portable contracts use fakes. Reuse M10 HTTP/secrets if present when drivers land; otherwise L7/L8 own the shared app/data drivers. Stores and UI wait for the named M8 storage, graph, navigation and editor seams. No parallel stacks. |
+| J2 · L1–L10 | B1's Swift networking exception does not apply to Kotlin. | Core owns immutable values, bounded envelopes and suspend HttpTransport/SecretStore ports. Absolute deadlineNanos uses the injected MonotonicClock's time base; remaining time is deadline minus now, including nanoTime wraparound. Only app/data touches networking, Keystore or DataStore. Catalog coroutines-core/test use the existing version. Secret operations serialize off UI; cancellation must not wait for a blocked read. Android exposes a keystore storage tier; actual hardware backing is driver/owner evidence. |
+| J5 · L1/L7/L9 | Sync permits LAN HTTP; the assistant permits only literal loopback. | Preserve Swift endpoint fixed-point trimming and URL validation. Assistant HTTP allows localhost, canonical decimal 127/8 and IPv6 ::1 without DNS lookup. Reject URL credentials, query/fragment, unsafe path segments/separators, backslashes and controls. LAN/user-CA sync exceptions do not apply; desktop Ollama needs device-loopback forwarding or trusted HTTPS. |

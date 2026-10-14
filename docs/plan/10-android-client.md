@@ -66,6 +66,14 @@ android/app    ch.lkmc.monkeyspaw
   `android.*` import does not compile, the way the Linux CI job guards the
   Swift core. It is tested on the JVM with fakes, so there is no
   `androidTest` and no emulator job, as in HalloMiao.
+- **Assistant contracts (M11).** `domain/llm` owns immutable provider,
+  action, output and body-free error values. `ports` owns suspend
+  `HttpTransport` and `SecretStore`, plus an injected nanosecond monotonic
+  clock. Request construction validates headers and byte caps before a driver
+  can consume them. Only `app/data` implements networking and Keystore access;
+  Core has no network client, Android, AndroidX or DI dependency. L7/L8 supply
+  shared drivers if M10 has not already supplied them
+  ([§20 J1/J2](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
 - **Unicode parity.** `core` ships catalog-pinned ICU4J for NFC and Unicode
   properties, independent of Android's runtime Unicode version. Sync keys
   use the frozen Swift C/F table (§19 B4); search normalization remains a
@@ -201,6 +209,11 @@ constants.
   - An opt-in setting trusts user-installed CAs for self-signed LAN TLS.
   - That setting lives in the OkHttp trust manager, because the network
     security config is static.
+  - Assistant endpoints retain §7.1's separate policy: HTTP permits only
+    literal `localhost`, canonical decimal IPv4 `127/8`, or IPv6 `::1`,
+    without DNS classification. Sync's LAN and user-CA exceptions do not
+    apply. Device-loopback forwarding or normally trusted HTTPS is required
+    for a desktop Ollama endpoint ([§20 J5](20-m6-m8-decisions.md#m11-portable-assistant-contracts)).
 - **Manifest.**
   - It requests `INTERNET` and `POST_NOTIFICATIONS`. Notifications are asked
     for during onboarding; without them, the §9.3 and §9.6 notices appear
