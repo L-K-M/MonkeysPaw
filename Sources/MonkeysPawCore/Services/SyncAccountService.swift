@@ -167,7 +167,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         } catch {
             var result = failure(error)
             if staged {
-                sync.stop()
+                sync.stopAccountSession()
                 await sync.drain()
                 locked { active = nil; cached = SyncAccountSnapshot(account: previous.account) }
                 do { try accounts.saveInactive(previous.account, retiring: secretAttempted ? [candidate?.connectionID].compactMap { $0 } : []) }
@@ -319,7 +319,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
     }
 
     private func signOut(session: Session?, device: ULID?) async -> SyncAccountCleanup {
-        sync.stop()
+        sync.stopAccountSession()
         await sync.drain()
         var cleanup = SyncAccountCleanup()
         var connection: SyncConnectionDocument?

@@ -666,6 +666,35 @@ final class SyncAccountServiceTests: XCTestCase {
         XCTAssertNil(rig.account.snapshot.tier)
     }
 
+    func testFailedSignOutRecoveryCannotRetryNetworkWithRetiredCredential() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        _ = try await rig.pendingCreate()
+        let old = try XCTUnwrap(rig.sync.base.states.snapshot.value)
+        let edit = try rig.sync.base.mutations.publication(SyncScanTestSupport.bytes("Apply", id: SyncTestValues.groupPrompt),
+            at: "apply.md", expecting: nil, transition: SyncIdentityTransition(from: nil, to: .assigned(SyncTestValues.groupPrompt)))
+        let plan = SyncApplyPlan(expectedState: old, nextState: old, edits: [edit])
+        rig.sync.base.dataOperations.onOperation = { operation in
+            if operation == "file:sync/apply.json" { rig.sync.base.dataOperations.failOperationNumber = rig.sync.base.dataOperations.operationCount }
+        }
+        XCTAssertThrowsError(try rig.sync.journal.apply(plan))
+        let normal = rig.sync.transport.handler
+        rig.sync.transport.handler = { index, request in
+            if request.url.path.hasSuffix("/logout") { throw HTTPTransportError.networkFailure }
+            return try await normal(index, request)
+        }
+        let cleanup = try await rig.account.signOut()
+        XCTAssertTrue(cleanup.recoveryRequired)
+        XCTAssertEqual(cleanup.remote, .unconfirmed)
+        rig.sync.base.dataOperations.onOperation = nil
+        let requests = rig.sync.transport.requests.count
+        do { try await rig.sync.service.recoverJournal() }
+        catch { /* The signed-out graph has no authenticated recovery session. */ }
+        XCTAssertEqual(rig.sync.transport.requests.count, requests)
+        XCTAssertFalse(rig.sync.service.report.enabled)
+    }
+
     func testMeUnauthorizedImmediatelyStopsCurrentWork() async throws {
         let rig = try SyncAccountRig()
         try await rig.login()
