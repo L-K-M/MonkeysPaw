@@ -219,11 +219,15 @@ final class PortalHotkeyTests: XCTestCase {
         let service = ShortcutService(backend: backend, scheduler: GLibScheduler(), mainThread: GLibMainThread())
         var events: [HotkeyAction] = []
         var correctTokens = 0
-        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")]) { action in
+        var declarations: Result<Void, ShortcutRebindError>?
+        service.configure([.togglePicker: try Accelerator("Ctrl+Alt+P")], done: { declarations = $0 }) { action in
             events.append(action)
             let expected = action == .togglePicker ? "picker-fixture" : "repeat-fixture"
             if live.consumeActivationToken(for: action) == expected { correctTokens += 1 }
         }
+        // A D-Bus property reply does not drain GLib's queued catalogue apply.
+        XCTAssertTrue(GTKTestSupport.spin { declarations != nil })
+        try XCTUnwrap(declarations).get()
         PortalSessionTestSupport.barrier(transport)
         configure()
         service.refreshRegistrations(Dictionary(uniqueKeysWithValues: HotkeyAction.allCases.map {
