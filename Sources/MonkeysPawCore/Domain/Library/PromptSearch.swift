@@ -24,7 +24,7 @@ public struct PromptSearchResult: Sendable {
     public let matchedFields: [PromptSearchField]
 }
 
-/// Normalization for both fields and terms: locale-fixed Unicode case folding,
+/// Normalization for both fields and terms: full default Unicode 17 folding,
 /// then NFC. Match lengths and positions count normalized Unicode scalars;
 /// accents remain significant. Cache field normalization during indexing.
 struct FuzzyText {
@@ -35,18 +35,17 @@ struct FuzzyText {
         let normalized = Array(Self.normalize(text).unicodeScalars)
         scalars = normalized
         wordStarts = normalized.indices.map {
-            $0 == 0 || !CharacterSet.alphanumerics.contains(normalized[$0 - 1])
+            $0 == 0 || !SearchNormalizer.isWordScalar(normalized[$0 - 1])
         }
     }
 
     static func normalize(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-            .precomposedStringWithCanonicalMapping
+        SearchNormalizer.normalize(text)
     }
 }
 
 /// §5.4: subsequence matching, maximizing m + 2W + C over alignments:
-/// m = term length, W = matches at position zero or after a non-alphanumeric,
+/// m = term length, W = matches at position zero or after a scalar outside L/M/N,
 /// C = adjacent matched pairs. Divide by the upper bound 4m - 1, then multiply
 /// by (1 + m/n)/2, where n is field length. Scores are in (0, 1], favor shorter
 /// fields, and use no locale-sensitive comparison or undocumented heuristics.
@@ -91,9 +90,9 @@ struct PromptSearchQuery {
     let isEmpty: Bool
 
     init(_ query: String) {
-        let tokens = query.split(whereSeparator: \.isWhitespace).map(String.init)
-        terms = tokens.filter { !$0.hasPrefix("#") }.map { Array(FuzzyText.normalize($0).unicodeScalars) }
-        tags = tokens.filter { $0.hasPrefix("#") }.map { FuzzyText.normalize(String($0.dropFirst())) }
+        let tokens = SearchNormalizer.tokens(query)
+        terms = tokens.filter { !SearchNormalizer.isTag($0) }.map { Array(FuzzyText.normalize($0).unicodeScalars) }
+        tags = tokens.filter(SearchNormalizer.isTag).map { FuzzyText.normalize(String($0.unicodeScalars.dropFirst())) }
         isEmpty = tokens.isEmpty
     }
 }
@@ -105,7 +104,7 @@ struct PromptMatch {
 
 struct PromptSearchContent {
     private let fields: [(PromptSearchField, FuzzyText)]
-    private let tags: Set<String>
+    private let tags: Set<[Unicode.Scalar]>
 
     init(_ entry: LibraryEntry) {
         let front = entry.document.frontMatter
@@ -114,7 +113,7 @@ struct PromptSearchContent {
             + [(.folder, FuzzyText(entry.folder)),
                (.description, FuzzyText(front.description ?? "")),
                (.body, FuzzyText(entry.document.body))]
-        tags = Set(front.tags.map(FuzzyText.normalize))
+        tags = Set(front.tags.map { Array(FuzzyText.normalize($0).unicodeScalars) })
     }
 
     /// All whitespace-separated terms must match, possibly in different fields.
@@ -123,7 +122,7 @@ struct PromptSearchContent {
     /// fuzzy; a bare # matches nothing. Filters add no numeric bonus. A query
     /// containing only matching filters has base match 1, like an empty query.
     func match(_ query: PromptSearchQuery) -> PromptMatch? {
-        guard query.tags.allSatisfy({ !$0.isEmpty && tags.contains($0) }) else { return nil }
+        guard query.tags.allSatisfy({ !$0.isEmpty && tags.contains(Array($0.unicodeScalars)) }) else { return nil }
         var matched = Set<PromptSearchField>()
         if !query.tags.isEmpty { matched.insert(.tags) }
         var total: Double = 0

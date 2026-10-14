@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "category": "ranking",
+  "query": "#́ab",
+  "now": "2026-10-11T12:00:00Z",
+  "prompts": [
+    {
+      "source": "ordinary.md",
+      "path": "ordinary.md",
+      "uses": []
+    },
+    {
+      "source": "filter.md",
+      "path": "filter.md",
+      "uses": []
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "path": "ordinary.md",
+        "score": 2.933333333333333,
+        "matchedFields": [
+          "title"
+        ]
+      }
+    ]
+  }
+}
