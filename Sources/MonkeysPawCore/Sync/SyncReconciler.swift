@@ -35,6 +35,12 @@ enum SyncReconciler {
         let mode: SyncReconciliationPlan.Mode = old.databaseID == nil ? .firstSync
             : old.databaseID == pull.databaseID ? .normal : .restore
         let groups = try groups(for: pull, old: old, folders: groupFolders)
+        if mode == .normal {
+            for key in pull.scopes.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+                guard old.cursors[key] == SyncState.snapshotResetCursor else { continue }
+                guard pull.scopes[key]?.snapshotHead != nil else { throw SyncReconciliationError.snapshotRequired(key) }
+            }
+        }
         let files = try index(local.files, heldPaths: local.heldPaths)
         var heads = Dictionary(uniqueKeysWithValues: old.prompts.compactMap { identity, prompt -> (ULID, Head)? in
             guard case .assigned(let id) = identity else { return nil }

@@ -173,6 +173,8 @@ struct SyncPromptState: Equatable, Sendable, Codable {
 }
 
 struct SyncState: Equatable, Sendable, Codable {
+    /// The API's explicit snapshot reset request, not an interpreted feed cursor.
+    static let snapshotResetCursor = "0"
     let binding: SyncLibraryIdentity
     var databaseID: UUID?
     var cursors: [SyncScopeKey: String]

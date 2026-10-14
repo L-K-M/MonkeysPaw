@@ -6,6 +6,7 @@ enum SyncReconciliationError: Error, Equatable {
     case unavailableLibrary
     case bindingMismatch
     case groupFolderRequired(ULID)
+    case snapshotRequired(SyncScopeKey)
     case requiresPolicy
 }
 
