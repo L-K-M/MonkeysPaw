@@ -60,6 +60,7 @@ final class ScenarioDisk: FileStore, SyncFileOperations {
             guard Darwin.lstat(url.path, &info) == 0 else { throw FileStoreError.ioFailure }
             let times = "\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_ctimespec.tv_sec):\(info.st_ctimespec.tv_nsec)"
             #endif
+            guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw FileStoreError.notRegularFile }
             return FileStamp("\(info.st_dev):\(info.st_ino):\(info.st_size):" + times)
         }
     }
