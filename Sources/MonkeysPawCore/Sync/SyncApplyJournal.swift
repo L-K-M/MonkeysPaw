@@ -100,6 +100,7 @@ struct SyncApplyRecord: Codable, CustomStringConvertible, CustomReflectable {
 enum SyncApplyOutcome: Equatable {
     case committed
     /// Retain the journal and bytes; the planner must account for prior steps.
+    /// The ID identifies the plan for a state conflict or the edit for a file conflict.
     case replanAsConflict(operationID: UUID)
     /// Incomplete identity migration needs recovery, not a new conflict plan.
     case recoveryRequired(operationID: UUID)

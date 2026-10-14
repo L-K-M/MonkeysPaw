@@ -2,6 +2,28 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncLibraryMutationTests: XCTestCase {
+    func testCapabilityDetectsAnIncarnationChangeDuringExpectationRead() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let original = SyncApplyTestRig.bytes("Old")
+        try files.write(original, at: "a.md")
+        let stamp = try XCTUnwrap(files.stamp(at: "a.md"))
+        files.onRead = { path in
+            guard path == "a.md" else { return }
+            files.onRead = nil
+            try files.write(original, at: path)
+        }
+        XCTAssertThrowsError(try operations.publish(SyncApplyTestRig.bytes("Server"), at: "a.md",
+            expecting: .matching(stamp: stamp, bytes: original), mode: .normal)) {
+            let error = $0 as? SyncFileOperationError
+            XCTAssertEqual(error?.code, .changed)
+            XCTAssertEqual(error?.effect, .unchanged)
+        }
+        XCTAssertEqual(try files.read(at: "a.md"), original)
+        XCTAssertNil(operations.modes["a.md"])
+        XCTAssertEqual(operations.flushCount, 0)
+    }
+
     func testCreateRaceAfterExpectationKeepsOccupyingBytes() throws {
         let rig = try SyncApplyTestRig()
         let edit = try rig.replacement()
@@ -213,6 +235,7 @@ final class SyncLibraryMutationTests: XCTestCase {
         XCTAssertThrowsError(try rig.journal.apply(rig.plan([rescue, replace])))
         let restarted = try SyncApplyTestRig(files: rig.files, data: rig.data)
         XCTAssertEqual(try restarted.journal.replay(), .committed)
+        XCTAssertEqual(try restarted.files.read(at: "a.md"), replace.bytes)
         XCTAssertEqual(try restarted.journal.replay(), .committed)
         XCTAssertEqual(try restarted.files.read(at: "Conflicts/Copy.md"), rescue.bytes)
         XCTAssertEqual(try restarted.library.load(at: "Conflicts/Copy.md").document.frontMatter.id, SyncTestValues.groupPrompt)
@@ -272,6 +295,7 @@ final class SyncLibraryMutationTests: XCTestCase {
             XCTAssertNil(rig.states.snapshot.value)
             let restarted = try SyncApplyTestRig(files: rig.files, data: rig.data)
             XCTAssertEqual(try restarted.journal.replay(), .committed)
+            XCTAssertEqual(try restarted.files.read(at: "a.md"), edit.bytes)
             XCTAssertEqual(try restarted.journal.replay(), .committed)
         }
     }
@@ -324,7 +348,9 @@ final class SyncLibraryMutationTests: XCTestCase {
         try rig.values.record(identity: PromptIdentity(path: "a.md", id: nil), values: ["old": "source"])
         try rig.values.record(identity: .assigned(SyncTestValues.personalPrompt), values: ["new": "destination"])
         let edit = try rig.replacement()
-        XCTAssertThrowsError(try rig.journal.apply(rig.plan([edit])))
+        XCTAssertThrowsError(try rig.journal.apply(rig.plan([edit]))) {
+            XCTAssertEqual($0 as? LibraryError, .keyedStateConflict)
+        }
         XCTAssertEqual(try rig.files.text(at: "a.md"), "Local")
         XCTAssertEqual(try rig.values.rememberedValues(for: .assigned(SyncTestValues.personalPrompt)), ["new": "destination"])
         XCTAssertNoThrow(try rig.library.load(at: "a.md"))

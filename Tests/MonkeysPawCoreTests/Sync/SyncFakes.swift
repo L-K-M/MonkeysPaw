@@ -11,6 +11,7 @@ final class MemorySyncFileOperations: SyncFileOperations {
     var beforePublish: ((RelativePath) throws -> Void)?
     /// Simulate the documented noncooperating-writer window after the last
     /// expectation check; the driver still retains the actual losing bytes.
+    /// Applies to each publication until explicitly cleared.
     var racingBytesAfterCheck: Data?
     var onOperation: ((String) -> Void)?
     private(set) var operationCount = 0

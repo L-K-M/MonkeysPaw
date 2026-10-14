@@ -100,7 +100,13 @@ final class SyncKeyedMigrationTests: XCTestCase {
         let operations = MemorySyncFileOperations(files: files)
         XCTAssertTrue(try store.isSyncMigrationUnstarted(migration))
         try store.applySyncMigration(migration, operations: operations)
+        let writes = files.writeCount
+        let deletes = files.deleteCount
+        let flushes = operations.flushCount
         try store.applySyncMigration(migration, operations: operations)
+        XCTAssertEqual(files.writeCount, writes)
+        XCTAssertEqual(files.deleteCount, deletes)
+        XCTAssertGreaterThan(operations.flushCount, flushes)
         XCTAssertNil(try files.stamp(at: from))
         XCTAssertEqual(try files.read(at: to), bytes)
     }
@@ -127,11 +133,19 @@ final class SyncKeyedMigrationTests: XCTestCase {
         XCTAssertEqual(store.cachedUseEvents()[source], [Date(timeIntervalSince1970: 12)])
         XCTAssertNil(store.cachedUseEvents()[destination])
         try files.delete(at: destinationPath)
+        let sourceBytes = try files.read(at: "usage/" + (try source.storageKey))
         try store.applySyncMigration(migration, operations: operations)
+        let appliedWrites = files.writeCount
+        let deletes = files.deleteCount
+        let flushes = operations.flushCount
         try store.applySyncMigration(migration, operations: operations)
+        XCTAssertEqual(files.writeCount, appliedWrites)
+        XCTAssertEqual(files.deleteCount, deletes)
+        XCTAssertGreaterThan(operations.flushCount, flushes)
         XCTAssertNil(try files.stamp(at: "usage/" + (try source.storageKey)))
         XCTAssertEqual(store.cachedUseEvents()[destination], [Date(timeIntervalSince1970: 12)])
         XCTAssertNil(store.cachedUseEvents()[source])
+        XCTAssertEqual(try files.read(at: destinationPath), sourceBytes)
     }
 
     func testDecodedKeyedMovesRejectCorruptionBeforeAnyIO() throws {

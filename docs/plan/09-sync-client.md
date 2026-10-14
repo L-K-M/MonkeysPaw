@@ -19,8 +19,10 @@
     shorten/flatten long source names and retain source mappings.
   - A folder is keyed by `group_id` in sync state. Its name is the group
     name, sanitized: path-validation rules applied, then de-duplicated
-    with ` (2)`. Reserve the suffix's UTF-8 bytes before safely shortening
-    the sanitized stem so the complete folder name stays within 255 bytes.
+    with numbered suffixes starting at ` (2)`. For each candidate, reserve
+    its suffix's actual UTF-8 bytes, including multi-digit counters, before
+    safely shortening the sanitized stem so the complete folder name stays
+    within 255 bytes.
   - A group rename renames the folder.
   - A folder under `Groups/` that maps to no current group, or a file
     sitting loose directly under `Groups/`, is never pushed. It is rescued

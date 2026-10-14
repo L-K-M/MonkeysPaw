@@ -17,6 +17,24 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertEqual(try rig.journal.apply(fixture.plan), .committed)
     }
 
+    func testJournalCreationWriteFailureReleasesPermitWithoutRecovery() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.data.failNextWrite = true
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .writeFailed(.ioFailure))
+        }
+        XCTAssertNil(try rig.data.stamp(at: "sync/apply.json"))
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertNil(rig.mutations.pendingPermit)
+        XCTAssertNil(rig.states.snapshot.value)
+        XCTAssertNil(try rig.files.stamp(at: "a.md"))
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.journal.apply(plan), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+    }
+
     func testReplanPreparationConflictKeepsTypedErrorAndOriginalJournal() throws {
         let rig = try SyncApplyTestRig()
         try rig.files.write(SyncApplyTestRig.bytes("Old"), at: "a.md")
@@ -278,7 +296,15 @@ final class SyncApplyJournalTests: XCTestCase {
                 let context = "operation \(number), data \(isData)"
                 if isData { rig.dataOperations.failOperationNumber = number }
                 else { rig.libraryOperations.failOperationNumber = number }
-                XCTAssertThrowsError(try rig.journal.apply(fixture.plan), context)
+                XCTAssertThrowsError(try rig.journal.apply(fixture.plan), context) { error in
+                    switch error {
+                    case SyncError.durabilityUncertain, LibraryError.operationFailed:
+                        XCTAssertTrue(isData, context)
+                    case let error as SyncFileOperationError:
+                        XCTAssertTrue([SyncFileFailureCode.ioFailure, .durabilityFailed].contains(error.code), context)
+                    default: XCTFail("Unexpected capability failure: \(error), \(context)")
+                    }
+                }
                 XCTAssertThrowsError(try rig.library.load(at: "a.md"), context) {
                     XCTAssertEqual($0 as? LibraryError, .recoveryRequired, context)
                 }
@@ -302,7 +328,9 @@ final class SyncApplyJournalTests: XCTestCase {
         let rig = try SyncApplyTestRig()
         let plan = try rig.plan([rig.replacement()])
         rig.libraryOperations.failOperationNumber = 1
-        XCTAssertThrowsError(try rig.journal.apply(plan))
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .ioFailure)
+        }
         rig.libraryOperations.failOperationNumber = nil
         try rig.states.reset(for: rig.binding)
         XCTAssertEqual(try rig.journal.replay(), .replanAsConflict(operationID: plan.id))
@@ -726,7 +754,7 @@ final class SyncApplyJournalTests: XCTestCase {
             XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .ioFailure)
         }
         let record = try fixture.rig.data.read(at: "sync/apply.json")
-        for variant in 0...2 {
+        for variant in 0...4 {
             let data = MemoryFileStore()
             if variant == 0 { try data.put("broken", at: "sync/apply.json") }
             else {
@@ -734,9 +762,13 @@ final class SyncApplyJournalTests: XCTestCase {
                 if variant == 1 { object["version"] = 99 }
                 else {
                     var steps = try XCTUnwrap(object["steps"] as? [[String: Any]])
-                    var edit = try XCTUnwrap(XCTUnwrap(steps.first)["edit"] as? [String: Any])
-                    edit["hash"] = String(repeating: "0", count: 64)
-                    steps[0]["edit"] = edit
+                    if variant == 2 {
+                        var edit = try XCTUnwrap(XCTUnwrap(steps.first)["edit"] as? [String: Any])
+                        edit["hash"] = String(repeating: "0", count: 64)
+                        steps[0]["edit"] = edit
+                    } else {
+                        steps[0].removeValue(forKey: variant == 3 ? "started" : "completed")
+                    }
                     object["steps"] = steps
                 }
                 try SyncTestValues.write(object, to: data, path: "sync/apply.json")
