@@ -20,9 +20,9 @@ dependencies {
     implementation(libs.icu4j)
     implementation(libs.snakeyaml.engine)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.kotlinx.serialization.json)
 }
 
 val fixtureDirectory = rootProject.layout.projectDirectory.dir("../spec/fixtures")
