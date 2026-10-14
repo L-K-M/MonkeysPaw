@@ -197,9 +197,11 @@ struct LlmJSONParser {
 
             // Foundation decodes raw string runs differently on macOS and Linux.
             if bytes[start..<position].starts(with: [0xEF, 0xBB, 0xBF]) { start += 3 }
-            guard let raw = String(validating: bytes[start..<position], as: UTF8.self) else {
-                throw AssistantError.invalidOutput
-            }
+            // String(validating:as:) needs macOS 15. Invalid UTF-8 decodes to U+FFFD,
+            // so only valid input round-trips byte for byte.
+            let run = bytes[start..<position]
+            let raw = String(decoding: run, as: UTF8.self)
+            guard raw.utf8.elementsEqual(run) else { throw AssistantError.invalidOutput }
             decoded += raw
             position += 1
             if byte == 34 { return decoded }
