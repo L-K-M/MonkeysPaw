@@ -33,6 +33,8 @@ FILES = {
     "README.md": frozenset({"core-linux", "deb"}),
     # The version checker also reads the committed Android literals.
     "android/app/build.gradle.kts": frozenset({"android", "core-linux", "deb"}),
+    # The verifier tests compare the recorded fingerprint with this ADR.
+    "docs/decisions/0001-android-zero-secret-signing.md": frozenset({"core-linux"}),
     "compose.yaml": SERVER_JOBS,
     ".env.example": SERVER_JOBS,
     "Caddyfile": SERVER_JOBS,

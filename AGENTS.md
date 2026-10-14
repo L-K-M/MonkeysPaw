@@ -104,6 +104,8 @@ manifest's target paths and the image copies the full source tree.
 Android's JVM tests also read
 `Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift`, so that Core file enables
 Android as well as every Swift job.
+The Android signing ADR also runs `core-linux` to check its recorded
+fingerprint against the release verifier.
 
 Pushes, manual runs and reusable release calls run every job. The reusable
 call's `full-ci` input defaults to true, including release PR dry runs whose

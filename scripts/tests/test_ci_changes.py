@@ -111,6 +111,7 @@ class SelectionTests(unittest.TestCase):
             "LICENSE": frozenset(),
             "docs/plan/14-repository-packaging-ci-release.md": frozenset(),
             "docs/platform/macos.md": frozenset(),
+            "docs/decisions/0001-android-zero-secret-signing.md": frozenset({"core-linux"}),
         }
         for path, expected in cases.items():
             with self.subTest(path=path):

@@ -95,7 +95,8 @@ Rollout by milestone:
     Android-only PRs run `android`; app Gradle version changes also run the
     `core-linux` and `deb` version checks. Pure documentation PRs run no
     build jobs.
-    `README.md` remains an input to the Linux version checks. Xcode project
+    `README.md` remains an input to the Linux version checks. The Android
+    signing ADR selects `core-linux` for fingerprint agreement. Xcode project
     changes also run `core-linux` and `deb`. Linux source changes keep Core
     portability and server jobs enabled because the parent Swift manifest
     validates target paths and Docker copies the full source tree.
@@ -147,7 +148,7 @@ Rollout by milestone:
 - **release.yml.**
   - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
     true. PRs touching Android, shared fixtures/seeds, packaging,
-    `server/Dockerfile` or the release
+    `server/Dockerfile` or either CI/release
     workflow run the dry-run path too. Every path first calls `ci.yml`, then
     checks committed versions. A real tag's numeric core must equal the
     committed `MARKETING_VERSION`, README marker and Android `versionName`;

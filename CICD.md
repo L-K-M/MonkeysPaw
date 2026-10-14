@@ -14,7 +14,7 @@ are pinned to build tools `36.0.0`; no signing secrets are needed on fork PRs.
 See [§14](docs/plan/14-repository-packaging-ci-release.md) for each gate.
 
 `.github/workflows/release.yml` runs on `v*` tags, manual dispatches and PRs
-touching its workflow, packaging inputs, Android, shared fixtures/seeds or
+touching either workflow, packaging inputs, Android, shared fixtures/seeds or
 `server/Dockerfile`. It calls CI before packaging. Once S20's compose smoke
 job lands in `ci.yml`, this existing
 `uses: ./.github/workflows/ci.yml` call also gates image publishing and GitHub
@@ -83,6 +83,11 @@ a draft with all seven assets, downloads them again from the release, and
 byte-compares each before publishing. A failed upload or
 comparison leaves the release unpublished. Hyphenated tags are prereleases
 and are explicitly excluded from `latest`.
+Assembly waits for both native image builds. Android failure reports use
+`MonkeysPaw-android-release-reports`, outside the release asset glob and
+distinct from ordinary CI reports, so retained reports cannot contaminate
+asset assembly after a successful job retry. Signing-ADR changes select
+`core-linux` to check fingerprint agreement.
 
 Registry promotion and GitHub publishing are separate operations: if GitHub
 publishing fails afterward, verified image tags can already be published.

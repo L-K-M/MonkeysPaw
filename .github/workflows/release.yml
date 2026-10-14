@@ -11,6 +11,7 @@ on:
         default: true
   pull_request:
     paths:
+      - .github/workflows/ci.yml
       - .github/workflows/release.yml
       - server/Dockerfile
       - packaging/**
@@ -317,7 +318,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: MonkeysPaw-release-android-reports
+          name: MonkeysPaw-android-release-reports
           path: |
             android/core/build/reports/tests/test/
             android/core/build/test-results/test/*.xml
@@ -329,7 +330,7 @@ jobs:
 
   artifacts:
     name: Verify all release assets
-    needs: [tests, verify, linux, macos, android-build]
+    needs: [tests, verify, linux, macos, android-build, server-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

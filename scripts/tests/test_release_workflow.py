@@ -1,5 +1,6 @@
 """Exercise release gates with temporary assets and a recording GitHub CLI."""
 
+import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -79,13 +80,25 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertIn("android-build", dependencies)
             for required in ("tests", "verify", "linux", "macos"):
                 self.assertIn(required, dependencies)
+        self.assertIn("server-images", JOBS["artifacts"])
         for required in ("artifacts", "server-images"):
             self.assertIn(required, JOBS["image-publish"])
             self.assertIn(required, JOBS["publish"])
         self.assertIn("image-publish]", JOBS["publish"])
-        for path in ("android/**", "spec/**", "seed/**", "scripts/package-android.sh",
+        for path in (".github/workflows/ci.yml", "android/**", "spec/**", "seed/**", "scripts/package-android.sh",
                      "scripts/verify-android-release.py", "scripts/check-version.py"):
             self.assertIn(f"      - {path}\n", SOURCE.split("\nconcurrency:", 1)[0])
+
+    def test_retained_failure_reports_do_not_join_release_assets_after_a_retry(self):
+        names = re.findall(r"^          name: (.+)$", SOURCE, re.MULTILINE)
+        selected = {name for name in names if fnmatch.fnmatchcase(name, "MonkeysPaw-release-*")}
+        self.assertEqual(selected, {"MonkeysPaw-release-deb", "MonkeysPaw-release-macos", "MonkeysPaw-release-android"})
+        report_step = JOBS["android-build"].split("      - name: Upload Android reports on failure\n", 1)[1]
+        self.assertIn("if: failure()", report_step)
+        report = re.search(r"^          name: (.+)$", report_step, re.MULTILINE)[1]
+        self.assertFalse(fnmatch.fnmatchcase(report, "MonkeysPaw-release-*"))
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertNotIn(f"name: {report}\n", ci, "Release/ordinary CI report names must be distinct")
 
     def test_ordinary_ci_keeps_the_five_task_gate_and_verifies_release_artifacts(self):
         source = (ROOT / ".github/workflows/ci.yml").read_text()
