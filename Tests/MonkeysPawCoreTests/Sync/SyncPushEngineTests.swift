@@ -111,6 +111,27 @@ final class SyncPushEngineTests: XCTestCase {
         XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(id)]?.rev, 4)
     }
 
+    func testPrivateFormattingOnlyConflictPreservesLosingLocalVersion() async throws {
+        let rig = try fixture(rev: 3)
+        try rig.files.write(SyncScanTestSupport.bytes(extra: "# exact sent comment\n"), at: "a.md")
+        let change = try candidate(rig)
+        let losing = SyncScanTestSupport.bytes(extra: "# comment saved during HTTP\n")
+        let server = SyncScanTestSupport.bytes(extra: "# authoritative server comment\n")
+        XCTAssertTrue(try CanonicalForm.equivalentForAdoption(losing, server, scope: .user, filename: "a.md"))
+        XCTAssertNotEqual(losing, server)
+        let transport = PushTransport { _ in
+            try rig.files.write(losing, at: "a.md")
+            return try Self.conflict(server, rev: 4)
+        }
+        let result = try await engine(rig, transport).push(change, availability: .available)
+        XCTAssertEqual(result, .replan)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), server)
+        XCTAssertEqual(try rig.files.listFiles().filter { $0.relativePath.hasPrefix("Conflicts/") }.count, 1)
+        XCTAssertEqual(rig.states.snapshot.value?.prompts[.assigned(SyncScanTestSupport.fresh)]?.origin, .conflictOf(id))
+        let retained = try rig.data.listFiles().filter { $0.relativePath.hasSuffix(".bin") }
+        XCTAssertTrue(try retained.contains { try rig.data.read(at: $0.relativePath) == losing })
+    }
+
     func testUncommittedLostRequestIsReplannedWithFreshBytes() async throws {
         for revision: Int64 in [0, 3] {
             let rig = try fixture(rev: revision)

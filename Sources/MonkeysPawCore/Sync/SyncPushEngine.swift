@@ -308,35 +308,45 @@ final class SyncPushEngine {
     }
 
     private func install(_ head: SyncConflictHead, error: SyncPromptError?) throws -> SyncPushResult {
-        let state = try currentState()
+        let expected = try states.load(for: binding)
+        let state = try expected ?? SyncState(binding: binding)
         let snapshot = try snapshot(state)
         let path = try SyncLocalScanner.rooted(head.path, scope: head.scope, groups: state.groups)
         let remote = SyncReconciliationRemote(id: head.id, scope: head.scope, path: head.path, libraryPath: path,
             rev: head.rev, bytes: head.bytes, hash: head.hash, mode: mode(head.scope, state: state))
         let local = try live(head.id, in: snapshot)
-        var plan: SyncApplyPlan
-        if local != nil {
-            let decision = try SyncAdoption.match(remote, local: snapshot, groups: state.groups)
-            plan = try SyncAdoption.application(decision, state: state, local: snapshot, groups: state.groups,
-                device: device, at: now(), freshID: freshID, mutations: mutations)
-        } else {
-            guard !snapshot.files.contains(where: {
-                (try? SyncNaming.pathKey(RelativePath($0.path))) == (try? SyncNaming.pathKey(path))
-            }) else { throw SyncReconciliationError.requiresPolicy }
-            let record = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
-                                            canonicalHash: head.hash, origin: head.origin)
-            let next = try setting(record, for: .assigned(head.id), in: state)
-            let edit = try mutations.publication(head.bytes, at: path, expecting: nil,
-                transition: SyncIdentityTransition(from: nil, to: .assigned(head.id)), mode: remote.mode)
-            plan = SyncApplyPlan(expectedState: state, nextState: next, edits: [edit])
+        let pathKey = try SyncNaming.pathKey(path)
+        let targets = try snapshot.files.filter { try SyncNaming.pathKey(RelativePath($0.path)) == pathKey }
+        guard targets.count <= 1, targets.allSatisfy({
+            RelativePath($0.path) == path && $0.identityKey == head.id.rawValue && !snapshot.heldPaths.contains(path)
+        }) else { throw SyncReconciliationError.requiresPolicy }
+        if targets.isEmpty, try mutations.read(at: path) != nil { throw SyncReconciliationError.requiresPolicy }
+        let installation = SyncReconciliationInstall(remote: remote, source: local, target: targets.first)
+        let record = try SyncPromptState(scope: head.scope, path: head.path, rev: head.rev,
+                                        canonicalHash: head.hash, origin: head.origin, lastError: error)
+        var next = try setting(record, for: .assigned(head.id), in: state)
+        if head.scope.pathScope == .group, let local,
+           let form = try? SyncLocalScanner.canonical(local.bytes, path: head.path, scope: head.scope) {
+            try next.applyGroupFavorite(form.favorite, for: .assigned(head.id))
         }
-        if let error, let record = plan.nextState.prompts[.assigned(head.id)] {
-            var next = plan.nextState
-            next.prompts[.assigned(head.id)] = try SyncPromptState(scope: record.scope, path: record.path, rev: record.rev,
-                canonicalHash: record.canonicalHash, origin: record.origin, lastError: error)
-            plan = SyncApplyPlan(id: plan.id, expectedState: plan.expectedState, nextState: next, edits: plan.edits)
+        let operation: SyncReconciliationOperation
+        // B5 is only for adoption. Private formatting/comments are real losing
+        // bytes on a conflict, even when identity-neutral content compares equal.
+        if let local, (try? SyncLocalScanner.canonical(local.bytes, path: head.path, scope: head.scope).bytes) != head.bytes {
+            operation = .preserve(.init(id: head.id, reason: .dirtyUpsert, local: local, installation: installation))
+        } else { operation = .install(installation) }
+        let plan = SyncReconciliationPlan(mode: .normal, expectedState: expected, nextState: next,
+            operations: [operation], occupiedPaths: Set(snapshot.files.map { RelativePath($0.path) }),
+            localIdentities: try Set(snapshot.files.map { try $0.identity }))
+        let candidates = snapshot.files.compactMap { file -> SyncConflictCopyCandidate? in
+            let path = RelativePath(file.path)
+            guard !snapshot.heldPaths.contains(path),
+                  let location = SyncLocalScanner.location(of: path, binding: binding, groups: state.groups) else { return nil }
+            return SyncConflictCopyCandidate(scope: location.scope, file: file)
         }
-        try requireCommit(journal.apply(plan))
+        let copies = try SyncConflictPolicy.copies(for: plan, device: device, at: now(), freshID: freshID,
+                                                  existingCopies: candidates, mutations: mutations)
+        try requireCommit(journal.apply(SyncReconciler.application(plan, mutations: mutations, copies: copies)))
         return .replan
     }
 
