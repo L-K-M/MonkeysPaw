@@ -40,6 +40,7 @@ class SyncEngine internal constructor(
         scope, io, clock, { ULID.generate(clock.now(), entropy.bytes(Limits.ulidEntropyBytes)) }, monotonicClock)
 
     private class Session(val binding: SyncLibraryIdentity, val client: SyncHTTPClient, val device: String)
+    private enum class RunKind { PASS, RECOVERY }
     private class Active(val epoch: Long, val version: Long, val parent: CompletableJob, val coordinator: SyncCoordinator) {
         lateinit var task: Deferred<SyncReport>
     }
@@ -219,7 +220,7 @@ class SyncEngine internal constructor(
             invalidateTimers()
             epoch++
             mutableReport.value = reports.value.copy(enabled = false)
-            newActive(recovery = true)
+            newActive(RunKind.RECOVERY)
         }
         try { run.task.await() }
         catch (error: CancellationException) {
@@ -243,10 +244,10 @@ class SyncEngine internal constructor(
     private fun launch(): Active? {
         if (!eligible || active != null || !dirty || session == null) return null
         if (retryAtNanos?.let { it - monotonicClock.nowNanos() > 0 } == true) return null
-        return newActive(recovery = false)
+        return newActive(RunKind.PASS)
     }
 
-    private fun newActive(recovery: Boolean): Active {
+    private fun newActive(kind: RunKind): Active {
         val session = session ?: throw SyncError.InvalidAccount
         val parent = Job(scope.coroutineContext[Job])
         val permit = SyncWorkPermit(session.binding, epoch, parent)
@@ -262,7 +263,7 @@ class SyncEngine internal constructor(
             counts = reports.value.counts.copy(pulled = 0, pushed = 0))
         run.task = scope.async(io + parent, start = CoroutineStart.LAZY) {
             val result = runCatching {
-                if (recovery) { coordinator.recoverJournal(); SyncPassResult() }
+                if (kind == RunKind.RECOVERY) { coordinator.recoverJournal(); SyncPassResult() }
                 else coordinator.run(progress = { pass ->
                     lock.withLock {
                         if (epoch == generation && eligible) mutableReport.value = reports.value.copy(counts = pass.counts, details = pass.details)
@@ -271,8 +272,8 @@ class SyncEngine internal constructor(
                     lock.withLock { if (epoch == generation && eligible) mutableReport.value = reports.value.copy(phase = phase) }
                 })
             }
-            val report = finish(run, result, recovery)
-            if (recovery) result.getOrThrow()
+            val report = finish(run, result, kind)
+            if (kind == RunKind.RECOVERY) result.getOrThrow()
             report
         }
         run.task.invokeOnCompletion {
@@ -289,7 +290,7 @@ class SyncEngine internal constructor(
         return run
     }
 
-    private fun finish(run: Active, result: Result<SyncPassResult>, recovery: Boolean): SyncReport = lock.withLock {
+    private fun finish(run: Active, result: Result<SyncPassResult>, kind: RunKind): SyncReport = lock.withLock {
         if (active !== run) return@withLock reports.value
         active = null
         if (epoch != run.epoch) {
@@ -298,7 +299,7 @@ class SyncEngine internal constructor(
         }
         consumedVersion = maxOf(consumedVersion, run.version)
         mutableReport.value = reports.value.copy(phase = SyncPhase.IDLE)
-        if (recovery) {
+        if (kind == RunKind.RECOVERY) {
             result.fold({ mutableReport.value = reports.value.copy(blockingIssue = null) }, ::handle)
             publishScheduling()
             return@withLock reports.value
