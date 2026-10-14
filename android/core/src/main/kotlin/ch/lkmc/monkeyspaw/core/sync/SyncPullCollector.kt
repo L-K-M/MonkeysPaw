@@ -7,12 +7,12 @@ import ch.lkmc.monkeyspaw.core.domain.sync.SyncError
 import ch.lkmc.monkeyspaw.core.domain.sync.SyncIdentifiers
 import ch.lkmc.monkeyspaw.core.domain.sync.SyncScopeKey
 import ch.lkmc.monkeyspaw.core.domain.sync.syncMapCopy
-import ch.lkmc.monkeyspaw.core.ports.HttpTransportError
 import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.syncapi.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import java.util.UUID
 
 /** Collects only, with no library, persistent sync-state or journal capability. */
@@ -61,6 +61,8 @@ internal class SyncPullCollector(
                     removed.clear()
                     databaseID = null
                     continue
+                } catch (error: CancellationException) {
+                    throw error
                 } catch (error: Exception) {
                     check(deadline)
                     throw error
@@ -201,7 +203,7 @@ internal class SyncPullCollector(
     }
 
     private suspend fun check(deadline: Long) {
-        if (!currentCoroutineContext().isActive) throw SyncHTTPClientError.Transport(HttpTransportError.Cancelled)
+        currentCoroutineContext().ensureActive()
         if (deadline - clock.nowNanos() <= 0) {
             throw SyncPullCollectorError.NoProgress(SyncPullCollectorError.Reason.COLLECTION_DEADLINE)
         }

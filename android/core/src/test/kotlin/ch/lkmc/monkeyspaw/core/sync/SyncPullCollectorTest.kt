@@ -11,6 +11,7 @@ import ch.lkmc.monkeyspaw.core.services.SyncStateStore
 import ch.lkmc.monkeyspaw.core.services.SyncTestValues
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
@@ -155,8 +156,38 @@ class SyncPullCollectorTest {
             assertEquals(PullRequest(database, mapOf(userKey to originalUser)), transport.requests[2])
             assertEquals(listOf(10L), items(pull, Mode.DELTA).map { it.seq })
             assertEquals(listOf(12L), items(pull, Mode.SNAPSHOT).map { it.seq })
+            assertTrue(pull.removed.isEmpty())
             assertEquals(1, staged(files).size)
         }
+    }
+
+    @Test fun expiredUserScopeReturnsAsAFreshSnapshotWithoutRemoval() = runTest {
+        val files = MemoryStore()
+        val transport = ScriptTransport(listOf(
+            http(response(personal(Mode.SNAPSHOT, 10, "expired user manifest", true, listOf(upsert(10))),
+                team(head = 11, cursor = "g11"))),
+            HttpResponse(409, body = ErrorResponse.codec.encode(ErrorResponse.SnapshotExpired(listOf(userKey)))),
+            http(response(personal(Mode.SNAPSHOT, 12, "u12", items = listOf(upsert(12, another))),
+                team(head = 11, cursor = "g11")))))
+        collector(transport, files).collect(initial).use { pull ->
+            assertEquals(PullRequest(database, mapOf(groupKey to originalGroup)), transport.requests[2])
+            assertEquals(listOf(SyncCollectedItem(userScope, upsert(12, another))), items(pull, Mode.SNAPSHOT))
+            assertEquals("u12", pull.cursors[userScope])
+            assertTrue(pull.removed.isEmpty())
+            assertEquals(1, staged(files).size)
+        }
+        assertTrue(staged(files).isEmpty())
+    }
+
+    @Test fun expiredUserScopeMissingFromRestartedResponseIsRejected() = runTest {
+        val files = MemoryStore()
+        val missingUser = response(team(Mode.SNAPSHOT, 0, "0"))
+        val transport = ScriptTransport(listOf(http(oldPage),
+            HttpResponse(409, body = ErrorResponse.codec.encode(ErrorResponse.SnapshotExpired(listOf(userKey)))),
+            HttpResponse(200, body = WireJson.canonical(PullResponse.codec.encodeValue(missingUser)))))
+        assertFailsWith<SyncHTTPClientError.MalformedResponse> { collector(transport, files).collect(initial) }
+        assertEquals(PullRequest(database, mapOf(groupKey to originalGroup)), transport.requests[2])
+        assertTrue(staged(files).isEmpty())
     }
 
     @Test fun expiryAndDatabaseChangesShareOneRestartInBothOrders() = runTest {
@@ -356,23 +387,65 @@ class SyncPullCollectorTest {
 
     @Test fun cancellationAfterAnEarlierPageCleansOnlyItsOwnedStage() = runTest {
         val files = MemoryStore().apply { put("canary", "sync/pull-other.json") }
+        val unhandled = mutableListOf<Throwable>()
+        val callerScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler) +
+            CoroutineExceptionHandler { _, error -> unhandled.add(error) })
+        val outcome = CompletableDeferred<Exception>()
         var requests = 0
-        var failure: SyncHTTPClientError? = null
         var released = false
-        val task = launch(start = CoroutineStart.UNDISPATCHED) {
+        val task = callerScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 collector(HttpTransport {
                     if (requests++ == 0) http(oldPage)
                     else try { awaitCancellation() } finally { released = true }
                 }, files).collect(initial)
-            } catch (error: SyncHTTPClientError) { failure = error }
+            } catch (error: Exception) { outcome.complete(error); throw error }
+        }
+        try {
+            assertEquals(2, requests)
+            assertEquals(2, staged(files).size)
+            callerScope.cancel()
+            task.join()
+            assertTrue(released)
+            assertEquals(listOf("sync/pull-other.json"), staged(files))
+            assertIs<CancellationException>(outcome.await())
+            assertTrue(unhandled.isEmpty(), "Unhandled failures: $unhandled")
+            assertTrue(task.isCancelled)
+            assertTrue(currentCoroutineContext().isActive)
+        } finally { callerScope.cancel() }
+    }
+
+    @Test fun alreadyCancelledCollectionDoesNotDispatchOrReportAnExpiredDeadline() = runTest {
+        val files = MemoryStore()
+        val transport = ScriptTransport(emptyList())
+        var failure: Exception? = null
+        launch(start = CoroutineStart.UNDISPATCHED) {
+            currentCoroutineContext().cancel()
+            try { collector(transport, files).collect(initial, 0L) }
+            catch (error: Exception) { failure = error }
+        }.join()
+        assertIs<CancellationException>(failure)
+        assertTrue(transport.requests.isEmpty())
+        assertTrue(files.writes.isEmpty())
+    }
+
+    @Test fun nestedTimeoutIsNotReplacedByCollectionDeadline() = runTest {
+        val files = MemoryStore()
+        val deadline = 20_000_000L
+        var now = 0L
+        var requests = 0
+        val transport = HttpTransport {
+            if (requests++ == 0) http(oldPage)
+            else withTimeout(1) {
+                try { awaitCancellation() } finally { now = deadline }
+            }
+        }
+        assertFailsWith<TimeoutCancellationException> {
+            collector(transport, files, MonotonicClock { now }).collect(initial, deadline)
         }
         assertEquals(2, requests)
-        assertEquals(2, staged(files).size)
-        task.cancelAndJoin()
-        assertTrue(released)
-        assertEquals(HttpTransportError.Cancelled, assertIs<SyncHTTPClientError.Transport>(failure).error)
-        assertEquals(listOf("sync/pull-other.json"), staged(files))
+        assertTrue(staged(files).isEmpty())
+        assertTrue(currentCoroutineContext().isActive)
     }
 
     @Test fun libraryStateAndCommittedCursorBytesStayUntouchedThroughCompletion() = runTest {
