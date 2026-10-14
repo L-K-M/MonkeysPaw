@@ -367,6 +367,10 @@ final class GroupAccessServiceTests: XCTestCase {
         rig.settle()
         XCTAssertEqual(rig.model.state.source, dirty)
         XCTAssertFalse(rig.model.state.conflict?.choices.contains(.keepMine) == true)
+        rig.ui { rig.model.save() }
+        rig.settle()
+        XCTAssertEqual(rig.model.state.conflict?.origin, .sync)
+        XCTAssertFalse(rig.model.state.conflict?.choices.contains(.keepMine) == true)
         rig.ui { rig.model.resolveConflict(.saveAsCopy) }
         rig.settle()
         XCTAssertTrue(try XCTUnwrap(rig.model.state.lastCopy).relativePath.string.hasPrefix("Conflicts/Personal/"))
