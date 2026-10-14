@@ -213,7 +213,8 @@ tasks.withType<Test>().configureEach {
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/MonkeysPawApplication.kt"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/MainActivity.kt"))
         .withPropertyName("appGraphSources").withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.files(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/ui"), graphSources.file("res/values/strings.xml"))
+    inputs.files(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/ui"), graphSources.file("res/values/strings.xml"),
+        graphSources.file("res/values/editor_strings.xml"))
         .withPropertyName("libraryUiSources").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(graphSources.file("kotlin/ch/lkmc/monkeyspaw/entry/FillActivity.kt"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/AndroidClipboard.kt"))

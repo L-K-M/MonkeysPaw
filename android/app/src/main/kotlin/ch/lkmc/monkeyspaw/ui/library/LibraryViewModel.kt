@@ -73,6 +73,13 @@ internal class LibraryViewModel @Inject constructor(
         mutableState.value = mutableState.value.copy(selectedPrompt = allRows.firstOrNull { it.selection == selection })
     }
 
+    /** Guard-approved navigation/commits can select a row hidden by the current browser filter. */
+    fun selectFromEditor(selection: LibrarySelection?) {
+        preferredSelection = selection
+        mutableState.value = mutableState.value.copy(selectedPrompt = allRows.firstOrNull { it.selection == selection })
+        load()
+    }
+
     fun toggleFavorite(selection: LibrarySelection) {
         val row = allRows.firstOrNull { it.selection == selection } ?: return
         if (row.isReadOnly || state.value.favoritePending != null) return
