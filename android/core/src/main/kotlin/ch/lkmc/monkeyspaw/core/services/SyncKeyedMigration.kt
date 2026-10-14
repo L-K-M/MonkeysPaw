@@ -1,6 +1,5 @@
 package ch.lkmc.monkeyspaw.core.services
 
-import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.util.Collections
@@ -73,8 +72,7 @@ internal class SyncKeyedFileMove(
 
     fun validate() {
         syncValidated { StorePath.validate(source); StorePath.validate(destination) }
-        if (source == destination || bytes.size > Limits.syncRecordMaxBytes || destinationBytes.size > Limits.syncRecordMaxBytes ||
-            hash != SyncHash.of(bytes) || destinationHash != SyncHash.of(destinationBytes)) throw SyncError.InvalidState
+        if (source == destination || hash != SyncHash.of(bytes) || destinationHash != SyncHash.of(destinationBytes)) throw SyncError.InvalidState
     }
 
     fun apply(files: StateStore, operations: SyncFileFlushing) {
