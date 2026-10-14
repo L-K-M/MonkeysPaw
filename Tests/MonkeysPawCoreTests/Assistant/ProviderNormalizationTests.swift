@@ -3,6 +3,27 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class ProviderNormalizationTests: XCTestCase {
+    func testEscapedIPLiteralSpellingsAreRejectedWithoutDecoding() {
+        for kind in [ProviderKind.anthropic, .openaiCompatible] {
+            for scheme in ["http", "https"] {
+                for host in ["[::%31]", "[%3A%3A1]", "[v1.%66e]", "[::%2531]"] {
+                    let input = "\(scheme)://\(host)"
+                    XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                        XCTAssertEqual($0 as? ProviderSettingsError, .invalidBaseURL, input)
+                    }
+                }
+            }
+            for input in ["https://[::%31]?q", "https://[%3A%3A1]#fragment"] {
+                XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL(input, kind: kind), input) {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .queryOrFragmentInURL, input)
+                }
+            }
+            XCTAssertThrowsError(try ProviderSettings.normalizeBaseURL("https://user@[::%31]", kind: kind)) {
+                XCTAssertEqual($0 as? ProviderSettingsError, .credentialsInURL)
+            }
+        }
+    }
+
     func testInvalidBracketedHostsAreRejectedForBothSchemesAndKinds() {
         let hosts = ["[]", "[!]", "[foo]", "[::g]", "[1:2:3]", "[1:2:3:4:5:6:7:8:9]",
                      "[1::2::3]", "[:::1]", "[12345::]", "[::ffff:999.0.0.1]",

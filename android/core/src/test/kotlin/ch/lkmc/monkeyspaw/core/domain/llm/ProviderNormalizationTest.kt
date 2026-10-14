@@ -9,6 +9,20 @@ import kotlin.test.assertTrue
 
 /** Port of Swift ProviderNormalizationTests; no shared provider-URL fixture exists yet. */
 class ProviderNormalizationTest {
+    @Test fun escapedIPLiteralSpellingsAreRejectedWithoutDecoding() {
+        for (kind in ProviderKind.entries) {
+            for (scheme in listOf("http", "https")) {
+                for (host in listOf("[::%31]", "[%3A%3A1]", "[v1.%66e]", "[::%2531]")) {
+                    assertError("$scheme://$host", kind, ProviderSettingsError.InvalidBaseURL)
+                }
+            }
+            for (input in listOf("https://[::%31]?q", "https://[%3A%3A1]#fragment")) {
+                assertError(input, kind, ProviderSettingsError.QueryOrFragmentInURL)
+            }
+            assertError("https://user@[::%31]", kind, ProviderSettingsError.CredentialsInURL)
+        }
+    }
+
     @Test fun invalidBracketedHostsAreRejectedForBothSchemesAndKinds() {
         val hosts = listOf("[]", "[!]", "[foo]", "[::g]", "[1:2:3]", "[1:2:3:4:5:6:7:8:9]",
             "[1::2::3]", "[:::1]", "[12345::]", "[::ffff:999.0.0.1]",

@@ -81,7 +81,8 @@ internal object ProviderURLs {
         }
         // Keep the lexeme to distinguish a missing port from numeric overflow.
         val port = rawPort.drop(1).takeIf { it.isNotEmpty() }?.toLongOrNull()
-        val host = decodePercent(rawHost)
+        // Foundation leaves bracketed IP literals raw, including percent escapes.
+        val host = (if (bracketed) rawHost else decodePercent(rawHost))
             ?: throw ProviderSettingsError.InvalidBaseURL
         return Authority(host, port, rawPort, '@' in raw)
     }

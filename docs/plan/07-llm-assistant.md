@@ -29,8 +29,9 @@ re-entry or Clear before it can be used.
   - Full Anthropic `…/v1/messages` and either protocol's model-list endpoint
     are also trimmed. Scheme/host case and default ports normalize; queries,
     fragments, userinfo, dot path segments and encoded path separators are
-    rejected. Bracketed hosts must be valid IPv6 or IPvFuture literals;
-    nonempty ports must be decimal values in `1...65535`, even when the
+    rejected. Bracketed hosts must be valid IPv6 or IPvFuture literals.
+    Percent escapes inside brackets are rejected without reinterpretation.
+    Nonempty ports must be decimal values in `1...65535`, even when the
     lexeme exceeds a machine integer. Empty ports normalize to absent ports.
     Percent-escaped paths must decode as UTF-8; undecodable paths are rejected
     rather than replaced with an empty base path. HTTP is allowed only for

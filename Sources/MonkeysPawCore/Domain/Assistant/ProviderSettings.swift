@@ -36,6 +36,8 @@ public struct ProviderSettings: Equatable, Sendable {
 
         var host = rawHost.lowercased()
         if host.hasSuffix(".") { host.removeLast() }
+        // Foundation leaves escapes inside IP literals raw; reject those
+        // rather than interpreting escapes as address digits or zone IDs.
         guard !host.isEmpty, !host.contains("%"),
               host.unicodeScalars.allSatisfy({ $0.isASCII }),
               (!host.hasPrefix("[") || isValidIPLiteral(host)),
