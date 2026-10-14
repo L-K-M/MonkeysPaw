@@ -46,6 +46,7 @@ final class PickerModelTests: XCTestCase {
         XCTAssertEqual(h.picker.state, .done(.copiedOnly(.requested)))
         XCTAssertEqual(h.picker.persistenceWarnings, [.usageNotSaved])
         XCTAssertNil(try h.store.load())
+    }
 
     func testPreferredTerminalModeAndHintPublishAfterDeferredTargetCapture() throws {
         let h = PromptFlowHarness(mainMode: .deferred, session: .otherX11)

@@ -56,6 +56,7 @@ final class FillModelTests: XCTestCase {
         XCTAssertEqual(h.picker.persistenceWarnings, [.rememberedValuesNotSaved])
         XCTAssertEqual(try h.flow.usage.useEvents(for: entry.identity).count, 1)
         XCTAssertNil(try h.store.load())
+    }
 
     func testPreferredFillModeIsChosenAtOpenAndSurvivesDefaultChange() throws {
         for windowClass in ["kitty", "Firefox"] {

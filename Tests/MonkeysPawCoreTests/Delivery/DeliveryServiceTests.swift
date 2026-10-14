@@ -88,6 +88,7 @@ final class DeliveryServiceTests: XCTestCase {
         XCTAssertEqual(outcomes, [nil])
         XCTAssertNil(h.service.lastDelivery)
         XCTAssertTrue(h.injectors.values.allSatisfy { $0.chords.isEmpty })
+    }
 
     func testDeliveryFromPreferredPublicationWaitsForPanelShow() {
         for mode: FakeCompletionMode in [.immediate, .deferred] {
