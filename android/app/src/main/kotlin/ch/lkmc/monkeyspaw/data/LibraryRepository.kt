@@ -17,6 +17,8 @@ internal data class LibraryState(
     val error: Exception? = null,
 )
 
+internal data class LibrarySearchSnapshot(val state: LibraryState, val matches: List<LocalSearchResult>)
+
 /** One process-wide graph. ViewModels use this worker seam; views only consume immutable state. */
 internal class LibraryRepository(
     private val library: LibraryService,
@@ -29,6 +31,11 @@ internal class LibraryRepository(
     private var indexLoaded = false
     private val mutableState = MutableStateFlow(LibraryState(LibrarySnapshot(0, emptyList())))
     val state: StateFlow<LibraryState> = mutableState.asStateFlow()
+
+    /** Search the warm index even when disk is unavailable, without clearing a rescan failure. */
+    suspend fun search(query: String): LibrarySearchSnapshot = withContext(io) {
+        mutex.withLock { LibrarySearchSnapshot(mutableState.value, library.index.search(query)) }
+    }
 
     /** Startup/foreground rescan stages a complete index; failure retains the last good snapshot. */
     suspend fun refresh(): LibraryState = withContext(io) {
