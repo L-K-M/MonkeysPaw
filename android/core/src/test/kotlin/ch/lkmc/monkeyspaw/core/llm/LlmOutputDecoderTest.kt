@@ -50,4 +50,18 @@ class LlmOutputDecoderTest {
         LlmArtifact.jsonSchema.fill(0)
         assertContentEquals(expected, LlmArtifact.jsonSchema)
     }
+
+    @Test fun rawAndEscapedBomSegmentsMatchSwiftReferenceDecoding() {
+        val wire = """{"title":"a\n﻿b","description":"","tags":[],"fields":[],"body":"","notes":""}"""
+        assertEquals("a\nb", LlmOutputDecoder.artifact(wire).title)
+        val escaped = """{"title":"\uFEFFb","description":"","tags":[],"fields":[],"body":"","notes":""}"""
+        assertEquals("\uFEFFb", LlmOutputDecoder.artifact(escaped).title)
+    }
+
+    @Test fun bomPrefixedNumberFragmentsMatchSwiftArrayPreambleRecovery() {
+        val wire = """{"title":"later","description":"","tags":[],"fields":[],"body":"","notes":""}"""
+        for (token in listOf("1", "true", "false")) {
+            assertEquals("later", LlmOutputDecoder.artifact("[{\"ignored\":\uFEFF$token}]" + wire).title)
+        }
+    }
 }

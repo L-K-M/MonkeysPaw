@@ -145,7 +145,12 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 val start = position
                 while (position < bytes.size && peek() !in listOf(9, 10, 13, 32, 44, 93, 125)) position++
                 val token = String(bytes, start, position - start, Charsets.UTF_8)
-                if (!number.matches(token) || token.toDoubleOrNull()?.isFinite() != true) throw AssistantError.InvalidOutput
+                // Swift's fragment reader accepts a leading UTF-8 BOM, including NSNumber booleans.
+                val fragment = token.removePrefix("\uFEFF")
+                val bomBoolean = token.startsWith("\uFEFF") && fragment in setOf("true", "false")
+                if (!bomBoolean && (!number.matches(fragment) || fragment.toDoubleOrNull()?.isFinite() != true)) {
+                    throw AssistantError.InvalidOutput
+                }
                 LlmJsonValue.Number
             }
         }
@@ -159,7 +164,8 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
             val byte = peek()
             if (byte < 32) throw AssistantError.InvalidOutput
             if (byte == 34 || byte == 92) {
-                try { text.append(bytes.decodeToString(start, position, throwOnInvalidSequence = true)) }
+                // The reference strips one literal BOM per raw UTF-8 run; escaped BOMs remain.
+                try { text.append(bytes.decodeToString(start, position, throwOnInvalidSequence = true).removePrefix("\uFEFF")) }
                 catch (_: CharacterCodingException) { throw AssistantError.InvalidOutput }
                 position++
                 if (byte == 34) return text.toString()
