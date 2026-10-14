@@ -58,4 +58,13 @@ internal class KeyboardTileSetupBoundaryTest {
         val library = root.resolve("ui/library/LibraryScreen.kt").readText()
         assertTrue(library.contains("onSettings: (() -> Unit)? = null"))
     }
+
+    @Test
+    fun `launcher refreshes picker status on focus regain and the screen honors failure back state`() {
+        val activity = root.resolve("MainActivity.kt").readText()
+        assertTrue(activity.contains("override fun onWindowFocusChanged(hasFocus: Boolean)"))
+        assertTrue(activity.contains("if (hasFocus) setup.checkStatus()"))
+        val screen = root.resolve("ui/setup/KeyboardTileSetupScreen.kt").readText()
+        assertTrue(screen.contains("BackHandler(enabled = state.handlesBack)"))
+    }
 }

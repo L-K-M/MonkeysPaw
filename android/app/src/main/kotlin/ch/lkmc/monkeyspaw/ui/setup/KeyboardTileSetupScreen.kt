@@ -23,7 +23,7 @@ internal fun KeyboardTileSetupScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    BackHandler(enabled = state.visible) { if (state.canDecide) onSkip() }
+    BackHandler(enabled = state.handlesBack) { if (state.canDecide) onSkip() }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.headlineMedium)

@@ -51,6 +51,12 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // The system picker can return window focus without pausing this Activity.
+        if (hasFocus) setup.checkStatus()
+    }
+
     override fun onStart() {
         super.onStart()
         if (seedOffer.state.value == SeedOfferUiState.Ready) library.refresh() else seedOffer.refresh()

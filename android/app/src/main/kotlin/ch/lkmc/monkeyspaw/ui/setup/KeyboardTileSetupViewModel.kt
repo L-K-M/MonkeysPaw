@@ -55,6 +55,7 @@ internal class KeyboardTileSetupViewModel @Inject constructor(private val settin
         val status = try { host.keyboardStatus() } catch (_: Exception) { KeyboardSetupStatus() }
         mutableState.value = state.value.copy(enabled = status.enabled, selected = status.selected,
             externalActionPending = false,
+            error = state.value.error.takeUnless { it == KeyboardTileSetupError.SETTINGS || it == KeyboardTileSetupError.PICKER },
             tile = if (state.value.step == KeyboardTileSetupStep.ADD_TILE && !supportsTileRequest)
                 TileSetupState.MANUAL else state.value.tile)
     }

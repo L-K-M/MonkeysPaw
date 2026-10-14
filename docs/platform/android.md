@@ -133,11 +133,12 @@ version, tester/date and results. Keep private text and keyboard IDs out of logs
 |---|---|
 | Fresh install and upgrade from M8 show the three skippable steps once; starter-prompt choice and existing library are preserved | NOT RUN |
 | Privacy explanation precedes Android's enable warning; return from keyboard settings rereads enabled status, including disabling it again | NOT RUN |
-| Picker shows Monkey's Paw picker; dismissing it does not complete selection; Check status and launcher resume reflect the current selection | NOT RUN |
+| Picker shows Monkey's Paw picker; dismissing it does not complete selection; window focus return, Check status and launcher resume reflect selection and permit another picker request | NOT RUN |
 | API 26–33 selection uses the system setting's parsed ComponentName; API 34+ reflects the current input method API | NOT RUN |
 | API 26–32 shows manual Quick Settings editing instructions and user confirmation; no tile request is attempted | NOT RUN |
 | API 33+ explicitly requests the existing Insert prompt tile with its existing label/icon; added, already added, denied and error remain distinct | NOT RUN |
 | Repeated taps while a request is pending do not stack requests; skip, Back, rotation and late replies do not resurrect old setup | NOT RUN |
+| Failed choice publication keeps its pending decision for retry; Back can leave after failure without claiming the choice was saved | NOT RUN |
 | Settings → Keyboard and tile setup reopens after disabling the keyboard or removing the tile, without displaying saved progress as current installation | NOT RUN |
 | IME, tile, shortcut and widget invocation do not launch keyboard/tile setup; setup requests no sign-in or notification permission | NOT RUN |
 | TalkBack, large text, rotation and background/resume keep setup actions and skips usable | NOT RUN |

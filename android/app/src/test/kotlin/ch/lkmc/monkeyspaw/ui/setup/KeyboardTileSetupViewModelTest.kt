@@ -346,6 +346,64 @@ internal class KeyboardTileSetupViewModelTest {
     }
 
     @Test
+    fun `picker focus return refreshes status and allows another explicit request without resume`() = runTest {
+        val model = start()
+        model.skip()
+        runCurrent()
+        model.selectKeyboard()
+        assertTrue(model.state.value.externalActionPending)
+        host.status = KeyboardSetupStatus(true, true)
+        // MainActivity forwards focus regain even when the system picker did not pause it.
+        model.checkStatus()
+        assertFalse(model.state.value.externalActionPending)
+        assertTrue(model.state.value.canContinue)
+        model.selectKeyboard()
+        assertEquals(2, host.pickerLaunches)
+        assertEquals(SetupDecision.PENDING, settings.current.value.keyboardTileSetup.selectKeyboard)
+    }
+
+    @Test
+    fun `failed save permits Activity back while retaining the pending decision and retry`() = runTest {
+        val model = start()
+        assertTrue(model.state.value.handlesBack)
+        settings.failWrites = true
+        model.skip()
+        assertTrue(model.state.value.handlesBack)
+        runCurrent()
+        assertTrue(model.state.value.visible)
+        assertTrue(model.state.value.pendingSave)
+        assertFalse(model.state.value.handlesBack)
+        assertEquals(KeyboardTileSetupError.SAVE, model.state.value.error)
+        assertEquals(SetupDecision.PENDING, settings.current.value.keyboardTileSetup.enableKeyboard)
+        settings.failWrites = false
+        model.retry()
+        runCurrent()
+        assertEquals(SetupDecision.SKIPPED, settings.current.value.keyboardTileSetup.enableKeyboard)
+    }
+
+    @Test
+    fun `fresh status clears past launch errors but never hides a pending save failure`() = runTest {
+        val model = start()
+        host.launchSucceeds = false
+        model.enableKeyboard()
+        assertEquals(KeyboardTileSetupError.SETTINGS, model.state.value.error)
+        model.resumed(host)
+        assertNull(model.state.value.error)
+        model.skip()
+        runCurrent()
+        model.selectKeyboard()
+        assertEquals(KeyboardTileSetupError.PICKER, model.state.value.error)
+        model.checkStatus()
+        assertNull(model.state.value.error)
+        settings.failWrites = true
+        model.skip()
+        runCurrent()
+        model.resumed(host)
+        assertEquals(KeyboardTileSetupError.SAVE, model.state.value.error)
+        assertTrue(model.state.value.pendingSave)
+    }
+
+    @Test
     fun `clearing the model rejects late tile callbacks without changing UI or settings`() = runTest {
         val model = atTile()
         model.addTile()

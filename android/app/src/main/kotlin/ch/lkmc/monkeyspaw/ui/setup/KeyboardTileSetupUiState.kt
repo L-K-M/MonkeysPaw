@@ -17,6 +17,7 @@ internal data class KeyboardTileSetupUiState(
     val externalActionPending: Boolean = false,
     val error: KeyboardTileSetupError? = null,
 ) {
+    val handlesBack: Boolean get() = visible && (canDecide || saving)
     val canDecide: Boolean get() = visible && !loading && !saving && !pendingSave
     val canContinue: Boolean get() = canDecide && when (step) {
         KeyboardTileSetupStep.ENABLE_KEYBOARD -> enabled == true
