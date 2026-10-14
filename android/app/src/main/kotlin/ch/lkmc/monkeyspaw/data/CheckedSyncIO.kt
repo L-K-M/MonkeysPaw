@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.data
 
+import android.os.Build
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -74,8 +75,9 @@ internal class AndroidCheckedSyncIO : CheckedSyncIO() {
 
     private fun withDescriptor(path: Path, kind: Kind, work: (java.io.FileDescriptor) -> Unit) {
         // O_NONBLOCK also prevents a raced FIFO from hanging before fstat rejects it.
+        val closeOnExec = if (Build.VERSION.SDK_INT >= 27) OsConstants.O_CLOEXEC else api26CloseOnExec
         val descriptor = Os.open(path.toString(), OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW or
-            OsConstants.O_CLOEXEC or OsConstants.O_NONBLOCK, 0)
+            OsConstants.O_NONBLOCK or closeOnExec, 0)
         try {
             val mode = Os.fstat(descriptor).st_mode
             if (if (kind == Kind.FILE) !OsConstants.S_ISREG(mode) else !OsConstants.S_ISDIR(mode)) {
@@ -88,5 +90,6 @@ internal class AndroidCheckedSyncIO : CheckedSyncIO() {
     private companion object {
         const val incarnationAttribute = "user.monkeyspaw.sync-incarnation"
         const val xattrCreate = 1 // Linux XATTR_CREATE; absent from the public Android OsConstants.
+        const val api26CloseOnExec = 0x80000 // Linux O_CLOEXEC predates the API-27 public SDK field.
     }
 }
