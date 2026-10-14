@@ -51,6 +51,11 @@ final class LinuxSettingsUpdatePage {
         GTK.onSignal(automatic, "toggled") { [weak self] in
             guard let self, self.isShown, !self.isRendering, !self.model.state.isReadOnly else { return }
             self.model.setAutomaticUpdateChecks(gtk_check_button_get_active(mp_check_button(self.automatic)) != 0 ? .enabled : .disabled)
+            // Keep committed consent visible even after identical save failures.
+            GTK.onMainLoop { [weak self] in
+                guard let self, self.isShown else { return }
+                self.render()
+            }
         }
         render()
     }

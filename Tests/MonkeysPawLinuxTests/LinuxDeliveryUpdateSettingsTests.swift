@@ -102,12 +102,12 @@ final class LinuxDeliveryUpdateSettingsTests: XCTestCase {
 
     func testPreferenceWriteFailuresShowErrorsAndRestoreCommittedControls() throws {
         let window = try showSettings()
-        let config = try RootedFileStore(root: paths.configDirectory)
         environment.settingsModel.markSetupPresented()
-        try config.delete(at: "settings.json")
-        try FileManager.default.createDirectory(at: paths.configDirectory.appendingPathComponent("settings.json"), withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: paths.configDirectory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.configDirectory.path) }
         gtk_combo_box_set_active(mp_combo_box(try control("settings-default-chord", in: window)), 1)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.deliverySettingsModel.state.settingsError != nil })
+        XCTAssertFalse(environment.deliverySettingsModel.state.isReadOnly)
         let deliveryError = try control("settings-delivery-error", in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(deliveryError) != 0 })
         XCTAssertEqual(gtk_combo_box_get_active(mp_combo_box(try control("settings-default-chord", in: window))), 0)
@@ -115,6 +115,14 @@ final class LinuxDeliveryUpdateSettingsTests: XCTestCase {
         let updateError = try control("settings-update-error", in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(updateError) != 0 })
         XCTAssertEqual(environment.settingsModel.automaticUpdateChecks, .enabled)
+        XCTAssertNotEqual(gtk_check_button_get_active(mp_check_button(try control("settings-automatic-updates", in: window))), 0)
+        // Identical failed intents need no Core publication, but the controls
+        // must still represent the committed preference after each attempt.
+        gtk_combo_box_set_active(mp_combo_box(try control("settings-default-chord", in: window)), 1)
+        gtk_check_button_set_active(mp_check_button(try control("settings-automatic-updates", in: window)), 0)
+        drain()
+        drain()
+        XCTAssertEqual(gtk_combo_box_get_active(mp_combo_box(try control("settings-default-chord", in: window))), 0)
         XCTAssertNotEqual(gtk_check_button_get_active(mp_check_button(try control("settings-automatic-updates", in: window))), 0)
         XCTAssertEqual(transport.count, 0)
     }

@@ -7,7 +7,7 @@ enum LinuxSettingsUpdateStrings {
     static let automatic = "Automatically check for updates"
     static let checkNow = "Check Now"
     static let viewRelease = "View release"
-    static let disclosure = "Checks stable releases on GitHub at most once a day. GitHub receives your IP address and app version; no prompts, field values or account details. Check Now works while automatic checks are off. View release opens your browser; install updates yourself."
+    static let disclosure = "Automatically checks stable releases on GitHub at most once a day. GitHub receives your IP address and app version; no prompts, field values or account details. Check Now works while automatic checks are off. View release opens your browser; install updates yourself."
     static let openingFailed = "The release page could not be opened. Check your default browser and try again."
 
     static func version(_ version: ReleaseVersion?) -> String {

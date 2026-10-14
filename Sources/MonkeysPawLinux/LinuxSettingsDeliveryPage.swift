@@ -68,10 +68,19 @@ final class LinuxSettingsDeliveryPage {
         GTK.onSignal(chord, "changed") { [weak self] in
             guard let self, self.isShown, !self.isRendering, !self.model.state.isReadOnly else { return }
             self.model.setLinuxDefaultPasteChord(gtk_combo_box_get_active(mp_combo_box(self.chord)) == 1 ? .terminal : .standard)
+            // Repeated save errors emit no change; redraw after GTK settles.
+            GTK.onMainLoop { [weak self] in
+                guard let self, self.isShown else { return }
+                self.render()
+            }
         }
         GTK.onSignal(restore, "toggled") { [weak self] in
             guard let self, self.isShown, !self.isRendering, !self.model.state.isReadOnly else { return }
             self.model.setClipboardRestore(gtk_check_button_get_active(mp_check_button(self.restore)) != 0 ? .previousText : .off)
+            GTK.onMainLoop { [weak self] in
+                guard let self, self.isShown else { return }
+                self.render()
+            }
         }
         render()
     }
