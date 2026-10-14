@@ -172,6 +172,10 @@ public enum Limits {
     /// M6 E6: one sync request has a 60-second monotonic deadline.
     static let syncRequestTimeout: Duration = .seconds(60)
 
+    /// M6 E6: collection, including its one immediate restart, shares a budget.
+    static let syncCollectionBudget: Duration = .seconds(300)
+    static let syncCollectionRestartLimit: Int = 1
+
     /// §8.3: cap prompt bodies at 256 KiB on both clients and the server.
     public static let maxPromptBytes: Int = 256 * kibibyte
 
