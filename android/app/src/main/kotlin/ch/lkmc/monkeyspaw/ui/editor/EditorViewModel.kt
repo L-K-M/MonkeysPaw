@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.library.PromptCreation
+import ch.lkmc.monkeyspaw.core.domain.llm.LlmReview
 import ch.lkmc.monkeyspaw.core.ports.Clock
 import ch.lkmc.monkeyspaw.core.ports.FileStamp
 import ch.lkmc.monkeyspaw.core.ports.StoreError
@@ -45,6 +46,7 @@ internal class EditorViewModel @Inject constructor(
     private val assistantObservers = linkedMapOf<Long, () -> Unit>()
     private var nextAssistantObserver = 0L
     private var notifiedAssistantSnapshot: AssistantEditorSnapshot? = null
+    private var highlightedSnapshot: AssistantEditorSnapshot? = null
     private var reading = false
     // Set by activity composition, outside the view. All selection changes pass this guard first.
     var onSelectionChanged: ((LibrarySelection?) -> Unit)? = null
@@ -109,11 +111,31 @@ internal class EditorViewModel @Inject constructor(
 
     fun removeAssistantContextObserver(token: Long) { assistantObservers.remove(token) }
 
+    /** Selection is UI-only and belongs to the complete checked review snapshot. */
+    fun highlightReviewQuote(reviewed: AssistantEditorSnapshot, quote: String, range: LlmReview.QuoteMatch.Matched): Boolean {
+        clearReviewQuote()
+        if (assistantSnapshot != reviewed || reviewed.availability != AssistantEditorAvailability.AVAILABLE) return false
+        val source = reviewed.source ?: return false
+        val selection = reviewQuoteSelection(source, quote, range) ?: return false
+        highlightedSnapshot = reviewed
+        currentState = state.value.copy(tab = EditorTab.EDIT, quoteSelection = selection)
+        return true
+    }
+
+    fun clearReviewQuote() {
+        highlightedSnapshot = null
+        if (state.value.quoteSelection != null) currentState = state.value.copy(quoteSelection = null)
+    }
+
     private fun notifyAssistantContext() {
         if (adoptingAssistant) return
         val captured = assistantSnapshot
         if (captured == notifiedAssistantSnapshot) return
         notifiedAssistantSnapshot = captured
+        if (highlightedSnapshot != null && captured != highlightedSnapshot) {
+            highlightedSnapshot = null
+            mutableState.value = state.value.copy(quoteSelection = null)
+        }
         val permit = assistantPermit
         if (permit != null && captured?.copy(availability = AssistantEditorAvailability.AVAILABLE) !=
             assistantSource?.copy(availability = AssistantEditorAvailability.AVAILABLE)) {
@@ -687,11 +709,12 @@ internal class EditorViewModel @Inject constructor(
 
     private fun applyProjection(projection: EditorDocumentState) {
         currentState = state.value.copy(title = projection.title, issues = projection.issues,
-            fields = projection.fields, preview = projection.preview, previewAvailable = projection.previewAvailable, validating = false)
+            fields = projection.fields, preview = projection.preview, previewAvailable = projection.previewAvailable,
+            isPrivate = projection.isPrivate, validating = false)
     }
 
     private fun projectFromState() = EditorDocumentState(state.value.title, state.value.issues,
-        state.value.fields, state.value.preview, state.value.previewAvailable)
+        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate)
     private fun project(document: PromptDocument) = projectEditor(document, clock.now(), ZoneId.systemDefault())
     private fun selection(entry: LibraryEntry) = LibrarySelection(entry.identity, entry.relativePath)
     private fun current(snapshot: EditorSnapshot): Boolean = active && session == snapshot.session
