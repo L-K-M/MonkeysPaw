@@ -2,10 +2,12 @@ import Foundation
 import XCTest
 @testable import MonkeysPawCore
 
-/// The corpus is enumerated, not a hand-picked list. Each JSON and source
-/// must be dispatched exactly once so future language consumers share a gate.
+/// Owned content is enumerated and dispatched exactly once. Sync scenarios
+/// have an explicit server-package owner, without a root server dependency.
 final class PromptConformanceTests: XCTestCase {
     private let categories: Set<String> = ["format", "grammar", "render", "validation", "ranking", "import", "paths", "canonical", "dto"]
+    // Real-router sync execution belongs to the server package (E34).
+    private let delegatedCategories: Set<String> = ["sync"]
     private let rankingAccuracy = 1e-12
 
     private var fixtureRoot: URL {
@@ -51,6 +53,12 @@ final class PromptConformanceTests: XCTestCase {
             }),
             ("missing category", .unknownCategory, { root in
                 try FileManager.default.removeItem(at: root.appendingPathComponent("ranking"))
+            }),
+            ("missing delegated sync category", .unknownCategory, { root in
+                try FileManager.default.removeItem(at: root.appendingPathComponent("sync"))
+            }),
+            ("unknown delegated sync file", .unrecognizedFile, { root in
+                try Data().write(to: root.appendingPathComponent("sync/orphan.md"))
             }),
             ("unknown content file", .unrecognizedFile, { root in
                 try Data().write(to: root.appendingPathComponent("format/extra.txt"))
@@ -191,7 +199,7 @@ final class PromptConformanceTests: XCTestCase {
         let manager = FileManager.default
         let directories = try manager.contentsOfDirectory(atPath: root.path)
             .filter { !$0.hasPrefix(".") }.sorted()
-        guard Set(directories) == categories else { throw CorpusError.unknownCategory }
+        guard Set(directories) == categories.union(delegatedCategories) else { throw CorpusError.unknownCategory }
         var consumed = Set<RelativePath>()
         var allFiles = Set<RelativePath>()
         var cases = 0
@@ -202,6 +210,14 @@ final class PromptConformanceTests: XCTestCase {
             let files = try manager.contentsOfDirectory(atPath: directory.path)
                 .filter { !$0.hasPrefix(".") }.sorted()
             guard !files.isEmpty else { throw CorpusError.emptyCategory }
+
+            if delegatedCategories.contains(category) {
+                for file in files {
+                    guard file.hasSuffix(".json") else { throw CorpusError.unrecognizedFile }
+                    try require(.file, at: directory.appendingPathComponent(file))
+                }
+                continue
+            }
 
             if category == "import" {
                 let imported = try ImportFixtureCorpus.consume(at: directory)

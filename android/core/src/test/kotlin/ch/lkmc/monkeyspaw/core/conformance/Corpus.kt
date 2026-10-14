@@ -64,7 +64,16 @@ internal class Corpus private constructor(
 
             val directories = visibleChildren(root)
             corpusRequire(directories.map { it.fileName.toString() }.toSet() ==
-                Category.entries.map { it.directory }.toSet(), "Unknown or missing category")
+                Category.entries.map { it.directory }.toSet() + "sync", "Unknown or missing category")
+            // E34: sync-engine scenarios execute in the server suite until M10.
+            val sync = root.resolve("sync")
+            requireDirectory(sync)
+            val syncFiles = visibleChildren(sync)
+            corpusRequire(syncFiles.isNotEmpty(), "Empty delegated sync corpus")
+            syncFiles.forEach { file ->
+                requireFile(file)
+                corpusRequire(file.fileName.toString().endsWith(".json"), "Unknown delegated sync file")
+            }
             val enumerated = linkedSetOf<String>()
             val accounted = linkedSetOf<String>()
             val cases = mutableListOf<FixtureCase>()

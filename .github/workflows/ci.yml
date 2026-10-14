@@ -766,7 +766,7 @@ jobs:
           persist-credentials: false
       - name: Build server
         run: swift build --package-path server
-      - name: Test server
+      - name: Test server and client sync scenarios
         run: swift test --package-path server
       - name: Check SyncAPI schema drift
         run: |

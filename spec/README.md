@@ -1,11 +1,16 @@
 # Portable prompt content fixtures
 
 The Swift `PromptConformanceTests` and Kotlin `EveryFixtureTest` both
-semantically consume every case and visible file in all nine categories.
+semantically consume every case and visible file in the nine content categories.
+The separate server-package `MonkeysPawSyncIntegrationTests` owns `sync/` and
+executes its entire corpus against the real router. Content consumers explicitly
+delegate that directory; they do not claim sync execution. Kotlin engine replay
+arrives in M10 (§20 E34).
 From the repository root:
 
 ```sh
 swift test --filter PromptConformanceTests
+swift test --package-path server
 android/gradlew -p android --max-workers=2 :core:test
 # Run only the Kotlin full-corpus gate:
 android/gradlew -p android --max-workers=2 :core:test --tests '*EveryFixtureTest'
@@ -49,9 +54,10 @@ paths 141/282, ranking 36/164, import 14/28 and DTOs 649/1,298 (160 valid,
 These are reported counts, not fixed enumeration limits. LLM and sync-engine
 scenarios arrive with their implementations under the move-together rule.
 
-`fixtures/` contains exactly nine categories: `format`, `grammar`,
-`render`, `validation`, `ranking`, `import`, `paths`, `canonical` and `dto`. The
-consumer enumerates all directories and files, rejects unknown categories,
+`fixtures/` contains nine content categories: `format`, `grammar`,
+`render`, `validation`, `ranking`, `import`, `paths`, `canonical` and `dto`, plus
+the delegated `sync` category. Each owning
+consumer enumerates its directories and files, rejects unknown categories,
 files, schema versions and case members, and requires every input and
 expectation to be consumed once. Symlinks and
 unexpected nested directories are rejected. The corpus itself is the
@@ -730,3 +736,90 @@ public Codable/Sendable use, and that malformed constructed values fail
 encoding. The fixtures cover every union/error branch, missing/extra fields,
 types/enums, numeric boundaries, malformed identifiers/timestamps, explicit
 nullable/omitted fields and nested response secrecy.
+
+## Sync scenario contract (version 1)
+
+`sync/*.json` belongs to `MonkeysPawSyncIntegrationTests` in the server
+package. Its full-corpus test enumerates every visible regular JSON file,
+rejects symlinks, directories, orphan files, missing acceptance files and
+repeated case IDs, and executes every case exactly once. Parsing a scenario
+is not execution. Unknown members, versions, actions and expectations fail;
+every checkpoint field is checked, and unused network mutations fail.
+
+An envelope has exactly `schema: 1`, `category: "sync"` and a nonempty
+`cases` array. A case has exactly these fields:
+
+| Field | Contract |
+|---|---|
+| `id` | Stable unique case ID starting with the file's two-digit ledger number and `-`; variants add a descriptive suffix. |
+| `now` | Exact UTC seconds, `YYYY-MM-DDTHH:mm:ssZ`. Both server and device wall clocks start here. |
+| `servers` | Nonempty array of unique symbolic deployment names, such as `main` or `other`. Each uses its own migrated SQLite database at `https://<name>.test`. No DNS or sockets are used. |
+| `users` | At least two distinct symbolic usernames. Each deployment seeds them through the real account repository with a test-only bcrypt password. Login still exercises the real login route, device issuance and bearer middleware. |
+| `devices` | At least two objects containing only `name` and `entropy_seed`. Seeds are distinct positive integers below 2^32. Each device owns separate library/data/secret disk roots, clock, entropy and services. |
+| `prompts` | Map of symbolic names to hand-authored canonical ULIDs; may be empty when IDs are bound from local files. |
+| `steps` | Ordered actions, including at least one `expect`. Every case must issue real HTTP. |
+
+Names use lowercase ASCII letters, digits and underscores. Exact UTF-8
+source strings live in action/checkpoint `content` fields; fixtures never
+contain passwords, issued tokens or actual host paths. `${user.main.alice}`,
+`${prompt.example}` and names created by `bind` expand in strings at execution.
+Bindings cannot change value. User IDs, group IDs and other scalar response
+values can be bound symbolically; cursors and database UUIDs remain opaque.
+Checkpoint bytes and hashes are specification expectations, not recordings of
+implementation output. When using symbolic IDs, fixed hashes must account for
+the resulting bytes; generated IDs can instead be compared through exact
+content and identity checkpoints.
+
+Every action requires `action` and `device`. The additional members are:
+
+| Action | Additional members and behavior |
+|---|---|
+| `login` | `user`, `server`; use `SyncAccountService`, consume its password, check activation/cleanup, and drain its initial pass. |
+| `write` | `path`, `content`; external disk edit, without an implicit save timer. |
+| `remove` | `path`; external disk removal. |
+| `move` | `source`, `destination`; external exclusive file move. |
+| `symlink` | `path`; create a parent link to an otherwise empty outside directory for containment proof. |
+| `sync` | No additional members; explicit `SyncService.syncNow`, then drain the pass. |
+| `restart` | No additional members; stop/drain, replace the device graph, reopen the same disk and secret roots, then run account startup. This is a graceful graph restart, not process-death proof. |
+| `sign_out` | No additional members; require complete cleanup and confirmed real remote revocation. |
+| `reset_metrics` | No additional members; reset that device's file-write/trash and HTTP trace counters. It does not erase files, history or state. |
+| `bind_prompt` | `path`, `name`; bind an assigned local identity as `${prompt.<name>}`. |
+| `seed_keyed` | `path`; store one history revision, one usage event at `now`, and `{"field":"remembered locally"}` through the real keyed stores, for migration proof. |
+| `favorite` | `id`, `value` (boolean); apply Core's group-favourite state intent without changing a viewer's file. Native UI/access intents belong to Y16. |
+| `http` | `method`, `path`, `status`; optional `body`, `expected`, `bind`. Send through the device's authenticated transport into the real router. `expected` maps JSON pointers to exact values; `bind` maps symbolic names to pointers returning strings. Every supplied assertion/binding is consumed. |
+| `rewrite_next_request` / `rewrite_next_response` | `method`, `path`, nonempty `patch` map of JSON pointers to replacement values. One matching real request/response is altered; response patches require an actual 200. They never fabricate successful server mutations. |
+| `before_next_request` | `method`, `path`, `then` (a complete `http` action). Execute the peer request through the real router before sending the matched request, to establish a deterministic race. |
+| `expect` | Nonempty `expected` object with the checkpoint members below. |
+
+Methods are `GET`, `POST`, `PUT`, `DELETE` or `PATCH`. HTTP paths are rooted
+router paths and include an exact query when needed. Network matching uses the
+percent-encoded URI. JSON pointers follow RFC 6901 and must address an existing
+value. HTTP action bodies are raw wire objects so rejection scenarios can send
+invalid input; all requests still traverse decoding, validation and transactions.
+
+Device checkpoints support:
+
+- `files`: objects with required `path` and byte-exact `content`, optional
+  `mode` (`normal` or `readOnly`). `absent`: paths that must have no file.
+- `file_count`, `prompt_count`, `cursor_count`, `held_count`, `history_count`,
+  `writes` and `trash_count`: exact nonnegative counts. History counts concern
+  persisted history files; writes concern library publications only.
+- `status`: Core sync status; `blocking_issue`: a fixed issue or `none`;
+  `account_user`: a symbolic user ID or `none`.
+- `state`: objects requiring `id`, `scope`, `path`, `rev`; optional `hash`,
+  `favorite`, `error` (fixed code or `none`), `origin` (`rescued`,
+  `conflict_of <ID>` or `none`), `history`, `uses` and `values`. Keyed-store
+  assertions read the actual persisted stores under that identity.
+- `requests`: objects requiring `method`, `path`, `count`; optional `status`,
+  `body` (pointer/value checks for prompt request bodies) and `local_exists`
+  (a byte-exact file path present before router dispatch). Method/path `*`
+  match all. Authentication headers and login bodies never enter traces.
+
+The seven initial files own ledger rows 01 and 11–16. Later slices extend
+this version-1 action/checkpoint vocabulary and add their files without changing
+existing semantics or bypassing the full-corpus executor. Y13 adds conflicts,
+permissions, transfers and group lifecycle; Y14 adds real retention/restore and
+killed-worker proof. Platform store modes, native system trash and hardware
+behavior stay with their native suites. Adding protocol/format behavior still
+requires the Swift/Kotlin/fixture move-together rule; this test-only language is
+ported with the Kotlin sync engine in M10.

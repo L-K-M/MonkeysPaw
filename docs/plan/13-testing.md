@@ -4,14 +4,14 @@
 |---|---|
 | Core domain | Unit tests on macOS and Linux:<br>• grammar table (escapes, invalid `{{…}}`, reuse, ordering) and single-pass render<br>• front matter round-trip with unknown keys; validation messages<br>• ranking with an injected clock; history pruning; diff<br>• artifact JSON → file and the merge rule<br>• review parsing with fence/`<think>`/brace recovery<br>• SyncAPI DTO round-trips |
 | Presentation models | Keystroke-budget scenarios (§2) and state machines (picker, fill, assistant phases, setup, account) driven without any UI. These replace UI tests for logic; views stay thin. |
-| Services | Fakes for every port.<br>• `DeliveryService`: the call order write → hide → settle → restore → inject; failure caching; copy-only fallback; chord selection.<br>• `AssistantService`: cancel in flight (gate fake); retry-with-feedback transcripts.<br>• `SyncService`: §13.1. |
+| Services | Fakes for every port.<br>• `DeliveryService`: the call order write → hide → settle → restore → inject; failure caching; copy-only fallback; chord selection.<br>• `AssistantService`: cancel in flight (gate fake); retry-with-feedback transcripts.<br>• `SyncService`: deterministic request, orchestration and durable-operation failures; real client/server acceptance belongs to §13.1. |
 | LLM transport | Request-level stub transport (Vervellum doctrine: doubles answer *requests*). It asserts:<br>• per-provider headers, with no `x-api-key` sent to OpenAI and vice versa<br>• no sampling parameters to Anthropic; the `/v1` normalisation; keyless local servers<br>• truncation, refusal, and empty 200<br>• redirect refusal, and the 400 → `json_object` downgrade |
 | Linux drivers | • Fake executables on `PATH` for `ydotool` (both dialects; unknown help → refuse), `gsettings` (argv capture), `xdotool`, and `secret-tool` (asserts stdin, not argv).<br>• GDBus drivers against a private bus (`dbus-run-session`) with mock portal and KGlobalAccel services.<br>• GTK lifecycle tests under Xvfb (Vervellum `linux.yml`). |
 | macOS drivers | Unit tests for the CGEvent sequence builder, the AX-focus wait (fake clock), Carbon modifier translation, and Keychain blob encoding. |
 | Server | Hummingbird's test client against an in-memory SQLite:<br>• every endpoint and every row of the §8.2 permission matrix (allowed and denied)<br>• compare-and-swap conflicts; per-scope feeds after moves and membership changes (a non-member never receives a row)<br>• snapshot mode for new and stale cursors; login backoff; invite single-use; migrations from an empty database |
-| Sync integration | §13.1. |
+| Sync integration | `server/Tests/MonkeysPawSyncIntegrationTests/`, compiled in Swift 5 mode. §13.1 scenarios execute through Core's HTTP port into the real Hummingbird router, authentication, services and repositories on migrated temporary file SQLite. Each device owns independent disk/secret roots and a Core graph. The suite enumerates and executes every `spec/fixtures/sync/*.json` case exactly once; unknown or unused inputs/expectations fail. |
 | Deployment | CI job `compose-smoke`:<br>• `docker compose config --quiet` (default and `--profile tls`; TLS configuration only)<br>• local image build; `compose up --wait --wait-timeout 120`; unauthenticated `/api/health`<br>• bootstrap login, private PUT + GET, initial snapshot, second PUT + GET and delta from the snapshot cursor, asserting id/rev/path/content and database identity<br>• `shellcheck`, Bash syntax and fake-command smoke tests; `shellcheck update.sh` when S19 supplies it |
-| Conformance | `spec/fixtures/` run by `MonkeysPawCoreTests` and the Android `:core` tests; each suite fails on a fixture it does not consume. Server Schema tests call `MonkeysPawServer.SchemaRenderer` directly, check deterministic bytes and complete catalog coverage, and validate every DTO fixture against the emitted keywords plus documented contract annotations, comparing with strict Codable. One CLI test runs the built `dump-schema` executable with a deadline. These schema tests need no database, GTK or network. CI regenerates `spec/schema/` into a fresh directory and compares recursively, including missing and extra files. |
+| Conformance | Nine content categories in `spec/fixtures/` run by `MonkeysPawCoreTests` and Android `:core`; each suite fails on an unconsumed file in its owned categories. Both explicitly delegate `sync/` to the server integration target; Kotlin sync-engine replay arrives in M10. Server Schema tests call `MonkeysPawServer.SchemaRenderer` directly, check deterministic bytes and complete catalog coverage, and validate every DTO fixture against the emitted keywords plus documented contract annotations, comparing with strict Codable. One CLI test runs the built `dump-schema` executable with a deadline. These schema tests need no database, GTK or network. CI regenerates `spec/schema/` into a fresh directory and compares recursively, including missing and extra files. |
 | Android | `:core` JVM tests with fakes, including the `sync/*.json` scenarios and the §13.1 suite against the real server in CI. App JVM tests for ViewModels, the IME `inputType` decision table, and the entry activities' intent handling. No emulator job (HalloMiao decision). |
 | End-to-end, manual | A per-release checklist in `docs/platform/`: macOS (Safari, Chrome, Terminal, full-screen Space), GNOME Wayland, KDE Wayland, X11, Android (Chrome, ChatGPT, Claude, Termux; Gboard and Samsung Keyboard). Run the §6.5 self-test plus a browser chat box and a terminal. Two devices and two users syncing a group prompt, one of them a phone. |
 
@@ -50,7 +50,17 @@ the TLS configuration without starting Caddy or requesting certificates.
 ### 13.1 Sync tests
 
 `SyncService` runs against a real `MonkeysPawServer` started in-process on a
-temp SQLite, with two simulated devices and two users. Scenarios:
+temporary file SQLite, with two simulated devices and two users. The version-1
+scenario contract is documented in [spec/README.md](../../spec/README.md).
+The existing `swift test --package-path server` command owns this acceptance
+suite; root fake tests and native driver tests provide different proofs.
+Router connection metadata is supplied by a test responder wrapper for login's
+peer-IP policy; no successful server mutation is synthesized. Network mutations
+may corrupt a real request/response or commit a peer request before another
+request. Restarts reopen the device's persisted library, state and secret roots.
+Temporary roots are removed on success and failure; scenario/request deadlines
+bound startup and execution. These disk adapters do not prove native system
+trash or process-kill recovery. Scenarios:
 
 - a basic round trip; our own pushes echoed back are no-ops
 - offline edits on both devices → conflict copy in `Conflicts/`, never in the group folder
