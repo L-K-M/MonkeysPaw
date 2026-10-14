@@ -28,6 +28,8 @@ FILES = {
     "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL_JOBS,
     # This is a check-version.py input, despite its Markdown extension.
     "README.md": frozenset({"core-linux", "deb"}),
+    # The version checker also reads the committed Android literals.
+    "android/app/build.gradle.kts": frozenset({"android", "core-linux", "deb"}),
     "compose.yaml": SERVER_JOBS,
     ".env.example": SERVER_JOBS,
     "Caddyfile": SERVER_JOBS,
@@ -35,12 +37,13 @@ FILES = {
     "update.sh": SERVER_JOBS | {"deb"},
     "media-sources/icon.png": LINUX_JOBS | MACOS_JOBS,
     "scripts/check-pbxproj.py": frozenset({"core-linux"}),
-    "scripts/check-version.py": frozenset({"core-linux", "deb"}),
+    "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),
     "scripts/linux-delivery-smoke.sh": frozenset({"linux-app"}),
     "scripts/package-macos.sh": frozenset({"macos-artifacts"}),
     "scripts/make-icons.sh": MACOS_JOBS,
     "scripts/make-linux-icons.sh": frozenset({"deb"}),
-    "scripts/build.sh": frozenset({"deb", "macos-artifacts"}),
+    "scripts/build.sh": frozenset({"core-linux", "deb", "macos-artifacts", "android"}),
+    "scripts/package-android.sh": frozenset({"core-linux", "android"}),
     "scripts/release.sh": ALL_JOBS,
     "scripts/generate-seeds.py": SWIFT_JOBS,
     "scripts/generate-assistant-prompts.py": SWIFT_JOBS,
@@ -48,12 +51,14 @@ FILES = {
     "scripts/backup.sh": SERVER_JOBS | {"deb"},
     # unittest discovery in core-linux also executes the compose script.
     "scripts/compose-smoke.sh": SERVER_JOBS | {"core-linux"},
-    "scripts/sync-android-version.sh": frozenset({"android"}),
+    "scripts/sync-android-version.sh": frozenset({"core-linux", "android"}),
     "scripts/tests/test-backup.sh": frozenset({"core-linux", "deb"}),
     "scripts/tests/test-update.sh": frozenset({"core-linux", "deb"}),
     "scripts/tests/test_compose_smoke.py": frozenset({"core-linux", "compose-smoke"}),
     # Python tests run through core-linux unittest discovery.
     "scripts/tests/test_check_version.py": frozenset({"core-linux"}),
+    "scripts/tests/test_android_version.py": frozenset({"core-linux"}),
+    "scripts/tests/test_package_android.py": frozenset({"core-linux"}),
     # The Flatpak job repacks the deb job's tested artifact.
     "scripts/build-flatpak.sh": frozenset({"deb", "flatpak"}),
     "scripts/tests/test-build-flatpak.sh": frozenset({"deb", "flatpak"}),

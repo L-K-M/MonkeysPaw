@@ -31,15 +31,27 @@ Rollout by milestone:
   `ch.lkmc.monkeyspaw`; binary `monkeyspaw`; server image `monkeyspaw-server`.
   Product name `MonkeysPaw`, display name "Monkey's Paw" (Q5).
 - **Versioning.** `RELEASE_KIND=xcode` (Vervellum stub): `MARKETING_VERSION`
-  and the README marker are the committed version. Release CI derives the
-  macOS artifact version, the deb version, the server `VERSION` build arg,
+  and the README marker are the committed numeric `X.Y.Z` version. The
+  `RELEASE_POST_BUMP=scripts/sync-android-version.sh` hook uses
+  `RELEASE_NEW_VERSION` to align Android's committed `versionName` and
+  increment its positive Int `versionCode` once per changed version. An
+  aligned retry is a no-op; validation and overflow failures edit nothing.
+  Release CI derives the macOS artifact version, the deb version, the server `VERSION` build arg,
   and the image tags from the git tag without editing committed settings.
   `python3 scripts/check-version.py` checks that every `MARKETING_VERSION`
-  agrees with the single README marker and verifies `v0.1.0` → `0.1.0` and
-  `v0.1.0-beta.1` → `0.1.0~beta.1`. Packaging injects the tag's app version
+  agrees with the single README marker and Android's numeric `versionName`,
+  requires a single literal positive Int `versionCode`, and verifies
+  `v0.1.0` → `0.1.0` and `v0.1.0-beta.1` → `0.1.0~beta.1`.
+  Packaging injects the tag's app version
   into a temporary Swift source file for `monkeyspaw --version`; it removes
   the file on exit. `AppIdentity.fallbackVersion` is the development-build
   value only. The deb's tilde does not change the binary's hyphenated version.
+  Android packaging injects the full validated `X.Y.Z[-prerelease]` via
+  Gradle's `releaseVersion` property without changing source or the committed
+  code. Stable tags match exactly; prerelease tags match by numeric core.
+  APK names and packaged `versionName` retain the suffix; code never comes
+  from a CI run number. Repeated same-core prereleases require increasing
+  committed codes and engine support before owner use (§20 F20).
 - **Desktop update checks (M7, §21 G16/G17).** All desktop installs,
   including betas, check only the stable GitHub `releases/latest` endpoint
   through the shared `HTTPTransporting` default Assistant policy (§12).
@@ -80,7 +92,9 @@ Rollout by milestone:
     base and head through their merge base, with rename detection disabled
     so both the old and new paths contribute. Each build job requires
     `changes` and its own true output; its name and steps stay unchanged.
-    Android-only PRs run `android`; pure documentation PRs run no build jobs.
+    Android-only PRs run `android`; app Gradle version changes also run the
+    `core-linux` and `deb` version checks. Pure documentation PRs run no
+    build jobs.
     `README.md` remains an input to the Linux version checks. Xcode project
     changes also run `core-linux` and `deb`. Linux source changes keep Core
     portability and server jobs enabled because the parent Swift manifest
@@ -135,7 +149,7 @@ Rollout by milestone:
     true. PRs touching packaging, `server/Dockerfile` or the release
     workflow run the dry-run path too. Every path first calls `ci.yml`, then
     checks committed versions. A real tag's numeric core must equal the
-    committed `MARKETING_VERSION` and README marker;
+    committed `MARKETING_VERSION`, README marker and Android `versionName`;
     `python3 scripts/check-version.py --check-tag v0.1.0` enforces this.
     Release tags use `vX.Y.Z[-prerelease]`; build metadata (`+...`) is
     rejected before packaging because the macOS packager does not accept it.
@@ -193,6 +207,9 @@ Rollout by milestone:
     `lkm-release` engine installed. It bumps committed versions and pushes
     the release commit and `v0.1.0` tag. CI derives the artifact version from
     `${GITHUB_REF_NAME#v}` without modifying committed settings. See `CICD.md`.
+    `--check` reports engine configuration without executing the hook;
+    omitting `--push` still commits and tags. Test hook/commit/tag effects
+    only in disposable repositories (§20 F19).
   - Deb `Depends:` comes from `dpkg-shlibdeps` (Ubuntu 24.04's t64 renames),
     plus `libglib2.0-bin`. `Recommends:` `libsecret-tools`, `ydotool`,
     `xdotool`. Prerelease versions use a tilde (every prerelease hyphen
@@ -225,15 +242,26 @@ Rollout by milestone:
     `dist/MonkeysPaw-<version>.sha256` records both files; download all three
     together and run `shasum -a 256 -c MonkeysPaw-<version>.sha256` before
     installation (`docs/platform/macos.md`).
-- **Local build orchestration.** `scripts/build.sh [mac|deb ...] [--no-open]`
+- **Local build orchestration.** `scripts/build.sh [mac|deb|android ...] [--no-open]`
   builds every artifact this host can produce by default. An unavailable
   toolchain skips a default target but fails an explicitly named target.
   Outputs go to `dist/`, followed by one Summary block. On macOS it opens
   `dist/` when an artifact was built, unless `--no-open` was passed.
   `mac` calls the packager above; `deb` calls the builder below with the
-  committed version. `scripts/build.sh app [lkm-build flags]` preserves the
+  committed version; `android` calls `scripts/package-android.sh` with that
+  version. `scripts/build.sh app [lkm-build flags]` preserves the
   app-only engine path, including `--clean`, `--debug`, `--run`, `--install`,
-  `--zip` and `--dmg`. Server and APK targets arrive in later milestones.
+  `--zip` and `--dmg`. Server packaging remains separate.
+- **Local Android packaging.** `scripts/package-android.sh [version]` builds
+  `:app:assembleRelease` through `android/gradlew` with two workers. It
+  requires executable wrapper/JDK 17+ tools, SDK platform `android-37.0`
+  and build tools `36.0.0`; SDK downloads are disabled. `JAVA_HOME` selects
+  the JDK; `sdk.dir` in `android/local.properties` takes precedence over
+  `ANDROID_HOME`/`ANDROID_SDK_ROOT`. The default version is committed; an
+  explicit `[v]X.Y.Z[-prerelease]` must have the same numeric core. The
+  wrapper receives the normalized version as `-PreleaseVersion=...`, leaving
+  the code unchanged. Outputs are `dist/monkeyspaw-v<full-version>.apk`
+  and `.apk.sha256`. `--check` validates configuration without building.
 - **Linux floor.** Ubuntu 24.04+ (GTK 4.14), like Vervellum; the deb is
   built on noble. Ubuntu 22.04 (GTK 4.6) is Q8.
 - **Building a Linux deb locally.** On Ubuntu 24.04 with Swift 6.4, install
