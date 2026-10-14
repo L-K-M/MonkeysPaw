@@ -28,11 +28,13 @@ For a warm entry, invoke it after another completed or cancelled form.
 | Locked tile requires unlock before showing prompts; cancel unlock opens nothing; retry succeeds | NOT RUN | NOT RUN | |
 | Shortcut and home-screen widget do not show a form, preview or clipboard above the lock screen | NOT RUN | NOT RUN | |
 | Reinvoke any entry while editing; switch between tile, shortcut and widget; one form keeps its fields and initial clipboard snapshot | NOT RUN | NOT RUN | |
+| Open Library while a fill picker is held and select a prompt; the selected prompt opens. Repeat while editing/copying; the active form is preserved | NOT RUN | NOT RUN | |
 | Reinvoke while Copy is pending; one write and one learning operation complete, then the Activity finishes | NOT RUN | NOT RUN | |
 | Copy finishes after saving usage/remembered fields; no automatic paste, target-app start or duplicate app copy toast | NOT RUN | NOT RUN | |
 | Back from picker or form and Cancel finish, returning to the prior app or launcher; clipboard and usage are unchanged | NOT RUN | NOT RUN | |
 | After Copy or Back, a new entry opens a fresh session; an already open Library/Editor is preserved | NOT RUN | NOT RUN | |
 | Rotate, background, lock and resume a form; fields survive and the builtin snapshot is not retaken | NOT RUN | NOT RUN | |
+| With "Don't keep activities" enabled, Copy/Back still returns and a new entry opens without stalling | NOT RUN | NOT RUN | |
 | TalkBack identifies the tile, shortcut and widget button; large text and widget resizing keep the button usable | NOT RUN | NOT RUN | |
 
 For each target below, focus a harmless editable field, invoke the tile,

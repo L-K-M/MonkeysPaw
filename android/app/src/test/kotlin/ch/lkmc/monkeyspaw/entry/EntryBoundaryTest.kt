@@ -116,12 +116,13 @@ internal class EntryBoundaryTest {
     }
 
     @Test
-    fun `repeated fill intents keep the original session and Copy or Back finishes without a target-app launch`() {
+    fun `warm library requests use guarded activation and Copy or Back finishes without a target-app launch`() {
         val activity = root.resolve("FillActivity.kt").readText()
         assertTrue(activity.contains("val requestedPath = FillRoute.read(intent).promptPath"))
         val repeated = activity.substringAfter("override fun onNewIntent(").substringBefore("override fun onCreate(")
         assertTrue(repeated.contains("super.onNewIntent(intent)"))
-        assertFalse(Regex("\\b(?:read|setIntent|open|cancel|copy|finish)\\s*\\(").containsMatchIn(repeated))
+        assertTrue(repeated.contains("FillRoute.read(intent).promptPath?.let(fill::open)"))
+        assertFalse(Regex("\\b(?:setIntent|cancel|copy|finish)\\s*\\(").containsMatchIn(repeated))
         assertTrue(activity.contains("BackHandler { fill.cancel() }"))
         assertTrue(activity.contains("if (it.shouldFinish) finish()"))
         assertFalse(Regex("\\b(?:startActivity|finishAndRemoveTask|setShowWhenLocked|requestDismissKeyguard)\\s*\\(")

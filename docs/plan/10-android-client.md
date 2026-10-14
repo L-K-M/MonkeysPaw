@@ -143,6 +143,8 @@ Rules:
 The M8 entries use one explicit route to a private `FillActivity` in its own
 `singleTask` task, separate from Library. Repeated entry brings the held
 picker or form forward without resetting its fields or builtin snapshot.
+A Library activation opens its selected prompt in a held picker; during
+loading, editing or copying it preserves the active form.
 Copy and Back finish that session; a later invocation opens a fresh one.
 The static shortcut targets a small private, empty-affinity trampoline
 because Android adds `NEW_TASK | CLEAR_TASK` to its first intent. The

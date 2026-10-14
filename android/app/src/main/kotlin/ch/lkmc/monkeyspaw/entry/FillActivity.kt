@@ -51,7 +51,8 @@ class FillActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Keep the original path, fields and builtin snapshot, including while Copy is pending.
+        // A Library selection can activate a picker; the model preserves any held form and snapshot.
+        FillRoute.read(intent).promptPath?.let(fill::open)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
