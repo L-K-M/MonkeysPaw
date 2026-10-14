@@ -186,6 +186,47 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
         } finally { reopened.close() }
     }
 
+    @Test fun `cold root loss during a pending apply still clears credentials and preserves recovery intent`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher)
+        r.login()
+        r.remote()
+        r.checked.onFlush = { if (it == libraryDir.resolve("remote.md")) throw java.io.IOException("Synthetic failure") }
+        assertNotNull(r.sync.runBackground().blockingIssue)
+        val journal = Files.readAllBytes(stateDir.resolve("sync/apply.json"))
+        r.close()
+        Files.move(libraryDir, filesDir.resolve("lost-library"))
+        val reopened = Rig(dispatcher, r.secrets)
+        try {
+            val cleanup = reopened.sync.signOut()
+            assertTrue(cleanup.recoveryRequired)
+            assertFalse(cleanup.isComplete)
+            assertTrue(r.secrets.values.isEmpty())
+            assertContentEquals(journal, Files.readAllBytes(stateDir.resolve("sync/apply.json")))
+            assertFalse(Files.exists(libraryDir))
+            assertNull(reopened.sync.accounts.value!!.account)
+            assertFalse(reopened.requests.any { it.url.endsWith("/sync/pull") || it.method == HttpMethod.PUT })
+        } finally { reopened.close() }
+    }
+
+    @Test fun `explicit local recovery can resume the retained enabled account on the same graph`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.remote()
+            r.checked.onFlush = { if (it == libraryDir.resolve("remote.md")) throw java.io.IOException("Synthetic failure") }
+            assertNotNull(r.sync.runBackground().blockingIssue)
+            r.checked.onFlush = { }
+            assertNull(r.sync.recoverLocal().error)
+            assertFalse(r.sync.reports.value!!.enabled)
+            assertTrue(r.sync.resume().enabled)
+            val completed = r.sync.runBackground()
+            assertTrue(completed.enabled)
+            assertEquals(SyncStatus.IDLE, completed.status)
+            assertNotNull(completed.lastSuccess)
+        } finally { r.close() }
+    }
+
     @Test fun `selected TLS trust reaches only the bound client and changes rebuild without bypassing 401`() = runTest {
         val r = Rig(StandardTestDispatcher(testScheduler))
         try {
@@ -210,6 +251,48 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
             val another = SyncServerURL("https://other.test/paw")
             assertEquals(SyncTLSTrust.SYSTEM, r.sync.selectServer(another)!!.trust)
             assertFailsWith<SyncTlsSettingsError.ServerChanged> { r.sync.setTlsTrust(server, SyncTLSTrust.SYSTEM_AND_USER) }
+        } finally { r.close() }
+    }
+
+    @Test fun `cold authentication stop shows bound metadata without credentials or HTTP`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher)
+        val account = r.login().account
+        r.close()
+        val reopened = Rig(dispatcher)
+        try {
+            reopened.sync.requireSignIn()
+            assertEquals(account, reopened.sync.resume().account)
+            assertEquals(account, reopened.sync.accounts.value!!.account)
+            assertFalse(reopened.sync.accounts.value!!.enabled)
+            assertEquals(0, reopened.secrets.reads)
+            assertTrue(reopened.requests.isEmpty())
+        } finally { reopened.close() }
+    }
+
+    @Test fun `restored original root resumes only from explicit sync entry and never from a local read`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.remote()
+            r.sync.setExecutionMode(SyncExecutionMode.FOREGROUND)
+            runCurrent()
+            Files.move(libraryDir, filesDir.resolve("lost-library"))
+            assertNotNull(r.repository.refresh().error)
+            runCurrent()
+            assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
+            val requests = r.requests.size
+            Files.move(filesDir.resolve("lost-library"), libraryDir)
+            assertNull(r.repository.refresh().error)
+            runCurrent()
+            assertEquals(requests, r.requests.size, "A local Application/IME read cannot dispatch foreground sync")
+            assertTrue(r.startup.rootAvailable.value)
+            assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
+            r.sync.resume()
+            runCurrent()
+            assertEquals(SyncStatus.IDLE, r.sync.reports.value!!.status)
+            assertNull(r.sync.reports.value!!.blockingIssue)
+            assertTrue(r.requests.size > requests)
         } finally { r.close() }
     }
 
@@ -356,6 +439,11 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
             assertFalse(r.sync.reports.value!!.enabled)
             assertFailsWith<CancellationException> { r.sync.runBackground() }
             assertFailsWith<CancellationException> { r.login() }
+            assertFailsWith<CancellationException> { r.sync.signOut() }
+            assertFailsWith<CancellationException> { r.sync.selectServer(SyncServerURL("https://other.test")) }
+            assertFailsWith<CancellationException> {
+                r.sync.setTlsTrust(SyncServerURL("https://example.test/paw"), SyncTLSTrust.SYSTEM_AND_USER)
+            }
         } finally { r.close() }
     }
 

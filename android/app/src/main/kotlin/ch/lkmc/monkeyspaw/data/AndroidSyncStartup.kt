@@ -54,7 +54,7 @@ internal class AndroidSyncStartup(
     }
 
     private fun checkRoot() {
-        try { prompts.requireRoot() }
+        try { prompts.requireRoot(); mutableRootAvailable.value = true }
         catch (error: Exception) { mutableRootAvailable.value = false; throw error }
     }
 }

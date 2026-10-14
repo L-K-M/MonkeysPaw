@@ -18,6 +18,13 @@ class SyncLocalGraph(
     internal val graph = makeSyncGraph(library, libraryOperations, dataFiles, dataOperations, states, accounts)
     val access = GroupAccessService(library, states, accounts, libraryRoot)
 
+    /** Non-secret UI state when authentication is stopped; never resolve a token or verify /me. */
+    fun accountMetadata(): SyncAccountSnapshot {
+        val connection = accounts.loadConnection()
+        return SyncAccountSnapshot(account = connection.account,
+            cleanup = SyncAccountCleanup(secretFailures = connection.cleanupConnections))
+    }
+
     /** Validate metadata before composition may automatically create a fresh library root. */
     val requiresExistingRoot: Boolean get() {
         val connection = accounts.loadConnection()

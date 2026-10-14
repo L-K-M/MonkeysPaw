@@ -95,8 +95,8 @@ internal class AndroidSyncRepository(
 
     /** Only an authorized Library/Account entry or worker calls resume, never Application/IME. */
     suspend fun resume(): SyncAccountSnapshot = accountOperation { graph ->
-        if (graph.engine.reports.value.needsSignIn) return@accountOperation graph.account.snapshot
-        if (graph.account.snapshot.enabled) graph.account.snapshot else graph.account.startup()
+        if (graph.engine.reports.value.needsSignIn) return@accountOperation stoppedAccount(graph)
+        if (graph.account.snapshot.enabled && graph.engine.reports.value.enabled) graph.account.snapshot else graph.account.startup()
     }
 
     suspend fun login(server: String, username: String, password: SecretValue, deviceName: String): SyncAccountSnapshot =
@@ -106,16 +106,18 @@ internal class AndroidSyncRepository(
         }
 
     suspend fun selectServer(server: SyncServerURL?): SyncTlsSettings? = withContext(io) {
+        synchronized(lifecycleLock) { checkActive() }
         settings.selectSyncServer(server).syncTls
     }
 
     suspend fun setTlsTrust(server: SyncServerURL, trust: SyncTLSTrust): SyncTlsSettings = withContext(io) {
+        synchronized(lifecycleLock) { checkActive() }
         checkNotNull(settings.setSyncTlsTrust(server, trust).syncTls)
     }
 
     /** Rebuild the verified client after a trust edit; a 401 still requires reauthentication. */
     suspend fun reconnect(): SyncAccountSnapshot = accountOperation {
-        if (it.engine.reports.value.needsSignIn) it.account.snapshot else it.account.startup()
+        if (it.engine.reports.value.needsSignIn) stoppedAccount(it) else it.account.startup()
     }
 
     suspend fun refreshAccount(): SyncAccountSnapshot = accountOperation { it.account.refresh() }
@@ -137,7 +139,7 @@ internal class AndroidSyncRepository(
                 }
                 try {
                     val graph = graph()
-                    startup.ready()
+                    readyForSync(graph)
                     work(graph).also { graph.engine.setExecutionMode(mode) }
                 } finally {
                     synchronized(lifecycleLock) { accountWork = null }
@@ -149,11 +151,13 @@ internal class AndroidSyncRepository(
     suspend fun signOut(): SyncAccountCleanup = withContext(io + NonCancellable) {
         invalidate()
         accountMutex.withLock {
+            synchronized(lifecycleLock) { checkActive() }
             val graph = graph(GraphUse.SIGN_OUT)
             graph.account.signOut().also {
                 mutableAccounts.value = graph.account.snapshot
                 mutableReports.value = graph.engine.reports.value
                 mutableScheduling.value = graph.engine.scheduling.value
+                mutableAccess.value = graph.local.access.snapshot
                 repository.publishProjection()
             }
         }
@@ -161,10 +165,12 @@ internal class AndroidSyncRepository(
 
     suspend fun setExecutionMode(value: SyncExecutionMode) = withContext(io) {
         mode = value
-        graph().engine.setExecutionMode(value)
+        val graph = graph()
+        if (value == SyncExecutionMode.FOREGROUND) readyForSync(graph)
+        graph.engine.setExecutionMode(value)
     }
 
-    suspend fun syncNow() = withContext(io) { startup.ready(); graph().engine.syncNow() }
+    suspend fun syncNow() = withContext(io) { val graph = graph(); readyForSync(graph); graph.engine.syncNow() }
 
     /** Resume is explicit so Z20 can restore its durable authentication stop before dispatch. */
     suspend fun runBackground(expectedEpoch: Long? = null, version: Long? = null): SyncReport = withContext(io) {
@@ -173,7 +179,20 @@ internal class AndroidSyncRepository(
         graph.engine.runBackground(expectedEpoch, version)
     }
 
-    suspend fun requireSignIn() = withContext(io) { graph().engine.requireSignIn() }
+    suspend fun requireSignIn() = withContext(io) {
+        val graph = graph()
+        graph.engine.requireSignIn()
+        stoppedAccount(graph)
+        Unit
+    }
+
+    private fun stoppedAccount(graph: Graph): SyncAccountSnapshot = graph.local.accountMetadata().also { mutableAccounts.value = it }
+
+    private suspend fun readyForSync(graph: Graph) {
+        startup.ready()
+        // A local Application/IME read may restore the root fact, but only an explicit sync entry resumes work.
+        graph.engine.rootHealthChanged(SyncRootHealth.AVAILABLE)
+    }
 
     suspend fun recoverLocal(): LibraryState = withContext(io) {
         invalidate()
@@ -181,7 +200,9 @@ internal class AndroidSyncRepository(
             val graph = graphMutex.withLock { current }
             graph?.engine?.stop()
             graph?.engine?.drain()
+            graph?.let { mutableAccounts.value = it.account.snapshot.copy(enabled = false) }
             startup.ready().recover()
+            graph?.engine?.rootHealthChanged(SyncRootHealth.AVAILABLE)
             repository.refresh()
         }
     }
