@@ -241,9 +241,11 @@ public final class SyncService {
         guard let active = coordinator else { return }
         running = true
         dirty = false
+        current.counts.pulled = 0
+        current.counts.pushed = 0
         current.phase = .recovering
         publish()
-        let generation = epoch
+        let generation = active.permit.epoch
         task = Task { [weak self, active] in
             do {
                 let result = try await active.run(progress: { [weak self] result in

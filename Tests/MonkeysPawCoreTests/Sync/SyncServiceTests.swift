@@ -712,6 +712,54 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertNil(rig.service.report.lastSuccess)
         XCTAssertEqual(rig.transport.requests.count, 1)
     }
+
+    func testRootRecoveryDuringInlinePublicationUsesAdmittedEpoch() async throws {
+        let rig = try SyncServiceRig()
+        let probe = SyncStopProbe()
+        _ = rig.service.observe { report in
+            if report.enabled && report.phase == .recovering && probe.once() {
+                _ = rig.service.rootHealthChanged(.unavailable)
+                _ = rig.service.rootHealthChanged(.available)
+            }
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.count, 1)
+        XCTAssertNotNil(rig.service.report.lastSuccess)
+        rig.scheduler.advance(.seconds(60))
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.count, 2)
+    }
+
+    func testReusedOwnDeletionPathCannotSuppressLaterUserDeletion() async throws {
+        let rig = try SyncServiceRig()
+        let bytes = SyncScanTestSupport.bytes()
+        try rig.base.files.write(bytes, at: "a.md")
+        let old = try SyncState(binding: rig.base.binding, databaseID: SyncTestValues.uuid,
+            cursors: [SyncScanTestSupport.personal: "before"], prompts: [.assigned(SyncTestValues.personalPrompt):
+                SyncPromptState(scope: SyncScanTestSupport.personal, path: "a.md", rev: 1, canonicalHash: SyncHash(bytes: bytes))])
+        try rig.base.states.update(for: rig.base.binding) { $0 = old }
+        rig.transport.handler = { index, request in
+            if request.method == .post {
+                return try SyncServiceRig.pull(items: index == 0 ? [.delete(seq: 2, id: SyncTestValues.personalPrompt.rawValue)] : [], mode: .delta)
+            }
+            return try SyncServiceRig.http(SyncAPI.WriteResponse(rev: request.method == .delete ? 2 : 1, seq: 4))
+        }
+        try rig.start()
+        await rig.settle()
+        XCTAssertNil(try rig.base.files.stamp(at: "a.md"))
+        try rig.base.files.write(SyncScanTestSupport.bytes("New identity", id: SyncTestValues.groupPrompt), at: "a.md")
+        rig.service.localSave()
+        rig.scheduler.advance(.seconds(3))
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .put }.count, 1)
+        try rig.base.files.delete(at: "a.md")
+        rig.service.filesChanged([SyncFileChange(path: "a.md", stamp: nil, hash: nil)])
+        rig.scheduler.advance(.seconds(3))
+        await rig.settle()
+        XCTAssertEqual(rig.transport.requests.filter { $0.method == .delete }.count, 1)
+        XCTAssertNil(rig.base.states.snapshot.value?.prompts[.assigned(SyncTestValues.groupPrompt)])
+    }
 }
 
 final class SyncServiceRig {
