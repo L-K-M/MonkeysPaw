@@ -376,6 +376,8 @@ instead of doubling.
     copies, renames and private sync preserve the keys; clearing them clears
     state origin on ingest. The Conflicts filter uses marker-derived origin,
     never the file name. Copies from another device remain listed anywhere.
+    It includes rescued prompts; without a known original, only Keep both
+    (retain the copy and clear its marker) is available.
   - The resolve view reuses the improve diff (§7.3). The actions are: keep
     server, keep mine (re-push on the new head), or keep both.
 - **Dispatch by envelope code.** A `409 conflict`, including on `/move`,

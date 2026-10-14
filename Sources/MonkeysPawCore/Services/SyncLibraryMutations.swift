@@ -175,6 +175,8 @@ final class SyncLibraryMutations {
         self.operations = operations
     }
 
+    var accessSnapshot: GroupAccessSnapshot { library.accessSnapshot }
+
     func read(at path: RelativePath) throws -> SyncLibraryFile? {
         try library.withSyncLock { files in try Self.read(files, at: path.string) }
     }
