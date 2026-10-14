@@ -296,6 +296,33 @@ final class FakePortal {
         return String(cString: g_variant_get_string(value, nil))
     }
 
+    /// Inspect the request independently of the production response decoder.
+    func shortcuts(_ call: Call) -> [PortalShortcut] {
+        let value = g_variant_get_child_value(call.parameters, 1)!
+        defer { g_variant_unref(value) }
+        XCTAssertEqual(String(cString: g_variant_get_type_string(value)), "a(sa{sv})")
+        return (0..<g_variant_n_children(value)).map { index in
+            let entry = g_variant_get_child_value(value, index)!
+            let id = g_variant_get_child_value(entry, 0)!
+            let dictionary = g_variant_get_child_value(entry, 1)!
+            defer { g_variant_unref(entry); g_variant_unref(id); g_variant_unref(dictionary) }
+            var properties: [String: String] = [:]
+            for index in 0..<g_variant_n_children(dictionary) {
+                let pair = g_variant_get_child_value(dictionary, index)!
+                let key = g_variant_get_child_value(pair, 0)!
+                let wrapper = g_variant_get_child_value(pair, 1)!
+                let child = g_variant_get_variant(wrapper)!
+                defer {
+                    g_variant_unref(pair); g_variant_unref(key)
+                    g_variant_unref(wrapper); g_variant_unref(child)
+                }
+                XCTAssertEqual(String(cString: g_variant_get_type_string(child)), "s")
+                properties[String(cString: g_variant_get_string(key, nil))] = String(cString: g_variant_get_string(child, nil))
+            }
+            return PortalShortcut(id: String(cString: g_variant_get_string(id, nil)), properties: properties)
+        }
+    }
+
     private func sessionResponse(_ call: Call) -> String {
         switch call.method {
         case "CreateSession":
