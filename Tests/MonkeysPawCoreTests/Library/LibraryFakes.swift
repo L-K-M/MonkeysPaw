@@ -1,6 +1,8 @@
 import Foundation
 @testable import MonkeysPawCore
 
+/// Services call file stores from worker threads, so shared state is locked.
+/// Test callbacks run outside the lock because some tests block inside them.
 final class MemoryFileStore: FileStore {
     enum PathMatching { case exact, caseInsensitive }
 
@@ -30,6 +32,7 @@ final class MemoryFileStore: FileStore {
     var onMove: ((String, String) throws -> Void)?
     private(set) var accessCount = 0
     private(set) var listCount = 0
+    private let lock = NSRecursiveLock()
 
     init(pathMatching: PathMatching = .exact) { self.pathMatching = pathMatching }
 
@@ -41,27 +44,35 @@ final class MemoryFileStore: FileStore {
         return Data(path.utf8)
     }
 
+    private func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+
     func listFiles() throws -> [StoredFile] {
-        accessCount += 1
-        listCount += 1
-        // Deliberately unsorted to prove service ordering.
-        return files.values.map { StoredFile(relativePath: $0.path, stamp: $0.stamp) }
-            .sorted { $0.relativePath > $1.relativePath }
+        locked {
+            accessCount += 1
+            listCount += 1
+            // Deliberately unsorted to prove service ordering.
+            return files.values.map { StoredFile(relativePath: $0.path, stamp: $0.stamp) }
+                .sorted { $0.relativePath > $1.relativePath }
+        }
     }
 
     func stamp(at path: String) throws -> FileStamp? {
-        accessCount += 1
+        locked { accessCount += 1 }
         try FileStorePath.validate(path)
-        let stamp = files[key(path)]?.stamp
+        let stamp = locked { files[key(path)]?.stamp }
         try onStamp?(path, stamp)
         return stamp
     }
 
     func read(at path: String) throws -> Data {
-        accessCount += 1
+        locked { accessCount += 1 }
         try FileStorePath.validate(path)
         try onRead?(path)
-        guard let file = files[key(path)] else { throw FileStoreError.notFound }
+        guard let file = locked({ files[key(path)] }) else { throw FileStoreError.notFound }
         return file.bytes
     }
 
@@ -72,60 +83,71 @@ final class MemoryFileStore: FileStore {
     func create(_ data: Data, at path: String) throws {
         try FileStorePath.validate(path)
         try onCreate?(path)
-        guard files[key(path)] == nil else { throw FileStoreError.alreadyExists }
-        try store(data, at: path, isPrivate: false)
+        try locked {
+            guard files[key(path)] == nil else { throw FileStoreError.alreadyExists }
+            try store(data, at: path, isPrivate: false, notify: false)
+        }
+        onWrite?(path)
     }
 
     func writePrivate(_ data: Data, at path: String) throws {
         try store(data, at: path, isPrivate: true)
     }
 
-    func isPrivate(at path: String) -> Bool { files[key(path)]?.isPrivate == true }
+    func isPrivate(at path: String) -> Bool { locked { files[key(path)]?.isPrivate == true } }
 
-    private func store(_ data: Data, at path: String, isPrivate: Bool) throws {
-        accessCount += 1
-        try FileStorePath.validate(path)
-        writeCount += 1
-        if failNextWrite || writeCount == failWriteNumber {
-            failNextWrite = false
-            throw FileStoreError.ioFailure
+    private func store(_ data: Data, at path: String, isPrivate: Bool, notify: Bool = true) throws {
+        try locked {
+            accessCount += 1
+            try FileStorePath.validate(path)
+            writeCount += 1
+            if failNextWrite || writeCount == failWriteNumber {
+                failNextWrite = false
+                throw FileStoreError.ioFailure
+            }
+            generation += 1
+            rememberParents(of: path)
+            let storedPath = files[key(path)]?.path ?? path
+            files[key(path)] = File(path: storedPath, bytes: data, stamp: FileStamp("memory-\(generation)"),
+                                    isPrivate: isPrivate)
         }
-        generation += 1
-        rememberParents(of: path)
-        let storedPath = files[key(path)]?.path ?? path
-        files[key(path)] = File(path: storedPath, bytes: data, stamp: FileStamp("memory-\(generation)"),
-                                isPrivate: isPrivate)
-        onWrite?(path)
+        if notify { onWrite?(path) }
     }
 
     func delete(at path: String) throws {
-        accessCount += 1
-        try FileStorePath.validate(path)
-        deleteCount += 1
-        if failNextDelete || deleteCount == failDeleteNumber {
-            failNextDelete = false
-            throw FileStoreError.ioFailure
+        try locked {
+            accessCount += 1
+            try FileStorePath.validate(path)
+            deleteCount += 1
+            if failNextDelete || deleteCount == failDeleteNumber {
+                failNextDelete = false
+                throw FileStoreError.ioFailure
+            }
+            guard files.removeValue(forKey: key(path)) != nil else { throw FileStoreError.notFound }
         }
-        guard files.removeValue(forKey: key(path)) != nil else { throw FileStoreError.notFound }
     }
 
     func move(from source: String, to destination: String) throws {
-        accessCount += 1
+        locked { accessCount += 1 }
         try FileStorePath.validate(source)
         try FileStorePath.validate(destination)
-        moveCount += 1
-        if moveCount == failMoveNumber { throw FileStoreError.ioFailure }
+        try locked {
+            moveCount += 1
+            if moveCount == failMoveNumber { throw FileStoreError.ioFailure }
+        }
         try onMove?(source, destination)
         let sourceKey = key(source)
         let destinationKey = key(destination)
-        guard files[destinationKey] == nil || (pathMatching == .caseInsensitive
-            && sourceKey == destinationKey && !source.utf8.elementsEqual(destination.utf8)) else {
-            throw FileStoreError.alreadyExists
+        try locked {
+            guard files[destinationKey] == nil || (pathMatching == .caseInsensitive
+                && sourceKey == destinationKey && !source.utf8.elementsEqual(destination.utf8)) else {
+                throw FileStoreError.alreadyExists
+            }
+            guard let file = files.removeValue(forKey: sourceKey) else { throw FileStoreError.notFound }
+            rememberParents(of: destination)
+            files[destinationKey] = File(path: destination, bytes: file.bytes, stamp: file.stamp,
+                                        isPrivate: file.isPrivate)
         }
-        guard let file = files.removeValue(forKey: sourceKey) else { throw FileStoreError.notFound }
-        rememberParents(of: destination)
-        files[destinationKey] = File(path: destination, bytes: file.bytes, stamp: file.stamp,
-                                    isPrivate: file.isPrivate)
     }
 
     func put(_ source: String, at path: String) throws { try write(Data(source.utf8), at: path) }
