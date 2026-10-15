@@ -96,7 +96,12 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         let response = try await withScenarioDeadline(request.deadline) {
             try await client.executeRequest(uri: uri, method: method, headers: requestHeaders, body: body)
         }
-        guard response.body.readableBytes <= request.responseByteCap else { throw HTTPTransportError.responseTooLarge }
+        guard response.body.readableBytes <= request.responseByteCap else {
+            // Count the real response without decoding or consuming its pending rewrite.
+            locked { recorded.append(.init(method: request.method.rawValue, path: uri, status: response.status.code,
+                body: safeBody, localPaths: localPaths, pull: nil, responseBytes: response.body.readableBytes)) }
+            throw HTTPTransportError.responseTooLarge
+        }
         var received = Data(response.body.readableBytesView)
         let pull = uri == "/api/v1/sync/pull" && response.status == .ok
             ? try JSONDecoder().decode(SyncAPI.PullResponse.self, from: received) : nil
