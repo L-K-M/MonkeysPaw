@@ -369,13 +369,17 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let completion = try XCTUnwrap(chooser.requests.last?.done)
         completion(second.path)
         gtk_window_destroy(mp_window(window))
-        environment.showSettings() // The wrapper outlives GTK's borrowed pointer.
+        environment.showSettings() // Recreate without touching the destroyed GTK window.
         completion(second.path)
         _ = gtk_widget_activate(reveal)
         drainUI()
         XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, defaultFolder.path)
         XCTAssertTrue(launched.isEmpty)
-        XCTAssertTrue(settingsWindows.isEmpty)
+        let reopened = try visibleSettings()
+        XCTAssertEqual(settingsWindows.count, 1)
+        let path = try settingsWidget("settings-library-path", in: reopened)
+        try choose(second.path, in: reopened)
+        XCTAssertTrue(GTKTestSupport.spin { self.labelText(path) == second.path })
     }
 
     func testInvalidPathIsRejectedBeforeFileURLResolvesIt() throws {

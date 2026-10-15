@@ -255,11 +255,12 @@ final class LinuxEnvironment {
         return service
     }()
     private var currentUpdateSettingsModel: UpdateSettingsModel?
-    private(set) lazy var updateSettingsModel: UpdateSettingsModel = {
+    var updateSettingsModel: UpdateSettingsModel {
+        if let currentUpdateSettingsModel { return currentUpdateSettingsModel }
         let model = UpdateSettingsModel(settings: settingsModel, updates: updateService, mainThread: mainThread)
         currentUpdateSettingsModel = model
         return model
-    }()
+    }
     private lazy var assistantService = AssistantService(providerSettings: providerSettingsService,
         anthropic: AnthropicClient(transport: assistantTransport),
         openAICompatible: OpenAIClient(transport: assistantTransport, providerState: ProviderStateStore(files: configFiles)),
@@ -340,12 +341,13 @@ final class LinuxEnvironment {
         session: session, shortcuts: shortcuts, selfTest: selfTest, mainThread: mainThread)
     private(set) lazy var setupModel = SetupModel(setup: setup)
     private var currentDeliverySettingsModel: DeliverySettingsModel?
-    private(set) lazy var deliverySettingsModel: DeliverySettingsModel = {
+    var deliverySettingsModel: DeliverySettingsModel {
+        if let currentDeliverySettingsModel { return currentDeliverySettingsModel }
         let model = DeliverySettingsModel(settings: settingsModel, delivery: delivery, setup: setup, mainThread: mainThread)
         model.onOpenSetup = { [weak self] in self?.showSetup() }
         currentDeliverySettingsModel = model
         return model
-    }()
+    }
     private(set) lazy var shortcutsSettingsModel = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
     private var currentSetupWindow: LinuxSetupWindow?
     private var currentSettingsWindow: LinuxSettingsWindow?
@@ -643,6 +645,12 @@ final class LinuxEnvironment {
         mainThread.run { [weak self] in
             // An open request queued before shutdown must not build a window.
             guard let self, !self.isShutDown else { return }
+            if self.currentSettingsWindow?.isDestroyed == true {
+                // Release the old view before wiring callbacks on the next one.
+                self.currentSettingsWindow = nil
+                self.currentDeliverySettingsModel = nil
+                self.currentUpdateSettingsModel = nil
+            }
             if self.currentSettingsWindow == nil {
                 self.currentSettingsWindow = LinuxSettingsWindow(application: self.application,
                     general: self.generalSettingsModel, shortcuts: self.shortcutsSettingsModel,

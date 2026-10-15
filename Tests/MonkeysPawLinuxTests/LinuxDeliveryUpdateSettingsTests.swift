@@ -365,6 +365,44 @@ final class LinuxDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertTrue(opened.isEmpty)
     }
 
+    func testNativeDestroyReopensWithWorkingPreferencesAndLiveRendering() throws {
+        let window = try showSettings()
+        let retiredDelivery = environment.deliverySettingsModel
+        let retiredUpdates = environment.updateSettingsModel
+        gtk_window_destroy(mp_window(window))
+
+        let reopened = try showSettings()
+        XCTAssertFalse(environment.deliverySettingsModel === retiredDelivery)
+        XCTAssertFalse(environment.updateSettingsModel === retiredUpdates)
+        let chord = try control("settings-default-chord", in: reopened)
+        let restore = try control("settings-restore-clipboard", in: reopened)
+        let automatic = try control("settings-automatic-updates", in: reopened)
+        gtk_combo_box_set_active(mp_combo_box(chord), 1)
+        gtk_check_button_set_active(mp_check_button(restore), 1)
+        gtk_check_button_set_active(mp_check_button(automatic), 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.settingsModel.deliveryPreferences == DeliveryPreferences(
+                linuxDefaultPasteChord: .terminal, clipboardRestore: .previousText)
+                && self.environment.settingsModel.automaticUpdateChecks == .disabled
+        })
+
+        // Changes from outside the view must still reach the new pages.
+        environment.settingsModel.setLinuxDefaultPasteChord(.standard)
+        environment.settingsModel.setClipboardRestore(.off)
+        environment.settingsModel.setAutomaticUpdateChecks(.enabled)
+        XCTAssertTrue(GTKTestSupport.spin {
+            gtk_combo_box_get_active(mp_combo_box(chord)) == 0
+                && gtk_check_button_get_active(mp_check_button(restore)) == 0
+                && gtk_check_button_get_active(mp_check_button(automatic)) != 0
+        })
+        retiredDelivery.setLinuxDefaultPasteChord(.terminal)
+        retiredUpdates.setAutomaticUpdateChecks(.disabled)
+        drainUpdate()
+        XCTAssertEqual(environment.settingsModel.deliveryPreferences.linuxDefaultPasteChord, .standard)
+        XCTAssertEqual(environment.settingsModel.automaticUpdateChecks, .enabled)
+        XCTAssertEqual(transport.count, 0)
+    }
+
     func testDestroyedPagesRejectDetachedControlsAndLateReports() throws {
         let window = try showSettings()
         let check = try control("settings-check-updates", in: window)

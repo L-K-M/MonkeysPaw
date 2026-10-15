@@ -15,7 +15,7 @@ final class LinuxSettingsWindow {
     private let chooser: LinuxFolderChoosing
     private let openSetup: () -> Void
     private let librarySwitchMessage: () -> String?
-    private var isDestroyed = false
+    private(set) var isDestroyed = false
     private var isChoosing = false
     private var chooserRevision = 0
 
