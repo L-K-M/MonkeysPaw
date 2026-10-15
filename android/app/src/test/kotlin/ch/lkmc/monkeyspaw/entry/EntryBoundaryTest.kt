@@ -25,7 +25,11 @@ internal class EntryBoundaryTest {
         val components = children(manifest, "activity") + children(manifest, "service") + children(manifest, "receiver")
         assertEquals(expected.keys, components.map { it.attr("name") }.toSet())
         for (component in components) assertEquals(expected.getValue(component.attr("name")), component.attr("exported"))
-        for (tag in listOf("activity-alias", "provider")) assertTrue(children(manifest, tag).isEmpty())
+        assertTrue(children(manifest, "activity-alias").isEmpty())
+        val startup = children(manifest, "provider").single()
+        assertEquals("androidx.startup.InitializationProvider", startup.attr("name"))
+        assertEquals("false", startup.attr("exported"))
+        assertTrue(children(startup, "meta-data").all { it.getAttributeNS("http://schemas.android.com/tools", "node") == "remove" })
         // Only the assistant/sync transport's INTERNET permission is requested; anything merged in is removed.
         for (permission in children(manifest, "uses-permission")) {
             if (permission.attr("name") == "android.permission.INTERNET") continue

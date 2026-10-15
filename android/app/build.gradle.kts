@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import groovy.json.JsonOutput
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -106,6 +107,12 @@ androidComponents.onVariants { variant ->
         apkDirectory.set(layout.buildDirectory.dir("outputs/apk/${variant.name}"))
     }
     tasks.matching { it.name == "assemble$name" }.configureEach { finalizedBy(verification) }
+    // The debug JVM gate also pins the release manifest that ships.
+    val mergedManifest = variant.artifacts.get(SingleArtifact.MERGED_MANIFEST)
+    tasks.withType<Test>().configureEach {
+        systemProperty("monkeyspaw.mergedManifest.${variant.name}", mergedManifest.get().asFile.absolutePath)
+        inputs.file(mergedManifest).withPropertyName("merged${variant.name}EntryManifest").withPathSensitivity(PathSensitivity.RELATIVE)
+    }
 }
 
 android {
@@ -183,6 +190,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.savedstate)
+    implementation(libs.androidx.startup)
+    implementation(libs.androidx.profileinstaller)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)

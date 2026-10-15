@@ -545,3 +545,82 @@ Record commit, APK SHA-256, signer, device/API, filesystem, tester/date,
 server/desktop versions where applicable, and PASS/FAIL/BLOCKED for each row.
 Actual process death and power-loss testing remain distinct from injected
 errors. Required NOT RUN rows keep M10 open (§23 P20).
+
+The selection, share and setup checklists above also need owner results.
+Preserve the M8 and Unicode evidence when adding them.
+
+## M9 insertion integration and privacy proof (N8)
+
+The automatic gate is `:core:test testDebugUnitTest lintDebug assembleDebug
+assembleRelease`. `EntryFlowIntegrationTest` runs IME, editable/read-only
+selection, share, tile, shortcut and widget sessions through the shared picker,
+`FillViewModelFactory` and Fill service with fake delivery ports and real private
+file stores. It checks held builtin snapshots, literal capture, effect before
+learning/finish, one accepted delivery, M8 repeated-entry preservation and
+accepted bookkeeping after IME teardown. Existing lifecycle, delivery, setup,
+selection, share and M8 regression suites remain part of the full gate.
+
+`ImePrivacyTest` generates fresh sentinels at runtime and compares every file
+in its isolated sandbox, including cache/log locations. Cancelled sessions,
+late builtin callbacks, failed effects/launches, lost handoffs, unsaved/failed
+share drafts and Ephemeral Insert/Copy/activity handoff leave the original
+bytes unchanged.
+Normal delivery adds only `state/values.json` with remember=true fields and
+one body-free usage record, verified through a new store graph. Explicit share
+Save creates only its prompt; a later explicit edit/save can add its previous
+bytes to history. Capture, remember=false values, builtins and error bodies
+are checked in raw, JSON, base64 and percent-encoded forms outside permitted
+files, including both form-encoded `+` and percent-encoded `%20` spaces. JVM
+logger callbacks at all levels and stdout/stderr are also observed; planted
+FINE records and concurrent publishers exercise the capture itself.
+
+`ImeBoundaryTest` extends the existing constructor/provider/inheritance walk
+with top-level helper calls, class constructions, object calls and callback
+references, including imported aliases with explicit-import precedence.
+Negative probes check network, secrets, scheduling, diagnostics and target-text
+reads. The local graph excludes the application diagnostic scope; settings
+DataStore owns its separate silent supervised scope. `Application.onCreate`
+retains the existing local index refresh, and the JVM warm-up test checks
+both success and a missing-root failure without diagnostics or files. Concrete
+clipboard access reads plain clip text without URI coercion. These source and
+fake-port checks are regression guards, not a complete semantic DI analysis.
+
+Merged-manifest regressions also cover startup before `Application.onCreate`.
+The audit found dependency metadata eagerly initializing OkHttp's platform/log
+bridge and scheduling profile installation on a cold IME process. Both checks
+failed before their initializer metadata was removed. OkHttp's Android context
+setup now runs only when Hilt constructs the HTTP transport. Profile installation
+uses AndroidX's once-per-process manual initialization from the launcher through
+a data driver, preserving normal launcher profiling. Lifecycle/emoji startup and
+the system-protected profile receiver remain. The two newly direct AndroidX
+dependencies use the already resolved versions; no version was upgraded.
+
+**Permission deviation from the original N8 plan row:** the main app already
+ships exactly `android.permission.INTERNET` for M11 assistant and M10 sync.
+N8 preserves it and asserts that exact permission set, rather than the row's
+older “absent INTERNET” wording. `EntryManifestTest` pins exported flags,
+exact filters, IME `BIND_INPUT_METHOD` protection/metadata, one process,
+backup denial and quick-entry resources. JVM tests inspect both merged debug
+and release manifests as declared inputs from AGP's artifact API. Inspect the
+packaged release manifest after assembly as well: source XML alone cannot
+detect dependency additions.
+The IME graph continues to exclude HTTP, sync engine, secret and scheduler
+capabilities; shared local sync recovery/value types are not outbound work.
+
+No JVM result executes real Intent/Bundle parsing, Compose owners, Binder,
+InputConnection, Android ClipboardManager, logcat or OS storage. Lint, R8 and
+merged-manifest inspection prove build/packaging properties. They do not prove
+that a target displayed inserted text or that Android performed no background
+work. Use the signed, minified release APK for the owner matrix above and these
+additional checks; all remain NOT RUN until runtime evidence is attached.
+
+| Runtime privacy check | Result |
+|---|---|
+| Cold/warm IME open, browse, password target, hide/reopen and handoff cause no HTTP/sync/secret access, scheduled work or IME diagnostics | NOT RUN |
+| Component-only startup does not initialize OkHttp or schedule profile installation; the first explicit network use and launcher profile initialization still work | NOT RUN |
+| Cancel, failed commit/Copy, late callbacks and Ephemeral Insert/Copy/handoff leave no new value, draft, capture, log or temporary files; inspect private storage and logcat using runtime-generated harmless sentinels | NOT RUN |
+| Normal delivery persists only permitted remembered fields/usage; shared new prompt persists only after explicit Save, with history only for later explicit saves | NOT RUN |
+| Rotation, process loss and target changes never restore capture or an old connection from Intent/saved state; no extracted, selected or surrounding target text is requested | NOT RUN |
+
+Record only pass/fail, file paths/counts and sentinel-match counts, never the
+sentinels or private content. Required device gaps keep M9 open (§22 H12).

@@ -19,7 +19,27 @@ internal class ImeBoundaryTest {
     private val app = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
     private val core = File(checkNotNull(System.getProperty("monkeyspaw.coreSources")))
     private val namespace = "http://schemas.android.com/apk/res/android"
-    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|Logger|Log|Timber|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b")
+    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|PlatformInitializer|ProfileInstallerInitializer|ForegroundProfileInstaller|AppInitializer|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL(?=\\s*(?:\\(|\\.|::))|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable|ProcessBuilder|Runtime)\\b|\\bSystem\\.(?:out|err)\\b|\\bjava\\.net\\.URL\\b|::\\s*URL\\b|^URL$")
+    private val helperSources by lazy {
+        indexSources((app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }.map { it.readText() })
+    }
+
+    private fun indexSources(sources: Sequence<String>): Map<String, List<String>> =
+        sources.flatMap { source ->
+            val pkg = Regex("(?m)^package (\\S+)").find(source)!!.groupValues[1]
+            // Follow local constructions and object calls that reflection cannot see.
+            // Same-line annotations with arguments and imported members still need semantic analysis.
+            val modifiers = "(?:(?:@[\\w.]+|private|internal|public|expect|actual|external|infix|operator|suspend|inline|tailrec|sealed|data|abstract|open|value|enum|annotation|final)\\s+)*"
+            val functions = Regex("(?m)^${modifiers}fun (?:<[^\\n>]+> )?(?:[^\\n(]+\\.)?(\\w+)\\(").findAll(source).toList()
+            val types = Regex("(?m)^$modifiers(?:fun )?(?:class|interface|object) (\\w+)").findAll(source).toList()
+            val starts = (functions + types).map { it.range.first }.sorted()
+            val header = Regex("(?m)^(?:package|import) [^\\n]+").findAll(source).joinToString("\n") { it.value }
+            functions.asSequence().map { "$pkg.${it.groupValues[1]}" to source } + types.asSequence().map { type ->
+                // A shared file can contain an inert value alongside an unrelated capability.
+                val end = starts.firstOrNull { it > type.range.first } ?: source.length
+                "$pkg.${type.groupValues[1]}" to "$header\n${source.substring(type.range.first, end)}"
+            }
+        }.groupBy({ it.first }, { it.second })
 
     @Test fun `IME is exported only behind system binding permission with exact filter and metadata in one process`() {
         val manifest = xml("AndroidManifest.xml")
@@ -80,6 +100,7 @@ internal class ImeBoundaryTest {
             Regex("fun (\\w+)\\(").find(block)!!.groupValues[1] to block
         }
         val reached = mutableSetOf<Class<*>>()
+        val validatedSources = mutableSetOf<String>()
         val classSources = (app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }
             .flatMap { file ->
                 val source = file.readText()
@@ -90,7 +111,7 @@ internal class ImeBoundaryTest {
             if (!reached.add(type)) return
             assertFalse(forbidden.containsMatchIn(type.simpleName), type.simpleName)
             providers[type]?.let { provider ->
-                validateGraphSource(providerBodies.getValue(provider.name))
+                validateGraphSource(providerBodies.getValue(provider.name), visited = validatedSources, resolutionSource = module)
                 provider.parameterTypes.forEach(::visit)
             }
             type.declaredConstructors.filter { it.getAnnotation(Inject::class.java) != null }
@@ -98,7 +119,7 @@ internal class ImeBoundaryTest {
             type.superclass?.let(::visit)
             type.interfaces.forEach(::visit)
             if (!type.name.startsWith("ch.lkmc.monkeyspaw.")) return
-            classSources[type.name.substringBefore('$')]?.forEach(::validateGraphSource)
+            classSources[type.name.substringBefore('$')]?.forEach { validateGraphSource(it, visited = validatedSources) }
             type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .forEach { visit(it.type) }
         }
@@ -115,6 +136,94 @@ internal class ImeBoundaryTest {
         }
     }
 
+    @Test fun `privacy source guard rejects indirect sync scheduling stdout and initial target reads`() {
+        for (code in listOf("SyncScheduler()", "AndroidSyncTlsTrust()", "PlatformInitializer()", "ProfileInstallerInitializer()",
+            "ForegroundProfileInstaller(context)", "AppInitializer.getInstance(context)", "JobScheduler()", "AlarmManager()",
+            "println(privateValue)", "System.err.write(privateBytes)", "getInitialTextBeforeCursor(1, 0)",
+            "getInitialTextAfterCursor(1, 0)", "getInitialSelectedText(0)", "takeSnapshot()")) {
+            assertFailsWith<AssertionError>(code) { validateGraphSource(code) }
+        }
+    }
+
+    @Test fun `source guard follows top-level helper calls and callback references transitively`() {
+        val helpers = mapOf("warmLocalIndex" to listOf("fun warmLocalIndex() = onReady(::notifyReady)"),
+            "notifyReady" to listOf("fun notifyReady() = Logger.getLogger(\"private\")"))
+        for (source in listOf("warmLocalIndex()", "launch(::warmLocalIndex)")) {
+            assertFailsWith<AssertionError> { validateGraphSource(source, helpers) }
+        }
+        validateGraphSource("unrelatedLocalCall()", helpers)
+        val qualified = mapOf("other.prepare" to listOf("fun prepare() = Logger.getLogger(\"private\")"))
+        validateGraphSource("package local\nfun work() = prepare()", qualified)
+        assertFailsWith<AssertionError> {
+            validateGraphSource("package local\nimport other.prepare as ready\nfun work() = ready()", qualified)
+        }
+    }
+
+    @Test fun `source guard follows constructed helpers and object members transitively`() {
+        for (declaration in listOf("class Helper", "object Helper", "interface Helper", "fun interface Helper",
+            "value class Helper(val value: Int)", "enum class Helper")) {
+            val helpers = indexSources(sequenceOf("package other\n$declaration { fun run() = nested() }",
+                "package other\nfun nested() = OkHttpClient()"))
+            assertTrue("other.Helper" in helpers, declaration)
+            for (call in listOf("Helper()", "Helper.run()", "launch(::Helper)")) {
+                assertFailsWith<AssertionError>("$declaration: $call") {
+                    validateGraphSource("package local\nimport other.Helper\nfun work() = $call", helpers)
+                }
+            }
+        }
+    }
+
+    @Test fun `source guard indexes annotated and additional function modifiers`() {
+        for (declaration in listOf("@PublishedApi internal inline fun prepare()", "actual fun prepare()",
+            "expect fun prepare()", "external fun prepare()", "infix fun Any.prepare(other: Any)")) {
+            val helpers = indexSources(sequenceOf("package other\n$declaration = SecretStore()"))
+            assertTrue("other.prepare" in helpers, declaration)
+            assertFailsWith<AssertionError>(declaration) {
+                validateGraphSource("package local\nimport other.prepare\nfun work() = prepare()", helpers)
+            }
+        }
+    }
+
+    @Test fun `explicit helper aliases take precedence over wildcard imports`() {
+        val helpers = mapOf("other.prepare" to listOf("fun prepare() = SyncScheduler()"))
+        for (source in listOf("package local\nimport other.*\nimport other.prepare as ready\nfun work() = ready()",
+            "package local\nimport other.*\nfun work() = prepare()")) {
+            assertFailsWith<AssertionError> { validateGraphSource(source, helpers) }
+        }
+    }
+
+    @Test fun `privacy source guard rejects subprocess escapes`() {
+        for (source in listOf("ProcessBuilder(commands).start()", "Runtime.getRuntime().exec(command)")) {
+            assertFailsWith<AssertionError>(source) { validateGraphSource(source) }
+        }
+    }
+
+    @Test fun `type traversal preserves local values while following their private helpers`() {
+        val helpers = indexSources(sequenceOf("package other\nclass Local\nclass Remote { fun run() = OkHttpClient() }"))
+        validateGraphSource("package local\nimport other.Local\nfun work() = Local()", helpers)
+        assertFailsWith<AssertionError> {
+            validateGraphSource("package local\nimport other.Remote\nfun work() = Remote()", helpers)
+        }
+        val indirect = indexSources(sequenceOf("package other\nclass Local { fun run() = prepare() }\n" +
+            "private fun prepare() = WorkManager.getInstance()"))
+        assertFailsWith<AssertionError> {
+            validateGraphSource("package local\nimport other.Local\nfun work() = Local()", indirect)
+        }
+        validateGraphSource("fun localValue() = \"<sync server URL>\"")
+        for (source in listOf("java.net.URL", "URL(address)", "URL::class", "::URL", "URL")) {
+            assertFailsWith<AssertionError>(source) { validateGraphSource(source) }
+        }
+    }
+
+    @Test fun `provider bodies resolve helper aliases without scanning unrelated module imports`() {
+        val context = "package local\nimport other.Helper as Ready\nimport other.SecretStore"
+        val helpers = indexSources(sequenceOf("package other\nclass Helper { fun run() = SyncScheduler() }"))
+        validateGraphSource("fun provide() = Unit", helpers, resolutionSource = context)
+        assertFailsWith<AssertionError> {
+            validateGraphSource("fun provide() = Ready()", helpers, resolutionSource = context)
+        }
+    }
+
     @Test fun `history token counters remain an immutable value with no assistant behavior`() {
         val source = core.resolve("ch/lkmc/monkeyspaw/core/domain/llm/AssistantTypes.kt").readText()
         // Pin the entire bodyless declaration before allowing its name in local history codecs.
@@ -126,6 +235,10 @@ internal class ImeBoundaryTest {
         val application = app.resolve("MonkeysPawApplication.kt").readText()
         validateLocal(application)
         assertTrue(application.contains("scope.launch { library.refresh() }"))
+        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope"),
+            Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
+        val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }").trim()
+        assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
         val service = app.resolve("ime/MonkeysPawImeService.kt").readText()
         validateLocal(service)
         assertTrue(service.contains("onEvaluateFullscreenMode(): Boolean = false"))
@@ -174,9 +287,30 @@ internal class ImeBoundaryTest {
         assertFalse(forbidden.containsMatchIn(source), forbidden.find(source)?.value)
     }
 
-    private fun validateGraphSource(source: String) {
-        validateLocal(source)
-        assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(source), "Application scope")
+    private fun validateGraphSource(source: String, helpers: Map<String, List<String>> = helperSources,
+        visited: MutableSet<String> = mutableSetOf(), resolutionSource: String = source) {
+        val callPatterns = mutableMapOf<String, Regex>()
+        fun visit(current: String, context: String = current) {
+            if (!visited.add(current)) return
+            validateLocal(current)
+            assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(current), "Application scope")
+            val pkg = Regex("(?m)^package (\\S+)").find(context)?.groupValues?.get(1)
+            val imports = Regex("(?m)^import ([\\w.*]+)(?: as (\\w+))?").findAll(context).toList()
+            for ((qualified, definitions) in helpers) {
+                val name = qualified.substringAfterLast('.')
+                val namespace = qualified.substringBeforeLast('.', "")
+                val imported = imports.firstOrNull { it.groupValues[1] == qualified }
+                    ?: imports.firstOrNull { it.groupValues[1] == "$namespace.*" }
+                val visible = namespace.isEmpty() || namespace == pkg || imported != null
+                val alias = imported?.groupValues?.get(2)?.ifEmpty { null } ?: name
+                val call = if (visible) Regex.escape(alias) else Regex.escape(qualified)
+                val pattern = callPatterns.getOrPut(call) { Regex("\\b$call\\s*(?:\\(|\\.)|::\\s*$call\\b") }
+                if (pattern.containsMatchIn(current)) {
+                    definitions.forEach { visit(it) }
+                }
+            }
+        }
+        visit(source, resolutionSource)
     }
 
     private fun xml(path: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
