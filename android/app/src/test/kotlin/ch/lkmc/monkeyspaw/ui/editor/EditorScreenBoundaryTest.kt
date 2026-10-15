@@ -32,7 +32,7 @@ internal class EditorScreenBoundaryTest {
         assertTrue(screen.contains("EditorSourceField(state.source, state.relativePath, state.quoteSelection, state.canEdit, onEdit, onClearQuote)"))
         val field = packageRoot.resolve("ui/editor/EditorSourceField.kt").readText()
         assertTrue(field.contains("readOnly = !editable"))
-        assertTrue(field.contains("TextRange(it.start, it.endExclusive)"))
+        assertTrue(field.contains("editorSourceValue(field, source, quote)"))
         assertTrue(screen.contains("selected.canRestore && state.canCommand"))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("editor.onSelectionChanged = library::selectFromEditor"))

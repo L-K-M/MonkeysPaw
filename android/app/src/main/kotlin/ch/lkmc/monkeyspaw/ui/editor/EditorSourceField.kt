@@ -19,13 +19,17 @@ internal fun EditorSourceField(source: String, path: String?, quote: ReviewQuote
     var field by remember(path) { mutableStateOf(TextFieldValue(source)) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(quote) { if (quote != null) focus.requestFocus() }
-    val selection = quote?.let { TextRange(it.start, it.endExclusive) }
-        ?: if (field.text == source) field.selection else TextRange.Zero
-    OutlinedTextField(value = field.copy(text = source, selection = selection),
+    OutlinedTextField(value = editorSourceValue(field, source, quote),
         onValueChange = { value ->
             field = value
             onClearQuote()
             onEdit(value.text)
         }, readOnly = !editable, label = { Text(stringResource(R.string.editor_source)) }, minLines = 12,
         modifier = Modifier.fillMaxWidth().focusRequester(focus))
+}
+
+internal fun editorSourceValue(field: TextFieldValue, source: String, quote: ReviewQuoteSelection?): TextFieldValue {
+    val selection = quote?.let { TextRange(it.start, it.endExclusive) }
+        ?: if (field.text == source) field.selection else TextRange.Zero
+    return if (field.text == source) field.copy(selection = selection) else TextFieldValue(source, selection)
 }
