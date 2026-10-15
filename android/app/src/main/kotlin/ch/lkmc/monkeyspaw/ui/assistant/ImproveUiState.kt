@@ -24,6 +24,6 @@ internal data class ImproveUiState(
     val isWorking: Boolean get() = assistant?.phase == AssistantPhase.WORKING
     val isAccepting: Boolean get() = assistant?.isAccepting == true
     val isPrivateCopy: Boolean get() = assistant?.mutationAccess == AssistantMutationAccess.PRIVATE_COPY
-    val canEdit: Boolean get() = isOpen && !loading && !isWorking && !isAccepting
+    val canEdit: Boolean get() = isOpen && !loading && assistant != null && !isWorking && !isAccepting
     override fun toString(): String = "<assistant improve state redacted>"
 }
