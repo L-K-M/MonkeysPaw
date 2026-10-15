@@ -268,8 +268,13 @@ final class SyncApplyJournal {
             if result == .committed { permit?.remember(receipts) }
             return result
         } else {
-            if let permit = mutations.pendingPermit { try settleRemovedJournal(permit) }
-            else if mutations.hasUnreadableJournal {
+            if let permit = mutations.pendingPermit {
+                do { try settleRemovedJournal(permit) }
+                catch {
+                    mutations.blockForRecovery()
+                    throw error
+                }
+            } else if mutations.hasUnreadableJournal {
                 try SyncDurability.flushParents(of: "sync/apply.json", operations: operations)
                 mutations.finishEmptyRecovery()
             }

@@ -85,6 +85,10 @@ class SyncAccountStore(files: StateStore, operations: SyncFileFlushing) {
     /** Ownership reads ignore connection health; account reads/edits and ownership edits require both. */
     internal fun binding(root: SyncLibraryRoot): SyncLibraryBinding? = ownership.load()?.firstOrNull { it.root == root }
 
+    /** Journal replay validates the intended ownership before reestablishing uncertain durability. */
+    internal fun recoverBinding(root: SyncLibraryRoot, validate: (SyncLibraryBinding?) -> Unit) =
+        ownership.recover { libraries -> validate(libraries?.firstOrNull { it.root == root }) }
+
     internal fun updateBinding(root: SyncLibraryRoot, change: (SyncLibraryBinding?) -> SyncLibraryBinding) {
         connection.load()
         ownership.update { current ->

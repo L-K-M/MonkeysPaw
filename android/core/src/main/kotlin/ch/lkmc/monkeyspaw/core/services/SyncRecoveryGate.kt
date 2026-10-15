@@ -8,7 +8,8 @@ import kotlin.concurrent.withLock
 
 /** Library admission takes its lock first; keyed writers check under their own store lock. */
 internal class SyncRecoveryGate {
-    data class Permit(val id: UUID, val nextState: SyncState)
+    enum class CommitEvidence { UNCOMMITTED, STATE_DURABLE }
+    data class Permit(val id: UUID, val nextState: SyncState, val commit: CommitEvidence = CommitEvidence.UNCOMMITTED)
     private val lock = ReentrantLock()
     private var owner: Permit? = null
     private var recoveryBlocked = false
@@ -19,7 +20,12 @@ internal class SyncRecoveryGate {
 
     fun begin(id: UUID, nextState: SyncState) = lock.withLock {
         if (recoveryBlocked || owner?.id?.let { it != id } == true) throw LibraryError.RecoveryRequired
-        owner = Permit(id, nextState)
+        owner = owner?.takeIf { it.id == id && it.nextState == nextState } ?: Permit(id, nextState)
+    }
+
+    fun stateCommitted(id: UUID) = lock.withLock {
+        if (recoveryBlocked || owner?.id != id) throw LibraryError.RecoveryRequired
+        owner = owner?.copy(commit = CommitEvidence.STATE_DURABLE)
     }
 
     fun finish(id: UUID) = lock.withLock {
@@ -33,7 +39,7 @@ internal class SyncRecoveryGate {
 
     /** Only serialized replay may adopt a validated on-disk intent and clear the read-failure latch. */
     fun resume(id: UUID, nextState: SyncState) = lock.withLock {
-        owner = Permit(id, nextState)
+        owner = owner?.takeIf { it.id == id && it.nextState == nextState } ?: Permit(id, nextState)
         recoveryBlocked = false
     }
 
