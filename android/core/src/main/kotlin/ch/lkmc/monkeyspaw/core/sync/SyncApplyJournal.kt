@@ -78,7 +78,11 @@ internal class SyncApplyJournal(
             if (binding != null && mutations.pendingPermit?.nextState?.binding?.let { it != binding } == true) {
                 throw SyncError.BindingMismatch
             }
-            settleEmptyJournal()
+            try { settleEmptyJournal() }
+            catch (error: Exception) {
+                mutations.blockForRecovery()
+                throw safe(error)
+            }
             return@withLock SyncApplyOutcome.Committed
         }
         mutations.resume(record.id, record.nextState)

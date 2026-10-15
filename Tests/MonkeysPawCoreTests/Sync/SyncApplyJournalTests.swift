@@ -327,6 +327,45 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertNoThrow(try rig.library.entries())
     }
 
+    func testFailedStateReflushOnLiveReplayCannotReleaseTheRecoveryGate() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.dataOperations.onOperation = { operation in
+            if (try? rig.data.stamp(at: "sync/apply.json")) == nil, operation == "directory:sync" {
+                rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+            }
+        }
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+        }
+        XCTAssertNil(try rig.data.stamp(at: "sync/apply.json"))
+        rig.dataOperations.failOperationNumber = nil
+        rig.dataOperations.onOperation = { operation in
+            if operation == "file:sync/state.json" {
+                rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+            }
+        }
+
+        XCTAssertThrowsError(try rig.journal.replay()) {
+            XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+        }
+        XCTAssertThrowsError(try rig.mutations.begin(plan.id, nextState: plan.nextState)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.mutations.finish(plan.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, plan.id)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertThrowsError(try rig.values.removeAll()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+
+        rig.dataOperations.onOperation = nil
+        rig.dataOperations.failOperationNumber = nil
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+        XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+        XCTAssertNoThrow(try rig.library.entries())
+    }
+
     func testMissingPreparationIntentCannotInferCommitFromAnUnchangedState() throws {
         let rig = try SyncApplyTestRig()
         let state = try SyncState(binding: rig.binding, databaseID: SyncTestValues.uuid,

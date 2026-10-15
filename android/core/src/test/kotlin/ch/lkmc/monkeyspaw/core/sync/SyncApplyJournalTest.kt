@@ -181,6 +181,36 @@ class SyncApplyJournalTest {
         assertCopies(h, plan)
     }
 
+    @Test fun failedStateReflushOnLiveReplayCannotReleaseTheRecoveryGate() {
+        val h = SyncJournalHarness()
+        val plan = h.preparedCopy()
+        h.dataOperations.onOperation = { name ->
+            if (h.local.state.stamp("sync/apply.json") == null && name == "directory:sync") {
+                h.dataOperations.failAt = h.dataOperations.calls.size
+            }
+        }
+        assertFailsWith<SyncError.DurabilityUncertain> { h.journal.apply(plan) }
+        assertNull(h.local.state.stamp("sync/apply.json"))
+        h.dataOperations.failAt = null
+        h.dataOperations.onOperation = { name ->
+            if (name == "file:sync/state.json") h.dataOperations.failAt = h.dataOperations.calls.size
+        }
+
+        assertFailsWith<SyncError.DurabilityUncertain> { h.journal.replay() }
+        assertFailsWith<LibraryError.RecoveryRequired> { h.mutations.begin(plan.id, plan.nextState) }
+        h.mutations.finish(plan.id)
+        assertEquals(plan.id, h.mutations.pendingPermit?.id)
+        assertFailsWith<LibraryError.RecoveryRequired> { h.local.library.entries() }
+        assertFailsWith<LibraryError.RecoveryRequired> { h.local.values.removeAll() }
+
+        h.dataOperations.onOperation = null
+        h.dataOperations.failAt = null
+        assertEquals(SyncApplyOutcome.Committed, h.journal.replay())
+        assertEquals(SyncApplyOutcome.Committed, h.journal.replay())
+        assertCopies(h, plan)
+        h.local.library.entries()
+    }
+
     @Test fun missingPreparationIntentCannotInferCommitFromAnUnchangedState() {
         val h = SyncJournalHarness()
         val edit = h.replacement()
