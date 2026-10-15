@@ -137,8 +137,12 @@ final class MacSyncCompositionTests: XCTestCase {
         XCTAssertTrue(spin { presentation.snapshot.selectedPrompt?.favorite == true })
         XCTAssertEqual(try files.read(at: "Groups/Team/group.md"), before)
         transport.role = .editor
-        delegate.syncComposition?.sync.syncNow()
-        XCTAssertTrue(spin { editor.state.readOnlyReason == nil })
+        // A pass already running for the favourite can absorb one request;
+        // ask again until a pass observes the new role.
+        XCTAssertTrue(spin {
+            if editor.state.readOnlyReason != nil { self.delegate.syncComposition?.sync.syncNow() }
+            return editor.state.readOnlyReason == nil
+        })
         XCTAssertEqual(editor.assistantAccess, .group(.editor))
         XCTAssertTrue(editor.state.canEdit)
     }
