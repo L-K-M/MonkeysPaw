@@ -20,6 +20,7 @@ final class LinuxLibraryWindow {
     private var conflictProvider: () -> ConflictModel? = { nil }
     private weak var conflictModel: ConflictModel?
     private let conflictView = LinuxConflictView()
+    private let syncStatusView = LinuxSyncStatusView(surface: .library)
     private var assistantMessage: String?
     private var assistantMessagePrompt: LibraryPromptSelection?
     private var assistantMessageStamp: FileStamp?
@@ -79,6 +80,8 @@ final class LinuxLibraryWindow {
          imports: ImportBinding? = nil,
          assistant: @escaping () -> AssistantModel? = { nil },
          conflict: @escaping () -> ConflictModel? = { nil },
+         syncStatus: SyncStatusModel? = nil,
+         syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in },
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
@@ -107,8 +110,11 @@ final class LinuxLibraryWindow {
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed else { return }
-            if self.isVisible { self.render() }
-            else { self.commands.cancelDialog(); self.assistantPanel.close(); self.conflictView.close() }
+            if self.isVisible { self.syncStatusView.show(); self.render() }
+            else {
+                self.syncStatusView.suspend()
+                self.commands.cancelDialog(); self.assistantPanel.close(); self.conflictView.close()
+            }
         }
         GTK.observeKeys(window) { [weak self] key, modifiers in
             self?.keyPressed(key, modifiers: modifiers) ?? false
@@ -138,6 +144,7 @@ final class LinuxLibraryWindow {
         gtk_widget_set_name(reveal, "library-open-folder")
         for widget in [filter, favorite, reveal] { gtk_box_append(mp_box(toolbar), widget) }
         gtk_box_append(mp_box(content), toolbar)
+        gtk_box_append(mp_box(content), syncStatusView.widget)
         if let imports {
             let view = LinuxLibraryImportView(parent: window, list: list, chooser: imports.chooser)
             importView = view
@@ -177,20 +184,29 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(content), status)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.libraryHint))
         gtk_window_set_child(mp_window(window), content)
-        rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant, conflict: conflict)
+        rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant, conflict: conflict,
+               syncStatus: syncStatus, syncNavigation: syncNavigation)
     }
 
     deinit { unbind() }
 
     func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState? = nil,
                 assistant: @escaping () -> AssistantModel? = { nil },
-                conflict: @escaping () -> ConflictModel? = { nil }) {
+                conflict: @escaping () -> ConflictModel? = { nil },
+                syncStatus: SyncStatusModel? = nil,
+                syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in }) {
         guard !isDestroyed else { return }
         precondition((importView == nil) == (imports == nil),
                      "Import-enabled windows require the current graph's import state")
         unbind()
         self.browser = browser
         self.editor = editor
+        syncStatusView.bind(syncStatus, navigate: { [weak self] action in
+            guard let self, self.isVisible else { return }
+            if action == .conflicts { self.showSyncConflicts() }
+            else { syncNavigation(action) }
+        }, openFile: { [weak self] path in self?.openSyncErrorFile(path) })
+        if isVisible { syncStatusView.show() }
         assistantProvider = assistant
         conflictProvider = conflict
         conflictView.onChange = { [weak self] in self?.render() }
@@ -259,6 +275,7 @@ final class LinuxLibraryWindow {
 
     func show() {
         guard !isDestroyed else { return }
+        syncStatusView.show()
         render()
         gtk_window_present(mp_window(window))
         if editor?.state.prompt == nil, let selection = browser?.selection { selectPrompt(selection) }
@@ -275,6 +292,7 @@ final class LinuxLibraryWindow {
     }
 
     private func unbind() {
+        syncStatusView.retire(isDestroyed ? .destroyed : .rebind)
         assistantPanel.retire(destroyed: isDestroyed)
         conflictView.unbind(isDestroyed ? .destroyed : .rebind)
         conflictProvider = { nil }
@@ -299,6 +317,25 @@ final class LinuxLibraryWindow {
         gtk_notebook_set_current_page(mp_notebook(tabs), 0)
         if !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
         selectPrompt(selection)
+    }
+
+    func showSyncConflicts() {
+        guard !isDestroyed, let browser else { return }
+        browser.setFilter("")
+        browser.selectSection(.conflicts)
+    }
+
+    private func openSyncErrorFile(_ path: RelativePath) {
+        guard isVisible, let browser else { return }
+        browser.setFilter("")
+        browser.selectSection(.all)
+        guard let row = browser.rows.first(where: { $0.relativePath == path }) else {
+            message = LinuxStrings.promptFileUnavailable
+            messageSelection = browser.selection
+            render()
+            return
+        }
+        openPrompt(row.selection)
     }
 
     func setLibraryAvailable(_ available: Bool) {

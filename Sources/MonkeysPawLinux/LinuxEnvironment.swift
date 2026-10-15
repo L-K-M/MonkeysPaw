@@ -281,7 +281,7 @@ final class LinuxEnvironment {
     var assistantModel: AssistantModel? { libraryGraph.assistant }
     // Native Y21/Y24/Y26/Y28/Y33 views consume these shared models.
     var accountModel: AccountModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.account }
-    var syncStatusModel: SyncStatusModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.status }
+    var syncStatusModel: SyncStatusModel? { libraryGraph.sync?.status }
     var inviteModel: InviteModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.invite }
     var groupManagementModel: GroupManagementModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.groups }
     var conflictModel: ConflictModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.conflict }
@@ -724,7 +724,7 @@ final class LinuxEnvironment {
             + " recovery=\(libraryStatusModel.needsLibraryFolderStep)")
     }
 
-    func showSettings() {
+    func showSettings(page: LinuxSettingsWindow.Page = .current) {
         LinuxPickerTrace.record("settings.request", "state=\(LinuxPickerTrace.pickerState(currentLibraryGraph?.picker.state))")
         guard pickerModel.state != .delivering else { return }
         onboardingRequestRevision += 1
@@ -766,7 +766,7 @@ final class LinuxEnvironment {
                         return self.accountModel
                     })
             }
-            self.currentSettingsWindow?.show()
+            self.currentSettingsWindow?.show(page: page)
         }
     }
 
@@ -800,7 +800,12 @@ final class LinuxEnvironment {
                 browser: libraryBrowserModel, editor: editorModel,
                 imports: .init(state: libraryImportState, chooser: importChooser),
                 assistant: { [weak graph] in graph?.assistant },
-                conflict: { [weak graph] in graph?.sync?.conflict }, openFolder: { [weak self] in
+                conflict: { [weak graph] in graph?.sync?.conflict },
+                syncStatus: graph.sync?.status,
+                syncNavigation: { [weak self, weak graph] action in
+                    guard let graph else { return }
+                    self?.navigateSyncStatus(action, in: graph)
+                }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
@@ -808,6 +813,21 @@ final class LinuxEnvironment {
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         libraryImportState.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         currentLibraryWindow?.show()
+    }
+
+    private func navigateSyncStatus(_ action: SyncStatusAction, in graph: LibraryGraph) {
+        guard !isShutDown, graph.callbacks.isActive, currentLibraryGraph === graph,
+              graph.sync?.retired == false else { return }
+        switch action {
+        case .account: showSettings(page: .account)
+        case .conflicts, .errors:
+            showLibrary()
+            graph.callbacks.run { [weak self, weak graph] in
+                guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return }
+                if action == .conflicts { self.currentLibraryWindow?.showSyncConflicts() }
+            }
+        case .syncNow, .none: break // The status view forwards Sync now to its model.
+        }
     }
 
     /// The tray and GApplication action share this guarded quit path. A queued
@@ -1054,6 +1074,9 @@ final class LinuxEnvironment {
             }, openSettings: { [weak self, weak callbacks] in
                 guard callbacks?.isActive == true else { return }
                 self?.showSettings()
+            }, syncStatus: sync?.status, syncNavigation: { [weak self, weak graph] action in
+                guard let graph else { return }
+                self?.navigateSyncStatus(action, in: graph)
             }, requestedIntent: { [weak self, weak graph] intent in
                 guard let graph, graph.callbacks.isActive else { return }
                 self?.handle(intent, in: graph)
@@ -1080,7 +1103,10 @@ final class LinuxEnvironment {
                 scheduler: timer, mainThread: mainThread, clock: clock, entropy: SystemEntropy())
             let account = try SyncAccountService(sync: service, accounts: accounts, secrets: secretStore,
                 transport: suppliedSyncTransport ?? assistantTransport, libraryRoot: directory.path)
-            return SyncGraph(service: service, accounts: accounts, accountService: account, access: access, scheduler: timer)
+            let graph = SyncGraph(service: service, accounts: accounts, accountService: account, access: access, scheduler: timer)
+            // Status observes reports without starting Account's asynchronous load.
+            graph.status = SyncStatusModel(sync: service, mainThread: mainThread)
+            return graph
         } catch {
             timer.retire()
             log.write(.warning, "Sync unavailable; local recovery is required")
@@ -1091,7 +1117,6 @@ final class LinuxEnvironment {
     private func prepareSyncModels(in graph: LibraryGraph) {
         guard let sync = graph.sync, !sync.retired, sync.account == nil else { return }
         sync.account = AccountModel(account: sync.accountService, mainThread: mainThread)
-        sync.status = SyncStatusModel(sync: sync.service, mainThread: mainThread)
         sync.invite = InviteModel(service: SyncInviteService(account: sync.accountService, clipboard: clipboard), mainThread: mainThread)
         sync.groups = GroupManagementModel(service: SyncGroupService(account: sync.accountService, clipboard: clipboard), mainThread: mainThread)
         sync.conflict = ConflictModel(service: ConflictResolutionService(sync: sync.service), mainThread: mainThread)
@@ -1228,7 +1253,11 @@ final class LinuxEnvironment {
         if resumeSync { startSync(in: graph) }
         currentSettingsWindow?.rebindAccount()
         currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
-            assistant: { [weak graph] in graph?.assistant }, conflict: { [weak graph] in graph?.sync?.conflict })
+            assistant: { [weak graph] in graph?.assistant }, conflict: { [weak graph] in graph?.sync?.conflict },
+            syncStatus: graph.sync?.status, syncNavigation: { [weak self, weak graph] action in
+                guard let graph else { return }
+                self?.navigateSyncStatus(action, in: graph)
+            })
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
