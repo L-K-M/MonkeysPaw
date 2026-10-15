@@ -284,10 +284,43 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertNil(old.state.preview)
     }
 
+    func testLocalLibraryReplacementDoesNotStartSyncModelWorkBeforeQuit() throws {
+        compose()
+        environment.showLibrary()
+        XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.library) != nil })
+        let replacement = tools.directory.appendingPathComponent("local-replacement")
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: replacement), .switched)
+        var approved = false
+        environment.requestQuit { approved = true }
+        XCTAssertTrue(approved, "A local-only Library rebind must not construct a loading AccountModel")
+        XCTAssertFalse(environment.syncService?.report.enabled == true)
+    }
+
+    func testLibraryOpenedBeforeSignInBindsTheLaterConflictModel() throws {
+        compose()
+        environment.showLibrary()
+        XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.library) != nil })
+        let localWindow = try XCTUnwrap(nativeWindow(LinuxStrings.library))
+        try signInAndSelectCopy()
+        XCTAssertEqual(window, localWindow)
+        XCTAssertTrue(try sensitive("conflict-keep-both"))
+        try click("conflict-keep-both")
+        try resolved(.keepBoth)
+    }
+
     private func open() throws {
+        compose()
+        try signInAndSelectCopy()
+    }
+
+    private func compose() {
         environment = LinuxEnvironment(application: application, environment: tools.environment,
             scheduler: ConflictViewIdleTimer(), syncTransport: transport)
         _ = environment.libraryStatusModel
+    }
+
+    private func signInAndSelectCopy() throws {
         let account = try XCTUnwrap(environment.accountModel)
         XCTAssertTrue(GTKTestSupport.spin { !account.state.isBusy })
         var password = "test-password"

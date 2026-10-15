@@ -17,6 +17,7 @@ final class LinuxLibraryWindow {
     private weak var editor: EditorModel?
     private var assistantProvider: () -> AssistantModel? = { nil }
     private let assistantPanel = LinuxAssistantPanel()
+    private var conflictProvider: () -> ConflictModel? = { nil }
     private weak var conflictModel: ConflictModel?
     private let conflictView = LinuxConflictView()
     private var assistantMessage: String?
@@ -77,7 +78,7 @@ final class LinuxLibraryWindow {
     init(application: UnsafeMutablePointer<GtkApplication>, browser: LibraryBrowserModel, editor: EditorModel,
          imports: ImportBinding? = nil,
          assistant: @escaping () -> AssistantModel? = { nil },
-         conflict: ConflictModel? = nil,
+         conflict: @escaping () -> ConflictModel? = { nil },
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
@@ -182,7 +183,8 @@ final class LinuxLibraryWindow {
     deinit { unbind() }
 
     func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState? = nil,
-                assistant: @escaping () -> AssistantModel? = { nil }, conflict: ConflictModel? = nil) {
+                assistant: @escaping () -> AssistantModel? = { nil },
+                conflict: @escaping () -> ConflictModel? = { nil }) {
         guard !isDestroyed else { return }
         precondition((importView == nil) == (imports == nil),
                      "Import-enabled windows require the current graph's import state")
@@ -190,7 +192,7 @@ final class LinuxLibraryWindow {
         self.browser = browser
         self.editor = editor
         assistantProvider = assistant
-        conflictModel = conflict
+        conflictProvider = conflict
         conflictView.onChange = { [weak self] in self?.render() }
         conflictView.onResolve = { [weak self] action in self?.resolveConflict(action) }
         assistantMessage = nil
@@ -275,6 +277,7 @@ final class LinuxLibraryWindow {
     private func unbind() {
         assistantPanel.retire(destroyed: isDestroyed)
         conflictView.unbind(isDestroyed ? .destroyed : .rebind)
+        conflictProvider = { nil }
         conflictModel = nil
         assistantProvider = { nil }
         endDialog()
@@ -463,6 +466,7 @@ final class LinuxLibraryWindow {
         let row = browser?.state.selectedPrompt
         let conflictSelection = row?.conflictOrigin != nil && row?.selection == state.prompt && state.stamp != nil
             && isVisible ? state.prompt : nil
+        if conflictSelection != nil { conflictModel = conflictProvider() }
         conflictView.bind(model: conflictModel, selection: conflictSelection, stamp: state.stamp,
             available: available && !busy && state.pendingDecision == nil && state.queuedActions.isEmpty)
         let editorAvailable = available && !conflictView.isResolving
