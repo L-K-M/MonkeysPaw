@@ -78,17 +78,18 @@ internal class EditorViewModel @Inject constructor(
                     state.value.status == EditorStatus.LOADING || state.value.isNew) return@collect
                 val path = state.value.relativePath ?: return@collect
                 val stamp = baseline?.entry?.stamp ?: return@collect
+                val identity = state.value.selection?.identity
                 var current = library.snapshot.prompts.firstOrNull { it.entry.relativePath == path }?.entry
-                if (current == null) {
-                    val identity = state.value.selection?.identity
-                    current = library.snapshot.prompts.filter { it.entry.identity == identity }.singleOrNull()?.entry
-                    if (current != null) {
+                if (current?.identity != identity) {
+                    val moved = library.snapshot.prompts.filter { it.entry.identity == identity }.singleOrNull()?.entry
+                    if (moved != null) {
+                        current = moved
                         currentState = state.value.copy(relativePath = current.relativePath, selection = selection(current))
                         onSelectionChanged?.invoke(selection(current))
                         updateAccess(repository.accessSnapshot)
                     }
                 }
-                if (current?.stamp != stamp) refresh()
+                if (current?.stamp != stamp || current.relativePath != path) refresh()
             }
         }
     }
@@ -706,6 +707,7 @@ internal class EditorViewModel @Inject constructor(
                 if (purpose == LoadPurpose.REPLACE || purpose == LoadPurpose.RECONCILE && !state.value.dirty && state.value.conflict == null) {
                     // Own-commit reconciliation must not erase a committed maintenance warning.
                     if (purpose != LoadPurpose.REPLACE && loaded.entry.stamp == state.value.stamp) {
+                        baseline = Baseline(loaded.entry, loaded.source, loaded.readOnlyReason, checkNotNull(observed.projection))
                         currentState = state.value.copy(failure = null, saveIssues = emptyList())
                         return
                     }

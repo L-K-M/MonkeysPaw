@@ -307,6 +307,26 @@ internal class GroupLibraryUiTest : TemporaryFiles() {
         assertFalse(Files.exists(libraryDir.resolve(groupPath)))
     }
 
+    @Test fun `remote rename follows original identity when another prompt takes the old path`() = runTest {
+        val r = Rig()
+        r.open(); runCurrent()
+        r.editor.edit(original + "Mine")
+        val movedPath = "Groups/Team/renamed.md"
+        Files.move(libraryDir.resolve(groupPath), libraryDir.resolve(movedPath))
+        val replacementID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        val replacement = "---\nid: '$replacementID'\n---\nOther prompt"
+        put(libraryDir.resolve(groupPath), replacement.encodeToByteArray())
+        r.states.update(r.binding) { it.copy(prompts = it.prompts + (r.identity to it.prompts.getValue(r.identity).copy(path = "renamed.md"))) }
+        r.repository.refresh(); runCurrent()
+        assertEquals(movedPath, r.editor.state.value.relativePath)
+        assertEquals(movedPath, r.browser.state.value.selectedPrompt?.selection?.relativePath)
+        assertEquals(original + "Mine", r.editor.state.value.source)
+        assertNull(r.editor.state.value.conflict)
+        r.editor.save(); runCurrent()
+        assertEquals("Original\r\nMine", r.library.load(movedPath).document.body)
+        assertContentEquals(replacement.encodeToByteArray(), r.bytes())
+    }
+
     @Test fun `chooser guards source destination and occupied paths while preserving drafts`() = runTest {
         val r = Rig()
         r.open(); runCurrent()
