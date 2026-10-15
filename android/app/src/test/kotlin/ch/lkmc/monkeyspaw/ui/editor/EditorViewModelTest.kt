@@ -1,19 +1,24 @@
 package ch.lkmc.monkeyspaw.ui.editor
 
 import androidx.lifecycle.ViewModelStore
+import androidx.datastore.core.DataStore
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.llm.*
+import ch.lkmc.monkeyspaw.core.llm.AssistantClient
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.data.*
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.*
 import java.nio.file.Files
 import java.time.Instant
 import java.time.ZoneId
+import java.util.UUID
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.*
 
@@ -1119,6 +1124,235 @@ internal class EditorViewModelTest : TemporaryFiles() {
         bytesAre(committed, "a.md")
         assertEquals(1, writes)
         assertTrue(model.state.value.queuedActions.isEmpty())
+    }
+
+    @Test
+    fun `assistant load notifications expose available only after checked bytes apply`() = runTest {
+        put(libraryDir.resolve("a.md"), "Original".encodeToByteArray())
+        val model = model()
+        val notifications = mutableListOf<AssistantEditorSnapshot?>()
+        model.addAssistantContextObserver { notifications.add(model.assistantSnapshot) }
+        open(model)
+        runCurrent()
+        assertEquals(listOf("Original"), notifications.filter {
+            it?.availability == AssistantEditorAvailability.AVAILABLE
+        }.map { it?.source })
+
+        for (replace in listOf(true, false)) {
+            notifications.clear()
+            val source = if (replace) "Reloaded" else "Reconciled"
+            put(libraryDir.resolve("a.md"), source.encodeToByteArray())
+            if (replace) model.reload() else model.refresh()
+            runCurrent()
+            val available = notifications.filter { it?.availability == AssistantEditorAvailability.AVAILABLE }
+            assertEquals(listOf(source), available.map { it?.source })
+            assertEquals(model.state.value.stamp, available.single()?.stamp)
+        }
+    }
+
+    @Test
+    fun `assistant load completion leaves a newer reconciliation busy`() = runTest {
+        put(libraryDir.resolve("a.md"), "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal".encodeToByteArray())
+        val held = HeldDispatcher()
+        val model = model(io = held)
+        var reconciled = false
+        model.onSelectionChanged = {
+            if (!reconciled && model.state.value.stamp != null) {
+                reconciled = true
+                model.refresh()
+            }
+        }
+        open(model)
+        runCurrent()
+        held.release()
+        runCurrent()
+        assertTrue(reconciled)
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        held.releaseAll()
+        runCurrent()
+        assertEquals(AssistantEditorAvailability.AVAILABLE, model.assistantSnapshot?.availability)
+    }
+
+    @Test
+    fun `assistant captures raw immutable buffer revision stamp and loaded identity without rendered values`() = runTest {
+        val original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nDisk {{clipboard}}"
+        put(libraryDir.resolve("a.md"), original.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        val loaded = checkNotNull(model.assistantSnapshot)
+        val captured = mutableListOf<AssistantEditorSnapshot?>()
+        val observer = model.addAssistantContextObserver { captured.add(model.assistantSnapshot) }
+        model.edit("Unsaved {{topic}} and {{clipboard}}")
+        val first = checkNotNull(model.assistantSnapshot)
+        model.edit("Changed")
+        model.edit("Unsaved {{topic}} and {{clipboard}}")
+        val returned = checkNotNull(model.assistantSnapshot)
+        assertEquals("Unsaved {{topic}} and {{clipboard}}", first.source)
+        assertEquals(first.source, returned.source)
+        assertNotEquals(first.revision, returned.revision)
+        assertEquals(loaded.session, returned.session)
+        assertEquals(loaded.stamp, returned.stamp)
+        assertEquals(ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV"), returned.loadedID)
+        assertEquals(3, captured.size)
+        assertEquals(listOf(first.revision, first.revision + 1, returned.revision), captured.map { it?.revision })
+        val bytes = checkNotNull(first.sourceBytes)
+        bytes.fill(0)
+        assertEquals("Unsaved {{topic}} and {{clipboard}}", first.source)
+        assertContentEquals("Unsaved {{topic}} and {{clipboard}}".encodeToByteArray(), first.sourceBytes)
+        runCurrent()
+        assertFalse(model.state.value.preview.contains("{{clipboard}}"))
+        bytesAre(original.encodeToByteArray())
+        assertFalse(first.toString().contains("Unsaved"))
+        assertFalse(model.snapshot().toString().contains("Unsaved"))
+        assertFalse(model.state.value.toString().contains("Unsaved"))
+        model.removeAssistantContextObserver(observer)
+        model.edit("Observer removed")
+        assertEquals(3, captured.size)
+    }
+
+    @Test
+    fun `assistant snapshots expose loading queued pending saving reconciliation and conflict gates`() = runTest {
+        put(libraryDir.resolve("a.md"))
+        val held = HeldDispatcher()
+        val model = model(io = held)
+        open(model)
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        assertNull(model.assistantSnapshot?.source)
+        runCurrent()
+        held.release()
+        runCurrent()
+        assertEquals(AssistantEditorAvailability.AVAILABLE, model.assistantSnapshot?.availability)
+        model.edit("Unsaved")
+        model.close()
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        assertNotNull(model.state.value.pendingDecision)
+        model.rename("queued.md")
+        assertTrue(model.state.value.queuedActions.isNotEmpty())
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        decide(model, EditorDecision.CANCEL)
+        decide(model, EditorDecision.CANCEL)
+        assertEquals(AssistantEditorAvailability.AVAILABLE, model.assistantSnapshot?.availability)
+        model.save()
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        runCurrent()
+        held.releaseAll()
+        runCurrent()
+        held.releaseAll()
+        runCurrent()
+        assertEquals(AssistantEditorAvailability.AVAILABLE, model.assistantSnapshot?.availability)
+        model.refresh()
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        runCurrent()
+        held.releaseAll()
+        runCurrent()
+        assertEquals(AssistantEditorAvailability.AVAILABLE, model.assistantSnapshot?.availability)
+        model.edit("New dirty buffer")
+        put(libraryDir.resolve("a.md"), "External".encodeToByteArray())
+        model.refresh()
+        runCurrent()
+        held.releaseAll()
+        runCurrent()
+        assertEquals(AssistantEditorAvailability.CONFLICTED, model.assistantSnapshot?.availability)
+        model.resolveConflict(EditorConflictChoice.CANCEL)
+        assertEquals(AssistantEditorAvailability.CONFLICTED, model.assistantSnapshot?.availability)
+    }
+
+    @Test
+    fun `assistant source unavailable snapshots retain read only reasons and session retirement notifies synchronously`() = runTest {
+        val cases = listOf(
+            "---\nformat: 2\n---\nFuture".encodeToByteArray() to SourceReadOnlyReason.FUTURE_FORMAT,
+            byteArrayOf(0xc3.toByte(), 0x28) to SourceReadOnlyReason.INVALID_UTF8,
+            ByteArray(Limits.maxPromptBytes + 1) { 'a'.code.toByte() } to SourceReadOnlyReason.SOURCE_TOO_LARGE,
+        )
+        for ((index, pair) in cases.withIndex()) {
+            val (bytes, reason) = pair
+            val path = "readonly-$index.md"
+            put(libraryDir.resolve(path), bytes)
+            val model = model()
+            open(model, path)
+            runCurrent()
+            val captured = checkNotNull(model.assistantSnapshot)
+            assertEquals(reason, captured.readOnlyReason)
+            if (reason != SourceReadOnlyReason.FUTURE_FORMAT) assertNull(captured.source)
+            val notifications = mutableListOf<AssistantEditorSnapshot?>()
+            model.addAssistantContextObserver { notifications.add(model.assistantSnapshot) }
+            model.close()
+            assertNull(model.assistantSnapshot)
+            open(model, path)
+            runCurrent()
+            assertNotEquals(captured.session, model.assistantSnapshot?.session)
+            assertTrue(notifications.contains(null))
+            model.close()
+        }
+    }
+
+    @Test
+    fun `assistant service consumes live editor buffer and context notifications withdraw stale diff without writes`() = runTest {
+        val original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nDisk template"
+        put(libraryDir.resolve("a.md"), original.encodeToByteArray())
+        val editor = model()
+        open(editor)
+        runCurrent()
+        val requests = mutableListOf<AssistantRequest>()
+        val client = object : AssistantClient {
+            override suspend fun perform(request: AssistantRequest, connection: ProviderConnection): AssistantResponse = error("Missing deadline")
+            override suspend fun perform(request: AssistantRequest, connection: ProviderConnection, deadlineNanos: Long): AssistantResponse {
+                requests.add(request)
+                return AssistantResponse(AssistantOutput.Artifact(LlmArtifact("Improved", "", emptyList(), emptyList(), "Use {{topic}}", "Notes")))
+            }
+            override suspend fun listModels(connection: ProviderConnection): AssistantModelPage = error("Unexpected models")
+            override suspend fun listModels(connection: ProviderConnection, afterID: String?, deadlineNanos: Long): AssistantModelPage = error("Unexpected models")
+        }
+        val secrets = object : SecretStore {
+            override suspend fun read(account: SecretAccount, source: SecretReadSource): StoredSecret? = error("No credentials")
+            override suspend fun write(value: SecretValue, account: SecretAccount): SecretTier = error("No credentials")
+            override suspend fun delete(account: SecretAccount) = error("No credentials")
+        }
+        val settings = MutableStateFlow(AndroidSettings())
+        val dataStore = object : DataStore<AndroidSettings> {
+            override val data = settings
+            override suspend fun updateData(transform: suspend (AndroidSettings) -> AndroidSettings): AndroidSettings =
+                transform(settings.value).also { settings.value = it }
+        }
+        val providerState = AndroidStateStore(stateDir.toFile(), settings = AndroidSettingsStore(dataStore), isMainThread = { false })
+        val providers = ProviderSettingsService(ProviderSettingsStore(providerState), secrets, dispatcher)
+        providers.save(ProviderDraft(kind = ProviderKind.OPENAI_COMPATIBLE, modelID = "manual-model"))
+        val monotonic = MonotonicClock { testScheduler.currentTime * 1_000_000 }
+        val service = AssistantService(providers, client, client, dispatcher, clock, Entropy { ByteArray(it) }, monotonic, dispatcher)
+        val graph = UUID.randomUUID()
+        val assistant = AssistantSession(service, backgroundScope, {
+            AssistantContext(graph, service.selectedProfile, editor.assistantSnapshot)
+        }, monotonic)
+        val observer = editor.addAssistantContextObserver { assistant.contextChanged() }
+        try {
+            editor.edit("Unsaved {{topic}} and {{clipboard}}")
+            assistant.editInstruction("Clarify")
+            assistant.improve()
+            runCurrent()
+            val action = requests.single().action as AssistantAction.Improve
+            assertEquals("Unsaved {{topic}} and {{clipboard}}", action.source)
+            assertTrue(assistant.isCandidateCurrent)
+            assertEquals(editor.assistantSnapshot, assistant.state.value.candidate?.context?.editor)
+            val id = ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+            assertEquals(id, assistant.state.value.candidate?.content?.document?.frontMatter?.id)
+            editor.edit("Away")
+            editor.edit("Unsaved {{topic}} and {{clipboard}}")
+            assertNull(assistant.state.value.candidate)
+            assertTrue(assistant.state.value.isStale)
+            assistant.showDiff()
+            runCurrent()
+            assertTrue(assistant.isCandidateCurrent)
+            assertEquals(1, requests.size)
+            bytesAre(original.encodeToByteArray())
+            assertTrue(library().history.revisions(checkNotNull(editor.state.value.selection).identity).isEmpty())
+            assistant.reject()
+            assertEquals(AssistantPhase.IDLE, assistant.state.value.phase)
+            bytesAre(original.encodeToByteArray())
+        } finally {
+            editor.removeAssistantContextObserver(observer)
+            assistant.deactivate()
+        }
     }
 
     private class HeldDispatcher : CoroutineDispatcher() {
