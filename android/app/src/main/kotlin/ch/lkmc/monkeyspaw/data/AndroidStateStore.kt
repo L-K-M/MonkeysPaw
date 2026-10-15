@@ -12,11 +12,14 @@ import java.util.UUID
  * Callers and DataStore must not share a single-thread executor.
  * Moves across the two backends are rejected rather than pretending to be atomic.
  */
-internal class AndroidStateStore private constructor(private val files: StateStore,
-    private val settings: AndroidSettingsStore?, private val isMainThread: () -> Boolean) : StateStore by files {
+internal class AndroidStateStore private constructor(private val files: RootedFileStore,
+    private val settings: AndroidSettingsStore?, private val isMainThread: () -> Boolean, io: CheckedSyncIO) : StateStore by files {
     constructor(root: File, publication: AtomicPublication = AtomicPublication(), settings: AndroidSettingsStore? = null,
-        isMainThread: () -> Boolean = { Looper.myLooper() == Looper.getMainLooper() }) :
-        this(RootedFileStore(root, RootedFileStore.Scan.STATE, publication), settings, isMainThread)
+        isMainThread: () -> Boolean = { Looper.myLooper() == Looper.getMainLooper() },
+        io: CheckedSyncIO = AndroidCheckedSyncIO()) :
+        this(RootedFileStore(root, RootedFileStore.Scan.STATE, publication), settings, isMainThread, io)
+
+    val syncOperations: SyncFileOperations = AndroidSyncFileOperations(files, io)
 
     override fun read(path: String): ByteArray {
         val name = providerRecordPaths[path] ?: return files.read(path)

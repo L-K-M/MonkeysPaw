@@ -513,3 +513,35 @@ Also record these cases for each OS/keyboard pair:
 
 Selection/share/setup and final milestone closure are later slices. Preserve
 the M8 and Unicode evidence above when adding their owner-run results.
+
+## M10 Z4 private-filesystem durability: NOT RUN
+
+The Z4 JVM tests use real temporary paths, POSIX modes and persistent directory
+xattrs, with injected flush/race failures. They do not execute Android `Os`
+or establish Android crash durability. No physical Android check has run.
+Z19 owns production sync composition; repeat these checks through its final
+signed, minified APK when that path is available.
+
+Checked operations share the existing prompt/state roots. File and directory
+flushes use read-only, no-follow `Os` descriptors, including viewer files.
+Directory incarnations combine device/inode with a UUID in
+`user.monkeyspaw.sync-incarnation`; checked flush persists the marker. The UUID
+survives child edits, rename and restart, while delete/recreate gets a new one.
+Unsupported xattrs or directory fsync fail closed. Ordinary index filtering
+and best-effort local writes keep their existing contracts.
+
+| Owner check on the private library and state filesystem | Status |
+|---|---|
+| Full inventory includes hidden, unknown, empty and unowned entries; links block unsafe sync | NOT RUN |
+| Exact-byte exclusive publication and replacement; modes 0444 and 0600 survive replay | NOT RUN |
+| Read-only descriptor file fsync and checked directory/ancestor fsync succeed | NOT RUN |
+| Persistent incarnation marker survives restart/rename/child edits; recreation changes it; corrupt bytes fail permanently | NOT RUN |
+| Exclusive directory rename preserves unknown contents and refuses occupied destinations | NOT RUN |
+| Interrupt both case-rename steps, recreate the graph and replay twice without losing either version | NOT RUN |
+| Inject file/parent flush failures; applied effects retain losing bytes and no cursor commits early | NOT RUN |
+| Durable journal/raw retention precedes checked unlink; empty-only removal keeps late files | NOT RUN |
+
+Record commit, APK SHA-256, signer, device/API, filesystem, tester/date,
+server/desktop versions where applicable, and PASS/FAIL/BLOCKED for each row.
+Actual process death and power-loss testing remain distinct from injected
+errors. Required NOT RUN rows keep M10 open (§23 P20).
