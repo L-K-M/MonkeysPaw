@@ -26,11 +26,12 @@ internal class LibraryScreenBoundaryTest {
     @Test
     fun `library exposes completed controls and Ready routes to the browser with a foreground rescan`() {
         val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
-        val unfinished = Regex("\\b(?:Account|Groups?|Conflicts?)\\b", RegexOption.IGNORE_CASE)
+        val unfinished = Regex("\\b(?:Groups?|Conflicts?)\\b", RegexOption.IGNORE_CASE)
         assertFalse(unfinished.containsMatchIn(screen))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
-        assertTrue(activity.contains("if (startup == SeedOfferUiState.Ready)"))
+        assertTrue(activity.contains("if (startup == SeedOfferUiState.Ready || destination != MainDestination.LIBRARY)"))
         assertTrue(activity.contains("LibraryScreen("))
+        assertTrue(activity.contains("onAccount = ::openAccount"))
         assertTrue(activity.contains("if (seedOffer.state.value == SeedOfferUiState.Ready) library.refresh() else seedOffer.refresh()"))
         val seeds = packageRoot.resolve("ui/locallibrary/SeedOfferScreen.kt").readText()
         assertTrue(seeds.contains("SeedOfferUiState.Ready -> Unit"))
