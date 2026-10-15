@@ -177,4 +177,19 @@ final class MacRepeatShortcutTests: XCTestCase {
         presentation.clearShortcut(.repeatLast)
         XCTAssertNil(presentation.displayedShortcutError(for: .repeatLast))
     }
+
+    func testRetainedSettingsAndBackendCallbacksDoNotKeepDelegateAlive() throws {
+        presentation.setAccelerator("Ctrl+Alt+R", for: .repeatLast)
+        let retainedPresentation = presentation
+        let callback = try XCTUnwrap(backend.callbacks[.repeatLast])
+        let model = try XCTUnwrap(delegate.repeatModel)
+        weak var owner = delegate
+        delegate = nil
+        XCTAssertNil(owner)
+        XCTAssertEqual(model.state, .inactive)
+        callback()
+        retainedPresentation.refresh()
+        XCTAssertNil(model.result)
+        XCTAssertFalse(NSApp.windows.contains { !originalWindows.contains(ObjectIdentifier($0)) && $0.isVisible })
+    }
 }
