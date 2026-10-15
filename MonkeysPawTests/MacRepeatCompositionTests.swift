@@ -47,6 +47,10 @@ final class MacRepeatCompositionTests: XCTestCase {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, launchURI: { _ in XCTFail("Unexpected launch") },
             backgroundWork: work, httpTransport: MacRepeatNoHTTP(), clipboard: clipboard,
             pasteInjectors: [injector], setActivationPolicy: { _ in }, activateApplication: {},
+            ownWindowIsActive: { [weak self] in
+                guard let self, let target = self.target, case .macOS(let pid, _) = target else { return false }
+                return pid == self.ownPID
+            },
             makeFocusTracker: { [weak self] main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { [weak self] in
                     self?.captures += 1
@@ -280,23 +284,30 @@ final class MacRepeatCompositionTests: XCTestCase {
     func testOwnSettingsLibraryAndPickerWindowsRefuseBeforeCapture() throws {
         try put("{{field}}")
         try deliver(values: ["field": "delivered"])
-        let actions: [() -> Void] = [
-            { self.delegate.showSettings() },
-            { self.delegate.showLibrary() },
-            { self.delegate.pickerModel?.open() },
+        // Window ordering is synchronous; hosted activation comes from the same fake as capture.
+        target = .macOS(processID: ownPID, bundleID: "test.own")
+        let actions: [() -> Bool] = [
+            {
+                self.delegate.showSettings()
+                return self.delegate.settingsWindow?.window?.isVisible == true
+            },
+            {
+                self.delegate.showLibrary()
+                return self.delegate.libraryWindow?.window?.isVisible == true
+            },
+            {
+                self.delegate.pickerModel?.open()
+                return self.panel.isVisible
+            },
             {
                 self.delegate.pickerModel?.open()
                 self.delegate.pickerModel?.use(mode: .copyOnly)
                 self.delegate.pickerModel?.fillModel?.setValue("draft", name: "field")
+                return self.panel.isVisible
             },
         ]
         for action in actions {
-            action()
-            let deadline = Date().addingTimeInterval(2)
-            while NSApp.keyWindow == nil, Date() < deadline {
-                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005))
-            }
-            XCTAssertNotNil(NSApp.keyWindow)
+            XCTAssertTrue(action(), "The requested own window must be visible")
             let captures = self.captures
             let writes = clipboard.writes.count
             XCTAssertEqual(try repeatNow(), .unavailable(.ownWindow))

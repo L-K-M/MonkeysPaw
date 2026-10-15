@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let forgetAllConfirmation: SettingsWindowController.ForgetAllConfirmation
     private let makeNotifier: (() -> UserNotificationNotifier)?
     private let activateApplication: () -> Void
+    private let ownWindowIsActive: (() -> Bool)?
     private let windowActivation: WindowActivationCoordinator
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
@@ -129,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          makeNotifier: (() -> UserNotificationNotifier)? = nil,
          setActivationPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          activateApplication: @escaping () -> Void = { NSApp.activate() },
+         ownWindowIsActive: (() -> Bool)? = nil,
          makeFocusTracker: @escaping (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker = {
         WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
     }, scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
@@ -169,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.forgetAllConfirmation = forgetAllConfirmation
         self.makeNotifier = makeNotifier
         self.activateApplication = activateApplication
+        self.ownWindowIsActive = ownWindowIsActive
         windowActivation = WindowActivationCoordinator(mainThread: mainThread,
             setPolicy: setActivationPolicy, activate: activateApplication)
         // Injected graphs never read or write the user's legacy preferences.
@@ -1004,6 +1007,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var isOwnWindowActive: Bool {
+        if let ownWindowIsActive { return ownWindowIsActive() }
         if panelController?.isActiveAndVisible == true { return true }
         return NSApp.isActive && NSApp.windows.contains { $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) }
     }
