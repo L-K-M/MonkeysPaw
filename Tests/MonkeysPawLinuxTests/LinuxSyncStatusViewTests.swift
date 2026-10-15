@@ -379,6 +379,24 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         XCTAssertFalse(transport.sentOnMain)
     }
 
+    func testEarlyHeldPullReleaseDoesNotLeaveALateRequestSuspended() throws {
+        transport.mode = .held
+        transport.releasePull()
+        let transport = try XCTUnwrap(transport)
+        let request = try HTTPRequest(url: XCTUnwrap(URL(string: "https://sync.example.test/api/v1/sync/pull")),
+            method: .post, deadline: ContinuousClock().now.advanced(by: .seconds(3)))
+        let done = StatusViewFlag()
+        Task.detached {
+            _ = try? await transport.send(request)
+            done.set()
+        }
+        let completed = GTKTestSupport.spin { done.value }
+        // Release again so the regression fails without leaving a suspended task.
+        transport.releasePull()
+        XCTAssertTrue(GTKTestSupport.spin { done.value })
+        XCTAssertTrue(completed, "An early cleanup release must also unblock a pull registered afterward")
+    }
+
     func testEnvironmentRebindsStatusWithoutStartingLocalAccountWork() throws {
         compose()
         environment.showLibrary()
@@ -556,6 +574,8 @@ private final class StatusViewTransport: HTTPTransporting, @unchecked Sendable {
     private let lock = NSLock()
     private var storedMode: Mode = .normal
     private var held: CheckedContinuation<HTTPResponse, Error>?
+    // Teardown may release before a worker installs its held continuation.
+    private var releaseRequested = false
     private var pulls = 0
     private var mainRequest = false
     var mode: Mode { get { locked { storedMode } } set { locked { storedMode = newValue } } }
@@ -578,7 +598,14 @@ private final class StatusViewTransport: HTTPTransporting, @unchecked Sendable {
         if request.url.path.hasSuffix("/sync/pull") {
             locked { pulls += 1 }
             if mode == .held {
-                return try await withCheckedThrowingContinuation { continuation in locked { held = continuation } }
+                return try await withCheckedThrowingContinuation { continuation in
+                    let resumeNow = locked {
+                        if releaseRequested { releaseRequested = false; return true }
+                        held = continuation
+                        return false
+                    }
+                    if resumeNow { resumePull(continuation) }
+                }
             }
             return try pullResponse()
         }
@@ -591,10 +618,18 @@ private final class StatusViewTransport: HTTPTransporting, @unchecked Sendable {
     }
 
     func releasePull() {
-        let pending = locked { let value = held; held = nil; return value }
-        guard let pending else { return }
-        do { pending.resume(returning: try pullResponse()) }
-        catch { pending.resume(throwing: HTTPTransportError.networkFailure) }
+        let pending = locked {
+            let value = held
+            held = nil
+            if value == nil { releaseRequested = true }
+            return value
+        }
+        if let pending { resumePull(pending) }
+    }
+
+    private func resumePull(_ continuation: CheckedContinuation<HTTPResponse, Error>) {
+        do { continuation.resume(returning: try pullResponse()) }
+        catch { continuation.resume(throwing: HTTPTransportError.networkFailure) }
     }
 
     private func pullResponse() throws -> HTTPResponse {
