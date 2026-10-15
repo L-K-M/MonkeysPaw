@@ -81,32 +81,37 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
     private let transport: HTTPTransporting
     private let root: SyncLibraryRoot
     private let connectionID: () -> UUID
+    private let beforeAccountChange: () async -> Bool
     private let lock = NSLock()
     private var busy = false
     private var active: Session?
     private var cached = SyncAccountSnapshot()
 
     public init(sync: SyncService, accounts: SyncAccountStore, secrets: SecretStore,
-                transport: HTTPTransporting, libraryRoot: String) throws {
+                transport: HTTPTransporting, libraryRoot: String,
+                beforeAccountChange: @escaping () async -> Bool = { true }) throws {
         self.sync = sync
         self.accounts = accounts
         self.secrets = secrets
         self.transport = transport
         root = try SyncLibraryRoot(libraryRoot)
         connectionID = UUID.init
+        self.beforeAccountChange = beforeAccountChange
         // Saved metadata stays visible even when native root recovery prevents
         // startup. This grants no authenticated session, tier or sync admission.
         cached.account = accounts.cachedAccount
     }
 
     init(sync: SyncService, accounts: SyncAccountStore, secrets: SecretStore,
-         transport: HTTPTransporting, root: SyncLibraryRoot, connectionID: @escaping () -> UUID) {
+         transport: HTTPTransporting, root: SyncLibraryRoot, connectionID: @escaping () -> UUID,
+         beforeAccountChange: @escaping () async -> Bool = { true }) {
         self.sync = sync
         self.accounts = accounts
         self.secrets = secrets
         self.transport = transport
         self.root = root
         self.connectionID = connectionID
+        self.beforeAccountChange = beforeAccountChange
         cached.account = accounts.cachedAccount
     }
 
@@ -148,6 +153,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         } catch let error as InviteIssue { throw error }
         catch { throw failure(error) }
 
+        try await prepareAccountChange()
         let authentication: SyncAuthentication
         do {
             let client = SyncHTTPClient(server: server, transport: transport)
@@ -472,6 +478,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         defer { leave() }
         let session = try session()
         if id == session.account.deviceID {
+            try await prepareAccountChange()
             let cleanup = await signOut(session: session, device: id)
             locked { cached.cleanup = cleanup }
             return snapshot
@@ -486,6 +493,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
     func signOut() async throws -> SyncAccountCleanup {
         try enter()
         defer { leave() }
+        try await prepareAccountChange()
         let session = locked { active }
         let cleanup = await signOut(session: session, device: nil)
         locked { cached.cleanup = cleanup }
@@ -638,6 +646,12 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
     }
 
     private func metadataError(_ error: Error) -> SyncError { error as? SyncError ?? .invalidState }
+
+    /// Native composition can refuse until graph-bound private state is retired.
+    /// Startup and read-only refresh never retire a completed delivery record.
+    private func prepareAccountChange() async throws {
+        guard await beforeAccountChange() else { throw SyncAccountServiceError(issue: .recoveryRequired) }
+    }
 
     private func enter() throws {
         try locked {

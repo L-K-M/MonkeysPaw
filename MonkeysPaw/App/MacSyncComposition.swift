@@ -124,6 +124,13 @@ final class MacSyncComposition {
         sync.stop()
     }
 
+    /// Capture model references on UI before awaiting their admitted work off UI.
+    func accountDrain() -> () async -> Void {
+        let account = accountStorage
+        let invites = inviteStorage
+        return { await account?.drain(); await invites?.drain() }
+    }
+
     /// Run off UI. Account compensation can restart sync, so stop AGAIN after
     /// draining all model admissions. Never discard an unsettled apply journal.
     func drainAndRetire() async -> SyncStopResult {

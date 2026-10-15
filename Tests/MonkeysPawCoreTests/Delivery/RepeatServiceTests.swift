@@ -478,6 +478,25 @@ final class RepeatServiceTests: XCTestCase {
         XCTAssertEqual(h.repeatNow(using: h.restart()), [.nothingToRepeat])
     }
 
+    func testAccountRebindKeepsOldBindingOnFailureAndRejectsOldRecordingTickets() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("body")
+        try h.deliver()
+        let ticket = h.service.beginRecording()
+        let binding = try RepeatBinding(root: "/library", serverURL: "https://sync.example", userID: SyncTestValues.user)
+        h.flow.data.failNextWrite = true
+        XCTAssertThrowsError(try h.service.rebind(to: binding))
+        XCTAssertEqual(try h.store.load()?.binding, h.binding)
+        XCTAssertEqual(h.repeatNow(), [.unavailable(.invalidationFailed)])
+
+        try h.service.rebind(to: binding)
+        XCTAssertFalse(h.service.isCurrent(ticket))
+        h.service.recordCompleted(entry: entry, values: [:], mode: .copyOnly, ticket: ticket) { _ in }
+        XCTAssertNil(try h.store.load())
+        try h.deliver()
+        XCTAssertEqual(try h.store.load()?.binding, binding, "The existing picker records the new account binding")
+    }
+
     func testNonmatchingForgetCannotEnableRepeatWithoutRepairingFailedInvalidation() throws {
         let h = try RepeatHarness()
         _ = try h.put("body")

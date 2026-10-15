@@ -36,9 +36,10 @@ final class MacSyncCompositionTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func start(work: BackgroundWork = DispatchBackgroundWork()) throws {
+    private func start(work: BackgroundWork = DispatchBackgroundWork(), clipboard: Clipboard = MacRepeatClipboard()) throws {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, backgroundWork: work,
-            httpTransport: transport, secrets: secrets, replyToTermination: { [weak self] in self?.terminationReplies.append($0) },
+            httpTransport: transport, secrets: secrets, clipboard: clipboard,
+            replyToTermination: { [weak self] in self?.terminationReplies.append($0) },
             setActivationPolicy: { _ in }, activateApplication: {}, makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in false }),
                     mainThread: main, scheduler: scheduler, isTrusted: { false }, deactivateIfUnused: {})
@@ -111,6 +112,72 @@ final class MacSyncCompositionTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(delegate.syncComposition).accounts.hasConfiguredAccount)
         delegate.onboardingModel?.refresh()
         XCTAssertEqual(delegate.onboardingModel?.state.step, .seedOffer)
+    }
+
+    func testRepeatRetiresBeforeAccountRequestsAndRebindsOnlyAfterTheAccountDrain() throws {
+        let files = try RootedFileStore(root: root)
+        try files.createRoot()
+        try files.write(Data("Local prompt".utf8), at: "local.md")
+        let clipboard = MacRepeatClipboard()
+        try start(clipboard: clipboard)
+        let picker = try XCTUnwrap(delegate.pickerModel)
+        func copyPrompt() {
+            picker.open()
+            XCTAssertTrue(spin { !picker.results.isEmpty })
+            picker.use(mode: .copyOnly)
+            XCTAssertTrue(spin { if case .done = picker.state { return true }; return false })
+        }
+        copyPrompt()
+        XCTAssertEqual(try storedRepeatBinding(), try RepeatBinding(root: root.path))
+
+        let account = try XCTUnwrap(delegate.accountModel)
+        XCTAssertTrue(spin { !account.state.isBusy })
+        transport.holdLogin = true
+        var password = "Runtime-password-" + UUID().uuidString
+        account.login(server: "https://example.test/paw", username: "person", password: &password, deviceName: "Mac")
+        XCTAssertTrue(spin { self.transport.heldCount == 1 })
+        XCTAssertNil(try storedRepeatBinding(), "Clear repeat before the first account request")
+        let writes = clipboard.writes.count
+        delegate.repeatLast()
+        XCTAssertEqual(delegate.repeatModel?.result, .unavailable(.inactive))
+        XCTAssertEqual(clipboard.writes.count, writes)
+        transport.releaseHeldRequests()
+        XCTAssertTrue(spin { !account.state.isBusy && account.state.enabled
+            && self.delegate.repeatModel?.availability == .nothingToRepeat })
+        XCTAssertTrue(picker === delegate.pickerModel, "Keep the existing picker and its drafts")
+        copyPrompt()
+        let expected = try RepeatBinding(root: root.path, serverURL: "https://example.test/paw", userID: MacSyncTransport.user)
+        XCTAssertEqual(try storedRepeatBinding(), expected)
+
+        let dataFiles = try RootedFileStore(root: data)
+        let bytes = try dataFiles.read(at: "last-delivery.json")
+        let record = data.appendingPathComponent("last-delivery.json")
+        try FileManager.default.removeItem(at: record)
+        try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
+        let requests = transport.requests.count
+        account.signOut()
+        XCTAssertTrue(spin { !account.state.isBusy && account.state.error == .recoveryRequired })
+        XCTAssertEqual(transport.requests.count, requests, "Failed retirement cannot send logout or change the account")
+        XCTAssertEqual(account.state.connection?.userID, MacSyncTransport.user)
+        XCTAssertEqual(delegate.repeatModel?.availability, .unavailable(.invalidationFailed))
+        try FileManager.default.removeItem(at: record)
+        try dataFiles.writePrivate(bytes, at: "last-delivery.json")
+        XCTAssertEqual(try storedRepeatBinding(), expected)
+        account.signOut()
+        XCTAssertTrue(spin { !account.state.isBusy && account.state.connection == nil
+            && self.delegate.repeatModel?.availability == .nothingToRepeat })
+        XCTAssertNil(try storedRepeatBinding())
+        copyPrompt()
+        XCTAssertEqual(try storedRepeatBinding(), try RepeatBinding(root: root.path))
+    }
+
+    private func storedRepeatBinding() throws -> RepeatBinding? {
+        struct Payload: Decodable {
+            struct Record: Decodable { let binding: RepeatBinding }
+            let record: Record?
+        }
+        let bytes = try RootedFileStore(root: data).read(at: "last-delivery.json")
+        return try JSONDecoder().decode(Payload.self, from: bytes).record?.binding
     }
 
     func testGroupViewerModesAndPrivateCopyPolicyReachTheRealEditorAndAssistantContext() throws {

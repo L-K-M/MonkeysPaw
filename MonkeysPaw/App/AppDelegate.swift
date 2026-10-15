@@ -77,6 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var updateService: UpdateService?
     private var lastDelivery: LastDeliveryStore?
     private var repeatService: RepeatService?
+    private var repeatBinding: RepeatBinding?
+    private var repeatAccountGeneration: UInt64 = 0
     private var repeatAwaitingResult = false
     private(set) var repeatModel: RepeatModel?
     private(set) var repeatWindow: RepeatWindowController?
@@ -920,8 +922,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let sync = try SyncService(library: library, libraryOperations: libraryOperations,
                 dataFiles: data, dataOperations: dataOperations, states: states, accounts: accounts,
                 scheduler: scheduler, mainThread: main, clock: clock, entropy: SystemEntropy())
+            let generation = libraryGeneration
+            let repeatMain = mainThread
             let account = try SyncAccountService(sync: sync, accounts: accounts, secrets: secrets,
-                transport: httpTransport, libraryRoot: libraryDirectory.path)
+                transport: httpTransport, libraryRoot: libraryDirectory.path, beforeAccountChange: { [weak self] in
+                    await withCheckedContinuation { completion in
+                        // Always resume, even when the old graph's filtered UI port retires.
+                        repeatMain.run { [weak self] in
+                            completion.resume(returning: self?.prepareRepeatAccountChange(
+                                generation: generation, accounts: accounts) ?? false)
+                        }
+                    }
+                })
             let rootBinding = MacSyncRootBinding(data: dataOperations)
             let rootIssue: MacSyncRootIssue?
             do {
@@ -1264,15 +1276,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // Repeat belongs to the current library graph. Y18 can add account binding
-    // and access here, then join its account retirement to retireRepeat below.
+    private func currentRepeatBinding() throws -> RepeatBinding {
+        if let graph = syncComposition { return try graph.accounts.repeatBinding(libraryRoot: libraryDirectory.path) }
+        return try RepeatBinding(root: libraryDirectory.path)
+    }
+
     private func composeRepeat(library: LibraryService, index: PromptIndex,
                                isCurrent: @escaping () -> Bool) -> RepeatService? {
         guard let lastDelivery, let fill, let delivery else { return nil }
-        let service = (try? RepeatBinding(root: libraryDirectory.path)).map { binding in
+        // Corrupt account metadata keeps the recorder available for explicit
+        // recovery, but the live identity check below refuses every repeat.
+        let binding = (try? currentRepeatBinding()) ?? (try? RepeatBinding(root: libraryDirectory.path))
+        repeatBinding = binding
+        let service = binding.map { binding in
             RepeatService(binding: binding, store: lastDelivery, library: library, index: index,
                 fill: fill, delivery: delivery, work: backgroundWork, main: mainThread,
-                canAccess: { [weak self] _ in isCurrent() && self?.pickerModel?.libraryAvailable == true },
+                canAccess: { [weak self] entry in
+                    guard let self, isCurrent(), self.pickerModel?.libraryAvailable == true,
+                          (try? self.currentRepeatBinding()) == self.repeatBinding else { return false }
+                    if let access = self.syncComposition?.access.snapshot.access(at: entry.relativePath, identity: entry.identity),
+                       case .unavailable = access { return false }
+                    return true
+                },
                 isOwnWindowActive: { [weak self] in self?.isOwnWindowActive ?? true })
         }
         repeatService = service
@@ -1289,6 +1314,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let result = model.result { self.showRepeatResult(result) }
         }
         return service
+    }
+
+    private func prepareRepeatAccountChange(generation: UInt64, accounts: SyncAccountStore) -> Bool {
+        guard !isShutDown, libraryGeneration == generation, libraryTransition == nil, !terminationPending,
+              let graph = syncComposition, graph.accounts === accounts else { return false }
+        repeatAccountGeneration &+= 1
+        let transition = repeatAccountGeneration
+        do { try retireRepeat(replacementRoot: libraryDirectory) }
+        catch {
+            showRepeatResult(.unavailable(.invalidationFailed))
+            return false
+        }
+        let drain = graph.accountDrain()
+        let main = mainThread
+        Task.detached { [weak self, weak graph] in
+            await drain()
+            main.run { [weak self, weak graph] in
+                guard let self, let graph, !self.isShutDown, self.libraryGeneration == generation,
+                      self.repeatAccountGeneration == transition, self.syncComposition === graph,
+                      self.libraryTransition == nil, !self.terminationPending,
+                      let repeatService = self.repeatService else { return }
+                do {
+                    let binding = try self.currentRepeatBinding()
+                    try repeatService.rebind(to: binding)
+                    self.repeatBinding = binding
+                } catch { self.showRepeatResult(.unavailable(.invalidationFailed)) }
+            }
+        }
+        return true
     }
 
     private func retireRepeat(replacementRoot: URL) throws {

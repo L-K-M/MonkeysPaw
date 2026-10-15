@@ -83,6 +83,14 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// metadata without constructing an Account model or resolving a secret.
     public var hasConfiguredAccount: Bool { connection.snapshot.value?.account != nil }
 
+    /// Repeat uses validated cached identity without reading a credential or disk.
+    public func repeatBinding(libraryRoot: String) throws -> RepeatBinding {
+        guard readOnlyError == nil else { throw RepeatFailure.invalidBinding }
+        let account = cachedAccount
+        return try RepeatBinding(root: libraryRoot, serverURL: account?.identity.serverURL.absoluteString,
+                                 userID: account?.identity.userID)
+    }
+
     /// Cached diagnostics may be stale until load; readOnlyError blocks use for
     /// sync decisions. Each snapshot is locked, not a cross-document transaction.
     var cachedAccount: SyncAccount? { connection.snapshot.value?.account }

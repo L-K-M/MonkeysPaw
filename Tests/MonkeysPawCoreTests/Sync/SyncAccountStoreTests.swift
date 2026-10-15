@@ -6,6 +6,26 @@ final class SyncAccountStoreTests: XCTestCase {
     private let accountPath = "sync/account.json"
     private let bindingPath = "sync/binding.json"
 
+    func testRepeatBindingUsesCachedCanonicalAccountAndRefusesCorruptMetadata() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncAccountStore(files: files, operations: operations)
+        let local = try RepeatBinding(root: "/library")
+        XCTAssertEqual(try store.repeatBinding(libraryRoot: "/library"), local)
+        let account = try connection()
+        try store.setAccount(account)
+        let expected = try RepeatBinding(root: "/library", serverURL: account.identity.serverURL.absoluteString,
+                                         userID: account.identity.userID)
+        files.onRead = { _ in XCTFail("Repeat binding must use the validated cache") }
+        XCTAssertEqual(try store.repeatBinding(libraryRoot: "/library"), expected)
+        files.onRead = nil
+        try store.setAccount(nil)
+        XCTAssertEqual(try store.repeatBinding(libraryRoot: "/library"), local)
+        try files.put("corrupt", at: accountPath)
+        let corrupt = SyncAccountStore(files: files, operations: operations)
+        XCTAssertThrowsError(try corrupt.repeatBinding(libraryRoot: "/library"))
+    }
+
     func testConfiguredAccountPredicateUsesValidatedMetadataWithoutSecretLookup() throws {
         let files = MemoryFileStore()
         let operations = MemorySyncFileOperations(files: files)
