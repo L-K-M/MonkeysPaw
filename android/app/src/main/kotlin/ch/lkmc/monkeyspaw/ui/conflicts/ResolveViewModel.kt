@@ -158,6 +158,5 @@ internal class ResolveViewModel @Inject constructor(private val sync: AndroidSyn
     override fun onCleared() {
         active = false
         close()
-        super.onCleared()
     }
 }
