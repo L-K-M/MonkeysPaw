@@ -1,11 +1,14 @@
 package ch.lkmc.monkeyspaw.data
 
+import ch.lkmc.monkeyspaw.core.ports.SyncFileMode
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption.READ
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.util.UUID
 
@@ -28,6 +31,11 @@ internal open class JvmCheckedSyncIO : CheckedSyncIO() {
         onFlush(path)
         FileChannel.open(path, READ, NOFOLLOW_LINKS).use { it.force(true) }
         flushedDirectories.add(path)
+    }
+
+    override fun setMode(path: Path, mode: SyncFileMode) {
+        Files.getFileAttributeView(path, PosixFileAttributeView::class.java, NOFOLLOW_LINKS)
+            .setPermissions(PosixFilePermissions.fromString(if (mode == SyncFileMode.READ_ONLY) "r--r--r--" else "rw-------"))
     }
 
     override fun directoryToken(path: Path): DirectoryToken = synchronized(markerLock) {
