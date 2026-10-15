@@ -145,6 +145,14 @@ final class MacSyncStatusViewTests: XCTestCase {
         source.send(report)
         view.openError(error)
         XCTAssertEqual(paths, ["a.md"], "A stale row cannot open another file")
+        let composed = RelativePath("Caf\u{e9}.md")
+        let decomposed = RelativePath("Cafe\u{301}.md")
+        report.details = [.init(path: composed, code: "forbidden"), .init(path: decomposed, code: "forbidden")]
+        report.counts.fileErrors = 2
+        source.send(report)
+        for error in model.state.fileErrors { view.openError(error) }
+        XCTAssertEqual(paths.dropFirst().map { Array($0.string.utf8) },
+            [Array(decomposed.string.utf8), Array(composed.string.utf8)])
         view.retire()
         model.retire()
     }

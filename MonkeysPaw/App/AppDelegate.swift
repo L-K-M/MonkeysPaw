@@ -836,7 +836,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.showSyncDestination(action)
             }, openFile: { [weak self, weak index] path in
                 guard isCurrent(), let self, self.pickerModel?.libraryAvailable == true,
-                      let entry = index?.search("").first(where: { $0.relativePath == path.string })?.entry else { return }
+                      let entry = index?.search("").first(where: { $0.relativePath.utf8.elementsEqual(path.string.utf8) })?.entry else { return }
                 self.libraryWindow?.presentation.openPrompt(LibraryPromptSelection(identity: entry.identity, relativePath: path))
             })
         }
