@@ -19,7 +19,17 @@ internal class ImeBoundaryTest {
     private val app = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
     private val core = File(checkNotNull(System.getProperty("monkeyspaw.coreSources")))
     private val namespace = "http://schemas.android.com/apk/res/android"
-    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|Logger|Log|Timber|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b")
+    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b|\\bSystem\\.(?:out|err)\\b")
+    private val helperSources by lazy {
+        (app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }.flatMap { file ->
+            val source = file.readText()
+            val pkg = Regex("(?m)^package (\\S+)").find(source)!!.groupValues[1]
+            // Follow top-level calls/references too: reflection does not expose their captured dependencies.
+            // Private helpers are already covered by their containing file.
+            Regex("(?m)^(?:(?:internal|public|suspend|inline|tailrec) )*fun (?:<[^\\n>]+> )?(?:[^\\n(]+\\.)?(\\w+)\\(")
+                .findAll(source).map { "$pkg.${it.groupValues[1]}" to source }
+        }.groupBy({ it.first }, { it.second })
+    }
 
     @Test fun `IME is exported only behind system binding permission with exact filter and metadata in one process`() {
         val manifest = xml("AndroidManifest.xml")
@@ -115,6 +125,28 @@ internal class ImeBoundaryTest {
         }
     }
 
+    @Test fun `privacy source guard rejects indirect sync scheduling stdout and initial target reads`() {
+        for (code in listOf("SyncScheduler()", "AndroidSyncTlsTrust()", "JobScheduler()", "AlarmManager()",
+            "println(privateValue)", "System.err.write(privateBytes)", "getInitialTextBeforeCursor(1, 0)",
+            "getInitialTextAfterCursor(1, 0)", "getInitialSelectedText(0)", "takeSnapshot()")) {
+            assertFailsWith<AssertionError>(code) { validateGraphSource(code) }
+        }
+    }
+
+    @Test fun `source guard follows top-level helper calls and callback references transitively`() {
+        val helpers = mapOf("warmLocalIndex" to listOf("fun warmLocalIndex() = onReady(::notifyReady)"),
+            "notifyReady" to listOf("fun notifyReady() = Logger.getLogger(\"private\")"))
+        for (source in listOf("warmLocalIndex()", "launch(::warmLocalIndex)")) {
+            assertFailsWith<AssertionError> { validateGraphSource(source, helpers) }
+        }
+        validateGraphSource("unrelatedLocalCall()", helpers)
+        val qualified = mapOf("other.prepare" to listOf("fun prepare() = Logger.getLogger(\"private\")"))
+        validateGraphSource("package local\nfun work() = prepare()", qualified)
+        assertFailsWith<AssertionError> {
+            validateGraphSource("package local\nimport other.prepare as ready\nfun work() = ready()", qualified)
+        }
+    }
+
     @Test fun `history token counters remain an immutable value with no assistant behavior`() {
         val source = core.resolve("ch/lkmc/monkeyspaw/core/domain/llm/AssistantTypes.kt").readText()
         // Pin the entire bodyless declaration before allowing its name in local history codecs.
@@ -126,6 +158,10 @@ internal class ImeBoundaryTest {
         val application = app.resolve("MonkeysPawApplication.kt").readText()
         validateLocal(application)
         assertTrue(application.contains("scope.launch { library.refresh() }"))
+        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope"),
+            Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
+        val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }").trim()
+        assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
         val service = app.resolve("ime/MonkeysPawImeService.kt").readText()
         validateLocal(service)
         assertTrue(service.contains("onEvaluateFullscreenMode(): Boolean = false"))
@@ -174,9 +210,27 @@ internal class ImeBoundaryTest {
         assertFalse(forbidden.containsMatchIn(source), forbidden.find(source)?.value)
     }
 
-    private fun validateGraphSource(source: String) {
-        validateLocal(source)
-        assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(source), "Application scope")
+    private fun validateGraphSource(source: String, helpers: Map<String, List<String>> = helperSources) {
+        val visited = mutableSetOf<String>()
+        fun visit(current: String) {
+            if (!visited.add(current)) return
+            validateLocal(current)
+            assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(current), "Application scope")
+            val pkg = Regex("(?m)^package (\\S+)").find(current)?.groupValues?.get(1)
+            val imports = Regex("(?m)^import ([\\w.*]+)(?: as (\\w+))?").findAll(current).toList()
+            for ((qualified, definitions) in helpers) {
+                val name = qualified.substringAfterLast('.')
+                val namespace = qualified.substringBeforeLast('.', "")
+                val imported = imports.firstOrNull { it.groupValues[1] == qualified || it.groupValues[1] == "$namespace.*" }
+                val visible = namespace.isEmpty() || namespace == pkg || imported != null
+                val alias = imported?.groupValues?.get(2)?.ifEmpty { null } ?: name
+                val call = if (visible) Regex.escape(alias) else Regex.escape(qualified)
+                if (Regex("\\b$call\\s*\\(|::\\s*$call\\b").containsMatchIn(current)) {
+                    definitions.forEach(::visit)
+                }
+            }
+        }
+        visit(source)
     }
 
     private fun xml(path: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
