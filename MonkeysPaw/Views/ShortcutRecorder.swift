@@ -4,6 +4,7 @@ import MonkeysPawCore
 import SwiftUI
 
 struct ShortcutRecorder: NSViewRepresentable {
+    var label = Strings.recordShortcut
     let onCapture: (String) -> Void
     let onError: (ShortcutRebindError) -> Void
 
@@ -12,9 +13,14 @@ struct ShortcutRecorder: NSViewRepresentable {
     func updateNSView(_ view: ShortcutRecorderButton, context: Context) {
         view.onCapture = onCapture
         view.onError = onError
+        view.captureLabel = label
     }
 
-    static func dismantleNSView(_ view: ShortcutRecorderButton, coordinator: ()) { view.stopCapture() }
+    static func dismantleNSView(_ view: ShortcutRecorderButton, coordinator: ()) {
+        view.stopCapture()
+        view.onCapture = nil
+        view.onError = nil
+    }
 }
 
 /// A window-local monitor precedes menu equivalents, so Command chords and
@@ -27,6 +33,9 @@ final class ShortcutRecorderButton: NSButton {
 
     var onCapture: ((String) -> Void)?
     var onError: ((ShortcutRebindError) -> Void)?
+    var captureLabel = Strings.recordShortcut {
+        didSet { if !isRecording { setAccessibilityLabel(captureLabel) } }
+    }
     private(set) var isRecording = false
     private var keyMonitor: Any?
     private var windowObservers: [NSObjectProtocol] = []
@@ -35,7 +44,7 @@ final class ShortcutRecorderButton: NSButton {
         super.init(frame: frameRect)
         bezelStyle = .rounded
         title = Strings.recordShortcut
-        setAccessibilityLabel(Strings.recordShortcut)
+        setAccessibilityLabel(captureLabel)
         target = self
         action = #selector(beginCapture)
     }
@@ -67,7 +76,7 @@ final class ShortcutRecorderButton: NSButton {
     func stopCapture() {
         isRecording = false
         title = Strings.recordShortcut
-        setAccessibilityLabel(Strings.recordShortcut)
+        setAccessibilityLabel(captureLabel)
         removeObservers()
     }
 
@@ -111,6 +120,10 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     private func record(_ event: NSEvent) -> Bool {
+        // Local monitors precede the input method and native field editing.
+        // A recorder only owns keys while it is the first responder.
+        guard let responder = window?.firstResponder, responder === self else { return false }
+        if let client = responder as? NSTextInputClient, client.hasMarkedText() { return false }
         switch Self.capture(event) {
         case .ignored: return false
         case .cancelled: stopCapture()

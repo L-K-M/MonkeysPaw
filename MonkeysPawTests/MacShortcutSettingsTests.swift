@@ -234,6 +234,65 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertEqual(harness.presentation.togglePicker.registrationStatus, .registered)
     }
 
+    func testRecorderYieldsToMarkedTextAndNativeEditingAfterFocusMoves() throws {
+        let window = recorderWindow()
+        defer { window.close() }
+        let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        let editor = NSTextView(frame: NSRect(x: 0, y: 40, width: 300, height: 60))
+        window.contentView = container
+        container.addSubview(recorder)
+        container.addSubview(editor)
+        var captures: [String] = []
+        recorder.onCapture = { captures.append($0) }
+        try makeRecorderKey(window)
+        recorder.beginCapture()
+        XCTAssertTrue(recorder.isRecording)
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        XCTAssertFalse(recorder.isRecording, "Native text editing retires the recorder's monitor")
+        editor.setMarkedText("入力", selectedRange: NSRange(location: 2, length: 0),
+                             replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        for event in [try key(kVK_Escape, window: window),
+                      try key(kVK_Return, text: "\r", window: window),
+                      try key(kVK_ANSI_C, text: "c", flags: .command, window: window)] {
+            XCTAssertTrue(recorder.monitoredEvent(event) === event)
+        }
+        XCTAssertTrue(captures.isEmpty)
+        XCTAssertTrue(editor.hasMarkedText(), "Recorder must leave conversion to the native input method")
+        editor.unmarkText()
+        editor.string = "native editing"
+        editor.selectAll(nil)
+        editor.insertText("replacement", replacementRange: editor.selectedRange())
+        XCTAssertEqual(editor.string, "replacement")
+        XCTAssertTrue(captures.isEmpty)
+    }
+
+    func testTwoRecorderLabelsAndDismantleReleaseCallbacksAndMonitors() throws {
+        let window = recorderWindow()
+        defer { window.close() }
+        let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
+        recorder.captureLabel = Strings.recordShortcutLabel(Strings.repeatLast)
+        XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Repeat last")
+        weak var owner: NSObject?
+        do {
+            let retained = NSObject()
+            owner = retained
+            recorder.onCapture = { _ in _ = retained.description }
+            recorder.onError = { _ in _ = retained.description }
+        }
+        XCTAssertNotNil(owner)
+        recorder.beginCapture()
+        ShortcutRecorder.dismantleNSView(recorder, coordinator: ())
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertNil(owner)
+        XCTAssertNil(recorder.onCapture)
+        XCTAssertNil(recorder.onError)
+        XCTAssertEqual(recorder.accessibilityLabel(), Strings.recordShortcutLabel(Strings.repeatLast))
+        recorder.captureLabel = Strings.recordShortcutLabel(Strings.togglePicker)
+        XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Toggle picker")
+    }
+
     func testFailedRecoveryDisplaysFailedStatusAndActionableError() throws {
         let harness = ShortcutSettingsHarness()
         let original = try XCTUnwrap(harness.backend.current[.togglePicker])
