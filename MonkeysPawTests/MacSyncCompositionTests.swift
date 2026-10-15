@@ -322,6 +322,57 @@ final class MacSyncCompositionTests: XCTestCase {
         XCTAssertTrue(try retained.contains { try appData.read(at: $0.relativePath) == losing })
     }
 
+    func testDiscardedBarrierRefusesLibraryReplacementAndClearsTransition() throws {
+        let work = MacSyncHeldWork()
+        try start(work: work)
+        let account = try XCTUnwrap(delegate.accountModel)
+        XCTAssertTrue(spin { !account.state.isBusy })
+        transport.holdLogin = true
+        var password = "Runtime-password-" + UUID().uuidString
+        account.login(server: "https://example.test/paw", username: "person", password: &password, deviceName: "Mac")
+        XCTAssertTrue(spin { self.transport.heldCount == 1 })
+        let other = try otherRoot()
+        XCTAssertEqual(delegate.switchLibrary(to: other), .syncBusy)
+        XCTAssertTrue(spin { work.pendingCount == 1 })
+        work.discardPending()
+        // An invalid target reaches validation only after the transition clears.
+        let invalid = try XCTUnwrap(URL(string: "https://example.test/library"))
+        XCTAssertTrue(spin { self.delegate.switchLibrary(to: invalid) == .invalidTarget(.invalidRoot) })
+        XCTAssertEqual(delegate.libraryDirectory, root)
+        XCTAssertNil(delegate.accountModel, "The old graph must retain its retired account admission")
+        XCTAssertEqual(delegate.switchLibrary(to: other), .syncBusy)
+        XCTAssertTrue(spin { work.pendingCount == 1 })
+        work.drain()
+        XCTAssertEqual(delegate.libraryDirectory, root, "Retry must still wait for the original login")
+        transport.releaseHeldRequests()
+        XCTAssertTrue(spin { self.delegate.libraryDirectory == other && self.delegate.pickerModel?.libraryAvailable == true })
+        XCTAssertEqual(delegate.libraryDirectory, other)
+    }
+
+    func testDiscardedBarrierRefusesQuitAndRepliesExactlyOnce() throws {
+        let work = MacSyncHeldWork()
+        try start(work: work)
+        try login()
+        work.drain()
+        transport.holdPull = true
+        delegate.syncComposition?.sync.syncNow()
+        XCTAssertTrue(spin { self.transport.heldCount == 1 })
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateLater)
+        XCTAssertTrue(spin { work.pendingCount == 1 })
+        work.discardPending()
+        XCTAssertTrue(spin { self.terminationReplies.count == 1 })
+        XCTAssertEqual(terminationReplies, [false])
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateLater)
+        XCTAssertTrue(spin { work.pendingCount == 1 })
+        work.drain()
+        XCTAssertEqual(terminationReplies, [false])
+        transport.releaseHeldRequests()
+        XCTAssertTrue(spin { self.terminationReplies.count == 2 })
+        XCTAssertEqual(terminationReplies, [false, true])
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateNow)
+        XCTAssertEqual(terminationReplies, [false, true])
+    }
+
     func testQuitWaitsForAnAdmittedPullAndRepliesExactlyOnce() throws {
         try start()
         try login()
@@ -411,7 +462,9 @@ private final class MacSyncWatcher: FileStoreWatcher {
 private final class MacSyncHeldWork: BackgroundWork {
     private let lock = NSLock()
     private var pending: [() -> Void] = []
+    var pendingCount: Int { lock.lock(); defer { lock.unlock() }; return pending.count }
     func run(_ work: @escaping () -> Void) { lock.lock(); pending.append(work); lock.unlock() }
+    func discardPending() { lock.lock(); pending.removeAll(); lock.unlock() }
     func drain() {
         DispatchQueue.global().sync {
             while true {

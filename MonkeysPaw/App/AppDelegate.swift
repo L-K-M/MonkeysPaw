@@ -298,29 +298,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = mainThread
         let work = backgroundWork
         Task.detached { [weak self] in
-            await Self.drain(work)
-            let result = await graph?.drainAndRetire() ?? .stopped
+            let result: SyncStopResult
+            do {
+                try await work.drainSubmittedWork()
+                result = await graph?.drainAndRetire() ?? .stopped
+            } catch { result = .busy }
             main.run { [weak self] in
                 guard let self, !self.isShutDown, self.terminationPending else { return }
                 self.terminationPending = false
                 self.terminationDrained = result == .stopped
                 if result != .stopped {
-                    graph?.restoreModelsAfterFailedDrain()
+                    // A cancelled worker barrier has not drained model admissions.
+                    if result == .recoveryRequired { graph?.restoreModelsAfterFailedDrain() }
                     self.syncIndexRetryPending = false
-                    let available = wasAvailable && (try? (self.libraryFiles as? RootedFileStore)?.requireRoot()) != nil
+                    let available = result != .busy && wasAvailable
+                        && (try? (self.libraryFiles as? RootedFileStore)?.requireRoot()) != nil
                     self.pickerModel?.libraryAvailable = available
                     self.libraryWindow?.presentation.setLibraryAvailable(available)
-                    self.syncTransitionMessage = "Local sync recovery must finish before you quit."
-                    self.log?.write(.warning, "Quit refused; local sync recovery is required")
-                    if self.syncStarted { graph?.startup() }
+                    self.syncTransitionMessage = result == .busy ? "Background work could not finish before you quit."
+                        : "Local sync recovery must finish before you quit."
+                    self.log?.write(.warning, "Quit refused; background work or local sync recovery is unfinished")
+                    if result == .recoveryRequired, self.syncStarted { graph?.startup() }
                 }
                 self.replyToTermination(result == .stopped)
             }
         }
-    }
-
-    private static func drain(_ work: BackgroundWork) async {
-        await withCheckedContinuation { completion in work.run { completion.resume() } }
     }
 
     private func tearDown() {
@@ -659,8 +661,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = mainThread
         let work = backgroundWork
         Task.detached { [weak self] in
-            await Self.drain(work)
-            let result = await graph.drainAndRetire()
+            let result: SyncStopResult
+            do {
+                try await work.drainSubmittedWork()
+                result = await graph.drainAndRetire()
+            } catch { result = .busy }
             main.run { [weak self] in
                 guard let self, !self.isShutDown, self.libraryTransition == id, let settings = self.settingsModel else { return }
                 self.libraryTransition = nil
@@ -671,14 +676,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.syncTransitionMessage = outcome == .syncBusy ? "Sync is preparing the selected library."
                         : GeneralSettingsStrings.message(for: outcome.outcome)
                 } else {
-                    graph.restoreModelsAfterFailedDrain()
+                    if result == .recoveryRequired { graph.restoreModelsAfterFailedDrain() }
                     self.syncIndexRetryPending = false
-                    self.syncTransitionMessage = "Local sync recovery must finish before you change libraries."
-                    let available = (try? (self.libraryFiles as? RootedFileStore)?.requireRoot()) != nil
+                    self.syncTransitionMessage = result == .busy ? "Background work could not finish before you change libraries."
+                        : "Local sync recovery must finish before you change libraries."
+                    let available = result != .busy && (try? (self.libraryFiles as? RootedFileStore)?.requireRoot()) != nil
                     self.pickerModel?.libraryAvailable = available
                     self.libraryWindow?.presentation.setLibraryAvailable(available)
-                    self.log?.write(.warning, "Library replacement refused; local sync recovery is required")
-                    if self.syncStarted { graph.startup() }
+                    self.log?.write(.warning, "Library replacement refused; background work or local sync recovery is unfinished")
+                    if result == .recoveryRequired, self.syncStarted { graph.startup() }
                 }
                 self.generalSettingsModel?.refresh()
                 self.settingsWindow?.presentation.objectWillChange.send()
