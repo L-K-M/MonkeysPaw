@@ -70,7 +70,7 @@ final class SyncCrashChild {
             try? stdin.fileHandleForWriting.close()
             try? stdin.fileHandleForReading.close()
             try? child.killAndReap()
-            throw ScenarioFailure.invalid("worker did not reach its checkpoint")
+            throw (error as? ScenarioFailure) ?? .invalid("worker did not reach its checkpoint")
         }
     }
 
@@ -116,7 +116,7 @@ final class SyncCrashChild {
                     }
                     try scenarioCheck(bytes == Data((marker + "\n").utf8), "unexpected worker checkpoint")
                     continuation.resume()
-                } catch { continuation.resume(throwing: ScenarioFailure.invalid("worker checkpoint failed")) }
+                } catch { continuation.resume(throwing: error) }
             }
         }
     }
@@ -195,6 +195,43 @@ extension ScenarioRunner {
 }
 
 final class SyncCrashScenarioTests: XCTestCase {
+    func testChildCheckpointFailuresKeepSanitizedReasons() async throws {
+        let sentinel = "runtime-only-secret-" + UUID().uuidString
+        let stalled = try JSONSerialization.data(withJSONObject: ["directory": "/unused", "endpoint": "http://127.0.0.1:1",
+            "secret": sentinel, "now": 0, "seed": 1, "checkpoint": "stall", "fileCount": 1])
+        let cases: [(Data, String, String)] = [
+            (Data(repeating: 0, count: 64 * 1024 + 1), "paused", "worker input cap"),
+            (stalled, "complete", "unexpected worker checkpoint"),
+            (Data("{}".utf8), "paused", "worker exited before checkpoint")
+        ]
+        for (input, marker, reason) in cases {
+            do {
+                _ = try await SyncCrashChild.launch(input: input, marker: marker, timeout: 2)
+                XCTFail("Invalid child checkpoint passed")
+            } catch let error as ScenarioFailure {
+                XCTAssertEqual(error.description, "Sync scenario: " + reason)
+                XCTAssertFalse(error.description.contains(sentinel))
+            }
+        }
+    }
+
+    func testFinalCrashCheckpointRejectsLostCursor() async throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("spec/fixtures/sync/17-crash-apply.json")
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(Data(contentsOf: file)).first)
+        var steps = baseline.steps
+        steps.insert(.maintenance(device: "a", .cursor(device: "a", scope: "user:${user.main.alice}", value: nil)),
+                     at: steps.count - 1)
+        let scenario = SyncScenario(id: "negative-crash-cursor", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts, steps: steps)
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Lost cursor passed the final crash checkpoint")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("scope cursor"), error.description)
+        }
+    }
+
     func testWatchdogKillsAndReapsAStalledChildWithSecretFreeArguments() async throws {
         let sentinel = "runtime-only-secret-" + UUID().uuidString
         let input = try JSONSerialization.data(withJSONObject: ["directory": "/unused", "endpoint": "http://127.0.0.1:1",

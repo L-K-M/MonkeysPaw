@@ -261,6 +261,36 @@
                 "path": "*",
                 "count": 0
               }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
             ]
           }
         }
@@ -524,6 +554,36 @@
                 "method": "PUT",
                 "path": "*",
                 "count": 0
+              }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
               }
             ]
           }
@@ -789,6 +849,36 @@
                 "path": "*",
                 "count": 0
               }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
             ]
           }
         }
@@ -1052,6 +1142,36 @@
                 "method": "PUT",
                 "path": "*",
                 "count": 0
+              }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
               }
             ]
           }

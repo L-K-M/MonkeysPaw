@@ -263,6 +263,27 @@ func scenarioCheck(_ success: @autoclosure () throws -> Bool, _ reason: String) 
 }
 
 final class SyncRestoreRetentionScenarioTests: XCTestCase {
+    func testFinalRestoreCheckpointRejectsRepeated409() async throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("spec/fixtures/sync/22-restore-lower-head.json")
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(Data(contentsOf: file)).first {
+            $0.id == "22-restore-CAS-race-preserves-loser-on-409"
+        })
+        var steps = baseline.steps
+        let retry = ScenarioHTTP(device: "b", method: .put, path: "/api/v1/prompts/${prompt.q}",
+            body: .object(["base_rev": .integer(1), "scope": .string("user"), "path": .string("Q.md"),
+                "content": .string("---\nid: ${prompt.q}\n---\nLocal retained\n")]), status: 409, expected: [:], bindings: [:])
+        steps.insert(.http(retry), at: steps.count - 1)
+        let scenario = SyncScenario(id: "negative-restore-retry", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts, steps: steps)
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Repeated 409 passed the final restore checkpoint")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("request count"), error.description)
+        }
+    }
+
     func testFailedHookCheckpointCannotBeSwallowedAsOffline() async throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("spec/fixtures/sync/01-round-trip.json")

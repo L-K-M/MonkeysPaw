@@ -843,6 +843,10 @@
           }
         },
         {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
           "action": "restart",
           "device": "b"
         },
@@ -851,7 +855,14 @@
           "device": "b",
           "expected": {
             "file_count": 2,
-            "prompt_count": 2
+            "prompt_count": 2,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
           }
         }
       ]
