@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var deliverySettingsObserver: UUID?
     private var lastDelivery: LastDeliveryStore?
     private var repeatService: RepeatService?
+    private var repeatAwaitingResult = false
     private(set) var repeatModel: RepeatModel?
     private(set) var repeatWindow: RepeatWindowController?
     private var statusItem: NSStatusItem?
@@ -974,11 +975,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 isOwnWindowActive: { [weak self] in self?.isOwnWindowActive ?? true })
         }
         repeatService = service
+        repeatAwaitingResult = false
         let model = service.map { RepeatModel(service: $0, main: mainThread) }
         repeatModel = model
         model?.onChange = { [weak self, weak model] in
-            guard isCurrent(), let model, model.state == .idle, let result = model.result else { return }
-            self?.showRepeatResult(result)
+            guard isCurrent(), let self, let model else { return }
+            if model.state == .repeating { self.repeatAwaitingResult = true; return }
+            guard self.repeatAwaitingResult, model.state == .idle else { return }
+            // Availability also publishes after ordinary deliveries and Forget.
+            // Consume only this invocation's completion, never its retained result.
+            self.repeatAwaitingResult = false
+            if let result = model.result { self.showRepeatResult(result) }
         }
         return service
     }

@@ -194,6 +194,26 @@ final class MacRepeatCompositionTests: XCTestCase {
         XCTAssertTrue(currentNotice.presentation.message.contains("changed"))
     }
 
+    func testLaterDeliveryAndForgetDoNotReopenAnOldRepeatRefusal() throws {
+        try put("body")
+        XCTAssertEqual(try repeatNow(), .nothingToRepeat)
+        let notice = try XCTUnwrap(delegate.repeatWindow)
+        let window = try XCTUnwrap(notice.window)
+        window.close()
+        let picker = try XCTUnwrap(delegate.pickerModel)
+        picker.open()
+        picker.use(mode: .copyOnly)
+        settle()
+        XCTAssertEqual(delegate.repeatModel?.availability, .ready)
+        XCTAssertFalse(window.isVisible, "Recording an ordinary delivery must not replay Nothing to repeat")
+        XCTAssertEqual(picker.forgetAllValues(), .forgotten)
+        settle()
+        XCTAssertFalse(window.isVisible, "Forget publishes availability, not a new repeat result")
+        XCTAssertEqual(try repeatNow(), .nothingToRepeat)
+        XCTAssertTrue(notice.window === window)
+        XCTAssertTrue(window.isVisible, "A new invocation may present the same refusal again")
+    }
+
     func testLibraryRetirementRejectsLateClipboardAndCannotResurrectRecord() throws {
         try put("{{clipboard}}")
         try deliver()
