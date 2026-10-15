@@ -1026,7 +1026,7 @@ map, both caps, absolute relative deadline and nullable raw body bytes.
 GET's body is null. No decoded-object equality substitutes for body comparison.
 The 143 Anthropic body goldens were captured through the unchanged Swift client
 at `a6fbb4b`; identical-input compatibility cases reuse those captured bytes.
-L6's 282 OpenAI POST body goldens, typed outputs and cache bytes were captured
+L6's 283 OpenAI POST body goldens, typed outputs and cache bytes were captured
 through the unchanged Swift `OpenAIClient` and `ProviderStateStore` at the
 integration base `a42a42c`. Swift consumers compare request and persisted state
 bytes directly, never Foundation re-serializations of those goldens.

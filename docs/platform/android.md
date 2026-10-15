@@ -13,14 +13,15 @@ Automated evidence collected on 2026-10-14 at main `766394cf4a2a298f03e128870b3c
 
 | Acceptance item | Result and evidence |
 |---|---|
-| Every M2/M5 fixture is consumed by `:core` | PASS. [CorpusInventoryTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/CorpusInventoryTest.kt), `inventory accounts for every visible fixture exactly once`, independently accounts for 1,509 cases / 4,346 files / 10 categories and 54 schemas. [EveryFixtureTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/EveryFixtureTest.kt), `every visible fixture is consumed semantically exactly once`, requires semantic consumption to equal that inventory, with pending 0. The nine M8 categories total 1,034 cases / 2,172 files; the later LLM category is also consumed. |
+| Every M2/M5 fixture is consumed by `:core` | PASS. [CorpusInventoryTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/CorpusInventoryTest.kt), `inventory accounts for every visible fixture exactly once`, requires every visible fixture to be accounted for. The current inventory below has 1,536 cases / 5,515 files / 10 categories and 54 schemas; the recorded PASS remains tied to the revision above. [EveryFixtureTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/EveryFixtureTest.kt), `every visible fixture is consumed semantically exactly once`, requires semantic consumption to equal that inventory, with pending 0. The nine M8 categories total 1,034 cases / 2,172 files; the later LLM category is also consumed. |
 | DTO accounting, including admin contracts | PASS. [DtoConformanceTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/DtoConformanceTest.kt), `every contract consumes every valid and invalid case with canonical bytes` and `case order does not affect complete corpus accounting`: 649 cases (160 valid / 489 invalid), 1,298 files, all 54 contracts; pending 0. |
 | Exact Android gate | PASS locally: 570 Core tests and 357 app tests, zero failures/errors/skips; lint and both APK assemblies pass, including seed-asset verification. Command/environment below. Compilation and R8 outputs may be reused from Gradle's build cache. |
 | `ci.yml` Android job exists and runs the five tasks | PASS. [`android`](../../.github/workflows/ci.yml) is green on main `ea741f46`, [run 38634897474 / Android job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38634897474/job/116122711154), including APK verification and artifact byte comparison. Main `766394cf`'s run 38656497917 was pending at collection. |
 | `release.yml` APK and asset gates | PASS in PR dry runs: K19 [run 38586738354 / APK job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38586738354/job/116024653871), and the verifier fix now merged as #216, [run 38634076231 / APK job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38634076231/job/116142682271). The latter's [asset gate](https://github.com/L-K-M/MonkeysPaw/actions/runs/38634076231/job/116159168194) passed; both publish jobs were skipped. [`android-build`](../../.github/workflows/release.yml) exists on the recorded main. This is dry-run evidence, not a published release or a post-K19 main tag/manual release run. |
 | `scripts/sync-android-version.sh` works | PASS. [test_android_version.py](../../scripts/tests/test_android_version.py): 11 tests, none skipped, including seven hook/fake-engine tests and four installed-release-engine tests in disposable fixture repositories. Changed versions increment the code once, aligned retries do not write, malformed/overflow input preserves files, and hook edits enter the release commit/tag with rollback on failure. No release command or tag was created in the implementation checkout. |
 
-Counts from that run's Gradle JUnit XML and successful full semantic gate:
+Current fixture inventory after L6 (#186), recomputed from this slice's files.
+The automated pass above remains historical evidence for main `766394cf`:
 
 | Category | Cases | Consumed files |
 |---|---:|---:|
@@ -34,11 +35,11 @@ Counts from that run's Gradle JUnit XML and successful full semantic gate:
 | import | 15 | 30 |
 | dto | 649 | 1,298 |
 | M8 subtotal | 1,034 | 2,172 |
-| llm (later M11 fixtures) | 475 | 2,174 |
-| Current corpus total | 1,509 | 4,346 |
+| llm (later M11 fixtures) | 502 | 3,343 |
+| Current corpus total | 1,536 | 5,515 |
 
-The LLM consumer also checked 16,902 expectations, pending 0. The inventory
-SHA-256 (sorted relative path, NUL, exact file bytes) was
+The current LLM inventory contains 27,486 semantic expectations. The historical
+run's inventory SHA-256 (sorted relative path, NUL, exact file bytes) was
 `ac2db8413b5705b23cba52758f776dc3faec2eb37c0c725e07a7e1fbed0693fe`.
 The inventory rejects missing/orphan/unknown cases; the full gate also
 rejects changed semantic expectations. This proves semantic consumption,
