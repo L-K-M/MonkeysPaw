@@ -428,12 +428,16 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
             SettingsDeliveryView(presentation: page.delivery)
             SettingsUpdateView(presentation: page.updates)
         })
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 1400),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        // Like the shortcut tests, this host can become key while XCTest's app is inactive.
+        let window = MacSettingsKeyViewPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 1400),
+            styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
         window.contentView = content
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        window.makeKey()
         defer { window.close() }
+        waitFor("Settings test host becomes key") { window.isKeyWindow }
         content.layoutSubtreeIfNeeded()
         // A client query activates SwiftUI's otherwise lazy virtual accessibility tree.
         // Run it off-main so AppKit can answer while XCTest pumps the main run loop.
@@ -455,12 +459,19 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
             return expectedLabels.isSubset(of: observedLabels)
         }
         window.recalculateKeyViewLoop()
+        let firstKeyView = try XCTUnwrap(content.nextValidKeyView, "Settings must have a valid key view")
+        window.initialFirstResponder = firstKeyView
+        XCTAssertTrue(window.makeFirstResponder(nil))
         window.selectNextKeyView(nil)
-        XCTAssertTrue(window.firstResponder is NSView, "Tab must focus a Settings view")
+        XCTAssertTrue(window.firstResponder === firstKeyView, "Forward traversal must select the initial key view")
+        XCTAssertTrue(firstKeyView.isDescendant(of: content), "Forward traversal must stay in Settings")
+        let previousKeyView = try XCTUnwrap(firstKeyView.previousValidKeyView,
+            "Settings must have a previous valid key view")
         window.selectPreviousKeyView(nil)
-        XCTAssertTrue(window.firstResponder is NSView, "Shift-Tab must focus a Settings view")
+        XCTAssertTrue(window.firstResponder === previousKeyView, "Reverse traversal must select the previous key view")
+        XCTAssertTrue(previousKeyView.isDescendant(of: content), "Reverse traversal must stay in Settings")
         XCTAssertTrue(window.isVisible)
-        assertRequestCount(0, "Tab must not activate a check or self-test")
+        assertRequestCount(0, "Key-view traversal must not activate a check or self-test")
         XCTAssertEqual(selfTestTarget.presentations, 0)
         XCTAssertEqual(updateTimers.jobs.count, 0)
         XCTAssertEqual(updateScheduler.pendingCount, 0)
@@ -508,4 +519,9 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         }
         return result
     }
+}
+
+private final class MacSettingsKeyViewPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
