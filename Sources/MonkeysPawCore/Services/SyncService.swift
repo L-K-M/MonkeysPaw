@@ -546,7 +546,7 @@ public final class SyncService {
     }
 
     private func recoveryState() -> SyncStopResult {
-        guard journal.pending == nil else { return .recoveryRequired }
+        guard journal.pending == nil, !mutations.hasUnreadableJournal else { return .recoveryRequired }
         let snapshot = pending.snapshot
         if snapshot.error != nil || snapshot.value != nil { return .recoveryRequired }
         return .stopped

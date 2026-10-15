@@ -242,6 +242,21 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(report.status, .needsSignIn)
     }
 
+    func testUnreadableJournalRequiresRecoveryWithoutPendingSnapshots() throws {
+        let rig = try SyncServiceRig()
+        try rig.base.data.put("corrupt", at: "sync/apply.json")
+        XCTAssertThrowsError(try rig.journal.replay()) { XCTAssertEqual($0 as? SyncError, .corruptFile) }
+        XCTAssertTrue(rig.base.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.base.mutations.pendingPermit)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertNil(rig.pending.snapshot.value)
+        XCTAssertNil(rig.pending.snapshot.error)
+
+        XCTAssertEqual(rig.service.stop(), .recoveryRequired)
+        XCTAssertEqual(rig.service.rootHealthChanged(.available), .recoveryRequired)
+        XCTAssertEqual(rig.service.retire(), .recoveryRequired)
+    }
+
     func testStoppedPendingPushRequiresRecoveryBeforeRetirement() async throws {
         let rig = try SyncServiceRig()
         try rig.base.files.write(SyncScanTestSupport.bytes(), at: "a.md")

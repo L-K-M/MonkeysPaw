@@ -211,7 +211,7 @@ final class SyncApplyJournal {
     private func applyPlan(_ plan: SyncApplyPlan, captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
-        guard try persistence.load() == nil else { throw SyncError.invalidState }
+        guard try loadRecord() == nil else { throw SyncError.invalidState }
         guard try states.load(for: plan.nextState.binding) == plan.expectedState else {
             return .replanAsConflict(operationID: plan.id)
         }
@@ -295,7 +295,7 @@ final class SyncApplyJournal {
     func replan(_ plan: SyncApplyPlan) throws -> SyncApplyOutcome {
         lock.lock()
         defer { lock.unlock() }
-        guard let previous = try persistence.load(), previous.id != plan.id,
+        guard let previous = try loadRecord(), previous.id != plan.id,
               previous.nextState.binding == plan.nextState.binding else { throw SyncError.invalidState }
         guard try previous.steps.allSatisfy({ try mutations.canReplan($0) }),
               try previous.directorySteps.allSatisfy({ try mutations.canReplan($0) }) else {
@@ -331,8 +331,16 @@ final class SyncApplyJournal {
         return try run()
     }
 
+    private func loadRecord() throws -> SyncApplyRecord? {
+        do { return try persistence.load() }
+        catch {
+            mutations.blockForRecovery()
+            throw error
+        }
+    }
+
     private func run(captureReceipts: (() throws -> Void)? = nil) throws -> SyncApplyOutcome {
-        guard var record = try persistence.load() else { return .committed }
+        guard var record = try loadRecord() else { return .committed }
         try mutations.begin(record.id, nextState: record.nextState)
         let binding = record.nextState.binding
         let state = try states.load(for: binding)
