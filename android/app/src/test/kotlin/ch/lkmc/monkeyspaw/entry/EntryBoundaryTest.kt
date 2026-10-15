@@ -12,11 +12,12 @@ internal class EntryBoundaryTest {
     private val namespace = "http://schemas.android.com/apk/res/android"
 
     @Test
-    fun `only launcher text-selection and permission-protected tile are exported`() {
+    fun `only launcher capture entries and permission-protected tile are exported`() {
         val manifest = xml("AndroidManifest.xml")
         val expected = mapOf(
             ".MainActivity" to "true", ".entry.FillActivity" to "false",
             ".entry.ProcessTextActivity" to "true",
+            ".entry.ShareReceiverActivity" to "true",
             ".entry.PromptShortcutActivity" to "false", ".entry.PromptTileService" to "true",
             ".entry.PromptWidgetProvider" to "false",
         )

@@ -35,6 +35,7 @@ internal fun EditorScreen(
     onDecision: (Long, EditorDecision) -> Unit,
     onConflict: (EditorConflictChoice) -> Unit,
     modifier: Modifier = Modifier,
+    backLabel: Int = R.string.editor_back,
 ) {
     BackHandler(onBack = onBack)
     var dialog by remember(state.relativePath) { mutableStateOf<FileDialog?>(null) }
@@ -42,7 +43,7 @@ internal fun EditorScreen(
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onBack) { Text(stringResource(R.string.editor_back)) }
+                TextButton(onClick = onBack) { Text(stringResource(backLabel)) }
                 TextButton(onClick = onSave, enabled = state.canSave) { Text(stringResource(R.string.editor_save)) }
             }
             Text(state.title.ifEmpty { stringResource(R.string.editor_title) }, style = MaterialTheme.typography.headlineSmall)

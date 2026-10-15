@@ -34,6 +34,15 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".entry.ShareReceiverActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
         <!-- A static shortcut resets its first target's task; keep that target separate. -->
         <activity
             android:name=".entry.PromptShortcutActivity"
