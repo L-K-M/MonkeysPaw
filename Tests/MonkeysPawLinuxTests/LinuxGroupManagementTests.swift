@@ -202,6 +202,44 @@ final class LinuxGroupManagementTests: XCTestCase {
         XCTAssertEqual(model.state.selectedGroup?.name, "Second remote rename")
     }
 
+    func testRefreshRestoresKeyboardFocusWithoutTakingItFromAnotherControl() throws {
+        try showSelected()
+        let refresh = try control("refresh")
+        XCTAssertNotEqual(gtk_widget_grab_focus(refresh), 0)
+        backend.configure { $0.blockNext = .refresh(GroupPageBackend.group) }
+        try click("refresh")
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.isBlocked })
+        backend.release()
+        waitIdle()
+        XCTAssertEqual(gtk_root_get_focus(gtk_widget_get_root(window)), refresh,
+            "Refresh lost keyboard focus after completing")
+
+        backend.configure { $0.blockNext = .refresh(GroupPageBackend.group) }
+        try click("refresh")
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.isBlocked })
+        let notebook = try settingsWidget("settings-tabs", in: window)
+        XCTAssertNotEqual(gtk_widget_grab_focus(notebook), 0)
+        let movedFocus = gtk_root_get_focus(gtk_widget_get_root(window))
+        XCTAssertNotNil(movedFocus)
+        backend.release()
+        waitIdle()
+        XCTAssertEqual(gtk_root_get_focus(gtk_widget_get_root(window)), movedFocus,
+            "Refresh took focus after the user moved it")
+
+        let memberAction = "set-role-" + GroupPageBackend.user.rawValue
+        let oldAction = try control(memberAction)
+        XCTAssertNotEqual(gtk_widget_grab_focus(oldAction), 0)
+        backend.configure { $0.blockNext = .refresh(GroupPageBackend.group) }
+        try click("refresh")
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.isBlocked })
+        backend.configure { $0.role = .viewer }
+        backend.release()
+        waitIdle()
+        XCTAssertFalse(try sensitive(memberAction))
+        XCTAssertNotEqual(gtk_root_get_focus(gtk_widget_get_root(window)), oldAction,
+            "Refresh restored focus to a replaced member control after role loss")
+    }
+
     func testReauthenticationResetsMemberRowRoleDraftsEvenWhenMembersAreUnchanged() throws {
         try showSelected()
         try role("role-" + GroupPageBackend.user.rawValue, .editor)
@@ -213,6 +251,7 @@ final class LinuxGroupManagementTests: XCTestCase {
     }
 
     func testInviteRequiresExplicitCopyAndClearsOnTabHideAndNativeCloseWithoutLogging() throws {
+        environment.log.write(.warning, "Group invitation lifecycle log scan")
         try showSelected()
         try role("invite-role", .editor)
         try click("create-invite")
@@ -239,12 +278,31 @@ final class LinuxGroupManagementTests: XCTestCase {
         try show()
         XCTAssertTrue(try label("invite-link").isEmpty, "Reopening restored invitation text")
         XCTAssertEqual(backend.copyCount, 1)
+        var scannedLogs = 0
         if let files = FileManager.default.enumerator(at: tools.directory, includingPropertiesForKeys: nil) {
             for case let url as URL in files where url.pathExtension == "log" {
                 let data = try Data(contentsOf: url)
+                scannedLogs += 1
                 XCTAssertFalse(data.range(of: Data(backend.token.utf8)) != nil, "An invitation secret reached a log")
             }
         }
+        XCTAssertGreaterThan(scannedLogs, 0, "The invitation-secret scan did not inspect any log files")
+    }
+
+    func testCancelledBlockedBackendCompletesWithoutRelease() throws {
+        backend.configure { $0.blockNext = .refresh(nil) }
+        let done = GroupPageFlag()
+        let work = Task.detached { [backend = backend!] in
+            _ = await backend.execute(.refresh(nil), expectedAccount: nil)
+            done.set()
+        }
+        defer {
+            backend.release()
+            XCTAssertTrue(GTKTestSupport.spin { done.value })
+        }
+        XCTAssertTrue(GTKTestSupport.spin { self.backend.isBlocked })
+        work.cancel()
+        XCTAssertTrue(GTKTestSupport.spin { done.value }, "Cancellation left the fake's worker blocked")
     }
 
     func testBusyInviteKeepsGLibResponsiveAndAllWidgetNotificationsOnUI() throws {
@@ -544,7 +602,6 @@ private final class GroupPageBackend: GroupManagementProviding, AccountProviding
     }
     let token = UUID().uuidString.replacingOccurrences(of: "-", with: "") + "AAAAAAAAAAA"
     private let lock = NSLock()
-    private let gate = DispatchSemaphore(value: 0)
     private var config: Configuration
     private var recorded: [SyncGroupCommand] = []
     private var otherMembers: [SyncAPI.Member] = []
@@ -561,7 +618,7 @@ private final class GroupPageBackend: GroupManagementProviding, AccountProviding
 
     init() throws { config = Configuration(account: try Self.connection()) }
     func configure(_ edit: (inout Configuration) -> Void) { locked { edit(&config) } }
-    func release() { gate.signal() }
+    func release() { locked { blocked = false } }
     static func connection(user: ULID = user) throws -> SyncAccount {
         try SyncAccount(identity: SyncAccountIdentity(serverURL: "https://example.test/paw", userID: user),
             username: "person", deviceID: device, deviceName: "Linux", connectionID: UUID())
@@ -589,7 +646,15 @@ private final class GroupPageBackend: GroupManagementProviding, AccountProviding
             blocked = config.blockNext == command
             return blocked
         }
-        if shouldBlock { gate.wait(); locked { blocked = false; config.blockNext = nil } }
+        if shouldBlock {
+            // Yield so Account completions can run even on a small cooperative pool.
+            let deadline = ContinuousClock().now.advanced(by: .seconds(30))
+            while isBlocked && !Task.isCancelled, ContinuousClock().now < deadline {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            if isBlocked && !Task.isCancelled { XCTFail("A blocked group command was never released") }
+            locked { blocked = false; config.blockNext = nil }
+        }
         return locked {
             var selected = command.groupID
             var issue = config.nextIssue

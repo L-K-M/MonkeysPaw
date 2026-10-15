@@ -28,6 +28,7 @@ final class LinuxGroupManagementView {
     private var memberWidgets: [(controls: GTK.Widget, role: GTK.Widget, set: GTK.Widget, remove: GTK.Widget)] = []
     private var managementVisible = false
     private var renderedName = ""
+    private var savedFocus: GTK.Widget?
 
     private let message: GTK.Widget
     private let progress: GTK.Widget
@@ -157,6 +158,7 @@ final class LinuxGroupManagementView {
     }
 
     deinit {
+        clearSavedFocus()
         if let observer { model?.removeObserver(observer) }
         model?.dismiss()
     }
@@ -180,6 +182,7 @@ final class LinuxGroupManagementView {
         account = state
         accountIntentPending = pendingIntent != nil
         if changed {
+            clearSavedFocus()
             mayDisplayInvite = false
             confirmingGroup = nil
             model?.dismiss()
@@ -191,6 +194,7 @@ final class LinuxGroupManagementView {
     func retire(_ reason: LinuxAccountSettingsPage.Retirement) {
         guard !isDestroyed else { return }
         isShown = false
+        clearSavedFocus()
         if let observer { model?.removeObserver(observer) }
         observer = nil
         model?.dismiss()
@@ -269,8 +273,15 @@ final class LinuxGroupManagementView {
         guard !isDestroyed, refresh != nil else { return }
         let state = model?.state
         let canManage = canOperate && state?.canManage == true
-        if !canOperate, let root = gtk_widget_get_root(widget), let focus = gtk_root_get_focus(root),
-           gtk_widget_is_ancestor(focus, widget) != 0 { gtk_root_set_focus(root, nil) }
+        if !canOperate, savedFocus == nil, let root = gtk_widget_get_root(widget), let focus = gtk_root_get_focus(root),
+           gtk_widget_is_ancestor(focus, widget) != 0 {
+            if isShown {
+                // Member/group rows may be replaced while work is pending.
+                g_object_ref(focus)
+                savedFocus = focus
+            }
+            gtk_root_set_focus(root, nil)
+        }
         gtk_widget_set_sensitive(refresh, isIdle ? 1 : 0)
         gtk_widget_set_sensitive(createForm, canOperate && state?.canCreate == true ? 1 : 0)
         gtk_widget_set_sensitive(management, canManage ? 1 : 0)
@@ -291,6 +302,20 @@ final class LinuxGroupManagementView {
             let allowed = selectedRole(row.role).map { state?.canSetRole(userID: member.userID, role: $0) == true } == true
             gtk_widget_set_sensitive(row.set, canManage && allowed ? 1 : 0)
         }
+        if canOperate, let savedFocus {
+            if let root = gtk_widget_get_root(widget), gtk_root_get_focus(root) == nil,
+               gtk_widget_is_ancestor(savedFocus, widget) != 0,
+               gtk_widget_is_sensitive(savedFocus) != 0, gtk_widget_get_mapped(savedFocus) != 0 {
+                gtk_widget_grab_focus(savedFocus)
+            }
+            clearSavedFocus()
+        }
+    }
+
+    private func clearSavedFocus() {
+        guard let savedFocus else { return }
+        self.savedFocus = nil
+        g_object_unref(savedFocus)
     }
 
     private func renderGroups(_ rows: [SyncAPI.GroupMembership]) {
