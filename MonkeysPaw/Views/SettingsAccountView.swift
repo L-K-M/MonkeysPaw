@@ -89,7 +89,6 @@ final class AccountSettingsViewState: ObservableObject {
 
     func refresh() { perform { $0.refresh() } }
     func signOut() {
-        refreshBinding()
         guard canSignOut else { return }
         perform { $0.signOut() }
     }
@@ -99,28 +98,25 @@ final class AccountSettingsViewState: ObservableObject {
     }
 
     func revoke(_ device: SyncAPI.Device) {
-        refreshBinding()
         guard canRevoke(device), let id = ULID(device.id) else { return }
         perform { $0.revokeDevice(id) }
     }
 
     func selectHeld(_ identity: PromptIdentity, selected: Bool) {
-        refreshBinding()
-        guard canSelectHeld, state?.heldPrompts.contains(where: { $0.identity == identity }) == true else { return }
+        guard hasCurrentBinding(), canSelectHeld,
+              state?.heldPrompts.contains(where: { $0.identity == identity }) == true else { return }
         if selected { selectedHeld.insert(identity) }
         else { selectedHeld.remove(identity) }
     }
 
     func decideHeld(_ decision: AccountHeldDecision) {
-        refreshBinding()
         guard canDecideHeld else { return }
         let selected = selectedHeld
         perform { $0.decideHeld(selected, decision: decision) }
     }
 
     private func perform(_ intent: (AccountModel) -> Void) {
-        refreshBinding()
-        guard canOperate, let model else { return }
+        guard hasCurrentBinding(), canOperate, let model else { return }
         let request = UUID()
         pendingIntent = request
         intent(model)
@@ -130,6 +126,14 @@ final class AccountSettingsViewState: ObservableObject {
             guard let self, let model, self.model === model, self.pendingIntent == request else { return }
             self.pendingIntent = nil
         }
+    }
+
+    private func hasCurrentBinding() -> Bool {
+        let previous = model
+        refreshBinding()
+        // Rebinding refreshes the UI, but never transfers a stale click or
+        // held-file selection to a different library/account graph.
+        return previous != nil && previous === model
     }
 
     private func render(_ next: AccountState) {
@@ -209,7 +213,7 @@ final class AccountPasswordInput {
     }
 
     func consume() -> String {
-        let supplied = field?.stringValue ?? ""
+        let supplied = field?.currentEditor()?.string ?? field?.stringValue ?? ""
         clear()
         return supplied
     }

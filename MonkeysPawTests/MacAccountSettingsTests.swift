@@ -125,6 +125,19 @@ final class MacAccountSettingsTests: XCTestCase {
         XCTAssertTrue(view.passwordInput.consume().isEmpty)
     }
 
+    func testSubmissionConsumesCurrentEditorTextBeforeClearingBothValues() {
+        let input = AccountPasswordInput()
+        let field = AccountSettingsEditingField(frame: .zero)
+        input.update(field, reset: UUID(), isEditable: true)
+        field.stringValue = "older-control-value"
+        field.editor.string = "current-editor-value"
+        let supplied = input.consume()
+        XCTAssertTrue(supplied == "current-editor-value", "Submission must consume the active editor's text")
+        XCTAssertTrue(field.stringValue.isEmpty)
+        XCTAssertTrue(field.editor.string.isEmpty)
+        input.detach(field)
+    }
+
     func testSecretSaveFailureIsVisibleAndRetryRequiresFreshPassword() throws {
         let view = try openAccount()
         let field = try secureField()
@@ -382,6 +395,54 @@ final class MacAccountSettingsTests: XCTestCase {
         XCTAssertEqual(transport.loginCount, 0)
     }
 
+    func testStaleLoginCannotCrossIntoAReplacementGraph() throws {
+        let old = try XCTUnwrap(delegate.accountModel)
+        XCTAssertTrue(spin { !old.state.isBusy })
+        let files = try RootedFileStore(root: directory.appendingPathComponent("replacement-library"))
+        try files.createRoot()
+        try files.pinRoot()
+        let appData = try RootedFileStore(root: directory.appendingPathComponent("replacement-data"))
+        let library = LibraryService(library: files, data: appData, clock: SystemClock(), entropy: SystemEntropy())
+        let states = SyncStateStore(files: appData, operations: appData)
+        let accounts = SyncAccountStore(files: appData, operations: appData)
+        let scheduler = DispatchSyncScheduler()
+        let main = DispatchMainThread()
+        let sync = try SyncService(library: library, libraryOperations: files, dataFiles: appData, dataOperations: appData,
+            states: states, accounts: accounts, scheduler: scheduler, mainThread: main, clock: SystemClock(), entropy: SystemEntropy())
+        let service = try SyncAccountService(sync: sync, accounts: accounts, secrets: secrets, transport: transport,
+            libraryRoot: directory.appendingPathComponent("replacement-library").path)
+        let next = AccountModel(account: service, mainThread: main)
+        XCTAssertTrue(spin { !next.state.isBusy })
+        defer {
+            next.retire()
+            let drained = expectation(description: "Replacement fixture drains")
+            Task.detached {
+                await next.drain()
+                sync.stop()
+                await sync.drain()
+                _ = sync.retire()
+                scheduler.tearDown()
+                main.run { drained.fulfill() }
+            }
+            wait(for: [drained], timeout: 5)
+        }
+        var active: AccountModel? = old
+        let view = AccountSettingsViewState(mainThread: main, makeModel: { active })
+        view.show()
+        defer { view.hide() }
+        let field = NSSecureTextField(frame: .zero)
+        view.passwordInput.update(field, reset: view.passwordInputReset, isEditable: view.canOperate)
+        setLogin(view, field: field, password: "stale-input")
+        active = next
+        view.login()
+        XCTAssertTrue(field.stringValue.isEmpty)
+        XCTAssertFalse(next.state.isBusy, "A click from the old binding must not admit work on the replacement")
+        XCTAssertEqual(view.state, next.state)
+        XCTAssertTrue(spin { view.canOperate })
+        XCTAssertEqual(transport.loginCount, 0)
+        XCTAssertNil(next.state.connection)
+    }
+
     private func openAccount() throws -> AccountSettingsViewState {
         delegate.showSettings()
         let controller = try XCTUnwrap(delegate.settingsWindow)
@@ -444,6 +505,11 @@ final class MacAccountSettingsTests: XCTestCase {
 private final class AccountSettingsWatcher: FileStoreWatcher {
     func start(_ onEvent: @escaping @Sendable (FileStoreWatchEvent) -> Void) throws {}
     func stop() {}
+}
+
+private final class AccountSettingsEditingField: NSSecureTextField {
+    let editor = NSTextView(frame: .zero)
+    override func currentEditor() -> NSText? { editor }
 }
 
 private final class AccountSettingsSecrets: SecretStore {

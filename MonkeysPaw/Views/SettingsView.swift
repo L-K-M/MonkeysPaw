@@ -215,7 +215,7 @@ struct SettingsView: View {
         }
         // Composition also publishes when a refused drain restores models but
         // General's path/outcome is unchanged, so its onChange need not fire.
-        .onReceive(presentation.objectWillChange) { presentation.account.refreshBinding() }
+        .onReceive(presentation.objectWillChange) { _ in presentation.account.refreshBinding() }
     }
 
     private var general: some View {
