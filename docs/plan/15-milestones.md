@@ -47,6 +47,16 @@
   K20's owner-evidence dependency and milestone closure remain pending until
   those results are committed for the final signed, shrunk APK.
 
+- M9 N1–N8 are code-complete on main; **M9 is NOT closed**. N9 records
+  the [automated acceptance evidence and consolidated owner matrix](../platform/android.md#m9-acceptance-record)
+  against main `3b900c8a` (2026-10-15), including the inputType and
+  selection-field tests, entry integration/privacy guards, both merged
+  manifests and the Android gate. Every Android 14–16/below-API-34,
+  Gboard/Samsung insertion, selection/share/setup and M8 entry regression
+  cell remains NOT RUN (owner). Closure requires committed owner evidence
+  on the final signed, minified APK and green latest-main CI; historical
+  green runs and JVM/build results do not close those gaps.
+
 - I3 adds Core forget intents, draft clearing and open-form resets before the
   Settings and picker UI slices add their visible controls.
 

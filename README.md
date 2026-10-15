@@ -58,10 +58,17 @@ The [CI and release guide](CICD.md) describes dry runs and cutting a release.
 ## Install and build on Android
 
 Android API 26 or later is required. The Android app keeps its library on
-the device, with seeds, a raw editor and history. Add the Quick Settings tile
-manually, hold the launcher icon for **Insert prompt**, or add the
-**Monkey's Paw: Insert prompt** widget. Pick a prompt, fill it, tap **Copy**,
-then paste in your target app. Device checks are still pending; see the
+the device, with seeds, a raw editor and history. Use **Keyboard and tile
+setup** to enable the picker keyboard and add the Quick Settings tile.
+Switch to the picker while typing in another app to insert a prompt;
+fields that need typing open a Copy form, and multi-line text in Termux
+offers Copy instead. Where offered, the text-selection action uses selected
+text in a prompt. Share text to Monkey's Paw to fill a prompt or start an
+unsaved new prompt.
+
+The tile, launcher icon's **Insert prompt** shortcut and
+**Monkey's Paw: Insert prompt** widget open pick → fill → **Copy**, then
+you paste in your target app. Device checks are still pending; see the
 [Android checklist](docs/platform/android.md).
 
 When an Android release is published, download `monkeyspaw-v<full-version>.apk`
