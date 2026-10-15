@@ -378,19 +378,41 @@ final class LinuxPickerViewTests: XCTestCase {
     private func assertPresentationSurvivesQueuedBlur(_ request: () -> Void) throws {
         try open()
         XCTAssertTrue(GTKTestSupport.spin { g_main_context_pending(nil) == 0 })
+        let window = UnsafeMutableRawPointer(environment.panel.clipboardOwner).assumingMemoryBound(to: GObject.self)
+        // Hold focus notifications so native focus handoff cannot start the blur timer yet.
+        g_object_freeze_notify(window)
+        var notificationsFrozen = true
+        defer { if notificationsFrozen { g_object_thaw_notify(window) } }
         let other = try XCTUnwrap(gtk_application_window_new(application))
         defer { gtk_window_destroy(mp_window(other)) }
         gtk_window_present(mp_window(other))
         let picker = environment.pickerModel
         XCTAssertTrue(GTKTestSupport.spin {
-            picker.state != .picker || (self.environment.panel.isVisible
-                && !self.environment.panel.isActiveAndVisible && gtk_window_is_active(mp_window(other)) != 0)
+            self.environment.panel.isVisible && !self.environment.panel.isActiveAndVisible
+                && gtk_window_is_active(mp_window(other)) != 0
         })
-        // A focus handoff slower than the blur delay closes the picker during
-        // setup; the race cannot be staged then, which is not a regression.
-        guard picker.state == .picker else {
-            throw XCTSkip("Focus handoff outlasted the blur delay; the stale-blur race was not staged.")
+        XCTAssertEqual(picker.state, .picker)
+
+        // GLib allocates source IDs in order. Thaw synchronously queues the blur
+        // timeout; bracket it without iterating the loop, then hold that source.
+        let before = GTK.after(.greatestFiniteMagnitude) {}
+        g_source_remove(before)
+        g_object_thaw_notify(window)
+        notificationsFrozen = false
+        let after = GTK.after(.greatestFiniteMagnitude) {}
+        g_source_remove(after)
+        let sources = ((before + 1)..<after).compactMap { g_main_context_find_source_by_id(nil, $0) }
+            .filter { g_source_get_ready_time($0) > 0 }
+        XCTAssertEqual(sources.count, 1, "Focus loss must queue one blur timer.")
+        let blur = try XCTUnwrap(sources.first)
+        g_source_ref(blur)
+        defer {
+            g_source_destroy(blur)
+            g_source_unref(blur)
         }
+        XCTAssertEqual(g_source_get_priority(blur), G_PRIORITY_DEFAULT)
+        XCTAssertGreaterThan(g_source_get_ready_time(blur), 0)
+        g_source_set_ready_time(blur, -1)
 
         let render = picker.onChange
         defer { picker.onChange = render }
@@ -401,18 +423,15 @@ final class LinuxPickerViewTests: XCTestCase {
             XCTAssertEqual(picker?.state, .picker, "Blur fired before the new show was queued.")
             guard picker?.state == .picker else { return }
             delayedPresentation = true
-            // The show is a GLib idle. Let the older blur timeout become ready
-            // before the next iteration, as when the app loses CPU time.
-            Thread.sleep(forTimeInterval: Limits.blurHideDelay.timeInterval + 0.1)
-        }
-        guard picker.state == .picker else {
-            throw XCTSkip("Blur expired before the presentation request; the race was not staged.")
+            // A ready timeout precedes the queued show idle, independent of host load.
+            g_source_set_ready_time(blur, 0)
         }
         request()
         XCTAssertTrue(GTKTestSupport.spin { delayedPresentation })
         var drained = false
         environment.mainThread.run { self.environment.mainThread.run { drained = true } }
         XCTAssertTrue(GTKTestSupport.spin { drained })
+        XCTAssertNotEqual(g_source_is_destroyed(blur), 0, "The stale blur timer must have fired.")
         XCTAssertEqual(picker.state, .picker)
         XCTAssertTrue(environment.panel.isVisible)
     }
