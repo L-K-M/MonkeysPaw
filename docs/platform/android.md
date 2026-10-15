@@ -120,6 +120,29 @@ published APK or owner installation is asserted here. Version upgrades
 need a suitable earlier APK; repeated same-core prereleases remain
 unclaimed until increasing codes and engine support exist (§20 F20).
 
+## M9 keyboard and tile setup: NOT RUN
+
+Owner-run checks for §10.4 onboarding and §22 H6/H10/H12, with Gboard and
+Samsung Keyboard. JVM tests cover state and fake effects; they do not execute
+the actual Settings, keyboard picker or Quick Settings dialogs. Use the final
+signed, shrunk release APK on API 26–32, API 33 and API 34+ where available.
+Record the main commit, APK version/SHA-256/signer, device/API, previous keyboard
+version, tester/date and results. Keep private text and keyboard IDs out of logs.
+
+| Check | Result / device details |
+|---|---|
+| Fresh install and upgrade from M8 show the three skippable steps once; starter-prompt choice and existing library are preserved | NOT RUN |
+| Privacy explanation precedes Android's enable warning; return from keyboard settings rereads enabled status, including disabling it again | NOT RUN |
+| Picker shows Monkey's Paw picker; dismissing it does not complete selection; window focus return, Check status and launcher resume reflect selection and permit another picker request | NOT RUN |
+| API 26–33 selection uses the system setting's parsed ComponentName; API 34+ reflects the current input method API | NOT RUN |
+| API 26–32 shows manual Quick Settings editing instructions and user confirmation; no tile request is attempted | NOT RUN |
+| API 33+ explicitly requests the existing Insert prompt tile with its existing label/icon; added, already added, denied and error remain distinct | NOT RUN |
+| Repeated taps while a request is pending do not stack requests; skip, Back, rotation and late replies do not resurrect old setup | NOT RUN |
+| Failed choice publication keeps its pending decision for retry; Back can leave after failure without claiming the choice was saved | NOT RUN |
+| Settings → Keyboard and tile setup reopens after disabling the keyboard or removing the tile, without displaying saved progress as current installation | NOT RUN |
+| IME, tile, shortcut and widget invocation do not launch keyboard/tile setup; setup requests no sign-in or notification permission | NOT RUN |
+| TalkBack, large text, rotation and background/resume keep setup actions and skips usable | NOT RUN |
+
 ## M8 quick entry points: NOT RUN (owner)
 
 Owner-run checks for §10.4 B and §20 F2/F16. No Android device or emulator
