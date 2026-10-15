@@ -19,7 +19,9 @@ internal class ImeBoundaryTest {
     private val app = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
     private val core = File(checkNotNull(System.getProperty("monkeyspaw.coreSources")))
     private val namespace = "http://schemas.android.com/apk/res/android"
-    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|PlatformInitializer|ProfileInstallerInitializer|ForegroundProfileInstaller|AppInitializer|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL(?=\\s*(?:\\(|\\.|::))|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable|ProcessBuilder|Runtime)\\b|\\bSystem\\.(?:out|err)\\b|\\bjava\\.net\\.URL\\b|::\\s*URL\\b|^URL$")
+    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|PlatformInitializer|ProfileInstallerInitializer|ForegroundProfileInstaller|AppInitializer|Assistant(?!(?:TokenUsage|Access)\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL(?=\\s*(?:\\(|\\.|::))|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable|ProcessBuilder|Runtime)\\b|\\bSystem\\.(?:out|err)\\b|\\bjava\\.net\\.URL\\b|::\\s*URL\\b|^URL$")
+    // Shared local save methods name contracts without holding a provider or assistant session.
+    private val localSaveReferences = Regex("\\bAssistant(?:Acceptance(?:Conflict|Editor|Failure|Outcome)?|AccessState|Candidate|CommittedPrompt|EditorSnapshot|MutationAccess|Save(?:Destination|Permit|Refusal))\\b")
     private val helperSources by lazy {
         indexSources((app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }.map { it.readText() })
     }
@@ -90,6 +92,20 @@ internal class ImeBoundaryTest {
         assertEquals("SecretStore", error.message?.substringBefore('.'))
     }
 
+    @Test fun `local save references do not admit assistant sessions or provider access`() {
+        val library = core.resolve("ch/lkmc/monkeyspaw/core/services/LibraryService.kt").readText()
+        val access = core.resolve("ch/lkmc/monkeyspaw/core/services/AssistantAcceptance.kt").readText()
+        assertTrue(library.contains("private val assistantAccess: AssistantAccess = AssistantAccess.LOCAL,"))
+        assertTrue(access.contains("val LOCAL = AssistantAccess { AssistantAccessState.PRIVATE_PROMPT }"))
+        assertTrue(app.resolve("di/AppModule.kt").readText().contains("LibraryService(prompts, state, clock, entropy)"))
+        validateGraphSource("AssistantAcceptance AssistantSavePermit AssistantAcceptanceOutcome")
+        // Source references are allowed; an instance in the runtime graph remains forbidden.
+        val error = assertFailsWith<AssertionError> {
+            graphClosure(ch.lkmc.monkeyspaw.core.services.AssistantCandidate::class.java)
+        }
+        assertEquals("AssistantCandidate", error.message?.substringBefore('.'))
+    }
+
     private abstract class InheritedConnection : javax.net.ssl.HttpsURLConnection(null)
     private interface InheritedSecret : ch.lkmc.monkeyspaw.core.ports.SecretStore
 
@@ -131,7 +147,9 @@ internal class ImeBoundaryTest {
         for (code in listOf("HttpTransport", "OkHttpClient()", "SyncEngine()", "AssistantClient()", "SecretStore",
             "WorkManager.getInstance()", "Logger.getLogger()", "Log.d()", "getSurroundingText()", "getExtractedText()",
             "getSelectedText()", "SavedStateHandle", "rememberSaveable", "AssistantTokenUsageClient()",
-            "AssistantTokenUsage(Logger.getLogger())", "@ApplicationScope scope", "AppModule.applicationScope(io)")) {
+            "AssistantTokenUsage(Logger.getLogger())", "@ApplicationScope scope", "AppModule.applicationScope(io)",
+            "AssistantAccessClient()", "AssistantSavePermit(SecretStore)", "AssistantAcceptance(AssistantClient())",
+            "AssistantAccess { Logger.getLogger() }")) {
             assertFailsWith<AssertionError> { validateGraphSource(code) }
         }
     }
@@ -292,7 +310,7 @@ internal class ImeBoundaryTest {
         val callPatterns = mutableMapOf<String, Regex>()
         fun visit(current: String, context: String = current) {
             if (!visited.add(current)) return
-            validateLocal(current)
+            validateLocal(localSaveReferences.replace(current, ""))
             assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(current), "Application scope")
             val pkg = Regex("(?m)^package (\\S+)").find(context)?.groupValues?.get(1)
             val imports = Regex("(?m)^import ([\\w.*]+)(?: as (\\w+))?").findAll(context).toList()
