@@ -28,10 +28,11 @@ internal class AppGraphTest {
 
     @Test
     fun `one singleton provider owns every mutable library service and DataStore`() {
-        val methods = AppModule::class.java.declaredMethods
+        val methods = AppModule::class.java.declaredMethods.filterNot { it.isSynthetic }
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
             AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, SecretStore::class.java,
             AndroidStateStore::class.java, AndroidSyncStartup::class.java, AndroidSyncRepository::class.java,
+            SyncWorkScheduler::class.java, SyncWorkHooks::class.java,
             CoroutineScope::class.java, AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
             AndroidClock::class.java, Clock::class.java, Clipboard::class.java,
             HttpTransport::class.java, MonotonicClock::class.java, AssistantService::class.java,

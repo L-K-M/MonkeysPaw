@@ -25,6 +25,7 @@ internal class AndroidSyncRepository(
     private val engineFactory: (SyncLocalGraph) -> SyncEngine,
     private val accountFactory: (SyncEngine, SyncLocalGraph) -> SyncAccountService,
     private val settings: AndroidSettingsStore,
+    private val work: SyncWorkHooks = SyncWorkHooks.None,
 ) {
     internal class Graph(val local: SyncLocalGraph, val engine: SyncEngine, val account: SyncAccountService)
     private enum class GraphUse { READY, SIGN_OUT }
@@ -34,7 +35,7 @@ internal class AndroidSyncRepository(
     private var generation = 0L
     @Volatile private var retired = false
     private var accountWork: Job? = null
-    private var current: Graph? = null
+    @Volatile private var current: Graph? = null
     private var observers: Job? = null
     @Volatile private var mode = SyncExecutionMode.BACKGROUND
     private val mutableReports = MutableStateFlow<SyncReport?>(null)
@@ -45,6 +46,12 @@ internal class AndroidSyncRepository(
     val scheduling = mutableScheduling.asStateFlow()
     val accounts = mutableAccounts.asStateFlow()
     val access = mutableAccess.asStateFlow()
+
+    internal fun workFacts(): SyncWorkFacts? = current?.engine?.let { SyncWorkFacts(it.scheduling.value, it.reports.value) }
+
+    internal suspend fun restoreWorkEligibility(retries: Int, dueAt: Long) = withContext(io) {
+        graph().engine.restoreWorkEligibility(retries, java.time.Instant.ofEpochMilli(dueAt))
+    }
 
     internal suspend fun graph(): Graph = graph(GraphUse.READY)
 
@@ -64,8 +71,12 @@ internal class AndroidSyncRepository(
 
     private fun observe(graph: Graph) {
         observers = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            launch(start = CoroutineStart.UNDISPATCHED) { graph.engine.reports.collect { mutableReports.value = it } }
-            launch(start = CoroutineStart.UNDISPATCHED) { graph.engine.scheduling.collect { mutableScheduling.value = it } }
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                graph.engine.reports.collect { mutableReports.value = it; work.changed() }
+            }
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                graph.engine.scheduling.collect { mutableScheduling.value = it; work.changed() }
+            }
             launch(start = CoroutineStart.UNDISPATCHED) { graph.account.snapshots.collect { mutableAccounts.value = it } }
             launch(start = CoroutineStart.UNDISPATCHED) {
                 graph.local.access.snapshots.collect {
@@ -75,6 +86,7 @@ internal class AndroidSyncRepository(
             }
             launch(start = CoroutineStart.UNDISPATCHED) {
                 library.sourceChanges.drop(1).collect {
+                    work.saved()
                     graph.engine.committedMutation(SyncChangeOrigin.USER, graph.engine.scheduling.value.epoch)
                 }
             }
@@ -95,15 +107,17 @@ internal class AndroidSyncRepository(
 
     /** Only an authorized Library/Account entry or worker calls resume, never Application/IME. */
     suspend fun resume(): SyncAccountSnapshot = accountOperation { graph ->
+        if (work.authenticationStopped()) graph.engine.requireSignIn()
         if (graph.engine.reports.value.needsSignIn) return@accountOperation stoppedAccount(graph)
         if (graph.account.snapshot.enabled && graph.engine.reports.value.enabled) graph.account.snapshot else graph.account.startup()
     }
 
-    suspend fun login(server: String, username: String, password: SecretValue, deviceName: String): SyncAccountSnapshot =
-        accountOperation {
+    suspend fun login(server: String, username: String, password: SecretValue, deviceName: String): SyncAccountSnapshot {
+        return accountOperation {
             settings.selectSyncServer(SyncServerURL(server))
             it.account.login(server, username, password, deviceName)
-        }
+        }.also { snapshot -> snapshot.account?.let { work.authenticated(it.connectionID.toString()) } }
+    }
 
     suspend fun selectServer(server: SyncServerURL?): SyncTlsSettings? = withContext(io) {
         synchronized(lifecycleLock) { checkActive() }
@@ -117,6 +131,7 @@ internal class AndroidSyncRepository(
 
     /** Rebuild the verified client after a trust edit; a 401 still requires reauthentication. */
     suspend fun reconnect(): SyncAccountSnapshot = accountOperation {
+        if (work.authenticationStopped()) it.engine.requireSignIn()
         if (it.engine.reports.value.needsSignIn) stoppedAccount(it) else it.account.startup()
     }
 
@@ -125,7 +140,9 @@ internal class AndroidSyncRepository(
     suspend fun heldPrompts() = accountOperation { it.account.heldPrompts() }
     suspend fun includeHeld(identities: Set<PromptIdentity>): SyncAccountSnapshot =
         accountOperation { it.account.includeHeld(identities) }
-    suspend fun revokeDevice(id: ULID): SyncAccountSnapshot = accountOperation { it.account.revokeDevice(id) }
+    suspend fun revokeDevice(id: ULID): SyncAccountSnapshot = accountOperation { it.account.revokeDevice(id) }.also {
+        if (it.account == null) work.signedOut()
+    }
 
     private suspend fun <T> accountOperation(work: suspend (Graph) -> T): T = withContext(io) {
         val expected = synchronized(lifecycleLock) { checkActive(); generation }
@@ -149,6 +166,7 @@ internal class AndroidSyncRepository(
     }
 
     suspend fun signOut(): SyncAccountCleanup = withContext(io + NonCancellable) {
+        work.signedOut()
         invalidate()
         accountMutex.withLock {
             synchronized(lifecycleLock) { checkActive() }
@@ -208,6 +226,7 @@ internal class AndroidSyncRepository(
     }
 
     suspend fun retire(): SyncStopResult = withContext(io + NonCancellable) {
+        work.signedOut()
         synchronized(lifecycleLock) { retired = true }
         invalidate()
         accountMutex.withLock {
