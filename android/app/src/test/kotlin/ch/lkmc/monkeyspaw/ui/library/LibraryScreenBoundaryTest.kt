@@ -65,7 +65,8 @@ internal class LibraryScreenBoundaryTest {
     private fun validateView(source: String) {
         val imports = Regex("(?m)^import (.+)$").findAll(source).map { it.groupValues[1] }
         assertTrue(imports.all { it.startsWith("androidx.compose.") || it == "androidx.activity.compose.BackHandler" ||
-            it == "ch.lkmc.monkeyspaw.R" || it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
+            it == "ch.lkmc.monkeyspaw.R" || it == "ch.lkmc.monkeyspaw.ui.assistant.ImproveDiffView" ||
+            it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
                 "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",
                 "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance",
                 "ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason",
