@@ -400,8 +400,11 @@ internal class EditorViewModel @Inject constructor(
             }
             if (!current(captured)) return@launch
             currentState = state.value.copy(status = EditorStatus.READY)
-            if (completed.result is EditResult.Saved) acceptCommit(completed, DraftAcceptance.REPLACE)
-            else applyFailure(completed.result)
+            if (completed.result is EditResult.Saved) {
+                // Retire source-bound commands when adopting a new private identity.
+                session++
+                acceptCommit(completed, DraftAcceptance.REPLACE)
+            } else applyFailure(completed.result)
             drain()
         }
     }

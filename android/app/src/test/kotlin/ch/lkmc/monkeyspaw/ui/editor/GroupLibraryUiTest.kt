@@ -266,6 +266,22 @@ internal class GroupLibraryUiTest : TemporaryFiles() {
         assertTrue(r.editor.state.value.issues.any { it.code == PromptIssueCode.UNBALANCED_OPENER })
     }
 
+    @Test fun `commands queued for shared source cannot act on adopted private copy`() = runTest {
+        val held = HeldDispatcher()
+        val r = Rig(Role.VIEWER, held)
+        r.open(); runCurrent(); held.releaseAll(); runCurrent()
+        r.editor.privateCopy("mine.md")
+        r.editor.move("Other")
+        r.editor.delete()
+        runCurrent()
+        repeat(5) { held.releaseAll(); runCurrent() }
+        assertTrue(Files.exists(libraryDir.resolve("mine.md")))
+        assertFalse(Files.exists(libraryDir.resolve("Other/mine.md")))
+        assertEquals("mine.md", r.editor.state.value.relativePath)
+        assertTrue(r.editor.state.value.queuedActions.isEmpty())
+        assertContentEquals(original.encodeToByteArray(), r.bytes())
+    }
+
     @Test fun `group rename follows stable filter selection and dirty editor path`() = runTest {
         val r = Rig()
         r.open(); runCurrent()
