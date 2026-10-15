@@ -148,6 +148,26 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         XCTAssertEqual(source.syncRequests, 0)
     }
 
+    func testLongFileErrorPathDoesNotForceLibraryBeyondTheScreen() throws {
+        try bindStatus()
+        library?.show()
+        let window = try XCTUnwrap(nativeWindow(LinuxStrings.library))
+        let path = (Array(repeating: String(repeating: "p", count: 100), count: 9) + ["prompt.md"]).joined(separator: "/")
+        var report = enabledReport()
+        report.counts.fileErrors = 1
+        report.details = [.init(path: RelativePath(path), code: "forbidden")]
+        source.send(report)
+        model.showErrorDetails()
+        drain()
+        let details = try settingsWidget("library-sync-file-errors", in: window)
+        let button = try XCTUnwrap(descendants(details).first {
+            mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == path
+        })
+        var minimum: Int32 = 0
+        gtk_widget_measure(button, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, nil, nil, nil)
+        XCTAssertLessThan(minimum, Int32(Limits.panelSize.width))
+    }
+
     func testDisabledPickerOpensAccountInReusableSettingsWindow() throws {
         compose()
         environment.showSettings()

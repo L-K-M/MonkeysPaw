@@ -151,6 +151,11 @@ final class LinuxSyncStatusView {
                       self.model?.state.fileErrors.contains(error) == true else { return }
                 self.openFile?(error.path)
             }
+            if let label = gtk_button_get_child(mp_button(button)) {
+                gtk_label_set_ellipsize(mp_label(label), PANGO_ELLIPSIZE_END)
+                gtk_label_set_xalign(mp_label(label), 0)
+            }
+            gtk_widget_set_tooltip_text(button, error.path.string)
             mp_accessible_label(button, error.path.string + ". " + error.reason)
             gtk_box_append(mp_box(row), button)
             gtk_box_append(mp_box(row), GTK.label(error.reason))
