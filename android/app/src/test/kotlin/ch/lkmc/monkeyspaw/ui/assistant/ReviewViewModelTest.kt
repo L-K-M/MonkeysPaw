@@ -48,11 +48,13 @@ internal class ReviewViewModelTest : TemporaryFiles() {
 
     private class Client : AssistantClient {
         val calls = mutableListOf<AssistantRequest>()
+        val completedQuotes = mutableListOf<List<String>>()
         var quotes = listOf("Cafe\u0301", "Café", "")
         var held: CompletableDeferred<Unit>? = null
         var failure: AssistantError? = null
         override suspend fun perform(request: AssistantRequest, connection: ProviderConnection): AssistantResponse = error("Missing deadline")
         override suspend fun perform(request: AssistantRequest, connection: ProviderConnection, deadlineNanos: Long): AssistantResponse {
+            val responseQuotes = quotes.toList()
             calls.add(request)
             held?.let { withContext(NonCancellable) { it.await() } }
             failure?.let { throw it }
@@ -60,14 +62,16 @@ internal class ReviewViewModelTest : TemporaryFiles() {
             val json = buildJsonObject {
                 put("summary", "Review summary")
                 put("findings", buildJsonArray {
-                    for ((index, quote) in quotes.withIndex()) add(buildJsonObject {
+                    for ((index, quote) in responseQuotes.withIndex()) add(buildJsonObject {
                         put("criterion", LlmRubricCriterion.entries[index % LlmRubricCriterion.entries.size].rawValue)
                         put("severity", LlmReviewSeverity.entries[index % LlmReviewSeverity.entries.size].rawValue)
                         put("quote", quote); put("problem", "Problem $index"); put("suggestion", "Suggestion $index")
                     })
                 })
             }
-            return AssistantResponse(AssistantOutput.Review(LlmOutputDecoder.review(json.toString(), source)), AssistantTokenUsage(12, 8))
+            val review = LlmOutputDecoder.review(json.toString(), source)
+            completedQuotes.add(review.findings.map { it.quote })
+            return AssistantResponse(AssistantOutput.Review(review), AssistantTokenUsage(12, 8))
         }
         override suspend fun listModels(connection: ProviderConnection): AssistantModelPage = error("Unexpected listing")
         override suspend fun listModels(connection: ProviderConnection, afterID: String?, deadlineNanos: Long): AssistantModelPage =
@@ -232,6 +236,7 @@ internal class ReviewViewModelTest : TemporaryFiles() {
         assertEquals(setOf(1, 2), h.model.state.value.assistant?.selectedFindings)
         h.client.quotes = emptyList()
         h.model.review(); runCurrent()
+        assertEquals(2, h.client.calls.size)
         assertTrue(h.model.state.value.assistant!!.review!!.findings.isEmpty())
         assertTrue(h.model.state.value.assistant!!.selectedFindings.isEmpty())
         assertEquals(AssistantPhase.DRAFT, h.model.state.value.assistant?.phase)
@@ -308,11 +313,72 @@ internal class ReviewViewModelTest : TemporaryFiles() {
         h.unchanged()
     }
 
+    @Test fun `cursor interaction clears a quote without invalidating findings or revalidating unchanged source`() = runTest {
+        val h = Harness(this)
+        h.configure(); h.review()
+        h.model.toggleFinding(0); h.model.showQuote(0)
+        val snapshot = assertNotNull(h.editor.assistantSnapshot)
+        val review = assertNotNull(h.model.state.value.assistant?.review)
+        assertNotNull(h.editor.state.value.quoteSelection)
+        h.editor.clearReviewQuote()
+        h.editor.edit(assertNotNull(snapshot.source))
+        assertEquals(snapshot, h.editor.assistantSnapshot)
+        assertFalse(h.editor.state.value.validating)
+        runCurrent()
+        assertNull(h.editor.state.value.quoteSelection)
+        assertSame(review, h.model.state.value.assistant?.review)
+        assertFalse(h.model.state.value.assistant!!.isStale)
+        assertEquals(setOf(0), h.model.state.value.assistant?.selectedFindings)
+        assertEquals(1, h.client.calls.size)
+        h.unchanged()
+    }
+
+    @Test fun `provider failures keep feedback and explicit retry clears failure while working without persistence`() = runTest {
+        for (kind in ProviderKind.entries) for (error in listOf(AssistantError.Authentication,
+            AssistantError.Transport(HttpTransportError.NetworkFailure))) {
+            val h = Harness(this, kind)
+            h.configure(); h.open()
+            h.model.editFeedback("Check the same template")
+            h.client.failure = error
+            h.model.review(); runCurrent()
+            val failed = assertNotNull(h.model.state.value.assistant)
+            assertEquals(AssistantPhase.FAILED, failed.phase)
+            assertEquals(AssistantFailure.Assistant(error), failed.failure)
+            assertEquals(1, failed.transcript.size)
+            assertTrue(h.model.state.value.canRetry)
+            assertEquals("Check the same template", h.model.state.value.feedback)
+            advanceTimeBy(2000); runCurrent()
+            assertEquals(1, h.client.calls.size)
+            assertEquals(failed.elapsedSeconds, h.model.state.value.assistant!!.elapsedSeconds)
+            h.unchanged()
+
+            h.client.failure = null
+            val reply = CompletableDeferred<Unit>().also { h.client.held = it }
+            h.model.retryWithFeedback(); runCurrent()
+            val working = assertNotNull(h.model.state.value.assistant)
+            assertEquals(AssistantPhase.WORKING, working.phase)
+            assertNull(working.failure)
+            assertFalse(working.isStale)
+            assertEquals("Check the same template", h.model.state.value.feedback)
+            assertEquals(2, h.client.calls.size)
+            val request = h.client.calls.last()
+            assertEquals("Check the same template", request.feedback)
+            assertEquals(failed.transcript, request.transcript)
+            assertEquals(h.editor.state.value.source, assertIs<AssistantAction.Review>(request.action).source)
+            reply.complete(Unit); runCurrent()
+            assertEquals(AssistantPhase.DRAFT, h.model.state.value.assistant!!.phase)
+            assertNotNull(h.model.state.value.assistant?.review)
+            assertNull(h.model.state.value.assistant?.failure)
+            h.unchanged()
+        }
+    }
+
     @Test fun `Cancel Back teardown and new request generations suppress noncooperative late replies`() = runTest {
         for (departure in 0..3) {
             val h = Harness(this)
             h.configure()
             val reply = CompletableDeferred<Unit>().also { h.client.held = it }
+            val originalQuotes = h.client.quotes
             h.review()
             advanceTimeBy(2100); runCurrent()
             assertTrue(h.model.state.value.assistant!!.elapsedSeconds >= 2)
@@ -324,11 +390,18 @@ internal class ReviewViewModelTest : TemporaryFiles() {
             }
             runCurrent()
             reply.complete(Unit); runCurrent()
+            assertEquals(originalQuotes, h.client.completedQuotes.last(), "The late reply must keep its original findings")
             assertTrue(h.model.state.value.assistant?.review?.findings.isNullOrEmpty())
             assertTrue(h.model.state.value.assistant?.selectedFindings.isNullOrEmpty())
-            assertEquals(0.0, h.model.state.value.assistant?.elapsedSeconds ?: 0.0)
+            if (departure == 0 || departure == 3) {
+                val retained = assertNotNull(h.model.state.value.assistant)
+                assertEquals(if (departure == 0) AssistantPhase.IDLE else AssistantPhase.DRAFT, retained.phase)
+                assertEquals(0.0, retained.elapsedSeconds)
+                assertEquals(if (departure == 0) 1 else 2, h.client.calls.size)
+            } else assertNull(h.model.state.value.assistant)
+            val settled = h.model.state.value
             advanceTimeBy(2000); runCurrent()
-            assertEquals(0.0, h.model.state.value.assistant?.elapsedSeconds ?: 0.0)
+            assertEquals(settled, h.model.state.value)
             if (departure == 1 || departure == 2) assertFalse(h.model.state.value.isOpen)
             h.unchanged()
         }
