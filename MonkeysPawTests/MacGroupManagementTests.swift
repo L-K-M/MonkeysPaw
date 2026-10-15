@@ -496,7 +496,7 @@ final class MacGroupManagementTests: XCTestCase {
     }
 
     private func hasGroupRow(_ path: String) -> Bool {
-        delegate.libraryBrowserModel?.state.rows.contains { $0.relativePath == path } == true
+        delegate.libraryBrowserModel?.state.rows.contains { $0.relativePath.string == path } == true
     }
 
     private func waitIdle(_ account: AccountSettingsViewState) {
