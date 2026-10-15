@@ -2,6 +2,7 @@ import Foundation
 
 /// Owns B23 key rules. Call from serial background work when a native secret
 /// store can prompt or block. The shared store serializes every compound edit.
+/// Cancelled secret reads report `.secret(.readFailed)` without starting recovery.
 public final class ProviderSettingsService {
     private struct Credential: Codable {
         static let currentVersion = 1
@@ -138,9 +139,19 @@ public final class ProviderSettingsService {
 
     private func readSecret(_ account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
         do { return try secrets.read(account: account, source: source) }
-        catch let error as CancellationError { throw error }
         catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
         catch { throw ProviderSettingsError.secret(.readFailed) }
+    }
+
+    private func readForEdit(_ account: SecretAccount, source: SecretReadSource) throws
+        -> (stored: StoredSecret?, unreadable: Bool) {
+        do { return (try secrets.read(account: account, source: source), false) }
+        // Abort before mutation, while preserving the public typed-error contract.
+        catch is CancellationError { throw ProviderSettingsError.secret(.readFailed) }
+        catch let error as SecretStoreError where error != .locked && error != .unavailable && error != .readFailed {
+            throw ProviderSettingsError.secret(error)
+        }
+        catch { return (nil, true) }
     }
 
     // Bind inside the secret: a failed rollback can leave metadata byte-identical.
@@ -173,28 +184,17 @@ public final class ProviderSettingsService {
     /// Readable edits compensate because metadata and OS secrets cannot transact.
     /// Explicit recovery discards an unreadable payload without restoring it.
     private func editSecret(account: SecretAccount, value: SecretValue?) throws -> () throws -> Void {
-        if value != nil {
-            do {
-                if try readSecret(account, source: .effective)?.tier == .environment {
-                    throw ProviderSettingsError.secret(.readOnly)
-                }
-            } catch ProviderSettingsError.secret(let error) where error == .locked || error == .unavailable || error == .readFailed {
-                // A persisted read failure must not block explicit replacement.
-            }
+        if value != nil, try readForEdit(account, source: .effective).stored?.tier == .environment {
+            throw ProviderSettingsError.secret(.readOnly)
         }
-        let previous: StoredSecret?
-        var unreadable = false
-        do { previous = try readSecret(account, source: .persisted) }
-        catch ProviderSettingsError.secret(let error) where error == .locked || error == .unavailable || error == .readFailed {
-            previous = nil
-            unreadable = true
-        }
+        let (previous, unreadable) = try readForEdit(account, source: .persisted)
         if value == nil, previous == nil, !unreadable { return {} }
 
         var failure = SecretStoreError.deleteFailed
         do {
             // Discard only this account. A shared unreadable map must fail closed
-            // in the driver rather than erase unrelated accounts.
+            // in the driver rather than erase unrelated accounts. A failed write
+            // after discarding an unreadable payload can leave the account empty.
             if unreadable || value == nil { try secrets.delete(account: account) }
             if let value {
                 failure = .writeFailed

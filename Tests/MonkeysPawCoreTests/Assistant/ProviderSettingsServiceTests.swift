@@ -115,14 +115,23 @@ final class ProviderSettingsServiceTests: XCTestCase {
         h.secrets.writeError = NSError(domain: "private-driver-body", code: 3)
         let before = h.service.snapshot
         let bytes = try h.files.read(at: "provider-settings.json")
+        let ui = try AssistantSettingsHarness()
+        let model = AssistantSettingsModel(settings: h.service, testing: ui.testing,
+            work: ui.work, mainThread: ui.main)
 
-        XCTAssertThrowsError(try recover(.replace, draft: draft, service: h.service)) {
-            XCTAssertEqual($0 as? ProviderSettingsError, .secret(.writeFailed))
-        }
+        model.renameProfile("Changed")
+        model.setKeyInput("replacement")
+        model.save()
+
+        XCTAssertEqual(model.state.error, .secret(.writeFailed))
+        XCTAssertEqual(model.state.keyStorage, .none)
+        XCTAssertEqual(model.state.keyEdit, .replace)
         XCTAssertEqual(h.service.snapshot, before)
         XCTAssertEqual(try h.files.read(at: "provider-settings.json"), bytes)
         XCTAssertNil(h.secrets.persisted[account])
         XCTAssertEqual(h.log.lines, ["warning: Provider secret update failed."])
+        XCTAssertEqual(model.state.profiles, before.settings.profiles)
+        XCTAssertEqual(model.state.selectedProfileID, draft.id)
     }
 
     func testFailedUnreadableReplacementCleanupDisablesInstance() throws {
@@ -184,13 +193,75 @@ final class ProviderSettingsServiceTests: XCTestCase {
                 XCTAssertThrowsError(try recover(operation, draft: draft, service: h.service)) {
                     if let failure = failure as? SecretStoreError {
                         XCTAssertEqual($0 as? ProviderSettingsError, .secret(failure))
-                    } else { XCTAssertTrue($0 is CancellationError) }
+                    } else { XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed)) }
                 }
                 XCTAssertEqual(h.service.snapshot, before)
                 XCTAssertEqual(h.secrets.persisted[account], previous)
                 XCTAssertTrue(h.secrets.deletions.isEmpty)
                 XCTAssertEqual(h.secrets.writes.count, 1)
             }
+        }
+    }
+
+    func testCancelledCredentialReadsKeepTheTypedErrorContract() throws {
+        let h = ProviderHarness()
+        let draft = ProviderDraft(key: .typed(UUID().uuidString))
+        try h.service.save(draft)
+        h.secrets.readError = CancellationError()
+        let before = h.service.snapshot
+        let bytes = try h.files.read(at: "provider-settings.json")
+        let keep = ProviderDraft(profile: before.settings.profiles[0])
+        let unsaved = ProviderDraft()
+
+        XCTAssertThrowsError(try h.service.connection(for: draft.id)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed))
+        }
+        XCTAssertThrowsError(try h.service.secretTier(for: draft.id)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed))
+        }
+        XCTAssertThrowsError(try h.service.resolveForTesting(keep)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed))
+        }
+        XCTAssertThrowsError(try h.service.resolveForTesting(unsaved)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed))
+        }
+        XCTAssertThrowsError(try h.service.save(unsaved)) {
+            XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed))
+        }
+        XCTAssertEqual(h.service.snapshot, before)
+        XCTAssertEqual(try h.files.read(at: "provider-settings.json"), bytes)
+        XCTAssertTrue(h.secrets.deletions.isEmpty)
+        XCTAssertEqual(h.secrets.writes.count, 1)
+    }
+
+    func testCancelledRecoveryReportsReadFailureToSettings() throws {
+        for operation in Recovery.allCases {
+            let h = ProviderHarness()
+            let draft = ProviderDraft(key: .typed(UUID().uuidString))
+            try h.service.save(draft)
+            let before = h.service.snapshot
+            let account = SecretAccount.provider(draft.id)
+            let previous = h.secrets.persisted[account]
+            let bytes = try h.files.read(at: "provider-settings.json")
+            h.secrets.accountReadErrors[account] = CancellationError()
+            let ui = try AssistantSettingsHarness()
+            let model = AssistantSettingsModel(settings: h.service, testing: ui.testing,
+                work: ui.work, mainThread: ui.main)
+
+            switch operation {
+            case .delete: model.deleteProfile(draft.id)
+            case .clear: model.clearKey(); model.save()
+            case .replace: model.setKeyInput("replacement"); model.save()
+            }
+
+            XCTAssertEqual(model.state.error, .secret(.readFailed))
+            XCTAssertEqual(model.state.keyStorage, .failed(.secret(.readFailed)))
+            XCTAssertNil(model.state.operation)
+            XCTAssertEqual(h.service.snapshot, before)
+            XCTAssertEqual(try h.files.read(at: "provider-settings.json"), bytes)
+            XCTAssertEqual(h.secrets.persisted[account], previous)
+            XCTAssertTrue(h.secrets.deletions.isEmpty)
+            XCTAssertEqual(h.secrets.writes.count, 1)
         }
     }
 
