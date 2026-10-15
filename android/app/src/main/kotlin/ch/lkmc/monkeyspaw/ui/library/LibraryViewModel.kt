@@ -82,7 +82,7 @@ internal class LibraryViewModel @Inject constructor(
 
     fun toggleFavorite(selection: LibrarySelection) {
         val row = allRows.firstOrNull { it.selection == selection } ?: return
-        if (row.isReadOnly || state.value.favoritePending != null) return
+        if (!row.canFavorite || state.value.favoritePending != null) return
         actionFailure = null
         mutableState.value = mutableState.value.copy(favoritePending = selection, failure = null, historyMaintenanceFailed = false)
         viewModelScope.launch {
@@ -92,13 +92,15 @@ internal class LibraryViewModel @Inject constructor(
                         it.entry.identity == selection.identity && it.entry.relativePath == selection.relativePath
                     }?.entry ?: throw LibraryError.Conflict
                     if (entry.stamp != row.stamp) throw LibraryError.Conflict
+                    if (entry.accessGeneration != row.accessGeneration) throw LibraryError.AccessChanged
                     library.toggleFavorite(entry)
                 }
                 if (preferredSelection == selection) preferredSelection = LibrarySelection(saved.entry.identity, saved.entry.relativePath)
                 mutableState.value = mutableState.value.copy(historyMaintenanceFailed = saved.historyMaintenanceFailed)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                actionFailure = if (error is LibraryError.Conflict) LibraryFailure.CHANGED else LibraryFailure.FAVOURITE
+                actionFailure = if (error is LibraryError.Conflict || error is LibraryError.AccessChanged)
+                    LibraryFailure.CHANGED else LibraryFailure.FAVOURITE
             } finally {
                 mutableState.value = mutableState.value.copy(favoritePending = null)
             }
