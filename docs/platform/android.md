@@ -68,17 +68,22 @@ Do not run a Gradle daemon stop on the shared implementation host.
 
 Download `monkeyspaw-v<full-version>.apk` and its `.apk.sha256` from this
 repository's GitHub Release into the same directory. Android API 26 or later
-is required. Before sideloading, run:
+is required. Verify the download:
 
 ```bash
 version='<full-version>' # Replace with the release version, including any suffix.
-sha256sum -c "monkeyspaw-v${version}.apk.sha256"
-"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "monkeyspaw-v${version}.apk"
-adb install -r "monkeyspaw-v${version}.apk"
+sha256sum -c "monkeyspaw-v${version}.apk.sha256" &&
+  "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "monkeyspaw-v${version}.apk"
 ```
 
 The signature command requires SDK build-tools 36.0.0 and the JDK's `bin`
 on `PATH`; compare its single SHA-256 certificate digest with the ADR below.
+Install only if both commands succeed and the digest matches:
+
+```bash
+adb install -r "monkeyspaw-v${version}.apk"
+```
+
 `adb` requires platform-tools and USB debugging. Alternatively open the
 verified APK on the device and permit installation from that source.
 On macOS, use `shasum -a 256 -c` instead. Both debug and release APKs

@@ -57,11 +57,12 @@ The [CI and release guide](CICD.md) describes dry runs and cutting a release.
 
 ## Install and build on Android
 
-Android API 26 or later is required. M8's local Library, raw editor/history,
-seeds and fill/copy flow are implemented. Add the Quick Settings tile manually,
-hold the launcher icon for **Insert prompt**, or add the **Monkey's Paw:
-Insert prompt** widget. Pick a prompt, fill it, tap **Copy**, then paste in
-your target app. M8's [owner checks](docs/platform/android.md) remain NOT RUN.
+Android API 26 or later is required. The Android app keeps its library on
+the device, with seeds, a raw editor and history. Add the Quick Settings tile
+manually, hold the launcher icon for **Insert prompt**, or add the
+**Monkey's Paw: Insert prompt** widget. Pick a prompt, fill it, tap **Copy**,
+then paste in your target app. Device checks are still pending; see the
+[Android checklist](docs/platform/android.md).
 
 When an Android release is published, download `monkeyspaw-v<full-version>.apk`
 and its `.apk.sha256` from this repository's
@@ -69,20 +70,21 @@ and its `.apk.sha256` from this repository's
 
 ```sh
 version='<full-version>' # Replace with the release version, including any suffix.
-sha256sum -c "monkeyspaw-v${version}.apk.sha256"
-adb install -r "monkeyspaw-v${version}.apk"
+sha256sum -c "monkeyspaw-v${version}.apk.sha256" && adb install -r "monkeyspaw-v${version}.apk"
 ```
 
 On macOS use `shasum -a 256 -c` for the checksum. `adb` requires SDK
 platform-tools and USB debugging; alternatively open the verified APK on the
 device and allow installation from that source. Both debug and release builds
 share the same app ID and [public signer](docs/decisions/0001-android-zero-secret-signing.md),
-so they replace one another. The signature does not establish publisher
-identity. Use this repository's release; uninstalling deletes app-private data.
+so they replace one another. Because the signing key is public, any APK
+signed with it installs over the app and keeps its data; the signature does
+not establish publisher identity. Install only APKs from this repository's
+releases. Uninstalling deletes app-private data.
 See the [APK verification and upgrade checklist](docs/platform/android.md#release-apk-verification).
 
-To build locally, install JDK 17 or newer (CI uses 17; the implementation
-host uses 21), Android SDK `platforms;android-37.0` and `build-tools;36.0.0`.
+To build locally, install JDK 17 or newer (CI uses 17; 21 also works),
+Android SDK `platforms;android-37.0` and `build-tools;36.0.0`.
 Set `JAVA_HOME` and `ANDROID_HOME` to those installations, then from the
 repository root run `scripts/build.sh android --no-open`. It produces
 `dist/monkeyspaw-v<full-version>.apk` and `.apk.sha256`. The complete gate is:
@@ -94,7 +96,7 @@ cd android
 
 The direct Gradle build writes `android/app/build/outputs/apk/debug/app-debug.apk`
 and `android/app/build/outputs/apk/release/app-release.apk` relative to the
-repository root. If Google Maven times out on the implementation host, set
+repository root. If Google Maven times out, set
 `MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/`
 before building.
 
