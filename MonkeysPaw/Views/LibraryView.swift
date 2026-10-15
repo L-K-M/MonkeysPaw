@@ -40,6 +40,10 @@ struct LibraryView: View {
                     .accessibilityIdentifier("library-favorite-message")
             }
             Divider()
+            if let syncStatus = presentation.syncStatus {
+                SyncStatusView(presentation: syncStatus)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
             Text(LibraryStrings.keyboardHint).font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(8)
         }

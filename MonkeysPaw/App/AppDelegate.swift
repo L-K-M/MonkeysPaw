@@ -351,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         promptEditing?.deactivate()
         importModel?.deactivate()
         libraryWindow?.tearDown()
+        pickerPresentation?.syncStatus?.retire()
         pickerModel?.onChange = nil
         onboardingStarted = false
         presentedOnboardingStep = nil
@@ -477,7 +478,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.setupModel = setupModel
         setupWindow = SetupWindowController(model: setupModel)
         setupWindow?.onClose = { [weak self] in self?.presentPendingOnboarding() }
-        panel.onHide = { reason in
+        panel.onHide = { [weak self] reason in
+            self?.pickerPresentation?.didHide()
             switch reason {
             case .delivery: focus.prepareForRestore(.delivery)
             case .dismissal: focus.prepareForRestore(.dismissal)
@@ -825,7 +827,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 repeatService: repeatService)
         let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: libraryMain, editor: editor)
         model.libraryAvailable = availability
+        let makeSyncStatus: (SyncStatusViewState.Surface) -> SyncStatusViewState = { [weak self, weak index] surface in
+            SyncStatusViewState(surface: surface, main: libraryMain, makeModel: { [weak self] in
+                guard isCurrent() else { return nil }
+                return self?.syncStatusModel
+            }, navigate: { [weak self] action in
+                guard isCurrent() else { return }
+                self?.showSyncDestination(action)
+            }, openFile: { [weak self, weak index] path in
+                guard isCurrent(), let self, self.pickerModel?.libraryAvailable == true,
+                      let entry = index?.search("").first(where: { $0.relativePath == path.string })?.entry else { return }
+                self.libraryWindow?.presentation.openPrompt(LibraryPromptSelection(identity: entry.identity, relativePath: path))
+            })
+        }
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
+            syncStatus: makeSyncStatus(.picker),
             requestedIntent: { [weak self] intent in
                 guard isCurrent() else { return }
                 self?.handle(intent)
@@ -887,12 +903,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let libraryWindow {
             libraryWindow.rebind(to: browser, editor: editor, libraryPath: libraryDirectory.path, available: availability,
-                imports: imports, makeAssistant: makeAssistant, conflictProvider: conflictProvider)
+                imports: imports, makeAssistant: makeAssistant, conflictProvider: conflictProvider,
+                syncStatus: makeSyncStatus(.library))
         } else {
             libraryWindow = LibraryWindowController(model: browser, editor: editor, libraryPath: libraryDirectory.path,
                 available: availability, mainThread: mainThread, activation: windowActivation,
                 presentDialog: editorDialog, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
                 conflictProvider: conflictProvider,
+                syncStatus: makeSyncStatus(.library),
                 importChooser: importChooser,
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
@@ -1428,6 +1446,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, !self.isShutDown, self.pickerModel?.libraryAvailable == true else { return }
             self.cancelPickerForOwnedWindow()
             self.libraryWindow?.show()
+        }
+    }
+
+    private func showSyncDestination(_ action: SyncStatusAction) {
+        guard !isShutDown, libraryTransition == nil, !terminationPending else { return }
+        cancelPickerForOwnedWindow()
+        switch action {
+        case .account:
+            settingsWindow?.presentation.selectedTab = .account
+            settingsWindow?.show()
+        case .conflicts:
+            libraryWindow?.presentation.setFilter("")
+            libraryWindow?.presentation.selectSection(.conflicts)
+            libraryWindow?.show()
+        case .errors:
+            libraryWindow?.show()
+        case .syncNow, .none: break
         }
     }
 
