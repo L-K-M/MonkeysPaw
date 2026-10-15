@@ -33,6 +33,7 @@ internal fun LibraryScreen(
     onCreate: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     mode: LibraryMode = LibraryMode.BROWSER,
+    onAssistantSettings: (() -> Unit)? = null,
 ) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -43,6 +44,9 @@ internal fun LibraryScreen(
             if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
             onCreate?.let { TextButton(onClick = it) { Text(stringResource(R.string.editor_new)) } }
             onSettings?.let { TextButton(onClick = it) { Text(stringResource(R.string.settings_title)) } }
+            if (mode == LibraryMode.BROWSER) {
+                onAssistantSettings?.let { TextButton(onClick = it) { Text(stringResource(R.string.assistant_settings_title)) } }
+            }
         }
         item {
             OutlinedTextField(value = state.query, onValueChange = onQuery, singleLine = true,
