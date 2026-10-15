@@ -1,0 +1,23 @@
+<resources>
+    <string name="invite_title">Accept an invite</string>
+    <string name="invite_input">Invite link or token</string>
+    <string name="invite_review">Review invite</string>
+    <string name="invite_destination">Destination server: %1$s</string>
+    <string name="invite_no_account">No account is signed in.</string>
+    <string name="invite_existing">Use the signed-in account</string>
+    <string name="invite_new">Create a new account</string>
+    <string name="invite_registration_detail">Use the username, password and device name above. Accept creates the account and signs in on this device.</string>
+    <string name="invite_new_destination">New account: %1$s at %2$s</string>
+    <string name="invite_accept">Accept invite</string>
+    <string name="invite_accept_new">Accept and create account</string>
+    <string name="invite_http_warning">HTTP is unencrypted. Your invite, password, device token and prompts can be read on the network.</string>
+    <string name="invite_invalid">Enter a valid invite link or token.</string>
+    <string name="invite_server_required">Select a server above before entering a bare invite token.</string>
+    <string name="invite_authenticate">Sign in explicitly to the destination server above, then open the invite again. Your current credential will not be sent there.</string>
+    <string name="invite_account_changed">Your account changed. Open the invite again and check the destination.</string>
+    <string name="invite_unavailable">This invite could not be used. It may have expired or already been used. Check your account details before opening it again.</string>
+    <string name="invite_reopen">Open the invite again to retry. It was cleared from memory.</string>
+    <string name="invite_accepted">Invite accepted.</string>
+    <string name="invite_refresh_incomplete">The invite was accepted. Refresh Account to finish, or sign in again if required. Do not redeem the invite again.</string>
+    <string name="invite_registration_incomplete">The account was created, but local setup did not finish. Sign in above to finish setup. Do not redeem the invite again.</string>
+</resources>

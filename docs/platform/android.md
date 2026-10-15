@@ -924,3 +924,19 @@ and PASS/FAIL/BLOCKED evidence. Required NOT RUN rows keep M10 open.
 | Cancel a background pass: HTTP cancels and durable pending work survives | NOT RUN |
 | Sign out or receive 401, restart/reboot: old jobs do no HTTP; failed login keeps the stop and successful reauthentication clears it | NOT RUN |
 | Force-stop suppresses dispatch until manual launch; minified Hilt worker factory resolves after reboot | NOT RUN |
+
+## Android invite links (M10 Z23): NOT RUN
+
+JVM intent snapshots verify Account staging and explicit acceptance; manifest,
+lint and R8 assembly validate the declared route. Real OS dispatch and native
+Intent clearing require the minified release APK on a device. Record commit,
+APK SHA-256/signer, phone/API, server/desktop versions, tester/date and sanitized
+PASS/FAIL/BLOCKED evidence. Never record an invite URL, token or password.
+
+| Check | Status |
+|---|---|
+| Open a `monkeyspaw://join` link from another app with Monkey’s Paw cold, foreground and background; Account shows destination server and account before Accept | NOT RUN |
+| Repeat or send a malformed link: no automatic join/register, no token in recents, descriptions or consumed Intent data/extras | NOT RUN |
+| Cancel, leave Account, background or kill/restart: invitation/password are lost and no redemption resumes | NOT RUN |
+| Open an invite for another deployment: explicit sign-in there or explicit new-account acceptance; current bearer never crosses servers | NOT RUN |
+| Accept with an existing account and explicitly create a new account; remote registration followed by local failure offers sign-in without redeeming again | NOT RUN |

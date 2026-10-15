@@ -26,6 +26,8 @@ internal fun AccountScreen(
     onSelectHold: (HeldIdentity) -> Unit,
     onRequestInclude: () -> Unit, onInclude: () -> Unit, onDismissConfirmation: () -> Unit,
     onSyncNow: () -> Unit, onSyncDetails: () -> Unit, onRecover: () -> Unit,
+    onInviteDraft: (String) -> Unit, onStageInvite: () -> Unit, onInviteMode: (InviteMode) -> Unit,
+    onAcceptInvite: () -> Unit, onDismissInvite: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val trustDescription = stringResource(R.string.account_trust)
@@ -71,6 +73,7 @@ internal fun AccountScreen(
             if (state.canSignOut) TextButton(onClick = onRequestSignOut,
                 enabled = state.busy != AccountAction.SIGN_OUT) { Text(stringResource(R.string.account_sign_out)) }
         }
+        item { AccountInviteSection(state, onInviteDraft, onStageInvite, onInviteMode, onAcceptInvite, onDismissInvite) }
         item {
             SyncFooter(state.sync, onSyncDetails)
             TextButton(onClick = onSyncNow, enabled = state.canSync) { Text(stringResource(R.string.sync_now)) }
