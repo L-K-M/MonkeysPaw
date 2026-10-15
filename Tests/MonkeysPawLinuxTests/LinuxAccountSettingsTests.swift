@@ -188,6 +188,23 @@ final class LinuxAccountSettingsTests: XCTestCase {
         XCTAssertFalse(try sensitive("sign-out"))
     }
 
+    func testRepeatedKeepLocalDoesNotLeaveAccountControlsBusy() throws {
+        account.snapshot = try AccountPageService.signedIn()
+        account.holds = try [AccountPageService.hold(path: "a.md", id: AccountPageService.firstHeld)]
+        try show()
+        try selectHold(0)
+        try click("keep-local")
+        XCTAssertTrue(GTKTestSupport.spin { self.model.state.keptLocal.count == 1 })
+        drainUI()
+        try click("keep-local")
+        drainUI()
+        XCTAssertFalse(model.state.isBusy)
+        XCTAssertTrue(try sensitive("refresh"))
+        XCTAssertTrue(try sensitive("server"))
+        XCTAssertTrue(try sensitive("include"))
+        XCTAssertTrue(account.calls.isEmpty)
+    }
+
     func testSignOutShowsPartialCleanupAndCannotRunTwice() throws {
         account.snapshot = try AccountPageService.signedIn()
         account.signOutCleanup = SyncAccountCleanup(remote: .unconfirmed, secretFailures: [UUID()],

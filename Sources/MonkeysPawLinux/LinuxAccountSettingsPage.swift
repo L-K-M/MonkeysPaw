@@ -12,7 +12,7 @@ final class LinuxAccountSettingsPage {
     private var observer: UUID?
     private var isShown = false
     private var isDestroyed = false
-    private var intentPending = false
+    private var pendingIntent: UUID?
     private var passwordInputReset: UUID?
     private var renderedConnection: AccountConnection?
     private var hasRenderedConnection = false
@@ -119,7 +119,6 @@ final class LinuxAccountSettingsPage {
         model = makeModel()
         observer = model?.addObserver { [weak self] _ in
             guard let self, self.isShown, !self.isDestroyed else { return }
-            self.intentPending = false
             self.render()
         }
         render()
@@ -133,7 +132,7 @@ final class LinuxAccountSettingsPage {
         observer = nil
         model?.clearPasswordInput()
         model = nil
-        intentPending = false
+        pendingIntent = nil
         selectedHeld.removeAll()
         passwordInputReset = nil
         if reason == .destroyed {
@@ -146,7 +145,7 @@ final class LinuxAccountSettingsPage {
     }
 
     private var canOperate: Bool {
-        isShown && !isDestroyed && !intentPending && model?.state.isBusy == false
+        isShown && !isDestroyed && pendingIntent == nil && model?.state.isBusy == false
     }
 
     private func render() {
@@ -241,9 +240,17 @@ final class LinuxAccountSettingsPage {
                         intent: @escaping (AccountModel) -> Void) -> GTK.Widget {
         let button = GTK.button(title) { [weak self] in
             guard let self, self.canOperate, let model = self.model else { return }
-            self.intentPending = true
+            let request = UUID()
+            self.pendingIntent = request
             intent(model)
             self.render()
+            // Admission is queued before this idle; a no-op need not publish.
+            GTK.onMainLoop { [weak self, weak model] in
+                guard let self, let model, self.model === model,
+                      self.pendingIntent == request else { return }
+                self.pendingIntent = nil
+                self.render()
+            }
         }
         gtk_widget_set_name(button, "settings-account-" + name)
         mp_accessible_label(button, title)
