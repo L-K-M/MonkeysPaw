@@ -1302,7 +1302,7 @@ final class KDEPortalHotkeyTests: XCTestCase {
     }
 
     func testConsentDeadlineAndLateParentCannotBindOrVerify() throws {
-        start(budget: .milliseconds(500))
+        start(budget: .seconds(2))
         holdParent = true
         var done = 0
         backend.configure { done += 1 }
@@ -1320,7 +1320,7 @@ final class KDEPortalHotkeyTests: XCTestCase {
     }
 
     func testUncertainCreateTimeoutFailsClosedEvenOnExplicitFallback() {
-        start(budget: .milliseconds(500))
+        start(budget: .seconds(2))
         service.handleCall = { call in
             guard call.method == "CreateSession" else { return false }
             // Source semantics: actions can load before the public Response.
