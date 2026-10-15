@@ -343,6 +343,7 @@ final class LinuxAccountSettingsTests: XCTestCase {
         var bindings = 0
         view = LinuxSettingsWindow(application: application, general: environment.generalSettingsModel,
             shortcuts: environment.shortcutsSettingsModel, rememberedValues: environment.rememberedValuesSettingsModel,
+            delivery: environment.deliverySettingsModel, updates: environment.updateSettingsModel, session: .otherX11,
             makeAssistant: { nil }, chooser: SettingsFolderChooser(), openSetup: {},
             makeAccount: { [weak self] in bindings += 1; return self?.model })
         view.show()
@@ -439,6 +440,7 @@ final class LinuxAccountSettingsTests: XCTestCase {
         if view == nil {
             view = LinuxSettingsWindow(application: application, general: environment.generalSettingsModel,
                 shortcuts: environment.shortcutsSettingsModel, rememberedValues: environment.rememberedValuesSettingsModel,
+                delivery: environment.deliverySettingsModel, updates: environment.updateSettingsModel, session: .otherX11,
                 makeAssistant: { nil }, chooser: SettingsFolderChooser(), openSetup: {},
                 makeAccount: { [weak self] in self?.model })
         }
