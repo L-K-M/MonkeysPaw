@@ -286,6 +286,13 @@ static inline void mp_command_line_print(GApplicationCommandLine *command, const
     g_application_command_line_print(command, "%s\n", text);
 }
 
+/* Preserve the URI's escaping; only Core decodes invite query values. */
+static inline void mp_application_open_uri(GApplication *application, const char *uri) {
+    GFile *file = g_file_new_for_uri(uri);
+    g_application_open(application, &file, 1, "");
+    g_object_unref(file);
+}
+
 /* Portal window identities, with runtime backend checks. */
 static inline char *mp_portal_x11_parent(GtkWindow *window) {
     GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));

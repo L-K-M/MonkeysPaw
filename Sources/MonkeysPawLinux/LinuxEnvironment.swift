@@ -724,7 +724,19 @@ final class LinuxEnvironment {
             + " recovery=\(libraryStatusModel.needsLibraryFolderStep)")
     }
 
-    func showSettings() {
+    private enum SettingsDestination { case general, invite(SecretValue?) }
+
+    func showSettings() { showSettings(destination: .general) }
+
+    func showInviteSettings() { showSettings(destination: .invite(nil)) }
+
+    func openInvite(_ input: inout String) {
+        let supplied = SecretValue(input)
+        input = ""
+        showSettings(destination: .invite(supplied))
+    }
+
+    private func showSettings(destination: SettingsDestination) {
         LinuxPickerTrace.record("settings.request", "state=\(LinuxPickerTrace.pickerState(currentLibraryGraph?.picker.state))")
         guard pickerModel.state != .delivering else { return }
         onboardingRequestRevision += 1
@@ -764,9 +776,21 @@ final class LinuxEnvironment {
                         guard let self, !self.isShutDown,
                               self.libraryGraph.sync?.retired == false else { return nil }
                         return self.accountModel
+                    },
+                    makeInvite: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.inviteModel
                     })
             }
-            self.currentSettingsWindow?.show()
+            switch destination {
+            case .general: self.currentSettingsWindow?.show()
+            case .invite(let supplied):
+                if let supplied {
+                    var input = supplied.withValue { $0 }
+                    self.currentSettingsWindow?.stageInvite(&input)
+                } else { self.currentSettingsWindow?.showInvite() }
+            }
         }
     }
 
@@ -924,7 +948,8 @@ final class LinuxEnvironment {
             currentOnboardingWindow = LinuxOnboardingWindow(application: application,
                 model: onboardingModel, general: GeneralSettingsModel(settings: settingsModel,
                     library: libraryLocation, mainThread: mainThread), chooser: folderChooser,
-                librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
+                librarySwitchMessage: { [weak self] in self?.librarySwitchMessage },
+                openInvite: { [weak self] in self?.showInviteSettings() })
         }
         currentOnboardingWindow?.show()
     }

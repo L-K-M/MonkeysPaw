@@ -6,6 +6,7 @@ import MonkeysPawCore
 /// GTK owns the window and children; Swift keeps guarded borrowed pointers.
 final class LinuxSettingsWindow {
     private let window: GTK.Widget
+    private let notebook: GTK.Widget
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
     private let rememberedValues: RememberedValuesSettingsModel
@@ -49,18 +50,20 @@ final class LinuxSettingsWindow {
          makeAssistant: @escaping () -> AssistantSettingsModel?,
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
          librarySwitchMessage: @escaping () -> String? = { nil },
-         makeAccount: @escaping () -> AccountModel? = { nil }) {
+         makeAccount: @escaping () -> AccountModel? = { nil },
+         makeInvite: @escaping () -> InviteModel? = { nil }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
         self.updates = LinuxSettingsUpdatePage(model: updates)
-        account = LinuxAccountSettingsPage(makeModel: makeAccount)
+        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
         window = gtk_application_window_new(application)!
+        notebook = gtk_notebook_new()!
         GTK.hideOnClose(window)
         gtk_window_set_title(mp_window(window), LinuxStrings.settings)
         gtk_window_set_default_size(mp_window(window), Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
@@ -88,7 +91,6 @@ final class LinuxSettingsWindow {
             self.account.retire(.hidden)
         }
 
-        let notebook = gtk_notebook_new()!
         gtk_widget_set_name(notebook, "settings-tabs")
         gtk_notebook_append_page(mp_notebook(notebook), generalPage(), GTK.label(LinuxStrings.generalTab))
         gtk_notebook_append_page(mp_notebook(notebook), shortcutsPage(), GTK.label(LinuxStrings.shortcutsTab))
@@ -134,6 +136,18 @@ final class LinuxSettingsWindow {
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
         rememberedValues.cancelForgetAll()
+    }
+
+    func showInvite() {
+        guard !isDestroyed else { return }
+        gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        show()
+        account.show()
+    }
+
+    func stageInvite(_ input: inout String) {
+        showInvite()
+        account.stageInvite(&input)
     }
 
     // Account follows the replaceable library graph, independently of General.

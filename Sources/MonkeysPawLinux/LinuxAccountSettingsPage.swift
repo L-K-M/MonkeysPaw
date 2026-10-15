@@ -8,6 +8,7 @@ final class LinuxAccountSettingsPage {
     enum Retirement { case hidden, destroyed }
     let widget: GTK.Widget
     private let makeModel: () -> AccountModel?
+    private let invite: LinuxInviteView
     private var model: AccountModel?
     private var observer: UUID?
     private var isShown = false
@@ -42,8 +43,9 @@ final class LinuxAccountSettingsPage {
     private var keepLocal: GTK.Widget!
     private var include: GTK.Widget!
 
-    init(makeModel: @escaping () -> AccountModel?) {
+    init(makeModel: @escaping () -> AccountModel?, makeInvite: @escaping () -> InviteModel? = { nil }) {
         self.makeModel = makeModel
+        invite = LinuxInviteView(makeModel: makeInvite)
         let page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
                      gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(page, 12) }
@@ -81,6 +83,7 @@ final class LinuxAccountSettingsPage {
         gtk_box_append(mp_box(heldSection), heldRows)
         let heldActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         gtk_box_append(mp_box(heldSection), heldActions)
+        gtk_box_append(mp_box(page), invite.widget)
 
         signIn = button("sign-in", title: LinuxAccountSettingsStrings.signIn, in: actions) { [weak self] model in
             guard let self else { return }
@@ -107,6 +110,11 @@ final class LinuxAccountSettingsPage {
         render()
     }
 
+    func stageInvite(_ input: inout String) {
+        show()
+        invite.stage(&input)
+    }
+
     deinit {
         if let observer { model?.removeObserver(observer) }
         model?.clearPasswordInput()
@@ -122,11 +130,13 @@ final class LinuxAccountSettingsPage {
             self.render()
         }
         render()
+        invite.show(account: model)
     }
 
     /// Account work finishes independently; detached observers cannot touch GTK.
     func retire(_ reason: Retirement) {
         guard !isDestroyed else { return }
+        invite.retire(reason)
         isShown = false
         if let observer { model?.removeObserver(observer) }
         observer = nil
