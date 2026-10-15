@@ -57,6 +57,18 @@ internal class ImeLifecycleTest {
         assertFailsWith<AssertionError>("view.setContent") { assertOwnerWiring(owners, withoutContent) }
     }
 
+    @Test fun `owner wiring guard rejects renamed callbacks even when effects occur elsewhere`() {
+        val owners = sources.resolve("ImeViewOwners.kt").readText()
+        val service = sources.resolve("MonkeysPawImeService.kt").readText()
+        for ((callback, effect) in lifecycleCallbacks) {
+            val renamed = service.replace("override fun $callback(", "fun renamed$callback(")
+            assertFailsWith<AssertionError>(callback) { assertOwnerWiring(owners, "// $effect\n$renamed") }
+        }
+    }
+
+    private val lifecycleCallbacks = listOf("onWindowHidden" to "sessions.hide()", "onUnbindInput" to "sessions.unbind()",
+        "onFinishInput" to "sessions.finishInput()", "onDestroy" to "sessions.destroy()")
+
     private fun assertOwnerWiring(owners: String, service: String) {
         assertBefore(owners, "savedState.performAttach()", "savedState.performRestore(null)")
         assertBefore(owners, "savedState.performRestore(null)", "transitions = ImeViewLifecycle")
@@ -70,9 +82,10 @@ internal class ImeLifecycleTest {
         assertTrue(service.contains("ImeViewOwners(view::disposeComposition)"))
         assertTrue(service.contains("view.setParentCompositionContext(view.createLifecycleAwareWindowRecomposer(lifecycle = owners.lifecycle))"))
         assertFalse(service.contains("hiltViewModel"))
-        for ((callback, effect) in listOf("onWindowHidden" to "sessions.hide()", "onUnbindInput" to "sessions.unbind()",
-            "onFinishInput" to "sessions.finishInput()", "onDestroy" to "sessions.destroy()")) {
-            assertTrue(service.substringAfter("override fun $callback(").substringBefore("\n    }").contains(effect))
+        for ((callback, effect) in lifecycleCallbacks) {
+            val override = "override fun $callback("
+            assertTrue(service.contains(override), "Missing override: $callback")
+            assertTrue(service.substringAfter(override).substringBefore("\n    }").contains(effect), "$callback must call $effect")
         }
     }
 

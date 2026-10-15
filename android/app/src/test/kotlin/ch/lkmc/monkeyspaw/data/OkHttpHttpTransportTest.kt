@@ -32,6 +32,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.concurrent.TimeUnit.SECONDS
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.*
 
@@ -702,26 +703,54 @@ internal class OkHttpHttpTransportTest {
         val ca = HeldCertificate.Builder().certificateAuthority(0).build()
         val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").signedBy(ca).build()
         val source = tlsServer(leaf, ca)
-        val driver = OkHttpHttpTransport(clock, scope, dispatcher, trustFactory(ca))
         for (fixture in listOf("advertised", "chunked", "deadline", "cancel")) {
+            val now = AtomicLong(clock.nowNanos())
+            val driver = OkHttpHttpTransport(MonotonicClock(now::get), scope, dispatcher, trustFactory(ca))
+            val request = syncRequest(source, cap = 64, budgetMillis = 30_000)
+            val receiving = CompletableDeferred<Unit>()
+            val releaseBody = CountDownLatch(1)
             val closed = CountDownLatch(1)
             source.enqueue(when (fixture) {
                 "advertised" -> stalled(closed, "65")
                 "chunked" -> chunkedOversize(closed, syncError().padEnd(65))
-                else -> stalled(closed)
+                else -> MockResponse.Builder().setHeader("Content-Length", "64")
+                    .socketHandler(object : SocketHandler {
+                        override fun handle(socket: Socket) {
+                            socket.sink.flush()
+                            receiving.complete(Unit)
+                            if (fixture == "deadline") {
+                                check(releaseBody.await(10, SECONDS))
+                                try { socket.sink.buffer().apply { writeUtf8("a"); flush() } }
+                                catch (_: IOException) {
+                                    // Expiry at headers can close before this write; still observe peer closure below.
+                                }
+                            }
+                            observeClose(socket, closed)
+                        }
+                    }).build()
             })
             val outcome = CompletableDeferred<HttpTransportError>()
-            val caller = launch { outcome.complete(errorOf { driver.send(syncRequest(source, cap = 64,
-                budgetMillis = if (fixture == "deadline") 500 else 3000)) }) }
-            assertNotNull(withContext(Dispatchers.IO) { source.takeRequest(2, SECONDS) })
-            if (fixture == "cancel") caller.cancel()
-            assertEquals(when (fixture) {
-                "deadline" -> HttpTransportError.DeadlineExceeded
-                "cancel" -> HttpTransportError.Cancelled
-                else -> HttpTransportError.ResponseTooLarge
-            }, withTimeout(2000) { outcome.await() })
-            assertTrue(closed.await(2, SECONDS), "Receipt was not closed for $fixture")
-            caller.join()
+            val caller = launch { outcome.complete(errorOf { driver.send(request) }) }
+            try {
+                assertNotNull(withContext(Dispatchers.IO) { source.takeRequest(10, SECONDS) })
+                if (fixture == "deadline" || fixture == "cancel") withTimeout(10_000) { receiving.await() }
+                if (fixture == "deadline") {
+                    // Expire only after TLS and the response head, then wake the receipt's next read.
+                    now.set(request.deadlineNanos)
+                    releaseBody.countDown()
+                }
+                if (fixture == "cancel") caller.cancel()
+                assertEquals(when (fixture) {
+                    "deadline" -> HttpTransportError.DeadlineExceeded
+                    "cancel" -> HttpTransportError.Cancelled
+                    else -> HttpTransportError.ResponseTooLarge
+                }, withTimeout(10_000) { outcome.await() }, fixture)
+                assertTrue(closed.await(10, SECONDS), "Receipt was not closed for $fixture")
+                caller.join()
+            } finally {
+                releaseBody.countDown()
+                caller.cancelAndJoin()
+            }
         }
         assertEquals(4, source.requestCount)
     }
