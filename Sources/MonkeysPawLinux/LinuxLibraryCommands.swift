@@ -134,6 +134,7 @@ final class LinuxLibraryCommands {
         self.pendingDrop = nil
         dropOpenApproved = false
         guard canRun, !hasDialog, gtk_widget_get_visible(parent) != 0,
+              editor.state.queuedActions.isEmpty,
               editor.state.prompt == pendingDrop.selection,
               let destination = browser?.moveDestination(for: pendingDrop.section) else { return }
         editor.move(to: destination.string, completion: completion(success: LinuxLibraryFileCommand.move.success))
@@ -155,7 +156,7 @@ final class LinuxLibraryCommands {
         let prepare: @convention(c) (UnsafeMutableRawPointer?, Double, Double,
                                      UnsafeMutableRawPointer?) -> UnsafeMutablePointer<GdkContentProvider>? = { _, _, _, data in
             guard let data, let payload = Unmanaged<DragHandler>.fromOpaque(data).takeUnretainedValue().prepare() else { return nil }
-            return mp_clipboard_text_provider(payload)
+            return mp_library_row_provider(payload)
         }
         let release: GClosureNotify = { data, _ in
             if let data { Unmanaged<DragHandler>.fromOpaque(data).release() }
@@ -171,15 +172,15 @@ final class LinuxLibraryCommands {
 
     func installDrop(on widget: GTK.Widget, section: LibrarySectionID) {
         let revision = self.revision
-        let target = gtk_drop_target_new(mp_string_type(), GDK_ACTION_MOVE)!
+        let target = gtk_drop_target_new(mp_library_row_type(), GDK_ACTION_MOVE)!
         let handler = Unmanaged.passRetained(DropHandler { [weak self] payload in
             guard let self, self.revision == revision else { return false }
             return self.drop(payload, onto: section)
         }).toOpaque()
         let receive: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<GValue>?, Double, Double,
                                      UnsafeMutableRawPointer?) -> gboolean = { _, value, _, _, data in
-            guard let value, let data, g_type_check_value_holds(value, mp_string_type()) != 0,
-                  let string = g_value_get_string(value), let payload = String(validatingUTF8: string) else { return 0 }
+            guard let value, let data, let string = mp_library_row_string(value),
+                  let payload = String(validatingUTF8: string) else { return 0 }
             return Unmanaged<DropHandler>.fromOpaque(data).takeUnretainedValue().receive(payload) ? 1 : 0
         }
         let release: GClosureNotify = { data, _ in

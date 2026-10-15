@@ -107,9 +107,9 @@ final class LinuxScopeDragTests: XCTestCase {
         defer { g_value_unset(&wrong) }
         XCTAssertFalse(try emitDrop(&wrong, on: target))
         var malformed = GValue()
-        g_value_init(&malformed, mp_string_type())
+        g_value_init(&malformed, mp_library_row_type())
         let invalidUTF8: [CChar] = [-1, 0]
-        invalidUTF8.withUnsafeBufferPointer { g_value_set_string(&malformed, $0.baseAddress) }
+        invalidUTF8.withUnsafeBufferPointer { g_value_set_boxed(&malformed, $0.baseAddress) }
         defer { g_value_unset(&malformed) }
         XCTAssertFalse(try emitDrop(&malformed, on: target))
         XCTAssertNotNil(try rig.files.stamp(at: "a.md"))
@@ -129,7 +129,7 @@ final class LinuxScopeDragTests: XCTestCase {
         XCTAssertFalse(try drop(oldPayload, onto: .group(ScopeDragRig.team)))
         let fresh = try dragPayload()
         XCTAssertNotEqual(oldPayload, fresh)
-        XCTAssertFalse(try emitStringDrop(fresh, on: oldTarget))
+        XCTAssertFalse(try emitRowDrop(fresh, on: oldTarget))
         let source = try promptWidget()
         let target = try destinationWidget(.all)
         g_object_ref(source)
@@ -140,7 +140,7 @@ final class LinuxScopeDragTests: XCTestCase {
         rig.view = nil
         XCTAssertNil(view)
         XCTAssertNil(try preparedPayload(on: source))
-        XCTAssertFalse(try emitStringDrop(fresh, on: target))
+        XCTAssertFalse(try emitRowDrop(fresh, on: target))
         XCTAssertNotNil(try rig.files.stamp(at: "a.md"))
     }
 
@@ -181,8 +181,43 @@ final class LinuxScopeDragTests: XCTestCase {
         let other = try XCTUnwrap(rig.browser.rows.first { $0.relativePath == "Folder/seed.md" }?.selection)
         rig.editor.request(.open(other))
         XCTAssertFalse(rig.editor.state.queuedActions.isEmpty)
-        XCTAssertFalse(try emitStringDrop(payload, on: target))
+        XCTAssertFalse(try emitRowDrop(payload, on: target))
         XCTAssertFalse(rig.editor.state.queuedActions.contains(.move))
+    }
+
+    func testNavigationQueuedWhileOpeningDraggedRowCancelsDeferredMove() throws {
+        try rig.files.write(Data("---\nid: '00000000000000000000000009'\n---\nOther".utf8), at: "b.md")
+        try rig.index.rebuild()
+        let payload = try dragPayload(path: "b.md")
+        let original = rig.selection
+        var queuedNavigation = false
+        var queuedMove = false
+        rig.editor.onChange = {
+            let state = self.rig.editor.state
+            if state.queuedActions.contains(.move) { queuedMove = true }
+            guard !queuedNavigation, state.prompt?.relativePath == "b.md",
+                  state.source != nil, state.status != .loading else { return }
+            queuedNavigation = true
+            self.rig.editor.request(.open(original))
+        }
+        defer { rig.editor.onChange = nil }
+        XCTAssertTrue(try drop(payload, onto: .group(ScopeDragRig.team)))
+        XCTAssertTrue(GTKTestSupport.spin {
+            queuedNavigation && self.rig.editor.state.prompt == original
+                && self.rig.editor.state.status != .loading && self.rig.editor.state.queuedActions.isEmpty
+        })
+        XCTAssertFalse(queuedMove, "A deferred drop must not enqueue a move behind newer navigation")
+        XCTAssertNotNil(try rig.files.stamp(at: "b.md"))
+        XCTAssertNil(try rig.files.stamp(at: "Groups/Team/b.md"))
+    }
+
+    func testInternalRowPayloadCannotBeExportedAsTextOrReplayedAsStringDrop() throws {
+        let payload = try dragPayload()
+        XCTAssertFalse(try emitStringDrop(payload, on: destinationWidget(.group(ScopeDragRig.team))))
+        XCTAssertNotNil(try rig.files.stamp(at: "a.md"))
+        XCTAssertNil(try rig.files.stamp(at: "Groups/Team/a.md"))
+        XCTAssertTrue(try drop(payload, onto: .group(ScopeDragRig.team)))
+        try rig.waitForPath("Groups/Team/a.md")
     }
 
     func testAcceptedPayloadCannotReplayAfterCancellation() throws {
@@ -441,11 +476,20 @@ final class LinuxScopeDragTests: XCTestCase {
             g_signal_emitv($0.baseAddress, g_signal_lookup("prepare", gtk_drag_source_get_type()), 0, &result)
         }
         guard let provider = g_value_get_object(&result) else { return nil }
+        let formats = gdk_content_provider_ref_formats(provider.assumingMemoryBound(to: GdkContentProvider.self))!
+        defer { gdk_content_formats_unref(formats) }
+        XCTAssertEqual(gdk_content_formats_contain_gtype(formats, mp_string_type()), 0,
+                       "Internal row payloads must not be offered as plain text")
+        let serialized = gdk_content_formats_union_serialize_mime_types(gdk_content_formats_ref(formats))!
+        defer { gdk_content_formats_unref(serialized) }
+        var mimeCount: gsize = 0
+        _ = gdk_content_formats_get_mime_types(serialized, &mimeCount)
+        XCTAssertEqual(mimeCount, 0, "Internal row payloads must not be serialized for another process")
         var value = GValue()
-        g_value_init(&value, mp_string_type())
+        g_value_init(&value, mp_library_row_type())
         defer { g_value_unset(&value) }
         XCTAssertNotEqual(gdk_content_provider_get_value(provider.assumingMemoryBound(to: GdkContentProvider.self), &value, nil), 0)
-        return g_value_get_string(&value).map(String.init(cString:))
+        return mp_library_row_string(&value).map(String.init(cString:))
     }
 
     private func drop(_ payload: String, onto section: LibrarySectionID, requiresTarget: Bool = true) throws -> Bool {
@@ -455,7 +499,15 @@ final class LinuxScopeDragTests: XCTestCase {
             guard let target = controller(on: widget, type: gtk_drop_target_get_type()) else { return false }
             g_object_unref(target)
         }
-        return try emitStringDrop(payload, on: widget)
+        return try emitRowDrop(payload, on: widget)
+    }
+
+    private func emitRowDrop(_ payload: String, on widget: GTK.Widget) throws -> Bool {
+        var value = GValue()
+        g_value_init(&value, mp_library_row_type())
+        payload.withCString { g_value_set_boxed(&value, $0) }
+        defer { g_value_unset(&value) }
+        return try emitDrop(&value, on: widget)
     }
 
     private func emitStringDrop(_ payload: String, on widget: GTK.Widget) throws -> Bool {
