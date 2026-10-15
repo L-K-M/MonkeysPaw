@@ -12,6 +12,7 @@ final class AccountSettingsViewState: ObservableObject {
     @Published private(set) var passwordInputReset = UUID()
     @Published private var pendingIntent: UUID? = nil
     let passwordInput = AccountPasswordInput()
+    let invites: InviteViewState
 
     private let makeModel: () -> AccountModel?
     private let mainThread: MainThread
@@ -22,10 +23,12 @@ final class AccountSettingsViewState: ObservableObject {
     private var hasRenderedConnection = false
     private var renderedConnection: AccountConnection?
 
-    init(mainThread: MainThread, makeModel: @escaping () -> AccountModel?, onOpen: @escaping () -> Void = {}) {
+    init(mainThread: MainThread, makeModel: @escaping () -> AccountModel?, onOpen: @escaping () -> Void = {},
+         makeInvite: @escaping () -> InviteModel? = { nil }) {
         self.mainThread = mainThread
         self.makeModel = makeModel
         self.onOpen = onOpen
+        invites = InviteViewState(mainThread: mainThread, makeModel: makeInvite, makeAccount: makeModel)
     }
 
     deinit {
@@ -54,11 +57,13 @@ final class AccountSettingsViewState: ObservableObject {
         guard !isShown else { refreshBinding(); return }
         isShown = true
         refreshBinding()
+        invites.show()
         onOpen()
     }
 
     func hide() {
         isShown = false
+        invites.hide()
         detach()
     }
 
@@ -66,6 +71,7 @@ final class AccountSettingsViewState: ObservableObject {
     /// switches. Recheck identity without owning the graph's switch/drain policy.
     func refreshBinding() {
         guard isShown else { return }
+        invites.refreshBinding()
         let next = makeModel()
         guard next !== model else { return }
         detach()
@@ -246,6 +252,8 @@ struct SettingsAccountView: View {
                 reservedFolders
                 devices
                 heldFiles
+                Divider()
+                SettingsInviteView(presentation: presentation.invites)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)

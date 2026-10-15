@@ -32,12 +32,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
          makeAssistant: @escaping () -> AssistantSettingsModel,
          onProviderChange: @escaping () -> Void = {},
-         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {}) {
+         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {},
+         makeInvite: @escaping () -> InviteModel? = { nil }) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          delivery: delivery, updates: updates,
                                          mainThread: mainThread, openSetup: openSetup,
-                                         makeAccount: makeAccount, onAccountOpen: onAccountOpen)
+                                         makeAccount: makeAccount, onAccountOpen: onAccountOpen,
+                                         makeInvite: makeInvite)
         self.mainThread = mainThread
         self.activation = activation
         self.folderChooser = folderChooser
@@ -106,6 +108,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             self.isClosing = false
             self.activation.show(window)
             self.refreshAccountVisibility()
+        }
+    }
+
+    func showAccount() {
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            self.presentation.selectedTab = .account
+            self.show()
+        }
+    }
+
+    func openInvite(_ supplied: inout String) {
+        let link = SecretValue(supplied)
+        supplied = ""
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            self.showAccount()
+            var input = link.withValue { $0 }
+            self.presentation.account.invites.stage(&input)
         }
     }
 
