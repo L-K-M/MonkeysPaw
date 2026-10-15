@@ -15,6 +15,8 @@ final class SettingsViewState: ObservableObject {
     let generalModel: GeneralSettingsModel
     let shortcutsModel: ShortcutsSettingsModel
     let rememberedValuesModel: RememberedValuesSettingsModel
+    let delivery: DeliverySettingsViewState
+    let updates: UpdateSettingsViewState
     var onChooseFolder: (() -> Void)?
     var onRememberedValuesChange: (() -> Void)?
     /// An installed override may return nil to hide a resolved busy outcome.
@@ -23,12 +25,15 @@ final class SettingsViewState: ObservableObject {
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
          rememberedValues: RememberedValuesSettingsModel,
+         delivery: DeliverySettingsModel, updates: UpdateSettingsModel,
          mainThread: MainThread, openSetup: @escaping () -> Void) {
         generalModel = general
         shortcutsModel = shortcuts
         rememberedValuesModel = rememberedValues
         self.rememberedValues = rememberedValues.state
         self.openSetup = openSetup
+        self.delivery = DeliverySettingsViewState(model: delivery, mainThread: mainThread)
+        self.updates = UpdateSettingsViewState(model: updates, mainThread: mainThread)
         self.general = general.state
         togglePicker = shortcuts.togglePicker
         repeatLast = shortcuts.repeatLast
@@ -174,6 +179,8 @@ struct SettingsView: View {
         TabView {
             general.tabItem { Text(Strings.generalTab) }
             shortcuts.tabItem { Text(Strings.shortcutsTab) }
+            SettingsDeliveryView(presentation: presentation.delivery)
+                .tabItem { Text(DeliverySettingsStrings.title) }
             if let assistant = presentation.assistant {
                 SettingsAssistantView(presentation: assistant).tabItem { Text(SettingsAssistantStrings.tab) }
             }
@@ -181,37 +188,41 @@ struct SettingsView: View {
     }
 
     private var general: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(Strings.libraryFolder).font(.headline)
-            Text(presentation.general.activeLibraryPath)
-                .textSelection(.enabled)
-                .accessibilityLabel(Strings.libraryFolder)
-                .accessibilityValue(presentation.general.activeLibraryPath)
-            Text(presentation.general.isDefaultLibrary ? Strings.defaultLibraryFolder : Strings.chosenLibraryFolder)
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Button(Strings.chooseFolder) { presentation.chooseFolder() }
-                    .disabled(presentation.isChoosingFolder)
-                Button(Strings.useDefaultFolder) { presentation.useDefaultFolder() }
-                    .disabled(!presentation.canUseDefault)
-                Button(Strings.showInFinder) { presentation.revealFolder() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(Strings.libraryFolder).font(.headline)
+                Text(presentation.general.activeLibraryPath)
+                    .textSelection(.enabled)
+                    .accessibilityLabel(Strings.libraryFolder)
+                    .accessibilityValue(presentation.general.activeLibraryPath)
+                Text(presentation.general.isDefaultLibrary ? Strings.defaultLibraryFolder : Strings.chosenLibraryFolder)
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button(Strings.chooseFolder) { presentation.chooseFolder() }
+                        .disabled(presentation.isChoosingFolder)
+                    Button(Strings.useDefaultFolder) { presentation.useDefaultFolder() }
+                        .disabled(!presentation.canUseDefault)
+                    Button(Strings.showInFinder) { presentation.revealFolder() }
+                }
+                ForEach(presentation.generalMessages, id: \.self) { message in
+                    Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+                Divider()
+                Button(Strings.forgetAllValues, action: presentation.requestForgetAll)
+                    .disabled(presentation.isChoosingFolder || presentation.rememberedValues.confirmation != .none)
+                    .accessibilityLabel(Strings.forgetAllValues)
+                    .accessibilityIdentifier("settings-forget-all")
+                if let message = presentation.rememberedValues.message {
+                    Text(message).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(message)
+                        .accessibilityIdentifier("settings-forget-message")
+                }
+                Divider()
+                SettingsUpdateView(presentation: presentation.updates)
             }
-            ForEach(presentation.generalMessages, id: \.self) { message in
-                Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
-            Divider()
-            Button(Strings.forgetAllValues, action: presentation.requestForgetAll)
-                .disabled(presentation.isChoosingFolder || presentation.rememberedValues.confirmation != .none)
-                .accessibilityLabel(Strings.forgetAllValues)
-                .accessibilityIdentifier("settings-forget-all")
-            if let message = presentation.rememberedValues.message {
-                Text(message).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel(message)
-                    .accessibilityIdentifier("settings-forget-message")
-            }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
         }
-        .padding(20)
     }
 
     private var shortcuts: some View {

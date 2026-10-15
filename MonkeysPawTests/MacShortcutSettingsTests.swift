@@ -412,10 +412,17 @@ private final class ShortcutSettingsHarness {
         let selfTest = SelfTest(target: ports, delivery: delivery, session: ports, scheduler: scheduler, mainThread: main)
         let setup = SetupService(probe: ports, session: ports, shortcuts: shortcuts, selfTest: selfTest, mainThread: main)
         let model = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
-        let settings = SettingsModel(settings: SettingsService(store: SettingsStore(files: UnavailableFileStore())))
+        let service = SettingsService(store: SettingsStore(files: UnavailableFileStore()))
+        let settings = SettingsModel(settings: service)
         let general = GeneralSettingsModel(settings: settings, library: ports, mainThread: main)
         let rememberedValues = RememberedValuesSettingsModel(control: ports, mainThread: main)
+        let deliverySettings = DeliverySettingsModel(settings: settings, delivery: delivery, setup: setup, mainThread: main)
+        let updates = UpdateService(transport: MacRepeatNoHTTP(), currentVersion: nil, settings: service,
+            stateStore: UpdateStateStore(files: UnavailableFileStore()), clock: SystemClock(), scheduler: scheduler,
+            mainThread: main, releasePage: WorkspaceReleasePageOpener(open: { _ in false }))
+        let updateSettings = UpdateSettingsModel(settings: settings, updates: updates, mainThread: main)
         presentation = SettingsViewState(general: general, shortcuts: model, rememberedValues: rememberedValues,
+                                         delivery: deliverySettings, updates: updateSettings,
                                          mainThread: main, openSetup: {})
         shortcuts.configure([.togglePicker: Accelerator.defaultBinding(for: .togglePicker)!]) { [weak self] _ in
             self?.activations += 1

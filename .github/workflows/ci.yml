@@ -659,7 +659,7 @@ jobs:
       run:
         shell: /bin/bash -e -o pipefail {0}
     env:
-      ARTIFACT_VERSION: '0.1.0'
+      ARTIFACT_VERSION: '0.1.0-beta.7'
       ARTIFACT_BUILD_NUMBER: '42'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -718,7 +718,8 @@ jobs:
             [[ "$signature" == *"flags="*"runtime"* ]]
             entitlements=$(/usr/bin/codesign --display --entitlements - "$app" 2>/dev/null)
             [[ "$entitlements" == *"com.apple.security.automation.apple-events"* ]]
-            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == "$ARTIFACT_VERSION" ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :MonkeysPawReleaseVersion' "$app/Contents/Info.plist")" == "$ARTIFACT_VERSION" ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == "${ARTIFACT_VERSION%%-*}" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" == "$ARTIFACT_BUILD_NUMBER" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" == true ]]
           }
