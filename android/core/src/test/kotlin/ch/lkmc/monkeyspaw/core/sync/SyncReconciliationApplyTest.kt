@@ -38,6 +38,50 @@ class SyncReconciliationApplyTest {
         }
     }
 
+    @Test fun incomingPublicationsWithTheSameFoldedPathRequirePolicy() {
+        for (paths in listOf("A.md" to "a.md", "Straße.md" to "STRASSE.md")) {
+            val h = ReconciliationHarness()
+            h.baseline()
+            h.collected(h.scope(items = listOf(h.upsert(10, path = paths.first),
+                h.upsert(11, id = v.groupPrompt, path = paths.second)))).use { pull ->
+                h.assertBlocked(h.plan(pull))
+            }
+        }
+    }
+
+    @Test fun retiringDistinctFilesWithTheSameFoldedPathIsAllowed() {
+        val h = ReconciliationHarness()
+        h.baseline(h.record(path = "A.md"), h.record(id = v.groupPrompt, path = "a.md"))
+        h.put("Baseline", "A.md")
+        h.put("Baseline", "a.md", v.groupPrompt)
+        h.collected(h.scope(mode = Mode.SNAPSHOT, head = 0)).use { pull ->
+            val application = SyncReconciler.application(h.plan(pull), h.mutations)
+            assertEquals(listOf("A.md", "a.md"), application.edits.map { it.path })
+            assertTrue(application.edits.all { it.kind == SyncLibraryEdit.Kind.TRASH })
+            assertEquals(SyncApplyOutcome.Committed, h.rig.journal.apply(application))
+            assertTrue(h.files.listFiles().isEmpty())
+        }
+    }
+
+    @Test fun reusedCopySurvivesRetirementOfADistinctFoldedPath() {
+        val h = ReconciliationHarness()
+        h.baseline(h.record(), h.record(id = v.groupPrompt, path = "Conflicts/copy.md"))
+        val losing = h.put("Losing")
+        h.put("Baseline", "Conflicts/copy.md", v.groupPrompt)
+        val origin = SyncPromptOrigin.ConflictOf(v.personal)
+        val copyBytes = SyncMutationOrigin.copyBytes(PromptCodec.parseFile(losing.bytes, "a.md"), v.device, origin, "Copy.md")
+        val existing = h.put(copyBytes, "Conflicts/Copy.md")
+        h.collected(h.scope(items = listOf(FeedItem.Delete(10, v.personal.rawValue),
+            FeedItem.Delete(11, v.groupPrompt.rawValue)))).use { pull ->
+            val plan = h.plan(pull)
+            val edit = h.mutations.publication(existing.bytes, existing.path, existing, SyncIdentityTransition(existing.identity, existing.identity))
+            val application = SyncReconciler.application(plan, h.mutations, mapOf("a.md" to SyncReconciliationCopy(edit, origin)))
+            assertEquals(SyncApplyOutcome.Committed, h.rig.journal.apply(application))
+            assertContentEquals(copyBytes, h.files.read(existing.path))
+            assertEquals(listOf(existing.path), h.files.listFiles().map { it.relativePath })
+        }
+    }
+
     @Test fun dirtyRenameCopiesFirstPublishesServerThenRetiresActualSource() {
         val h = ReconciliationHarness()
         h.baseline(h.record())
@@ -52,6 +96,10 @@ class SyncReconciliationApplyTest {
             h.rig.libraryOperations.onOperation = { events.add(it) }
             h.rig.local.state.onWrite = { path -> if (path == "sync/state.json") events.add("state") }
             assertEquals(SyncApplyOutcome.Committed, h.rig.journal.apply(application))
+            for (event in listOf("publish-file-flush:Conflicts/Copy.md", "publish-install:new.md", "trash-unlink:a.md",
+                "trash-parent-flush:a.md", "state")) {
+                assertTrue(event in events, "Missing expected event: $event")
+            }
             assertTrue(events.indexOf("publish-file-flush:Conflicts/Copy.md") < events.indexOf("publish-install:new.md"))
             assertTrue(events.indexOf("publish-install:new.md") < events.indexOf("trash-unlink:a.md"))
             assertTrue(events.indexOf("trash-parent-flush:a.md") < events.indexOf("state"))
@@ -237,7 +285,9 @@ class SyncReconciliationApplyTest {
         h.collected(h.scope(items = listOf(h.upsert(10, rev = 2)))).use { pull ->
             val plan = h.plan(pull)
             val edit = h.mutations.publication(existing.bytes, existing.path, existing, SyncIdentityTransition(existing.identity, existing.identity))
-            assertFails { SyncReconciler.application(plan, h.mutations, mapOf("a.md" to SyncReconciliationCopy(edit, origin))) }
+            assertFailsWith<SyncReconciliationError.RequiresPolicy> {
+                SyncReconciler.application(plan, h.mutations, mapOf("a.md" to SyncReconciliationCopy(edit, origin)))
+            }
             assertEquals(old, h.states.snapshot.value)
             assertContentEquals(losing, h.files.read("a.md"))
             assertNull(h.rig.journal.pending)

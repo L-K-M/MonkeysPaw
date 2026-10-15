@@ -31,6 +31,7 @@ internal fun SyncReconciler.application(plan: SyncReconciliationPlan, mutations:
     val edits = mutableListOf<SyncLibraryEdit>()
     val destinations = plan.occupiedPaths.map(::folded).toMutableSet()
     val serverPaths = installations.map { folded(it.remote.libraryPath) }.toSet()
+    if (serverPaths.size != installations.size) throw SyncReconciliationError.RequiresPolicy
     destinations.addAll(serverPaths)
     val identities = (plan.localIdentities + prompts.keys).toMutableSet()
     val reused = mutableSetOf<String>()
@@ -64,10 +65,12 @@ internal fun SyncReconciler.application(plan: SyncReconciliationPlan, mutations:
             if (copy.origin !is SyncPromptOrigin.ConflictOf || path == source || path !in plan.occupiedPaths ||
                 identity !in plan.localIdentities || folded(path) in serverPaths || !reused.add(folded(path)) ||
                 !bytes.contentEquals(existing.bytes)) throw SyncReconciliationError.RequiresPolicy
-            val document = PromptCodec.parseFile(preservation.local.bytes, LibraryPath.filename(source))
-            SyncMutationOrigin.origin(document)
-            val expectedBytes = SyncMutationOrigin.copyBytes(document, (identity as PromptIdentity.Assigned).id,
-                copy.origin, LibraryPath.filename(path))
+            val expectedBytes = try {
+                val document = PromptCodec.parseFile(preservation.local.bytes, LibraryPath.filename(source))
+                SyncMutationOrigin.origin(document) // Invalid source markers require a held rescue.
+                SyncMutationOrigin.copyBytes(document, (identity as PromptIdentity.Assigned).id,
+                    copy.origin, LibraryPath.filename(path))
+            } catch (_: Exception) { throw SyncReconciliationError.RequiresPolicy }
             if (!expectedBytes.contentEquals(existing.bytes)) throw SyncReconciliationError.RequiresPolicy
             val old = prompts[identity]
             val privateScope = SyncScopeKey.User(plan.nextState.binding.account.userID)

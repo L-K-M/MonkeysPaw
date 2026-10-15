@@ -29,6 +29,7 @@ extension SyncReconciler {
         var edits: [SyncLibraryEdit] = []
         var destinations = Set(try plan.occupiedPaths.map(folded))
         let serverPaths = Set(try installations.map { try folded($0.remote.libraryPath) })
+        guard serverPaths.count == installations.count else { throw SyncReconciliationError.requiresPolicy }
         destinations.formUnion(serverPaths)
         var identities = plan.localIdentities.union(next.prompts.keys)
         var reused = Set<String>()
@@ -66,8 +67,8 @@ extension SyncReconciler {
                 guard path != source, plan.occupiedPaths.contains(path), plan.localIdentities.contains(.assigned(id)),
                       !serverPaths.contains(try folded(path)), reused.insert(try folded(path)).inserted,
                       edit.bytes == existing.bytes,
-                      try SyncConflictMetadata.copyBytes(preservation.local, freshID: id, origin: copy.origin,
-                          filename: LibraryPath.filename(edit.path)) == existing.bytes else {
+                      let expectedBytes = try? SyncConflictMetadata.copyBytes(preservation.local, freshID: id, origin: copy.origin,
+                          filename: LibraryPath.filename(edit.path)), expectedBytes == existing.bytes else {
                     throw SyncReconciliationError.requiresPolicy
                 }
                 let old = next.prompts[.assigned(id)]

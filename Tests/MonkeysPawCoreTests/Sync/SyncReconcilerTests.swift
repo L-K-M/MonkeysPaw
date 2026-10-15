@@ -518,6 +518,82 @@ final class SyncReconcilerTests: XCTestCase {
         XCTAssertNil(rig.journal.pending)
     }
 
+    func testInvalidLocalMarkerCannotAuthorizeReuseOfAnUnheldCopy() throws {
+        let rig = try SyncApplyTestRig()
+        let old = try baseline(rig, [record(id, "a.md")])
+        let losing = Data("---\nid: '\(id.rawValue)'\nx-monkeyspaw-rescued: invalid\n---\nLosing".utf8)
+        try rig.files.write(losing, at: "a.md")
+        let origin = SyncPromptOrigin.conflictOf(id)
+        let valid = try SyncLibraryFile(path: "a.md", stamp: FileStamp("valid"), bytes: bytes("Losing"))
+        let copyBytes = try SyncConflictMetadata.copyBytes(valid, freshID: SyncTestValues.device,
+            origin: origin, filename: "Copy.md")
+        try rig.files.write(copyBytes, at: "Conflicts/Copy.md")
+        let existing = try XCTUnwrap(rig.mutations.read(at: "Conflicts/Copy.md"))
+        let pull = try collected([scope(items: [upsert(10, rev: 2)])])
+        defer { try? pull.discard() }
+        let plan = try reconcile(pull, rig)
+        let edit = try rig.mutations.publication(existing.bytes, at: "Conflicts/Copy.md", expecting: existing,
+            transition: SyncIdentityTransition(from: existing.identity, to: existing.identity))
+        XCTAssertThrowsError(try apply(plan, rig, copies: ["a.md": .init(edit: edit, origin: origin)])) {
+            XCTAssertEqual($0 as? SyncReconciliationError, .requiresPolicy)
+        }
+        XCTAssertEqual(rig.states.snapshot.value, old)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), losing)
+        XCTAssertNil(rig.journal.pending)
+    }
+
+    func testIncomingPublicationsWithTheSameFoldedPathRequirePolicy() throws {
+        for (first, second) in [("A.md", "a.md"), ("Straße.md", "STRASSE.md")] {
+            let rig = try SyncApplyTestRig()
+            let old = try baseline(rig, [])
+            let pull = try collected([scope(items: [upsert(10, path: first), upsert(11, id: other, path: second)])])
+            defer { try? pull.discard() }
+            let plan = try reconcile(pull, rig)
+            XCTAssertThrowsError(try apply(plan, rig)) { XCTAssertEqual($0 as? SyncReconciliationError, .requiresPolicy) }
+            XCTAssertEqual(rig.states.snapshot.value, old)
+            XCTAssertTrue(try rig.files.listFiles().isEmpty)
+            XCTAssertNil(rig.journal.pending)
+        }
+    }
+
+    func testRetiringDistinctFilesWithTheSameFoldedPathIsAllowed() throws {
+        let rig = try SyncApplyTestRig()
+        _ = try baseline(rig, [record(id, "A.md"), record(other, "a.md")])
+        try rig.files.write(bytes("Baseline"), at: "A.md")
+        try rig.files.write(bytes("Baseline", id: other), at: "a.md")
+        let pull = try collected([scope(mode: .snapshot, head: 0)])
+        defer { try? pull.discard() }
+        let plan = try reconcile(pull, rig)
+        let application = try SyncReconciler.application(plan, mutations: rig.mutations)
+        XCTAssertEqual(application.edits.map(\.path), ["A.md", "a.md"])
+        XCTAssertTrue(application.edits.allSatisfy { $0.kind == .trash })
+        XCTAssertEqual(try rig.journal.apply(application), .committed)
+        XCTAssertTrue(try rig.files.listFiles().isEmpty)
+    }
+
+    func testReusedCopySurvivesRetirementOfADistinctFoldedPath() throws {
+        let rig = try SyncApplyTestRig()
+        _ = try baseline(rig, [record(id, "a.md"), record(other, "Conflicts/copy.md")])
+        let losing = bytes("Losing")
+        try rig.files.write(losing, at: "a.md")
+        try rig.files.write(bytes("Baseline", id: other), at: "Conflicts/copy.md")
+        let source = try XCTUnwrap(rig.mutations.read(at: "a.md"))
+        let origin = SyncPromptOrigin.conflictOf(id)
+        let copyBytes = try SyncConflictMetadata.copyBytes(source, freshID: SyncTestValues.device,
+            origin: origin, filename: "Copy.md")
+        try rig.files.write(copyBytes, at: "Conflicts/Copy.md")
+        let existing = try XCTUnwrap(rig.mutations.read(at: "Conflicts/Copy.md"))
+        let pull = try collected([scope(items: [.delete(seq: 10, id: id.rawValue), .delete(seq: 11, id: other.rawValue)])])
+        defer { try? pull.discard() }
+        let plan = try reconcile(pull, rig)
+        let copies = try SyncConflictPolicy.copies(for: plan, device: "Device", at: Date(timeIntervalSince1970: 0),
+            freshID: { SyncTestValues.device }, existingCopies: [.init(scope: personal, file: existing)], mutations: rig.mutations)
+        XCTAssertEqual(copies["a.md"]?.edit.kind, .apply)
+        XCTAssertEqual(try apply(plan, rig, copies: copies), .committed)
+        XCTAssertEqual(try rig.files.read(at: "Conflicts/Copy.md"), copyBytes)
+        XCTAssertEqual(try rig.files.listFiles().map(\.relativePath), ["Conflicts/Copy.md"])
+    }
+
     func testOperationDescriptionsAndReflectionDoNotExposePromptContent() throws {
         let rig = try SyncApplyTestRig()
         _ = try baseline(rig, [])
