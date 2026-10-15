@@ -86,12 +86,23 @@ final class MacScopeDragTests: XCTestCase {
         defer { h.close() }
         let original = try h.files.read(at: "a.md")
         try h.files.write(Data("Occupied".utf8), at: "Groups/Team/a.md")
-        XCTAssertTrue(try h.drop(onto: .group(h.team)))
-        XCTAssertTrue(h.spin { if case .failed = h.view.editorState.status { return true }; return false })
+        XCTAssertFalse(h.view.editorState.isDirty)
+        let held = MacScopeHeldProvider(bytes: try h.bytes(from: h.provider()))
+        XCTAssertTrue(h.drop(held.provider, onto: .group(h.team)))
+        XCTAssertTrue(h.spin { held.isRequested })
+        // SwiftUI can echo the current sidebar selection while loading the provider.
+        h.view.selectSection(h.view.snapshot.selectedSection)
+        XCTAssertTrue(h.view.isScopeDropPending)
+        held.release()
+        XCTAssertTrue(h.spin {
+            h.view.editorState.status == .failed(.editing(.library(.destinationOccupied)))
+                && h.view.commandMessage == LibraryCommandStrings.occupied
+        }, String(describing: h.view.editorState.status))
         XCTAssertEqual(try h.files.read(at: "a.md"), original)
         XCTAssertEqual(try h.files.read(at: "Groups/Team/a.md"), Data("Occupied".utf8))
         XCTAssertEqual(h.view.editorState.prompt?.relativePath, "a.md")
-        XCTAssertNotNil(h.view.commandMessage)
+        XCTAssertEqual(h.view.snapshot.selection, h.view.editorState.prompt)
+        XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.occupied)
     }
 
     func testViewerSourceAndDestinationRefuseMovesAndKeepPrivateCopyAction() throws {

@@ -317,7 +317,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     func selectSection(_ section: LibrarySectionID) {
-        guard isActive else { return }
+        guard isActive, section != model.selectedSection else { return }
         cancelScopeDrop()
         favoriteOutcome = nil
         model.selectSection(section)
