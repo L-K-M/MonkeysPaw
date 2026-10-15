@@ -291,7 +291,11 @@ final class ScenarioRunner {
         case .http(let action):
             try await http(action)
         case .beforeRequest(let name, let method, let path, let then):
-            try device(name).transport.before(method: method, path: expand(path)) { [self] in try await http(then) }
+            try device(name).transport.before(method: method, path: expand(path)) { [self] in
+                do { try await http(then) }
+                catch let error as ScenarioFailure { throw error }
+                catch { throw ScenarioFailure.invalid(safeFailure(error)) }
+            }
         case .rewrite(let action):
             let rewrite = ScenarioRewrite(device: action.device, phase: action.phase, method: action.method,
                 path: try expand(action.path), patch: try action.patch.mapValues(expand))
