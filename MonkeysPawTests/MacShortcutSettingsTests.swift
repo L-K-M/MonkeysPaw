@@ -273,6 +273,7 @@ final class MacShortcutSettingsTests: XCTestCase {
         defer { window.close() }
         let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
         recorder.captureLabel = Strings.recordShortcutLabel(Strings.repeatLast)
+        XCTAssertEqual(recorder.title, recorder.captureLabel)
         XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Repeat last")
         weak var owner: NSObject?
         do {
@@ -288,9 +289,32 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertNil(owner)
         XCTAssertNil(recorder.onCapture)
         XCTAssertNil(recorder.onError)
+        XCTAssertEqual(recorder.title, recorder.captureLabel)
         XCTAssertEqual(recorder.accessibilityLabel(), Strings.recordShortcutLabel(Strings.repeatLast))
         recorder.captureLabel = Strings.recordShortcutLabel(Strings.togglePicker)
+        XCTAssertEqual(recorder.title, recorder.captureLabel)
         XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Toggle picker")
+    }
+
+    func testRecorderLabelUpdatesPreserveCapturePromptAndResetAfterCommitOrEscape() throws {
+        let window = recorderWindow()
+        defer { window.close() }
+        let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
+        recorder.captureLabel = Strings.recordShortcutLabel(Strings.repeatLast)
+        recorder.beginCapture()
+        XCTAssertTrue(recorder.isRecording)
+        recorder.captureLabel = Strings.recordShortcutLabel(Strings.togglePicker)
+        XCTAssertEqual(recorder.title, Strings.recordingShortcut)
+        XCTAssertEqual(recorder.accessibilityLabel(), Strings.recordingShortcut)
+        XCTAssertTrue(recorder.performKeyEquivalent(with: try key(kVK_ANSI_K, flags: .command, window: window)))
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertEqual(recorder.title, recorder.captureLabel)
+        XCTAssertEqual(recorder.accessibilityLabel(), recorder.captureLabel)
+        recorder.beginCapture()
+        XCTAssertTrue(recorder.performKeyEquivalent(with: try key(kVK_Escape, window: window)))
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertEqual(recorder.title, recorder.captureLabel)
+        XCTAssertEqual(recorder.accessibilityLabel(), recorder.captureLabel)
     }
 
     func testFailedRecoveryDisplaysFailedStatusAndActionableError() throws {

@@ -34,7 +34,11 @@ final class ShortcutRecorderButton: NSButton {
     var onCapture: ((String) -> Void)?
     var onError: ((ShortcutRebindError) -> Void)?
     var captureLabel = Strings.recordShortcut {
-        didSet { if !isRecording { setAccessibilityLabel(captureLabel) } }
+        didSet {
+            guard !isRecording else { return }
+            title = captureLabel
+            setAccessibilityLabel(captureLabel)
+        }
     }
     private(set) var isRecording = false
     private var keyMonitor: Any?
@@ -43,7 +47,7 @@ final class ShortcutRecorderButton: NSButton {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         bezelStyle = .rounded
-        title = Strings.recordShortcut
+        title = captureLabel
         setAccessibilityLabel(captureLabel)
         target = self
         action = #selector(beginCapture)
@@ -75,7 +79,7 @@ final class ShortcutRecorderButton: NSButton {
 
     func stopCapture() {
         isRecording = false
-        title = Strings.recordShortcut
+        title = captureLabel
         setAccessibilityLabel(captureLabel)
         removeObservers()
     }
@@ -120,10 +124,8 @@ final class ShortcutRecorderButton: NSButton {
     }
 
     private func record(_ event: NSEvent) -> Bool {
-        // Local monitors precede the input method and native field editing.
-        // A recorder only owns keys while it is the first responder.
-        guard let responder = window?.firstResponder, responder === self else { return false }
-        if let client = responder as? NSTextInputClient, client.hasMarkedText() { return false }
+        // Only the focused recorder owns keys; native editors keep their IME path.
+        guard window?.firstResponder === self else { return false }
         switch Self.capture(event) {
         case .ignored: return false
         case .cancelled: stopCapture()
