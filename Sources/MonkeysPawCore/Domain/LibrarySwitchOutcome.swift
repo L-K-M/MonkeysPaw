@@ -16,6 +16,8 @@ public enum LibrarySwitchOutcome: Equatable, Sendable {
     case switched
     case settingsNotSaved(SettingsError)
     case deliveryInFlight
+    /// The current graph is retained, with repeat disabled until a durable retry.
+    case repeatInvalidationFailed
     case invalidTarget(LibraryTargetError)
     /// The graph changed, but its watcher or initial rebuild could not start.
     case libraryUnavailable(FileStoreError)

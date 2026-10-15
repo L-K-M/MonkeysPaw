@@ -99,7 +99,7 @@ public final class GeneralSettingsModel {
 
         let activePath: String
         switch outcome {
-        case .deliveryInFlight, .invalidTarget: activePath = state.activeLibraryPath
+        case .deliveryInFlight, .repeatInvalidationFailed, .invalidTarget: activePath = state.activeLibraryPath
         case .switched, .settingsNotSaved, .libraryUnavailable: activePath = library.activeLibraryPath
         }
         publish(path: activePath, message: outcome == .switched ? nil : outcome)

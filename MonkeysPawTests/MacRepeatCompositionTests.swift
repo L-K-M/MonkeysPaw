@@ -239,23 +239,40 @@ final class MacRepeatCompositionTests: XCTestCase {
         XCTAssertEqual(try repeatNow(), .nothingToRepeat)
     }
 
-    func testFailedRetirementPreservesGraphAndRequiresDurableRetry() throws {
-        try put("body")
+    func testFailedRetirementKeepsGraphReportsRecoveryAndCancelsPendingRepeat() throws {
+        try put("{{clipboard}}")
         try deliver()
         let old = delegate.pickerModel
+        clipboard.hold = true
+        delegate.repeatLast()
+        XCTAssertNotNil(clipboard.pending)
+        let writes = clipboard.writes.count
         let record = data.appendingPathComponent("last-delivery.json")
-        try FileManager.default.removeItem(at: record)
+        let saved = data.appendingPathComponent("saved-record")
+        try FileManager.default.moveItem(at: record, to: saved)
         try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
-        let other = directory.appendingPathComponent("other")
+        let other = directory.appendingPathComponent("other", isDirectory: true)
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
-        XCTAssertEqual(delegate.switchLibrary(to: other), .repeatInvalidationFailed)
+        let presentation = try XCTUnwrap(delegate.settingsWindow).presentation
+        presentation.generalModel.chooseFolder(other.path)
         XCTAssertTrue(delegate.pickerModel === old)
         XCTAssertEqual(delegate.libraryDirectory, root)
+        XCTAssertEqual(presentation.general.activeLibraryPath, root.path)
+        XCTAssertEqual(presentation.general.lastSwitchMessage, .repeatInvalidationFailed)
+        XCTAssertEqual(presentation.generalMessages,
+            ["Your library folder has not changed because Repeat could not be cleared. "
+                + "Repeat is disabled. Check your app data permissions and available disk space, then retry the library change."])
         XCTAssertTrue(try XCTUnwrap(delegate.repeatWindow).presentation.message.contains("could not be cleared"))
+        clipboard.release("late")
+        settle()
+        XCTAssertEqual(clipboard.writes.count, writes)
         hideWindows()
         XCTAssertEqual(try repeatNow(), .unavailable(.invalidationFailed))
         try FileManager.default.removeItem(at: record)
-        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        try FileManager.default.moveItem(at: saved, to: record)
+        presentation.generalModel.chooseFolder(other.path)
+        XCTAssertEqual(delegate.libraryDirectory, other)
+        XCTAssertTrue(presentation.generalMessages.isEmpty)
         hideWindows()
         XCTAssertEqual(try repeatNow(), .nothingToRepeat)
     }

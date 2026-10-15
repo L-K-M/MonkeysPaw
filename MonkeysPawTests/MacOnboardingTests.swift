@@ -684,9 +684,11 @@ final class MacOnboardingTests: XCTestCase {
         try presentation().chooseFolder()
         chooserCompletions[0](chosen)
         XCTAssertEqual(try model().state.step, .libraryFolder)
-        XCTAssertEqual(try model().state.lastSwitchMessage, .libraryUnavailable(.ioFailure))
+        XCTAssertEqual(try model().state.lastSwitchMessage, .repeatInvalidationFailed)
         XCTAssertNil(try model().state.settingsError)
-        XCTAssertEqual(try presentation().messages.count, 1, "Retirement errors must not be shown twice")
+        XCTAssertEqual(try presentation().messages,
+            [try XCTUnwrap(GeneralSettingsStrings.message(for: .repeatInvalidationFailed))],
+            "Retirement errors must not be shown twice")
         XCTAssertEqual(try presentation().activeLibraryPath, root.path)
         XCTAssertEqual(delegate.repeatModel?.availability, .unavailable(.invalidationFailed))
         XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.libraryFolderCompleted)

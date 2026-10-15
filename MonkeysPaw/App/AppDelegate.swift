@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .settingsNotSaved(let error): return .settingsNotSaved(error)
-            case .repeatInvalidationFailed: return .libraryUnavailable(.ioFailure)
+            case .repeatInvalidationFailed: return .repeatInvalidationFailed
             }
         }
     }

@@ -20,6 +20,7 @@ final class GeneralSettingsModelTests: XCTestCase {
     func testEveryOutcomePublishesItsMessageAndRetainsOrReplacesTheActivePath() {
         let outcomes: [LibrarySwitchOutcome] = [
             .switched, .settingsNotSaved(.writeFailed(.ioFailure)), .deliveryInFlight,
+            .repeatInvalidationFailed,
             .invalidTarget(.notAbsolute), .invalidTarget(.missing), .invalidTarget(.notDirectory),
             .invalidTarget(.unreadable), .invalidTarget(.symlink), .invalidTarget(.outsideSandboxHome),
             .invalidTarget(.rejectedByStore(.invalidRoot)), .libraryUnavailable(.ioFailure)
@@ -33,7 +34,7 @@ final class GeneralSettingsModelTests: XCTestCase {
             model.chooseFolder("/chosen")
 
             switch outcome {
-            case .invalidTarget, .deliveryInFlight:
+            case .invalidTarget, .deliveryInFlight, .repeatInvalidationFailed:
                 XCTAssertEqual(model.state.activeLibraryPath, "/active")
             case .switched, .settingsNotSaved, .libraryUnavailable:
                 XCTAssertEqual(model.state.activeLibraryPath, "/chosen")
@@ -418,7 +419,7 @@ final class GeneralSettingsModelTests: XCTestCase {
         h.library.activeLibraryPath = sensitive[0]
         let model = h.makeModel()
         let outcomes: [LibrarySwitchOutcome] = [
-            .switched, .deliveryInFlight, .invalidTarget(.notAbsolute), .invalidTarget(.missing),
+            .switched, .deliveryInFlight, .repeatInvalidationFailed, .invalidTarget(.notAbsolute), .invalidTarget(.missing),
             .invalidTarget(.notDirectory), .invalidTarget(.unreadable), .invalidTarget(.symlink)
         ] + allFileErrors.flatMap { [.invalidTarget(.rejectedByStore($0)), .libraryUnavailable($0)] }
             + allSettingsErrors.map { .settingsNotSaved($0) }
@@ -496,7 +497,7 @@ private final class FakeLibraryLocationControl: LibraryLocationControl {
         XCTAssertTrue(main.isRunning)
         switches.append(path)
         switch outcome {
-        case .invalidTarget, .deliveryInFlight: return outcome
+        case .invalidTarget, .deliveryInFlight, .repeatInvalidationFailed: return outcome
         case .libraryUnavailable: activeLibraryPath = path ?? defaultLibraryPath
         case .switched, .settingsNotSaved:
             activeLibraryPath = path ?? defaultLibraryPath

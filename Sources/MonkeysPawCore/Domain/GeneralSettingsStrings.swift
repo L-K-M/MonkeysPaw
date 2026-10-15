@@ -9,6 +9,9 @@ public enum GeneralSettingsStrings {
                 + settingsError(error)
         case .deliveryInFlight:
             return "Wait until your prompt has been delivered before changing your library folder."
+        case .repeatInvalidationFailed:
+            return "Your library folder has not changed because Repeat could not be cleared. "
+                + "Repeat is disabled. Check your app data permissions and available disk space, then retry the library change."
         case .invalidTarget(let reason):
             switch reason {
             case .notAbsolute: return "Choose an absolute path for your library folder."

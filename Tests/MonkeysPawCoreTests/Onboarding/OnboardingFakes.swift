@@ -113,7 +113,7 @@ final class OnboardingLibraryLocation: LibraryLocationControl {
         XCTAssertTrue(main.isRunning)
         switches.append(path)
         switch outcome {
-        case .invalidTarget, .deliveryInFlight: return outcome
+        case .invalidTarget, .deliveryInFlight, .repeatInvalidationFailed: return outcome
         case .switched, .settingsNotSaved, .libraryUnavailable:
             activeLibraryPath = path ?? defaultLibraryPath
             graph = graphs[Data(activeLibraryPath.utf8)] ?? OnboardingLibraryGraph()
