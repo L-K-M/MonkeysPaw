@@ -457,6 +457,21 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
     }
 
     @Test
+    fun `native mode admission preserves typed failures and sanitizes other errors`() {
+        for ((underlying, code) in listOf(
+            SyncFileOperationError(SyncFileFailureCode.INVALID_PATH) to SyncFileFailureCode.INVALID_PATH,
+            IOException("private sentinel path") to SyncFileFailureCode.IO_FAILURE,
+        )) {
+            // Inject before Os.open so the JVM exercises the native error boundary.
+            val path = object : Path by libraryDir {
+                override fun toString(): String = throw underlying
+            }
+            val error = failure(code) { AndroidCheckedSyncIO().setMode(path, SyncFileMode.READ_ONLY) }
+            assertFalse(error.stackTraceToString().contains("private sentinel"))
+        }
+    }
+
+    @Test
     fun `directory identities survive child edits rename and graph reconstruction but not recreation`() {
         sync.createDirectory("Groups/Team")
         val identity = assertNotNull(sync.directoryIdentity("Groups/Team"))

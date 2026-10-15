@@ -49,8 +49,8 @@ internal class AndroidCheckedSyncIO : CheckedSyncIO() {
                 Os.fchmod(it, if (mode == SyncFileMode.READ_ONLY) 0x124 else 0x180) // 0444 / 0600
                 applied = true
             }
-        } catch (_: Exception) {
-            throw SyncFileOperationError(SyncFileFailureCode.IO_FAILURE,
+        } catch (error: Exception) {
+            throw SyncFileOperationError((error as? SyncFileOperationError)?.code ?: SyncFileFailureCode.IO_FAILURE,
                 if (applied) SyncFileMutationEffect.APPLIED else SyncFileMutationEffect.UNCHANGED)
         }
     }
