@@ -345,7 +345,11 @@ final class MacSyncCompositionTests: XCTestCase {
         work.drain()
         XCTAssertEqual(delegate.libraryDirectory, root, "Retry must still wait for the original login")
         transport.releaseHeldRequests()
-        XCTAssertTrue(spin { self.delegate.libraryDirectory == other && self.delegate.pickerModel?.libraryAvailable == true })
+        // The replacement's later steps also queue on the held worker.
+        XCTAssertTrue(spin {
+            work.drain()
+            return self.delegate.libraryDirectory == other && self.delegate.pickerModel?.libraryAvailable == true
+        })
         XCTAssertEqual(delegate.libraryDirectory, other)
     }
 
