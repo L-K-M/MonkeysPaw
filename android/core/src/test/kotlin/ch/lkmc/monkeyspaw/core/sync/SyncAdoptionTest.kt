@@ -227,6 +227,35 @@ class SyncAdoptionTest {
         assertIs<SyncAdoptionDecision.Clash>(SyncAdoption.pathTaken(existing, differentIntent, h.scan().snapshot, emptyMap()))
     }
 
+    @Test fun pathTakenExcludesHeldDuplicateOwnersBeforeMatching() {
+        val h = ScanHarness()
+        val sent = ScanHarness.bytes(id = v.groupPrompt)
+        val raw = ScanHarness.bytes(id = v.groupPrompt, extra = "format: 999\n")
+        h.put(sent)
+        h.put(raw, "Conflicts/raw.md")
+        val intent = SyncConflictIntent(v.groupPrompt, SyncOperation.PUT, 0, v.userScope, "a.md", sent, sent, 0)
+        val head = remote(h)
+        val existing = ExistingPrompt(v.personal.rawValue, head.rev, head.bytes.decodeToString())
+        val snapshot = h.scan(ids = emptyList()).snapshot
+        assertEquals(setOf("Conflicts/raw.md"), snapshot.heldPaths)
+        val decision = assertIs<SyncAdoptionDecision.Adopt>(SyncAdoption.pathTaken(existing, intent, snapshot, emptyMap()))
+        assertEquals(SyncApplyOutcome.Committed, h.journal.apply(application(decision, h, snapshot)))
+        assertContentEquals(head.bytes, h.files.read("a.md"))
+        assertContentEquals(raw, h.files.read("Conflicts/raw.md"))
+
+        h.put(raw)
+        val held = h.scan(ids = emptyList()).snapshot
+        assertEquals(setOf("a.md", "Conflicts/raw.md"), held.heldPaths)
+        assertIs<SyncAdoptionDecision.Held>(SyncAdoption.pathTaken(existing, intent, held, emptyMap()))
+
+        h.put(sent)
+        h.put(sent, "Conflicts/raw.md")
+        val duplicates = SyncReconciliationSnapshot(h.binding, h.mutations.listedFiles())
+        assertFailsWith<SyncReconciliationError.InvalidLocalSnapshot> {
+            SyncAdoption.pathTaken(existing, intent, duplicates, emptyMap())
+        }
+    }
+
     @Test fun changedSourceOrOccupiedDestinationAfterPlanningRetainsBothVersions() {
         for (destinationRace in listOf(false, true)) {
             val h = ScanHarness()

@@ -67,9 +67,10 @@ internal object SyncAdoption {
             SyncLocalScanner.rooted(intent.path, intent.scope, groups), existing.rev, bytes, SyncHash.of(bytes), mode(intent.scope, groups))
         validate(remote, local.binding, groups)
         if (local.availability != SyncReconciliationSnapshot.Availability.AVAILABLE) throw SyncReconciliationError.UnavailableLibrary
-        val owners = local.files.filter { it.identityKey == intent.id.rawValue }
+        val candidates = local.files.filter { it.identityKey == intent.id.rawValue }
+        val owners = candidates.filterNot { isHeld(it, local) }
         if (owners.size > 1) throw SyncReconciliationError.InvalidLocalSnapshot
-        val file = owners.firstOrNull() ?: return SyncAdoptionDecision.Replan
+        val file = owners.firstOrNull() ?: candidates.firstOrNull() ?: return SyncAdoptionDecision.Replan
         if (isHeld(file, local)) return SyncAdoptionDecision.Held(file.path)
         val location = SyncLocalScanner.location(file.path, local.binding, groups)
         if (location == null || location.scope != intent.scope || SyncNaming.pathKey(location.path) != SyncNaming.pathKey(intent.path)) {
