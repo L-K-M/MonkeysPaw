@@ -458,18 +458,24 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
             observedLabels = self.accessibilityLabels(content)
             return expectedLabels.isSubset(of: observedLabels)
         }
-        window.recalculateKeyViewLoop()
-        let firstKeyView = try XCTUnwrap(content.nextValidKeyView, "Settings must have a valid key view")
-        window.initialFirstResponder = firstKeyView
-        XCTAssertTrue(window.makeFirstResponder(nil))
-        window.selectNextKeyView(nil)
-        XCTAssertTrue(window.firstResponder === firstKeyView, "Forward traversal must select the initial key view")
-        XCTAssertTrue(firstKeyView.isDescendant(of: content), "Forward traversal must stay in Settings")
-        let previousKeyView = try XCTUnwrap(firstKeyView.previousValidKeyView,
-            "Settings must have a previous valid key view")
-        window.selectPreviousKeyView(nil)
-        XCTAssertTrue(window.firstResponder === previousKeyView, "Reverse traversal must select the previous key view")
-        XCTAssertTrue(previousKeyView.isDescendant(of: content), "Reverse traversal must stay in Settings")
+        // AppKit excludes buttons and toggles from valid key views when Keyboard navigation is off.
+        if NSApp.isFullKeyboardAccessEnabled {
+            window.recalculateKeyViewLoop()
+            let firstKeyView = try XCTUnwrap(content.nextValidKeyView, "Settings must have a valid key view")
+            window.initialFirstResponder = firstKeyView
+            XCTAssertTrue(window.makeFirstResponder(nil))
+            window.selectNextKeyView(nil)
+            XCTAssertTrue(window.firstResponder === firstKeyView, "Forward traversal must select the initial key view")
+            XCTAssertTrue(firstKeyView.isDescendant(of: content), "Forward traversal must stay in Settings")
+            let previousKeyView = try XCTUnwrap(firstKeyView.previousValidKeyView,
+                "Settings must have a previous valid key view")
+            window.selectPreviousKeyView(nil)
+            XCTAssertTrue(window.firstResponder === previousKeyView, "Reverse traversal must select the previous key view")
+            XCTAssertTrue(previousKeyView.isDescendant(of: content), "Reverse traversal must stay in Settings")
+        } else {
+            print("Skipping Settings Tab/Shift+Tab assertions because macOS Keyboard navigation is off; " +
+                  "see docs/platform/macos.md (M7 D17).")
+        }
         XCTAssertTrue(window.isVisible)
         assertRequestCount(0, "Key-view traversal must not activate a check or self-test")
         XCTAssertEqual(selfTestTarget.presentations, 0)
