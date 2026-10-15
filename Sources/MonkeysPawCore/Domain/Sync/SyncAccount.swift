@@ -83,8 +83,7 @@ struct SyncAccount: Equatable, Sendable, Codable {
     let connectionID: UUID
 
     var secretAccount: SecretAccount {
-        // The canonical UUID already satisfies SecretAccount's grammar.
-        try! SecretAccount(namespace: "device", name: connectionID.uuidString.lowercased())
+        .device(connectionID)
     }
 
     init(identity: SyncAccountIdentity, username: String, deviceID: ULID,

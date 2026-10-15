@@ -89,6 +89,113 @@ public final class SyncService {
 
     public func removeObserver(_ id: UUID) { locked { observers[id] = nil } }
 
+    /// Account work shares this graph's journal and library mutation gate.
+    /// A different account retires possibly-sent requests to private evidence;
+    /// same-account authentication recovers the exact request with the new token.
+    func prepareAccount(binding: SyncLibraryIdentity, client: SyncHTTPClient, device: String,
+                        intent: SyncAccountIntent) async throws {
+        stop()
+        await drain()
+        let resume = try locked { () throws -> Bool in
+            try requireAccountGraph(root: binding.root)
+            try requireAccountCommit(journal.replay())
+            let owned = try accounts.binding(for: binding.root)
+            let inventory = try SyncGroupFolders.inventory(binding: binding, availability: .available, mutations: mutations)
+            try SyncGroupFolders.preflight(inventory, ownership: owned)
+            if intent == .startup, let owned, owned.owner != binding.account { throw SyncError.bindingMismatch }
+
+            guard let request = try pending.recoverForAccountTransition() else { return false }
+            if request.binding != binding {
+                guard intent == .login else { throw SyncError.bindingMismatch }
+                try pending.retainHeld(request)
+                try pending.clear()
+                return false
+            }
+            session = Session(binding: binding, client: client, device: device)
+            current.needsSignIn = false
+            coordinator = try makeCoordinator()
+            return true
+        }
+        if resume { try await recoverJournal() }
+
+        try locked {
+            try requireAccountGraph(root: binding.root)
+            var old = try states.loadForAccountTransition()
+            let owned = try accounts.binding(for: binding.root)
+            if let owned, owned.owner != binding.account {
+                guard intent == .login else { throw SyncError.bindingMismatch }
+                let previous = SyncLibraryIdentity(account: owned.owner, root: binding.root)
+                guard old == nil || old?.binding.root != binding.root || old?.binding == previous else {
+                    throw SyncError.bindingMismatch
+                }
+                // A state for another root is not deletion evidence here.
+                if let existing = old, existing.binding.root != binding.root {
+                    try states.clear()
+                    old = nil
+                }
+                let inventory = try SyncGroupFolders.inventory(binding: previous, availability: .available, mutations: mutations)
+                if let plan = try SyncGroupFolders.accountChange(to: binding.account, state: old, ownership: owned,
+                    inventory: inventory, at: clock.now(), freshID: freshID, mutations: mutations) {
+                    try requireAccountCommit(journal.apply(plan))
+                }
+            } else if owned == nil {
+                guard old == nil || old?.binding.root != binding.root || old?.binding.account == binding.account else {
+                    throw SyncError.bindingMismatch
+                }
+                let inventory = try SyncGroupFolders.inventory(binding: binding, availability: .available, mutations: mutations)
+                try SyncGroupFolders.preflight(inventory, ownership: nil)
+                try accounts.updateBinding(for: binding.root) { previous in
+                    guard previous == nil else { throw SyncError.bindingMismatch }
+                    return try SyncLibraryBinding(root: binding.root, owner: binding.account)
+                }
+            }
+            let state = try states.loadForAccountTransition()
+            if intent == .startup, state?.binding.root == binding.root, state?.binding.account != binding.account {
+                throw SyncError.bindingMismatch
+            }
+            if state?.binding != binding { try states.reset(for: binding) }
+        }
+    }
+
+    /// Logout never retries a pending network write. Local apply recovery and
+    /// durable request retention precede clearing state; failures keep recovery.
+    func prepareSignOut(root: SyncLibraryRoot) async throws {
+        stop()
+        await drain()
+        try locked {
+            guard !running, !retired else { throw SyncPushError.busy }
+            if journal.pending != nil || mutations.pendingPermit != nil || mutations.hasUnreadableJournal {
+                try requireAccountGraph(root: root)
+                try requireAccountCommit(journal.replay())
+            }
+            if let request = try pending.recoverForAccountTransition() {
+                try pending.retainHeld(request)
+                try pending.clear()
+            }
+            try states.clear()
+            session = nil
+            coordinator = nil
+            current.needsSignIn = false
+            current.blockingIssue = nil
+            current.counts = SyncCounts()
+            current.details = []
+            current.lastSuccess = nil
+            publish()
+        }
+    }
+
+    private func requireAccountGraph(root: SyncLibraryRoot) throws {
+        guard !running, !retired else { throw SyncPushError.busy }
+        guard health == .available else { throw SyncReconciliationError.unavailableLibrary }
+        guard journal.pending == nil || journal.pending?.nextState.binding.root == root else {
+            throw SyncError.bindingMismatch
+        }
+    }
+
+    private func requireAccountCommit(_ outcome: SyncApplyOutcome) throws {
+        guard outcome == .committed else { throw SyncCoordinatorError.recoveryRequired }
+    }
+
     /// Y11 calls this only after authenticating and committing account/ownership.
     /// Same-account reauthentication creates a new epoch and resumes exact intents.
     func start(binding: SyncLibraryIdentity, client: SyncHTTPClient, device: String) throws {
@@ -147,6 +254,25 @@ public final class SyncService {
         locked {
             current.enabled = false
             return stopWork()
+        }
+    }
+
+    /// Sign-out retires authentication even if local journal cleanup fails.
+    /// Deferred graph recovery must never retry HTTP with this credential.
+    func stopAccountSession() {
+        locked {
+            current.enabled = false
+            _ = stopWork()
+            session = nil
+            coordinator = nil
+        }
+    }
+
+    func requireSignIn() {
+        locked {
+            current.enabled = false
+            current.needsSignIn = true
+            _ = stopWork()
         }
     }
 

@@ -12,6 +12,9 @@ public final class SyncStateStore: @unchecked Sendable {
 
     var snapshot: SyncStoreSnapshot<SyncState> { persistence.snapshot }
 
+    /// Only the stopped account transition inspects the previous binding.
+    func loadForAccountTransition() throws -> SyncState? { try persistence.load() }
+
     func load(for binding: SyncLibraryIdentity) throws -> SyncState? {
         let state = try persistence.load()
         guard state == nil || state?.binding == binding else { throw SyncError.bindingMismatch }
