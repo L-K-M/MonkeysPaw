@@ -143,7 +143,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
     }
 
     func testRepeatedSaveErrorsKeepCommittedChoicesAndRemainRetryable() throws {
-        guard getuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         start()
         let page = try show()
         // Make a readable existing file; deny atomic replacement in its parent.
@@ -327,6 +327,26 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(transport.count, 0)
     }
 
+    func testManualCheckFinishesWhileClosedAndReopenShowsSharedResult() throws {
+        start()
+        let page = try show()
+        transport.hold = true
+        page.updates.checkNow()
+        waitFor { self.transport.count == 1 && page.updates.state.update?.isChecking == true }
+        let window = try XCTUnwrap(delegate.settingsWindow?.window)
+        window.close()
+        XCTAssertNil(page.updates.model.onChange)
+        transport.release()
+        waitFor { page.updates.model.state.update?.canOpenRelease == true }
+        XCTAssertEqual(page.updates.state.update?.isChecking, true, "Hidden view callbacks remain detached")
+        delegate.showSettings()
+        waitFor { page.updates.canViewRelease }
+        XCTAssertTrue(delegate.settingsWindow?.window === window)
+        XCTAssertEqual(transport.count, 1)
+        XCTAssertEqual(updateScheduler.pendingCount, 0)
+        XCTAssertTrue(opened.isEmpty)
+    }
+
     func testLibraryReplacementPreservesManualCheckAndShutdownRetiresOldIntents() throws {
         start()
         let page = try show()
@@ -370,13 +390,13 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         content.layoutSubtreeIfNeeded()
-        let labels = accessibilityLabels(content)
-        for label in [DeliverySettingsStrings.restoreClipboard, DeliverySettingsStrings.testPaste,
-                      DeliverySettingsStrings.openSetup, SettingsUpdateStrings.automatic,
-                      SettingsUpdateStrings.checkNow, SettingsUpdateStrings.viewRelease] {
-            XCTAssertTrue(labels.contains(label), "Missing accessibility label: \(label)")
-        }
+        let expectedLabels: Set<String> = [DeliverySettingsStrings.restoreClipboard, DeliverySettingsStrings.testPaste,
+            DeliverySettingsStrings.openSetup, SettingsUpdateStrings.automatic,
+            SettingsUpdateStrings.checkNow, SettingsUpdateStrings.viewRelease]
+        waitFor { expectedLabels.isSubset(of: self.accessibilityLabels(content)) }
         window.selectNextKeyView(nil)
+        XCTAssertNotNil(window.firstResponder)
+        window.selectPreviousKeyView(nil)
         XCTAssertNotNil(window.firstResponder)
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(transport.count, 0, "Tab must not activate a check or self-test")
