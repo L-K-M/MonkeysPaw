@@ -61,12 +61,15 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
             escaped(sentinel), escaped(escaped(sentinel)), escaped(credential), escaped(escaped(credential)),
             escaped(sentinel).replace("/", "\\/"),
             escaped(sentinel).replace("雪", "\\u96ea").replace("😀", "\\ud83d\\ude00"))
+            .map { it.encodeToByteArray() } + listOf(Charsets.UTF_16LE, Charsets.UTF_16BE).flatMap { charset ->
+                listOf(sentinel, credential).map { it.toByteArray(charset) }
+            }
         val path = temporary.resolve(".logs/.cache/output.bin")
         for ((index, copy) in copies.withIndex()) {
-            put(path, ByteArray(65_533) + copy.encodeToByteArray() + byteArrayOf(-1))
+            put(path, ByteArray(65_533) + copy + byteArrayOf(-1))
             assertFailsWith<AssertionError>("Encoded copy $index was missed") { scan(sentinel, credential, ByteArrayOutputStream()) }
             Files.delete(path)
-            val output = ByteArrayOutputStream().apply { write(copy.encodeToByteArray()) }
+            val output = ByteArrayOutputStream().apply { write(copy) }
             assertFailsWith<AssertionError>("Diagnostic copy $index was missed") { scan(sentinel, credential, output) }
         }
         scan(sentinel, credential, ByteArrayOutputStream())
@@ -287,7 +290,9 @@ private class SecretScan(values: List<String>) {
             variants += escaped
         }
         variants
-    }.map { String(it.encodeToByteArray(), Charsets.ISO_8859_1) }
+    }.map { String(it.encodeToByteArray(), Charsets.ISO_8859_1) } + values.flatMap { value ->
+        listOf(Charsets.UTF_16LE, Charsets.UTF_16BE).map { String(value.toByteArray(it), Charsets.ISO_8859_1) }
+    }
 
     fun contains(bytes: ByteArray): Boolean {
         val text = String(bytes, Charsets.ISO_8859_1)
