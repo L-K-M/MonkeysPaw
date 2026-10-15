@@ -313,7 +313,7 @@ private final class MacScopeDragHarness {
         files = try RootedFileStore(root: root)
         data = try RootedFileStore(root: directory.appendingPathComponent("data"))
         try files.createRoot()
-        let transport = MacScopeTransport(role: role, sourceInGroup: sourceInGroup)
+        let transport = try MacScopeTransport(role: role, sourceInGroup: sourceInGroup)
         self.transport = transport
         let dialogs = MacScopeDialogs()
         self.dialogs = dialogs
@@ -512,9 +512,11 @@ private final class MacScopeTransport: HTTPTransporting, @unchecked Sendable {
         locked { requests.filter { $0.url.path.hasSuffix("/move") || ($0.method == .put && $0.url.lastPathComponent == Self.prompt) } }
     }
 
-    init(role: SyncAPI.Role, sourceInGroup: Bool) {
+    init(role: SyncAPI.Role, sourceInGroup: Bool) throws {
         self.role = role
         scope = sourceInGroup ? .group(groupID: Self.team) : .user
+        // The server supplies group-canonical bytes, including numeric ID quoting.
+        content = String(decoding: try CanonicalForm.group(Data(content.utf8), filename: path).bytes, as: UTF8.self)
     }
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -555,7 +557,8 @@ private final class MacScopeTransport: HTTPTransporting, @unchecked Sendable {
                 let prompt = SyncAPI.FeedItem.upsert(seq: rev,
                     prompt: .init(id: Self.prompt, rev: rev, path: path, content: content))
                 let seedBytes = "---\nid: '" + Self.seed + "'\n---\nFolder seed"
-                let seed = SyncAPI.FeedItem.upsert(seq: 1,
+                // Snapshot items use the page head even when their revision is older.
+                let seed = SyncAPI.FeedItem.upsert(seq: rev,
                     prompt: .init(id: Self.seed, rev: 1, path: "Folder/seed.md", content: seedBytes))
                 let personal = scope == .user ? [prompt, seed] : [seed]
                 let team = scope == .group(groupID: Self.team) ? [prompt] : []
