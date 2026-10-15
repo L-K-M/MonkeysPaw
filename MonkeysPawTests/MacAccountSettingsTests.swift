@@ -162,11 +162,13 @@ final class MacAccountSettingsTests: XCTestCase {
     func testMetadataSaveFailureIsVisibleWithoutClaimingSyncEnabled() throws {
         let view = try openAccount()
         let field = try secureField()
-        let record = data.appendingPathComponent("sync/account.json")
-        defer { try? FileManager.default.removeItem(at: record) }
+        // A read-only directory fails the metadata write while existing
+        // records stay readable. A directory in the record's place would
+        // fail the read first. macOS CI runs unprivileged, so modes apply.
+        let directory = data.appendingPathComponent("sync").path
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory) }
         secrets.onNextWrite = {
-            try FileManager.default.removeItem(at: record)
-            try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory)
         }
         setLogin(view, field: field, password: "test-password")
         view.login()
