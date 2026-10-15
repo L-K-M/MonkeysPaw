@@ -203,6 +203,18 @@ final class MacScopeDragTests: XCTestCase {
         XCTAssertNil(try h.files.stamp(at: "Groups/Team/renamed.md"))
     }
 
+    func testSelectingARowKeepsItsRenderedDragSourceUsable() throws {
+        let h = try MacScopeDragHarness()
+        defer { h.close() }
+        let renderedEpoch = h.view.scopeDragEpoch
+        let row = try XCTUnwrap(h.view.model.rows.first { $0.relativePath == "Folder/seed.md" })
+        h.view.selectPath(row.relativePath)
+        try h.waitForPath("Folder/seed.md")
+        let provider = try XCTUnwrap(h.view.scopeDragProvider(for: row.selection, epoch: renderedEpoch))
+        XCTAssertTrue(h.drop(provider, onto: .group(h.team)))
+        try h.waitForPath("Groups/Team/seed.md")
+    }
+
     func testExternalDropsStillImportWithoutMovingOrReusingDuplicateIdentity() throws {
         let h = try MacScopeDragHarness()
         defer { h.close() }

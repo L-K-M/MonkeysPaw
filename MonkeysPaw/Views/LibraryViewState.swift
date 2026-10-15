@@ -230,7 +230,7 @@ final class LibraryViewState: ObservableObject {
                 imports: LibraryImportViewState? = nil, makeAssistant: AssistantFactory? = nil,
                 conflictProvider: ConflictProvider? = nil) {
         guard isActive else { return }
-        cancelScopeDrop()
+        retireScopeDrags()
         retireAssistant()
         retireConflict()
         self.makeAssistant = makeAssistant
@@ -262,7 +262,7 @@ final class LibraryViewState: ObservableObject {
 
     func deactivate() {
         guard isActive else { return }
-        cancelScopeDrop()
+        retireScopeDrags()
         retireAssistant()
         retireConflict()
         conflictProvider = nil
@@ -289,7 +289,7 @@ final class LibraryViewState: ObservableObject {
         imports?.setLibraryAvailable(available)
         assistant?.editorChanged(available: available && !isResolvingConflict)
         updateConflict()
-        if !available { fileCommandRequest = nil; cancelScopeDrop() }
+        if !available { fileCommandRequest = nil; retireScopeDrags() }
         if becameAvailable, editorTab == .history { loadHistory() }
         onEditorChange?()
     }
@@ -305,7 +305,7 @@ final class LibraryViewState: ObservableObject {
 
     func didHide() {
         isPresented = false
-        cancelScopeDrop()
+        retireScopeDrags()
         retireConflict()
     }
 
@@ -439,7 +439,7 @@ final class LibraryViewState: ObservableObject {
 
     func requestClose(_ completion: @escaping (EditorGuardResult) -> Void) {
         guard isActive else { completion(.inactive); return }
-        cancelScopeDrop()
+        retireScopeDrags()
         isClosingEditor = true
         let revision = bindingRevision
         // EditorModel.request completes through its injected MainThread.
@@ -649,8 +649,12 @@ final class LibraryViewState: ObservableObject {
         let load = scopeDropLoad
         scopeDropLoad = nil
         isScopeDropPending = false
-        scopeDragEpoch = UUID()
         load?.cancel()
+    }
+
+    private func retireScopeDrags() {
+        cancelScopeDrop()
+        scopeDragEpoch = UUID()
     }
 
     private func detachObservers() {
