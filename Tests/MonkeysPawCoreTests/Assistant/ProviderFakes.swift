@@ -30,11 +30,13 @@ final class FakeProviderSecrets: SecretStore {
     var environment = [SecretAccount: SecretValue]()
     var tier = SecretTier.secretService
     var readError: Error?
+    var accountReadErrors = [SecretAccount: Error]()
     var writeError: Error?
     var deleteError: Error?
     /// Fails the Nth recorded write attempt, including failed attempts.
     /// Ignored when writeError is set, which fails every call first.
     var failWriteNumber: Int?
+    var failDeleteNumber: Int?
     private(set) var reads = [(SecretAccount, SecretReadSource)]()
     private(set) var writes = [SecretAccount]()
     private(set) var deletions = [SecretAccount]()
@@ -45,6 +47,7 @@ final class FakeProviderSecrets: SecretStore {
         if case .effective = source, let value = environment[account] {
             return StoredSecret(value: value, tier: .environment)
         }
+        if persisted[account] != nil, let error = accountReadErrors[account] { throw error }
         return persisted[account]
     }
 
@@ -59,6 +62,7 @@ final class FakeProviderSecrets: SecretStore {
     func delete(account: SecretAccount) throws {
         deletions.append(account)
         if let deleteError { throw deleteError }
+        if deletions.count == failDeleteNumber { throw SecretStoreError.deleteFailed }
         persisted[account] = nil
     }
 }
