@@ -2,6 +2,9 @@ package ch.lkmc.monkeyspaw.ime
 
 import ch.lkmc.monkeyspaw.di.AppModule
 import ch.lkmc.monkeyspaw.data.AndroidClipboard
+import ch.lkmc.monkeyspaw.data.AndroidImeGateway
+import ch.lkmc.monkeyspaw.data.ImeTextDelivery
+import ch.lkmc.monkeyspaw.data.ImeSwitchBack
 import ch.lkmc.monkeyspaw.ui.fill.FillViewModel
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import java.io.File
@@ -45,14 +48,15 @@ internal class ImeBoundaryTest {
     @Test fun `local graph constructor and provider closure cannot reach network secrets scheduling or logger`() {
         app.resolve("ime").listFiles { file -> file.extension == "kt" }!!.forEach { validateGraphSource(it.readText()) }
         val reached = graphClosure(ImeLocalGraph::class.java, ImeSessionController::class.java,
-            ImeViewOwners::class.java, AndroidClipboard::class.java, FillViewModel::class.java, LibraryViewModel::class.java)
+            ImeViewOwners::class.java, AndroidClipboard::class.java, AndroidImeGateway::class.java, ImeTextDelivery::class.java,
+            ImeSwitchBack::class.java, FillViewModel::class.java, LibraryViewModel::class.java)
         assertTrue(reached.any { it.simpleName == "LibraryRepository" })
         assertTrue(reached.any { it.simpleName == "FillService" })
         assertTrue(reached.any { it.simpleName == "Clipboard" })
         assertTrue(reached.any { it.simpleName == "AndroidSettingsStore" })
         assertFalse(reached.any { it.simpleName == "CoroutineScope" })
         val graph = app.resolve("ime/ImeLocalGraph.kt").readText()
-        assertTrue(graph.contains("if (!session.isActive()) TextDeliveryResult.STALE else copy.deliver(mode, text)"))
+        assertTrue(graph.contains("ImeTextDelivery(gateway, session.isActive, copy)"))
         assertTrue(graph.contains("ViewModelProvider(owner, factory)"))
     }
 
@@ -126,9 +130,16 @@ internal class ImeBoundaryTest {
         validateLocal(service)
         assertTrue(service.contains("onEvaluateFullscreenMode(): Boolean = false"))
         assertTrue(service.contains("onCreateExtractTextView(): View? = null"))
-        assertTrue(service.contains("ImeEditor(info?.inputType, info?.imeOptions ?: 0, currentInputConnection)"))
+        val gateway = app.resolve("data/AndroidImeGateway.kt").readText()
+        validateLocal(gateway)
+        assertTrue(gateway.contains("info?.inputType, info?.imeOptions ?: 0, service.currentInputConnection, inFillActivity()"))
         assertFalse(Regex("\\b(?:hintText|packageName|fieldId|initialSelStart|initialSelEnd|initialSurroundingText|onKeyDown|onKeyUp)\\b")
             .containsMatchIn(service))
+        assertFalse(Regex("\\b(?:hintText|packageName|fieldId|initialSelStart|initialSelEnd|initialSurroundingText)\\b")
+            .containsMatchIn(gateway))
+        assertEquals(1, Regex("connection\\.commitText\\(").findAll(gateway).count())
+        assertTrue(gateway.contains("editor.matches(editor())"))
+        assertTrue(gateway.contains("service.window?.window?.attributes?.token"))
         assertFalse(service.contains("super.onFinishInput"))
         assertTrue(service.contains("@AndroidEntryPoint"))
         assertEquals(1, Regex("@Inject").findAll(service).count())

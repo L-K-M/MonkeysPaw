@@ -4,7 +4,6 @@ import android.inputmethodservice.InputMethodService
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
@@ -12,15 +11,31 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.createLifecycleAwareWindowRecomposer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import ch.lkmc.monkeyspaw.data.AndroidImeGateway
+import ch.lkmc.monkeyspaw.data.ImeSwitchBack
+import ch.lkmc.monkeyspaw.entry.EntrySource
+import ch.lkmc.monkeyspaw.entry.FillRoute
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /** The exported binder is system-only. Opening this keyboard constructs only the local graph. */
 @AndroidEntryPoint
 class MonkeysPawImeService : InputMethodService() {
     @Inject internal lateinit var localGraph: ImeLocalGraph
+    private val gateway by lazy { AndroidImeGateway(this, localGraph::inFillActivity) }
+    private val switchBack by lazy { ImeSwitchBack(gateway) }
     private val sessions by lazy {
-        ImeSessionController(localGraph::createModels, ::editor, ::showKeyboardPicker)
+        ImeSessionController({ root, session -> localGraph.createModels(root, session, gateway) },
+            gateway::editor, switchBack::switch, { handoff ->
+                localGraph.launchHandoff(handoff) { token ->
+                    startActivity(FillRoute(EntrySource.IME_HANDOFF, token).intent(this))
+                }
+            })
     }
 
     override fun onCreateInputView(): View {
@@ -33,6 +48,13 @@ class MonkeysPawImeService : InputMethodService() {
         // The IME window's ancestors have no owners; each replacement needs its own recomposer.
         view.setParentCompositionContext(view.createLifecycleAwareWindowRecomposer(lifecycle = owners.lifecycle))
         sessions.replaceRoot(owners)
+        owners.lifecycleScope.launch {
+            owners.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                sessions.state.collectLatest { state ->
+                    state.models?.fill?.state?.collect { sessions.fillChanged(state.generation) }
+                }
+            }
+        }
         view.setContent {
             val state by sessions.state.collectAsState()
             val models = state.models
@@ -50,6 +72,8 @@ class MonkeysPawImeService : InputMethodService() {
                     onRefresh = { sessions.refresh(epoch) },
                     onValue = { name, value -> sessions.value(epoch, name, value) },
                     onCopy = { sessions.copy(epoch) },
+                    onInsert = { sessions.insert(epoch) },
+                    onHandoff = { sessions.handoff(epoch) },
                     onCancel = { sessions.backToPicker(epoch) },
                     onRetry = { sessions.retry(epoch) })
             }
@@ -58,11 +82,11 @@ class MonkeysPawImeService : InputMethodService() {
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
-        sessions.startInput(editor(attribute))
+        sessions.startInput(gateway.editor(attribute))
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
-        sessions.show(editor(info))
+        sessions.show(gateway.editor(info))
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -83,13 +107,4 @@ class MonkeysPawImeService : InputMethodService() {
     override fun onCreateExtractTextView(): View? = null
     override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int,
         candidatesStart: Int, candidatesEnd: Int) = Unit
-
-    private fun editor(info: EditorInfo? = currentInputEditorInfo): ImeEditor =
-        ImeEditor(info?.inputType, info?.imeOptions ?: 0, currentInputConnection)
-
-    /** N4 supplies previous-keyboard switching; the system picker already works on every API. */
-    private fun showKeyboardPicker(): Boolean = try {
-        val manager = getSystemService(InputMethodManager::class.java)
-        if (manager == null) false else { manager.showInputMethodPicker(); true }
-    } catch (_: Exception) { false }
 }
