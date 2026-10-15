@@ -65,7 +65,8 @@ internal fun WriteScreen(
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     TextButton(onClick = onCancel) { Text(stringResource(R.string.assistant_cancel)) }
                 } else if (state.assistant?.artifact != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = onShowDiff, enabled = state.canShowDiff) { Text(stringResource(R.string.assistant_show_diff)) }
                         Button(onClick = onAccept, enabled = state.canAccept) { Text(stringResource(R.string.assistant_accept)) }
                         TextButton(onClick = onReject) { Text(stringResource(R.string.assistant_reject)) }

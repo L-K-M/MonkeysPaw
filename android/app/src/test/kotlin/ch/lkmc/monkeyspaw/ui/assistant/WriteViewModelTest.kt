@@ -260,6 +260,26 @@ internal class WriteViewModelTest : TemporaryFiles() {
         }
     }
 
+    @Test fun `Reject after a committed result resets the session and preserves the saved prompt`() = runTest {
+        for (warning in listOf(false, true)) {
+            val h = Harness(this)
+            h.configure()
+            val candidate = h.ready()
+            h.provenanceFailure = warning
+            val outcome = h.accept()
+            val commit = assertNotNull(outcome.committed)
+            h.model.reject()
+            runCurrent()
+            assertEquals(AssistantPhase.IDLE, h.model.state.value.assistant?.phase)
+            assertNull(h.model.state.value.assistant?.artifact)
+            assertNull(h.model.state.value.acceptanceOutcome)
+            assertEquals(outcome, h.editor.state.value.assistantAcceptanceOutcome)
+            assertContentEquals(candidate.content.canonicalBytes, h.bytes(commit.entry.relativePath))
+            assertEquals(1, h.library.state.value.rows.size)
+            assertEquals(1, h.writes.size)
+        }
+    }
+
     @Test fun `invalid draft disables Accept and feedback retries explicitly with the transcript`() = runTest {
         val h = Harness(this)
         h.configure()
@@ -459,6 +479,8 @@ internal class WriteViewModelTest : TemporaryFiles() {
         h.ready()
         h.editor.reload()
         val earlier = assertNotNull(h.editor.state.value.pendingDecision)
+        assertEquals(AssistantUnavailable.BUSY, h.model.state.value.unavailable)
+        assertTrue(h.model.state.value.canAccept)
         h.model.accept()
         assertEquals(1, h.editor.state.value.queuedActions.size)
         h.model.close()

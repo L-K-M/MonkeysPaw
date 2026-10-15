@@ -8,6 +8,15 @@ internal class AssistantScreenBoundaryTest {
     private val root = File(checkNotNull(System.getProperty("monkeyspaw.appSources")))
     private val sources = root.resolve("kotlin/ch/lkmc/monkeyspaw")
 
+    @Test fun `draft decisions do not require all buttons to fit on one unscrollable line`() {
+        val screen = sources.resolve("ui/assistant/WriteScreen.kt").readText()
+        val decisions = screen.substringAfter("else if (state.assistant?.artifact != null) {")
+            .substringBefore("if (state.canRetry)")
+        for (intent in listOf("onShowDiff", "onAccept", "onReject")) assertTrue(decisions.contains(intent), intent)
+        assertFalse(Regex("\\bRow\\(").containsMatchIn(decisions) && !decisions.contains("horizontalScroll("),
+            "Draft decisions must remain reachable when their combined width exceeds the viewport")
+    }
+
     @Test fun `Write has a complete route with explicit callbacks and no automatic request or saved content`() {
         val activity = sources.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("private val assistantWrite: WriteViewModel by viewModels()"))
