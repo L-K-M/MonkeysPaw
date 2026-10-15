@@ -5,11 +5,11 @@ import MonkeysPawCore
 final class MacSetupProbe: SetupProbe {
     private enum PromptState { case notRequested, requested }
 
-    private let hotkeys: CarbonHotkeyBackend
+    private let hotkeys: MacHotkeyBackend
     private let mainThread: MainThread
     private var promptState = PromptState.notRequested
 
-    init(hotkeys: CarbonHotkeyBackend, mainThread: MainThread) {
+    init(hotkeys: MacHotkeyBackend, mainThread: MainThread) {
         self.hotkeys = hotkeys
         self.mainThread = mainThread
     }

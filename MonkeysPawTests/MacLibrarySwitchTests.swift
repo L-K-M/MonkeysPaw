@@ -312,7 +312,7 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(try config.read(at: "settings.json"), bytes)
     }
 
-    func testSettingsWriteFailureKeepsNewGraphForSession() throws {
+    func testAppDataWriteFailureKeepsOldGraphUntilRepeatCanRetire() throws {
         guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         let other = try otherLibrary()
         try start()
@@ -320,14 +320,21 @@ final class MacLibrarySwitchTests: XCTestCase {
         settings.markSetupPresented()
         let config = try RootedFileStore(root: data)
         let bytes = try config.read(at: "settings.json")
+        let old = delegate.pickerModel
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: data.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path) }
-        XCTAssertEqual(delegate.switchLibrary(to: other), .settingsNotSaved(.writeFailed(.ioFailure)))
-        XCTAssertEqual(delegate.libraryDirectory, other)
-        XCTAssertEqual(delegate.pickerModel?.results.map(\.relativePath), ["beta.md"])
+        // App data also holds repeat. Its tombstone must succeed before the
+        // graph can move, even when no delivery has been recorded yet.
+        XCTAssertEqual(delegate.switchLibrary(to: other), .repeatInvalidationFailed)
+        XCTAssertEqual(delegate.libraryDirectory, root)
+        XCTAssertTrue(delegate.pickerModel === old)
+        XCTAssertEqual(delegate.repeatModel?.availability, .unavailable(.invalidationFailed))
         XCTAssertNil(settings.libraryFolderPath)
-        XCTAssertEqual(settings.error, .writeFailed(.ioFailure))
+        XCTAssertNil(settings.error)
         XCTAssertEqual(try config.read(at: "settings.json"), bytes)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path)
+        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        XCTAssertEqual(delegate.libraryDirectory, other)
     }
 
     func testStartupFailureDegradesNewGraphWithoutPersistingChoice() throws {

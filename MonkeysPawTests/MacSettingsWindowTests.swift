@@ -531,6 +531,7 @@ final class MacSettingsWindowTests: XCTestCase {
             (.invalidTarget(.outsideRoot), .invalidTarget(.rejectedByStore(.outsideRoot))),
             (.libraryUnavailable(.notFound), .libraryUnavailable(.notFound)),
             (.settingsNotSaved(.writeFailed(.ioFailure)), .settingsNotSaved(.writeFailed(.ioFailure))),
+            (.repeatInvalidationFailed, .libraryUnavailable(.ioFailure)),
         ]
         for (platform, core) in cases { XCTAssertEqual(platform.outcome, core) }
     }

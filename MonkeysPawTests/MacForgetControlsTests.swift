@@ -306,12 +306,14 @@ final class MacForgetControlsTests: XCTestCase {
         XCTAssertEqual(try openForm("Alpha").values["topic"], "Keep draft")
         delegate.showSettings()
         let presentation = try settings().presentation
-        // Global reset skips reads; only a blocked write should make it fail.
+        // Global reset tombstones repeat before clearing values. A blocked
+        // tombstone preserves the values/draft and disables repeat until retry.
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: data.path)
         presentation.requestForgetAll()
         confirmations[0](.confirmed)
-        XCTAssertEqual(presentation.rememberedValues.lastOutcome, .fileStoreFailure(.ioFailure))
-        XCTAssertEqual(presentation.rememberedValues.message, RememberedValuesStrings.message(for: .fileStoreFailure(.ioFailure)))
+        XCTAssertEqual(presentation.rememberedValues.lastOutcome, .libraryFailure(.operationFailed))
+        XCTAssertEqual(presentation.rememberedValues.message, RememberedValuesStrings.message(for: .libraryFailure(.operationFailed)))
+        XCTAssertEqual(delegate.repeatModel?.availability, .unavailable(.invalidationFailed))
         XCTAssertEqual(try openForm("Alpha").values["topic"], "Keep draft")
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         XCTAssertEqual(try dataFiles.read(at: "values.json"), original)
