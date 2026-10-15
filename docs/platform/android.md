@@ -576,18 +576,29 @@ files. JVM logger callbacks and stdout/stderr are also observed.
 with top-level helper calls and callback references, including imported aliases.
 Negative probes check network, secrets, scheduling, diagnostics and target-text
 reads. The local graph excludes the application diagnostic scope; settings
-DataStore owns its separate silent supervised scope. Application startup is
-restricted to the existing local index refresh, and the JVM warm-up test checks
+DataStore owns its separate silent supervised scope. `Application.onCreate`
+retains the existing local index refresh, and the JVM warm-up test checks
 both success and a missing-root failure without diagnostics or files. Concrete
 clipboard access reads plain clip text without URI coercion. These source and
 fake-port checks are regression guards, not a complete semantic DI analysis.
+
+Merged-manifest regressions also cover startup before `Application.onCreate`.
+The audit found dependency metadata eagerly initializing OkHttp's platform/log
+bridge and scheduling profile installation on a cold IME process. Both checks
+failed before their initializer metadata was removed. OkHttp's Android context
+setup now runs only when Hilt constructs the HTTP transport. Profile installation
+uses AndroidX's once-per-process manual initialization from the launcher through
+a data driver, preserving normal launcher profiling. Lifecycle/emoji startup and
+the system-protected profile receiver remain. The two newly direct AndroidX
+dependencies use the already resolved versions; no version was upgraded.
 
 **Permission deviation from the original N8 plan row:** the main app already
 ships exactly `android.permission.INTERNET` for M11 assistant and M10 sync.
 N8 preserves it and asserts that exact permission set, rather than the row's
 older “absent INTERNET” wording. `EntryManifestTest` pins exported flags,
 exact filters, IME `BIND_INPUT_METHOD` protection/metadata, one process,
-backup denial and quick-entry resources. Inspect the merged release manifest
+backup denial and quick-entry resources. JVM tests inspect the merged debug
+manifest as a declared build input. Inspect the merged release manifest
 after assembly as well: source XML alone cannot detect dependency additions.
 The IME graph continues to exclude HTTP, sync engine, secret and scheduler
 capabilities; shared local sync recovery/value types are not outbound work.
@@ -602,6 +613,7 @@ additional checks; all remain NOT RUN until runtime evidence is attached.
 | Runtime privacy check | Result |
 |---|---|
 | Cold/warm IME open, browse, password target, hide/reopen and handoff cause no HTTP/sync/secret access, scheduled work or IME diagnostics | NOT RUN |
+| Component-only startup does not initialize OkHttp or schedule profile installation; the first explicit network use and launcher profile initialization still work | NOT RUN |
 | Cancel, failed commit/Copy, late callbacks and Ephemeral Insert/Copy/handoff leave no new value, draft, capture, log or temporary files; inspect private storage and logcat using runtime-generated harmless sentinels | NOT RUN |
 | Normal delivery persists only permitted remembered fields/usage; shared new prompt persists only after explicit Save, with history only for later explicit saves | NOT RUN |
 | Rotation, process loss and target changes never restore capture or an old connection from Intent/saved state; no extracted, selected or surrounding target text is requested | NOT RUN |

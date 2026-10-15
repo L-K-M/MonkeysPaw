@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
 import ch.lkmc.monkeyspaw.data.AndroidKeyboardTileSetup
+import ch.lkmc.monkeyspaw.data.ForegroundProfileInstaller
 import ch.lkmc.monkeyspaw.entry.FillActivity
 import ch.lkmc.monkeyspaw.entry.FillLauncher
 import ch.lkmc.monkeyspaw.ui.editor.EditorScreen
@@ -28,9 +29,11 @@ import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupScreen
 import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupViewModel
 import ch.lkmc.monkeyspaw.ui.setup.SettingsScreen
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject internal lateinit var profiles: ForegroundProfileInstaller
     private val seedOffer: SeedOfferViewModel by viewModels()
     private val library: LibraryViewModel by viewModels()
     private val editor: EditorViewModel by viewModels()
@@ -65,6 +68,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        profiles.initialize()
         title = AppIdentity.displayName
         editor.onSelectionChanged = library::selectFromEditor
         enableEdgeToEdge()

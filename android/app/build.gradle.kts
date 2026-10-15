@@ -183,6 +183,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.savedstate)
+    implementation(libs.androidx.startup)
+    implementation(libs.androidx.profileinstaller)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
@@ -212,6 +214,10 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 
 tasks.withType<Test>().configureEach {
     dependsOn(generateSeedAssets)
+    dependsOn("processDebugManifest")
+    val mergedManifest = layout.buildDirectory.file("intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml")
+    systemProperty("monkeyspaw.mergedManifest", mergedManifest.get().asFile.absolutePath)
+    inputs.file(mergedManifest).withPropertyName("mergedEntryManifest").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("monkeyspaw.seedSources", generateSeedAssets.get().seedDirectory.get().asFile.absolutePath)
     systemProperty("monkeyspaw.seedAssets", generateSeedAssets.get().outputDirectory.get().asFile.absolutePath)
     inputs.dir(generateSeedAssets.flatMap { it.seedDirectory }).withPropertyName("seedSources").withPathSensitivity(PathSensitivity.RELATIVE)

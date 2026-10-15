@@ -11,6 +11,46 @@ internal class EntryManifestTest {
     private val android = "http://schemas.android.com/apk/res/android"
     private val tools = "http://schemas.android.com/tools"
 
+    @Test fun `merged startup metadata never eagerly initializes HTTP or its loggers for an IME launch`() {
+        assertFalse("okhttp3.internal.platform.PlatformInitializer" in startupInitializers())
+    }
+
+    @Test fun `merged startup metadata never schedules background profile installation for an IME launch`() {
+        assertFalse("androidx.profileinstaller.ProfileInstallerInitializer" in startupInitializers())
+    }
+
+    @Test fun `merged manifest has the exact permissions components filters and safe startup allowlist`() {
+        val merged = mergedManifest()
+        assertEquals(listOf("android.permission.INTERNET"), merged.children("uses-permission").map { it.attr("name") })
+        for (tag in listOf("permission", "uses-permission-sdk-23", "uses-permission-sdk-m")) assertTrue(merged.children(tag).isEmpty())
+        val application = merged.children("application").single()
+        assertEquals("false", application.attr("allowBackup"))
+        val tags = setOf("activity", "activity-alias", "service", "receiver", "provider")
+        val source = xml("AndroidManifest.xml").children("application").single().children().filter { it.tagName in tags }
+        val actual = application.children().filter { it.tagName in tags }.associateBy { it.attr("name") }
+        fun qualified(name: String) = if (name.startsWith('.')) "ch.lkmc.monkeyspaw$name" else name
+        val profileReceiver = "androidx.profileinstaller.ProfileInstallReceiver"
+        assertEquals(source.map { qualified(it.attr("name")) }.toSet() + profileReceiver, actual.keys)
+        for (component in source) {
+            val counterpart = actual.getValue(qualified(component.attr("name")))
+            assertEquals(component.tagName, counterpart.tagName)
+            assertEquals(component.attr("exported"), counterpart.attr("exported"))
+            assertEquals(component.attr("permission"), counterpart.attr("permission"))
+            assertEquals(filters(component), filters(counterpart))
+        }
+        val framework = actual.getValue(profileReceiver)
+        assertEquals("true", framework.attr("exported"))
+        assertEquals("android.permission.DUMP", framework.attr("permission"))
+        assertEquals(listOf("INSTALL_PROFILE", "SKIP_FILE", "SAVE_PROFILE", "BENCHMARK_OPERATION").map {
+            listOf("action" to mapOf("android:name" to "androidx.profileinstaller.action.$it"))
+        }, filters(framework))
+        val startup = actual.getValue("androidx.startup.InitializationProvider")
+        assertEquals("ch.lkmc.monkeyspaw.androidx-startup", startup.attr("authorities"))
+        assertEquals(setOf("androidx.emoji2.text.EmojiCompatInitializer", "androidx.lifecycle.ProcessLifecycleInitializer"),
+            startupInitializers())
+        for (element in actual.values + application) assertFalse(element.hasAttributeNS(android, "process"))
+    }
+
     @Test fun `only INTERNET is requested and removed library permissions cannot become active`() {
         val manifest = xml("AndroidManifest.xml")
         val permissions = manifest.children("uses-permission")
@@ -33,6 +73,7 @@ internal class EntryManifestTest {
     @Test fun `all entry components have exact export binding and intent filter contracts`() {
         val application = xml("AndroidManifest.xml").children("application").single()
         val expected = mapOf(
+            "androidx.startup.InitializationProvider" to Component("provider", false),
             ".MainActivity" to Component("activity", true, action = "android.intent.action.MAIN",
                 category = "android.intent.category.LAUNCHER"),
             ".entry.FillActivity" to Component("activity", false),
@@ -112,6 +153,15 @@ internal class EntryManifestTest {
         val action: String? = null, val category: String? = null, val mime: String? = null)
 
     private fun removed(element: Element) = element.getAttributeNS(tools, "node") == "remove"
+    private fun mergedManifest() = parse(File(checkNotNull(System.getProperty("monkeyspaw.mergedManifest"))))
+    private fun startupInitializers(): Set<String> = mergedManifest().children("application").single().children("provider")
+        .single { it.attr("name") == "androidx.startup.InitializationProvider" }
+        .children("meta-data").map { it.attr("name") }.toSet()
+    private fun filters(component: Element) = component.children("intent-filter").map { filter ->
+        filter.children().map { child -> child.tagName to (0 until child.attributes.length).associate {
+            child.attributes.item(it).nodeName to child.attributes.item(it).nodeValue
+        } }
+    }
     private fun xml(path: String) = parse(sources.resolve(path))
     private fun parse(file: File) = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
         .newDocumentBuilder().parse(file).documentElement
