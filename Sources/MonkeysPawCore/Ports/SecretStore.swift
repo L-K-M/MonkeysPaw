@@ -1,5 +1,7 @@
 /// Platform-owned storage. Implementations serialize account access and never
-/// log values or underlying errors. A failed mutation leaves the old value intact.
+/// log values or underlying errors. A failed mutation preserves readable values.
+/// Explicit deletion may discard an unreadable target without reading its value;
+/// an unreadable shared map must fail closed rather than lose unrelated accounts.
 ///
 /// Effective reads follow the platform ladder and report the actual tier.
 /// Persisted reads bypass environment overrides so a service can restore an

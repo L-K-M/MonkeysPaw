@@ -531,6 +531,7 @@ identity, and record any new access request.
 | Check | Result | Details |
 |---|---|---|
 | ACL prompts: record requests across both provider profiles sharing one item; allow, deny and cancel behave as expected, and denied/locked edits preserve saved credentials | NOT RUN | |
+| Unreadable shared-map recovery guard: with two profiles saved, deny/lock access or corrupt a disposable Keychain map, then explicitly Clear/Delete/Replace one profile. While the shared map is unreadable, a typed locked/unavailable/readFailed result preserves both the item and metadata; no whole-item reset occurs. Restore access or repair the disposable map and retry; the other profile remains usable | NOT RUN | |
 | Signed-build access: the intended signed build and an update can read, replace and delete their saved keys; record signing identities and any new ACL prompts | NOT RUN | |
 | Key never shown after save: Assistant settings show only saved status and Keychain tier after save/reopen/restart; no stored value appears in the key field, errors or diagnostics | NOT RUN | |
 

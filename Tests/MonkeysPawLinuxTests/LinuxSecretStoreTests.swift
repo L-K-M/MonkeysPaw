@@ -102,6 +102,98 @@ final class LinuxSecretStoreTests: XCTestCase {
         }
     }
 
+    func testProviderRecoveryDeletesUnreadableServiceAccountWithoutReadingItsValue() throws {
+        for operation in ["clear", "delete", "replace"] {
+            let tools = try toolsWithPaths()
+            try installService(tools)
+            let store = makeStore(tools)
+            let account = SecretAccount.provider(profile)
+            let other = ProviderDraft(displayName: "Other", key: .typed("retained"))
+            let files = try RootedFileStore(root: LinuxPaths(environment: tools.environment).configDirectory)
+            let service = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: store)
+            let draft = ProviderDraft(id: profile, key: .typed("unreadable"))
+            try worker {
+                try service.save(draft)
+                try service.save(other)
+                try service.selectProfile(other.id)
+            }
+            tools.environment["FAKE_UNREADABLE"] = account.rawValue
+            try tools.install("secret-tool", script: FakeLinuxTools.recordArguments + "\n" + #"""
+            case "$1" in
+              lookup)
+                if [ "$5" = "$FAKE_UNREADABLE" ] || [ ! -f "$FAKE_ITEMS/$5" ]; then exit 1; fi
+                /bin/cat "$FAKE_ITEMS/$5" ;;
+              search)
+                if [ -f "$FAKE_ITEMS/$6" ]; then printf '[locked-item]'; fi ;;
+              store) /bin/cat > "$FAKE_ITEMS/$7" ;;
+              clear) /bin/rm -f "$FAKE_ITEMS/$5" ;;
+              *) exit 2 ;;
+            esac
+            """#)
+            let unreadableStore = makeStore(tools)
+            let recovering = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: unreadableStore)
+            try worker {
+                XCTAssertThrowsError(try recovering.connection(for: self.profile)) {
+                    XCTAssertEqual($0 as? ProviderSettingsError, .secret(.locked))
+                }
+                if operation == "delete" { try recovering.deleteProfile(self.profile) }
+                else {
+                    var edit = draft
+                    edit.key = operation == "replace" ? .typed("replacement") : .clear
+                    try recovering.save(edit)
+                }
+            }
+            XCTAssertTrue(tools.arguments.contains(["clear", "service", AppIdentity.linuxAppID, "account", account.rawValue]))
+            XCTAssertEqual(recovering.snapshot.settings.selectedProfileID, other.id)
+            try installService(tools)
+            let reopened = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: makeStore(tools))
+            try worker {
+                XCTAssertEqual(try reopened.connection(for: other.id).key, SecretValue("retained"))
+                if operation == "delete" {
+                    XCTAssertFalse(reopened.snapshot.settings.profiles.contains { $0.id == self.profile })
+                } else {
+                    XCTAssertEqual(try reopened.connection(for: self.profile).key,
+                                   operation == "replace" ? SecretValue("replacement") : nil)
+                }
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: secretFile(tools).path))
+        }
+    }
+
+    func testUnreadableSharedFileMapFailsClosedForProviderRecovery() throws {
+        for operation in ["clear", "delete", "replace"] {
+            let tools = try toolsWithPaths()
+            let store = makeStore(tools)
+            let files = try RootedFileStore(root: LinuxPaths(environment: tools.environment).configDirectory)
+            let service = ProviderSettingsService(store: ProviderSettingsStore(files: files), secrets: store)
+            let draft = ProviderDraft(id: profile, key: .typed("discarded-only-explicitly"))
+            try worker {
+                try service.save(draft)
+                try service.save(ProviderDraft(displayName: "Other", key: .typed("retained")))
+            }
+            let corrupt = Data("{".utf8)
+            let handle = try FileHandle(forWritingTo: secretFile(tools))
+            try handle.truncate(atOffset: 0)
+            try handle.write(contentsOf: corrupt)
+            try handle.close()
+            let before = service.snapshot
+            let metadata = try files.read(at: "provider-settings.json")
+            try worker {
+                XCTAssertThrowsError(try {
+                    if operation == "delete" { try service.deleteProfile(self.profile) }
+                    else {
+                        var edit = draft
+                        edit.key = operation == "replace" ? .typed("replacement") : .clear
+                        try service.save(edit)
+                    }
+                }()) { XCTAssertEqual($0 as? ProviderSettingsError, .secret(.readFailed)) }
+            }
+            XCTAssertEqual(service.snapshot, before)
+            XCTAssertEqual(try files.read(at: "provider-settings.json"), metadata)
+            XCTAssertEqual(try Data(contentsOf: secretFile(tools)), corrupt)
+        }
+    }
+
     func testFallbackMigrationRemovesOnlyTheMigratedAccountAndClearRemovesBothCopies() throws {
         let tools = try toolsWithPaths()
         let account = SecretAccount.provider(profile)
@@ -149,7 +241,8 @@ final class LinuxSecretStoreTests: XCTestCase {
                     XCTAssertEqual($0 as? SecretStoreError, expected)
                 }
                 XCTAssertThrowsError(try store.delete(account: account)) {
-                    XCTAssertEqual($0 as? SecretStoreError, expected)
+                    // The explicit clear is attempted even when lookup fails.
+                    XCTAssertEqual($0 as? SecretStoreError, .deleteFailed)
                 }
             }
             XCTAssertEqual(try Data(contentsOf: secretFile(tools)), original)

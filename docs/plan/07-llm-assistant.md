@@ -14,10 +14,18 @@ paths through `StateStore` to namespaced `provider-settings`/`provider-state`
 records in the single M8 settings DataStore. The logical version-1 JSON and
 unknown metadata are preserved; no second settings DataStore or provider
 metadata file is created (§10.6, §22 J8).
-Secret edits are compensated if metadata cannot commit. Failed compensation
+Readable secret edits are compensated if metadata cannot commit. Failed compensation
 blocks further credential resolution and makes that store instance read-only;
 after restart, a credential with a mismatched destination still requires
 re-entry or Clear before it can be used.
+Explicit Clear, Delete and Replace can discard an unreadable credential through
+account-level deletion without its old value, following Android L21's recovery
+contract (§22 J9). Reads and Keep never discard it automatically. A failed
+metadata commit retains metadata, reports typed `writeFailed` and removes any
+new replacement; failed cleanup reports `secretRollbackFailed` and blocks the
+instance. The unreadable old payload cannot be restored. Driver permissions and
+unreadable shared maps still fail closed: recovery must preserve other accounts
+and never reset an entire secret map to remove one credential (§12).
 
 | Kind | Covers | Request | Auth |
 |---|---|---|---|

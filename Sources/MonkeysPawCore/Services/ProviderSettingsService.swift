@@ -138,6 +138,7 @@ public final class ProviderSettingsService {
 
     private func readSecret(_ account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
         do { return try secrets.read(account: account, source: source) }
+        catch let error as CancellationError { throw error }
         catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
         catch { throw ProviderSettingsError.secret(.readFailed) }
     }
@@ -169,28 +170,48 @@ public final class ProviderSettingsService {
         return key
     }
 
-    /// SecretStore promises atomic per-account edits. Metadata commit uses
-    /// compensation because FileStore and OS secret stores cannot transact.
+    /// Readable edits compensate because metadata and OS secrets cannot transact.
+    /// Explicit recovery discards an unreadable payload without restoring it.
     private func editSecret(account: SecretAccount, value: SecretValue?) throws -> () throws -> Void {
-        if value != nil, try readSecret(account, source: .effective)?.tier == .environment {
-            throw ProviderSettingsError.secret(.readOnly)
+        if value != nil {
+            do {
+                if try readSecret(account, source: .effective)?.tier == .environment {
+                    throw ProviderSettingsError.secret(.readOnly)
+                }
+            } catch ProviderSettingsError.secret(let error) where error == .locked || error == .unavailable || error == .readFailed {
+                // A persisted read failure must not block explicit replacement.
+            }
         }
-        let previous = try readSecret(account, source: .persisted)
-        if value == nil, previous == nil { return {} }
+        let previous: StoredSecret?
+        var unreadable = false
+        do { previous = try readSecret(account, source: .persisted) }
+        catch ProviderSettingsError.secret(let error) where error == .locked || error == .unavailable || error == .readFailed {
+            previous = nil
+            unreadable = true
+        }
+        if value == nil, previous == nil, !unreadable { return {} }
 
+        var failure = SecretStoreError.deleteFailed
         do {
-            if let value { try secrets.write(value, account: account) }
-            else { try secrets.delete(account: account) }
+            // Discard only this account. A shared unreadable map must fail closed
+            // in the driver rather than erase unrelated accounts.
+            if unreadable || value == nil { try secrets.delete(account: account) }
+            if let value {
+                failure = .writeFailed
+                try secrets.write(value, account: account)
+            }
         } catch let error as SecretStoreError {
             log?.write(.warning, "Provider secret update failed.")
             throw ProviderSettingsError.secret(error)
         } catch {
             log?.write(.warning, "Provider secret update failed.")
-            throw ProviderSettingsError.secret(value == nil ? .deleteFailed : .writeFailed)
+            throw ProviderSettingsError.secret(failure)
         }
         return { [secrets] in
             if let previous { try secrets.write(previous.value, account: account) }
-            else { try secrets.delete(account: account) }
+            // An unreadable discarded payload cannot be restored. Remove any
+            // replacement so failed metadata cannot authorize a different key.
+            else if value != nil { try secrets.delete(account: account) }
         }
     }
 }

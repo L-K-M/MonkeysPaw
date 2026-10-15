@@ -242,8 +242,10 @@ final class ProviderKeyRulesTests: XCTestCase {
         var edit = ProviderDraft(profile: before.settings.profiles[0])
         edit.key = .typed("new")
         harness.secrets.readError = SecretStoreError.locked
+        harness.secrets.deleteError = SecretStoreError.locked
         XCTAssertThrowsError(try harness.service.save(edit)) { XCTAssertEqual($0 as? ProviderSettingsError, .secret(.locked)) }
         harness.secrets.readError = nil
+        harness.secrets.deleteError = nil
         harness.secrets.writeError = NSError(domain: "untrusted provider body", code: 1)
         XCTAssertThrowsError(try harness.service.save(edit)) { XCTAssertEqual($0 as? ProviderSettingsError, .secret(.writeFailed)) }
         harness.secrets.writeError = nil
@@ -261,6 +263,14 @@ final class ProviderKeyRulesTests: XCTestCase {
             let harness = ProviderHarness()
             let draft = ProviderDraft(key: .typed("old"))
             try harness.service.save(draft)
+            let account = SecretAccount.provider(draft.id)
+            let stored = try XCTUnwrap(harness.secrets.persisted[account])
+            var payload = try stored.value.withValue {
+                try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+            }
+            payload["unknown"] = ["opaque", "雪"]
+            let opaque = " \n" + String(decoding: try JSONSerialization.data(withJSONObject: payload), as: UTF8.self) + "\n "
+            harness.secrets.persisted[account] = StoredSecret(value: SecretValue(opaque), tier: .secretService)
             let previousSecret = harness.secrets.persisted[.provider(draft.id)]
             let before = harness.service.snapshot
             let bytes = try harness.files.read(at: "provider-settings.json")

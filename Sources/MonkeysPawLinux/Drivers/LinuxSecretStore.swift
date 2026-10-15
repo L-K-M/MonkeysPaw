@@ -85,7 +85,18 @@ final class LinuxSecretStore: SecretStore {
         do { try file.prepareForMutation() }
         catch { throw SecretStoreError.deleteFailed }
         let previousFile = try fileSecret(account)
-        let previous = try lookup(account)
+        let previous: Lookup
+        do { previous = try lookup(account) }
+        catch let error as SecretStoreError where error == .locked || error == .unavailable || error == .readFailed {
+            // Explicit discard can clear an inaccessible account without its
+            // old value. The shared file map was validated before any deletion.
+            try clear(account)
+            if previousFile != nil {
+                do { try file.write(nil, account: account) }
+                catch { throw SecretStoreError.deleteFailed }
+            }
+            return
+        }
         if case .found = previous {
             do { try clear(account) }
             catch {

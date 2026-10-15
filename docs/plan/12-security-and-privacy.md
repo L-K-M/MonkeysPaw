@@ -47,6 +47,19 @@ metadata edits cannot rebind a stored key to another kind or origin.
 Environment values are raw operator overrides without destination bindings;
 the binding's re-entry gate applies only to persisted secrets.
 
+Explicit provider Clear/Delete/Replace can recover from a failed persisted read
+without obtaining the old value. Desktop permits locked/unavailable/readFailed
+reads to reach account-level deletion; environment-backed replacement stays
+read-only, and cancellation never starts recovery. The driver must preserve
+other accounts. Linux can clear an unreadable Secret Service account without a
+successful lookup, then remove any readable file copy. An unreadable shared
+Keychain or file map still blocks edits rather than deleting unrelated entries.
+Readable edits restore the exact opaque old payload on metadata failure.
+An unreadable discarded payload cannot be restored: failed metadata publication
+retains metadata, removes a replacement and reports typed `writeFailed`.
+Failed replacement cleanup reports `secretRollbackFailed`, disables credential
+resolution and makes the store instance read-only (§7.1, §22 J9).
+
 On macOS, one generic-password Keychain item uses service
 `ch.lkmc.monkeyspaw` and fixed account `secret-map`. Its version-1 JSON
 payload maps namespaced accounts to opaque secrets under `entries`; provider
