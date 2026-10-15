@@ -36,7 +36,10 @@ final class MacUpdateScheduler: MonkeysPawCore.Scheduler {
         self.schedule = schedule
     }
 
-    deinit { for entry in pending.values { entry.cancel() } }
+    deinit {
+        let cancellations = pending.values.map(\.cancel)
+        mainThread.run { for cancel in cancellations { cancel() } }
+    }
 
     func after(_ delay: Duration, _ work: @escaping () -> Void) {
         mainThread.run { [weak self] in

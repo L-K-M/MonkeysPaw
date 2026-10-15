@@ -91,6 +91,27 @@ final class MacUpdateDriverTests: XCTestCase {
         XCTAssertEqual(calls, 0)
     }
 
+    func testReleaseFromWorkerCancelsOnTheInstallingUIThread() throws {
+        let timers = MacSettingsUpdateTimers()
+        var scheduler: MacUpdateScheduler? = MacUpdateScheduler(mainThread: DispatchMainThread(), schedule: timers.schedule)
+        weak var weakScheduler = scheduler
+        scheduler?.setEnabled(true)
+        var calls = 0
+        scheduler?.after(.seconds(1)) { calls += 1 }
+        let owner = MacSettingsSchedulerOwner(try XCTUnwrap(scheduler))
+        scheduler = nil
+        let released = expectation(description: "Scheduler released on worker")
+        DispatchQueue.global().async {
+            owner.release()
+            released.fulfill()
+        }
+        wait(for: [released], timeout: 5)
+        waitFor { timers.cancellations == 1 }
+        XCTAssertNil(weakScheduler)
+        timers.fireAll()
+        XCTAssertEqual(calls, 0)
+    }
+
     func testAutomaticDailyAttemptSurvivesRestartAndUsesOnlyFakeTimers() throws {
         let clock = MacSettingsClock()
         let first = try harness(clock: clock)
@@ -167,4 +188,11 @@ final class MacUpdateDriverTests: XCTestCase {
         }
         XCTAssertTrue(predicate(), "Update work did not settle", file: file, line: line)
     }
+}
+
+/// The worker only drops ownership; it never calls the UI-confined scheduler.
+private final class MacSettingsSchedulerOwner: @unchecked Sendable {
+    private var scheduler: MacUpdateScheduler?
+    init(_ scheduler: MacUpdateScheduler) { self.scheduler = scheduler }
+    func release() { scheduler = nil }
 }

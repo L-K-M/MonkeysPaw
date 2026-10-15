@@ -81,7 +81,10 @@ final class MacSettingsUpdateTimers {
     func schedule(_ delay: Duration, _ work: @escaping () -> Void) -> (() -> Void) {
         XCTAssertTrue(Thread.isMainThread)
         jobs.append(work)
-        return { [weak self] in self?.cancellations += 1 }
+        return { [weak self] in
+            XCTAssertTrue(Thread.isMainThread)
+            self?.cancellations += 1
+        }
     }
     func fireAll() { let work = jobs; jobs.removeAll(); work.forEach { $0() } }
 }
