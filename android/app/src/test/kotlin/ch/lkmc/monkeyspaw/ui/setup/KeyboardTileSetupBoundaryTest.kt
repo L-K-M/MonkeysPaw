@@ -60,6 +60,16 @@ internal class KeyboardTileSetupBoundaryTest {
     }
 
     @Test
+    fun `unresolved settings show loading before any setup title`() {
+        val screen = root.resolve("ui/setup/KeyboardTileSetupScreen.kt").readText()
+        val loading = screen.indexOf("if (state.loading)")
+        val loadingExit = screen.indexOf("return@Column", loading)
+        val title = screen.indexOf("Text(stringResource(R.string.setup_title)")
+        assertTrue(loading >= 0 && loadingExit > loading && title > loadingExit,
+            "KeyboardTileSetupScreen must finish the loading branch before rendering the setup title")
+    }
+
+    @Test
     fun `launcher refreshes picker status on focus regain and the screen honors failure back state`() {
         val activity = root.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("override fun onWindowFocusChanged(hasFocus: Boolean)"))

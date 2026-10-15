@@ -26,11 +26,11 @@ internal fun KeyboardTileSetupScreen(
     BackHandler(enabled = state.handlesBack) { if (state.canDecide) onSkip() }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.headlineMedium)
         if (state.loading) {
             CircularProgressIndicator()
             return@Column
         }
+        Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.headlineMedium)
         state.error?.let {
             Text(stringResource(when (it) {
                 KeyboardTileSetupError.LOAD -> R.string.setup_load_failed
