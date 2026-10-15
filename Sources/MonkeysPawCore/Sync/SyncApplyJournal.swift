@@ -254,9 +254,16 @@ final class SyncApplyJournal {
         lock.lock()
         defer { lock.unlock() }
         // An uncertain publication can leave the cache nil or on an older intent.
-        if let record = try persistence.recover(validating: { record in
-            if let record { try permit?.validate(record.nextState.binding) }
-        }) {
+        let record: SyncApplyRecord?
+        do {
+            record = try persistence.recover(validating: { record in
+                if let record { try permit?.validate(record.nextState.binding) }
+            })
+        } catch {
+            mutations.blockForRecovery()
+            throw error
+        }
+        if let record {
             mutations.resume(record.id, nextState: record.nextState)
             _ = try states.recover(for: record.nextState.binding)
             let intended = try permit?.intendedWrites(edits: record.steps.map(\.edit),

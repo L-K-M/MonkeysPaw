@@ -327,6 +327,42 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertNoThrow(try rig.library.entries())
     }
 
+    func testMissingIntentOnLiveReplayCannotReleaseTheRecoveryGate() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.dataOperations.failFlushNumber = rig.dataOperations.flushCount + 1
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+        }
+        let intent = try rig.data.read(at: "sync/apply.json")
+        try rig.data.delete(at: "sync/apply.json")
+        rig.dataOperations.failFlushNumber = nil
+
+        XCTAssertThrowsError(try rig.journal.replay()) {
+            XCTAssertEqual($0 as? SyncError, .readFailed(.notFound))
+        }
+        XCTAssertTrue(rig.mutations.hasUnreadableJournal)
+        XCTAssertThrowsError(try rig.mutations.begin(plan.id, nextState: plan.nextState)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.mutations.finish(plan.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, plan.id)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertThrowsError(try rig.values.removeAll()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertNil(rig.states.snapshot.value)
+
+        try rig.data.writePrivate(intent, at: "sync/apply.json")
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+        XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+        XCTAssertFalse(rig.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.mutations.pendingPermit)
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertNoThrow(try rig.values.removeAll())
+    }
+
     func testFailedStateReflushOnLiveReplayCannotReleaseTheRecoveryGate() throws {
         let rig = try SyncApplyTestRig()
         let plan = try rig.plan([rig.replacement()])
