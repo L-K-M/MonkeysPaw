@@ -106,15 +106,18 @@ final class MacSettingsClock: WallClock {
 
 /// Accessibility clients can use these selectors without full protocol conformance.
 final class MacSettingsAccessibilityNode: NSObject {
-    private let label: String
+    private let label: String?
+    private let title: Any?
     private let children: [NSObject]
 
-    init(label: String, children: [NSObject] = []) {
+    init(label: String? = nil, title: Any? = nil, children: [NSObject] = []) {
         self.label = label
+        self.title = title
         self.children = children
         super.init()
     }
 
     @objc func accessibilityLabel() -> String? { label }
+    @objc func accessibilityTitle() -> Any? { title }
     @objc func accessibilityChildren() -> [Any]? { children }
 }

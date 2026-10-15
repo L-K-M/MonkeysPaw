@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 import MonkeysPawCore
 import XCTest
@@ -77,26 +78,30 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
     private func show() throws -> SettingsViewState {
         delegate.showSettings()
         let page = try XCTUnwrap(delegate.settingsWindow?.presentation)
-        waitFor { page.updates.state.update != nil }
+        waitFor("initial update snapshot") { page.updates.state.update != nil }
         return page
     }
 
-    private func waitFor(_ predicate: () -> Bool, file: StaticString = #filePath, line: UInt = #line) {
+    private func waitFor(_ condition: @autoclosure () -> String,
+                         file: StaticString = #filePath, line: UInt = #line, until predicate: () -> Bool) {
         let deadline = Date().addingTimeInterval(5)
         while !predicate(), Date() < deadline {
             work.drain()
             timers.drain()
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.002))
         }
-        XCTAssertTrue(predicate(), "Settings work did not settle", file: file, line: line)
+        XCTAssertTrue(predicate(), "Settings work did not settle: \(condition())", file: file, line: line)
     }
 
     private func check(_ page: UpdateSettingsViewState, expecting result: UpdateCheckResult,
                        file: StaticString = #filePath, line: UInt = #line) {
         let count = transport.count
         page.checkNow()
-        waitFor({ self.transport.count == count + 1 && page.state.update?.isChecking == false
-            && page.state.update?.result == result }, file: file, line: line)
+        waitFor("manual check \(count + 1) finished with \(result); requests=\(transport.count), snapshot=\(String(describing: page.state.update))",
+                file: file, line: line) {
+            self.transport.count == count + 1 && page.state.update?.isChecking == false
+                && page.state.update?.result == result
+        }
     }
 
     func testHostedVersionedLaunchRefreshAndReopenSendNoHTTPOrUpdateTimers() throws {
@@ -113,7 +118,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
             delegate.showSettings()
         }
         page.updates.model.refresh()
-        waitFor { page.updates.state.update != nil }
+        waitFor("refreshed update snapshot") { page.updates.state.update != nil }
         XCTAssertEqual(transport.count, 0)
         XCTAssertEqual(updateTimers.jobs.count, 0)
         XCTAssertEqual(updateScheduler.pendingCount, 0)
@@ -203,7 +208,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         page.delivery.testPaste()
         page.delivery.testPaste()
         XCTAssertEqual(page.delivery.state.test, .testing)
-        waitFor { if case .tested = page.delivery.state.test { return true }; return false }
+        waitFor("delivery self-test report") { if case .tested = page.delivery.state.test { return true }; return false }
         XCTAssertEqual(selfTestTarget.presentations, 2, "One self-test checks both macOS backends")
         XCTAssertEqual(selfTestTarget.closes, 2)
         XCTAssertEqual(injector.chords, [.standard])
@@ -223,7 +228,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let picker = try XCTUnwrap(delegate.pickerModel)
         picker.open()
         picker.usePreferred()
-        waitFor { if case .done = picker.state { return true }; return false }
+        waitFor("picker delivery completion") { if case .done = picker.state { return true }; return false }
         XCTAssertEqual(injector.chords, [.standard])
         XCTAssertEqual(timers.restores.count, 1)
         XCTAssertEqual(pasteboard.string(forType: .string), "delivered")
@@ -239,23 +244,27 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         page.setAutomatic(false)
         transport.hold = true
         page.checkNow()
-        waitFor { self.transport.count == 1 && page.state.update?.isChecking == true }
+        waitFor("first manual request in flight") { self.transport.count == 1 && page.state.update?.isChecking == true }
         XCTAssertFalse(page.canCheck)
         XCTAssertEqual(SettingsUpdateStrings.result(page.state.update), "Checking for updates…")
         page.checkNow()
         XCTAssertEqual(transport.count, 1)
         transport.release()
-        waitFor { page.state.update?.canOpenRelease == true && page.state.update?.isChecking == false }
+        waitFor("manual check completed with a release") {
+            page.state.update?.canOpenRelease == true && page.state.update?.isChecking == false
+        }
         XCTAssertEqual(SettingsUpdateStrings.result(page.state.update), "Update available: 1.0.0.")
         XCTAssertNotNil(page.state.update?.lastSuccessfulCheck)
         XCTAssertTrue(opened.isEmpty)
         opensSucceed = false
         page.viewRelease()
-        waitFor { page.state.update?.releasePageOpeningFailed == true }
+        waitFor("release-page failure publication") { page.state.update?.releasePageOpeningFailed == true }
         XCTAssertEqual(opened.map(\.absoluteString), ["https://github.com/L-K-M/MonkeysPaw/releases/tag/v1.0.0"])
         opensSucceed = true
         page.viewRelease()
-        waitFor { self.opened.count == 2 && page.state.update?.releasePageOpeningFailed == false }
+        waitFor("second release-page open and success publication") {
+            self.opened.count == 2 && page.state.update?.releasePageOpeningFailed == false
+        }
         XCTAssertEqual(transport.requests.first?.headers["User-Agent"], "MonkeysPaw/1.0.0-beta.2")
         XCTAssertEqual(updateTimers.jobs.count, 0)
     }
@@ -274,12 +283,14 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         check(page, expecting: .unavailable(.malformedResponse))
         transport.reply = .success(HTTPResponse(statusCode: 429, headers: ["Retry-After": "3600"], body: Data()))
         page.checkNow()
-        waitFor { page.state.update?.rateLimit?.statusCode == 429 && page.state.update?.isChecking == false }
+        waitFor("HTTP 429 completion and rate-limit publication") {
+            page.state.update?.rateLimit?.statusCode == 429 && page.state.update?.isChecking == false
+        }
         XCTAssertTrue(SettingsUpdateStrings.result(page.state.update).contains("HTTP 429"))
         let count = transport.count
         page.checkNow()
         page.model.refresh()
-        waitFor { page.state.update?.isChecking == false }
+        waitFor("rate-limited manual check remains idle") { page.state.update?.isChecking == false }
         XCTAssertEqual(transport.count, count)
         XCTAssertFalse(page.canViewRelease)
     }
@@ -338,15 +349,17 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         transport.hold = true
         page.updates.checkNow()
-        waitFor { self.transport.count == 1 && page.updates.state.update?.isChecking == true }
+        waitFor("manual request in flight before closing Settings") {
+            self.transport.count == 1 && page.updates.state.update?.isChecking == true
+        }
         let window = try XCTUnwrap(delegate.settingsWindow?.window)
         window.close()
         XCTAssertNil(page.updates.model.onChange)
         transport.release()
-        waitFor { page.updates.model.state.update?.canOpenRelease == true }
+        waitFor("closed Settings model receives the release") { page.updates.model.state.update?.canOpenRelease == true }
         XCTAssertEqual(page.updates.state.update?.isChecking, true, "Hidden view callbacks remain detached")
         delegate.showSettings()
-        waitFor { page.updates.canViewRelease }
+        waitFor("reopened Settings presents the release") { page.updates.canViewRelease }
         XCTAssertTrue(delegate.settingsWindow?.window === window)
         XCTAssertEqual(transport.count, 1)
         XCTAssertEqual(updateScheduler.pendingCount, 0)
@@ -358,12 +371,14 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         transport.hold = true
         page.updates.checkNow()
-        waitFor { self.transport.count == 1 && page.updates.state.update?.isChecking == true }
+        waitFor("manual request in flight before library replacement") {
+            self.transport.count == 1 && page.updates.state.update?.isChecking == true
+        }
         let other = directory.appendingPathComponent("other")
         try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
         XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
         transport.release()
-        waitFor { page.updates.canViewRelease }
+        waitFor("release publication after library replacement") { page.updates.canViewRelease }
         XCTAssertEqual(transport.count, 1)
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         let committed = try XCTUnwrap(delegate.settingsModel).state
@@ -396,10 +411,25 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         content.layoutSubtreeIfNeeded()
+        // A client query activates SwiftUI's otherwise lazy virtual accessibility tree.
+        // Run it off-main so AppKit can answer while XCTest pumps the main run loop.
+        let accessibilityReady = expectation(description: "Hosted accessibility client query completed")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+            var children: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(application, kAXChildrenAttribute as CFString, &children)
+            XCTAssertEqual(status, .success, "Hosted accessibility initialization failed: \(status.rawValue)")
+            accessibilityReady.fulfill()
+        }
+        wait(for: [accessibilityReady], timeout: 5)
         let expectedLabels: Set<String> = [DeliverySettingsStrings.restoreClipboard, DeliverySettingsStrings.testPaste,
             DeliverySettingsStrings.openSetup, SettingsUpdateStrings.automatic,
             SettingsUpdateStrings.checkNow, SettingsUpdateStrings.viewRelease]
-        waitFor { expectedLabels.isSubset(of: self.accessibilityLabels(content)) }
+        var observedLabels = Set<String>()
+        waitFor("missing accessibility labels=\(expectedLabels.subtracting(observedLabels).sorted()); observed=\(observedLabels.sorted())") {
+            observedLabels = self.accessibilityLabels(content)
+            return expectedLabels.isSubset(of: observedLabels)
+        }
         window.selectNextKeyView(nil)
         XCTAssertNotNil(window.firstResponder)
         window.selectPreviousKeyView(nil)
@@ -407,6 +437,9 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(transport.count, 0, "Tab must not activate a check or self-test")
         XCTAssertEqual(selfTestTarget.presentations, 0)
+        XCTAssertEqual(updateTimers.jobs.count, 0)
+        XCTAssertEqual(updateScheduler.pendingCount, 0)
+        XCTAssertTrue(opened.isEmpty)
     }
 
     func testAccessibilityLabelsTraverseChildrenWithoutProtocolConformance() {
@@ -418,13 +451,28 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(accessibilityLabels(root), ["Parent", "Nested control"])
     }
 
+    func testAccessibilityLabelsReadControlTitlesAndPreferExplicitLabels() {
+        let titled = MacSettingsAccessibilityNode(title: "Titled control")
+        let attributed = MacSettingsAccessibilityNode(title: NSAttributedString(string: "Attributed title"))
+        let labelled = MacSettingsAccessibilityNode(label: "Explicit label", title: "Visible title")
+        let root = MacSettingsAccessibilityNode(children: [titled, attributed, labelled])
+        XCTAssertNil(titled.accessibilityLabel())
+        XCTAssertEqual(accessibilityLabels(root), ["Titled control", "Attributed title", "Explicit label"])
+    }
+
     private func accessibilityLabels(_ element: NSObject) -> Set<String> {
         var result = Set<String>()
         // SwiftUI accessibility children may expose selectors without adopting the full protocol.
-        let labelSelector = #selector(NSAccessibilityProtocol.accessibilityLabel)
-        if element.responds(to: labelSelector),
-           let label = element.perform(labelSelector)?.takeUnretainedValue() as? String {
-            result.insert(label)
+        // AppKit controls may expose their accessible name as a title instead of a label.
+        for selector in [#selector(NSAccessibilityProtocol.accessibilityLabel),
+                         #selector(NSAccessibilityProtocol.accessibilityTitle)] {
+            guard element.responds(to: selector),
+                  let value = element.perform(selector)?.takeUnretainedValue() else { continue }
+            let name = (value as? String) ?? (value as? NSAttributedString)?.string
+            if let name, !name.isEmpty {
+                result.insert(name)
+                break
+            }
         }
         let childrenSelector = #selector(NSAccessibilityProtocol.accessibilityChildren)
         if element.responds(to: childrenSelector),
