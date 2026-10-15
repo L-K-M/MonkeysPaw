@@ -93,6 +93,24 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertTrue(predicate(), "Settings work did not settle: \(condition())", file: file, line: line)
     }
 
+    private func settle() {
+        // Negative assertions must observe deferred work even when state is already idle.
+        let deadline = Date().addingTimeInterval(0.1)
+        repeat {
+            work.drain()
+            timers.drain()
+            RunLoop.main.run(mode: .default, before: min(deadline, Date().addingTimeInterval(0.002)))
+        } while Date() < deadline
+        work.drain()
+        timers.drain()
+    }
+
+    private func assertRequestCount(_ count: Int = 0, _ message: String = "",
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        settle()
+        XCTAssertEqual(transport.count, count, message, file: file, line: line)
+    }
+
     private func check(_ page: UpdateSettingsViewState, expecting result: UpdateCheckResult,
                        file: StaticString = #filePath, line: UInt = #line) {
         let count = transport.count
@@ -112,14 +130,14 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         XCTAssertEqual(page.updates.state.update?.currentVersion?.description, "1.0.0-beta.2")
         XCTAssertEqual(page.updates.state.update?.result, .notChecked)
+        XCTAssertTrue(page.updates.canCheck)
         for _ in 0..<3 {
             delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
             try XCTUnwrap(delegate.settingsWindow?.window).close()
             delegate.showSettings()
         }
         page.updates.model.refresh()
-        waitFor("refreshed update snapshot") { page.updates.state.update != nil }
-        XCTAssertEqual(transport.count, 0)
+        assertRequestCount()
         XCTAssertEqual(updateTimers.jobs.count, 0)
         XCTAssertEqual(updateScheduler.pendingCount, 0)
         XCTAssertEqual(selfTestTarget.presentations, 0)
@@ -144,11 +162,13 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let restarted = try show()
         XCTAssertEqual(restarted.delivery.state.preferences.clipboardRestore, .previousText)
         XCTAssertEqual(restarted.updates.state.automaticUpdateChecks, .disabled)
+        XCTAssertEqual(restarted.updates.state.update?.result, .notChecked)
+        XCTAssertTrue(restarted.updates.canCheck)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: "settings.json")) as? [String: Any])
         XCTAssertEqual((object["account"] as? [String: String])?["opaque"], "keep")
         XCTAssertEqual((object["uri"] as? [String: Bool])?["enabled"], true)
         XCTAssertEqual((object["delivery"] as? [String: Any])?["foreign"] as? Int, 42)
-        XCTAssertEqual(transport.count, 0)
+        assertRequestCount()
     }
 
     func testRepeatedSaveErrorsKeepCommittedChoicesAndRemainRetryable() throws {
@@ -173,6 +193,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         page.updates.setAutomatic(false)
         XCTAssertEqual(page.delivery.state.preferences.clipboardRestore, .previousText)
         XCTAssertEqual(page.updates.state.automaticUpdateChecks, .disabled)
+        XCTAssertNil(page.delivery.state.settingsError)
         XCTAssertNil(page.updates.state.settingsError)
     }
 
@@ -190,7 +211,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(page.delivery.state.settingsError, .futureVersion(999))
         XCTAssertEqual(page.updates.state.settingsError, .futureVersion(999))
         XCTAssertEqual(try files.read(at: "settings.json"), bytes)
-        XCTAssertEqual(transport.count, 0)
+        assertRequestCount()
     }
 
     func testFixedMacChordAndSharedSetupTestForwardExactlyOnce() throws {
@@ -214,7 +235,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(injector.chords, [.standard])
         XCTAssertTrue(SettingsDeliveryStrings.test(page.delivery.state.test)?.contains("readback verified") == true)
         XCTAssertTrue(SettingsDeliveryStrings.automation(page.delivery.state).contains("backend unavailable"))
-        XCTAssertEqual(transport.count, 0)
+        assertRequestCount()
     }
 
     func testDisablingRestoreCancelsPendingNativePasteboardRestore() throws {
@@ -242,13 +263,15 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         start()
         let page = try show().updates
         page.setAutomatic(false)
+        XCTAssertEqual(page.state.update?.result, .notChecked)
+        XCTAssertTrue(page.canCheck)
         transport.hold = true
         page.checkNow()
         waitFor("first manual request in flight") { self.transport.count == 1 && page.state.update?.isChecking == true }
         XCTAssertFalse(page.canCheck)
         XCTAssertEqual(SettingsUpdateStrings.result(page.state.update), "Checking for updates…")
         page.checkNow()
-        XCTAssertEqual(transport.count, 1)
+        assertRequestCount(1)
         transport.release()
         waitFor("manual check completed with a release") {
             page.state.update?.canOpenRelease == true && page.state.update?.isChecking == false
@@ -290,8 +313,8 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let count = transport.count
         page.checkNow()
         page.model.refresh()
-        waitFor("rate-limited manual check remains idle") { page.state.update?.isChecking == false }
-        XCTAssertEqual(transport.count, count)
+        assertRequestCount(count)
+        XCTAssertEqual(page.state.update?.isChecking, false)
         XCTAssertFalse(page.canViewRelease)
     }
 
@@ -316,7 +339,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
             XCTAssertFalse(page.canCheck)
             page.checkNow()
             XCTAssertEqual(page.state.update?.result, .unavailable(version == nil ? .unversionedBuild : .invalidCurrentVersion))
-            XCTAssertEqual(transport.count, 0)
+            assertRequestCount()
             XCTAssertEqual(updateTimers.jobs.count, 0)
         }
     }
@@ -341,7 +364,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertNotNil(page.delivery.model.onChange)
         XCTAssertNotNil(page.updates.model.onChange)
         XCTAssertEqual(selfTestTarget.presentations, 0)
-        XCTAssertEqual(transport.count, 0)
+        assertRequestCount()
     }
 
     func testManualCheckFinishesWhileClosedAndReopenShowsSharedResult() throws {
@@ -361,7 +384,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         delegate.showSettings()
         waitFor("reopened Settings presents the release") { page.updates.canViewRelease }
         XCTAssertTrue(delegate.settingsWindow?.window === window)
-        XCTAssertEqual(transport.count, 1)
+        assertRequestCount(1)
         XCTAssertEqual(updateScheduler.pendingCount, 0)
         XCTAssertTrue(opened.isEmpty)
     }
@@ -379,7 +402,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
         transport.release()
         waitFor("release publication after library replacement") { page.updates.canViewRelease }
-        XCTAssertEqual(transport.count, 1)
+        assertRequestCount(1)
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         let committed = try XCTUnwrap(delegate.settingsModel).state
         page.delivery.model.setClipboardRestore(.previousText)
@@ -388,6 +411,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         page.updates.model.viewRelease()
         page.delivery.model.openSetup()
         delegate.settingsModel?.setLinuxDefaultPasteChord(.terminal)
+        assertRequestCount(1)
         XCTAssertEqual(delegate.settingsModel?.deliveryPreferences.clipboardRestore, committed.document.delivery.clipboardRestore)
         XCTAssertEqual(delegate.settingsModel?.automaticUpdateChecks, committed.document.automaticUpdateChecks)
         XCTAssertNil(page.delivery.model.onChange)
@@ -430,12 +454,13 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
             observedLabels = self.accessibilityLabels(content)
             return expectedLabels.isSubset(of: observedLabels)
         }
+        window.recalculateKeyViewLoop()
         window.selectNextKeyView(nil)
-        XCTAssertNotNil(window.firstResponder)
+        XCTAssertTrue(window.firstResponder is NSView, "Tab must focus a Settings view")
         window.selectPreviousKeyView(nil)
-        XCTAssertNotNil(window.firstResponder)
+        XCTAssertTrue(window.firstResponder is NSView, "Shift-Tab must focus a Settings view")
         XCTAssertTrue(window.isVisible)
-        XCTAssertEqual(transport.count, 0, "Tab must not activate a check or self-test")
+        assertRequestCount(0, "Tab must not activate a check or self-test")
         XCTAssertEqual(selfTestTarget.presentations, 0)
         XCTAssertEqual(updateTimers.jobs.count, 0)
         XCTAssertEqual(updateScheduler.pendingCount, 0)
