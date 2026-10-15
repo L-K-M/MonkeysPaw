@@ -32,6 +32,10 @@ object Limits {
     const val syncCollectionRestartLimit = 1
 
     internal const val syncStampMaxBytes = 4096
+    internal const val syncPathClashMax = 20
+    internal const val syncPathSegmentMaxBytes = 255
+    internal const val syncConflictDeviceMaxBytes = 64
+    internal const val syncRescuePathHashLength = 12
 
     const val llmBudgetNanos = 300_000_000_000L
     const val assistantElapsedTickNanos = 1_000_000_000L
