@@ -25,6 +25,11 @@ class SyncLocalGraph(
             cleanup = SyncAccountCleanup(secretFailures = connection.cleanupConnections))
     }
 
+    /** Non-secret admission check before a native scheduler may resolve credentials. */
+    fun enabledConnectionID(): java.util.UUID? = accounts.loadConnection().let {
+        if (it.activation == SyncAccountActivation.ENABLED) it.account?.connectionID else null
+    }
+
     /** Validate metadata before composition may automatically create a fresh library root. */
     val requiresExistingRoot: Boolean get() {
         val connection = accounts.loadConnection()
