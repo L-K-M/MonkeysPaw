@@ -361,6 +361,61 @@ struct GLibScheduler: Scheduler {
     }
 }
 
+/// Update-only cancellation; the ordinary runtime scheduler keeps accepted
+/// callbacks alive. Native sources and queued registrations retire on shutdown.
+final class GLibUpdateScheduler: Scheduler {
+    private var sources = Set<guint>()
+    private var enabled = true
+    private var stopped = false
+
+    deinit {
+        let pending = sources
+        if pending.isEmpty { return }
+        GTK.onMainLoop {
+            // The context owns the lookup result; it is borrowed, not a new ref.
+            for source in pending where g_main_context_find_source_by_id(nil, source) != nil {
+                g_source_remove(source)
+            }
+        }
+    }
+
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        GTK.onMainLoop { [weak self] in
+            guard let self, self.enabled, !self.stopped else { return }
+            var source: guint = 0
+            source = GTK.after(delay.timeInterval) { [weak self] in
+                guard let self else { return }
+                self.sources.remove(source)
+                work()
+            }
+            self.sources.insert(source)
+        }
+    }
+
+    func suspend() {
+        precondition(Thread.isMainThread)
+        enabled = false
+        cancelSources()
+    }
+
+    func resume() {
+        precondition(Thread.isMainThread)
+        enabled = true
+    }
+
+    func shutdown() {
+        precondition(Thread.isMainThread)
+        stopped = true
+        cancelSources()
+    }
+
+    private func cancelSources() {
+        let pending = sources
+        sources.removeAll()
+        for source in pending { g_source_remove(source) }
+    }
+}
+
 final class GTKSelfTestTarget: SelfTestTarget {
     private let window: GTK.Widget
     private let entry: GTK.Widget

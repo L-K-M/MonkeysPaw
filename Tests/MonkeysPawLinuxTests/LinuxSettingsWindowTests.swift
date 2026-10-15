@@ -39,14 +39,15 @@ final class LinuxSettingsWindowTests: XCTestCase {
         tools = nil
     }
 
-    func testSettingsActionReusesThreeTabWindowAcrossCloseAndLeavesPickerWorking() throws {
+    func testSettingsActionReusesFourTabWindowAcrossCloseAndLeavesPickerWorking() throws {
         let window = try openSettingsAction()
         let general = environment.generalSettingsModel
         let shortcuts = environment.shortcutsSettingsModel
         let rememberedValues = environment.rememberedValuesSettingsModel
         let tabs = try settingsWidget("settings-tabs", in: window)
-        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 3)
-        for (index, title) in [LinuxStrings.generalTab, LinuxStrings.shortcutsTab, LinuxAssistantSettingsStrings.tab].enumerated() {
+        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 4)
+        for (index, title) in [LinuxStrings.generalTab, LinuxStrings.shortcutsTab, LinuxAssistantSettingsStrings.tab,
+                               DeliverySettingsStrings.title].enumerated() {
             let page = try XCTUnwrap(gtk_notebook_get_nth_page(mp_notebook(tabs), Int32(index)))
             XCTAssertEqual(String(cString: gtk_notebook_get_tab_label_text(mp_notebook(tabs), page)), title)
         }
@@ -368,13 +369,17 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let completion = try XCTUnwrap(chooser.requests.last?.done)
         completion(second.path)
         gtk_window_destroy(mp_window(window))
-        environment.showSettings() // The wrapper outlives GTK's borrowed pointer.
+        environment.showSettings() // Recreate without touching the destroyed GTK window.
         completion(second.path)
         _ = gtk_widget_activate(reveal)
         drainUI()
         XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, defaultFolder.path)
         XCTAssertTrue(launched.isEmpty)
-        XCTAssertTrue(settingsWindows.isEmpty)
+        let reopened = try visibleSettings()
+        XCTAssertEqual(settingsWindows.count, 1)
+        let path = try settingsWidget("settings-library-path", in: reopened)
+        try choose(second.path, in: reopened)
+        XCTAssertTrue(GTKTestSupport.spin { self.labelText(path) == second.path })
     }
 
     func testInvalidPathIsRejectedBeforeFileURLResolvesIt() throws {
