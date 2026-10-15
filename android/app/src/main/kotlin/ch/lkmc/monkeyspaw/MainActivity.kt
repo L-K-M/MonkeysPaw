@@ -203,6 +203,7 @@ class MainActivity : ComponentActivity() {
                             onTab = editor::setTab, onSave = editor::save,
                             onBack = { if (reviewing.isOpen) assistantReview.open() else editor.close() },
                             onReload = editor::reload, onRename = editor::rename, onMove = editor::move,
+                            onPrivateCopy = editor::privateCopy,
                             onDelete = editor::delete, onHistory = editor::loadHistory,
                             onRevision = { editor.selectRevision(it.revision) }, onRestore = { editor.restore(it.revision) },
                             onDecision = editor::resolveDecision, onConflict = editor::resolveConflict,
