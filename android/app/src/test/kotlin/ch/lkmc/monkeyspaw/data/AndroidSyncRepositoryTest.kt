@@ -664,6 +664,22 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
         } finally { r.close() }
     }
 
+    @Test fun `native periodic work scans for missed events after all live engine triggers were consumed`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            assertEquals(1, r.requests.count { it.url.endsWith("/sync/pull") })
+            r.remote("later.md")
+            r.workTime += 900_000
+            r.scheduler.dispatch(SyncWorkRequest(r.workStore.read().generation))
+            runCurrent()
+            assertEquals(2, r.requests.count { it.url.endsWith("/sync/pull") })
+            assertTrue(Files.exists(libraryDir.resolve("later.md")))
+        } finally { r.close() }
+    }
+
     private companion object {
         const val userID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
         const val deviceID = "01ARZ3NDEKTSV4RRFFQ69G5FAW"

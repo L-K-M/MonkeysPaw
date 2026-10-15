@@ -40,7 +40,7 @@ internal class AndroidSyncWorkSession(private val startup: AndroidSyncStartup,
     override fun facts(): SyncWorkFacts? {
         return repository.get().workFacts()
     }
-    override suspend fun run(epoch: Long, version: Long) { repository.get().runBackground(epoch, version) }
+    override suspend fun run(epoch: Long, version: Long?) { repository.get().runBackground(epoch, version) }
 }
 
 /** KEEP deduplicates periodic registration; appending one successor cannot cancel a running pass. */

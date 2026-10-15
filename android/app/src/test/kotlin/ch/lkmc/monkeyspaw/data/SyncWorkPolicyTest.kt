@@ -25,7 +25,8 @@ internal class SyncWorkPolicyTest {
         val requests = mutableListOf<SyncWorkRequest>()
         val cancellations = mutableListOf<String>()
         var onOnce: suspend (SyncWorkRequest) -> Unit = {}
-        override suspend fun periodic(generation: String, intervalMillis: Long) { periodic.putIfAbsent(generation, intervalMillis) }
+        var onPeriodic: suspend () -> Unit = {}
+        override suspend fun periodic(generation: String, intervalMillis: Long) { onPeriodic(); periodic.putIfAbsent(generation, intervalMillis) }
         override suspend fun once(request: SyncWorkRequest) { onOnce(request); requests.add(request) }
         override suspend fun cancel(generation: String) { cancellations.add(generation); periodic.remove(generation) }
     }
@@ -55,12 +56,13 @@ internal class SyncWorkPolicyTest {
         override fun facts() = SyncWorkFacts(SyncSchedulingState(epoch, trigger, consumed, retries,
             due?.let(Instant::ofEpochMilli), needsSignIn), SyncReport(enabled = enabled, needsSignIn = needsSignIn,
             offline = offline, blockingIssue = blocking))
-        override suspend fun run(epoch: Long, version: Long) {
+        override suspend fun run(epoch: Long, version: Long?) {
             assertEquals(this.epoch, epoch)
-            assertEquals(trigger, version)
+            val admitted = version ?: ++trigger
+            assertEquals(trigger, admitted)
             runs++
             onRun()
-            consumed = version
+            consumed = admitted
             if (offline) trigger++
         }
     }
@@ -178,13 +180,24 @@ internal class SyncWorkPolicyTest {
         assertTrue(r.session.modes.isEmpty())
     }
 
+    @Test fun `periodic admission scans again after the previous engine trigger was consumed`() = runTest {
+        val r = Rig()
+        r.initial()
+        r.time += 900_000
+        r.policy.dispatch(SyncWorkRequest(r.store.value.generation))
+        assertEquals(2, r.session.runs)
+        assertFalse(r.store.value.pending)
+    }
+
     @Test fun `retry count and wall due survive every reconstruction with ten to six hundred second cap`() = runTest {
         var r = Rig()
         r.authenticate()
         for (expected in listOf(10_000L, 10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 600_000, 600_000)) {
-            r.session.offline = true
-            r.session.retries = 1 // A reconstructed engine starts its own retry counter over.
-            r.session.due = r.time + 5_000
+            r.session.onRun = {
+                r.session.offline = true
+                r.session.retries = 1 // A reconstructed engine starts its own retry counter over.
+                r.session.due = r.time + 5_000
+            }
             val generation = r.store.value.generation
             r.policy.dispatch(SyncWorkRequest(generation))
             assertEquals(expected, r.store.value.dueAt - r.time)
@@ -324,6 +337,19 @@ internal class SyncWorkPolicyTest {
         assertTrue(r.reconstruct().policy.authenticationStopped())
     }
 
+    @Test fun `an inactive connection after failed activation cannot clear a persisted 401`() = runTest {
+        val r = Rig()
+        r.authenticate()
+        r.session.needsSignIn = true
+        r.policy.changed()
+        val generation = r.store.value.generation
+        r.session.connected = false
+        r.policy.enter(SyncForegroundOwner.ACCOUNT)
+        assertTrue(r.store.value.needsSignIn)
+        assertEquals(generation, r.store.value.generation)
+        assertEquals(0, r.session.resumes)
+    }
+
     @Test fun `sign out changes generation before cancel and old jobs are no ops after new login`() = runTest {
         val r = Rig()
         r.authenticate()
@@ -374,5 +400,91 @@ internal class SyncWorkPolicyTest {
         assertEquals(0, r.session.runs)
         assertTrue(r.store.value.pending)
         assertEquals(SyncBlockingIssue.RECOVERY_REQUIRED, r.session.facts().report.blockingIssue)
+    }
+
+    @Test fun `completed reauthentication cannot reuse the previous native version mapping`() = runTest {
+        val r = Rig()
+        r.authenticate()
+        r.policy.enter(SyncForegroundOwner.LIBRARY)
+        repeat(4) {
+            r.policy.saved()
+            r.session.trigger++
+            r.policy.changed()
+            r.session.consumed = r.session.trigger
+            r.policy.changed()
+        }
+        assertTrue(r.store.value.consumed > 1)
+        r.session.connection = UUID.randomUUID().toString()
+        r.session.epoch++
+        r.session.trigger++
+        r.session.consumed = r.session.trigger // A fast foreground activation completed before its auth hook.
+        r.policy.authenticated(r.session.connection)
+        r.policy.changed()
+        assertTrue(r.store.value.consumed <= r.store.value.trigger)
+    }
+
+    @Test fun `a fast foreground pass consumed before observation needs no second worker pass`() = runTest {
+        val r = Rig()
+        r.initial()
+        r.policy.enter(SyncForegroundOwner.LIBRARY)
+        r.policy.saved()
+        r.time += 3_000
+        r.session.trigger++
+        r.session.consumed = r.session.trigger
+        r.policy.changed()
+        assertFalse(r.store.value.pending)
+        r.policy.leave(SyncForegroundOwner.LIBRARY)
+        assertEquals(1, r.queue.requests.size)
+        assertEquals(1, r.session.runs)
+    }
+
+    @Test fun `failed foreground admission cannot suppress subsequent OS dispatch`() = runTest {
+        val r = Rig()
+        r.authenticate()
+        r.session.onResume = { throw SyncAccountServiceError(SyncAccountIssue.Http(
+            SyncHTTPClientError.Transport(HttpTransportError.NetworkFailure))) }
+        assertFailsWith<SyncAccountServiceError> { r.policy.enter(SyncForegroundOwner.LIBRARY) }
+        r.session.onResume = {}
+        r.policy.dispatch(r.queue.requests.last())
+        assertEquals(1, r.session.runs)
+    }
+
+    @Test fun `leaving while foreground entry is suspended cannot rearm foreground timers`() = runTest {
+        val r = Rig()
+        r.authenticate()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        r.session.onResume = { entered.complete(Unit); release.await() }
+        val entry = launch { r.policy.enter(SyncForegroundOwner.LIBRARY) }
+        entered.await()
+        r.policy.leave(SyncForegroundOwner.LIBRARY)
+        release.complete(Unit)
+        entry.join()
+        assertEquals(SyncExecutionMode.BACKGROUND, r.session.modes.last())
+        assertEquals(0, r.session.modes.count { it == SyncExecutionMode.FOREGROUND })
+    }
+
+    @Test fun `failed OS registration during foreground entry releases its owner`() = runTest {
+        val original = Rig()
+        original.authenticate()
+        val r = original.reconstruct()
+        r.queue.onPeriodic = { error("Synthetic registration failure") }
+        assertFailsWith<IllegalStateException> { r.policy.enter(SyncForegroundOwner.LIBRARY) }
+        r.queue.onPeriodic = {}
+        r.policy.dispatch(SyncWorkRequest(r.store.value.generation, r.store.value.trigger))
+        assertEquals(1, r.session.runs)
+    }
+
+    @Test fun `engine requested background reruns back off instead of creating an immediate dispatch loop`() = runTest {
+        val r = Rig()
+        r.authenticate()
+        r.session.onRun = { r.session.trigger++ }
+        repeat(4) {
+            r.policy.dispatch(r.queue.requests.last())
+            if (it > 0) assertTrue(r.queue.requests.last().delayMillis >= 10_000)
+            r.time = r.store.value.dueAt
+        }
+        assertTrue(r.store.value.pending)
+        assertTrue(r.store.value.retries > 0)
     }
 }

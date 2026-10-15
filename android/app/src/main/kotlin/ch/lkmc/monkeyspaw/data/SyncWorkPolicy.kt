@@ -51,7 +51,7 @@ internal interface SyncWorkSession {
     suspend fun mode(value: SyncExecutionMode)
     suspend fun restoreEligibility(retries: Int, dueAt: Long) {}
     fun facts(): SyncWorkFacts?
-    suspend fun run(epoch: Long, version: Long)
+    suspend fun run(epoch: Long, version: Long?)
 }
 
 /** WorkManager dispatches background work; the existing engine alone owns foreground timers.
@@ -65,7 +65,8 @@ internal class SyncWorkPolicy(
     private val apiLevel: Int,
 ) {
     private val mutex = Mutex()
-    private val foreground = mutableSetOf<SyncForegroundOwner>()
+    private val foreground = mutableMapOf<SyncForegroundOwner, Long>()
+    private var admissionVersion = 0L
     private var running: String? = null
     private var queued = false
     private var periodicGeneration: String? = null
@@ -79,6 +80,7 @@ internal class SyncWorkPolicy(
         queued = false
         periodicGeneration = null
         observed = null
+        mappedVersion = 0
         queue.cancel(old.generation)
         reconcile(state)
     }
@@ -88,38 +90,65 @@ internal class SyncWorkPolicy(
 
     suspend fun authenticationStopped(): Boolean = mutex.withLock {
         val state = store.read()
-        state.needsSignIn && state.connection == session.connection()
+        val connection = session.connection()
+        state.needsSignIn && (connection == null || state.connection == connection)
     }
 
     suspend fun enter(owner: SyncForegroundOwner) {
-        val entry = mutex.withLock {
+        val (entry, admission) = mutex.withLock {
             val connection = session.connection()
             var state = store.read()
-            if (connection == null) { disable(state); return }
+            if (connection == null) {
+                if (state.needsSignIn) session.requireSignIn() else disable(state)
+                return
+            }
             if (state.connection != connection) {
                 val old = state
                 state = SyncWorkState(connection = connection, trigger = 1, reason = SyncWorkReason.SYNC, dueAt = now())
                 store.write(state)
                 queued = false
                 observed = null
+                mappedVersion = 0
                 queue.cancel(old.generation)
             }
-            foreground.add(owner)
-            reconcile(state)
-            state
+            val admission = ++admissionVersion
+            foreground[owner] = admission
+            state to admission
         }
-        if (entry.needsSignIn) { session.requireSignIn(); return }
-        session.resume()
-        if (entry.pending) session.restoreEligibility(entry.retries, entry.dueAt)
-        session.mode(SyncExecutionMode.FOREGROUND)
-        changed()
+        try {
+            mutex.withLock {
+                if (foreground[owner] != admission) return
+                reconcile(store.read())
+            }
+            if (entry.needsSignIn) { session.requireSignIn(); return }
+            session.resume()
+            mutex.withLock {
+                // A leaving screen or newer entry owns the mode after a suspended credential resume.
+                if (foreground[owner] != admission || store.read().generation != entry.generation) return
+                if (entry.pending) session.restoreEligibility(entry.retries, entry.dueAt)
+                session.mode(SyncExecutionMode.FOREGROUND)
+            }
+            changed()
+        } catch (error: Throwable) {
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    if (foreground[owner] == admission) {
+                        foreground.remove(owner)
+                        if (foreground.isEmpty()) {
+                            runCatching { session.mode(SyncExecutionMode.BACKGROUND) }
+                            runCatching { reconcile(store.read()) }
+                        }
+                    }
+                }
+            }
+            throw error
+        }
     }
 
-    suspend fun leave(owner: SyncForegroundOwner) {
-        val last = mutex.withLock { foreground.remove(owner) && foreground.isEmpty() }
-        if (!last) return
+    suspend fun leave(owner: SyncForegroundOwner): Unit = mutex.withLock {
+        if (foreground.remove(owner) == null || foreground.isNotEmpty()) return
         session.mode(SyncExecutionMode.BACKGROUND)
-        mutex.withLock { reconcile(store.read()) }
+        reconcile(store.read())
     }
 
     /** Called before forwarding a committed USER event to the engine. */
@@ -134,12 +163,19 @@ internal class SyncWorkPolicy(
     }
 
     suspend fun changed(): Unit = mutex.withLock {
-        var state = store.read()
-        val before = state
+        val before = store.read()
         val facts = session.facts() ?: return
-        if (state.connection == null || state.connection != session.connection()) return
-        if (facts.report.needsSignIn || facts.scheduling.needsSignIn) { stopAuthentication(state); return }
-        if (state.needsSignIn || running != null || !facts.report.enabled || facts.report.blockingIssue != null) return
+        if (before.connection == null || before.connection != session.connection()) return
+        if (facts.report.needsSignIn || facts.scheduling.needsSignIn) { stopAuthentication(before); return }
+        if (before.needsSignIn || running != null || !facts.report.enabled || facts.report.blockingIssue != null) return
+        val state = observeEngine(before, facts)
+        if (state != before) store.write(state)
+        // Expediting is legal only AFTER the existing foreground debounce, with no initial delay.
+        reconcile(state, readySave = foreground.isNotEmpty() && state.reason == SyncWorkReason.SAVE && state.dueAt <= now())
+    }
+
+    private fun observeEngine(before: SyncWorkState, facts: SyncWorkFacts): SyncWorkState {
+        var state = before
         val scheduling = facts.scheduling
         val key = scheduling.epoch to scheduling.triggerVersion
         if (observed != key) {
@@ -153,15 +189,16 @@ internal class SyncWorkPolicy(
                         retries = retries, dueAt = maxOf(state.dueAt,
                             if (retries > 0) retryDue(retries, due.toEpochMilli()) else due.toEpochMilli()))
                 }
+            } else if (state.pending && (state.reason != SyncWorkReason.SAVE || state.dueAt <= now())) {
+                // StateFlow may conflate the ready trigger and its fast completion.
+                mappedVersion = state.trigger
             }
         }
         if (scheduling.consumedVersion >= scheduling.triggerVersion && mappedVersion > state.consumed) {
             state = state.copy(consumed = mappedVersion)
             if (!state.pending) state = state.copy(reason = SyncWorkReason.NONE, retries = 0, dueAt = now() + Limits.syncIntervalMillis)
         }
-        if (state != before) store.write(state)
-        // Expediting is legal only AFTER the existing foreground debounce, with no initial delay.
-        reconcile(state, readySave = foreground.isNotEmpty() && state.reason == SyncWorkReason.SAVE && state.dueAt <= now())
+        return state
     }
 
     /** A worker completes dispatch, never claims that an offline/partial pass succeeded. */
@@ -173,6 +210,12 @@ internal class SyncWorkPolicy(
             if (state.needsSignIn) { session.requireSignIn(); return }
             if (state.connection != session.connection()) { disable(state); return }
             if (running != null || foreground.isNotEmpty()) return
+            session.facts()?.let { facts ->
+                if (facts.report.enabled && !facts.report.needsSignIn && facts.report.blockingIssue == null) {
+                    val updated = observeEngine(state, facts)
+                    if (updated != state) { store.write(updated); state = updated }
+                }
+            }
             if (request.version != null && request.version <= state.consumed) { reconcile(state); return }
             if (state.dueAt > now()) { reconcile(state); return }
             if (!state.pending) {
@@ -195,13 +238,14 @@ internal class SyncWorkPolicy(
             val facts = session.facts()
             if (facts != null && facts.report.enabled && facts.report.blockingIssue == null && !facts.report.needsSignIn) {
                 val scheduling = facts.scheduling
-                if (scheduling.triggerVersion > scheduling.consumedVersion) session.run(scheduling.epoch, scheduling.triggerVersion)
+                // Due periodic scans and missed source events need a fresh explicit engine trigger.
+                session.run(scheduling.epoch, scheduling.triggerVersion.takeIf { it > scheduling.consumedVersion })
             }
             completed = true
         } catch (error: SyncAccountServiceError) {
             val http = (error.issue as? SyncAccountIssue.Http)?.error
             if (http is SyncHTTPClientError.RateLimited || http is SyncHTTPClientError.ServerFailure ||
-                http is SyncHTTPClientError.Transport && http.error in setOf(HttpTransportError.NetworkFailure, HttpTransportError.DeadlineExceeded)) {
+                (http is SyncHTTPClientError.Transport && http.error in setOf(HttpTransportError.NetworkFailure, HttpTransportError.DeadlineExceeded))) {
                 resumeFailure = true
                 retryAfter = (http as? SyncHTTPClientError.RateLimited)?.retryAfter?.seconds?.times(1_000) ?: 0
             } else throw error
@@ -224,9 +268,13 @@ internal class SyncWorkPolicy(
                             state = state.copy(trigger = maxOf(state.trigger, state.consumed + 1), reason = SyncWorkReason.RETRY,
                                 retries = retries, dueAt = retryDue(retries, facts.scheduling.nextEligibleAt?.toEpochMilli() ?: 0))
                         } else if (!state.pending && facts.scheduling.triggerVersion > facts.scheduling.consumedVersion) {
-                            state = state.copy(trigger = state.trigger + 1, reason = SyncWorkReason.SYNC, dueAt = now())
+                            val retries = (claim.retries + 1).coerceAtMost(MAX_RETRIES)
+                            state = state.copy(trigger = state.trigger + 1, reason = SyncWorkReason.RETRY,
+                                retries = retries, dueAt = retryDue(retries, 0))
                         } else if (!state.pending) state = state.copy(reason = SyncWorkReason.NONE, retries = 0,
                             dueAt = now() + Limits.syncIntervalMillis)
+                        observed = facts.scheduling.epoch to facts.scheduling.triggerVersion
+                        mappedVersion = if (facts.scheduling.triggerVersion > facts.scheduling.consumedVersion) state.trigger else claim.trigger
                     } else state = state.copy(dueAt = maxOf(state.dueAt, now() + MIN_RETRY_MILLIS))
                     store.write(state)
                     // APPEND_OR_REPLACE queues a successor, never replaces this running pass.
@@ -249,6 +297,7 @@ internal class SyncWorkPolicy(
         queued = false
         periodicGeneration = null
         observed = null
+        mappedVersion = 0
         queue.cancel(state.generation)
     }
 
