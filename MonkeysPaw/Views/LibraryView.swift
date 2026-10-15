@@ -154,10 +154,16 @@ struct LibraryView: View {
 
     private var prompts: some View {
         VStack(spacing: 0) {
+            // List selection arrives on mouse-down. Activate on click release
+            // so a row drag reaches its drop guard before any draft sheet opens.
             List(selection: Binding<RelativePath?>(get: { presentation.snapshot.selection?.relativePath },
-                set: presentation.selectPath)) {
+                set: { _ in })) {
                 ForEach(presentation.snapshot.rows, id: \.relativePath) { row in
                     promptRow(row).tag(row.relativePath)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { presentation.selectPath(row.relativePath) }
+                        .accessibilityAction { presentation.selectPath(row.relativePath) }
                 }
             }
             .focused($focusedPane, equals: .prompts)

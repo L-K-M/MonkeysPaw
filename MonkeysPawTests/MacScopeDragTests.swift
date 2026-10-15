@@ -66,7 +66,10 @@ final class MacScopeDragTests: XCTestCase {
         let h = try MacScopeDragHarness()
         defer { h.close() }
         h.view.edit(try XCTUnwrap(h.view.editorState.source) + "\nKeep current")
-        XCTAssertTrue(try h.drop(path: "Folder/seed.md", onto: .group(h.team)))
+        let provider = try h.provider(path: "Folder/seed.md")
+        XCTAssertEqual(h.view.editorState.prompt?.relativePath, "a.md")
+        XCTAssertNil(h.view.editorState.pendingDecision, "A drag source does not activate its row")
+        XCTAssertTrue(h.drop(provider, onto: .group(h.team)))
         let seed = try XCTUnwrap(h.view.model.rows.first { $0.relativePath == "Folder/seed.md" }?.selection)
         try h.decide(.cancel, action: .open(seed))
         XCTAssertTrue(h.view.editorState.source?.contains("Keep current") == true)
