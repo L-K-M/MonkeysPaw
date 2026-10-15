@@ -65,6 +65,7 @@ internal class AccountViewModelTest : TemporaryFiles() {
         val local = LibraryRepository(library, EditingService(library), prompts, dispatcher) { startup.ready() }
         var failSettingsRead = false
         var failAuthenticationScheduling = false
+        var signOutRelease: CompletableDeferred<Unit>? = null
         private val settingsData = DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
             produceFile = { filesDir.resolve("datastore/settings.json").toFile() })
         val settings = AndroidSettingsStore(object : DataStore<AndroidSettings> by settingsData {
@@ -114,7 +115,7 @@ internal class AccountViewModelTest : TemporaryFiles() {
                 if (failAuthenticationScheduling) throw java.io.IOException("Synthetic scheduling failure")
                 scheduler.authenticated(connection)
             }
-            override suspend fun signedOut() { scheduler.signedOut() }
+            override suspend fun signedOut() { signOutRelease?.await(); scheduler.signedOut() }
             override suspend fun saved() { scheduler.saved() }
             override suspend fun changed() { scheduler.changed() }
         }
@@ -763,6 +764,50 @@ internal class AccountViewModelTest : TemporaryFiles() {
         assertEquals("https://other.test/team", m.state.value.invite?.serverURL)
         assertTrue(m.state.value.inviteReady)
         assertTrue(r.requests.isEmpty())
+    }
+
+    @Test fun `warm invite arriving before confirmed sign out runs waits for credential cleanup`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        runCurrent()
+        m.requestSignOut(); m.signOut()
+        assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+        route(m, inviteLink)
+        runCurrent()
+        assertEquals(1, count(r, "/auth/logout"))
+        assertNull(m.state.value.account.account)
+        assertTrue(r.secrets.values.isEmpty())
+        assertTrue(m.state.value.inviteReady)
+        assertNull(m.state.value.invite?.currentAccount)
+        assertFalse(m.state.value.canAcceptInvite)
+        assertEquals(0, count(r, "/groups/join"))
+        assertEquals(0, count(r, "/auth/register"))
+    }
+
+    @Test fun `repeated warm invites cannot bypass a draining confirmed sign out`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        runCurrent()
+        val release = CompletableDeferred<Unit>()
+        r.signOutRelease = release
+        m.requestSignOut(); m.signOut(); runCurrent()
+        try {
+            route(m, inviteLink); runCurrent()
+            route(m, inviteLink); runCurrent()
+            assertFalse(m.state.value.inviteReady)
+            assertEquals(0, count(r, "/groups/join"))
+            assertEquals(0, count(r, "/auth/register"))
+        } finally {
+            release.complete(Unit)
+            runCurrent()
+        }
+        assertEquals(1, count(r, "/auth/logout"))
+        assertNull(m.state.value.account.account)
+        assertTrue(r.secrets.values.isEmpty())
+        assertTrue(m.state.value.inviteReady)
+        assertNull(m.state.value.invite?.currentAccount)
     }
 
     @Test fun `accepted join with refresh failure reports commitment and never retries on refresh`() = runTest(dispatcher) {

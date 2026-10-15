@@ -31,6 +31,7 @@ internal class AccountViewModel @Inject constructor(
     val state = mutableState.asStateFlow()
     private val settingsMutex = Mutex()
     private var command: Job? = null
+    private var signOutCommand: Job? = null
     private var commandVersion = 0L
     private var draftVersion = 0L
     private var serverVersion = 0L
@@ -89,11 +90,14 @@ internal class AccountViewModel @Inject constructor(
 
     fun stageInvite(input: String = state.value.inviteDraft) {
         val previous = command
-        previous?.cancel()
+        val signOut = signOutCommand
+        if (previous !== signOut) previous?.cancel()
         val server = state.value.server?.baseURL
         clearInvite()
         val version = inviteVersion
         run(AccountAction.STAGE_INVITE, replace = true) {
+            // Replacement links still wait for the separately retained, confirmed sign-out.
+            signOut?.join()
             previous?.join()
             try {
                 // Account entry may restore its own session; an invite never redeems during this refresh.
@@ -287,6 +291,7 @@ internal class AccountViewModel @Inject constructor(
             val cleanup = repository.signOut()
             mutableState.value = state.value.copy(cleanup = cleanup, holds = emptyList(), selectedHolds = emptySet())
         }
+        signOutCommand = command
     }
 
     fun requestRevoke(id: String) {
