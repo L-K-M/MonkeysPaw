@@ -70,7 +70,7 @@ enum SyncServerHarness {
 
 /// Router testing has no socket peer. Supply connection metadata, then invoke
 /// the unchanged production responder, including login/backoff and middleware.
-private struct ScenarioPeerApplication<Base: ApplicationProtocol>: ApplicationProtocol {
+struct ScenarioPeerApplication<Base: ApplicationProtocol>: ApplicationProtocol {
     let base: Base
     var responder: ScenarioPeerResponder<Base.Responder> {
         get async throws { ScenarioPeerResponder(base: try await base.responder) }
@@ -78,13 +78,20 @@ private struct ScenarioPeerApplication<Base: ApplicationProtocol>: ApplicationPr
     var logger: Logger { base.logger }
 }
 
-private struct ScenarioPeerResponder<Base: HTTPResponder>: HTTPResponder where Base.Context: InitializableFromSource<ApplicationRequestContextSource> {
+struct ScenarioPeerResponder<Base: HTTPResponder>: HTTPResponder where Base.Context: InitializableFromSource<ApplicationRequestContextSource> {
     let base: Base
     func respond(to request: Request, context: BasicRequestContext) async throws -> Response {
         let channel = NIOAsyncTestingChannel()
         channel.remoteAddress = try SocketAddress(ipAddress: "127.0.0.1", port: 54321)
         let peer = Base.Context(source: .init(channel: channel, logger: context.logger))
-        return try await base.respond(to: request, context: peer)
+        do {
+            let response = try await base.respond(to: request, context: peer)
+            _ = try await channel.finish(acceptAlreadyClosed: true)
+            return response
+        } catch {
+            _ = try? await channel.finish(acceptAlreadyClosed: true)
+            throw error
+        }
     }
 }
 
@@ -146,7 +153,10 @@ final class ScenarioDevice {
         let envelope = try stored.value.withValue { try JSONDecoder().decode(ScenarioValue.self, from: Data($0.utf8)) }
         let token = try envelope.at("/token").string()
         let server = try SyncServerURL(account.identity.serverURL.absoluteString)
-        let request = try MonkeysPawCore.HTTPRequest(url: URL(string: server.baseURL.absoluteString + path)!, method: method,
+        guard let url = URL(string: server.baseURL.absoluteString + path) else {
+            throw ScenarioFailure.invalid("HTTP action has an unusable request path")
+        }
+        let request = try MonkeysPawCore.HTTPRequest(url: url, method: method,
             headers: ["Authorization": "Bearer " + token, "Content-Type": "application/json", "Accept": "application/json"],
             body: try body.map { try JSONEncoder().encode($0) }, requestByteCap: SyncAPI.requestEnvelopeMaxBytes,
             responseByteCap: SyncAPI.responseEnvelopeMaxBytes, deadline: ContinuousClock.now.advanced(by: .seconds(30)), urlPolicy: .sync(server: server))
@@ -174,7 +184,10 @@ final class ScenarioRunner {
 
     func run() async throws {
         for (index, step) in scenario.steps.enumerated() {
-            do { try await execute(step) }
+            do {
+                try await execute(step)
+                for device in devices.values { try device.transport.checkValidation() }
+            }
             catch {
                 // XCTest's errors must never print source bytes, bodies or credentials.
                 let reason = safeFailure(error)

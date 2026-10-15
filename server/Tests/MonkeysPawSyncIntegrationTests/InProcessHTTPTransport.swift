@@ -20,6 +20,7 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
     private var recorded: [ScenarioRequestTrace] = []
     private var rewrites: [ScenarioRewrite] = []
     private var hooks: [(method: String, path: String, run: () async throws -> Void)] = []
+    private var validationFailure: ScenarioFailure?
     var library: ScenarioDisk?
 
     init(clients: [String: any TestClientProtocol]) { self.clients = clients }
@@ -31,7 +32,20 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         locked { hooks.append((method.rawValue, path, run)) }
     }
 
+    func checkValidation() throws {
+        if let failure = locked({ validationFailure }) { throw failure }
+    }
+
     func send(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
+        do { return try await dispatch(request) }
+        catch let error as ScenarioFailure {
+            // Core maps transport errors to sync status; fixture failures must still fail the case.
+            locked { validationFailure = validationFailure ?? error }
+            throw error
+        }
+    }
+
+    private func dispatch(_ request: MonkeysPawCore.HTTPRequest) async throws -> MonkeysPawCore.HTTPResponse {
         try Task.checkCancellation()
         guard ContinuousClock.now < request.deadline else { throw HTTPTransportError.deadlineExceeded }
         guard case .sync(let server) = request.urlPolicy,
@@ -45,7 +59,6 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         let uri = components.percentEncodedPath + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
         if let hook = takeHook(method: request.method.rawValue, path: uri) { try await hook() }
         let requestRewrite = takeRewrite(phase: .request, method: request.method.rawValue, path: uri)
-        let responseRewrite = takeRewrite(phase: .response, method: request.method.rawValue, path: uri)
         var bytes = request.body
         if let requestRewrite {
             guard let body = bytes else { throw ScenarioFailure.invalid("request patch without body") }
@@ -68,7 +81,7 @@ final class InProcessHTTPTransport: HTTPTransporting, @unchecked Sendable {
         locked { recorded.append(.init(method: request.method.rawValue, path: uri, status: response.status.code, body: safeBody, localPaths: localPaths)) }
         guard response.body.readableBytes <= request.responseByteCap else { throw HTTPTransportError.responseTooLarge }
         var received = Data(response.body.readableBytesView)
-        if let responseRewrite {
+        if let responseRewrite = takeRewrite(phase: .response, method: request.method.rawValue, path: uri) {
             guard response.status == .ok else { throw ScenarioFailure.invalid("response patch requires real success") }
             received = try JSONEncoder().encode(JSONDecoder().decode(ScenarioValue.self, from: received).patching(responseRewrite.patch))
         }

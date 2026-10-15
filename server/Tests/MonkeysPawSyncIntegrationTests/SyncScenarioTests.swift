@@ -71,6 +71,107 @@ final class SyncScenarioTests: XCTestCase {
         XCTAssertNotEqual(ScenarioValue.object(["content": .string("Caf\u{e9}")]), .object(["content": .string("Cafe\u{301}")]))
     }
 
+    func testRequestPresenceCheckpointRequiresAPath() throws {
+        for value in [ScenarioValue.string("Clash (2).md"), .bool(true)] {
+            let step = ScenarioValue.object(["action": .string("expect"), "device": .string("a"),
+                "expected": .object(["requests": .array([.object(["method": .string("PUT"), "path": .string("*"),
+                    "count": .integer(1), "local_exists": value])])])])
+            if case .string = value { XCTAssertNoThrow(try ScenarioDecoder.decodeStep(step)) }
+            else { XCTAssertThrowsError(try ScenarioDecoder.decodeStep(step)) }
+        }
+    }
+
+    func testDecoderRequiresDeviceCheckpointsAlongsideHTTPAssertions() throws {
+        let original = try JSONDecoder().decode(ScenarioValue.self, from: Data(contentsOf: fixtures.appendingPathComponent("01-round-trip.json")))
+        let steps = try original.at("/cases/0/steps").array().filter { try $0.at("/action").string() != "expect" }
+        let changed = try original.patching(["/cases/0/steps": .array(steps)])
+        XCTAssertThrowsError(try ScenarioDecoder.decode(JSONEncoder().encode(changed)))
+    }
+
+    func testIncorrectHTTPCheckpointFailsAfterRealRouterExecution() async throws {
+        let original = try JSONDecoder().decode(ScenarioValue.self, from: Data(contentsOf: fixtures.appendingPathComponent("01-round-trip.json")))
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(JSONEncoder().encode(original)).first)
+        let steps = baseline.steps.map { step -> ScenarioStep in
+            guard case .http(let action) = step else { return step }
+            return .http(.init(device: action.device, method: action.method, path: action.path, body: action.body,
+                status: action.status, expected: ["/path": .string("incorrect.md")], bindings: action.bindings))
+        }
+        let scenario = SyncScenario(id: "negative-http-checkpoint", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts, steps: steps)
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Incorrect HTTP checkpoint passed")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("HTTP JSON checkpoint"))
+        }
+    }
+
+    func testInvalidHTTPActionURLFailsWithoutCrashing() async throws {
+        let original = try Data(contentsOf: fixtures.appendingPathComponent("01-round-trip.json"))
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(original).first)
+        let scenario = SyncScenario(id: "invalid-http-url", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts,
+            steps: [.login(device: "a", user: "alice", server: "main"), .http(.init(device: "a", method: .get, path: ":bad", body: nil,
+                status: 200, expected: [:], bindings: [:]))])
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Invalid HTTP URL passed")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("HTTP action has an unusable request path"))
+        }
+    }
+
+    func testIncorrectRacingHTTPCheckpointFailsAfterRealRouterExecution() async throws {
+        let original = try Data(contentsOf: fixtures.appendingPathComponent("11-path-clashes.json"))
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(original).first { $0.id == "11-path-clash-exact" })
+        let steps = baseline.steps.prefix(4).map { step -> ScenarioStep in
+            guard case .beforeRequest(let device, let method, let path, let action) = step else { return step }
+            return .beforeRequest(device: device, method: method, path: path, then: .init(device: action.device,
+                method: action.method, path: action.path, body: action.body, status: action.status,
+                expected: ["/rev": .integer(999)], bindings: [:]))
+        }
+        let scenario = SyncScenario(id: "negative-racing-http-checkpoint", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts,
+            steps: steps + [.sync("a"), .expect(.init(device: "a", fields: ["status": .string("offline")]))])
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Incorrect racing HTTP checkpoint passed")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("HTTP JSON checkpoint"), error.description)
+        }
+    }
+
+    func testInvalidResponseRewriteCannotBecomeExpectedOfflineStatus() async throws {
+        let original = try Data(contentsOf: fixtures.appendingPathComponent("01-round-trip.json"))
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(original).first)
+        let scenario = SyncScenario(id: "negative-response-rewrite", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts,
+            steps: [.login(device: "a", user: "alice", server: "main"),
+                .rewrite(.init(device: "a", phase: .response, method: .post, path: "/api/v1/sync/pull",
+                    patch: ["/missing": .string("invalid pointer")])),
+                .sync("a"), .expect(.init(device: "a", fields: ["status": .string("offline")]))])
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Invalid response rewrite passed")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("missing JSON pointer target"))
+        }
+    }
+
+    func testPathClashFileCountRejectsUnlistedDownload() async throws {
+        let original = try Data(contentsOf: fixtures.appendingPathComponent("11-path-clashes.json"))
+        let baseline = try XCTUnwrap(ScenarioDecoder.decode(original).first { $0.id == "11-path-clash-last-slot" })
+        let scenario = SyncScenario(id: "negative-clash-file-count", now: baseline.now, servers: baseline.servers,
+            users: baseline.users, devices: baseline.devices, prompts: baseline.prompts,
+            steps: baseline.steps + [.expect(.init(device: "a", fields: ["file_count": .integer(19)]))])
+        do {
+            try await SyncServerHarness.run(scenario)
+            XCTFail("Missing downloaded file passed")
+        } catch let error as ScenarioFailure {
+            XCTAssertTrue(error.description.contains("file count"))
+        }
+    }
+
     func testIncorrectExpectedBytesFailAfterRealRouterExecution() async throws {
         let original = try JSONDecoder().decode(ScenarioValue.self, from: Data(contentsOf: fixtures.appendingPathComponent("01-round-trip.json")))
         let changed = try original.patching([
