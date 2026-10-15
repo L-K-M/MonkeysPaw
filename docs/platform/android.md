@@ -1,19 +1,94 @@
 # Android acceptance
 
+## M8 acceptance record
+
+**M8 is code-complete, but NOT closed.** K1–K19 are merged. K20's owner
+evidence is still pending: every M8 owner row below is **NOT RUN (owner)**.
+No device or emulator was used for this record. JVM tests, R8 assembly and
+workflow checks do not establish physical paste, lifecycle or installation.
+The [§15 milestone record](../plan/15-milestones.md) remains open until the
+owner commits results for the final signed, shrunk release APK.
+
+Automated evidence collected on 2026-10-14 at main `766394cf4a2a298f03e128870b3c7cad7de744ae`:
+
+| Acceptance item | Result and evidence |
+|---|---|
+| Every M2/M5 fixture is consumed by `:core` | PASS. [CorpusInventoryTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/CorpusInventoryTest.kt), `inventory accounts for every visible fixture exactly once`, independently accounts for 1,509 cases / 4,346 files / 10 categories and 54 schemas. [EveryFixtureTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/EveryFixtureTest.kt), `every visible fixture is consumed semantically exactly once`, requires semantic consumption to equal that inventory, with pending 0. The nine M8 categories total 1,034 cases / 2,172 files; the later LLM category is also consumed. |
+| DTO accounting, including admin contracts | PASS. [DtoConformanceTest](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/DtoConformanceTest.kt), `every contract consumes every valid and invalid case with canonical bytes` and `case order does not affect complete corpus accounting`: 649 cases (160 valid / 489 invalid), 1,298 files, all 54 contracts; pending 0. |
+| Exact Android gate | PASS locally: 570 Core tests and 357 app tests, zero failures/errors/skips; lint and both APK assemblies pass, including seed-asset verification. Command/environment below. Compilation and R8 outputs may be reused from Gradle's build cache. |
+| `ci.yml` Android job exists and runs the five tasks | PASS. [`android`](../../.github/workflows/ci.yml) is green on main `ea741f46`, [run 38634897474 / Android job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38634897474/job/116122711154), including APK verification and artifact byte comparison. Main `766394cf`'s run 38656497917 was pending at collection. |
+| `release.yml` APK and asset gates | PASS in PR dry runs: K19 [run 38586738354 / APK job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38586738354/job/116024653871), and the verifier fix now merged as #216, [run 38634076231 / APK job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38634076231/job/116142682271). The latter's [asset gate](https://github.com/L-K-M/MonkeysPaw/actions/runs/38634076231/job/116159168194) passed; both publish jobs were skipped. [`android-build`](../../.github/workflows/release.yml) exists on the recorded main. This is dry-run evidence, not a published release or a post-K19 main tag/manual release run. |
+| `scripts/sync-android-version.sh` works | PASS. [test_android_version.py](../../scripts/tests/test_android_version.py): 11 tests, none skipped, including seven hook/fake-engine tests and four installed-release-engine tests in disposable fixture repositories. Changed versions increment the code once, aligned retries do not write, malformed/overflow input preserves files, and hook edits enter the release commit/tag with rollback on failure. No release command or tag was created in the implementation checkout. |
+
+Counts from that run's Gradle JUnit XML and successful full semantic gate:
+
+| Category | Cases | Consumed files |
+|---|---:|---:|
+| format | 17 | 34 |
+| grammar | 22 | 44 |
+| render | 22 | 44 |
+| validation | 113 | 226 |
+| canonical | 19 | 50 |
+| paths | 141 | 282 |
+| ranking | 36 | 164 |
+| import | 15 | 30 |
+| dto | 649 | 1,298 |
+| M8 subtotal | 1,034 | 2,172 |
+| llm (later M11 fixtures) | 475 | 2,174 |
+| Current corpus total | 1,509 | 4,346 |
+
+The LLM consumer also checked 16,902 expectations, pending 0. The inventory
+SHA-256 (sorted relative path, NUL, exact file bytes) was
+`ac2db8413b5705b23cba52758f776dc3faec2eb37c0c725e07a7e1fbed0693fe`.
+The inventory rejects missing/orphan/unknown cases; the full gate also
+rejects changed semantic expectations. This proves semantic consumption,
+beyond opening fixture files.
+
+Reproduce from the repository root on the implementation host:
+
+```bash
+export JAVA_HOME=/opt/java/openjdk
+export PATH="$JAVA_HOME/bin:$PATH"
+export ANDROID_HOME=/home/paseo/Android/Sdk
+export MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+cd android
+./gradlew --max-workers=2 :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+```
+
+This uses JDK 21 locally; CI uses Temurin 17 and the default Google Maven
+endpoint. Install `platforms;android-37.0` and `build-tools;36.0.0` first.
+From the repository root, `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests`
+passed all 87 tests; add `-p test_android_version.py -v` to isolate the 11
+version-hook/engine tests. Preserve the JUnit summaries before deleting
+`android/build`, `android/*/build`, `android/.gradle` and `android/.kotlin`.
+Do not run a Gradle daemon stop on the shared implementation host.
+
 ## Release APK verification
 
 Download `monkeyspaw-v<full-version>.apk` and its `.apk.sha256` from this
 repository's GitHub Release into the same directory. Android API 26 or later
-is required. Before sideloading, run:
+is required. Verify the download:
 
 ```bash
-sha256sum -c monkeyspaw-v<full-version>.apk.sha256
+version='<full-version>' # Replace with the release version, including any suffix.
+sha256sum -c "monkeyspaw-v${version}.apk.sha256" &&
+  "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "monkeyspaw-v${version}.apk"
 ```
 
-Replace `<full-version>` with the release version, including any prerelease
-suffix. On macOS, use `shasum -a 256 -c` instead. Both debug and release APKs
+The signature command requires SDK build-tools 36.0.0 and the JDK's `bin`
+on `PATH`; compare its single SHA-256 certificate digest with the ADR below.
+Install only if both commands succeed and the digest matches:
+
+```bash
+adb install -r "monkeyspaw-v${version}.apk"
+```
+
+`adb` requires platform-tools and USB debugging. Alternatively open the
+verified APK on the device and permit installation from that source.
+On macOS, use `shasum -a 256 -c` instead. Both debug and release APKs
 use the same [public signer](../decisions/0001-android-zero-secret-signing.md)
-and app ID, so installing one replaces the other. Anyone with the public key
+and app ID, so installing one replaces the other. Anyone with the checked-in keystore
 can sign an update; the signature does not establish publisher identity.
 Obtain APKs from this repository's release. Changing the signer breaks
 updates and requires uninstall/reinstall, which deletes app-private data.
@@ -24,15 +99,28 @@ the workflow artifact and byte-compare both files. Release publication also
 requires every desktop and server-image gate and draft-download comparisons.
 These checks do not prove device installation, runtime behavior or updates.
 
-- Latest main five-task CI / artifact URL: NOT RUN
-- Release dry-run / APK artifact URL: NOT RUN
-- Final APK version / code / SHA-256 / signer fingerprint: NOT RUN
-- Install and update on API 26–33 / API 34+: NOT RUN
+Record the following on both API 26–33 and API 34+ using the final signed,
+shrunk release APK. For every owner row in the M8 sections, record the main
+commit, APK version/code/SHA-256/signer, device/model/API/launcher, target app
+version and editor type where applicable, date/tester, expected versus actual
+result and a sanitized evidence reference. Keep prompt content, field values
+and clipboard contents out of collected logs. Each row's final column names
+the additional evidence to collect. Unsupported or unavailable checks remain
+explicit gaps, not PASS.
 
-The supervisor records CI links after integration; the owner records the
-final APK/device evidence. K19 creates no release tag.
+| Owner check | Status | Additional evidence to record |
+|---|---|---|
+| Release asset verification | NOT RUN (owner) | Release URL/tag/commit and publishing run ID; APK + checksum asset names, checksum OK and equality with the verified workflow APK pair. Record the seven-asset baseline (macOS dmg/zip/manifest, deb/checksum, APK/checksum), or the explicitly integrated Flatpak additions. A workflow artifact alone does not prove published assets. |
+| APK metadata and signature | NOT RUN (owner) | `aapt2 dump badging` package ID `ch.lkmc.monkeyspaw`, full version, committed code, minSdk 26/targetSdk 37; successful `apksigner verify --verbose --print-certs`, one signer matching the ADR fingerprint; checksum output. |
+| Clean install and launch | NOT RUN (owner) | Installation method/permission, success or exact sanitized failure, installed version/code and launch result on each device; use disposable data for a clean-install test. |
+| Install over an existing copy, including debug → release | NOT RUN (owner) | Old/new APK versions/codes/hashes and matching signer; `adb install -r` or system update result; verify an edited prompt, favourite, remembered field, usage, history and seed-offer decision survive. Record a higher code for a version upgrade; do not hand-edit it or count uninstall/reinstall or a forced downgrade as an update. |
 
-## M8 quick entry points: NOT RUN
+The automated CI/dry-run links are in the M8 record above. No post-K19
+published APK or owner installation is asserted here. Version upgrades
+need a suitable earlier APK; repeated same-core prereleases remain
+unclaimed until increasing codes and engine support exist (§20 F20).
+
+## M8 quick entry points: NOT RUN (owner)
 
 Owner-run checks for §10.4 B and §20 F2/F16. No Android device or emulator
 was used on the implementation host. JVM policy tests, manifest checks and
@@ -40,10 +128,10 @@ APK assembly do not prove launcher, keyguard, Activity stacking or return.
 Use the final signed, shrunk release APK on an API 26–33 device and an API
 34+ device, including minimum API and target 37 coverage when available.
 
-- Commit / APK version / SHA-256: NOT RUN
-- Device / Android API / launcher: NOT RUN
-- Target app versions / field: NOT RUN
-- Date / tester: NOT RUN
+- Commit / APK version / code / SHA-256 / signer: NOT RUN (owner)
+- Device / Android API / launcher: NOT RUN (owner)
+- Target app versions / field: NOT RUN (owner)
+- Date / tester / sanitized evidence reference: NOT RUN (owner)
 
 Add the tile through Quick Settings editing, expose **Insert prompt** by
 holding the launcher icon, and add the **Monkey's Paw: Insert prompt** widget.
@@ -51,23 +139,23 @@ No keyboard or automatic tile onboarding is part of M8. For a cold entry,
 end the app process while retaining its library, then invoke the entry.
 For a warm entry, invoke it after another completed or cancelled form.
 
-| Check | API 26–33 | API 34+ | Device / details |
+| Check | API 26–33 | API 34+ | Additional evidence to record for each device |
 |---|---|---|---|
-| Cold tile opens seed choice or the picker; pick → fill → Copy returns to the previous app | NOT RUN | NOT RUN | |
-| Warm tile collapses Quick Settings and opens the picker, using the Intent / PendingIntent policy respectively | NOT RUN | NOT RUN | |
-| Cold and warm launcher shortcut opens the same pick → fill → Copy flow | NOT RUN | NOT RUN | |
-| Cold and warm widget button opens the same flow; two widget instances both work | NOT RUN | NOT RUN | |
-| Locked tile requires unlock before showing prompts; cancel unlock opens nothing; retry succeeds | NOT RUN | NOT RUN | |
-| Shortcut and home-screen widget do not show a form, preview or clipboard above the lock screen | NOT RUN | NOT RUN | |
-| Reinvoke any entry while editing; switch between tile, shortcut and widget; one form keeps its fields and initial clipboard snapshot | NOT RUN | NOT RUN | |
-| Open Library while a fill picker is held and select a prompt; the selected prompt opens. Repeat while editing/copying; the active form is preserved | NOT RUN | NOT RUN | |
-| Reinvoke while Copy is pending; one write and one learning operation complete, then the Activity finishes | NOT RUN | NOT RUN | |
-| Copy finishes after saving usage/remembered fields; no automatic paste, target-app start or duplicate app copy toast | NOT RUN | NOT RUN | |
-| Back from picker or form and Cancel finish, returning to the prior app or launcher; clipboard and usage are unchanged | NOT RUN | NOT RUN | |
-| After Copy or Back, a new entry opens a fresh session; an already open Library/Editor is preserved | NOT RUN | NOT RUN | |
-| Rotate, background, lock and resume a form; fields survive and the builtin snapshot is not retaken | NOT RUN | NOT RUN | |
-| With "Don't keep activities" enabled, Copy/Back still returns and a new entry opens without stalling | NOT RUN | NOT RUN | |
-| TalkBack identifies the tile, shortcut and widget button; large text and widget resizing keep the button usable | NOT RUN | NOT RUN | |
+| Cold tile opens seed choice or the picker; pick → fill → Copy returns to the previous app | NOT RUN (owner) | NOT RUN (owner) | How the process was ended, seed/picker destination, actual return app/field and successful manual paste |
+| Warm tile collapses Quick Settings and opens the picker, using the Intent / PendingIntent policy respectively | NOT RUN (owner) | NOT RUN (owner) | Prior session, panel collapse and picker/return destinations |
+| Cold and warm launcher shortcut opens the same pick → fill → Copy flow | NOT RUN (owner) | NOT RUN (owner) | Shortcut label, cold/warm opening and actual return destination |
+| Cold and warm widget button opens the same flow; two widget instances both work | NOT RUN (owner) | NOT RUN (owner) | Launcher, widget instance/size, both launches and return destinations |
+| Locked tile requires unlock before showing prompts; cancel unlock opens nothing; retry succeeds | NOT RUN (owner) | NOT RUN (owner) | Locked/unlocked/cancelled outcomes and absence of prompt disclosure before unlock |
+| Shortcut and home-screen widget do not show a form, preview or clipboard above the lock screen | NOT RUN (owner) | NOT RUN (owner) | Lock method, entry attempted and what was visible before/after unlock |
+| Reinvoke any entry while editing; switch between tile, shortcut and widget; one form keeps its fields and initial clipboard snapshot | NOT RUN (owner) | NOT RUN (owner) | Entry sequence, number of forms and unchanged field/snapshot outcome without their contents |
+| Open Library while a fill picker is held and select a prompt; the selected prompt opens. Repeat while editing/copying; the active form is preserved | NOT RUN (owner) | NOT RUN (owner) | Picker/form/pending-copy state, selected prompt identity and preserved session outcome |
+| Reinvoke while Copy is pending; one write and one learning operation complete, then the Activity finishes | NOT RUN (owner) | NOT RUN (owner) | Reentry timing, observed copy/usage count and single finish; record unavailable diagnostics as a gap |
+| Copy finishes after saving usage/remembered fields; no automatic paste, target-app start or duplicate app copy toast | NOT RUN (owner) | NOT RUN (owner) | Reopened Recent/remembered state, toast count, return app and absence of automatic input |
+| Back from picker or form and Cancel finish, returning to the prior app or launcher; clipboard and usage are unchanged | NOT RUN (owner) | NOT RUN (owner) | Each cancellation path, actual return destination and unchanged clipboard/Recent state |
+| After Copy or Back, a new entry opens a fresh session; an already open Library/Editor is preserved | NOT RUN (owner) | NOT RUN (owner) | Completion path, new-session state and retained Library/Editor draft |
+| Rotate, background, lock and resume a form; fields survive and the builtin snapshot is not retaken | NOT RUN (owner) | NOT RUN (owner) | Each transition, retained fields and stable clock/clipboard snapshot outcome |
+| With "Don't keep activities" enabled, Copy/Back still returns and a new entry opens without stalling | NOT RUN (owner) | NOT RUN (owner) | Developer setting, return/new-entry results and restoration of the setting afterward |
+| TalkBack identifies the tile, shortcut and widget button; large text and widget resizing keep the button usable | NOT RUN (owner) | NOT RUN (owner) | Accessibility labels, font/display scale, widget size and usable controls |
 
 For each target below, focus a harmless editable field, invoke the tile,
 pick and fill a prompt with multiple lines, then Copy and long-press Paste.
@@ -77,12 +165,30 @@ shortcut and widget after returning to the launcher, then test Back without
 copying. Record the actual return destination; these home-screen entries
 cannot promise a sending text field.
 
-| Target | Tile → Copy → manual Paste | Shortcut / widget → manual Paste | Back / return | Details |
+| Target | Tile → fill → Copy → manual Paste | Shortcut / widget → manual Paste | Back / return | Additional evidence to record |
 |---|---|---|---|---|
-| Chrome | NOT RUN | NOT RUN | NOT RUN | |
-| ChatGPT app | NOT RUN | NOT RUN | NOT RUN | |
-| Claude app | NOT RUN | NOT RUN | NOT RUN | |
-| Termux | NOT RUN | NOT RUN | NOT RUN | |
+| Chrome | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Version, website/editor type, exact multiline text once, no submission, actual return app/field for each entry and cancellation |
+| ChatGPT app | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Version, conversation composer, exact multiline text once, no send, actual return destination for each entry and cancellation |
+| Claude app | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Version, conversation composer, exact multiline text once, no send, actual return destination for each entry and cancellation |
+| Termux | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Version, shell/editor and bracketed-paste behavior; harmless sentinel pasted once without execution, line safely cleared, actual return destination |
+
+## M8 seeds, library and editor/history: NOT RUN (owner)
+
+Use disposable libraries/devices for fresh-install and decline variants;
+clearing app data or uninstalling destroys local prompts and history.
+Use the same APK/device metadata and evidence format as the release table.
+
+| Owner check | Status | Additional evidence to record |
+|---|---|---|
+| Accept seeds in an empty library | NOT RUN (owner) | Offer shown once, accepted/added/failure counts against the `seed/` catalog bundled into the APK as `assets/seeds/`, unique first-save identities, browsable/fillable prompts; restart offers no duplicates and retains edits. |
+| Decline seeds and reopen | NOT RUN (owner) | Fresh-install decline, empty-library state, manual create success, no repeated offer after restart and decision retained across update. |
+| Existing or partially seeded library | NOT RUN (owner) | Initial prompt/count state, no overwrite or automatic reseed; if a failure can be reproduced, added/failure counts, retained prompts and Continue/Retry outcome. If not exercised, leave that failure case NOT RUN. |
+| Browse/search/filter/favourite/Recent | NOT RUN (owner) | Search and All/Favourites/Recent/folder/tag results for known synthetic prompts; toggled favourite and successful-copy usage survive restart. Invalid prompts remain listed with issues. |
+| Create → raw edit → save → rename/move → reopen | NOT RUN (owner) | Paths and stable identity, validation/Fields/Preview results, retained unknown front matter and exact body outcome; all saved changes survive restart. Preview does not consume clipboard data. |
+| Unsaved changes and invalid/read-only source | NOT RUN (owner) | Save/Discard/Cancel outcomes for navigation; live validation and refused invalid save; malformed text remains repairable, future/oversized/non-UTF-8 files are read-only if available through a controlled fixture setup. Record unavailable setup as a gap. |
+| History and restore | NOT RUN (owner) | At least two saved revisions, selected revision/time, confirmed restored source/preview, preserved identity and restored content after restart/update. |
+| Local stamp conflict | NOT RUN (owner) | Controlled second local edit while a draft is open, visible conflict and Keep mine/Take theirs/Cancel outcomes; no silent overwrite or lost draft. Record how the second edit was produced; do not claim M10 sync here. |
+| Fill on the final minified APK | NOT RUN (owner) | Text/multiline/choice, optional/required and remembered fields; fieldless prompt still previews before Copy; clock/date/time snapshot and one foreground clipboard read only when used. Check Unicode and line-break preservation, sensitive clipboard handling, failed-copy retention/no learning if reproducible, and post-copy storage warning without a second copy. |
 
 ## Text-selection entry checks (M9 N5): NOT RUN
 
@@ -201,7 +307,7 @@ The version catalog owns the pin. Sync folding comes from the frozen Swift
 Unicode table; these checks do not establish search parity or M8 acceptance.
 
 The local Android gate builds both APKs and minifies the release APK with
-R8. The app skeleton has no sync caller yet, so its ProGuard rules retain
+R8. M8 has no production sync-path caller, so its ProGuard rules retain
 the validator entry point with optimization enabled. Remove that temporary
 rule once a production caller keeps the path code reachable, then repeat
 the packaging check.
@@ -214,21 +320,23 @@ successful R8 task alone do not prove resource retention. K6's handoff
 records the APK hash, byte comparisons and dex inspection results before
 the host's required build-directory cleanup.
 
-## Minimum-API device check: NOT RUN
+## Minimum-API device check: NOT RUN (owner)
 
 No Android device or emulator was used on the implementation host. A
 minimum-API device still needs to execute the minified validator through
 the app's production call path when that caller exists. Check these cases:
 
-| Input | Expected result in private scope |
-|---|---|
-| `Cafe\u0301/E\u0301.md` | NFC `Café/É.md`, key `café/é.md` |
-| `\u0F73` repeated 20 times, followed by `.md` | All 20 U+0F71 marks, then all 20 U+0F72 marks, followed by `.md`; no truncation |
-| U+E0001 followed by `a.md` | `path.control_character`, segment 0 |
-| `Groupſ/a.md` | `path.reserved_groups_prefix`, null segment; accepted in group scope |
-| `İ/Iıi.md` | Key `i\u0307/iıi.md` |
+| Input | Expected result in private scope | Status |
+|---|---|---|
+| `Cafe\u0301/E\u0301.md` | NFC `Café/É.md`, key `café/é.md` | NOT RUN (owner) |
+| `\u0F73` repeated 20 times, followed by `.md` | All 20 U+0F71 marks, then all 20 U+0F72 marks, followed by `.md`; no truncation | NOT RUN (owner) |
+| U+E0001 followed by `a.md` | `path.control_character`, segment 0 | NOT RUN (owner) |
+| `Groupſ/a.md` | `path.reserved_groups_prefix`, null segment; accepted in group scope | NOT RUN (owner) |
+| `İ/Iıi.md` | Key `i\u0307/iıi.md` | NOT RUN (owner) |
 
-Record the commit, APK SHA-256, device/API level, tester and results. This
+For each row record the commit, APK version/code/SHA-256/signer, device/API
+level, production caller or controlled test harness, tester/date, expected
+and actual normalized path/key or error, and sanitized evidence. This
 checks Android class/resource loading and any required Java library
 desugaring on the actual minimum API; static APK inspection cannot prove
 runtime execution.

@@ -37,6 +37,16 @@
 
 **Ordering.**
 
+- M8 K1–K19 are code-complete on main; **M8 is NOT closed**. K20 records
+  the [automated acceptance evidence and owner checklist](../platform/android.md#m8-acceptance-record)
+  against main `766394cf` (2026-10-14): all 1,034 cases / 2,172 files in
+  the nine M8 fixture categories are consumed, as are the later LLM fixtures;
+  the exact five-task Android gate, version-hook tests, recent main Android
+  CI and release PR dry-run APK/asset jobs pass. Every M8 device, paste,
+  install/upgrade and published-release owner check remains NOT RUN (owner).
+  K20's owner-evidence dependency and milestone closure remain pending until
+  those results are committed for the final signed, shrunk APK.
+
 - I3 adds Core forget intents, draft clearing and open-form resets before the
   Settings and picker UI slices add their visible controls.
 

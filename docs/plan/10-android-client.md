@@ -25,16 +25,18 @@ v1 features:
 
 ### 10.2 Stack
 
-These versions follow HalloMiao, the fleet's model Android repo (a2 §1). The
-pins move only as one set; see the AGP 9 deadlock in Kararead's
-`DEPENDABOT.md`.
+The stack follows HalloMiao, the fleet's model Android repo (a2 §1).
+Current dependency pins live in the [version catalog](../../android/gradle/libs.versions.toml)
+and the [Gradle wrapper](../../android/gradle/wrapper/gradle-wrapper.properties);
+§20 records the original K1 choices. Change compatible pins together; see
+the AGP 9 deadlock in Kararead's `DEPENDABOT.md`.
 
 | Item | Choice |
 |---|---|
-| Build | AGP 9.3.1, Gradle 9.7.0, Kotlin 2.4.10, JDK 17. No `kotlin-android` plugin: AGP 9 has built-in Kotlin. |
+| Build | Catalog-pinned AGP and Kotlin, checked-in Gradle wrapper, JDK 17 in CI (JDK 21 also works locally). No `kotlin-android` plugin: AGP 9 has built-in Kotlin. |
 | SDK | `minSdk = 26`, `targetSdk = 37`, `compileSdkVersion("android-37.0")` with `android.suppressUnsupportedCompileSdk=37` |
-| UI | Jetpack Compose (BOM 2026.08.00), Material 3, single activity + entry activities |
-| DI | Hilt 2.60.1 with KSP 2.3.11; graph wiring starts with app data drivers in M8 K12. |
+| UI | Catalog-pinned Jetpack Compose BOM, Material 3, single activity + entry activities |
+| DI | Catalog-pinned Hilt and KSP; graph wiring starts with app data drivers in M8 K12. |
 | Serialization | kotlinx.serialization (JSON); snakeyaml-engine 3.x for front matter (kaml is archived) |
 | Networking | OkHttp (+ okhttp-coroutines) behind an `HttpTransport` port, with `followRedirects(false)` (§7.1 transport rules). OkHttp is the fleet standard (Kararead, Neutrodyne). |
 | Storage | app-private files (§10.6) + DataStore for settings |
