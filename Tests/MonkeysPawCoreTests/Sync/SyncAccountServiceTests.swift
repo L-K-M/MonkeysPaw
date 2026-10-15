@@ -574,10 +574,12 @@ final class SyncAccountServiceTests: XCTestCase {
 
     func testSameAccountRecoversPendingRequestBeforeNewBinding() async throws {
         let rig = try SyncAccountRig()
+        addTeardownBlock { [weak rig] in XCTAssertNil(rig) }
         try await rig.login()
         await rig.sync.settle()
         let pending = try await rig.pendingCreate()
         let normal = rig.sync.transport.handler
+        defer { rig.sync.transport.handler = normal }
         rig.sync.transport.handler = { index, request in
             if request.method == .get, request.url.path.hasSuffix(pending.intent.id.rawValue) {
                 return try SyncServiceRig.failure(.notFound)
@@ -616,6 +618,52 @@ final class SyncAccountServiceTests: XCTestCase {
             XCTAssertEqual(facts.binding, pending.binding)
             XCTAssertEqual(facts.intent.sentBytes, pending.intent.sentBytes)
             XCTAssertTrue(rig.sync.base.data.isPrivate(at: retained.relativePath))
+        }
+    }
+
+    func testMismatchedOwnershipCannotRecoverPendingRequestOrKeepLoginCredential() async throws {
+        for userID in [SyncTestValues.user, SyncTestValues.otherUser, nil] {
+            let rig = try SyncAccountRig()
+            try await rig.login()
+            await rig.sync.settle()
+            let pending = try await rig.pendingCreate()
+            let foreign = try SyncTestValues.account(userID: SyncTestValues.otherUser)
+            try rig.sync.accounts.updateBinding(for: pending.binding.root) { _ in
+                try SyncLibraryBinding(root: pending.binding.root, owner: foreign)
+            }
+            if let userID {
+                try rig.sync.base.states.reset(for: SyncTestValues.binding(userID: userID))
+            } else { try rig.sync.base.states.clear() }
+            let state = userID?.rawValue ?? "absent"
+            let before = try rig.sync.base.states.loadForAccountTransition()
+            let requests = rig.sync.transport.requests.count
+
+            let error = await failure { try await rig.login() }
+            XCTAssertEqual(error.issue, .metadata(.bindingMismatch), state)
+            XCTAssertEqual(error.cleanup.remote, .revoked, state)
+            XCTAssertEqual(rig.sync.transport.requests.dropFirst(requests).map { $0.url.lastPathComponent },
+                ["login", "me", "logout"], state)
+            XCTAssertEqual(try rig.sync.accounts.binding(for: pending.binding.root)?.owner, foreign, state)
+            XCTAssertEqual(try rig.sync.base.states.loadForAccountTransition(), before, state)
+            XCTAssertEqual(try rig.sync.pending.load(for: pending.binding)?.intent.sentBytes, pending.intent.sentBytes, state)
+            XCTAssertEqual(try rig.sync.base.files.read(at: pending.libraryPath.string), pending.file?.bytes, state)
+            XCTAssertFalse(rig.account.snapshot.enabled, state)
+            XCTAssertFalse(rig.sync.service.report.enabled, state)
+            XCTAssertEqual(try rig.sync.accounts.loadConnection().activation, .inactive, state)
+
+            // Remove the mismatches so only credential retirement can block HTTP.
+            try rig.sync.accounts.updateBinding(for: pending.binding.root) { _ in
+                try SyncLibraryBinding(root: pending.binding.root, owner: pending.binding.account)
+            }
+            try rig.sync.base.states.reset(for: pending.binding)
+            let after = rig.sync.transport.requests.count
+            do { try await rig.sync.service.recoverJournal() }
+            catch { /* Failed login must retire its temporary recovery credential. */ }
+            let refresh = await failure { try await rig.account.refresh() }
+            let devices = await failure { try await rig.account.devices() }
+            XCTAssertEqual(refresh.issue, .signedOut, state)
+            XCTAssertEqual(devices.issue, .signedOut, state)
+            XCTAssertEqual(rig.sync.transport.requests.count, after, state)
         }
     }
 
@@ -681,11 +729,13 @@ final class SyncAccountServiceTests: XCTestCase {
 
     func testAccountChangeWithoutStateDoesNotDeleteMissingState() async throws {
         let rig = try SyncAccountRig()
+        addTeardownBlock { [weak rig] in XCTAssertNil(rig) }
         try rig.sync.accounts.updateBinding(for: rig.sync.base.binding.root) { _ in
             try SyncLibraryBinding(root: rig.sync.base.binding.root, owner: rig.sync.base.binding.account)
         }
         rig.userID = SyncTestValues.otherUser
         rig.sync.base.data.failNextDelete = true
+        defer { rig.sync.base.data.onWrite = nil }
         rig.sync.base.data.onWrite = { path in
             // The account-change journal may be deleted after publication.
             if path == "sync/apply.json" { rig.sync.base.data.failNextDelete = false }
