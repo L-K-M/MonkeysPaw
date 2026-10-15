@@ -465,6 +465,7 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertEquals(ProviderSettingsError.WriteFailed, model.state.value.error)
         writeFailure = null
         model.save(); runCurrent()
+        assertNull(model.state.value.error)
         secrets.readError = IllegalStateException(sentinel)
         model.refresh(); runCurrent()
         assertEquals(AssistantKeyStorage.Failed(ProviderSettingsError.Secret(SecretStoreError.ReadFailed)), model.state.value.keyStorage)
