@@ -283,36 +283,38 @@ final class MacRepeatCompositionTests: XCTestCase {
 
     func testOwnSettingsLibraryAndPickerWindowsRefuseBeforeCapture() throws {
         try put("{{field}}")
+        // Copy needs no target; avoid queuing a dismissal restore when Settings opens.
+        target = nil
         try deliver(values: ["field": "delivered"])
         // Window ordering is synchronous; hosted activation comes from the same fake as capture.
         target = .macOS(processID: ownPID, bundleID: "test.own")
-        let actions: [() -> Bool] = [
-            {
+        let actions: [(String, () -> Bool)] = [
+            ("Settings", {
                 self.delegate.showSettings()
                 return self.delegate.settingsWindow?.window?.isVisible == true
-            },
-            {
+            }),
+            ("Library", {
                 self.delegate.showLibrary()
                 return self.delegate.libraryWindow?.window?.isVisible == true
-            },
-            {
+            }),
+            ("Picker", {
                 self.delegate.pickerModel?.open()
                 return self.panel.isVisible
-            },
-            {
+            }),
+            ("Picker with form", {
                 self.delegate.pickerModel?.open()
                 self.delegate.pickerModel?.use(mode: .copyOnly)
                 self.delegate.pickerModel?.fillModel?.setValue("draft", name: "field")
                 return self.panel.isVisible
-            },
+            }),
         ]
-        for action in actions {
-            XCTAssertTrue(action(), "The requested own window must be visible")
+        for (name, action) in actions {
+            XCTAssertTrue(action(), "\(name) must be visible")
             let captures = self.captures
             let writes = clipboard.writes.count
-            XCTAssertEqual(try repeatNow(), .unavailable(.ownWindow))
-            XCTAssertEqual(self.captures, captures)
-            XCTAssertEqual(clipboard.writes.count, writes)
+            XCTAssertEqual(try repeatNow(), .unavailable(.ownWindow), "\(name) must refuse repeat")
+            XCTAssertEqual(self.captures, captures, "\(name) must refuse before focus capture")
+            XCTAssertEqual(clipboard.writes.count, writes, "\(name) must not write the clipboard")
             if let form = delegate.pickerModel?.fillModel { XCTAssertEqual(form.values["field"], "draft") }
             delegate.pickerModel?.dismiss()
             hideWindows()
