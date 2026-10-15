@@ -56,6 +56,23 @@ internal class AppGraphTest {
         assertTrue(module.contains("File(context.filesDir, \"datastore/secrets.json\")"))
     }
 
+    @Test fun `HTTP platform context is initialized only when the network provider is requested`() {
+        val provider = source("di/AppModule.kt").substringAfter("fun httpTransport(").substringBefore("    @Provides")
+        assertTrue(provider.contains("@ApplicationContext context: Context"))
+        val initialize = provider.indexOf("OkHttp.initialize(context)")
+        assertTrue(initialize >= 0 && initialize < provider.indexOf("OkHttpHttpTransport("))
+    }
+
+    @Test fun `profile installation is requested only by launcher startup through a data driver`() {
+        val driver = sources.resolve("kotlin/ch/lkmc/monkeyspaw/data/ForegroundProfileInstaller.kt")
+        assertTrue(driver.isFile)
+        assertTrue(driver.readText().contains("initializeComponent(ProfileInstallerInitializer::class.java)"))
+        val activity = source("MainActivity.kt")
+        assertTrue(activity.contains("@Inject internal lateinit var profiles: ForegroundProfileInstaller"))
+        assertTrue(activity.substringAfter("override fun onCreate(").contains("profiles.initialize()"))
+        assertFalse(source("MonkeysPawApplication.kt").contains("ForegroundProfileInstaller"))
+    }
+
     @Test
     fun `graph source guard counts exact constructors rather than similarly named types`() {
         assertEquals(1, constructorCount("LibraryService( MemoLibraryService(", "LibraryService"))
@@ -110,13 +127,17 @@ internal class AppGraphTest {
         assertFalse(application.hasAttributeNS(androidNamespace, "dataExtractionRules"))
         val allowed = setOf(".MainActivity", ".entry.FillActivity", ".ime.MonkeysPawImeService", ".entry.PromptTileService",
             ".entry.PromptWidgetProvider", ".entry.PromptShortcutActivity", ".entry.ProcessTextActivity",
-            ".entry.ShareReceiverActivity")
+            ".entry.ShareReceiverActivity", "androidx.startup.InitializationProvider")
         val elements = document.getElementsByTagName("*")
         for (index in 0 until elements.length) {
             val element = elements.item(index) as org.w3c.dom.Element
             assertFalse(element.hasAttributeNS(androidNamespace, "process"))
             if (element.tagName in setOf("activity", "activity-alias", "service", "receiver", "provider")) {
                 assertTrue(element.getAttributeNS(androidNamespace, "name") in allowed)
+            }
+            if (element.tagName == "provider") {
+                assertEquals("false", element.getAttributeNS(androidNamespace, "exported"))
+                assertEquals("\${applicationId}.androidx-startup", element.getAttributeNS(androidNamespace, "authorities"))
             }
             if (element.tagName in setOf("uses-permission", "permission")) {
                 if (element.getAttributeNS(androidNamespace, "name") != "android.permission.INTERNET") {

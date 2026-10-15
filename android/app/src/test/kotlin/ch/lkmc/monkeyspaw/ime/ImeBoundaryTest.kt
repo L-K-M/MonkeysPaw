@@ -19,7 +19,7 @@ internal class ImeBoundaryTest {
     private val app = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
     private val core = File(checkNotNull(System.getProperty("monkeyspaw.coreSources")))
     private val namespace = "http://schemas.android.com/apk/res/android"
-    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b|\\bSystem\\.(?:out|err)\\b")
+    private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|PlatformInitializer|ProfileInstallerInitializer|ForegroundProfileInstaller|AppInitializer|Assistant(?!TokenUsage\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable)\\b|\\bSystem\\.(?:out|err)\\b")
     private val helperSources by lazy {
         (app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }.flatMap { file ->
             val source = file.readText()
@@ -126,7 +126,8 @@ internal class ImeBoundaryTest {
     }
 
     @Test fun `privacy source guard rejects indirect sync scheduling stdout and initial target reads`() {
-        for (code in listOf("SyncScheduler()", "AndroidSyncTlsTrust()", "JobScheduler()", "AlarmManager()",
+        for (code in listOf("SyncScheduler()", "AndroidSyncTlsTrust()", "PlatformInitializer()", "ProfileInstallerInitializer()",
+            "ForegroundProfileInstaller(context)", "AppInitializer.getInstance(context)", "JobScheduler()", "AlarmManager()",
             "println(privateValue)", "System.err.write(privateBytes)", "getInitialTextBeforeCursor(1, 0)",
             "getInitialTextAfterCursor(1, 0)", "getInitialSelectedText(0)", "takeSnapshot()")) {
             assertFailsWith<AssertionError>(code) { validateGraphSource(code) }

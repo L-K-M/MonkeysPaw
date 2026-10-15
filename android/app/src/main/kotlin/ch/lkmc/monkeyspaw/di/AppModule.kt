@@ -13,6 +13,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.*
+import okhttp3.OkHttp
 import java.io.File
 import java.security.SecureRandom
 import java.util.logging.Logger
@@ -77,8 +78,12 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun httpTransport(clock: MonotonicClock, @ApplicationScope scope: CoroutineScope): HttpTransport =
-        OkHttpHttpTransport(clock, scope, syncTlsTrust = AndroidSyncTlsTrust())
+    fun httpTransport(@ApplicationContext context: Context, clock: MonotonicClock,
+        @ApplicationScope scope: CoroutineScope): HttpTransport {
+        // Preserve OkHttp's Android context setup, outside component-only/IME startup.
+        OkHttp.initialize(context)
+        return OkHttpHttpTransport(clock, scope, syncTlsTrust = AndroidSyncTlsTrust())
+    }
 
     @Provides
     @Singleton
