@@ -25,6 +25,15 @@ enum LibraryStrings {
         }
     }
 
+    /// Built in steps: one concatenation with an optional and a ternary
+    /// exceeds the Release type checker's time limit.
+    static func sectionLabel(title: String, role: AssistantGroupRole?, count: Int) -> String {
+        var parts = [title]
+        if let role { parts.append(Self.role(role)) }
+        parts.append(String(count) + (count == 1 ? " prompt" : " prompts"))
+        return parts.joined(separator: ", ")
+    }
+
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {
         // The open editor reports its own unsaved or saving state.

@@ -129,8 +129,7 @@ struct LibraryView: View {
             Text(String(section.count)).foregroundStyle(.secondary)
         }
         .tag(section.id)
-        .accessibilityLabel(section.title + (section.role.map { ", " + LibraryStrings.role($0) } ?? "")
-            + ", " + String(section.count) + (section.count == 1 ? " prompt" : " prompts"))
+        .accessibilityLabel(LibraryStrings.sectionLabel(title: section.title, role: section.role, count: section.count))
     }
 
     @ViewBuilder
