@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Monkey\'s Paw</string>
+    <string name="ime_label">Monkey\'s Paw picker</string>
+    <string name="ime_switch_keyboard">Switch keyboard</string>
+    <string name="ime_switch_unavailable">Use the keyboard button in the navigation bar to switch keyboards.</string>
+    <string name="ime_password">Prompts are hidden in password fields.</string>
     <string name="local_library_title">Local library</string>
     <string name="library_loading">Loading your library…</string>
     <string name="seeds_offer_title">Add starter prompts?</string>

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -13,6 +14,8 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
+
+internal enum class LibraryMode { BROWSER, IME_PICKER }
 
 /** Reusable picker surface. Entry activities supply intents and decide what selection opens. */
 @Composable
@@ -28,6 +31,7 @@ internal fun LibraryScreen(
     onOpen: (LibrarySelection) -> Unit = {},
     onEdit: ((LibrarySelection) -> Unit)? = null,
     onCreate: (() -> Unit)? = null,
+    mode: LibraryMode = LibraryMode.BROWSER,
 ) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -40,6 +44,7 @@ internal fun LibraryScreen(
         }
         item {
             OutlinedTextField(value = state.query, onValueChange = onQuery, singleLine = true,
+                keyboardOptions = KeyboardOptions(showKeyboardOnFocus = mode != LibraryMode.IME_PICKER),
                 label = { Text(stringResource(R.string.library_search)) }, modifier = Modifier.fillMaxWidth())
         }
         item {
@@ -83,7 +88,7 @@ internal fun LibraryScreen(
         }
         items(state.rows, key = { it.selection.relativePath }) { row ->
             PromptRow(row, selected = state.selectedPrompt?.selection == row.selection,
-                favoriteEnabled = state.favoritePending == null && !row.isReadOnly,
+                favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && !row.isReadOnly,
                 onSelect = { onSelect(row.selection); onOpen(row.selection) }, onToggleFavorite = { onToggleFavorite(row.selection) })
         }
         item { Spacer(Modifier.height(12.dp)) }

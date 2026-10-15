@@ -103,8 +103,10 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun settings(@ApplicationContext context: Context, @ApplicationScope scope: CoroutineScope): AndroidSettingsStore =
-        AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
+    fun settings(@ApplicationContext context: Context, @IoDispatcher io: CoroutineDispatcher): AndroidSettingsStore =
+        // DataStore returns IO failures to callers; its private scope must not emit IME diagnostics.
+        AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer,
+            scope = CoroutineScope(SupervisorJob() + io + CoroutineExceptionHandler { _, _ -> }),
             produceFile = { File(context.filesDir, "datastore/settings.json") }))
 
     @Provides
