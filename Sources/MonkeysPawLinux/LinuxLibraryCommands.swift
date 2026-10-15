@@ -104,6 +104,7 @@ final class LinuxLibraryCommands {
         guard available, !hasDialog, pendingDrop == nil, gtk_widget_get_visible(parent) != 0,
               let browser, let editor, browser.moveDestination(for: section) != nil,
               editor.state.pendingDecision == nil, editor.state.conflict == nil,
+              editor.state.queuedActions.isEmpty,
               editor.state.status != .loading, editor.state.status != .saving,
               editor.state.status != .commandRunning,
               let row = browser.rows.first(where: {
@@ -111,6 +112,8 @@ final class LinuxLibraryCommands {
               }) else { return false }
         // Match exact issued identity/path/epoch bytes against current rows.
         // Never parse a dropped string into a path or pass it to ImportModel.
+        // Spend the payload even when the editor's guard later cancels.
+        dragEpoch = UUID()
         pendingDrop = (row.selection, section)
         dropOpenApproved = editor.state.prompt == row.selection
         if dropOpenApproved { finishDrop(); return true }

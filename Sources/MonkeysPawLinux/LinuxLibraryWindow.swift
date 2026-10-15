@@ -202,7 +202,7 @@ final class LinuxLibraryWindow {
         }
         commands.bind(editor: editor, browser: browser)
         renderedSections = []
-        renderedRows = []
+        renderedRowsSection = nil
         historyPrompt = nil
         historyReloadPending = false
         if let imports { importView?.bind(imports) }
@@ -601,7 +601,8 @@ final class LinuxLibraryWindow {
 
     private func renderRows(_ state: LibraryBrowserState) {
         let hadFocus = containsFocus(list)
-        if renderedRows != state.rows || (renderedRowsSection == .recent) != (state.selectedSection == .recent) {
+        if renderedRowsSection == nil || renderedRows != state.rows
+            || (renderedRowsSection == .recent) != (state.selectedSection == .recent) {
             clear(list)
             renderedRows = state.rows
             for row in state.rows {

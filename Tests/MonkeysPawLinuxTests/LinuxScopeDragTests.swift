@@ -154,6 +154,47 @@ final class LinuxScopeDragTests: XCTestCase {
         XCTAssertFalse(try drop(payload, onto: .all))
     }
 
+    func testRebindToEmptyGraphRemovesRetiredRows() throws {
+        let root = rig.root.appendingPathComponent("empty-library")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let files = try RootedFileStore(root: root)
+        let data = try RootedFileStore(root: rig.root.appendingPathComponent("empty-data"))
+        let usage = UsageStore(files: data, clock: SystemClock())
+        let library = LibraryService(library: files, data: data, clock: SystemClock(), entropy: SystemEntropy())
+        let index = PromptIndex(service: library, usage: usage, clock: SystemClock())
+        try index.rebuild()
+        let main = GLibMainThread()
+        let editing = PromptEditingService(library: library, index: index, work: LinuxBackgroundWork(), main: main)
+        let editor = EditorModel(editing: editing, clock: SystemClock(), timeZone: { .current }, main: main)
+        let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: main, editor: editor)
+        defer { browser.deactivate(); editor.deactivate() }
+        let list = try settingsWidget("library-list", in: rig.window)
+        XCTAssertNotNil(gtk_widget_get_first_child(list))
+        rig.view.rebind(browser: browser, editor: editor)
+        XCTAssertTrue(browser.rows.isEmpty)
+        XCTAssertNil(gtk_widget_get_first_child(list), "A replacement empty graph must remove every retired row")
+    }
+
+    func testQueuedNavigationRejectsDrop() throws {
+        let payload = try dragPayload()
+        let target = try destinationWidget(.group(ScopeDragRig.team))
+        let other = try XCTUnwrap(rig.browser.rows.first { $0.relativePath == "Folder/seed.md" }?.selection)
+        rig.editor.request(.open(other))
+        XCTAssertFalse(rig.editor.state.queuedActions.isEmpty)
+        XCTAssertFalse(try emitStringDrop(payload, on: target))
+        XCTAssertFalse(rig.editor.state.queuedActions.contains(.move))
+    }
+
+    func testAcceptedPayloadCannotReplayAfterCancellation() throws {
+        let payload = try dragPayload()
+        rig.editor.edit(rig.editor.state.source! + "\nDraft")
+        XCTAssertTrue(try drop(payload, onto: .group(ScopeDragRig.team)))
+        try decide(.cancel)
+        XCTAssertFalse(try drop(payload, onto: .group(ScopeDragRig.team)))
+        XCTAssertEqual(rig.selection.relativePath, "a.md")
+        XCTAssertTrue(rig.editor.state.isDirty)
+    }
+
     func testDraggingAnotherRowGuardsCurrentDraftBeforeOpeningAndMoving() throws {
         try rig.files.write(Data("---\nid: '00000000000000000000000009'\n---\nOther".utf8), at: "b.md")
         try rig.index.rebuild()
@@ -164,7 +205,7 @@ final class LinuxScopeDragTests: XCTestCase {
         try decide(.cancel, action: nil)
         XCTAssertEqual(rig.selection.relativePath, "a.md")
         XCTAssertTrue(rig.editor.state.source!.contains("Keep current"))
-        XCTAssertTrue(try drop(otherPayload, onto: .group(ScopeDragRig.team)))
+        XCTAssertTrue(try drop(dragPayload(path: "b.md"), onto: .group(ScopeDragRig.team)))
         try decide(.discard, action: nil)
         try rig.waitForPath("Groups/Team/b.md")
         XCTAssertEqual(rig.browser.selection, rig.selection)
