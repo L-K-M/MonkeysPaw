@@ -554,7 +554,7 @@ private final class MacScopeTransport: HTTPTransporting, @unchecked Sendable {
                 let seedBytes = "---\nid: '" + Self.seed + "'\n---\nFolder seed"
                 let seed = SyncAPI.FeedItem.upsert(seq: 1,
                     prompt: .init(id: Self.seed, rev: 1, path: "Folder/seed.md", content: seedBytes))
-                let personal = scope == .user ? [seed, prompt] : [seed]
+                let personal = scope == .user ? [prompt, seed] : [seed]
                 let team = scope == .group(groupID: Self.team) ? [prompt] : []
                 let other = scope == .group(groupID: Self.other) ? [prompt] : []
                 let scopes: [SyncAPI.SyncScope] = [
