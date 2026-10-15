@@ -175,6 +175,7 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
                 catch { result.cleanup.metadataIssue = metadataError(error) }
             }
             result.cleanup.remote = await revoke(client)
+            result.cleanup.secretFailures.append(contentsOf: previous.cleanupConnections)
             if secretAttempted, let candidate {
                 deleteSecrets([candidate.connectionID], cleanup: &result.cleanup)
             }
@@ -284,9 +285,9 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
             locked { cached.enabled = true }
             return snapshot
         } catch {
-            sync.stop()
+            sync.stopAccountSession()
             await sync.drain()
-            locked { cached.enabled = false }
+            locked { active = nil; cached.enabled = false; cached.me = nil }
             throw failure(error)
         }
     }

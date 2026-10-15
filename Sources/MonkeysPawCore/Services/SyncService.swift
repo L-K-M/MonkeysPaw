@@ -129,7 +129,10 @@ public final class SyncService {
                     throw SyncError.bindingMismatch
                 }
                 // A state for another root is not deletion evidence here.
-                if old?.binding.root != binding.root { try states.clear(); old = nil }
+                if let existing = old, existing.binding.root != binding.root {
+                    try states.clear()
+                    old = nil
+                }
                 let inventory = try SyncGroupFolders.inventory(binding: previous, availability: .available, mutations: mutations)
                 if let plan = try SyncGroupFolders.accountChange(to: binding.account, state: old, ownership: owned,
                     inventory: inventory, at: clock.now(), freshID: freshID, mutations: mutations) {

@@ -406,6 +406,26 @@ final class SyncAccountStoreTests: XCTestCase {
         }
     }
 
+    func testEnablingRetiredConnectionFailsBeforeWritingAndKeepsReadableMetadata() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncAccountStore(files: files, operations: operations)
+        let account = try connection()
+        try store.saveInactive(account, retiring: [account.connectionID])
+        let bytes = try files.read(at: accountPath)
+        let writes = files.writeCount
+
+        XCTAssertThrowsError(try store.setAccount(account, activation: .enabled)) {
+            XCTAssertEqual($0 as? SyncError, .invalidState)
+        }
+        XCTAssertEqual(files.writeCount, writes)
+        XCTAssertEqual(try files.read(at: accountPath), bytes)
+        let reopened = SyncAccountStore(files: files, operations: operations)
+        XCTAssertEqual(try reopened.loadConnection().activation, .inactive)
+        XCTAssertEqual(try reopened.loadAccount(), account)
+        XCTAssertEqual(try reopened.loadConnection().cleanupConnections, [account.connectionID])
+    }
+
     private func connection(userID: ULID = SyncTestValues.user) throws -> SyncAccount {
         try SyncAccount(identity: SyncTestValues.account(userID: userID), username: "user_1",
                         deviceID: SyncTestValues.device, deviceName: "Linux", connectionID: SyncTestValues.uuid)

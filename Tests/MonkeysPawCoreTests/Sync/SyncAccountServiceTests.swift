@@ -160,6 +160,21 @@ final class SyncAccountServiceTests: XCTestCase {
         XCTAssertNotNil(rig.secrets.environment[.device(rig.firstConnection)])
     }
 
+    func testFailedLoginPreservesPendingSecretCleanupInErrorAndSnapshot() async throws {
+        let rig = try SyncAccountRig()
+        let pending = SyncTestValues.uuid
+        try rig.sync.accounts.saveInactive(nil, retiring: [pending])
+        rig.secrets.writeError = SecretStoreError.writeFailed
+        rig.secrets.deleteError = SecretStoreError.locked
+
+        let error = await failure { try await rig.login() }
+        XCTAssertEqual(error.issue, .secret(.writeFailed))
+        XCTAssertEqual(Set(error.cleanup.secretFailures), [pending, rig.firstConnection])
+        XCTAssertEqual(error.cleanup.secretFailures.count, 2)
+        XCTAssertEqual(rig.account.snapshot.cleanup, error.cleanup)
+        XCTAssertEqual(Set(try rig.sync.accounts.loadConnection().cleanupConnections), [pending, rig.firstConnection])
+    }
+
     func testReservedFolderGateCompensatesAndLeavesLibraryUntouched() async throws {
         for path in ["Groups", "Conflicts", "groups", "CONFLICTS"] {
             let rig = try SyncAccountRig()
@@ -624,6 +639,62 @@ final class SyncAccountServiceTests: XCTestCase {
         XCTAssertEqual(rig.puts.count, 1)
         let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: XCTUnwrap(rig.puts.first?.body))
         XCTAssertEqual(put.path, "one.md")
+    }
+
+    func testFailedInclusionRetiresAccountAndRecoveryCredentials() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        let pending = try await rig.pendingCreate()
+        let normal = rig.sync.transport.handler
+        var gotHead = false
+        rig.sync.transport.handler = { index, request in
+            if request.method == .get, request.url.path.hasSuffix(pending.intent.id.rawValue) {
+                gotHead = true
+                return try SyncServiceRig.failure(.notFound)
+            }
+            return try await normal(index, request)
+        }
+        rig.sync.base.data.onRead = { path in
+            if path == "sync/state.json", gotHead { throw FileStoreError.ioFailure }
+        }
+
+        let error = await failure { try await rig.account.includeHeld([]) }
+        XCTAssertEqual(error.issue, .metadata(.readFailed(.ioFailure)))
+        XCTAssertTrue(gotHead)
+        XCTAssertFalse(rig.account.snapshot.enabled)
+        XCTAssertFalse(rig.sync.service.report.enabled)
+        XCTAssertEqual(try rig.sync.accounts.loadConnection().activation, .inactive)
+
+        rig.sync.base.data.onRead = nil
+        try rig.sync.base.states.reset(for: pending.binding)
+        try rig.sync.pending.save(pending)
+        let requests = rig.sync.transport.requests.count
+        do { try await rig.sync.service.recoverJournal() }
+        catch { /* Failed inclusion must retire its temporary recovery credential. */ }
+        let refresh = await failure { try await rig.account.refresh() }
+        let devices = await failure { try await rig.account.devices() }
+        XCTAssertEqual(refresh.issue, .signedOut)
+        XCTAssertEqual(devices.issue, .signedOut)
+        XCTAssertEqual(rig.sync.transport.requests.count, requests)
+    }
+
+    func testAccountChangeWithoutStateDoesNotDeleteMissingState() async throws {
+        let rig = try SyncAccountRig()
+        try rig.sync.accounts.updateBinding(for: rig.sync.base.binding.root) { _ in
+            try SyncLibraryBinding(root: rig.sync.base.binding.root, owner: rig.sync.base.binding.account)
+        }
+        rig.userID = SyncTestValues.otherUser
+        rig.sync.base.data.failNextDelete = true
+        rig.sync.base.data.onWrite = { path in
+            // The account-change journal may be deleted after publication.
+            if path == "sync/apply.json" { rig.sync.base.data.failNextDelete = false }
+        }
+
+        let result = try await rig.login()
+        await rig.sync.settle()
+        XCTAssertTrue(result.enabled)
+        XCTAssertEqual(try rig.sync.accounts.binding(for: rig.sync.base.binding.root)?.owner.userID, rig.userID)
     }
 
     func testInactiveLogoutDoesNotRevokeAnEnvironmentTokenForAnotherUser() async throws {
