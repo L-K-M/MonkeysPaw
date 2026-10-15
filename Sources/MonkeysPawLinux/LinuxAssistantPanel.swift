@@ -35,7 +35,7 @@ final class LinuxAssistantPanel {
     private let explanation = GTK.label("")
     private let status = GTK.label("")
     private let footer = GTK.label("")
-    private let diff = LinuxAssistantDiffView()
+    private let diff = LinuxDiffView()
     private var write: GTK.Widget!
     private var review: GTK.Widget!
     private var improve: GTK.Widget!
