@@ -86,8 +86,11 @@ final class InviteViewState: ObservableObject {
     func stage(_ supplied: inout String) {
         let link = SecretValue(supplied)
         supplied = ""
-        guard hasCurrentBinding() else { return }
+        guard hasCurrentBinding(), let model else { return }
+        // Opening another link must revoke the previous Accept action immediately.
+        model.dismiss()
         clearInputs()
+        guard isShown, self.model === model else { return }
         pendingLink = link
         stagePendingLink()
     }

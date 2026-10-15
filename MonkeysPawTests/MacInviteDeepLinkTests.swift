@@ -73,7 +73,11 @@ final class MacInviteDeepLinkTests: XCTestCase {
         let controller = try XCTUnwrap(delegate.settingsWindow)
         let window = try XCTUnwrap(controller.window)
         route(link())
-        _ = try stagedView()
+        let original = try stagedView()
+        route(link(server: "https://resident.test/paw"))
+        XCTAssertFalse(original.canAccept, "A replacement URL must revoke the old invitation before the queued stage")
+        let replacement = try stagedView()
+        XCTAssertTrue(replacement.state?.destination?.serverURL.absoluteString == "https://resident.test/paw")
         XCTAssertTrue(controller.window === window)
         window.close()
         route(link(server: "https://other.test/team"))
@@ -321,6 +325,21 @@ final class MacInviteDeepLinkTests: XCTestCase {
         RunLoop.current.run(until: end)
         XCTAssertNil(view.state)
         XCTAssertFalse(model.state.canAccept)
+        delegate.showAccount()
+        XCTAssertTrue(spin { view.canOperate })
+        XCTAssertFalse(view.canAccept)
+        route(link())
+        _ = try stagedView()
+        var closeOnReset = true
+        let observer = model.addObserver { state in
+            if closeOnReset, !state.hasStagedInvite, !state.isBusy {
+                closeOnReset = false
+                controller.window?.close()
+            }
+        }
+        route(link(server: "https://replacement.test/paw"))
+        model.removeObserver(observer)
+        XCTAssertNil(view.state, "A reentrant close must revoke the pending replacement too")
         delegate.showAccount()
         XCTAssertTrue(spin { view.canOperate })
         XCTAssertFalse(view.canAccept)
