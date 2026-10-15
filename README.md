@@ -5,7 +5,7 @@
 
 **Latest release:** v<!-- version -->0.1.0<!-- /version --> · [Download](https://github.com/L-K-M/MonkeysPaw/releases/latest)
 
-Monkey's Paw is a prompt repository for macOS and Linux, with Android planned.
+Monkey's Paw is a prompt repository for macOS, Linux, and Android.
 The desktop apps let you pick a prompt, fill its placeholders, and paste
 the result into the text field you were using. Prompts live in Markdown files
 with YAML front matter, so you can edit them with your own tools. An optional
@@ -54,6 +54,49 @@ notarized. For Gatekeeper approval and installation checks, see the
 `scripts/build.sh mac`; the app-only engine remains at `scripts/build.sh app`.
 
 The [CI and release guide](CICD.md) describes dry runs and cutting a release.
+
+## Install and build on Android
+
+Android API 26 or later is required. M8's local Library, raw editor/history,
+seeds and fill/copy flow are implemented. Add the Quick Settings tile manually,
+hold the launcher icon for **Insert prompt**, or add the **Monkey's Paw:
+Insert prompt** widget. Pick a prompt, fill it, tap **Copy**, then paste in
+your target app. M8's [owner checks](docs/platform/android.md) remain NOT RUN.
+
+When an Android release is published, download `monkeyspaw-v<full-version>.apk`
+and its `.apk.sha256` from this repository's
+[releases](https://github.com/L-K-M/MonkeysPaw/releases). In that directory:
+
+```sh
+version='<full-version>' # Replace with the release version, including any suffix.
+sha256sum -c "monkeyspaw-v${version}.apk.sha256"
+adb install -r "monkeyspaw-v${version}.apk"
+```
+
+On macOS use `shasum -a 256 -c` for the checksum. `adb` requires SDK
+platform-tools and USB debugging; alternatively open the verified APK on the
+device and allow installation from that source. Both debug and release builds
+share the same app ID and [public signer](docs/decisions/0001-android-zero-secret-signing.md),
+so they replace one another. The signature does not establish publisher
+identity. Use this repository's release; uninstalling deletes app-private data.
+See the [APK verification and upgrade checklist](docs/platform/android.md#release-apk-verification).
+
+To build locally, install JDK 17 or newer (CI uses 17; the implementation
+host uses 21), Android SDK `platforms;android-37.0` and `build-tools;36.0.0`.
+Set `JAVA_HOME` and `ANDROID_HOME` to those installations, then from the
+repository root run `scripts/build.sh android --no-open`. It produces
+`dist/monkeyspaw-v<full-version>.apk` and `.apk.sha256`. The complete gate is:
+
+```sh
+cd android
+./gradlew --max-workers=2 :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+```
+
+The direct Gradle build writes `android/app/build/outputs/apk/debug/app-debug.apk`
+and `android/app/build/outputs/apk/release/app-release.apk` relative to the
+repository root. If Google Maven times out on the implementation host, set
+`MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/`
+before building.
 
 ## Host the sync server
 
