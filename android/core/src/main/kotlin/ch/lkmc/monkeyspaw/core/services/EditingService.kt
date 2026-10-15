@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.services
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.ports.*
+import java.util.concurrent.CancellationException
 
 sealed interface EditResult {
     data class Saved(val commit: LibrarySaveResult) : EditResult
@@ -63,6 +64,7 @@ class EditingService(private val library: LibraryService) {
                     is PromptLoadResult.Failed -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Editing(current.error))
                 }
             } else when (error) {
+                is CancellationException -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled)
                 is PromptWriteError.UnsupportedFormat -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.ReadOnly(SourceReadOnlyReason.FUTURE_FORMAT))
                 PromptWriteError.InvalidPrompt -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Invalid(acceptance.candidate.content.document.issues))
                 else -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Editing(sanitized(error)))

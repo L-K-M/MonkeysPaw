@@ -6,6 +6,7 @@ import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.*
 import kotlin.test.*
@@ -88,6 +89,39 @@ class AssistantAcceptanceServiceTest {
         assertTrue(h.library.history.revisions(entry.identity).isEmpty())
         assertEquals(AssistantTokenUsage(11, 7), h.library.provenance(entry.relativePath)?.usage)
         assertEquals(entry.stamp, h.library.index.snapshot().prompts.single().entry.stamp)
+    }
+
+    @Test fun cancelledPublicationReturnsTypedOutcomeAndRollsBackEveryDestination() = runTest {
+        for (destination in AssistantSaveDestination.entries) {
+            val h = Harness(this)
+            h.configure()
+            if (destination == AssistantSaveDestination.PRIVATE_COPY) h.access = AssistantAccessState.GROUP_VIEWER
+            h.open()
+            val acceptance = h.prepared(destination)
+            val before = h.files.bytesSnapshot() to h.state.bytesSnapshot()
+            h.files.fault = { operation, _ ->
+                if (operation == MemoryStore.Operation.CREATE || operation == MemoryStore.Operation.WRITE) {
+                    CancellationException("Publication cancelled")
+                } else null
+            }
+            val outcome = assertIs<AssistantAcceptanceOutcome.Failed>(h.editing.accept(acceptance, AssistantSavePermit()))
+            assertEquals(AssistantAcceptanceFailure.Cancelled, outcome.reason, "destination=$destination")
+            assertEquals(before, h.files.bytesSnapshot() to h.state.bytesSnapshot(), "destination=$destination")
+        }
+    }
+
+    @Test fun oversizedFirstGraphemeStillCreatesAValidExclusiveAlternate() = runTest {
+        val h = Harness(this)
+        h.configure()
+        val title = "a" + "\u0301".repeat(125)
+        h.files.put("Occupied", "$title.md")
+        val candidate = h.service.prepare(LlmArtifact(title, "", emptyList(), emptyList(), "Body", ""),
+            AssistantCommand.Write("Brief"), h.context).await()
+        val acceptance = AssistantAcceptance(candidate, AssistantSaveDestination.NEW_PROMPT, null)
+        val entry = assertNotNull(h.editing.accept(acceptance, AssistantSavePermit()).committed).entry
+        assertEquals(" 2.md", entry.relativePath)
+        assertContentEquals(candidate.content.canonicalBytes, h.files.read(entry.relativePath))
+        assertEquals("Occupied", h.files.text("$title.md"))
     }
 
     @Test fun improveRetainsLoadedOrFirstSaveIdentityAndArchivesExactDiskSource() = runTest {

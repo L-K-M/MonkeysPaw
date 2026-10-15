@@ -191,7 +191,7 @@ class AssistantSession(
         val candidate = state.value.candidate ?: return null
         val destination = when {
             candidate.mutationAccess == AssistantMutationAccess.PRIVATE_COPY -> AssistantSaveDestination.PRIVATE_COPY
-            attempt?.command is AssistantCommand.Write -> AssistantSaveDestination.NEW_PROMPT
+            attempt?.command is AssistantCommand.Write || candidate.context.editor?.isNew == true -> AssistantSaveDestination.NEW_PROMPT
             else -> AssistantSaveDestination.IMPROVE
         }
         val acceptance = AssistantAcceptance(candidate, destination, state.value.usage)

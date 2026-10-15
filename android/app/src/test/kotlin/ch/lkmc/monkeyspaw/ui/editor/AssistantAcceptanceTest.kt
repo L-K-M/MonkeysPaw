@@ -181,6 +181,24 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
         }
     }
 
+    @Test fun `repeated cancelled saves complete separately on the shared main scheduler`() = runTest {
+        assertSame(dispatcher.scheduler, testScheduler)
+        val h = Harness(this)
+        h.configure()
+        h.beforeCreate = { throw CancellationException("Publication cancelled") }
+        val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
+        repeat(2) {
+            h.ready()
+            h.assistant.accept(h.editor, outcomes::add)
+            h.settle()
+            assertFalse(h.assistant.state.value.isAccepting)
+            assertFalse(h.editor.state.value.writing)
+        }
+        assertEquals(List<AssistantAcceptanceOutcome>(2) { AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled) }, outcomes)
+        assertEquals(outcomes.last(), h.editor.state.value.assistantAcceptanceOutcome)
+        assertTrue(h.writes.isEmpty())
+    }
+
     @Test fun `improve retains checked loaded ID omitted by dirty buffer and uses normal history`() = runTest {
         val h = Harness(this)
         val source = "---\nid: 01K6Z4V9KQWZX7MPQ4T8ZNB2PD\nfavorite: true\ncustom: retained\n---\nOriginal\r\n"
@@ -195,6 +213,34 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
         assertFalse(h.editor.state.value.dirty)
         assertNull(h.editor.state.value.conflict)
         assertNull(h.editor.state.value.pendingDecision)
+    }
+
+    @Test fun `improve of unsaved draft creates exclusively after guard and fresh diff`() = runTest {
+        val h = Harness(this)
+        h.configure()
+        h.disk("Occupied", "Candidate.md")
+        h.editor.createDraft("Draft.md")
+        h.editor.edit("Unsaved draft")
+        h.ready(improve = true)
+        val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
+        h.assistant.accept(h.editor, outcomes::add)
+        assertNotNull(h.editor.state.value.pendingDecision)
+        h.decide(EditorDecision.DISCARD)
+        h.settle()
+        assertEquals(AssistantAcceptanceConflict.ChangedBuffer, assertIs<AssistantAcceptanceOutcome.Conflict>(outcomes.single()).reason)
+        assertTrue(h.writes.isEmpty())
+        h.assistant.showDiff()
+        h.settle()
+        val candidate = assertNotNull(h.assistant.state.value.candidate)
+        val committed = assertNotNull(h.accept().committed)
+        assertEquals("Candidate 2.md", committed.entry.relativePath)
+        assertContentEquals(candidate.content.canonicalBytes, h.bytes(committed.entry.relativePath))
+        assertEquals("Occupied", h.text("Candidate.md"))
+        assertFalse(h.exists("Draft.md"))
+        assertFalse(h.editor.state.value.isNew)
+        assertFalse(h.editor.state.value.dirty)
+        assertEquals(committed.entry.stamp, h.editor.state.value.stamp)
+        assertEquals(1, h.writes.size)
     }
 
     @Test fun `fresh write and copy identity survives failed publication feedback and show diff`() = runTest {

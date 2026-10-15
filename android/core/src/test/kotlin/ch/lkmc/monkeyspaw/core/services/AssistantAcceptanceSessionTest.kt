@@ -8,6 +8,23 @@ import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantAcceptanceSessionTest {
+    @Test fun unsavedImproveUsesExclusiveCreation() = runTest {
+        val h = AssistantHarness(this, source = "Unsaved draft")
+        h.context = h.context.copy(editor = checkNotNull(h.context.editor).copy(stamp = null, isNew = true))
+        h.configure()
+        h.session.improve()
+        runCurrent()
+        val acceptance = assertNotNull(h.session.accept())
+        assertEquals(AssistantSaveDestination.NEW_PROMPT, acceptance.destination)
+        val library = ServiceHarness()
+        val result = EditingService(library.library).accept(acceptance, AssistantSavePermit())
+        val committed = assertNotNull(result.committed)
+        assertContentEquals(acceptance.candidate.content.canonicalBytes, library.prompts.read(committed.entry.relativePath))
+        assertTrue(h.session.completeAcceptance(acceptance.id, result))
+        assertEquals(AssistantPhase.SAVED, h.session.state.value.phase)
+        h.session.deactivate()
+    }
+
     @Test fun pureTokenIsRetiredByBufferChangeAndCannotCompleteAnotherAcceptance() = runTest {
         val h = AssistantHarness(this, source = "Original")
         h.configure()
@@ -44,7 +61,8 @@ class AssistantAcceptanceSessionTest {
         assertEquals(result.entry.stamp, h.session.state.value.acceptanceOutcome?.committed?.entry?.stamp)
         h.session.showDiff()
         runCurrent()
-        assertNotEquals(result.entry.document.frontMatter.id, h.session.state.value.candidate?.content?.document?.frontMatter?.id)
+        val nextID = assertNotNull(h.session.state.value.candidate?.content?.document?.frontMatter?.id)
+        assertNotEquals(result.entry.document.frontMatter.id, nextID)
         h.session.deactivate()
     }
 
