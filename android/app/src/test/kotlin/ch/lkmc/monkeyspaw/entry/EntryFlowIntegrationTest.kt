@@ -178,7 +178,7 @@ internal abstract class EntryFlowFixture : TemporaryFiles() {
         core = LibraryService(prompts, recording, clock, Entropy { count -> ByteArray(count) { (draw++).toByte() } })
         repository = LibraryRepository(core, EditingService(core), prompts, worker)
         factory = FillViewModelFactory(repository, FillService(core, clipboard, clock::zone), CopyTextDelivery(clipboard))
-        share = ShareEntry(::createFill, CopyTextDelivery(clipboard), EditorViewModelFactory(repository, worker, clock))
+        share = ShareEntry(::createFill, CopyTextDelivery(clipboard), EditorViewModelFactory(repository, worker, clock, CoroutineScope(SupervisorJob() + worker)))
         owners.put("share", share)
         val host = Any()
         share.attach(host)
