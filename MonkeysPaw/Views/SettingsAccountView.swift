@@ -12,6 +12,7 @@ final class AccountSettingsViewState: ObservableObject {
     @Published private(set) var passwordInputReset = UUID()
     @Published private var pendingIntent: UUID? = nil
     let passwordInput = AccountPasswordInput()
+    let groups: GroupManagementViewState
 
     private let makeModel: () -> AccountModel?
     private let mainThread: MainThread
@@ -22,10 +23,13 @@ final class AccountSettingsViewState: ObservableObject {
     private var hasRenderedConnection = false
     private var renderedConnection: AccountConnection?
 
-    init(mainThread: MainThread, makeModel: @escaping () -> AccountModel?, onOpen: @escaping () -> Void = {}) {
+    init(mainThread: MainThread, makeModel: @escaping () -> AccountModel?, onOpen: @escaping () -> Void = {},
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         self.mainThread = mainThread
         self.makeModel = makeModel
         self.onOpen = onOpen
+        groups = GroupManagementViewState(mainThread: mainThread, makeModel: makeGroups)
+        groups.onBusyChange = { [weak self] in self?.objectWillChange.send() }
     }
 
     deinit {
@@ -39,7 +43,7 @@ final class AccountSettingsViewState: ObservableObject {
         }
     }
 
-    var canOperate: Bool { isShown && pendingIntent == nil && model?.state.isBusy == false }
+    var canOperate: Bool { isShown && pendingIntent == nil && model?.state.isBusy == false && !groups.isBusy }
     var canSignOut: Bool { canOperate && state?.connection != nil }
     var canSelectHeld: Bool { canOperate && state?.enabled == true }
     var canDecideHeld: Bool { canSelectHeld && !selectedHeld.isEmpty }
@@ -59,6 +63,7 @@ final class AccountSettingsViewState: ObservableObject {
 
     func hide() {
         isShown = false
+        groups.hide()
         detach()
     }
 
@@ -67,7 +72,8 @@ final class AccountSettingsViewState: ObservableObject {
     func refreshBinding() {
         guard isShown else { return }
         let next = makeModel()
-        guard next !== model else { return }
+        guard next !== model else { groups.refreshBinding(); return }
+        groups.hide()
         detach()
         model = next
         guard let next else { return }
@@ -76,6 +82,7 @@ final class AccountSettingsViewState: ObservableObject {
             self.render(next.state)
         }
         render(next.state)
+        groups.show()
     }
 
     func login() {
@@ -119,12 +126,14 @@ final class AccountSettingsViewState: ObservableObject {
         guard hasCurrentBinding(), canOperate, let model else { return }
         let request = UUID()
         pendingIntent = request
+        groups.updateAccount(state, pendingIntent: request)
         intent(model)
         // Admission precedes this release even with a queued MainThread port.
         // A repeated Keep local is a no-op and need not publish another state.
         mainThread.run { [weak self, weak model] in
             guard let self, let model, self.model === model, self.pendingIntent == request else { return }
             self.pendingIntent = nil
+            self.groups.updateAccount(self.state, pendingIntent: nil)
         }
     }
 
@@ -152,6 +161,7 @@ final class AccountSettingsViewState: ObservableObject {
         }
         selectedHeld.formIntersection(Set(next.heldPrompts.map(\.identity)))
         state = next
+        groups.updateAccount(next, pendingIntent: pendingIntent)
     }
 
     private func detach() {
@@ -246,6 +256,9 @@ struct SettingsAccountView: View {
                 reservedFolders
                 devices
                 heldFiles
+                Divider()
+                if presentation.groups.isBusy { Text(GroupManagementStrings.busyAccount) }
+                GroupManagementView(presentation: presentation.groups)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
