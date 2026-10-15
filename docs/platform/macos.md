@@ -685,3 +685,29 @@ control offers **Improve a private copy**, and acceptance preserves the source
 while creating a fresh prompt in personal scope. Its LLM privacy flag is
 preserved; ownership is defined by §9's scope. Record an owner check when
 authoritative group roles are wired into macOS composition.
+
+## M7 D17 Delivery and update Settings: NOT RUN
+
+The Linux host cannot compile or run AppKit/SwiftUI. Record both `macos-app`
+and `macos-artifacts` CI results before these owner checks. Hosted tests use
+isolated roots/pasteboards, fake HTTP/paste and a fake update timer boundary;
+they do not establish live permission, browser, clipboard or keyboard behavior.
+Ordinary Settings close retains its window/models, detaches the two view
+callbacks and refreshes on reopen. Teardown permanently retires those models;
+any replacement controller must receive fresh models. Updates belong to app
+data and survive a prompt-library change. Default-on automatic checks start
+only in a versioned runtime outside XCTest.
+
+- Commit / CI runs / packaged artifact SHA-256:
+- macOS / hardware / signing identity / browser:
+- Keyboard navigation / VoiceOver / date / tester:
+
+| Check | Result | Details |
+|---|---|---|
+| Settings opens from the menu and Cmd+,; General, Shortcuts, Delivery and Assistant remain usable after repeated close/reopen, folder changes and Library window activation | NOT RUN | |
+| Delivery shows fixed Cmd+V, current Accessibility and AppleScript fallback facts, cached failures and readback results. Test paste runs once; Open Setup reuses the existing window. Deny/revoke/grant Accessibility and Automation in a disposable session and check refresh without duplicate prompts or hotkey registration | NOT RUN | |
+| Restore starts off, persists when enabled, and states previous text only, 750 ms timing and the simultaneous-copy limitation. Try slow browser/chat/terminal paste: record actual readback and whether 750 ms is sufficient. Newer copies, including identical text, Copy, failed paste, Test paste, disabling restore and shutdown preserve the expected clipboard | NOT RUN | |
+| General displays the full installed beta version and numeric marketing version remains valid in both signed dmg/zip copies. Automatic off survives restart and prevents traffic; enabled checks remain at most daily across restart/offline failure. Inspect metadata only, never prompt/field/account content | NOT RUN | |
+| Check Now shows progress and distinct success/no-release/offline/rate-limit errors, including while automatic is off. Update available is passive; only View release opens the repository release page, and opening failure is actionable. No download, installation or restart occurs automatically | NOT RUN | |
+| Disable automatic checks during slow work, close/reopen Settings, switch libraries and quit; no stale result revives a retired window and no update timer survives shutdown. Check timestamp/state errors using disposable app-data permissions | NOT RUN | |
+| Tab/Shift+Tab reach both toggles, Test paste, Open Setup, Check Now and View release with visible focus; VoiceOver reads each label, version, status and error. Native text editing, Cmd+V and existing shortcut recorders retain focus and key handling | NOT RUN | |
