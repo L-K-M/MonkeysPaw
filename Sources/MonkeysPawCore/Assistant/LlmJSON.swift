@@ -132,46 +132,74 @@ struct LlmJSONParser {
     }
 
     mutating func parsePrefix() throws -> (LlmJSONValue, Int) {
-        let parsed = try value(depth: 0)
-        return (parsed, position)
+        // Darwin's cooperative-pool stacks cannot hold a native frame per
+        // envelope container in debug builds. Keep open containers on the heap.
+        var stack = [Frame]()
+        let cap = mode == .output ? Limits.llmJSONNestingCap : Limits.assistantEnvelopeNestingCap
+        nextValue: while true {
+            whitespace()
+            guard position < bytes.count else { throw AssistantError.invalidOutput }
+            var parsed: LlmJSONValue
+            if bytes[position] == 123 || bytes[position] == 91 {
+                // Depth counts enclosing containers; a scalar at the cap opens none.
+                guard stack.count < cap else { throw AssistantError.invalidOutput }
+                let frame = Frame(kind: bytes[position] == 123 ? .object : .array)
+                position += 1
+                whitespace()
+                if consume(frame.closingByte) {
+                    parsed = frame.value
+                } else {
+                    if frame.kind == .object { try key(into: frame) }
+                    stack.append(frame)
+                    continue
+                }
+            } else {
+                parsed = try scalar()
+            }
+
+            while let frame = stack.last {
+                frame.append(parsed)
+                whitespace()
+                if consume(44) {
+                    if frame.kind == .object { try key(into: frame) }
+                    continue nextValue
+                }
+                guard consume(frame.closingByte) else { throw AssistantError.invalidOutput }
+                stack.removeLast()
+                parsed = frame.value
+            }
+            return (parsed, position)
+        }
     }
 
-    private mutating func value(depth: Int) throws -> LlmJSONValue {
-        whitespace()
-        guard position < bytes.count else { throw AssistantError.invalidOutput }
-        // Depth counts enclosing containers; a scalar at the cap opens none.
-        if bytes[position] == 123 || bytes[position] == 91 {
-            let cap = mode == .output ? Limits.llmJSONNestingCap : Limits.assistantEnvelopeNestingCap
-            guard depth < cap else { throw AssistantError.invalidOutput }
+    private final class Frame {
+        enum Kind { case object, array }
+        let kind: Kind
+        var key = ""
+        var properties = [String: LlmJSONValue]()
+        var items = [LlmJSONValue]()
+
+        init(kind: Kind) { self.kind = kind }
+
+        var closingByte: UInt8 { kind == .object ? 125 : 93 }
+        var value: LlmJSONValue { kind == .object ? .object(properties) : .array(items) }
+
+        func append(_ value: LlmJSONValue) {
+            if kind == .object { properties[key] = value }
+            else { items.append(value) }
         }
+    }
+
+    private mutating func key(into frame: Frame) throws {
+        whitespace()
+        frame.key = try string()
+        if mode == .output, frame.properties[frame.key] != nil { throw AssistantError.invalidOutput }
+        whitespace()
+        guard consume(58) else { throw AssistantError.invalidOutput }
+    }
+
+    private mutating func scalar() throws -> LlmJSONValue {
         switch bytes[position] {
-        case 123:
-            position += 1
-            whitespace()
-            var properties = [String: LlmJSONValue]()
-            if consume(125) { return .object(properties) }
-            repeat {
-                whitespace()
-                let key = try string()
-                if mode == .output, properties[key] != nil { throw AssistantError.invalidOutput }
-                whitespace()
-                guard consume(58) else { throw AssistantError.invalidOutput }
-                properties[key] = try value(depth: depth + 1)
-                whitespace()
-            } while consume(44)
-            guard consume(125) else { throw AssistantError.invalidOutput }
-            return .object(properties)
-        case 91:
-            position += 1
-            whitespace()
-            var items = [LlmJSONValue]()
-            if consume(93) { return .array(items) }
-            repeat {
-                items.append(try value(depth: depth + 1))
-                whitespace()
-            } while consume(44)
-            guard consume(93) else { throw AssistantError.invalidOutput }
-            return .array(items)
         case 34: return .string(try string())
         case 116: try literal("true"); return .boolean(true)
         case 102: try literal("false"); return .boolean(false)

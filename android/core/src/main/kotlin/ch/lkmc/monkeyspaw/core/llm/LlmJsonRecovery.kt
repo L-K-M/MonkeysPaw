@@ -114,47 +114,75 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
         return value
     }
 
-    fun parsePrefix(): Pair<LlmJsonValue, Int> = value(0) to position
-
-    private fun value(depth: Int): LlmJsonValue {
-        whitespace()
-        if (position >= bytes.size) throw AssistantError.InvalidOutput
+    fun parsePrefix(): Pair<LlmJsonValue, Int> {
+        // Envelope nesting must not consume one native frame per container.
+        val stack = mutableListOf<Frame>()
         val cap = if (mode == AssistantJsonMode.OUTPUT) Limits.llmJSONNestingCap else Limits.assistantEnvelopeNestingCap
-        if ((peek() == 123 || peek() == 91) && depth >= cap) throw AssistantError.InvalidOutput
-        return when (peek()) {
-            123 -> {
+        nextValue@ while (true) {
+            whitespace()
+            if (position >= bytes.size) throw AssistantError.InvalidOutput
+            var parsed: LlmJsonValue
+            if (peek() == 123 || peek() == 91) {
+                // A scalar at the cap opens no additional container.
+                if (stack.size >= cap) throw AssistantError.InvalidOutput
+                val frame = Frame(if (peek() == 123) Frame.Kind.OBJECT else Frame.Kind.ARRAY)
                 position++
                 whitespace()
-                val members = linkedMapOf<String, LlmJsonValue>()
-                if (!consume(125)) {
-                    do {
-                        whitespace()
-                        // Swift Dictionary<String, ...> uses canonical String equality.
-                        val decoded = string()
-                        val key = if (mode == AssistantJsonMode.OUTPUT) UnicodeText.nfc(decoded) else decoded
-                        if (key in members && mode == AssistantJsonMode.OUTPUT) throw AssistantError.InvalidOutput
-                        whitespace()
-                        if (!consume(58)) throw AssistantError.InvalidOutput
-                        val item = value(depth + 1)
-                        // JSONDecoder's envelope keyed containers retain the first duplicate.
-                        // JSONSerialization eagerly decodes values and keeps the last duplicate.
-                        if (key !in members || mode == AssistantJsonMode.SERIALIZATION) members[key] = item
-                        whitespace()
-                    } while (consume(44))
-                    if (!consume(125)) throw AssistantError.InvalidOutput
+                if (consume(frame.closingByte)) {
+                    parsed = frame.value
+                } else {
+                    if (frame.kind == Frame.Kind.OBJECT) key(frame)
+                    stack.add(frame)
+                    continue
                 }
-                LlmJsonValue.Object(members)
+            } else {
+                parsed = scalar()
             }
-            91 -> {
-                position++
+
+            while (stack.isNotEmpty()) {
+                val frame = stack.last()
+                frame.append(parsed, mode)
                 whitespace()
-                val items = mutableListOf<LlmJsonValue>()
-                if (!consume(93)) {
-                    do { items.add(value(depth + 1)); whitespace() } while (consume(44))
-                    if (!consume(93)) throw AssistantError.InvalidOutput
+                if (consume(44)) {
+                    if (frame.kind == Frame.Kind.OBJECT) key(frame)
+                    continue@nextValue
                 }
-                LlmJsonValue.Array(items)
+                if (!consume(frame.closingByte)) throw AssistantError.InvalidOutput
+                stack.removeAt(stack.lastIndex)
+                parsed = frame.value
             }
+            return parsed to position
+        }
+    }
+
+    private class Frame(val kind: Kind) {
+        enum class Kind { OBJECT, ARRAY }
+        var key = ""
+        val members = linkedMapOf<String, LlmJsonValue>()
+        val items = mutableListOf<LlmJsonValue>()
+        val closingByte: Int get() = if (kind == Kind.OBJECT) 125 else 93
+        val value: LlmJsonValue get() = if (kind == Kind.OBJECT) LlmJsonValue.Object(members) else LlmJsonValue.Array(items)
+
+        fun append(value: LlmJsonValue, mode: AssistantJsonMode) {
+            if (kind == Kind.OBJECT) {
+                // JSONDecoder keeps the first duplicate; serialization keeps the last.
+                if (key !in members || mode == AssistantJsonMode.SERIALIZATION) members[key] = value
+            } else items.add(value)
+        }
+    }
+
+    private fun key(frame: Frame) {
+        whitespace()
+        // Swift Dictionary<String, ...> uses canonical String equality.
+        val decoded = string()
+        frame.key = if (mode == AssistantJsonMode.OUTPUT) UnicodeText.nfc(decoded) else decoded
+        if (mode == AssistantJsonMode.OUTPUT && frame.key in frame.members) throw AssistantError.InvalidOutput
+        whitespace()
+        if (!consume(58)) throw AssistantError.InvalidOutput
+    }
+
+    private fun scalar(): LlmJsonValue =
+        when (peek()) {
             34 -> if (mode == AssistantJsonMode.ENVELOPE) encodedText() else LlmJsonValue.Text(string())
             116 -> { literal("true"); LlmJsonValue.Boolean(true) }
             102 -> { literal("false"); LlmJsonValue.Boolean(false) }
@@ -173,7 +201,6 @@ internal class LlmJsonParser(private val bytes: ByteArray, private var position:
                 LlmJsonValue.Number(fragment)
             }
         }
-    }
 
     // JSONDecoder defers unused values: malformed optional text cannot override a stop outcome.
     private fun encodedText(): LlmJsonValue {
