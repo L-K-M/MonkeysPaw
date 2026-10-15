@@ -242,6 +242,49 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(report.status, .needsSignIn)
     }
 
+    func testUnreadableJournalRequiresRecoveryWithoutPendingSnapshots() throws {
+        let rig = try SyncServiceRig()
+        try rig.base.data.put("corrupt", at: "sync/apply.json")
+        XCTAssertThrowsError(try rig.journal.replay()) { XCTAssertEqual($0 as? SyncError, .corruptFile) }
+        XCTAssertTrue(rig.base.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.base.mutations.pendingPermit)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertNil(rig.pending.snapshot.value)
+        XCTAssertNil(rig.pending.snapshot.error)
+
+        XCTAssertEqual(rig.service.stop(), .recoveryRequired)
+        XCTAssertEqual(rig.service.rootHealthChanged(.available), .recoveryRequired)
+        XCTAssertEqual(rig.service.retire(), .recoveryRequired)
+    }
+
+    func testPendingApplyPermitRequiresRecoveryWithoutPendingSnapshots() throws {
+        for failure in [SyncError.readFailed(.ioFailure), .durabilityUncertain] {
+            let rig = try SyncServiceRig()
+            let plan = try rig.base.plan([rig.base.replacement()])
+            if failure == .durabilityUncertain {
+                rig.base.dataOperations.failFlushNumber = rig.base.dataOperations.flushCount + 1
+            } else {
+                var reads = 0
+                rig.base.data.onRead = { path in
+                    guard path == "sync/apply.json" else { return }
+                    reads += 1
+                    if reads == 2 { throw FileStoreError.ioFailure }
+                }
+            }
+
+            XCTAssertThrowsError(try rig.journal.apply(plan)) { XCTAssertEqual($0 as? SyncError, failure) }
+            XCTAssertEqual(rig.base.mutations.pendingPermit?.id, plan.id)
+            XCTAssertFalse(rig.base.mutations.hasUnreadableJournal)
+            XCTAssertNil(rig.journal.pending)
+            XCTAssertNil(rig.pending.snapshot.value)
+            XCTAssertNil(rig.pending.snapshot.error)
+
+            XCTAssertEqual(rig.service.stop(), .recoveryRequired)
+            XCTAssertEqual(rig.service.rootHealthChanged(.available), .recoveryRequired)
+            XCTAssertEqual(rig.service.retire(), .recoveryRequired)
+        }
+    }
+
     func testStoppedPendingPushRequiresRecoveryBeforeRetirement() async throws {
         let rig = try SyncServiceRig()
         try rig.base.files.write(SyncScanTestSupport.bytes(), at: "a.md")

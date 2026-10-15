@@ -130,6 +130,122 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
     }
 
+    func testApplyReadFailureBlocksOrdinaryAccessUntilEmptyRecovery() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.data.directories.insert("sync")
+        rig.data.onRead = { path in
+            if path == "sync/apply.json" { throw FileStoreError.ioFailure }
+        }
+
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .readFailed(.ioFailure))
+        }
+        XCTAssertTrue(rig.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertNil(rig.mutations.pendingPermit)
+        XCTAssertThrowsError(try rig.mutations.begin(plan.id, nextState: plan.nextState)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.mutations.finish(plan.id)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertThrowsError(try rig.values.removeAll()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertEqual(rig.files.writeCount, 0)
+        XCTAssertNil(rig.states.snapshot.value)
+
+        rig.data.onRead = nil
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .readFailed(.ioFailure))
+        }
+        let recovered = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+            mutations: rig.mutations, states: rig.states)
+        XCTAssertEqual(try recovered.replay(), .committed)
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertNoThrow(try rig.values.removeAll())
+        XCTAssertEqual(try recovered.apply(plan), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+        XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+    }
+
+    func testReplanReadFailureCannotReleaseTheExistingPermit() throws {
+        let rig = try SyncApplyTestRig()
+        let first = try rig.plan([rig.replacement()])
+        try rig.files.write(SyncApplyTestRig.bytes("Changed"), at: "a.md")
+        XCTAssertEqual(try rig.journal.apply(first), .replanAsConflict(operationID: first.edits[0].id))
+        let intent = try rig.data.read(at: "sync/apply.json")
+        let replacement = try rig.plan([rig.replacement()])
+        let writes = rig.files.writeCount
+        rig.data.onRead = { path in
+            if path == "sync/apply.json" { throw FileStoreError.ioFailure }
+        }
+
+        XCTAssertThrowsError(try rig.journal.replan(replacement)) {
+            XCTAssertEqual($0 as? SyncError, .readFailed(.ioFailure))
+        }
+        XCTAssertTrue(rig.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertThrowsError(try rig.mutations.begin(first.id, nextState: first.nextState)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.mutations.finish(first.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, first.id)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertThrowsError(try rig.values.removeAll()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertEqual(rig.files.writeCount, writes)
+        XCTAssertNil(rig.states.snapshot.value)
+
+        rig.data.onRead = nil
+        XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), intent)
+        let recovered = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+            mutations: rig.mutations, states: rig.states)
+        XCTAssertEqual(try recovered.replan(replacement), .committed)
+        XCTAssertEqual(try recovered.replay(), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), replacement.edits[0].bytes)
+        XCTAssertEqual(rig.states.snapshot.value, replacement.nextState)
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertNoThrow(try rig.values.removeAll())
+    }
+
+    func testRunReadFailureRetainsThePublishedIntentAndRecoveryGate() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.dataOperations.onOperation = { operation in
+            if operation == "directory:/" {
+                rig.data.onRead = { path in
+                    if path == "sync/apply.json" { throw FileStoreError.ioFailure }
+                }
+            }
+        }
+
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .readFailed(.ioFailure))
+        }
+        XCTAssertTrue(rig.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertThrowsError(try rig.mutations.begin(plan.id, nextState: plan.nextState)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.mutations.finish(plan.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, plan.id)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertThrowsError(try rig.values.removeAll()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertEqual(rig.files.writeCount, 0)
+        XCTAssertNil(rig.states.snapshot.value)
+
+        rig.dataOperations.onOperation = nil
+        rig.data.onRead = nil
+        let record = try JSONDecoder().decode(SyncApplyRecord.self, from: rig.data.read(at: "sync/apply.json"))
+        XCTAssertEqual(record.id, plan.id)
+        let recovered = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+            mutations: rig.mutations, states: rig.states)
+        XCTAssertEqual(try recovered.replay(), .committed)
+        XCTAssertEqual(try recovered.replay(), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+        XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertNoThrow(try rig.values.removeAll())
+    }
+
     func testFailedJournalInitializationCanRecoverOnTheSameLibrary() throws {
         for restoreJournal in [false, true] {
             let rig = try SyncApplyTestRig()
@@ -325,6 +441,42 @@ final class SyncApplyJournalTests: XCTestCase {
                                            mutations: rig.mutations, states: rig.states)
         XCTAssertEqual(try restored.replay(), .committed)
         XCTAssertNoThrow(try rig.library.entries())
+    }
+
+    func testMissingIntentOnLiveReplayCannotReleaseTheRecoveryGate() throws {
+        let rig = try SyncApplyTestRig()
+        let plan = try rig.plan([rig.replacement()])
+        rig.dataOperations.failFlushNumber = rig.dataOperations.flushCount + 1
+        XCTAssertThrowsError(try rig.journal.apply(plan)) {
+            XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+        }
+        let intent = try rig.data.read(at: "sync/apply.json")
+        try rig.data.delete(at: "sync/apply.json")
+        rig.dataOperations.failFlushNumber = nil
+
+        XCTAssertThrowsError(try rig.journal.replay()) {
+            XCTAssertEqual($0 as? SyncError, .readFailed(.notFound))
+        }
+        XCTAssertTrue(rig.mutations.hasUnreadableJournal)
+        XCTAssertThrowsError(try rig.mutations.begin(plan.id, nextState: plan.nextState)) {
+            XCTAssertEqual($0 as? LibraryError, .recoveryRequired)
+        }
+        rig.mutations.finish(plan.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, plan.id)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertThrowsError(try rig.values.removeAll()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertNil(rig.states.snapshot.value)
+
+        try rig.data.writePrivate(intent, at: "sync/apply.json")
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.journal.replay(), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
+        XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+        XCTAssertFalse(rig.mutations.hasUnreadableJournal)
+        XCTAssertNil(rig.mutations.pendingPermit)
+        XCTAssertNoThrow(try rig.library.entries())
+        XCTAssertNoThrow(try rig.values.removeAll())
     }
 
     func testFailedStateReflushOnLiveReplayCannotReleaseTheRecoveryGate() throws {
