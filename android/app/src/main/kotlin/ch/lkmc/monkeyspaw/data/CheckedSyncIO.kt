@@ -6,11 +6,7 @@ import android.system.Os
 import android.system.OsConstants
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.nio.charset.CharacterCodingException
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.PosixFileAttributeView
-import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 
 /** Native durability and deterministic race/failure injection; never selects a JVM fallback. */
@@ -32,10 +28,7 @@ internal abstract class CheckedSyncIO {
         return DirectoryToken(token, created)
     }
 
-    open fun setMode(path: Path, mode: SyncFileMode) {
-        Files.getFileAttributeView(path, PosixFileAttributeView::class.java, NOFOLLOW_LINKS)
-            .setPermissions(PosixFilePermissions.fromString(if (mode == SyncFileMode.READ_ONLY) "r--r--r--" else "rw-------"))
-    }
+    abstract fun setMode(path: Path, mode: SyncFileMode)
 }
 
 internal class AndroidCheckedSyncIO : CheckedSyncIO() {
