@@ -71,6 +71,8 @@ internal class ImeSessionController(
     private var deliveryFinished = false
     private var insertRefused = false
     private var handingOff = false
+    // Report a failed launch on return even if switching already retired its form.
+    private var pendingHandoffFailure = false
 
     fun replaceRoot(next: ImeSessionRoot) {
         if (destroyed) { next.destroy(); return }
@@ -94,11 +96,12 @@ internal class ImeSessionController(
 
     fun show(next: ImeEditor) {
         if (destroyed || !inputStarted) return
-        if (editor?.matches(next) != true) {
+        val latest = next.retainOwnConnection(editor)
+        if (editor?.matches(latest) != true) {
             targetVersion++
             retire()
         }
-        editor = next
+        editor = latest
         shown = true
         root?.show()
         activate()
@@ -178,6 +181,8 @@ internal class ImeSessionController(
             if (destroyed || target != targetVersion) return@withModels
             if (shown && !isCurrent(epoch)) return@withModels
             val launched = try { launchHandoff(snapshot) } catch (_: Exception) { false }
+            if (destroyed || target != targetVersion) return@withModels
+            pendingHandoffFailure = !launched
             if (epoch != generation) return@withModels
             if (launched) retire() else mutableState.value = state.value.copy(handoffFailed = true)
         } finally { handingOff = false }
@@ -224,7 +229,7 @@ internal class ImeSessionController(
         val metadata = editor ?: return
         val policy = ImeInputPolicy.classify(metadata.inputType, metadata.imeOptions)
         mutableState.value = ImeUiState(generation, password = !policy.promptsAllowed,
-            inFillActivity = metadata.inFillActivity)
+            inFillActivity = metadata.inFillActivity, handoffFailed = pendingHandoffFailure)
         if (!policy.promptsAllowed || metadata.inFillActivity) return
         val epoch = generation
         val session = FillSession(mode = DeliveryMode.IME_COMMIT, input = FillInput.INLINE,

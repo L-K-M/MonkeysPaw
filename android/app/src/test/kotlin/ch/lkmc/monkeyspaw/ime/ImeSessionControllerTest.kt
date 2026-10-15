@@ -543,6 +543,33 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
         assertTrue(commits.isEmpty())
     }
 
+    @Test fun `show keeps a known own connection blocked until a new connection is reported`() = runTest {
+        graph()
+        val connection = Any()
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, connection, inFillActivity = true)
+        show()
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, connection, inFillActivity = false)
+        repeat(2) { controller.show(current) }
+        advanceUntilIdle()
+        assertTrue(controller.state.value.inFillActivity)
+        assertNull(controller.state.value.models)
+        controller.handoff(epoch())
+        controller.insert(epoch())
+        controller.copy(epoch())
+        assertEquals(0, created)
+        assertTrue(launchedTokens.isEmpty())
+        assertTrue(commits.isEmpty())
+        assertEquals(0, clipboard.reads)
+        assertEquals(0, clipboard.writes)
+
+        current = ImeEditor(TYPE_CLASS_TEXT, 0, Any())
+        controller.show(current)
+        advanceUntilIdle()
+        assertFalse(controller.state.value.inFillActivity)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+        assertEquals(1, created)
+    }
+
     @Test fun `Fill handoff waits for builtin completion and preserves held values and ephemeral Copy policy`() = runTest {
         graph("{{text}}/{{clipboard}}")
         current = ImeEditor(TYPE_CLASS_TEXT, IME_FLAG_NO_PERSONALIZED_LEARNING, Any())
@@ -591,6 +618,39 @@ internal class ImeSessionControllerTest : TemporaryFiles() {
         launchThrows = false
         controller.handoff(epoch())
         assertEquals(1, launchedTokens.size)
+        assertNotNull(handoffs.consume(launchedTokens.single()))
+        assertEquals(0, clipboard.writes)
+        assertTrue(commits.isEmpty())
+    }
+
+    @Test fun `failed handoff stays visible on return after keyboard departure without retaining the form`() = runTest {
+        graph()
+        show()
+        open()
+        val previous = models().fill
+        launchThrows = true
+        onSwitch = { controller.unbind() }
+        controller.handoff(epoch())
+        assertEquals(FillPhase.CLOSED, previous.state.value.phase)
+        assertNull(controller.state.value.models)
+        controller.startInput(current)
+        controller.show(current)
+        advanceUntilIdle()
+        assertTrue(controller.state.value.handoffFailed)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+
+        // Switching may finish after the synchronous launch callback has already failed.
+        onSwitch = {}
+        controller.handoff(epoch())
+        controller.unbind()
+        controller.startInput(current)
+        controller.show(current)
+        advanceUntilIdle()
+        assertTrue(controller.state.value.handoffFailed)
+        assertEquals(FillPhase.PICKING, models().fill.state.value.phase)
+        launchThrows = false
+        controller.handoff(epoch())
+        assertFalse(controller.state.value.handoffFailed)
         assertNotNull(handoffs.consume(launchedTokens.single()))
         assertEquals(0, clipboard.writes)
         assertTrue(commits.isEmpty())
