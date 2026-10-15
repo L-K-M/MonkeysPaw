@@ -1164,6 +1164,7 @@ Device checkpoints support:
 
 - `files`: objects with required `path` and byte-exact `content`, optional
   `mode` (`normal` or `readOnly`). `absent`: paths that must have no file.
+  `files` checks only the listed paths; also use `file_count` to pin the total.
 - `file_count`, `prompt_count`, `cursor_count`, `held_count`, `history_count`,
   `writes` and `trash_count`: exact nonnegative counts. History counts concern
   persisted history files; writes concern library publications only.

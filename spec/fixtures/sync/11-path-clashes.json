@@ -776,8 +776,13 @@
               {
                 "path": "Crowded (20).md",
                 "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              },
+              {
+                "path": "Crowded.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nRemote occupant.\n"
               }
             ],
+            "file_count": 20,
             "state": [
               {
                 "id": "${prompt.p}",
@@ -1138,7 +1143,32 @@
           "action": "expect",
           "device": "a",
           "expected": {
+            "files": [
+              {
+                "path": "Crowded.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "file_count": 20,
+            "writes": 0,
+            "trash_count": 0,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Crowded.md",
+                "rev": 0,
+                "error": "sync.path_clash"
+              }
+            ],
+            "status": "syncError",
             "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "status": 200,
+                "count": 1
+              },
               {
                 "method": "PUT",
                 "path": "/api/v1/prompts/${prompt.p}",
