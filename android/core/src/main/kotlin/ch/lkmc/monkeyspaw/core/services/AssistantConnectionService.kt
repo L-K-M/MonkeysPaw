@@ -44,7 +44,10 @@ class AssistantConnectionService(
                 test.finish(ConnectionTestResult.Ok(models(connection, client, deadline)))
             } catch (error: Exception) {
                 val result = if (deadline - clock.nowNanos() <= 0) ConnectionTestResult.Timeout else failure(error)
+                // Preserve the worker's cancellation before finish cancels the whole scope.
+                if (error is CancellationException) currentCoroutineContext().cancel(error)
                 test.finish(result)
+                if (error is CancellationException) throw error
             }
         }
         return test

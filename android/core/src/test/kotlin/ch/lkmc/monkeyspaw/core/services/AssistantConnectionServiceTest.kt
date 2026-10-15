@@ -2,6 +2,8 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.*
+import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
+import ch.lkmc.monkeyspaw.core.llm.AssistantClient
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -267,6 +269,29 @@ internal class AssistantConnectionServiceTest {
         assertEquals<List<ConnectionTestResult>>(listOf(ConnectionTestResult.Cancelled), results)
         assertEquals(emptyList(), h.requests)
         assertEquals(emptyList(), h.provider.secrets.reads)
+        h.assertNoWrites()
+    }
+
+    @Test fun clientCancellationPropagatesItsCauseAndCompletesExactlyOnce() = runTest {
+        val h = ConnectionHarness(testScheduler)
+        val cancellation = CancellationException("fixture cancellation")
+        var cause: Throwable? = null
+        val client = object : AssistantClient by AnthropicClient(h.transport, h.clock) {
+            override suspend fun listModels(connection: ProviderConnection, afterID: String?, deadlineNanos: Long): AssistantModelPage {
+                currentCoroutineContext().job.invokeOnCompletion { cause = it }
+                throw cancellation
+            }
+        }
+        val service = AssistantConnectionService(h.provider.service, client, client, h.io, h.completion, h.clock, timer = h.io)
+        val results = mutableListOf<ConnectionTestResult>()
+        val test = service.testConnection(h.draft()) { results.add(it) }
+        runCurrent()
+        assertEquals<List<ConnectionTestResult>>(listOf(ConnectionTestResult.Cancelled), results)
+        assertSame(cancellation, cause)
+        test.cancel()
+        advanceTimeBy(Limits.modelListTimeoutNanos / 1_000_000)
+        runCurrent()
+        assertEquals<List<ConnectionTestResult>>(listOf(ConnectionTestResult.Cancelled), results)
         h.assertNoWrites()
     }
 
