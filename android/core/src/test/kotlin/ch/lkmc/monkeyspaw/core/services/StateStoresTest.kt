@@ -301,8 +301,29 @@ class StateStoresTest {
                 h.usage.recordUse(identity, Instant.ofEpochSecond(number.toLong()))
             } }
             futures.forEach { it.get(10, TimeUnit.SECONDS) }
-            assertEquals(40, h.values.rememberedValues(identity).size)
-            assertEquals((0 until 40).toSet(), h.usage.useEvents(identity).map { it.epochSecond.toInt() }.toSet())
+            assertEquals((0 until 40).associate { "field$it" to it.toString() }, h.values.rememberedValues(identity))
+            assertEquals((0 until 40).map { Instant.ofEpochSecond(it.toLong()) }, h.usage.useEvents(identity).sorted())
+        } finally { pool.shutdownNow() }
+    }
+
+    @Test fun sharedFakeDoesNotHoldItsStorageLockDuringCallbacks() {
+        val h = ServiceHarness()
+        val writing = CountDownLatch(2)
+        h.state.onWrite = {
+            writing.countDown()
+            assertTrue(writing.await(5, TimeUnit.SECONDS))
+        }
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val values = pool.submit { h.values.record(identity, mapOf("field" to "value")) }
+            val usage = pool.submit { h.usage.recordUse(identity, Instant.EPOCH) }
+            values.get(10, TimeUnit.SECONDS)
+            usage.get(10, TimeUnit.SECONDS)
+            assertEquals(mapOf("field" to "value"), h.values.rememberedValues(identity))
+            assertEquals(listOf(Instant.EPOCH), h.usage.useEvents(identity))
+            assertEquals(2, h.state.writes.size)
+            assertEquals(4, h.state.reads.size)
+            assertEquals(6, h.state.accesses)
         } finally { pool.shutdownNow() }
     }
 
