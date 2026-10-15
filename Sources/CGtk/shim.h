@@ -317,6 +317,12 @@ static inline void mp_portal_unexport(GdkSurface *surface) {
 
 /* ---- Signals (g_signal_connect is a macro; G_CALLBACK is another) ---------- */
 
+/* Internal Library row drag: only the macro casts/types need C bridges. */
+static inline GType mp_string_type(void) { return G_TYPE_STRING; }
+static inline GtkEventController *mp_drag_source_controller(GtkDragSource *source) {
+    return GTK_EVENT_CONTROLLER(source);
+}
+
 static inline gulong mp_connect(gpointer instance,
                                 const char *signal,
                                 GCallback handler,
