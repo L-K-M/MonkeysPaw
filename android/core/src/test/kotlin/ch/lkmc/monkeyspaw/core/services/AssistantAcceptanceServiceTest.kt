@@ -50,6 +50,28 @@ class AssistantAcceptanceServiceTest {
         }
     }
 
+    @Test fun syncRecoveryRefusesEveryAssistantDestinationBeforeIO() = runTest {
+        for (blocked in listOf(false, true)) for (destination in AssistantSaveDestination.entries) {
+            val h = Harness(this)
+            h.configure()
+            if (destination == AssistantSaveDestination.PRIVATE_COPY) h.access = AssistantAccessState.GROUP_VIEWER
+            h.open()
+            val acceptance = h.prepared(destination)
+            val owner = UUID.randomUUID()
+            if (blocked) h.library.blockSyncApplyForRecovery()
+            else h.library.beginSyncApply(owner, SyncTestValues.state())
+            val accesses = h.files.accesses + h.state.accesses
+            val before = h.files.bytesSnapshot() to h.state.bytesSnapshot()
+            assertFailsWith<LibraryError.RecoveryRequired> {
+                h.library.acceptAssistant(acceptance, AssistantSavePermit())
+            }
+            assertEquals(accesses, h.files.accesses + h.state.accesses)
+            assertEquals(before, h.files.bytesSnapshot() to h.state.bytesSnapshot())
+            if (blocked) h.library.finishEmptySyncRecovery() else h.library.endSyncApply(owner)
+            assertNotNull(h.editing.accept(acceptance, AssistantSavePermit()).committed)
+        }
+    }
+
     @Test fun exclusiveCreationRetainsPreviewIDThroughOccupiedAndRacedNames() = runTest {
         val h = Harness(this)
         h.configure()
