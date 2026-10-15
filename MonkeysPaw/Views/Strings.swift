@@ -21,7 +21,8 @@ enum Strings {
     static let showInFinder = "Show in Finder"
     static let togglePicker = "Toggle picker"
     static let repeatLast = "Repeat last"
-    static let repeatUnavailable = "Repeat last is not available yet."
+    static let openRepeatPrompt = "Open prompt"
+    static let clearShortcut = "Clear"
     static let openSetup = "Open Setup…"
     static let changeShortcut = "Change shortcut…"
     static let configureShortcut = "Configure in Setup…"
@@ -31,6 +32,38 @@ enum Strings {
     static let unknownShortcut = "Your shortcut is unknown."
     static let shortcutUnavailable = "Your shortcut cannot be changed right now."
     static let invalidShortcut = "Choose one key with modifier keys for your shortcut."
+
+    static func recordShortcutLabel(_ action: String) -> String { "Record shortcut for " + action }
+    static func clearShortcutLabel(_ action: String) -> String { "Clear shortcut for " + action }
+    static func verifyShortcutLabel(_ action: String) -> String { "Verify shortcut for " + action }
+
+    static func shortcutRegistration(_ registration: HotkeyRegistration) -> String {
+        hotkeyMechanism(registration.mechanism) + ": " + registrationStatus(registration.status)
+    }
+
+    static func repeatMessage(_ result: RepeatResult) -> String? {
+        switch result {
+        case .nothingToRepeat: return "Nothing to repeat"
+        case .reviewRequired(_, let reason):
+            switch reason {
+            case .sessionOnlyValues: return "Your last delivery used values kept only for that session. Open the prompt and fill it again."
+            case .sourceChanged: return "Your last prompt changed. Open it and review it before delivering again."
+            case .sourceUnavailable: return "Your last prompt is unavailable. Check your library, then open the prompt again."
+            }
+        case .unavailable(let failure):
+            switch failure {
+            case .ownWindow: return "Focus the app you want to paste into, then repeat again."
+            case .invalidationFailed: return "Repeat could not be cleared. Check your app data permissions and retry the library change or Forget values."
+            case .corruptRecord, .futureRecord, .recordTooLarge: return "Your saved repeat record cannot be read. Deliver a prompt to replace it."
+            case .readFailed: return "Repeat could not be read. Check your app data permissions, then retry."
+            case .writeFailed: return "Repeat could not be saved. Check your app data permissions."
+            case .invalidBinding, .inactive: return "Repeat is unavailable for this library."
+            }
+        case .delivered(_, let warnings):
+            return warnings.isEmpty ? nil : warnings.map(persistenceWarning).joined(separator: "\n")
+        case .cancelled: return nil
+        }
+    }
 
     static func shortcutError(_ error: ShortcutRebindError) -> String {
         switch error {

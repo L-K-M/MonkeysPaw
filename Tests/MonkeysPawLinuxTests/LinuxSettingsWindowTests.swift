@@ -424,6 +424,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let cases: [(LinuxEnvironment.LibrarySwitchResult, LibrarySwitchOutcome)] = [
             (.switched, .switched),
             (.deliveryInFlight, .deliveryInFlight),
+            (.repeatInvalidationFailed, .repeatInvalidationFailed),
             (.outsideSandboxHome, .invalidTarget(.outsideSandboxHome)),
             (.invalidTarget(.outsideRoot), .invalidTarget(.rejectedByStore(.outsideRoot))),
             (.libraryUnavailable(.notFound), .libraryUnavailable(.notFound)),

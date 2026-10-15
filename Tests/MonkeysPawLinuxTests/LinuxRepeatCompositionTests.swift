@@ -289,13 +289,24 @@ final class LinuxRepeatCompositionTests: XCTestCase {
         try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
         let second = tools.directory.appendingPathComponent("Second")
         try RootedFileStore(root: second).write(Data("second".utf8), at: "prompt.md")
-        XCTAssertEqual(environment.switchLibrary(to: second), .repeatInvalidationFailed)
+        let general = environment.generalSettingsModel
+        let originalPath = general.state.activeLibraryPath
+        general.chooseFolder(second.path)
+        drain()
         XCTAssertTrue(environment.pickerModel === old)
+        XCTAssertEqual(general.state.activeLibraryPath, originalPath)
+        XCTAssertEqual(general.state.lastSwitchMessage, .repeatInvalidationFailed)
+        XCTAssertEqual(GeneralSettingsStrings.message(for: try XCTUnwrap(general.state.lastSwitchMessage)),
+            "Your library folder has not changed because Repeat could not be cleared. "
+                + "Repeat is disabled. Check your app data permissions and available disk space, then retry the library change.")
         XCTAssertEqual(try repeatNow(), .unavailable(.invalidationFailed))
         XCTAssertTrue(try message(in: repeatNotice()).contains("could not be cleared"))
         try FileManager.default.removeItem(at: record)
         try FileManager.default.moveItem(at: saved, to: record)
-        XCTAssertEqual(environment.switchLibrary(to: second), .switched)
+        general.chooseFolder(second.path)
+        drain()
+        XCTAssertNil(general.state.lastSwitchMessage)
+        XCTAssertEqual(general.state.activeLibraryPath, second.path)
         XCTAssertEqual(try repeatNow(), .nothingToRepeat)
     }
 

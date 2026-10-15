@@ -64,6 +64,7 @@ final class OnboardingModelTests: XCTestCase {
     func testChoosingFolderCompletesOnlyForSuccessfulSwitchAndReportsEveryOutcome() {
         let outcomes: [LibrarySwitchOutcome] = [
             .switched, .settingsNotSaved(.writeFailed(.ioFailure)), .deliveryInFlight,
+            .repeatInvalidationFailed,
             .invalidTarget(.notAbsolute), .invalidTarget(.missing), .invalidTarget(.notDirectory),
             .invalidTarget(.unreadable), .invalidTarget(.symlink),
             .invalidTarget(.rejectedByStore(.invalidRoot)), .libraryUnavailable(.ioFailure)

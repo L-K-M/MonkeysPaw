@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
         case settingsNotSaved(SettingsError)
+        case repeatInvalidationFailed
 
         var outcome: LibrarySwitchOutcome {
             switch self {
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
             case .settingsNotSaved(let error): return .settingsNotSaved(error)
+            case .repeatInvalidationFailed: return .repeatInvalidationFailed
             }
         }
     }
@@ -44,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let httpTransport: HTTPTransporting
     private let secrets: SecretStore
     private let clipboard: Clipboard
+    private let makeHotkeyBackend: (() -> MacHotkeyBackend)?
+    private let pasteInjectors: [PasteInjector]?
     private let editorDialog: LibraryWindowController.DialogPresenter
     private let importChooser: LibraryWindowController.ImportChooser
     private let replyToTermination: (Bool) -> Void
@@ -52,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let forgetAllConfirmation: SettingsWindowController.ForgetAllConfirmation
     private let makeNotifier: (() -> UserNotificationNotifier)?
     private let activateApplication: () -> Void
+    private let ownWindowIsActive: (() -> Bool)?
     private let windowActivation: WindowActivationCoordinator
     private var panelController: PanelController?
     private(set) var pickerPresentation: PickerViewState?
@@ -61,6 +66,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var onboardingWindow: OnboardingWindowController?
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
+    private var deliverySettingsObserver: UUID?
+    private var lastDelivery: LastDeliveryStore?
+    private var repeatService: RepeatService?
+    private var repeatAwaitingResult = false
+    private(set) var repeatModel: RepeatModel?
+    private(set) var repeatWindow: RepeatWindowController?
     private var statusItem: NSStatusItem?
     private(set) var pickerModel: PickerModel?
     private(set) var libraryBrowserModel: LibraryBrowserModel?
@@ -108,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          httpTransport: HTTPTransporting = URLSessionHTTPTransport(),
          secrets: SecretStore? = nil,
          clipboard: Clipboard = PasteboardClipboard(),
+         makeHotkeyBackend: (() -> MacHotkeyBackend)? = nil,
+         pasteInjectors: [PasteInjector]? = nil,
          editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
          importChooser: @escaping LibraryWindowController.ImportChooser = MacImportChooser.choose,
          replyToTermination: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) },
@@ -117,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          makeNotifier: (() -> UserNotificationNotifier)? = nil,
          setActivationPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { _ = NSApp.setActivationPolicy($0) },
          activateApplication: @escaping () -> Void = { NSApp.activate() },
+         ownWindowIsActive: (() -> Bool)? = nil,
          makeFocusTracker: @escaping (MainThread, MonkeysPawCore.Scheduler) -> WorkspaceFocusTracker = {
         WorkspaceFocusTracker(mainThread: $0, scheduler: $1)
     }, scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
@@ -147,6 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else if Self.isRunningTests { self.secrets = UnavailableSecretStore() }
         else { self.secrets = KeychainSecretStore() }
         self.clipboard = clipboard
+        self.makeHotkeyBackend = makeHotkeyBackend
+        self.pasteInjectors = pasteInjectors
         self.editorDialog = editorDialog
         self.importChooser = importChooser
         self.replyToTermination = replyToTermination
@@ -155,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.forgetAllConfirmation = forgetAllConfirmation
         self.makeNotifier = makeNotifier
         self.activateApplication = activateApplication
+        self.ownWindowIsActive = ownWindowIsActive
         windowActivation = WindowActivationCoordinator(mainThread: mainThread,
             setPolicy: setActivationPolicy, activate: activateApplication)
         // Injected graphs never read or write the user's legacy preferences.
@@ -188,12 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isRunningTests else { return }
 
         focusTracker?.startTrackingActivations()
-        if let accelerator = Accelerator.defaultBinding(for: .togglePicker) {
-            shortcuts?.configure([.togglePicker: accelerator]) { [weak self] action in
-                guard action == .togglePicker else { return }
-                self?.togglePicker()
-            }
-        }
+        startShortcuts()
 
         installMainMenu()
         installStatusItem()
@@ -235,6 +247,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func tearDown() {
         guard !isShutDown else { return }
         isShutDown = true
+        repeatModel?.deactivate()
+        repeatService?.cancel()
+        repeatWindow?.tearDown()
+        if let deliverySettingsObserver { settingsModel?.removeObserver(deliverySettingsObserver) }
+        deliverySettingsObserver = nil
+        delivery?.invalidatePendingPresentation()
+        delivery?.shutdown()
         watcher?.stop()
         libraryWindow?.presentation.retireAssistant()
         libraryBrowserModel?.deactivate()
@@ -247,9 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentedOnboardingStep = nil
         setupWindow?.tearDown()
         onboardingWindow?.tearDown()
-        if let presentation = settingsWindow?.presentation {
-            mainThread.run { presentation.retireAssistant() }
-        }
+        settingsWindow?.tearDown()
         windowActivation.tearDown()
     }
 
@@ -296,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let backgroundWork = self.backgroundWork
         let focus = makeFocusTracker(mainThread, scheduler)
         let panel = makePanelController(mainThread, scheduler, log)
-        let hotkeys = CarbonHotkeyBackend()
+        let hotkeys = makeHotkeyBackend?() ?? CarbonHotkeyBackend()
         let session = MacSessionProbe()
         let clipboard = self.clipboard
         let notifier: UserNotificationNotifier
@@ -308,31 +325,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notifier = UserNotificationNotifier()
         }
         self.notifier = notifier
-        let cgEvent = CGEventPasteInjector()
-        let appleScript = AppleScriptPasteInjector()
-        let failureCache = SessionPasteFailureCache()
-        let delivery = DeliveryService(panel: panel, focus: focus, clipboard: clipboard,
-                                       injectors: [cgEvent, appleScript], notifier: notifier,
-                                       session: session, scheduler: scheduler,
-                                       mainThread: mainThread, failureCache: failureCache)
-        let shortcuts = ShortcutService(backend: hotkeys, scheduler: scheduler, mainThread: mainThread)
-        let target = TextFieldSelfTestTarget()
-        let selfTest = SelfTest(target: target, delivery: delivery, session: session,
-                                scheduler: scheduler, mainThread: mainThread)
-        let probe = MacSetupProbe(hotkeys: hotkeys, mainThread: mainThread)
-        let setup = SetupService(probe: probe, session: session, shortcuts: shortcuts,
-                                 selfTest: selfTest, mainThread: mainThread)
         let data: FileStore
         do { data = try RootedFileStore(root: dataDirectory) }
         catch {
             data = UnavailableFileStore()
             log.write(.warning, "App data unavailable; settings, remembered values and usage cannot be saved")
         }
-        let values = ValuesStore(files: data)
-        let usage = UsageStore(files: data, clock: clock)
         let settings = SettingsService(store: SettingsStore(files: data, legacyFirstRun: legacyFirstRun))
         let settingsModel = SettingsModel(settings: settings)
         self.settingsModel = settingsModel
+        let failureCache = SessionPasteFailureCache()
+        let delivery = DeliveryService(panel: panel, focus: focus, clipboard: clipboard,
+                                       injectors: pasteInjectors ?? [CGEventPasteInjector(), AppleScriptPasteInjector()],
+                                       notifier: notifier,
+                                       session: session, scheduler: scheduler,
+                                       mainThread: mainThread, failureCache: failureCache,
+                                       clipboardRestore: settingsModel.isReadOnly ? .off
+                                           : settingsModel.deliveryPreferences.clipboardRestore)
+        deliverySettingsObserver = settingsModel.addObserver { [weak delivery] snapshot, _ in
+            delivery?.setClipboardRestore(snapshot.isReadOnly ? .off : snapshot.document.delivery.clipboardRestore)
+        }
+        let shortcuts = ShortcutService(backend: hotkeys, scheduler: scheduler, mainThread: mainThread,
+                                       settings: settings)
+        let target = TextFieldSelfTestTarget()
+        let selfTest = SelfTest(target: target, delivery: delivery, session: session,
+                                scheduler: scheduler, mainThread: mainThread)
+        let probe = MacSetupProbe(hotkeys: hotkeys, mainThread: mainThread)
+        let setup = SetupService(probe: probe, session: session, shortcuts: shortcuts,
+                                 selfTest: selfTest, mainThread: mainThread)
+        let values = ValuesStore(files: data)
+        let usage = UsageStore(files: data, clock: clock)
+        lastDelivery = LastDeliveryStore(files: data)
         let providers = ProviderSettingsService(store: ProviderSettingsStore(files: data, log: log),
             secrets: secrets, log: log)
         providerSettingsService = providers
@@ -496,6 +519,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do { files = try prepareLibrary(at: directory, location: url == nil ? .platformDefault : .chosen) }
         catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }
 
+        do { try retireRepeat(replacementRoot: directory) }
+        catch {
+            showRepeatResult(.unavailable(.invalidationFailed))
+            return .repeatInvalidationFailed
+        }
+        repeatModel?.deactivate()
+        repeatWindow?.tearDown()
+        repeatWindow = nil
+
         // Delivery's queue can still be finishing a guarded dismissal or Setup
         // self-test. Hide the old view now, before replacing its native root.
         panelController?.hide()
@@ -587,7 +619,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard isCurrent(), let self, self.editorSwitchRefused else { return }
             self.settingsWindow?.presentation.objectWillChange.send()
         }
-        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain)
+        let repeatService = composeRepeat(library: library, index: index, isCurrent: isCurrent)
+        let model = PickerModel(index: index, fill: fill, delivery: delivery, main: libraryMain,
+                                repeatService: repeatService)
         let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: libraryMain, editor: editor)
         model.libraryAvailable = availability
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
@@ -795,6 +829,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         // Library status owns availability, including runtime root loss.
         appMenu.autoenablesItems = false
+        addRepeatItem(to: appMenu)
         addLibraryItem(to: appMenu, keyEquivalent: "l")
         let importItem = appMenu.addItem(withTitle: ImportStrings.action, action: #selector(importFromMenu), keyEquivalent: "i")
         importItem.target = self
@@ -838,7 +873,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return libraryWindow?.presentation.imports?.canImport == true
         case #selector(openLibraryFromMenu), #selector(showLibrary):
             return libraryStatusModel?.libraryAvailable == true
-        case #selector(showPanel), #selector(showSetup), #selector(showSettings):
+        case #selector(showPanel), #selector(showSetup), #selector(showSettings), #selector(repeatLast):
             return true
         default: return false
         }
@@ -864,6 +899,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
                                 keyEquivalent: "")
         show.target = self
+        addRepeatItem(to: menu)
         addLibraryItem(to: menu, keyEquivalent: "")
         addSettingsItem(to: menu)
         let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
@@ -910,11 +946,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.target = self
     }
 
+    private func addRepeatItem(to menu: NSMenu) {
+        let repeatItem = menu.addItem(withTitle: Strings.repeatLast, action: #selector(repeatLast), keyEquivalent: "")
+        repeatItem.target = self
+    }
+
     @objc private func showPanel() {
         pickerModel?.open()
     }
 
+    /// Hosted tests can opt in only with an injected backend, never Carbon.
+    func startShortcuts() {
+        guard !isShutDown, !Self.isRunningTests || makeHotkeyBackend != nil else { return }
+        shortcuts?.configure { [weak self] action in
+            switch action {
+            case .togglePicker: self?.togglePicker()
+            case .repeatLast: self?.repeatLast()
+            }
+        }
+    }
+
+    // Repeat belongs to the current library graph. Y18 can add account binding
+    // and access here, then join its account retirement to retireRepeat below.
+    private func composeRepeat(library: LibraryService, index: PromptIndex,
+                               isCurrent: @escaping () -> Bool) -> RepeatService? {
+        guard let lastDelivery, let fill, let delivery else { return nil }
+        let service = (try? RepeatBinding(root: libraryDirectory.path)).map { binding in
+            RepeatService(binding: binding, store: lastDelivery, library: library, index: index,
+                fill: fill, delivery: delivery, work: backgroundWork, main: mainThread,
+                canAccess: { [weak self] _ in isCurrent() && self?.pickerModel?.libraryAvailable == true },
+                isOwnWindowActive: { [weak self] in self?.isOwnWindowActive ?? true })
+        }
+        repeatService = service
+        repeatAwaitingResult = false
+        let model = service.map { RepeatModel(service: $0, main: mainThread) }
+        repeatModel = model
+        model?.onChange = { [weak self, weak model] in
+            guard isCurrent(), let self, let model else { return }
+            if model.state == .repeating { self.repeatAwaitingResult = true; return }
+            guard self.repeatAwaitingResult, model.state == .idle else { return }
+            // Availability also publishes after ordinary deliveries and Forget.
+            // Consume only this invocation's completion, never its retained result.
+            self.repeatAwaitingResult = false
+            if let result = model.result { self.showRepeatResult(result) }
+        }
+        return service
+    }
+
+    private func retireRepeat(replacementRoot: URL) throws {
+        if let repeatService { try repeatService.retire(); return }
+        // An invalid initial root cannot compose repeat. Recovery must still
+        // clear a record left by an older valid root before it can return.
+        guard let lastDelivery, let library, let index, let fill, let delivery else {
+            throw RepeatFailure.invalidationFailed
+        }
+        let retirement = RepeatService(binding: try RepeatBinding(root: replacementRoot.path), store: lastDelivery,
+            library: library, index: index, fill: fill, delivery: delivery,
+            work: backgroundWork, main: mainThread, isOwnWindowActive: { true })
+        try retirement.retire()
+    }
+
+    private var isOwnWindowActive: Bool {
+        if let ownWindowIsActive { return ownWindowIsActive() }
+        if panelController?.isActiveAndVisible == true { return true }
+        return NSApp.isActive && NSApp.windows.contains { $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) }
+    }
+
+    @objc func repeatLast() {
+        guard !isShutDown, pickerModel?.state != .delivering,
+              pickerModel?.isResolvingBuiltins != true,
+              pickerModel?.fillModel?.builtinsResolved != false,
+              pickerModel?.fillModel?.state != .delivering else { return }
+        guard let repeatModel else { showRepeatResult(.unavailable(.invalidBinding)); return }
+        repeatModel.repeatLast()
+    }
+
+    private func showRepeatResult(_ result: RepeatResult) {
+        guard !isShutDown, Strings.repeatMessage(result) != nil else { return }
+        if repeatWindow == nil {
+            let generation = libraryGeneration
+            repeatWindow = RepeatWindowController(mainThread: mainThread, activateApplication: activateApplication,
+                openPrompt: { [weak self] reference in
+                    guard let self, !self.isShutDown, self.libraryGeneration == generation else { return }
+                    self.handle(.edit(identity: reference.identity, relativePath: reference.relativePath))
+                })
+        }
+        repeatWindow?.show(result)
+    }
+
     func togglePicker() {
+        guard !isShutDown else { return }
         if panelController?.isActiveAndVisible == true {
             pickerModel?.dismiss()
         } else {

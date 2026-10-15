@@ -2,8 +2,13 @@ import Carbon.HIToolbox
 import Foundation
 import MonkeysPawCore
 
+/// Setup reads native facts without registering or changing either action.
+protocol MacHotkeyBackend: HotkeyBackend {
+    func registration(for action: HotkeyAction) -> HotkeyRegistration
+}
+
 /// Carbon's Event Manager needs no Accessibility or Input Monitoring permission.
-final class CarbonHotkeyBackend: HotkeyBackend {
+final class CarbonHotkeyBackend: MacHotkeyBackend {
     let mechanism = HotkeyMechanism.carbon
 
     struct Combination: Equatable {

@@ -672,7 +672,7 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertEqual(try files(at: root).listFiles().map(\.relativePath), ["code"])
     }
 
-    func testFolderSaveFailureShowsErrorAndHealthyAlreadyActiveRetryCompletesStep() throws {
+    func testFolderRetirementFailureKeepsRootAndDurableRetryCompletesStep() throws {
         guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
         try saveProgress(folderCompleted: false, seedsOffered: false)
         start()
@@ -684,10 +684,13 @@ final class MacOnboardingTests: XCTestCase {
         try presentation().chooseFolder()
         chooserCompletions[0](chosen)
         XCTAssertEqual(try model().state.step, .libraryFolder)
-        XCTAssertEqual(try model().state.lastSwitchMessage, .settingsNotSaved(.writeFailed(.ioFailure)))
-        XCTAssertEqual(try model().state.settingsError, .writeFailed(.ioFailure))
-        XCTAssertEqual(try presentation().messages.count, 1, "Save errors must not be shown twice")
-        XCTAssertEqual(try presentation().activeLibraryPath, chosen.path)
+        XCTAssertEqual(try model().state.lastSwitchMessage, .repeatInvalidationFailed)
+        XCTAssertNil(try model().state.settingsError)
+        XCTAssertEqual(try presentation().messages,
+            [try XCTUnwrap(GeneralSettingsStrings.message(for: .repeatInvalidationFailed))],
+            "Retirement errors must not be shown twice")
+        XCTAssertEqual(try presentation().activeLibraryPath, root.path)
+        XCTAssertEqual(delegate.repeatModel?.availability, .unavailable(.invalidationFailed))
         XCTAssertFalse(try XCTUnwrap(delegate.settingsModel).firstRun.libraryFolderCompleted)
         XCTAssertNil(try XCTUnwrap(delegate.settingsModel).libraryFolderPath)
         XCTAssertEqual(delegate.libraryStatusModel?.state, .available)
