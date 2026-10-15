@@ -212,6 +212,7 @@ final class MacSettingsWindowTests: XCTestCase {
         weak var liveModel: AssistantSettingsModel?
         var controller: SettingsWindowController? = SettingsWindowController(general: existing.generalModel,
             shortcuts: existing.shortcutsModel, rememberedValues: existing.rememberedValuesModel,
+            delivery: existing.delivery.model, updates: existing.updates.model,
             forgetAllConfirmation: { _, _ in {} }, mainThread: main,
             activation: WindowActivationCoordinator(mainThread: main, setPolicy: { _ in }, activate: {}),
             folderChooser: { _, _ in {} }, openSetup: {}, makeAssistant: {

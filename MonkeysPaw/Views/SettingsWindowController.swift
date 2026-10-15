@@ -24,6 +24,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
          rememberedValues: RememberedValuesSettingsModel,
+         delivery: DeliverySettingsModel, updates: UpdateSettingsModel,
          forgetAllConfirmation: @escaping ForgetAllConfirmation,
          mainThread: MainThread, activation: WindowActivationCoordinator,
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
@@ -31,6 +32,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          onProviderChange: @escaping () -> Void = {}) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
+                                         delivery: delivery, updates: updates,
                                          mainThread: mainThread, openSetup: openSetup)
         self.mainThread = mainThread
         self.activation = activation
@@ -54,6 +56,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             presentation.cancelForgetAll()
             // Retire without publishing a tab removal from deinit.
             presentation.assistant?.retire()
+            presentation.delivery.retire()
+            presentation.updates.retire()
             window?.delegate = nil
             window?.close()
         }
@@ -65,6 +69,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             self.isTornDown = true
             self.cancelPendingPanels()
             self.presentation.retireAssistant()
+            self.presentation.delivery.retire()
+            self.presentation.updates.retire()
             self.window?.delegate = nil
             // willClose also stops both shortcut recorders' native monitors.
             self.window?.close()
@@ -80,6 +86,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                     onProviderChange: self.onProviderChange)
             }
             self.presentation.refresh()
+            self.presentation.delivery.show()
+            self.presentation.updates.show()
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
             self.window = window
@@ -89,6 +97,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         cancelPendingPanels()
+        presentation.delivery.hide()
+        presentation.updates.hide()
     }
 
     private func cancelPendingPanels() {

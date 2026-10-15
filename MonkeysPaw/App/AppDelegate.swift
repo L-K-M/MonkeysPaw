@@ -44,6 +44,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchURI: (URL) -> Void
     private let backgroundWork: BackgroundWork
     private let httpTransport: HTTPTransporting
+    private let currentReleaseVersion: String?
+    private let updateClock: WallClock
+    private let releasePage: ReleasePageOpening
+    private let updateScheduler: MacUpdateScheduler
+    private let makeSelfTestTarget: () -> SelfTestTarget
     private let secrets: SecretStore
     private let clipboard: Clipboard
     private let makeHotkeyBackend: (() -> MacHotkeyBackend)?
@@ -67,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusTracker: WorkspaceFocusTracker?
     private var shortcuts: ShortcutService?
     private var deliverySettingsObserver: UUID?
+    private var updateSettingsObserver: UUID?
+    private var updateService: UpdateService?
     private var lastDelivery: LastDeliveryStore?
     private var repeatService: RepeatService?
     private var repeatAwaitingResult = false
@@ -121,6 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          clipboard: Clipboard = PasteboardClipboard(),
          makeHotkeyBackend: (() -> MacHotkeyBackend)? = nil,
          pasteInjectors: [PasteInjector]? = nil,
+         currentReleaseVersion: String? = MacReleaseVersion.read(from: Bundle.main.infoDictionary ?? [:]),
+         updateClock: WallClock = SystemClock(), releasePage: ReleasePageOpening? = nil,
+         makeUpdateScheduler: (MainThread) -> MacUpdateScheduler = { MacUpdateScheduler(mainThread: $0) },
+         makeSelfTestTarget: @escaping () -> SelfTestTarget = { TextFieldSelfTestTarget() },
          editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
          importChooser: @escaping LibraryWindowController.ImportChooser = MacImportChooser.choose,
          replyToTermination: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) },
@@ -157,6 +168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.launchURI = launchURI
         self.backgroundWork = backgroundWork
         self.httpTransport = httpTransport
+        self.currentReleaseVersion = currentReleaseVersion
+        self.updateClock = updateClock
+        self.releasePage = releasePage ?? WorkspaceReleasePageOpener()
+        updateScheduler = makeUpdateScheduler(mainThread)
+        self.makeSelfTestTarget = makeSelfTestTarget
         if let secrets { self.secrets = secrets }
         else if Self.isRunningTests { self.secrets = UnavailableSecretStore() }
         else { self.secrets = KeychainSecretStore() }
@@ -204,6 +220,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // status items, first-run UI and prompts belong beyond this gate.
         guard !Self.isRunningTests else { return }
 
+        if currentReleaseVersion.flatMap(ReleaseVersion.init) != nil {
+            updateService?.startAutomaticChecks()
+        }
         focusTracker?.startTrackingActivations()
         startShortcuts()
 
@@ -252,6 +271,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         repeatWindow?.tearDown()
         if let deliverySettingsObserver { settingsModel?.removeObserver(deliverySettingsObserver) }
         deliverySettingsObserver = nil
+        if let updateSettingsObserver { settingsModel?.removeObserver(updateSettingsObserver) }
+        updateSettingsObserver = nil
+        updateScheduler.stop()
+        updateService?.stop()
         delivery?.invalidatePendingPresentation()
         delivery?.shutdown()
         watcher?.stop()
@@ -334,6 +357,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = SettingsService(store: SettingsStore(files: data, legacyFirstRun: legacyFirstRun))
         let settingsModel = SettingsModel(settings: settings)
         self.settingsModel = settingsModel
+        let updates = UpdateService(transport: httpTransport, currentVersion: currentReleaseVersion,
+            settings: settings, stateStore: UpdateStateStore(files: data), clock: updateClock,
+            scheduler: updateScheduler, mainThread: mainThread, releasePage: releasePage)
+        updateService = updates
+        let updateEligible = !Self.isRunningTests && currentReleaseVersion.flatMap(ReleaseVersion.init) != nil
+        updateScheduler.setEnabled(updateEligible && settingsModel.allowsAutomaticUpdateChecks)
+        updateSettingsObserver = settingsModel.addObserver { [weak updates, weak updateScheduler] snapshot, _ in
+            updateScheduler?.setEnabled(updateEligible && snapshot.allowsAutomaticUpdateChecks)
+            updates?.refreshAutomaticPolicy()
+        }
         let failureCache = SessionPasteFailureCache()
         let delivery = DeliveryService(panel: panel, focus: focus, clipboard: clipboard,
                                        injectors: pasteInjectors ?? [CGEventPasteInjector(), AppleScriptPasteInjector()],
@@ -347,7 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let shortcuts = ShortcutService(backend: hotkeys, scheduler: scheduler, mainThread: mainThread,
                                        settings: settings)
-        let target = TextFieldSelfTestTarget()
+        let target = makeSelfTestTarget()
         let selfTest = SelfTest(target: target, delivery: delivery, session: session,
                                 scheduler: scheduler, mainThread: mainThread)
         let probe = MacSetupProbe(hotkeys: hotkeys, mainThread: mainThread)
@@ -402,11 +435,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let shortcutSettings = ShortcutsSettingsModel(shortcuts: shortcuts, setup: setup)
         let rememberedValues = RememberedValuesSettingsModel(control: SettingsRememberedValuesControl(owner: self),
                                                             mainThread: mainThread)
+        let deliverySettings = DeliverySettingsModel(settings: settingsModel, delivery: delivery,
+            setup: setup, mainThread: mainThread)
+        deliverySettings.onOpenSetup = { [weak self] in self?.showSetup() }
+        let updateSettings = UpdateSettingsModel(settings: settingsModel, updates: updates, mainThread: mainThread)
         generalSettingsModel = general
         shortcutsSettingsModel = shortcutSettings
         rememberedValuesSettingsModel = rememberedValues
         settingsWindow = SettingsWindowController(general: general, shortcuts: shortcutSettings,
-            rememberedValues: rememberedValues, forgetAllConfirmation: forgetAllConfirmation,
+            rememberedValues: rememberedValues, delivery: deliverySettings, updates: updateSettings,
+            forgetAllConfirmation: forgetAllConfirmation,
             mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
             openSetup: { [weak self] in self?.showSetup() },
             makeAssistant: {
@@ -1084,7 +1122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     fileprivate func revealLibrary() { revealLibraryURI(libraryDirectory) }
 
     static var isRunningTests: Bool {
-        NSClassFromString("XCTestCase") != nil
+        NSClassFromString("XCTest.XCTestCase") != nil
+            || NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 }
