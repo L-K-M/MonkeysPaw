@@ -194,7 +194,9 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         delegate.settingsModel?.setLinuxDefaultPasteChord(.terminal)
         XCTAssertEqual(DeliverySettingsStrings.chordLabel(.terminal, session: .macOS), "Cmd+V")
         XCTAssertEqual(page.delivery.state.delivery?.pasteLadder, [.cgEvent, .appleScript])
-        XCTAssertEqual(page.delivery.state.permissionRows.map(\.kind), [.accessibility])
+        XCTAssertEqual(page.delivery.state.permissionRows.map(\.kind), [.accessibility, .portal, .ydotool])
+        XCTAssertEqual(page.delivery.state.permissionRows.first { $0.kind == .portal }?.status, .notApplicable)
+        XCTAssertEqual(page.delivery.state.permissionRows.first { $0.kind == .ydotool }?.status, .notApplicable)
         page.delivery.openSetup()
         XCTAssertEqual(setupOpens, 1)
         XCTAssertEqual(NSApp.windows.filter { $0.isVisible && $0.title == Strings.setupTitle }.count, 1)
@@ -407,11 +409,29 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(selfTestTarget.presentations, 0)
     }
 
-    private func accessibilityLabels(_ element: NSAccessibilityProtocol) -> Set<String> {
+    func testAccessibilityLabelsTraverseChildrenWithoutProtocolConformance() {
+        let child = MacSettingsAccessibilityNode(label: "Nested control")
+        let parent = MacSettingsAccessibilityNode(label: "Parent", children: [child, NSObject()])
+        let root = NSView()
+        root.setAccessibilityChildren([parent])
+        XCTAssertFalse((child as AnyObject) is NSAccessibilityProtocol)
+        XCTAssertEqual(accessibilityLabels(root), ["Parent", "Nested control"])
+    }
+
+    private func accessibilityLabels(_ element: NSObject) -> Set<String> {
         var result = Set<String>()
-        if let label = element.accessibilityLabel() { result.insert(label) }
-        for child in element.accessibilityChildren() ?? [] {
-            if let child = child as? NSAccessibilityProtocol { result.formUnion(accessibilityLabels(child)) }
+        // SwiftUI accessibility children may expose selectors without adopting the full protocol.
+        let labelSelector = #selector(NSAccessibilityProtocol.accessibilityLabel)
+        if element.responds(to: labelSelector),
+           let label = element.perform(labelSelector)?.takeUnretainedValue() as? String {
+            result.insert(label)
+        }
+        let childrenSelector = #selector(NSAccessibilityProtocol.accessibilityChildren)
+        if element.responds(to: childrenSelector),
+           let children = element.perform(childrenSelector)?.takeUnretainedValue() as? [Any] {
+            for child in children {
+                if let child = child as? NSObject { result.formUnion(accessibilityLabels(child)) }
+            }
         }
         return result
     }

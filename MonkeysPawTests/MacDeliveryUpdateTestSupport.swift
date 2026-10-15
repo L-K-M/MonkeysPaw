@@ -103,3 +103,18 @@ final class MacSettingsClock: WallClock {
     func now() -> Date { lock.withLock { date } }
     func advance(_ interval: TimeInterval) { lock.withLock { date.addTimeInterval(interval) } }
 }
+
+/// Accessibility clients can use these selectors without full protocol conformance.
+final class MacSettingsAccessibilityNode: NSObject {
+    private let label: String
+    private let children: [NSObject]
+
+    init(label: String, children: [NSObject] = []) {
+        self.label = label
+        self.children = children
+        super.init()
+    }
+
+    @objc func accessibilityLabel() -> String? { label }
+    @objc func accessibilityChildren() -> [Any]? { children }
+}
