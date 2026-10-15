@@ -1,6 +1,7 @@
 import Foundation
 import MonkeysPawCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The reusable window follows one browser graph at a time. Tokens and a
 /// binding revision also protect against already-queued retired publications.
@@ -16,6 +17,13 @@ final class LibraryViewState: ObservableObject {
     enum Direction { case up, down }
     enum EditorTab: Hashable { case edit, preview, fields, history }
     private enum OpenContext { case library, picker }
+    private struct ScopeDrop {
+        let selection: LibraryPromptSelection
+        let section: LibrarySectionID
+        var openApproved: Bool
+    }
+    private static let scopeDragType = UTType(exportedAs: "ch.lkmc.monkeyspaw.library-row")
+    static var scopeDragTypeIdentifier: String { scopeDragType.identifier }
 
     @Published private(set) var snapshot: LibraryBrowserState
     @Published private(set) var preview: Preview = .none
@@ -36,6 +44,8 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var assistantSaveMessage: String?
     @Published private(set) var quoteHighlight: LibrarySourceHighlight?
     @Published private(set) var conflict: LibraryConflictViewState?
+    @Published private(set) var scopeDragEpoch = UUID()
+    @Published private(set) var isScopeDropPending = false
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
     var onAssistantVisibilityChange: (() -> Void)?
@@ -58,6 +68,9 @@ final class LibraryViewState: ObservableObject {
     private var isPresented = false
     private var revealAfterOpen: [LibraryPromptSelection] = []
     private var lastClosedPromptPath: RelativePath?
+    private var scopeDrop: ScopeDrop?
+    private var scopeDropRequest: UUID?
+    private var scopeDropLoad: Progress?
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, imports: LibraryImportViewState? = nil,
@@ -187,7 +200,8 @@ final class LibraryViewState: ObservableObject {
     }
 
     var canRunFileCommand: Bool {
-        canRevert && editorState.canEdit && editorState.stamp != nil
+        canRevert && editorState.canEdit && editorState.stamp != nil && !isScopeDropPending
+            && editorState.queuedActions.isEmpty
     }
     var canLoadHistory: Bool {
         isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil && editorState.status != .commandRunning
@@ -216,6 +230,7 @@ final class LibraryViewState: ObservableObject {
                 imports: LibraryImportViewState? = nil, makeAssistant: AssistantFactory? = nil,
                 conflictProvider: ConflictProvider? = nil) {
         guard isActive else { return }
+        cancelScopeDrop()
         retireAssistant()
         retireConflict()
         self.makeAssistant = makeAssistant
@@ -247,6 +262,7 @@ final class LibraryViewState: ObservableObject {
 
     func deactivate() {
         guard isActive else { return }
+        cancelScopeDrop()
         retireAssistant()
         retireConflict()
         conflictProvider = nil
@@ -273,7 +289,7 @@ final class LibraryViewState: ObservableObject {
         imports?.setLibraryAvailable(available)
         assistant?.editorChanged(available: available && !isResolvingConflict)
         updateConflict()
-        if !available { fileCommandRequest = nil }
+        if !available { fileCommandRequest = nil; cancelScopeDrop() }
         if becameAvailable, editorTab == .history { loadHistory() }
         onEditorChange?()
     }
@@ -289,17 +305,20 @@ final class LibraryViewState: ObservableObject {
 
     func didHide() {
         isPresented = false
+        cancelScopeDrop()
         retireConflict()
     }
 
     func setFilter(_ filter: String) {
         guard isActive else { return }
+        cancelScopeDrop()
         favoriteOutcome = nil
         model.setFilter(filter)
     }
 
     func selectSection(_ section: LibrarySectionID) {
         guard isActive else { return }
+        cancelScopeDrop()
         favoriteOutcome = nil
         model.selectSection(section)
     }
@@ -323,6 +342,7 @@ final class LibraryViewState: ObservableObject {
 
     private func select(_ selection: LibraryPromptSelection, context: OpenContext = .library) {
         guard isActive, libraryAvailable else { return }
+        cancelScopeDrop()
         // Upgrade a pending Library selection when Picker requests the same
         // target, without asking the user to cancel two identical decisions.
         if context == .picker, !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
@@ -373,6 +393,7 @@ final class LibraryViewState: ObservableObject {
 
     func requestFileCommand(_ command: LibraryFileCommand) {
         guard canRunFileCommand, fileCommandRequest == nil, let prompt = editorState.prompt else { return }
+        cancelScopeDrop()
         commandMessage = nil
         let folders = snapshot.sections.compactMap { section -> String? in
             if case .folder(let folder) = section.id { return folder.string }
@@ -418,6 +439,7 @@ final class LibraryViewState: ObservableObject {
 
     func requestClose(_ completion: @escaping (EditorGuardResult) -> Void) {
         guard isActive else { completion(.inactive); return }
+        cancelScopeDrop()
         isClosingEditor = true
         let revision = bindingRevision
         // EditorModel.request completes through its injected MainThread.
@@ -533,8 +555,102 @@ final class LibraryViewState: ObservableObject {
                 // History keys follow identity; moving also retires Core's path-bound load.
                 if self.editorTab == .history, pathChanged || identityChanged || commandFinished || saveCommitted,
                    state.prompt != nil, !state.history.isLoading, !editor.state.history.isLoading { self.loadHistory() }
+                self.finishScopeDrop()
             }
         }
+    }
+
+    private var scopeDragReady: Bool {
+        let state = editor.state
+        return isActive && isPresented && libraryAvailable && !isClosingEditor && !isResolvingConflict
+            && fileCommandRequest == nil && imports?.isChoosing != true
+            && state.pendingDecision == nil && state.conflict == nil && state.queuedActions.isEmpty
+            && state.status != .loading && state.status != .saving && state.status != .commandRunning
+    }
+
+    func canDragScopeRow(_ selection: LibraryPromptSelection) -> Bool {
+        scopeDragReady && !isScopeDropPending
+            && model.rows.contains { $0.selection == selection && !$0.isReadOnly }
+    }
+
+    func canDropScopeRow(onto section: LibrarySectionID) -> Bool {
+        scopeDragReady && !isScopeDropPending && model.moveDestination(for: section) != nil
+    }
+
+    private func scopePayload(_ selection: LibraryPromptSelection, epoch: UUID) -> Data {
+        let identity: String
+        switch selection.identity {
+        case .assigned(let id): identity = id.rawValue
+        case .local(let hash): identity = hash
+        }
+        let value = "monkeyspaw-row:" + epoch.uuidString + ":" + identity + ":" + selection.relativePath.string
+        return Data(value.utf8)
+    }
+
+    func scopeDragProvider(for selection: LibraryPromptSelection, epoch: UUID) -> NSItemProvider? {
+        guard epoch == scopeDragEpoch, canDragScopeRow(selection) else { return nil }
+        let payload = scopePayload(selection, epoch: epoch)
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: Self.scopeDragTypeIdentifier, visibility: .ownProcess) { done in
+            done(payload, nil)
+            return nil
+        }
+        return provider
+    }
+
+    @discardableResult
+    func acceptScopeDrop(_ providers: [NSItemProvider], onto section: LibrarySectionID, epoch: UUID) -> Bool {
+        guard epoch == scopeDragEpoch, canDropScopeRow(onto: section), providers.count == 1,
+              let provider = providers.first,
+              provider.hasItemConformingToTypeIdentifier(Self.scopeDragTypeIdentifier) else { return false }
+        let request = UUID()
+        let revision = bindingRevision
+        scopeDropRequest = request
+        isScopeDropPending = true
+        // Spend even a cancelled drag. No dropped path is ever parsed or imported.
+        scopeDragEpoch = UUID()
+        let load = provider.loadDataRepresentation(forTypeIdentifier: Self.scopeDragTypeIdentifier) { [weak self] bytes, _ in
+            self?.mainThread.run { [weak self] in
+                guard let self, self.bindingRevision == revision, self.scopeDropRequest == request else { return }
+                self.scopeDropLoad = nil
+                guard self.scopeDragReady, let bytes,
+                      self.model.moveDestination(for: section) != nil,
+                      let row = self.model.rows.first(where: {
+                          !$0.isReadOnly && bytes == self.scopePayload($0.selection, epoch: epoch)
+                      }) else { self.cancelScopeDrop(); return }
+                self.scopeDrop = ScopeDrop(selection: row.selection, section: section,
+                    openApproved: self.editor.state.prompt == row.selection)
+                if self.scopeDrop?.openApproved == true { self.finishScopeDrop(); return }
+                self.editor.request(.open(row.selection)) { [weak self] result in
+                    guard let self, self.bindingRevision == revision, self.scopeDropRequest == request else { return }
+                    guard result == .allowed else { self.cancelScopeDrop(); return }
+                    self.model.selectPrompt(row.selection)
+                    self.scopeDrop?.openApproved = true
+                    self.finishScopeDrop()
+                }
+            }
+        }
+        if scopeDropRequest == request { scopeDropLoad = load }
+        return true
+    }
+
+    private func finishScopeDrop() {
+        guard let drop = scopeDrop, drop.openApproved else { return }
+        if editor.state.status == .loading { return }
+        cancelScopeDrop()
+        guard scopeDragReady, editor.state.prompt == drop.selection, editor.state.canEdit,
+              editor.state.stamp != nil, let destination = model.moveDestination(for: drop.section) else { return }
+        editor.move(to: destination.string, completion: commandCompletion(success: LibraryCommandStrings.moved))
+    }
+
+    private func cancelScopeDrop() {
+        scopeDropRequest = nil
+        scopeDrop = nil
+        let load = scopeDropLoad
+        scopeDropLoad = nil
+        isScopeDropPending = false
+        scopeDragEpoch = UUID()
+        load?.cancel()
     }
 
     private func detachObservers() {
