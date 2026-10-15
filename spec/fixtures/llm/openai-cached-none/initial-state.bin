@@ -1,0 +1,1 @@
+{"version":1,"profiles":[{"id":"00000000-0000-4000-8000-000000000061","kind":"openaiCompatible","baseURL":"https://api.openai.com/v1","modelID":"fixture-model","format":"none","futureProfile":{"text":"café/é/😀","values":[true,null]}}],"futureRoot":{"keep":"yes/\r\n"}}

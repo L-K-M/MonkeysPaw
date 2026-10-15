@@ -169,6 +169,9 @@ public enum Limits {
     /// §7.2: bound recovery/parser recursion; shipped schemas need five levels.
     public static let llmJSONNestingCap: Int = 32
 
+    /// Preserve the provider envelope limit independently of artifact depth.
+    static let assistantEnvelopeNestingCap: Int = 512
+
     /// §7.1: allow sync batches up to 16 MiB on the same bounded transport.
     public static let syncResponseCap: Int = 16 * mebibyte
 

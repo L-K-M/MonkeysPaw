@@ -4,6 +4,7 @@ import ch.lkmc.monkeyspaw.core.domain.llm.AssistantError
 import ch.lkmc.monkeyspaw.core.domain.llm.AssistantModelPage
 import ch.lkmc.monkeyspaw.core.domain.llm.ModelDescriptor
 import ch.lkmc.monkeyspaw.core.domain.llm.ProviderConnection
+import ch.lkmc.monkeyspaw.core.domain.llm.ProviderKind
 import ch.lkmc.monkeyspaw.core.domain.llm.hasControls
 import ch.lkmc.monkeyspaw.core.domain.llm.trimProviderWhitespace
 
@@ -28,12 +29,14 @@ internal object AssistantModelList {
         return connection.modelsURL + "?after_id=" + encoded
     }
 
-    fun decode(body: ByteArray): AssistantModelPage {
+    fun decode(body: ByteArray, kind: ProviderKind = ProviderKind.ANTHROPIC): AssistantModelPage {
         val page = LlmJsonParser(body, mode = AssistantJsonMode.ENVELOPE).parse()
         val models = page.member("data").array().map {
             val id = it.member("id").string()
             if (!validID(id)) throw AssistantError.InvalidOutput
-            ModelDescriptor(id, it.optionalString("display_name"))
+            val name = it.optionalString("display_name")
+                ?: if (kind == ProviderKind.OPENAI_COMPATIBLE) it.optionalString("name") else null
+            ModelDescriptor(id, name)
         }
         val first = page.optionalString("first_id")
         val last = page.optionalString("last_id")

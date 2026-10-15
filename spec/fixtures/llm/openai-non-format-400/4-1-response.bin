@@ -1,0 +1,1 @@
+{"error":{"message":"Invalid schema for response_format: oneOf is not supported.","param":"response_format"}}

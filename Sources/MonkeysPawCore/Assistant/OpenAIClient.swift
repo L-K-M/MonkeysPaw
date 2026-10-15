@@ -161,13 +161,16 @@ public struct OpenAIClient: AssistantClient, CustomStringConvertible,
     /// A generic 400, invalid schema or unsupported schema keyword is not proof
     /// that this output format is unsupported. Keep the evidence inside the codec.
     private func rejects(_ format: OpenAIResponseFormat, body: Data) -> Bool {
-        guard let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return false }
-        let error = object["error"] as? [String: Any]
-        let param = (error?["param"] as? String)?.lowercased()
+        // Foundation's error-body parsing differs across platforms. Match Kotlin's
+        // eager validation and last duplicate member without NSNumber bridging.
+        var parser = LlmJSONParser(bytes: Array(body), mode: .serialization)
+        guard let object = try? parser.parse(), case .object = object else { return false }
+        let error = try? object.member("error")
+        let param = (try? error?.member("param").string)?.lowercased()
         let formatParams = ["response_format", "response_format.type"]
         if let param, !formatParams.contains(param) { return false }
-        let code = (error?["code"] as? String)?.lowercased()
-        let raw = error?["message"] as? String ?? object["error"] as? String ?? ""
+        let code = (try? error?.member("code").string)?.lowercased()
+        let raw = (try? error?.member("message").string) ?? (try? error?.string) ?? ""
         let message = raw.lowercased().replacingOccurrences(of: "[\"'`]", with: "", options: .regularExpression)
             .replacingOccurrences(of: ":", with: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !["invalid schema", "invalid json schema", "invalid json_schema", "schema keyword", "schema validation"]

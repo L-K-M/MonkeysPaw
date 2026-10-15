@@ -63,6 +63,43 @@ internal class LlmExchangeConformanceTest {
         }
     }
 
+    @Test fun openAIProbeOrderingAndCapabilityExpectationsCannotBeIgnored() {
+        val fixture = Corpus.load().cases(Category.LLM).single { it.name == "openai-ladder-none" }
+        val changes = listOf(
+            listOf("actions", "0", "exchanges", "1", "request", "deadlineMs") to JsonPrimitive(299999),
+            listOf("actions", "0", "exchanges", "1", "elapsedMs") to JsonPrimitive(70001),
+            listOf("actions", "0", "expected", "cache", "format") to JsonPrimitive("json_object"),
+            listOf("actions", "0", "expected", "cache", "writes") to JsonPrimitive(0),
+            listOf("actions", "0", "expected", "cache", "state") to JsonNull,
+            listOf("setup", "capabilityState") to JsonPrimitive("../initial-state.bin"),
+        )
+        for ((path, value) in changes) {
+            val altered = replace(fixture.envelope, path) { value }
+            assertFails(path.joinToString("/")) { LlmFixtureConsumer.consume(listOf(fixture.copy(envelope = altered.objectValue()))) }
+        }
+        val extra = replace(fixture.envelope, listOf("actions", "0", "expected", "cache")) {
+            JsonObject(it.objectValue() + ("ignored" to JsonPrimitive(true)))
+        }
+        assertFailsWith<CorpusException> { LlmFixtureConsumer.consume(listOf(fixture.copy(envelope = extra.objectValue()))) }
+    }
+
+    @Test fun nonNullInitialStateAndEveryPublishedCacheByteGoldenAreConsumed() {
+        val fixture = Corpus.load().cases(Category.LLM).single { it.name == "openai-cached-json_object" }
+        val initial = fixture.envelope["setup"].objectValue()["capabilityState"].stringValue()
+        val published = fixture.envelope["actions"].arrayValue().first().objectValue()["expected"].objectValue()["cache"].objectValue()["state"].stringValue()
+        val temporary = Files.createTempFile("llm-cache-", ".bin")
+        try {
+            Files.writeString(temporary, "{}")
+            for (name in listOf(initial, published)) {
+                val file = fixture.source(name)
+                val altered = fixture.copy(sources = fixture.sources + (name to file.copy(path = temporary)))
+                assertFails(name) { LlmFixtureConsumer.consume(listOf(altered)) }
+            }
+            val duplicated = replace(fixture.envelope, listOf("actions", "0", "expected", "cache", "state")) { JsonPrimitive(initial) }
+            assertFailsWith<CorpusException> { LlmFixtureConsumer.consume(listOf(fixture.copy(envelope = duplicated.objectValue()))) }
+        } finally { Files.delete(temporary) }
+    }
+
     private fun replace(value: JsonElement, path: List<String>, transform: (JsonElement) -> JsonElement): JsonElement {
         if (path.isEmpty()) return transform(value)
         val key = path.first()
