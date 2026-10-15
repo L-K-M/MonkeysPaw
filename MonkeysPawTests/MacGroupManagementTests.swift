@@ -85,7 +85,7 @@ final class MacGroupManagementTests: XCTestCase {
         XCTAssertEqual(groups.state?.members.first { $0.userID == added.userID }?.role, .owner)
         groups.removeMember(added)
         waitIdle(account)
-        XCTAssertFalse(groups.state?.members.contains { $0.userID == added.userID } == true)
+        XCTAssertFalse(try XCTUnwrap(groups.state).members.contains { $0.userID == added.userID })
 
         groups.name = "Renamed"
         let before = http.groupMutationCount
@@ -154,7 +154,7 @@ final class MacGroupManagementTests: XCTestCase {
         waitIdle(account)
         XCTAssertEqual(groups.state?.error, .forbidden)
         XCTAssertTrue(groups.state?.error?.message.contains("keep an owner") == true)
-        XCTAssertFalse(groups.state?.changeConfirmed == true)
+        XCTAssertFalse(try XCTUnwrap(groups.state).changeConfirmed)
         XCTAssertEqual(groups.state?.members.first?.role, .owner)
         XCTAssertEqual(groups.role(for: owner), .viewer)
         groups.removeMember(owner)
@@ -262,6 +262,24 @@ final class MacGroupManagementTests: XCTestCase {
         waitIdle(account)
         XCTAssertNil(groups.createdInvite)
         XCTAssertEqual(http.inviteRoles.count, 1)
+    }
+
+    func testReleaseBeforeContinuationEnqueueDoesNotStrandResponse() throws {
+        let transport = MacGroupHTTP(beforeEnqueue: { $0.release() })
+        transport.holdSuffix = "/me"
+        defer { transport.release() }
+        let replied = expectation(description: "The released response completes")
+        let request = try HTTPRequest(url: URL(string: "https://example.test/paw/api/v1/me")!,
+            method: .get, deadline: ContinuousClock.now.advanced(by: .seconds(5)))
+        Task.detached {
+            do {
+                let response = try await transport.send(request)
+                XCTAssertEqual(response.statusCode, 200)
+                XCTAssertEqual(transport.heldCount, 0)
+            } catch { XCTFail("The released response must succeed") }
+            replied.fulfill()
+        }
+        wait(for: [replied], timeout: 5)
     }
 
     func testAccountRefreshAdoptsRoleLossRemovalAndResetsEveryDraft() throws {
@@ -572,6 +590,12 @@ private final class MacGroupHTTP: HTTPTransporting, @unchecked Sendable {
     private var defaultTTL = true
     private var heldSuffix: String?
     private var held: [(CheckedContinuation<HTTPResponse, Error>, HTTPResponse)] = []
+    private let beforeEnqueue: (MacGroupHTTP) -> Void
+
+    init(beforeEnqueue: @escaping (MacGroupHTTP) -> Void = { _ in }) {
+        self.beforeEnqueue = beforeEnqueue
+    }
+
     var role: SyncAPI.Role? {
         get { locked { currentRole } }
         set { locked { currentRole = newValue; if newValue != nil { hadGroup = true } } }
@@ -652,8 +676,15 @@ private final class MacGroupHTTP: HTTPTransporting, @unchecked Sendable {
             }
             return try http(SyncAPI.ErrorResponse.failure(.notFound), status: 404)
         }
-        guard locked({ heldSuffix.map { request.url.path.hasSuffix($0) } ?? false }) else { return response }
-        return try await withCheckedThrowingContinuation { reply in locked { held.append((reply, response)) } }
+        beforeEnqueue(self)
+        return try await withCheckedThrowingContinuation { reply in
+            let shouldHold = locked { () -> Bool in
+                guard heldSuffix.map({ request.url.path.hasSuffix($0) }) ?? false else { return false }
+                held.append((reply, response))
+                return true
+            }
+            if !shouldHold { reply.resume(returning: response) }
+        }
     }
 
     func release() {
