@@ -20,6 +20,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var cancelChooser: (() -> Void)?
     private var confirmationRequest: UUID?
     private var cancelConfirmation: (() -> Void)?
+    private var isTornDown = false
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
          rememberedValues: RememberedValuesSettingsModel,
@@ -44,18 +45,36 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     deinit {
         let cancel = cancelConfirmation
+        let cancelChooser = self.cancelChooser
+        let window = self.window
         let presentation = self.presentation
         mainThread.run {
             cancel?()
+            cancelChooser?()
             presentation.cancelForgetAll()
             // Retire without publishing a tab removal from deinit.
             presentation.assistant?.retire()
+            window?.delegate = nil
+            window?.close()
+        }
+    }
+
+    func tearDown() {
+        mainThread.run { [weak self] in
+            guard let self, !self.isTornDown else { return }
+            self.isTornDown = true
+            self.cancelPendingPanels()
+            self.presentation.retireAssistant()
+            self.window?.delegate = nil
+            // willClose also stops both shortcut recorders' native monitors.
+            self.window?.close()
+            self.window = nil
         }
     }
 
     func show() {
         mainThread.run { [weak self] in
-            guard let self else { return }
+            guard let self, !self.isTornDown else { return }
             if self.presentation.assistant == nil {
                 self.presentation.openAssistant(self.makeAssistant(), mainThread: self.mainThread,
                     onProviderChange: self.onProviderChange)
@@ -69,6 +88,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        cancelPendingPanels()
+    }
+
+    private func cancelPendingPanels() {
         // Invalidate before cancelling: the native panel may complete inline.
         chooserRequest = nil
         let cancel = cancelChooser

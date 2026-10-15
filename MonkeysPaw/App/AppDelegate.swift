@@ -262,9 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentedOnboardingStep = nil
         setupWindow?.tearDown()
         onboardingWindow?.tearDown()
-        if let presentation = settingsWindow?.presentation {
-            mainThread.run { presentation.retireAssistant() }
-        }
+        settingsWindow?.tearDown()
         windowActivation.tearDown()
     }
 
@@ -1016,7 +1014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isShutDown, Strings.repeatMessage(result) != nil else { return }
         if repeatWindow == nil {
             let generation = libraryGeneration
-            repeatWindow = RepeatWindowController(mainThread: mainThread, activation: windowActivation,
+            repeatWindow = RepeatWindowController(mainThread: mainThread, activateApplication: activateApplication,
                 openPrompt: { [weak self] reference in
                     guard let self, !self.isShutDown, self.libraryGeneration == generation else { return }
                     self.handle(.edit(identity: reference.identity, relativePath: reference.relativePath))

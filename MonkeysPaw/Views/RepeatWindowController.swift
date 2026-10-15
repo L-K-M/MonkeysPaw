@@ -28,13 +28,13 @@ final class RepeatWindowController {
     let presentation: Presentation
     private(set) var window: NSWindow?
     private let mainThread: MainThread
-    private let activation: WindowActivationCoordinator
+    private let activateApplication: () -> Void
     private var isTornDown = false
 
-    init(mainThread: MainThread, activation: WindowActivationCoordinator,
+    init(mainThread: MainThread, activateApplication: @escaping () -> Void,
          openPrompt: @escaping (RepeatPromptReference) -> Void) {
         self.mainThread = mainThread
-        self.activation = activation
+        self.activateApplication = activateApplication
         presentation = Presentation(openPrompt: openPrompt)
         presentation.dismiss = { [weak self] in self?.window?.close() }
     }
@@ -46,7 +46,10 @@ final class RepeatWindowController {
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
             self.window = window
-            self.activation.show(window)
+            // Notices stay accessory, like Setup; Settings/Library own the Dock policy.
+            window.orderFrontRegardless()
+            self.activateApplication()
+            window.makeKey()
         }
     }
 

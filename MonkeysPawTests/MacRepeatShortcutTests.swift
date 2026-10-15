@@ -192,4 +192,21 @@ final class MacRepeatShortcutTests: XCTestCase {
         XCTAssertNil(model.result)
         XCTAssertFalse(NSApp.windows.contains { !originalWindows.contains(ObjectIdentifier($0)) && $0.isVisible })
     }
+
+    func testShutdownClosesSettingsStopsRecorderAndPreventsReopening() throws {
+        delegate.showSettings()
+        let controller = try XCTUnwrap(delegate.settingsWindow)
+        let window = try XCTUnwrap(controller.window)
+        let recorder = ShortcutRecorderButton(frame: .zero)
+        window.contentView = recorder
+        recorder.beginCapture()
+        XCTAssertTrue(recorder.isRecording)
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        XCTAssertFalse(window.isVisible)
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertNil(controller.window)
+        controller.show()
+        XCTAssertNil(controller.window)
+        XCTAssertFalse(window.isVisible)
+    }
 }
