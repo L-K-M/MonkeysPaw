@@ -4,7 +4,8 @@
 # Requires macOS, Xcode and create-dmg (brew install create-dmg).
 # With no arguments, use the committed Xcode version and build number.
 # An explicit version may have a v prefix; the optional second argument sets
-# the build number. Prerelease suffixes appear only in the artifact filenames.
+# the build number. The full version is kept in MonkeysPawReleaseVersion;
+# CFBundleShortVersionString retains the numeric marketing version.
 # MACOS_SIGNING_IDENTITY selects an installed identity; unset/empty means ad-hoc.
 # MACOS_SIGNING_KEYCHAIN optionally selects its keychain when using an identity.
 # CI callers must export signing variables only when their secrets are non-empty.
@@ -49,12 +50,20 @@ printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$bui
   -destination 'generic/platform=macOS' -derivedDataPath "$derived_data" \
   ONLY_ACTIVE_ARCH=NO ARCHS="arm64 x86_64" \
   MARKETING_VERSION="$marketing_version" CURRENT_PROJECT_VERSION="$build_number" \
+  INFOPLIST_KEY_MonkeysPawReleaseVersion="$version" \
   CODE_SIGNING_ALLOWED=NO build
 
 built_app="$derived_data/Build/Products/Release/MonkeysPaw.app"
 [[ -d "$built_app" ]] || fail 'Release build did not produce MonkeysPaw.app'
 /usr/bin/ditto "$built_app" "$app"
 /usr/bin/lipo "$app/Contents/MacOS/MonkeysPaw" -verify_arch arm64 x86_64
+
+# Preserve the raw release version even if Xcode omits a custom generated key.
+plist="$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :MonkeysPawReleaseVersion $version" "$plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Add :MonkeysPawReleaseVersion string $version" "$plist"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :MonkeysPawReleaseVersion' "$plist")" == "$version" ]] || fail 'Raw release version mismatch'
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" == "$marketing_version" ]] || fail 'Marketing version mismatch'
 
 signing_identity="${MACOS_SIGNING_IDENTITY:--}"
 # Xcode signing is disabled above, so explicitly retain the paste entitlement

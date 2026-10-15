@@ -61,7 +61,7 @@ Rollout by milestone:
   URLs/assets/notes. Missing/invalid versions are typed unavailable results,
   never a guessed `0.0.0`; unversioned development/tests skip traffic.
   The Linux composition root injects its packaged hyphenated app version.
-  D17 adds/reads `MonkeysPawReleaseVersion` in every packaged plist before
+  macOS adds/reads `MonkeysPawReleaseVersion` in every packaged plist before
   signing, retaining numeric `CFBundleShortVersionString`; source builds
   may supply a declared version, without guessing a discarded suffix.
   General passively shows last successful check/result and Update available.
@@ -120,7 +120,7 @@ Rollout by milestone:
     cancels superseded PR runs only, and `timeout-minutes` on every job.
   - Actions are pinned to commit SHAs, with `persist-credentials: false`.
   - macOS job: `macos-26`, with Xcode pinned.
-  - `macos-artifacts` builds Release artifacts with test version `0.1.0`
+  - `macos-artifacts` builds Release artifacts with test version `0.1.0-beta.7`
     and build number `42` on PRs and main, using Xcode 26.0 and system
     `/bin/bash` for the script and shell checks. It checks both architectures,
     strict code signatures, bundle versions and `LSUIElement`,
