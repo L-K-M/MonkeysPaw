@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="setup_title">Keyboard and tile setup</string>
+    <string name="setup_step">Step %1$d of %2$d</string>
+    <string name="setup_enable_title">Enable the picker keyboard</string>
+    <string name="setup_privacy">Android warns that keyboards may collect what you type. Monkey\'s Paw is a prompt picker, with no letter keys. It inserts your prompts and does not read text from other apps. It reads the clipboard only when you choose a prompt that uses it. Enable Monkey\'s Paw picker in the keyboard settings.</string>
+    <string name="setup_enable_action">Open keyboard settings</string>
+    <string name="setup_enabled">The picker keyboard is enabled.</string>
+    <string name="setup_disabled">The picker keyboard is not enabled.</string>
+    <string name="setup_enabled_unknown">Could not check whether the picker keyboard is enabled.</string>
+    <string name="setup_select_title">Select the picker once</string>
+    <string name="setup_select_help">Choose Monkey\'s Paw picker in the system list. You can switch back with the keyboard button in the navigation bar. Check status after you close the list.</string>
+    <string name="setup_select_action">Choose keyboard</string>
+    <string name="setup_selected">The picker keyboard is selected.</string>
+    <string name="setup_not_selected">Another keyboard is selected.</string>
+    <string name="setup_selected_unknown">Could not check which keyboard is selected.</string>
+    <string name="setup_check_status">Check status</string>
+    <string name="setup_tile_title">Add the Quick Settings tile</string>
+    <string name="setup_tile_help">The Insert prompt tile opens a prompt to fill and copy. Paste the result in your app.</string>
+    <string name="setup_tile_offer">Choose Add tile to open the system request.</string>
+    <string name="setup_tile_action">Add tile</string>
+    <string name="setup_tile_manual">Swipe down twice to open Quick Settings, choose Edit (the pencil or menu), then drag Insert prompt into your active tiles. The edit control depends on your device.</string>
+    <string name="setup_tile_confirm">I added the tile</string>
+    <string name="setup_tile_pending">Waiting for your tile choice…</string>
+    <string name="setup_tile_added">The system added the tile.</string>
+    <string name="setup_tile_already_added">The system reported that the tile was already added.</string>
+    <string name="setup_tile_denied">The tile was not added. You can skip this step or try again yourself.</string>
+    <string name="setup_tile_error">Could not add the tile. You can add Insert prompt from Quick Settings → Edit, or skip this step.</string>
+    <string name="setup_skip">Skip this step</string>
+    <string name="setup_back">Back</string>
+    <string name="setup_load_failed">Could not read setup progress. Try again.</string>
+    <string name="setup_save_failed">Could not save your choice. This step is kept. Try again to save it.</string>
+    <string name="setup_settings_failed">Could not open keyboard settings. Open your device settings and find the keyboard list, or skip this step.</string>
+    <string name="setup_picker_failed">Could not open the keyboard list. Use the keyboard button in the navigation bar, or skip this step.</string>
+</resources>

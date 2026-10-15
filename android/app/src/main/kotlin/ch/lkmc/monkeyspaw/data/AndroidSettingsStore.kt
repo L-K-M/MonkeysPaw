@@ -29,8 +29,20 @@ internal sealed class SyncTlsSettingsError private constructor(code: String) : E
     final override fun toString(): String = message.orEmpty()
 }
 
-internal data class AndroidSettings(val seedProgress: SeedProgress = SeedProgress.NOT_OFFERED,
-    val records: Map<String, SettingsRecord> = emptyMap(), val syncTls: SyncTlsSettings? = null)
+internal enum class SetupDecision { PENDING, COMPLETE, SKIPPED }
+
+internal data class KeyboardTileSetupProgress(
+    val enableKeyboard: SetupDecision = SetupDecision.PENDING,
+    val selectKeyboard: SetupDecision = SetupDecision.PENDING,
+    val addTile: SetupDecision = SetupDecision.PENDING,
+)
+
+internal data class AndroidSettings(
+    val seedProgress: SeedProgress = SeedProgress.NOT_OFFERED,
+    val records: Map<String, SettingsRecord> = emptyMap(),
+    val syncTls: SyncTlsSettings? = null,
+    val keyboardTileSetup: KeyboardTileSetupProgress = KeyboardTileSetupProgress(),
+)
 
 /** Settings only. Prompt bytes, history, usage and remembered values never enter DataStore. */
 internal class AndroidSettingsStore(private val store: DataStore<AndroidSettings>) {
@@ -63,6 +75,10 @@ internal class AndroidSettingsStore(private val store: DataStore<AndroidSettings
         catch (error: Exception) { throw sanitized(error) }
     }
 
+    suspend fun setKeyboardTileSetup(progress: KeyboardTileSetupProgress): AndroidSettings = try {
+        store.updateData { it.copy(keyboardTileSetup = progress) }
+    } catch (error: Exception) { throw sanitized(error) }
+
     private fun sanitized(error: Throwable): Throwable = when (error) {
         is CancellationException -> error
         is StoreError -> error
@@ -72,7 +88,8 @@ internal class AndroidSettingsStore(private val store: DataStore<AndroidSettings
     }
 }
 
-/** No corruption handler: malformed or future settings fail closed and keep the original file. */
+/** Optional provider records, sync trust and setup decisions extend version 1 without a migration or read-time rewrite.
+ * No corruption handler: malformed or future settings fail closed and keep the original file. */
 internal object SettingsSerializer : Serializer<AndroidSettings> {
     override val defaultValue = AndroidSettings()
 
@@ -84,7 +101,7 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
             val root = Json.parseToJsonElement(text) as? JsonObject
                 ?: throw IllegalArgumentException()
             if (!root.keys.containsAll(setOf("version", "seedProgress")) ||
-                root.keys.any { it !in setOf("version", "seedProgress", "records", "syncTls") } || root["version"] != JsonPrimitive(1)) {
+                root.keys.any { it !in setOf("version", "seedProgress", "records", "syncTls", "keyboardTileSetup") } || root["version"] != JsonPrimitive(1)) {
                 throw IllegalArgumentException()
             }
             val progress = root["seedProgress"] as? JsonPrimitive ?: throw IllegalArgumentException()
@@ -113,7 +130,18 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
                 if (server.baseURL != url.content) throw IllegalArgumentException()
                 SyncTlsSettings(server, SyncTLSTrust.valueOf(trust.content))
             }
-            AndroidSettings(SeedProgress.valueOf(progress.content), records, syncTls)
+            val setup = if ("keyboardTileSetup" !in root) KeyboardTileSetupProgress() else {
+                val record = root["keyboardTileSetup"] as? JsonObject ?: throw IllegalArgumentException()
+                require(record.keys == setOf("version", "enableKeyboard", "selectKeyboard", "addTile"))
+                require(record["version"] == JsonPrimitive(1))
+                KeyboardTileSetupProgress(
+                    SetupDecision.valueOf(string(record, "enableKeyboard")),
+                    SetupDecision.valueOf(string(record, "selectKeyboard")),
+                    SetupDecision.valueOf(string(record, "addTile")),
+                )
+            }
+            AndroidSettings(seedProgress = SeedProgress.valueOf(progress.content), records = records,
+                syncTls = syncTls, keyboardTileSetup = setup)
         } catch (_: Exception) {
             throw CorruptionException("Settings are unreadable or use an unsupported version.")
         }
@@ -144,7 +172,12 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
 
     override suspend fun writeTo(t: AndroidSettings, output: OutputStream) {
         val fields = linkedMapOf<String, JsonElement>("seedProgress" to JsonPrimitive(t.seedProgress.name),
-            "version" to JsonPrimitive(1))
+            "version" to JsonPrimitive(1), "keyboardTileSetup" to JsonObject(linkedMapOf(
+                "version" to JsonPrimitive(1),
+                "enableKeyboard" to JsonPrimitive(t.keyboardTileSetup.enableKeyboard.name),
+                "selectKeyboard" to JsonPrimitive(t.keyboardTileSetup.selectKeyboard.name),
+                "addTile" to JsonPrimitive(t.keyboardTileSetup.addTile.name),
+            )))
         // Omit the optional map on an existing M8 install until the first provider edit.
         if (t.records.isNotEmpty()) fields["records"] = JsonObject(t.records.mapValues { (_, record) ->
             JsonObject(mapOf("payload" to JsonPrimitive(record.payload), "stamp" to JsonPrimitive(record.stamp)))
@@ -154,6 +187,12 @@ internal object SettingsSerializer : Serializer<AndroidSettings> {
                 "trust" to JsonPrimitive(option.trust.name)))
         }
         output.write(JsonObject(fields).toString().encodeToByteArray(throwOnInvalidSequence = true))
+    }
+
+    private fun string(record: JsonObject, key: String): String {
+        val value = record[key] as? JsonPrimitive ?: throw IllegalArgumentException()
+        require(value.isString)
+        return value.content
     }
 }
 
