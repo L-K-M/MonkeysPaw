@@ -21,7 +21,10 @@ internal class ImeBoundaryTest {
     private val namespace = "http://schemas.android.com/apk/res/android"
     private val forbidden = Regex("\\b(?:HttpTransport|OkHttp\\w*|SyncEngine|SyncScheduler|AndroidSyncTlsTrust|PlatformInitializer|ProfileInstallerInitializer|ForegroundProfileInstaller|AppInitializer|Assistant(?!(?:TokenUsage|Access)\\b)\\w*|SecretStore|AndroidKeystore\\w*|WorkManager|WorkRequest|JobScheduler|AlarmManager|Logger|Log|Timber|print|println|Socket|URLConnection|URL(?=\\s*(?:\\(|\\.|::))|sendKeyEvent|sendKeyChar|performEditorAction|setComposingText|getTextBeforeCursor|getTextAfterCursor|getSelectedText|getSurroundingText|getExtractedText|getInitialTextBeforeCursor|getInitialTextAfterCursor|getInitialSelectedText|takeSnapshot|requestCursorUpdates|SavedStateHandle|rememberSaveable|ProcessBuilder|Runtime)\\b|\\bSystem\\.(?:out|err)\\b|\\bjava\\.net\\.URL\\b|::\\s*URL\\b|^URL$")
     // Shared local save methods name contracts without holding a provider or assistant session.
-    private val localSaveReferences = Regex("\\bAssistant(?:Acceptance(?:Conflict|Editor|Failure|Outcome)?|AccessState|Candidate|CommittedPrompt|EditorSnapshot|MutationAccess|Save(?:Destination|Permit|Refusal))\\b")
+    private val localSaveReferences = setOf("AssistantAcceptance", "AssistantAcceptanceConflict", "AssistantAcceptanceEditor",
+        "AssistantAcceptanceFailure", "AssistantAcceptanceOutcome", "AssistantAccessState", "AssistantCandidate",
+        "AssistantCommittedPrompt", "AssistantEditorSnapshot", "AssistantMutationAccess", "AssistantSaveDestination",
+        "AssistantSavePermit", "AssistantSaveRefusal")
     private val helperSources by lazy {
         indexSources((app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }.map { it.readText() })
     }
@@ -98,12 +101,14 @@ internal class ImeBoundaryTest {
         assertTrue(library.contains("private val assistantAccess: AssistantAccess = AssistantAccess.LOCAL,"))
         assertTrue(access.contains("val LOCAL = AssistantAccess { AssistantAccessState.PRIVATE_PROMPT }"))
         assertTrue(app.resolve("di/AppModule.kt").readText().contains("LibraryService(prompts, state, clock, entropy)"))
-        validateGraphSource("AssistantAcceptance AssistantSavePermit AssistantAcceptanceOutcome")
-        // Source references are allowed; an instance in the runtime graph remains forbidden.
-        val error = assertFailsWith<AssertionError> {
-            graphClosure(ch.lkmc.monkeyspaw.core.services.AssistantCandidate::class.java)
+        for (name in localSaveReferences) {
+            validateGraphSource(name)
+            // Source references are allowed; an instance in the runtime graph remains forbidden.
+            val error = assertFailsWith<AssertionError> {
+                graphClosure(Class.forName("ch.lkmc.monkeyspaw.core.services.$name"))
+            }
+            assertEquals(name, error.message?.substringBefore('.'))
         }
-        assertEquals("AssistantCandidate", error.message?.substringBefore('.'))
     }
 
     private abstract class InheritedConnection : javax.net.ssl.HttpsURLConnection(null)
@@ -187,6 +192,20 @@ internal class ImeBoundaryTest {
                 assertFailsWith<AssertionError>("$declaration: $call") {
                     validateGraphSource("package local\nimport other.Helper\nfun work() = $call", helpers)
                 }
+            }
+        }
+    }
+
+    @Test fun `local save contract names cannot disguise app helper capabilities`() {
+        for (name in listOf("AssistantAcceptance", "AssistantAcceptanceConflict", "AssistantAcceptanceEditor",
+            "AssistantAcceptanceFailure", "AssistantAcceptanceOutcome", "AssistantAccessState", "AssistantCandidate",
+            "AssistantCommittedPrompt", "AssistantEditorSnapshot", "AssistantMutationAccess", "AssistantSaveDestination",
+            "AssistantSavePermit", "AssistantSaveRefusal")) {
+            val helpers = indexSources(sequenceOf("package other\nclass $name(private val connection: " +
+                "javax.net.ssl.HttpsURLConnection) { fun send() = connection.connect() }"))
+            assertFailsWith<AssertionError>(name) {
+                validateGraphSource("package local\nimport other.$name\n" +
+                    "fun work(connection: javax.net.ssl.HttpsURLConnection) = $name(connection).send()", helpers)
             }
         }
     }
@@ -301,8 +320,9 @@ internal class ImeBoundaryTest {
         assertTrue(password >= 0 && password < screen.indexOf("FillScreen(fill,"))
     }
 
-    private fun validateLocal(source: String) {
-        assertFalse(forbidden.containsMatchIn(source), forbidden.find(source)?.value)
+    private fun validateLocal(source: String, allowedReferences: Set<String> = emptySet()) {
+        val violation = forbidden.findAll(source).firstOrNull { it.value !in allowedReferences }
+        assertNull(violation, violation?.value)
     }
 
     private fun validateGraphSource(source: String, helpers: Map<String, List<String>> = helperSources,
@@ -310,9 +330,15 @@ internal class ImeBoundaryTest {
         val callPatterns = mutableMapOf<String, Regex>()
         fun visit(current: String, context: String = current) {
             if (!visited.add(current)) return
-            validateLocal(localSaveReferences.replace(current, ""))
+            validateLocal(current, localSaveReferences)
             assertFalse(Regex("\\b(?:ApplicationScope|applicationScope)\\b").containsMatchIn(current), "Application scope")
             val pkg = Regex("(?m)^package (\\S+)").find(context)?.groupValues?.get(1)
+            // Only Core declares these contracts; app helpers cannot borrow their exemptions.
+            if (pkg != "ch.lkmc.monkeyspaw.core.services") {
+                Regex("\\b(?:class|interface|object)\\s+(\\w+)").findAll(current).forEach {
+                    validateLocal(it.groupValues[1])
+                }
+            }
             val imports = Regex("(?m)^import ([\\w.*]+)(?: as (\\w+))?").findAll(context).toList()
             for ((qualified, definitions) in helpers) {
                 val name = qualified.substringAfterLast('.')
