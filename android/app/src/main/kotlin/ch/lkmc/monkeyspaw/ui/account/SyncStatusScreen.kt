@@ -19,6 +19,9 @@ internal fun SyncFooter(state: SyncStatusUiState, onDetails: () -> Unit, modifie
                 Text(stringResource(R.string.sync_footer_counts, it.fileErrors, it.conflicts, it.held, it.pending),
                     style = MaterialTheme.typography.bodySmall)
             }
+            state.lastSuccess?.let {
+                Text(stringResource(R.string.sync_last_success, it), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

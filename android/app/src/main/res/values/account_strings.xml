@@ -39,10 +39,13 @@
     <string name="account_sign_out_confirm">Sign out and stop sync? Your library stays on this device.</string>
     <string name="account_revoke_confirm">Revoke %1$s? It will need to sign in again.</string>
     <string name="account_revoke_current_confirm">Revoke %1$s and sign out on this device? Your local library stays.</string>
-    <string name="account_include_confirm">Include %1$d selected files in %2$s at %3$s? Their content may be uploaded to this account.</string>
+    <plurals name="account_include_confirm">
+        <item quantity="one">Include %1$d selected file in %2$s at %3$s? Its content may be uploaded to this account.</item>
+        <item quantity="other">Include %1$d selected files in %2$s at %3$s? Their content may be uploaded to this account.</item>
+    </plurals>
     <string name="account_cleanup_incomplete">Account cleanup is incomplete.</string>
     <string name="account_remote_unconfirmed">Remote sign-out could not be confirmed. Revoke this device from another signed-in device.</string>
-    <string name="account_secret_cleanup">Could not remove %1$d local device credentials. Retry Sign out.</string>
+    <string name="account_secret_cleanup">Device credentials still to remove: %1$d. Retry Sign out.</string>
     <string name="account_metadata_cleanup">Local account metadata could not be cleared. Retry Sign out before enabling sync.</string>
     <string name="sync_disabled">Sync is off</string>
     <string name="sync_idle">Up to date</string>
@@ -54,8 +57,8 @@
     <string name="sync_errors">sync errors</string>
     <string name="sync_now">Sync now</string>
     <string name="sync_details">Sync details</string>
-    <string name="sync_footer_counts">%1$d errors · %2$d conflicts · %3$d held · %4$d pending</string>
-    <string name="sync_pass_counts">%1$d pulled · %2$d pushed</string>
+    <string name="sync_footer_counts">Errors: %1$d · Conflicts: %2$d · Held: %3$d · Pending: %4$d</string>
+    <string name="sync_pass_counts">Pulled: %1$d · Pushed: %2$d</string>
     <string name="sync_last_success">Last successful sync: %1$s</string>
     <string name="sync_never_succeeded">No successful sync yet.</string>
     <string name="sync_file_error">%1$s: %2$s</string>

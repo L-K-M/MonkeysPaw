@@ -41,6 +41,8 @@ internal class AccountBoundaryTest {
         assertEquals("sync errors", strings["sync_errors"])
         assertEquals("resyncing…", strings["sync_resyncing"])
         assertTrue(checkNotNull(strings["account_http_warning"]).contains("password, device token and prompts"))
-        assertTrue(checkNotNull(strings["account_include_confirm"]).contains("selected files"))
+        val inclusion = document.getElementsByTagName("plurals").item(0).textContent
+        assertTrue(inclusion.contains("selected file"))
+        assertTrue(inclusion.contains("selected files"))
     }
 }

@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
@@ -126,7 +127,7 @@ internal fun AccountScreen(
         text = { Text(when {
             state.signOutConfirmation -> stringResource(R.string.account_sign_out_confirm)
             revoke != null -> stringResource(if (revoke.isCurrent) R.string.account_revoke_current_confirm else R.string.account_revoke_confirm, revoke.name)
-            else -> stringResource(R.string.account_include_confirm, state.selectedHolds.size,
+            else -> pluralStringResource(R.plurals.account_include_confirm, state.selectedHolds.size, state.selectedHolds.size,
                 state.account.account?.username.orEmpty(), state.account.account?.identity?.serverURL.orEmpty())
         }) },
         confirmButton = { TextButton(onClick = when {

@@ -10,7 +10,6 @@ import ch.lkmc.monkeyspaw.core.ports.HttpTransportError
 import ch.lkmc.monkeyspaw.core.ports.SyncTLSTrust
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.core.sync.SyncHTTPClientError
-import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import ch.lkmc.monkeyspaw.core.syncapi.LoginRequest
 import ch.lkmc.monkeyspaw.data.AndroidSyncRepository
 import ch.lkmc.monkeyspaw.data.SyncForegroundOwner
@@ -48,8 +47,10 @@ internal class AccountViewModel @Inject constructor(
             }
         } }
         viewModelScope.launch { repository.reports.collect {
+            val becameEnabled = it?.enabled == true && !state.value.sync.enabled
             mutableState.value = state.value.copy(sync = syncStatus(it))
             projectCondition()
+            if (becameEnabled && foreground != null && foregroundJob?.isActive != true) updateForeground()
         } }
     }
 
@@ -82,6 +83,8 @@ internal class AccountViewModel @Inject constructor(
             try {
                 settingsMutex.withLock {
                     if (version != serverVersion) return@withLock
+                    // An intervening draft deployment revokes consent even when its write was coalesced away.
+                    repository.selectServer(null)
                     val selected = repository.selectServer(server)
                     if (version == serverVersion) mutableState.value = state.value.copy(trust = selected?.trust ?: SyncTLSTrust.SYSTEM)
                 }
@@ -221,10 +224,9 @@ internal class AccountViewModel @Inject constructor(
 
     private suspend fun loadLocal() {
         val holds = repository.heldPrompts()
-        val selectedServer = state.value.server
         val settings = settingsMutex.withLock { repository.tlsSettings() }
         mutableState.value = state.value.copy(holds = holds, selectedHolds = state.value.selectedHolds.intersect(holds.map { it.identity }.toSet()),
-            trust = settings?.takeIf { it.server == selectedServer }?.trust ?: SyncTLSTrust.SYSTEM)
+            trust = settings?.takeIf { it.server == state.value.server }?.trust ?: SyncTLSTrust.SYSTEM)
     }
 
     private fun run(action: AccountAction, replace: Boolean = false, body: suspend () -> Unit) {
@@ -243,7 +245,8 @@ internal class AccountViewModel @Inject constructor(
                 if (version == commandVersion) {
                     mutableState.value = state.value.copy(busy = null, draft = state.value.draft.copy(password = ""))
                     projectCondition()
-                    if (completed) updateForeground()
+                    // A transient /me refresh failure must not strand an already authenticated foreground session.
+                    if (completed || repository.reports.value?.enabled == true) updateForeground()
                 }
             }
         }

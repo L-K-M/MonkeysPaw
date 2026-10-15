@@ -247,6 +247,41 @@ internal class AccountViewModelTest : TemporaryFiles() {
         assertEquals(2, m.state.value.account.me?.devices?.size)
     }
 
+    @Test fun `explicit trust reaches only requests for its selected deployment`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        m.setServer(server); runCurrent()
+        m.setTrust(true); runCurrent()
+        credentials(m); m.signIn(); runCurrent()
+        assertTrue(r.requests.isNotEmpty())
+        for (request in r.requests) assertEquals(SyncTLSTrust.SYSTEM_AND_USER, (request.urlPolicy as HttpUrlPolicy.Sync).trust)
+        val other = "https://other.test/paw"
+        credentials(m, other); m.signIn(); runCurrent()
+        assertEquals(other, m.state.value.account.account?.identity?.serverURL)
+        val changed = r.requests.filter { it.url.startsWith(other + "/api/v1/") }
+        assertEquals(2, changed.size)
+        for (request in changed) assertEquals(SyncTLSTrust.SYSTEM, (request.urlPolicy as HttpUrlPolicy.Sync).trust)
+    }
+
+    @Test fun `rapid server round trips never restore a trust choice after it was reset`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        m.setServer(server); runCurrent()
+        m.setTrust(true); runCurrent()
+        assertTrue(m.state.value.trustsUserCAs)
+        m.setServer("https://other.test/paw")
+        m.setServer(server)
+        runCurrent()
+        assertFalse(m.state.value.trustsUserCAs)
+        assertEquals(SyncTLSTrust.SYSTEM, r.settings.read().syncTls?.trust)
+        m.setTrust(true); runCurrent()
+        m.setServer("")
+        m.setServer(server)
+        runCurrent()
+        assertFalse(m.state.value.trustsUserCAs)
+        assertEquals(SyncTLSTrust.SYSTEM, r.settings.read().syncTls?.trust)
+    }
+
     @Test fun `reserved folders refuse activation and recovery cannot rename or delete user content`() = runTest(dispatcher) {
         val r = rig()
         put(libraryDir.resolve("Groups/keep.md"), "preserve".encodeToByteArray())
@@ -384,7 +419,9 @@ internal class AccountViewModelTest : TemporaryFiles() {
         m.setForeground(SyncForegroundOwner.LIBRARY)
         runCurrent()
         assertTrue(count(r, "/sync/pull") <= 1)
+        val meBeforeHop = count(r, "/me")
         m.setForeground(SyncForegroundOwner.ACCOUNT); runCurrent()
+        assertEquals(meBeforeHop, count(r, "/me"))
         m.setPassword(password)
         m.setForeground(null); runCurrent()
         assertEquals("", m.state.value.draft.password)
@@ -406,6 +443,39 @@ internal class AccountViewModelTest : TemporaryFiles() {
         m.setForeground(SyncForegroundOwner.LIBRARY)
         runCurrent()
         assertNull(m.state.value.busy)
+        val before = count(r, "/sync/pull")
+        advanceTimeBy(61_000); runCurrent()
+        assertTrue(count(r, "/sync/pull") > before)
+        m.setForeground(null); runCurrent()
+    }
+
+    @Test fun `failed entry refresh retains foreground polling for an authenticated session`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        runCurrent()
+        r.handler = { if (it.url.endsWith("/me")) throw HttpTransportError.NetworkFailure else null }
+        m.setForeground(SyncForegroundOwner.LIBRARY); runCurrent()
+        assertEquals(AccountCondition.OFFLINE, m.state.value.condition)
+        assertEquals(2, count(r, "/me"))
+        r.handler = null
+        val before = count(r, "/sync/pull")
+        advanceTimeBy(61_000); runCurrent()
+        assertTrue(count(r, "/sync/pull") > before)
+        m.setForeground(null); runCurrent()
+    }
+
+    @Test fun `a worker restoring authentication also restores the visible foreground lease`() = runTest(dispatcher) {
+        val first = rig()
+        first.login(); first.close()
+        val r = rig()
+        r.secrets.values.putAll(first.secrets.values)
+        val m = model(r)
+        r.handler = { if (it.url.endsWith("/me")) throw HttpTransportError.NetworkFailure else null }
+        m.setForeground(SyncForegroundOwner.LIBRARY); runCurrent()
+        assertEquals(1, count(r, "/me"))
+        r.handler = null
+        r.sync.resume(); runCurrent()
         val before = count(r, "/sync/pull")
         advanceTimeBy(61_000); runCurrent()
         assertTrue(count(r, "/sync/pull") > before)
