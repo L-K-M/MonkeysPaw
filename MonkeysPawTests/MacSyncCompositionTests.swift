@@ -327,6 +327,9 @@ final class MacSyncCompositionTests: XCTestCase {
         try start(work: work)
         let account = try XCTUnwrap(delegate.accountModel)
         XCTAssertTrue(spin { !account.state.isBusy })
+        // Authorize startup so the replacement can adopt the new root after login.
+        delegate.startSync()
+        XCTAssertTrue(spin { !account.state.isBusy })
         transport.holdLogin = true
         var password = "Runtime-password-" + UUID().uuidString
         account.login(server: "https://example.test/paw", username: "person", password: &password, deviceName: "Mac")
@@ -345,12 +348,14 @@ final class MacSyncCompositionTests: XCTestCase {
         work.drain()
         XCTAssertEqual(delegate.libraryDirectory, root, "Retry must still wait for the original login")
         transport.releaseHeldRequests()
-        // The replacement's later steps also queue on the held worker.
+        // Startup refreshes the replacement's index on the held worker.
         XCTAssertTrue(spin {
             work.drain()
             return self.delegate.libraryDirectory == other && self.delegate.pickerModel?.libraryAvailable == true
         })
         XCTAssertEqual(delegate.libraryDirectory, other)
+        XCTAssertEqual(delegate.settingsModel?.libraryFolderPath, other.path)
+        XCTAssertNil(account.state.connection, "The retired model cannot publish the admitted login's result")
     }
 
     func testDiscardedBarrierRefusesQuitAndRepliesExactlyOnce() throws {
