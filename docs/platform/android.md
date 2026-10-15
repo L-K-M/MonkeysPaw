@@ -570,10 +570,13 @@ one body-free usage record, verified through a new store graph. Explicit share
 Save creates only its prompt; a later explicit edit/save can add its previous
 bytes to history. Capture, remember=false values, builtins and error bodies
 are checked in raw, JSON, base64 and percent-encoded forms outside permitted
-files. JVM logger callbacks and stdout/stderr are also observed.
+files, including both form-encoded `+` and percent-encoded `%20` spaces. JVM
+logger callbacks at all levels and stdout/stderr are also observed; planted
+FINE records and concurrent publishers exercise the capture itself.
 
 `ImeBoundaryTest` extends the existing constructor/provider/inheritance walk
-with top-level helper calls and callback references, including imported aliases.
+with top-level helper calls, class constructions, object calls and callback
+references, including imported aliases with explicit-import precedence.
 Negative probes check network, secrets, scheduling, diagnostics and target-text
 reads. The local graph excludes the application diagnostic scope; settings
 DataStore owns its separate silent supervised scope. `Application.onCreate`
@@ -597,9 +600,10 @@ ships exactly `android.permission.INTERNET` for M11 assistant and M10 sync.
 N8 preserves it and asserts that exact permission set, rather than the row's
 older “absent INTERNET” wording. `EntryManifestTest` pins exported flags,
 exact filters, IME `BIND_INPUT_METHOD` protection/metadata, one process,
-backup denial and quick-entry resources. JVM tests inspect the merged debug
-manifest as a declared build input. Inspect the merged release manifest
-after assembly as well: source XML alone cannot detect dependency additions.
+backup denial and quick-entry resources. JVM tests inspect both merged debug
+and release manifests as declared inputs from AGP's artifact API. Inspect the
+packaged release manifest after assembly as well: source XML alone cannot
+detect dependency additions.
 The IME graph continues to exclude HTTP, sync engine, secret and scheduler
 capabilities; shared local sync recovery/value types are not outbound work.
 

@@ -20,6 +20,7 @@ import java.nio.file.Files
 import java.util.Base64
 import java.util.UUID
 import java.util.logging.Handler
+import java.util.logging.Level
 import java.util.logging.LogRecord
 import java.util.logging.Logger
 import kotlinx.serialization.json.JsonPrimitive
@@ -29,9 +30,13 @@ import kotlin.test.*
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ImePrivacyTest : EntryFlowFixture() {
     private val diagnostics = ByteArrayOutputStream()
-    private val records = mutableListOf<LogRecord>()
+    private val records = java.util.concurrent.CopyOnWriteArrayList<LogRecord>()
     private val stdout = System.out
     private val stderr = System.err
+    private val rootLogger = Logger.getLogger("")
+    private val appLogger = Logger.getLogger("MonkeysPaw")
+    private val rootLevel = rootLogger.level
+    private val appLevel = appLogger.level
     private val handler = object : Handler() {
         override fun publish(record: LogRecord) { records += record }
         override fun flush() = Unit
@@ -41,8 +46,11 @@ internal class ImePrivacyTest : EntryFlowFixture() {
     @BeforeTest fun observeDiagnostics() {
         System.setOut(PrintStream(diagnostics, true, Charsets.UTF_8))
         System.setErr(PrintStream(diagnostics, true, Charsets.UTF_8))
-        Logger.getLogger("").addHandler(handler)
-        Logger.getLogger("MonkeysPaw").addHandler(handler)
+        handler.level = Level.ALL
+        rootLogger.level = Level.ALL
+        appLogger.level = Level.ALL
+        rootLogger.addHandler(handler)
+        appLogger.addHandler(handler)
     }
 
     @AfterTest fun restoreDiagnostics() {
@@ -51,11 +59,50 @@ internal class ImePrivacyTest : EntryFlowFixture() {
             assertTrue(records.isEmpty(), "Unexpected JVM logger call")
             assertEquals(0, diagnostics.size(), "Unexpected stdout/stderr diagnostic")
         } finally {
-            Logger.getLogger("").removeHandler(handler)
-            Logger.getLogger("MonkeysPaw").removeHandler(handler)
+            rootLogger.removeHandler(handler)
+            appLogger.removeHandler(handler)
+            rootLogger.level = rootLevel
+            appLogger.level = appLevel
             System.setOut(stdout)
             System.setErr(stderr)
         }
+    }
+
+    @Test fun `diagnostic capture observes FINE records from app and inherited loggers`() {
+        val message = sentinel()
+        try {
+            for (logger in listOf(Logger.getLogger(""), Logger.getLogger("MonkeysPaw"),
+                Logger.getLogger("MonkeysPaw.privacy.probe"))) {
+                records.clear()
+                logger.fine(message)
+                assertTrue(records.any { it.level == Level.FINE && it.message == message }, logger.name)
+            }
+        } finally { records.clear() }
+    }
+
+    @Test fun `diagnostic capture retains concurrent publisher records`() {
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val start = java.util.concurrent.CountDownLatch(1)
+        try {
+            val publishers = (0 until 8).map { worker -> executor.submit {
+                start.await()
+                repeat(128) { record -> handler.publish(LogRecord(Level.FINE, "$worker-$record")) }
+            } }
+            start.countDown()
+            publishers.forEach { it.get() }
+            assertEquals(1024, records.size)
+            assertEquals(1024, records.map { it.message }.toSet().size)
+        } finally { executor.shutdownNow(); records.clear() }
+    }
+
+    @Test fun `sentinel scan rejects percent encoded spaces outside permitted files`() = runTest {
+        prepare("percent-probe")
+        val secret = sentinel()
+        val leak = directory.resolve("cache/encoded.txt")
+        try {
+            put(leak, URLEncoder.encode(secret, Charsets.UTF_8).replace("+", "%20").encodeToByteArray())
+            assertFailsWith<AssertionError> { absent(listOf(secret)) }
+        } finally { Files.deleteIfExists(leak) }
     }
 
     @Test fun `cancelled entries and their late builtin callbacks leave every sandbox file unchanged`() = runTest {
@@ -320,7 +367,8 @@ internal class ImePrivacyTest : EntryFlowFixture() {
 
     private fun absent(secrets: List<String>, allowed: Set<String> = emptySet()) {
         val variants = secrets.flatMap { listOf(it, Base64.getEncoder().encodeToString(it.encodeToByteArray()),
-            URLEncoder.encode(it, Charsets.UTF_8), JsonPrimitive(it).toString().removeSurrounding("\"")) }
+            URLEncoder.encode(it, Charsets.UTF_8), URLEncoder.encode(it, Charsets.UTF_8).replace("+", "%20"),
+            JsonPrimitive(it).toString().removeSurrounding("\"")) }
         for ((path, bytes) in disk().filterKeys { it !in allowed }) {
             val text = bytes.toByteArray().decodeToString()
             assertFalse(variants.any(text::contains), "Sensitive sentinel persisted in $path")

@@ -5,32 +5,55 @@ import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 import kotlin.test.*
 
-/** Pins the source manifest; N8 also inspects the separately built merged release manifest. */
+/** Pins source contracts and both AGP merged manifests, including the release that ships. */
 internal class EntryManifestTest {
     private val sources = File(checkNotNull(System.getProperty("monkeyspaw.appSources")))
     private val android = "http://schemas.android.com/apk/res/android"
     private val tools = "http://schemas.android.com/tools"
 
     @Test fun `merged startup metadata never eagerly initializes HTTP or its loggers for an IME launch`() {
-        assertFalse("okhttp3.internal.platform.PlatformInitializer" in startupInitializers())
+        for (merged in mergedManifests()) assertFalse("okhttp3.internal.platform.PlatformInitializer" in startupInitializers(merged))
     }
 
     @Test fun `merged startup metadata never schedules background profile installation for an IME launch`() {
-        assertFalse("androidx.profileinstaller.ProfileInstallerInitializer" in startupInitializers())
+        for (merged in mergedManifests()) assertFalse("androidx.profileinstaller.ProfileInstallerInitializer" in startupInitializers(merged))
     }
 
     @Test fun `merged manifest has the exact permissions components filters and safe startup allowlist`() {
-        val merged = mergedManifest()
+        mergedManifests().forEach(::validateMergedManifest)
+    }
+
+    @Test fun `merged manifest contract rejects duplicate components`() {
+        for (merged in mergedManifests()) {
+            val application = merged.children("application").single()
+            application.appendChild(application.children("activity").first().cloneNode(true))
+            assertFailsWith<AssertionError> { validateMergedManifest(merged) }
+        }
+    }
+
+    @Test fun `merged manifest contract rejects missing or weaker profile receiver protection`() {
+        for (permission in listOf("", "android.permission.INTERNET")) {
+            for (merged in mergedManifests()) {
+                val receiver = merged.children("application").single().children("receiver")
+                    .single { it.attr("name") == "androidx.profileinstaller.ProfileInstallReceiver" }
+                receiver.setAttributeNS(android, "android:permission", permission)
+                assertFailsWith<AssertionError> { validateMergedManifest(merged) }
+            }
+        }
+    }
+
+    private fun validateMergedManifest(merged: Element) {
         assertEquals(listOf("android.permission.INTERNET"), merged.children("uses-permission").map { it.attr("name") })
         for (tag in listOf("permission", "uses-permission-sdk-23", "uses-permission-sdk-m")) assertTrue(merged.children(tag).isEmpty())
         val application = merged.children("application").single()
         assertEquals("false", application.attr("allowBackup"))
         val tags = setOf("activity", "activity-alias", "service", "receiver", "provider")
         val source = xml("AndroidManifest.xml").children("application").single().children().filter { it.tagName in tags }
-        val actual = application.children().filter { it.tagName in tags }.associateBy { it.attr("name") }
+        val components = application.children().filter { it.tagName in tags }
+        val actual = components.associateBy { it.attr("name") }
         fun qualified(name: String) = if (name.startsWith('.')) "ch.lkmc.monkeyspaw$name" else name
         val profileReceiver = "androidx.profileinstaller.ProfileInstallReceiver"
-        assertEquals(source.map { qualified(it.attr("name")) }.toSet() + profileReceiver, actual.keys)
+        assertEquals((source.map { qualified(it.attr("name")) } + profileReceiver).sorted(), components.map { it.attr("name") }.sorted())
         for (component in source) {
             val counterpart = actual.getValue(qualified(component.attr("name")))
             assertEquals(component.tagName, counterpart.tagName)
@@ -47,7 +70,7 @@ internal class EntryManifestTest {
         val startup = actual.getValue("androidx.startup.InitializationProvider")
         assertEquals("ch.lkmc.monkeyspaw.androidx-startup", startup.attr("authorities"))
         assertEquals(setOf("androidx.emoji2.text.EmojiCompatInitializer", "androidx.lifecycle.ProcessLifecycleInitializer"),
-            startupInitializers())
+            startupInitializers(merged))
         for (element in actual.values + application) assertFalse(element.hasAttributeNS(android, "process"))
     }
 
@@ -153,8 +176,10 @@ internal class EntryManifestTest {
         val action: String? = null, val category: String? = null, val mime: String? = null)
 
     private fun removed(element: Element) = element.getAttributeNS(tools, "node") == "remove"
-    private fun mergedManifest() = parse(File(checkNotNull(System.getProperty("monkeyspaw.mergedManifest"))))
-    private fun startupInitializers(): Set<String> = mergedManifest().children("application").single().children("provider")
+    private fun mergedManifests() = listOf("debug", "release").map { variant ->
+        parse(File(checkNotNull(System.getProperty("monkeyspaw.mergedManifest.$variant"))))
+    }
+    private fun startupInitializers(merged: Element): Set<String> = merged.children("application").single().children("provider")
         .single { it.attr("name") == "androidx.startup.InitializationProvider" }
         .children("meta-data").map { it.attr("name") }.toSet()
     private fun filters(component: Element) = component.children("intent-filter").map { filter ->

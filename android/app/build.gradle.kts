@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import groovy.json.JsonOutput
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -106,6 +107,12 @@ androidComponents.onVariants { variant ->
         apkDirectory.set(layout.buildDirectory.dir("outputs/apk/${variant.name}"))
     }
     tasks.matching { it.name == "assemble$name" }.configureEach { finalizedBy(verification) }
+    // The debug JVM gate also pins the release manifest that ships.
+    val mergedManifest = variant.artifacts.get(SingleArtifact.MERGED_MANIFEST)
+    tasks.withType<Test>().configureEach {
+        systemProperty("monkeyspaw.mergedManifest.${variant.name}", mergedManifest.get().asFile.absolutePath)
+        inputs.file(mergedManifest).withPropertyName("merged${variant.name}EntryManifest").withPathSensitivity(PathSensitivity.RELATIVE)
+    }
 }
 
 android {
@@ -214,10 +221,6 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 
 tasks.withType<Test>().configureEach {
     dependsOn(generateSeedAssets)
-    dependsOn("processDebugManifest")
-    val mergedManifest = layout.buildDirectory.file("intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml")
-    systemProperty("monkeyspaw.mergedManifest", mergedManifest.get().asFile.absolutePath)
-    inputs.file(mergedManifest).withPropertyName("mergedEntryManifest").withPathSensitivity(PathSensitivity.RELATIVE)
     systemProperty("monkeyspaw.seedSources", generateSeedAssets.get().seedDirectory.get().asFile.absolutePath)
     systemProperty("monkeyspaw.seedAssets", generateSeedAssets.get().outputDirectory.get().asFile.absolutePath)
     inputs.dir(generateSeedAssets.flatMap { it.seedDirectory }).withPropertyName("seedSources").withPathSensitivity(PathSensitivity.RELATIVE)
