@@ -425,10 +425,10 @@ internal class EditorViewModel @Inject constructor(
                 Observation(PromptLoadResult.Failed(error), null)
             }
             if (!active || epoch != session || token != loadGeneration) return@launch
-            reading = false
             if (purpose == LoadPurpose.REPLACE) currentState = state.value.copy(status = EditorStatus.READY)
             applyObservation(observed, purpose)
             drain()
+            if (token == loadGeneration) reading = false
             notifyAssistantContext()
         }
     }

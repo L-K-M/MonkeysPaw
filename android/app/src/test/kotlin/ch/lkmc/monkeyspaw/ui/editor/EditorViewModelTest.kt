@@ -1127,6 +1127,53 @@ internal class EditorViewModelTest : TemporaryFiles() {
     }
 
     @Test
+    fun `assistant load notifications expose available only after checked bytes apply`() = runTest {
+        put(libraryDir.resolve("a.md"), "Original".encodeToByteArray())
+        val model = model()
+        val notifications = mutableListOf<AssistantEditorSnapshot?>()
+        model.addAssistantContextObserver { notifications.add(model.assistantSnapshot) }
+        open(model)
+        runCurrent()
+        assertEquals(listOf("Original"), notifications.filter {
+            it?.availability == AssistantEditorAvailability.AVAILABLE
+        }.map { it?.source })
+
+        for (replace in listOf(true, false)) {
+            notifications.clear()
+            val source = if (replace) "Reloaded" else "Reconciled"
+            put(libraryDir.resolve("a.md"), source.encodeToByteArray())
+            if (replace) model.reload() else model.refresh()
+            runCurrent()
+            val available = notifications.filter { it?.availability == AssistantEditorAvailability.AVAILABLE }
+            assertEquals(listOf(source), available.map { it?.source })
+            assertEquals(model.state.value.stamp, available.single()?.stamp)
+        }
+    }
+
+    @Test
+    fun `assistant load completion leaves a newer reconciliation busy`() = runTest {
+        put(libraryDir.resolve("a.md"), "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nOriginal".encodeToByteArray())
+        val held = HeldDispatcher()
+        val model = model(io = held)
+        var reconciled = false
+        model.onSelectionChanged = {
+            if (!reconciled && model.state.value.stamp != null) {
+                reconciled = true
+                model.refresh()
+            }
+        }
+        open(model)
+        runCurrent()
+        held.release()
+        runCurrent()
+        assertTrue(reconciled)
+        assertEquals(AssistantEditorAvailability.BUSY, model.assistantSnapshot?.availability)
+        held.releaseAll()
+        runCurrent()
+        assertEquals(AssistantEditorAvailability.AVAILABLE, model.assistantSnapshot?.availability)
+    }
+
+    @Test
     fun `assistant captures raw immutable buffer revision stamp and loaded identity without rendered values`() = runTest {
         val original = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\n---\nDisk {{clipboard}}"
         put(libraryDir.resolve("a.md"), original.encodeToByteArray())
@@ -1152,6 +1199,7 @@ internal class EditorViewModelTest : TemporaryFiles() {
         val bytes = checkNotNull(first.sourceBytes)
         bytes.fill(0)
         assertEquals("Unsaved {{topic}} and {{clipboard}}", first.source)
+        assertContentEquals("Unsaved {{topic}} and {{clipboard}}".encodeToByteArray(), first.sourceBytes)
         runCurrent()
         assertFalse(model.state.value.preview.contains("{{clipboard}}"))
         bytesAre(original.encodeToByteArray())

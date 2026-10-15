@@ -158,9 +158,12 @@ class AssistantOperation<T> internal constructor() {
                        remainingNanos: (() -> Long)? = null, work: suspend () -> T) {
         val scope = CoroutineScope(lifetime + io)
         if (remainingNanos != null) scope.launch(timer) {
-            val remaining = remainingNanos()
-            if (remaining > 0) delay(remaining.nanoseconds)
-            finish(Result.failure(AssistantFailure.Assistant(AssistantError.Transport(HttpTransportError.DeadlineExceeded))))
+            try {
+                val remaining = remainingNanos()
+                if (remaining > 0) delay(remaining.nanoseconds)
+                finish(Result.failure(AssistantFailure.Assistant(AssistantError.Transport(HttpTransportError.DeadlineExceeded))))
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) { finish(Result.failure(AssistantFailure.sanitized(error))) }
         }
         scope.launch {
             try {

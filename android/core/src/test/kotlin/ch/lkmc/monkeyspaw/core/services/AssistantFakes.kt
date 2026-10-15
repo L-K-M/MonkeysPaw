@@ -23,6 +23,7 @@ internal class AssistantFakeClient : AssistantClient {
     val pageCalls = mutableListOf<Pair<String?, Long>>()
     private val answers = ArrayDeque<suspend () -> AssistantResponse>()
     var onCall: (suspend () -> Unit)? = null
+    var onPage: (suspend () -> Unit)? = null
 
     fun answer(response: AssistantResponse) { answers.addLast { response } }
     fun fail(error: AssistantError) { answers.addLast { throw error } }
@@ -41,6 +42,7 @@ internal class AssistantFakeClient : AssistantClient {
     override suspend fun listModels(connection: ProviderConnection): AssistantModelPage = error("Missing deadline")
     override suspend fun listModels(connection: ProviderConnection, afterID: String?, deadlineNanos: Long): AssistantModelPage {
         pageCalls.add(afterID to deadlineNanos)
+        onPage?.invoke()
         return if (pages.isEmpty()) AssistantModelPage(emptyList()) else pages.removeFirst()
     }
 }

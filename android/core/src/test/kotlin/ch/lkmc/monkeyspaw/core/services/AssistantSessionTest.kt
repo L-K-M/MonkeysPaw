@@ -5,6 +5,9 @@ import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.llm.LlmOutputDecoder
 import ch.lkmc.monkeyspaw.core.ports.HttpTransportError
+import ch.lkmc.monkeyspaw.core.ports.Clock
+import ch.lkmc.monkeyspaw.core.ports.Entropy
+import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
 import java.util.UUID
 import kotlin.test.*
 import kotlinx.coroutines.*
@@ -13,6 +16,74 @@ import kotlinx.coroutines.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantSessionTest {
+    @Test fun synchronousCancellationPropagatesWithoutPublishingFailureOrSending() = runTest {
+        val h = AssistantHarness(this)
+        h.configure()
+        val cancellation = CancellationException("Cancelled action")
+        val session = AssistantSession(h.service, backgroundScope, { h.context }, MonotonicClock { throw cancellation })
+        assertSame(cancellation, assertFailsWith<CancellationException> { session.write("Brief") })
+        runCurrent()
+        assertEquals(AssistantPhase.IDLE, session.state.value.phase)
+        assertNull(session.state.value.failure)
+        assertTrue(h.client.calls.isEmpty())
+        session.deactivate()
+        h.session.deactivate()
+    }
+
+    @Test fun rawProviderAndPreparationExceptionsBecomeSanitizedRetryableFailures() = runTest {
+        for (error in listOf(IllegalStateException("sensitive-${UUID.randomUUID()}"), AssistantError.Authentication)) {
+            val expected = if (error is AssistantError) error else AssistantError.Transport(HttpTransportError.NetworkFailure)
+            for (preparing in listOf(false, true)) {
+                val h = AssistantHarness(this)
+                h.configure()
+                val service = if (preparing) AssistantService(h.provider.service, h.client, h.client, h.worker,
+                    Clock { java.time.Instant.EPOCH }, Entropy { throw error }, h.monotonic, h.worker) else h.service
+                if (!preparing) h.client.onCall = { throw error }
+                val session = AssistantSession(service, backgroundScope, { h.context }, h.monotonic)
+                session.write("Brief")
+                runCurrent()
+                assertEquals(AssistantPhase.FAILED, session.state.value.phase)
+                assertEquals(AssistantFailure.Assistant(expected), session.state.value.failure)
+                assertTrue(session.canRetry)
+                assertNull(session.state.value.candidate)
+                if (preparing) {
+                    assertNotNull(session.state.value.artifact)
+                    session.showDiff()
+                    runCurrent()
+                    assertEquals(AssistantPhase.FAILED, session.state.value.phase)
+                    assertEquals(AssistantFailure.Assistant(expected), session.state.value.failure)
+                }
+                session.deactivate()
+                h.session.deactivate()
+            }
+        }
+    }
+
+    @Test fun guardTransitionsKeepFooterAndCandidateWhileAccessTransitionsRefreshAndRetire() = runTest {
+        val h = AssistantHarness(this, source = "Original")
+        h.configure()
+        h.session.improve()
+        runCurrent()
+        val ready = h.session.state.value
+        assertNotNull(ready.candidate)
+        for (availability in listOf(AssistantEditorAvailability.BUSY, AssistantEditorAvailability.AVAILABLE)) {
+            h.context = h.context.copy(editor = h.context.editor?.copy(availability = availability))
+            h.session.contextChanged()
+            assertEquals(ready, h.session.state.value)
+            assertTrue(h.session.isCandidateCurrent)
+        }
+        for (access in AssistantAccessState.entries) {
+            h.context = h.context.copy(access = access)
+            h.session.contextChanged()
+            assertEquals(access.mutationAccess, h.session.state.value.mutationAccess)
+            if (access != AssistantAccessState.PRIVATE_PROMPT) {
+                assertEquals(AssistantPhase.IDLE, h.session.state.value.phase)
+                assertNull(h.session.state.value.candidate)
+            }
+        }
+        h.session.deactivate()
+    }
+
     @Test fun deactivationUsesCapturedContextAndKeepsFooterWithoutProbingRetiredGraph() = runTest {
         val h = AssistantHarness(this)
         h.configure()
@@ -379,6 +450,21 @@ class AssistantSessionTest {
             } else assertEquals(AssistantFailure.Assistant(AssistantError.PrivatePrompt), h.session.state.value.failure)
             h.session.deactivate()
         }
+        for ((availability, failure) in listOf(AssistantEditorAvailability.BUSY to AssistantFailure.EditorBusy,
+            AssistantEditorAvailability.CONFLICTED to AssistantFailure.EditorConflict)) {
+            val h = AssistantHarness(this, source = "Original")
+            h.configure()
+            h.session.improve()
+            runCurrent()
+            h.edit("Changed")
+            h.context = h.context.copy(editor = h.context.editor?.copy(availability = availability))
+            h.session.showDiff()
+            runCurrent()
+            assertEquals(failure, h.session.state.value.failure)
+            assertNull(h.session.state.value.candidate)
+            assertEquals(1, h.client.calls.size)
+            h.session.deactivate()
+        }
     }
 
     @Test fun guardAvailabilityPreservesReadyPreviewButBlocksEveryNewActionBeforeSecretRead() = runTest {
@@ -528,16 +614,22 @@ class AssistantSessionTest {
         h.session.editInstruction(sentinel)
         h.session.improve()
         runCurrent()
+        assertNotNull(h.session.state.value.candidate)
         for (value in listOf(h.session, h.session.state.value, h.context, h.context.editor,
-            h.session.state.value.candidate, AssistantCommand.Write(sentinel),
+            h.session.state.value.candidate, h.session.state.value.transcript, AssistantCommand.Write(sentinel),
             AssistantFailure.Assistant(AssistantError.UnexpectedStop(sentinel)), h.service)) {
             assertFalse(value.toString().contains(sentinel))
         }
         val state = h.session.state.value
-        assertFailsWith<UnsupportedOperationException> { (state.transcript as MutableList).clear() }
+        val transcript = state.transcript as MutableList<AssistantMessage>
+        assertTrue(transcript.isNotEmpty())
+        assertFailsWith<UnsupportedOperationException> { transcript.clear() }
+        assertFailsWith<UnsupportedOperationException> { transcript.add(transcript.first()) }
+        assertFailsWith<UnsupportedOperationException> { transcript[0] = transcript[0] }
         val bytes = checkNotNull(h.context.editor?.sourceBytes)
         bytes.fill(0)
         assertEquals(sentinel, h.context.editor?.source)
+        assertContentEquals(sentinel.encodeToByteArray(), h.context.editor?.sourceBytes)
         h.session.deactivate()
     }
 }

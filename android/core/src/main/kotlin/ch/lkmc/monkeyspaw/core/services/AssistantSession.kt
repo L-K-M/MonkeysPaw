@@ -212,6 +212,9 @@ class AssistantSession(
                 catch (error: AssistantFailure) { Result.failure(error) }
                 received(result, token)
             }
+        } catch (error: CancellationException) {
+            stopElapsed()
+            throw error
         } catch (error: Exception) {
             if (active && generation == token) {
                 stopElapsed()

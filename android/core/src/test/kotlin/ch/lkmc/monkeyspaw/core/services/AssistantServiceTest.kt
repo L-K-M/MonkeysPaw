@@ -15,6 +15,77 @@ import kotlinx.coroutines.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantServiceTest {
+    @Test fun timerClockFailureCompletesWithSanitizedFailureInsteadOfEscapingScope() = runTest {
+        val h = AssistantHarness(this)
+        val operation = AssistantOperation<Unit>()
+        operation.start(h.worker, h.worker, { throw IllegalStateException("Clock unavailable") }) { awaitCancellation() }
+        val awaiting = async { runCatching { operation.await() } }
+        try {
+            runCurrent()
+            assertTrue(awaiting.isCompleted, "Clock failure left the operation pending")
+            assertEquals(AssistantFailure.Assistant(AssistantError.Transport(HttpTransportError.NetworkFailure)),
+                awaiting.await().exceptionOrNull())
+        } finally { operation.cancel() }
+    }
+
+    @Test fun readOnlySourceTextCannotBypassActionOrPreparationGates() = runTest {
+        val h = AssistantHarness(this, source = "Original")
+        h.configure()
+        for (reason in SourceReadOnlyReason.entries) {
+            val source = if (reason == SourceReadOnlyReason.FUTURE_FORMAT) "---\nformat: 2\n---\nFuture" else "Original"
+            val context = h.context.copy(editor = h.context.editor?.copy(source = source, readOnlyReason = reason))
+            val reads = h.provider.secrets.reads.size
+            for (command in listOf(AssistantCommand.Review, AssistantCommand.Improve("Clarify"))) {
+                assertEquals(AssistantFailure.ReadOnly(reason), assertFailsWith<AssistantFailure> {
+                    h.service.perform(command, context).await()
+                })
+                assertEquals(AssistantFailure.ReadOnly(reason), assertFailsWith<AssistantFailure> {
+                    h.service.prepare(assistantArtifact(), command, context).await()
+                })
+            }
+            assertEquals(reads, h.provider.secrets.reads.size)
+            assertTrue(h.client.calls.isEmpty())
+        }
+        h.session.deactivate()
+    }
+
+    @Test fun rawModelErrorsAndCapFailuresAreReturnedAsConnectionResults() = runTest {
+        val h = AssistantHarness(this)
+        h.configure()
+        val draft = ProviderDraft(checkNotNull(h.service.selectedProfile))
+        h.client.onPage = { throw AssistantError.Transport(HttpTransportError.DeadlineExceeded) }
+        assertEquals(ConnectionTestResult.Timeout, h.service.testConnection(draft).await())
+        h.client.onPage = { throw CancellationException("Transport stopped").apply { initCause(HttpTransportError.DeadlineExceeded) } }
+        assertEquals(ConnectionTestResult.Timeout, h.service.testConnection(draft).await())
+        h.client.onPage = null
+        h.client.pages.add(AssistantModelPage(List(Limits.modelListEntryCap + 1) { ModelDescriptor("model-$it") }))
+        assertEquals(ConnectionTestResult.InvalidResponse, h.service.testConnection(draft).await())
+        h.session.deactivate()
+    }
+
+    @Test fun cancellingAwaiterPropagatesCancellationAndCancelsOperationBeforeLateReply() = runTest {
+        val h = AssistantHarness(this)
+        h.configure()
+        val reply = h.client.hold()
+        val operation = h.service.perform(AssistantCommand.Write("Brief"), h.context)
+        var caught: CancellationException? = null
+        val awaiting = backgroundScope.launch {
+            try { operation.await(); fail("Cancelled await returned") }
+            catch (error: CancellationException) { caught = error; throw error }
+        }
+        runCurrent()
+        awaiting.cancel()
+        runCurrent()
+        assertTrue(awaiting.isCancelled)
+        assertNotNull(caught)
+        val cancelled = AssistantFailure.Assistant(AssistantError.Transport(HttpTransportError.Cancelled))
+        assertEquals(cancelled, assertFailsWith<AssistantFailure> { operation.await() })
+        reply.complete(assistantResponse())
+        runCurrent()
+        assertEquals(cancelled, assertFailsWith<AssistantFailure> { operation.await() })
+        h.session.deactivate()
+    }
+
     @Test fun currentBufferIsSentAndPreparedWithoutReadingDiskOrRenderedValues() = runTest {
         for (kind in ProviderKind.entries) {
             val h = AssistantHarness(this, kind, "Disk template")
@@ -213,6 +284,7 @@ class AssistantServiceTest {
         val secrets = h.provider.secrets.writes.size
         h.client.pages.add(AssistantModelPage(listOf(ModelDescriptor("z"), ModelDescriptor("a", "Zulu")), true, lastID = "cursor"))
         h.client.pages.add(AssistantModelPage(listOf(ModelDescriptor("a", "Alpha"), ModelDescriptor("z", "Name"))))
+        h.client.onPage = { delay(1_000) }
         val result = h.service.testConnection(ProviderDraft(checkNotNull(h.service.selectedProfile))).await() as ConnectionTestResult.Ok
         assertEquals(listOf(ModelDescriptor("a", "Alpha"), ModelDescriptor("z", "Name")), result.models)
         assertEquals(listOf(null, "cursor"), h.client.pageCalls.map { it.first })
