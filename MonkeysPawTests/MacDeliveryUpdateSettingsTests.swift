@@ -124,7 +124,11 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
     func testPreferencesPersistAcrossRestartAndPreserveForeignAccountAndURIKeys() throws {
         let files = try RootedFileStore(root: data)
         try files.createRoot()
-        try files.write(Data("{\"version\":1,\"account\":{\"opaque\":\"keep\"},\"uri\":{\"enabled\":true},\"delivery\":{\"foreign\":42}}".utf8), at: "settings.json")
+        let initial: [String: Any] = ["version": 1,
+            "firstRun": ["setupPresented": false, "libraryFolderCompleted": false,
+                         "seedsOffered": false, "tourCompleted": false],
+            "account": ["opaque": "keep"], "uri": ["enabled": true], "delivery": ["foreign": 42]]
+        try files.write(JSONSerialization.data(withJSONObject: initial), at: "settings.json")
         start()
         let page = try show()
         page.delivery.setRestore(true)
