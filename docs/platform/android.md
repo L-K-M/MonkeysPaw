@@ -65,6 +65,98 @@ version-hook/engine tests. Preserve the JUnit summaries before deleting
 `android/build`, `android/*/build`, `android/.gradle` and `android/.kotlin`.
 Do not run a Gradle daemon stop on the shared implementation host.
 
+## M9 acceptance record
+
+**M9 is code-complete, but NOT closed.** N1–N8 are merged. Every owner
+cell in the consolidated matrix below is **NOT RUN (owner)**. No device
+or emulator was used for this record. Closure requires committed owner
+evidence on the final signed, minified APK and green latest-main CI
+([§15](../plan/15-milestones.md), [§22 H12](../plan/22-m9-m11-decisions.md)).
+
+Automated evidence collected on 2026-10-15 at main
+`3b900c8adefffb3ad687bb64e67afe0da48700fa`, which includes N8 merge `dee05a8f`.
+The gate launched at `dee05a8f`; the fast-forward to `3b900c8a` did not
+change the Android tree.
+
+| Acceptance item | Result and evidence |
+|---|---|
+| `inputType` decision table | PASS. [ImeInputPolicyTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ime/ImeInputPolicyTest.kt): 7 JVM tests, covering class/variation masks, all four password variants, missing metadata/connection, terminal/null-like encodings, actual MULTI_LINE versus IME_MULTI_LINE, final-render line separators and learning opt-out. Counts are test methods, including their table-driven loops. |
+| Selection-field choice | PASS. [CapturedTextFieldChoiceTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/fill/CapturedTextFieldChoiceTest.kt): 8 JVM tests. First effective multiline in body order, else explicit/implicit text; switch/ignore, prefill/edit precedence, no choice/builtin/fieldless capture and literal single-pass rendering. |
+| IME and entry integration | PASS. [EntryFlowIntegrationTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/entry/EntryFlowIntegrationTest.kt): 3 JVM tests across IME, editable/read-only selection, share, tile, shortcut and widget. Shared Fill, held snapshots, one effect before learning/finish, repeated-entry preservation and accepted bookkeeping after IME teardown. |
+| Persistence and diagnostics privacy | PASS. [ImePrivacyTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ime/ImePrivacyTest.kt): 11 JVM tests with fresh runtime sentinels and isolated file/log capture. Cancelled/failed/Ephemeral paths retain original bytes; Normal success writes only permitted remembered/usage state; explicit share Save alone creates a prompt. |
+| Local IME graph | PASS. [ImeBoundaryTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ime/ImeBoundaryTest.kt): 17 JVM source/DI guards and negative probes for HTTP, secrets, scheduling, diagnostics, subprocess escapes and target-text reads. These are regression guards with the limits documented in the [N8 proof](#m9-insertion-integration-and-privacy-proof-n8), not complete semantic analysis or runtime network evidence. |
+| Source and both merged manifests | PASS. [EntryManifestTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/entry/EntryManifestTest.kt): 8 JVM tests. AGP supplies debug and release manifests as declared test inputs. Assertions pin exact permissions/components/exports/filters, IME BIND_INPUT_METHOD/metadata, one process, backup denial, DUMP-protected profile receiver, and lifecycle/emoji-only eager startup metadata. Duplicate components and weakened receiver protection are rejected. Packaged debug/release manifests were also inspected after assembly. |
+| Exact Android gate | PASS locally: 753 Core and 566 app JVM tests, zero failures/errors/skips; lint has zero errors and 14 warnings. Debug and signed/minified release APKs, R8/resource shrinking and both seed-asset verifiers pass. The [host command/environment above](#m8-acceptance-record) was run exactly: from `android/`, `./gradlew --max-workers=2 :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease`, JDK 21 `/opt/java/openjdk`, SDK `/home/paseo/Android/Sdk`, the Google Maven CDN override and `LANG=C.UTF-8 LC_ALL=C.UTF-8`. Build directories started absent; some compilation outputs were restored from Gradle's cache, both JVM test tasks executed. |
+
+The local release APK has SHA-256
+`dbe1ca1fb4f4c18b913db479eb760086fb913b6cfefbbc31c1157c843dd3f37b`.
+Signature verification passes with the one [committed public signer](../decisions/0001-android-zero-secret-signing.md),
+certificate SHA-256 `76a19df68d562789f6ea990b23232875b70a98c9996ba81e794ccab063edd765`.
+This identifies a local build, not a published release or owner-tested APK.
+The scripts gate, `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests`,
+also passes all 87 tests.
+
+Merged N-slice PRs and their successful **Android JVM tests, lint and APKs**
+jobs, queried with `gh pr view <n> --repo L-K-M/MonkeysPaw --json mergeCommit,statusCheckRollup`:
+
+| Slice | Merged PR / main commit | Green Android PR CI |
+|---|---|---|
+| N1 | [#184](https://github.com/L-K-M/MonkeysPaw/pull/184), `5a8b417b` | [Run 38537794630 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38537794630/job/115804650495) |
+| N2 | [#194](https://github.com/L-K-M/MonkeysPaw/pull/194), `65927f5c` | [Run 38608413878 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38608413878/job/116025150804) |
+| N3 | [#211](https://github.com/L-K-M/MonkeysPaw/pull/211), `e6906312` | [Run 38660555184 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38660555184/job/116181261544) |
+| N4 | [#212](https://github.com/L-K-M/MonkeysPaw/pull/212), `795b886c` | [Run 38694640167 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38694640167/job/116294227142) |
+| N5 | [#209](https://github.com/L-K-M/MonkeysPaw/pull/209), `ff69a34f` | [Run 38623389286 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38623389286/job/116075635759) |
+| N6 | [#210](https://github.com/L-K-M/MonkeysPaw/pull/210), `0a6d3a81` | [Run 38640011276 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38640011276/job/116116281133) |
+| N7 | [#213](https://github.com/L-K-M/MonkeysPaw/pull/213), `860740d1` | [Run 38694060343 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38694060343/job/116294201658) |
+| N8 | [#256](https://github.com/L-K-M/MonkeysPaw/pull/256), `dee05a8f` | [Run 38792521260 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38792521260/job/116623912299) |
+
+These are build-job results, not reviewer approvals. N4's completed first
+review led to merged fixes, but its [final automated review run](https://github.com/L-K-M/MonkeysPaw/actions/runs/38694637306)
+failed without findings; final-revision review coverage is a gap, not approval.
+
+`gh run list --repo L-K-M/MonkeysPaw --branch main --workflow ci.yml -L 5`
+reports recent green main runs [38797937478](https://github.com/L-K-M/MonkeysPaw/actions/runs/38797937478)
+at `283c8fa3` and [38783075632](https://github.com/L-K-M/MonkeysPaw/actions/runs/38783075632)
+at `9829219c`. At collection, current-main [run 38809530240](https://github.com/L-K-M/MonkeysPaw/actions/runs/38809530240)
+was pending; N8's main [run 38809381519](https://github.com/L-K-M/MonkeysPaw/actions/runs/38809381519)
+was cancelled. The earlier green runs do not establish latest-main CI.
+
+**N8 plan deviation:** the external N8 row requested “absent INTERNET”.
+The app legitimately declares exactly `android.permission.INTERNET` for
+M10 sync and M11 assistant. Both merged manifests assert that permission
+set; the IME graph guards prove no reachable HTTP capability within their
+stated source-analysis limits. The [N8 proof and runtime checklist](#m9-insertion-integration-and-privacy-proof-n8)
+retain the distinction between packaging/JVM evidence and real OS behavior.
+
+The consolidated owner matrix follows. **Each cell requires separate
+Gboard and Samsung Keyboard results** on suitable hardware; a combined
+result must not hide an untested keyboard or app. The linked N3–N8 and M8
+sections retain their detailed procedures and per-app records.
+
+| Owner scenario | Android 14 / API 34 | Android 15 / API 35 | Android 16 / API 36 | One device below API 34 | Additional evidence to record |
+|---|---|---|---|---|---|
+| [IME insertion and switch-back](#m9-ime-insertion-and-switch-back-not-run) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Chrome, ChatGPT and Claude fieldless/default/remembered/choice Insert exactly once; previous keyboard/subtype restored. Termux single-line Insert without execution; multi-line offers Copy and manual paste. Record literal Unicode/line breaks and no submission. |
+| [Selection action](#text-selection-entry-checks-m9-n5-not-run) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Editable replacement versus read-only Copy, no selection, multiple candidate fields, switch/ignore and fieldless prompts; Chrome/native EditText/supporting Compose toolbar availability and return behavior. Unsupported hosts remain coverage gaps. |
+| [Share target](#share-entry-checks-m9-n6-not-run) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Fill → explicit Copy; unsaved Editor → explicit Save or cancel, no early file, sender replacement or URL/attachment access; exact body and return destination. |
+| [Keyboard/tile onboarding](#m9-keyboard-and-tile-setup-not-run) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Enable-warning explanation, enabled/selected rereads, tile add/deny/error or manual setup, skip/upgrade and Settings re-entry after disabling/removing components; no reseeding. |
+| [M8 tile/shortcut/widget regressions](#m8-quick-entry-points-not-run-owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | All four M8 target apps; cold/warm/locked entry, held form and builtin snapshot, exactly-once Copy/manual paste, Back and actual return destination. |
+| [IME lifecycle and handoff](#m9-ime-insertion-and-switch-back-not-run) / [runtime privacy](#m9-insertion-integration-and-privacy-proof-n8) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | NOT RUN (owner) | Passwords, stale target/connection, cold/warm process, hide/reopen, rotation/landscape, free-text/search Copy handoff and return from external Fill activity, cancel and failed switch fallback; Normal/Ephemeral state, no target reads or IME HTTP/scheduling/diagnostics. |
+
+Prefer API 26/27 for the below-34 device to exercise legacy token switching
+and manual tile setup. If only API 28–33 is available, record legacy API
+26/27 switching separately as **NOT RUN (owner)**. Samsung Keyboard needs
+supported Samsung hardware; the coverage may span multiple devices.
+
+For every result record main commit, APK version/code/SHA-256, signing
+fingerprint/build type (signed, minified release), device/model/API,
+previous keyboard/version/subtype, target/source app/version/editor type,
+scenario, expected/actual text and return behavior, tester/date and
+PASS/FAIL/NOT RUN with a sanitized evidence reference. Use harmless test
+strings; keep private prompt, field, selection and clipboard contents out
+of collected logs. Missing or failed cells keep M9 open. JVM fakes, source
+guards, lint and R8 do not execute real Intent/Bundle parsing, Compose
+owners, Binder/InputConnection, keyboard history, logcat or OS storage.
+
 ## Release APK verification
 
 Download `monkeyspaw-v<full-version>.apk` and its `.apk.sha256` from this
@@ -511,8 +603,9 @@ Also record these cases for each OS/keyboard pair:
 - Failed commit offers explicit Copy without retrying commitText; accepted
   persistence failure warns without replay and Done permits switching.
 
-Selection/share/setup and final milestone closure are later slices. Preserve
-the M8 and Unicode evidence above when adding their owner-run results.
+Selection/share/setup implementations are merged; their owner checks and
+the [M9 acceptance record](#m9-acceptance-record) remain open. Preserve
+the M8 and Unicode evidence above when adding owner-run results.
 
 ## M10 Z4 private-filesystem durability: NOT RUN
 
