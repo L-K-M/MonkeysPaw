@@ -1,0 +1,212 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "01-round-trip",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nHello.\r\n\n"
+        },
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/id": "${prompt.p}",
+            "/rev": 1,
+            "/path": "Sample.md",
+            "/content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nHello.\r\n\n"
+          }
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nHello.\r\n\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 1,
+                "hash": "6b2ae95b10a35657991549f41154cc73b42d3bb01b55e4448d12942474f0da1a"
+              }
+            ],
+            "file_count": 1,
+            "status": "idle"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nHello.\r\n\n"
+              }
+            ],
+            "writes": 0,
+            "history_count": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Sample.md",
+          "content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nEdited.\r\n\n"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nEdited.\r\n\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 2,
+                "hash": "3a54156a0eea7bb041f57272541e8df34692c0b4d3a5b48768088436ff86be90"
+              }
+            ],
+            "status": "idle",
+            "file_count": 1
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 2
+              }
+            ]
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Sample.md",
+                "content": "---\nid: ${prompt.p}\n# preserve private bytes\ntitle: Sample\n---\nEdited.\r\n\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Sample.md",
+                "rev": 2
+              }
+            ],
+            "status": "idle"
+          }
+        }
+      ]
+    }
+  ]
+}

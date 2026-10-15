@@ -1,0 +1,1183 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "11-path-clash-exact",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Clash.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "status": 200,
+            "body": {
+              "base_rev": 0,
+              "scope": "user",
+              "path": "Clash.md",
+              "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Clash (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Clash (2).md",
+                "rev": 1
+              }
+            ],
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 409,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 200,
+                "body": {
+                  "/path": "Clash (2).md"
+                },
+                "local_exists": "Clash (2).md",
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/path": "Clash.md",
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "Clash (2).md",
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Clash.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+              },
+              {
+                "path": "Clash (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "file_count": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "11-path-clash-case",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "clash.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "status": 200,
+            "body": {
+              "base_rev": 0,
+              "scope": "user",
+              "path": "CLASH.md",
+              "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "clash (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "clash (2).md",
+                "rev": 1
+              }
+            ],
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 409,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 200,
+                "body": {
+                  "/path": "clash (2).md"
+                },
+                "local_exists": "clash (2).md",
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/path": "CLASH.md",
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "clash (2).md",
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "CLASH.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+              },
+              {
+                "path": "clash (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "file_count": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "11-path-clash-unicode",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Café.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "status": 200,
+            "body": {
+              "base_rev": 0,
+              "scope": "user",
+              "path": "Café.md",
+              "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Café (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Café (2).md",
+                "rev": 1
+              }
+            ],
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 409,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 200,
+                "body": {
+                  "/path": "Café (2).md"
+                },
+                "local_exists": "Café (2).md",
+                "count": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/path": "Café.md",
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "Café (2).md",
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Café.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nOther.\n"
+              },
+              {
+                "path": "Café (2).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "file_count": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "11-path-clash-last-slot",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (2).md",
+          "content": "---\nid: '00000000000000000000000102'\ntitle: Sample\n---\nOccupied 2.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (3).md",
+          "content": "---\nid: '00000000000000000000000103'\ntitle: Sample\n---\nOccupied 3.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (4).md",
+          "content": "---\nid: '00000000000000000000000104'\ntitle: Sample\n---\nOccupied 4.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (5).md",
+          "content": "---\nid: '00000000000000000000000105'\ntitle: Sample\n---\nOccupied 5.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (6).md",
+          "content": "---\nid: '00000000000000000000000106'\ntitle: Sample\n---\nOccupied 6.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (7).md",
+          "content": "---\nid: '00000000000000000000000107'\ntitle: Sample\n---\nOccupied 7.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (8).md",
+          "content": "---\nid: '00000000000000000000000108'\ntitle: Sample\n---\nOccupied 8.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (9).md",
+          "content": "---\nid: '00000000000000000000000109'\ntitle: Sample\n---\nOccupied 9.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (10).md",
+          "content": "---\nid: '00000000000000000000000110'\ntitle: Sample\n---\nOccupied 10.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (11).md",
+          "content": "---\nid: '00000000000000000000000111'\ntitle: Sample\n---\nOccupied 11.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (12).md",
+          "content": "---\nid: '00000000000000000000000112'\ntitle: Sample\n---\nOccupied 12.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (13).md",
+          "content": "---\nid: '00000000000000000000000113'\ntitle: Sample\n---\nOccupied 13.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (14).md",
+          "content": "---\nid: '00000000000000000000000114'\ntitle: Sample\n---\nOccupied 14.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (15).md",
+          "content": "---\nid: '00000000000000000000000115'\ntitle: Sample\n---\nOccupied 15.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (16).md",
+          "content": "---\nid: '00000000000000000000000116'\ntitle: Sample\n---\nOccupied 16.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (17).md",
+          "content": "---\nid: '00000000000000000000000117'\ntitle: Sample\n---\nOccupied 17.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (18).md",
+          "content": "---\nid: '00000000000000000000000118'\ntitle: Sample\n---\nOccupied 18.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (19).md",
+          "content": "---\nid: '00000000000000000000000119'\ntitle: Sample\n---\nOccupied 19.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "body": {
+              "base_rev": 0,
+              "scope": "user",
+              "path": "Crowded.md",
+              "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nRemote occupant.\n"
+            },
+            "status": 200
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Crowded (2).md",
+                "content": "---\nid: '00000000000000000000000102'\ntitle: Sample\n---\nOccupied 2.\n"
+              },
+              {
+                "path": "Crowded (3).md",
+                "content": "---\nid: '00000000000000000000000103'\ntitle: Sample\n---\nOccupied 3.\n"
+              },
+              {
+                "path": "Crowded (4).md",
+                "content": "---\nid: '00000000000000000000000104'\ntitle: Sample\n---\nOccupied 4.\n"
+              },
+              {
+                "path": "Crowded (5).md",
+                "content": "---\nid: '00000000000000000000000105'\ntitle: Sample\n---\nOccupied 5.\n"
+              },
+              {
+                "path": "Crowded (6).md",
+                "content": "---\nid: '00000000000000000000000106'\ntitle: Sample\n---\nOccupied 6.\n"
+              },
+              {
+                "path": "Crowded (7).md",
+                "content": "---\nid: '00000000000000000000000107'\ntitle: Sample\n---\nOccupied 7.\n"
+              },
+              {
+                "path": "Crowded (8).md",
+                "content": "---\nid: '00000000000000000000000108'\ntitle: Sample\n---\nOccupied 8.\n"
+              },
+              {
+                "path": "Crowded (9).md",
+                "content": "---\nid: '00000000000000000000000109'\ntitle: Sample\n---\nOccupied 9.\n"
+              },
+              {
+                "path": "Crowded (10).md",
+                "content": "---\nid: '00000000000000000000000110'\ntitle: Sample\n---\nOccupied 10.\n"
+              },
+              {
+                "path": "Crowded (11).md",
+                "content": "---\nid: '00000000000000000000000111'\ntitle: Sample\n---\nOccupied 11.\n"
+              },
+              {
+                "path": "Crowded (12).md",
+                "content": "---\nid: '00000000000000000000000112'\ntitle: Sample\n---\nOccupied 12.\n"
+              },
+              {
+                "path": "Crowded (13).md",
+                "content": "---\nid: '00000000000000000000000113'\ntitle: Sample\n---\nOccupied 13.\n"
+              },
+              {
+                "path": "Crowded (14).md",
+                "content": "---\nid: '00000000000000000000000114'\ntitle: Sample\n---\nOccupied 14.\n"
+              },
+              {
+                "path": "Crowded (15).md",
+                "content": "---\nid: '00000000000000000000000115'\ntitle: Sample\n---\nOccupied 15.\n"
+              },
+              {
+                "path": "Crowded (16).md",
+                "content": "---\nid: '00000000000000000000000116'\ntitle: Sample\n---\nOccupied 16.\n"
+              },
+              {
+                "path": "Crowded (17).md",
+                "content": "---\nid: '00000000000000000000000117'\ntitle: Sample\n---\nOccupied 17.\n"
+              },
+              {
+                "path": "Crowded (18).md",
+                "content": "---\nid: '00000000000000000000000118'\ntitle: Sample\n---\nOccupied 18.\n"
+              },
+              {
+                "path": "Crowded (19).md",
+                "content": "---\nid: '00000000000000000000000119'\ntitle: Sample\n---\nOccupied 19.\n"
+              },
+              {
+                "path": "Crowded (20).md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              },
+              {
+                "path": "Crowded.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nRemote occupant.\n"
+              }
+            ],
+            "file_count": 20,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Crowded (20).md",
+                "rev": 1,
+                "error": "none"
+              }
+            ],
+            "status": "idle",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 409,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 200,
+                "count": 1,
+                "body": {
+                  "/path": "Crowded (20).md"
+                },
+                "local_exists": "Crowded (20).md"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/path": "Crowded.md",
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nRemote occupant.\n",
+            "/rev": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "11-path-clash-bounded",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (2).md",
+          "content": "---\nid: '00000000000000000000000102'\ntitle: Sample\n---\nOccupied 2.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (3).md",
+          "content": "---\nid: '00000000000000000000000103'\ntitle: Sample\n---\nOccupied 3.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (4).md",
+          "content": "---\nid: '00000000000000000000000104'\ntitle: Sample\n---\nOccupied 4.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (5).md",
+          "content": "---\nid: '00000000000000000000000105'\ntitle: Sample\n---\nOccupied 5.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (6).md",
+          "content": "---\nid: '00000000000000000000000106'\ntitle: Sample\n---\nOccupied 6.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (7).md",
+          "content": "---\nid: '00000000000000000000000107'\ntitle: Sample\n---\nOccupied 7.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (8).md",
+          "content": "---\nid: '00000000000000000000000108'\ntitle: Sample\n---\nOccupied 8.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (9).md",
+          "content": "---\nid: '00000000000000000000000109'\ntitle: Sample\n---\nOccupied 9.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (10).md",
+          "content": "---\nid: '00000000000000000000000110'\ntitle: Sample\n---\nOccupied 10.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (11).md",
+          "content": "---\nid: '00000000000000000000000111'\ntitle: Sample\n---\nOccupied 11.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (12).md",
+          "content": "---\nid: '00000000000000000000000112'\ntitle: Sample\n---\nOccupied 12.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (13).md",
+          "content": "---\nid: '00000000000000000000000113'\ntitle: Sample\n---\nOccupied 13.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (14).md",
+          "content": "---\nid: '00000000000000000000000114'\ntitle: Sample\n---\nOccupied 14.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (15).md",
+          "content": "---\nid: '00000000000000000000000115'\ntitle: Sample\n---\nOccupied 15.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (16).md",
+          "content": "---\nid: '00000000000000000000000116'\ntitle: Sample\n---\nOccupied 16.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (17).md",
+          "content": "---\nid: '00000000000000000000000117'\ntitle: Sample\n---\nOccupied 17.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (18).md",
+          "content": "---\nid: '00000000000000000000000118'\ntitle: Sample\n---\nOccupied 18.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (19).md",
+          "content": "---\nid: '00000000000000000000000119'\ntitle: Sample\n---\nOccupied 19.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded (20).md",
+          "content": "---\nid: '00000000000000000000000120'\ntitle: Sample\n---\nOccupied 20.\n"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Crowded.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "body": {
+              "base_rev": 0,
+              "scope": "user",
+              "path": "Crowded.md",
+              "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nRemote occupant.\n"
+            },
+            "status": 200
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Crowded (2).md",
+                "content": "---\nid: '00000000000000000000000102'\ntitle: Sample\n---\nOccupied 2.\n"
+              },
+              {
+                "path": "Crowded (3).md",
+                "content": "---\nid: '00000000000000000000000103'\ntitle: Sample\n---\nOccupied 3.\n"
+              },
+              {
+                "path": "Crowded (4).md",
+                "content": "---\nid: '00000000000000000000000104'\ntitle: Sample\n---\nOccupied 4.\n"
+              },
+              {
+                "path": "Crowded (5).md",
+                "content": "---\nid: '00000000000000000000000105'\ntitle: Sample\n---\nOccupied 5.\n"
+              },
+              {
+                "path": "Crowded (6).md",
+                "content": "---\nid: '00000000000000000000000106'\ntitle: Sample\n---\nOccupied 6.\n"
+              },
+              {
+                "path": "Crowded (7).md",
+                "content": "---\nid: '00000000000000000000000107'\ntitle: Sample\n---\nOccupied 7.\n"
+              },
+              {
+                "path": "Crowded (8).md",
+                "content": "---\nid: '00000000000000000000000108'\ntitle: Sample\n---\nOccupied 8.\n"
+              },
+              {
+                "path": "Crowded (9).md",
+                "content": "---\nid: '00000000000000000000000109'\ntitle: Sample\n---\nOccupied 9.\n"
+              },
+              {
+                "path": "Crowded (10).md",
+                "content": "---\nid: '00000000000000000000000110'\ntitle: Sample\n---\nOccupied 10.\n"
+              },
+              {
+                "path": "Crowded (11).md",
+                "content": "---\nid: '00000000000000000000000111'\ntitle: Sample\n---\nOccupied 11.\n"
+              },
+              {
+                "path": "Crowded (12).md",
+                "content": "---\nid: '00000000000000000000000112'\ntitle: Sample\n---\nOccupied 12.\n"
+              },
+              {
+                "path": "Crowded (13).md",
+                "content": "---\nid: '00000000000000000000000113'\ntitle: Sample\n---\nOccupied 13.\n"
+              },
+              {
+                "path": "Crowded (14).md",
+                "content": "---\nid: '00000000000000000000000114'\ntitle: Sample\n---\nOccupied 14.\n"
+              },
+              {
+                "path": "Crowded (15).md",
+                "content": "---\nid: '00000000000000000000000115'\ntitle: Sample\n---\nOccupied 15.\n"
+              },
+              {
+                "path": "Crowded (16).md",
+                "content": "---\nid: '00000000000000000000000116'\ntitle: Sample\n---\nOccupied 16.\n"
+              },
+              {
+                "path": "Crowded (17).md",
+                "content": "---\nid: '00000000000000000000000117'\ntitle: Sample\n---\nOccupied 17.\n"
+              },
+              {
+                "path": "Crowded (18).md",
+                "content": "---\nid: '00000000000000000000000118'\ntitle: Sample\n---\nOccupied 18.\n"
+              },
+              {
+                "path": "Crowded (19).md",
+                "content": "---\nid: '00000000000000000000000119'\ntitle: Sample\n---\nOccupied 19.\n"
+              },
+              {
+                "path": "Crowded (20).md",
+                "content": "---\nid: '00000000000000000000000120'\ntitle: Sample\n---\nOccupied 20.\n"
+              },
+              {
+                "path": "Crowded.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Crowded.md",
+                "rev": 0,
+                "error": "sync.path_clash"
+              }
+            ],
+            "status": "syncError",
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 409,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "status": 200,
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/path": "Crowded.md",
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nRemote occupant.\n",
+            "/rev": 1
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Crowded.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nHello.\n"
+              }
+            ],
+            "file_count": 20,
+            "writes": 0,
+            "trash_count": 0,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "Crowded.md",
+                "rev": 0,
+                "error": "sync.path_clash"
+              }
+            ],
+            "status": "syncError",
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/sync/pull",
+                "status": 200,
+                "count": 1
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
