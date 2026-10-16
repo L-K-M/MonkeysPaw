@@ -6,6 +6,7 @@ import SwiftUI
 /// binding revision also protect against already-queued retired publications.
 final class LibraryViewState: ObservableObject {
     typealias AssistantFactory = () -> AssistantModel
+    typealias ConflictProvider = () -> ConflictModel?
     enum Preview: Equatable {
         case none
         case rendered(String)
@@ -34,14 +35,17 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var isAssistantVisible = false
     @Published private(set) var assistantSaveMessage: String?
     @Published private(set) var quoteHighlight: LibrarySourceHighlight?
+    @Published private(set) var conflict: LibraryConflictViewState?
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
     var onAssistantVisibilityChange: (() -> Void)?
+    var onConflictVisibilityChange: (() -> Void)?
     private(set) var model: LibraryBrowserModel
     private(set) var editor: EditorModel
     private let mainThread: MainThread
     private let revealLibrary: () -> Void
     private var makeAssistant: AssistantFactory?
+    private var conflictProvider: ConflictProvider?
     private let scheduler: MonkeysPawCore.Scheduler?
     private var assistantSession: PromptEditingSession?
     private var assistantPrompt: LibraryPromptSelection?
@@ -58,6 +62,7 @@ final class LibraryViewState: ObservableObject {
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, imports: LibraryImportViewState? = nil,
          makeAssistant: AssistantFactory? = nil, scheduler: MonkeysPawCore.Scheduler? = nil,
+         conflictProvider: ConflictProvider? = nil,
          revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
@@ -70,14 +75,17 @@ final class LibraryViewState: ObservableObject {
         self.mainThread = mainThread
         self.revealLibrary = revealLibrary
         self.makeAssistant = makeAssistant
+        self.conflictProvider = conflictProvider
         self.scheduler = scheduler
         observeModel()
         refresh()
     }
 
-    deinit { assistant?.retire(); detachObservers() }
+    deinit { assistant?.retire(); conflict?.retire(); detachObservers() }
 
-    var canShowAssistant: Bool { isActive && libraryAvailable && makeAssistant != nil && scheduler != nil }
+    var isResolvingConflict: Bool { conflict?.isResolving == true }
+    var canEditSource: Bool { isActive && libraryAvailable && !isResolvingConflict && editorState.canEdit }
+    var canShowAssistant: Bool { isActive && libraryAvailable && !isResolvingConflict && makeAssistant != nil && scheduler != nil }
 
     func showAssistant() {
         guard canShowAssistant, let makeAssistant, let scheduler else { return }
@@ -156,25 +164,25 @@ final class LibraryViewState: ObservableObject {
             }
             return
         }
-        assistant.editorChanged(available: libraryAvailable)
+        assistant.editorChanged(available: libraryAvailable && !isResolvingConflict)
     }
 
     var canSave: Bool {
-        isActive && libraryAvailable && editorState.canSave
+        isActive && libraryAvailable && !isResolvingConflict && editorState.canSave
             && editorState.conflict == nil && editorState.pendingDecision == nil
     }
     var canSaveAsCopy: Bool {
-        isActive && libraryAvailable && editorState.canSaveAsCopy
+        isActive && libraryAvailable && !isResolvingConflict && editorState.canSaveAsCopy
             && editorState.conflict == nil && editorState.pendingDecision == nil
     }
     var canRevert: Bool {
-        isActive && libraryAvailable && editorState.prompt != nil
+        isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil
             && editorState.status != .loading && editorState.status != .saving
             && editorState.status != .commandRunning
             && editorState.conflict == nil && editorState.pendingDecision == nil
     }
     var canShowConflict: Bool {
-        isActive && libraryAvailable && editorState.canSave
+        isActive && libraryAvailable && !isResolvingConflict && editorState.canSave
             && editorState.conflict?.isLoading == false && editorState.pendingDecision == nil
     }
 
@@ -182,7 +190,7 @@ final class LibraryViewState: ObservableObject {
         canRevert && editorState.canEdit && editorState.stamp != nil
     }
     var canLoadHistory: Bool {
-        isActive && libraryAvailable && editorState.prompt != nil && editorState.status != .commandRunning
+        isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil && editorState.status != .commandRunning
     }
     var selectedRevision: PromptHistorySnapshot? {
         editorState.history.revisions.first { $0.revision == editorState.history.selectedRevision }
@@ -192,7 +200,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     var canToggleFavorite: Bool {
-        guard isActive, libraryAvailable, let row = snapshot.selectedPrompt else { return false }
+        guard isActive, libraryAvailable, !isResolvingConflict, let row = snapshot.selectedPrompt else { return false }
         // Group favourites are a personal overlay, including for a viewer or
         // a dirty open editor. The model rechecks committed access at intent time.
         if case .group = row.access { return row.canRender }
@@ -205,10 +213,13 @@ final class LibraryViewState: ObservableObject {
     var favoriteMessage: String? { favoriteOutcome.flatMap(LibraryStrings.favoriteMessage) }
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
-                imports: LibraryImportViewState? = nil, makeAssistant: AssistantFactory? = nil) {
+                imports: LibraryImportViewState? = nil, makeAssistant: AssistantFactory? = nil,
+                conflictProvider: ConflictProvider? = nil) {
         guard isActive else { return }
         retireAssistant()
+        retireConflict()
         self.makeAssistant = makeAssistant
+        self.conflictProvider = conflictProvider
         assistantSaveMessage = nil
         self.imports?.deactivate()
         self.imports = imports
@@ -237,6 +248,8 @@ final class LibraryViewState: ObservableObject {
     func deactivate() {
         guard isActive else { return }
         retireAssistant()
+        retireConflict()
+        conflictProvider = nil
         imports?.deactivate()
         isActive = false
         bindingRevision &+= 1
@@ -250,6 +263,7 @@ final class LibraryViewState: ObservableObject {
         onEditorChange = nil
         onConflictRequested = nil
         onAssistantVisibilityChange = nil
+        onConflictVisibilityChange = nil
     }
 
     func setLibraryAvailable(_ available: Bool) {
@@ -257,7 +271,8 @@ final class LibraryViewState: ObservableObject {
         let becameAvailable = available && !libraryAvailable
         libraryAvailable = available
         imports?.setLibraryAvailable(available)
-        assistant?.editorChanged(available: available)
+        assistant?.editorChanged(available: available && !isResolvingConflict)
+        updateConflict()
         if !available { fileCommandRequest = nil }
         if becameAvailable, editorTab == .history { loadHistory() }
         onEditorChange?()
@@ -270,6 +285,11 @@ final class LibraryViewState: ObservableObject {
         refresh()
         focusRevision &+= 1
         if editor.state.prompt == nil, let selection = snapshot.selection { select(selection) }
+    }
+
+    func didHide() {
+        isPresented = false
+        retireConflict()
     }
 
     func setFilter(_ filter: String) {
@@ -326,7 +346,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     func edit(_ source: String) {
-        guard isActive, libraryAvailable else { return }
+        guard canEditSource else { return }
         commandMessage = nil
         editor.edit(source)
     }
@@ -342,7 +362,7 @@ final class LibraryViewState: ObservableObject {
     func loadHistory() { if canLoadHistory { editor.loadHistory() } }
 
     func selectRevision(_ filename: String?) {
-        guard isActive else { return }
+        guard isActive, !isResolvingConflict else { return }
         editor.selectRevision(editorState.history.revisions.first { $0.revision.filename == filename }?.revision)
     }
 
@@ -403,7 +423,7 @@ final class LibraryViewState: ObservableObject {
         // EditorModel.request completes through its injected MainThread.
         editor.request(.close) { [weak self] result in
             guard let self, self.isActive, self.bindingRevision == revision else { completion(.inactive); return }
-            if result == .allowed { self.isPresented = false }
+            if result == .allowed { self.didHide() }
             self.isClosingEditor = false
             completion(result)
         }
@@ -451,6 +471,7 @@ final class LibraryViewState: ObservableObject {
                 if self.snapshot.selection != state.selection { self.favoriteOutcome = nil }
                 self.snapshot = state
                 self.imports?.updateDestinations(state.sections)
+                self.updateConflict()
                 if let copy = self.copySelection, state.rows.contains(where: { $0.selection == copy }) {
                     self.copySelection = nil
                     self.model.selectPrompt(copy)
@@ -488,6 +509,7 @@ final class LibraryViewState: ObservableObject {
                 let adoptedCopy = previousPrompt != nil
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
+                self.updateConflict()
                 self.updateAssistantSession()
                 if let request = self.fileCommandRequest,
                    !request.matchesFile(state.prompt) || !self.canRunFileCommand { self.fileCommandRequest = nil }
@@ -526,6 +548,50 @@ final class LibraryViewState: ObservableObject {
         snapshot = model.state
         editorState = editor.state
         refreshPreview()
+        updateConflict()
+    }
+
+    private func retireConflict() {
+        let old = conflict
+        conflict = nil
+        old?.retire()
+        if old != nil { onConflictVisibilityChange?() }
+    }
+
+    private func updateConflict() {
+        guard isPresented, let row = snapshot.selectedPrompt,
+              row.conflictOrigin != nil, row.selection == editorState.prompt,
+              let stamp = editorState.stamp else { retireConflict(); return }
+        if conflict == nil {
+            let view = LibraryConflictViewState(main: mainThread)
+            view.onResolve = { [weak self] action in self?.resolveSyncConflict(action) }
+            view.onChange = { [weak self, weak view] in
+                guard let self, let view, self.isActive, self.conflict === view else { return }
+                self.objectWillChange.send()
+                self.assistant?.editorChanged(available: self.libraryAvailable && !view.isResolving)
+            }
+            conflict = view
+            onConflictVisibilityChange?()
+        }
+        let busy = editorState.status == .loading || editorState.status == .saving || editorState.status == .commandRunning
+        conflict?.bind(model: conflictProvider?(), selection: row.selection, stamp: stamp,
+            available: libraryAvailable && !busy && editorState.pendingDecision == nil && editorState.queuedActions.isEmpty)
+    }
+
+    private func resolveSyncConflict(_ action: ConflictResolutionAction) {
+        guard isActive, isPresented, !isClosingEditor, libraryAvailable,
+              let view = conflict, view.canResolve(action), let selection = view.selection,
+              editor.state.prompt == selection, snapshot.selection == selection else { return }
+        if editor.state.isDirty || editor.state.conflict != nil {
+            let revision = bindingRevision
+            editor.request(.revert) { [weak self, weak view] result in
+                guard let self, let view, self.isActive, self.isPresented,
+                      self.bindingRevision == revision, self.conflict === view,
+                      result == .allowed, self.snapshot.selection == selection else { return }
+                // Save/reload may change the candidate; require a fresh choice.
+                view.refreshComparison(.afterEditing)
+            }
+        } else { view.resolve(action) }
     }
 
     private func refreshPreview() {
