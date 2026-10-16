@@ -78,14 +78,25 @@ def run_command(arguments, timeout=COMMAND_TIMEOUT, *, capture=False, env=None):
         raise SmokeFailure("command could not start") from None
     finally:
         if process is not None:
+            failure_active = sys.exc_info()[0] is not None
+            cleanup_failed = False
             # Also reap descendants left by an exited wrapper or inherited stdout pipe.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.wait(timeout=5)
+            except OSError:
+                cleanup_failed = True
+            try:
+                process.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                cleanup_failed = True
             if process.stdout is not None:
                 process.stdout.close()
+            if cleanup_failed:
+                if not failure_active:
+                    raise SmokeFailure("command cleanup failed")
+                print("Android sync smoke: command cleanup failed", file=sys.stderr)
 
 
 def private_file(path, contents):
@@ -202,6 +213,7 @@ def smoke(command):
             env = dict(os.environ, MONKEYSPAW_SYNC_MANIFEST=str(manifest), MONKEYSPAW_REQUIRE_SYNC_SERVER="1")
             run_command(command, RUNNER_TIMEOUT, env=env)
         finally:
+            failure_active = sys.exc_info()[0] is not None
             # Register names before start: a timed-out docker run may have created the container.
             if container_attempted:
                 try:
@@ -214,7 +226,9 @@ def smoke(command):
                 except SmokeFailure:
                     cleanup_failed = True
             if cleanup_failed:
-                raise SmokeFailure("container or image cleanup failed")
+                if not failure_active:
+                    raise SmokeFailure("container or image cleanup failed")
+                print("Android sync smoke: container or image cleanup failed", file=sys.stderr)
 
 
 def main():

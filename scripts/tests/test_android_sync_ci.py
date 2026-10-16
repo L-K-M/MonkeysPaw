@@ -13,7 +13,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "android-sync-ci.py"
@@ -45,15 +45,55 @@ class CommandTests(unittest.TestCase):
         with self.assertRaisesRegex(smoke.SmokeFailure, "output exceeded limit"):
             smoke.run_command([sys.executable, "-c", "print('X' * 100000)"], timeout=2, capture=True)
 
+    def test_cleanup_errors_preserve_the_command_failure_and_close_stdout(self):
+        for cleanup in ("kill", "wait"):
+            with self.subTest(cleanup=cleanup):
+                process = Mock(pid=12345, stdout=Mock())
+                process.wait.side_effect = [subprocess.TimeoutExpired("private command", 1),
+                    subprocess.TimeoutExpired("private command", 5) if cleanup == "wait" else 0]
+                stderr = io.StringIO()
+                with patch.object(smoke.subprocess, "Popen", return_value=process), \
+                        patch.object(smoke.os, "killpg", side_effect=PermissionError("PRIVATE") if cleanup == "kill" else None), \
+                        redirect_stderr(stderr):
+                    with self.assertRaisesRegex(smoke.SmokeFailure, "^command deadline exceeded$"):
+                        smoke.run_command([sys.executable])
+                self.assertEqual(process.wait.call_count, 2)
+                process.stdout.close.assert_called_once_with()
+                self.assertIn("command cleanup failed", stderr.getvalue())
+                self.assertNotIn("PRIVATE", stderr.getvalue())
+
+    def test_cleanup_errors_fail_an_otherwise_successful_command(self):
+        process = Mock(pid=12345, stdout=None)
+        process.wait.return_value = 0
+        with patch.object(smoke.subprocess, "Popen", return_value=process), \
+                patch.object(smoke.os, "killpg", side_effect=PermissionError("PRIVATE")):
+            with self.assertRaisesRegex(smoke.SmokeFailure, "^command cleanup failed$"):
+                smoke.run_command([sys.executable])
+        self.assertEqual(process.wait.call_count, 2)
+
     def test_timeout_kills_the_owned_parent_and_descendant(self):
         with tempfile.TemporaryDirectory(prefix="android-sync-command-test-") as directory:
             pid_file = Path(directory) / "pids"
             program = ("import os, pathlib, subprocess, sys, time; "
                        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
                        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()) + ' ' + str(child.pid)); time.sleep(30)")
-            started = time.monotonic()
-            with self.assertRaisesRegex(smoke.SmokeFailure, "deadline exceeded"):
-                smoke.run_command([sys.executable, "-c", program, str(pid_file)], timeout=0.5, capture=True)
+            clock = time.monotonic
+            started = None
+
+            def ready_clock():
+                nonlocal started
+                if started is None:
+                    # Bound startup separately so the kill deadline cannot race PID publication.
+                    deadline = clock() + 5
+                    while not pid_file.exists() and clock() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(pid_file.exists(), "child did not publish owned PIDs")
+                    started = clock()
+                return clock()
+
+            with patch.object(smoke.time, "monotonic", side_effect=ready_clock):
+                with self.assertRaisesRegex(smoke.SmokeFailure, "deadline exceeded"):
+                    smoke.run_command([sys.executable, "-c", program, str(pid_file)], timeout=0.5, capture=True)
             self.assertLess(time.monotonic() - started, 3)
             for pid in map(int, pid_file.read_text().split()):
                 self.assert_stopped(pid)
@@ -227,6 +267,26 @@ class LifecycleTests(unittest.TestCase):
             with self.subTest(stage=stage), patch.dict(os.environ, {"FAKE_FAIL": stage}):
                 with self.assertRaisesRegex(smoke.SmokeFailure, "cleanup failed"):
                     self.run_smoke()
+                self.assertEqual(self.read_calls()[-1][:3], ["image", "rm", "--force"])
+                self.assert_clean()
+
+    def test_cleanup_failure_preserves_primary_failure_and_reports_both(self):
+        for stage in ("build", "run", "runner"):
+            with self.subTest(stage=stage), patch.dict(os.environ, {"FAKE_FAIL": stage}):
+                original = smoke.run_command
+                stderr = io.StringIO()
+
+                def fail_cleanup(arguments, *args, **kwargs):
+                    if arguments[1:3] == ["rm", "--force"] or arguments[1:3] == ["image", "rm"]:
+                        original(arguments, *args, **kwargs)
+                        raise smoke.SmokeFailure("command failed")
+                    return original(arguments, *args, **kwargs)
+
+                with patch.object(smoke, "run_command", side_effect=fail_cleanup), redirect_stderr(stderr):
+                    with self.assertRaisesRegex(smoke.SmokeFailure, "^command failed$"):
+                        self.run_smoke()
+                self.assertIn("container or image cleanup failed", stderr.getvalue())
+                self.assertNotIn("PRIVATE", stderr.getvalue())
                 self.assertEqual(self.read_calls()[-1][:3], ["image", "rm", "--force"])
                 self.assert_clean()
 
