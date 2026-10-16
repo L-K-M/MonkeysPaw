@@ -355,21 +355,32 @@ internal class SyncPushEngine(
 
     private fun snapshot(state: SyncState): SyncReconciliationSnapshot {
         val files = mutations.listedFiles()
-        val held = files.filter { isHeld(it.identity, it.path, it.hash) }.map { it.path }.toSet()
+        if (files.isEmpty()) return SyncReconciliationSnapshot(binding, files)
+        val owner = currentOwnership()
+        val rescues = journal.heldRescues(binding.root)
+        val held = files.filter { isHeld(it.identity, it.path, it.hash, state, owner, rescues) }.map { it.path }.toSet()
         return SyncReconciliationSnapshot(binding, files, heldPaths = held)
     }
 
-    private fun isHeld(identity: PromptIdentity, path: String, hash: SyncHash): Boolean {
-        val owner = ownership()
+    private fun currentOwnership(): SyncLibraryBinding? = ownership().also { owner ->
         if (owner != null && (owner.root != binding.root || owner.owner != binding.account)) throw SyncError.BindingMismatch
         owner?.validate()
+    }
+
+    private fun isHeld(identity: PromptIdentity, path: String, hash: SyncHash): Boolean {
+        val owner = currentOwnership()
+        return isHeld(identity, path, hash, currentState(), owner, journal.heldRescues(binding.root))
+    }
+
+    private fun isHeld(identity: PromptIdentity, path: String, hash: SyncHash, state: SyncState,
+                       owner: SyncLibraryBinding?, rescues: List<SyncRetainedRescue>): Boolean {
         if (owner?.isHeld(identity, path, hash) == true) return true
-        val location = SyncLocalScanner.location(path, binding, currentState().groups)
+        val location = SyncLocalScanner.location(path, binding, state.groups)
         if (location?.scope is SyncScopeKey.Group) {
             val folder = owner?.managedFolders?.entries?.firstOrNull { it.value.folder == path.split('/').getOrNull(1) }
             if (folder != null && (folder.key != location.scope.id || folder.value.owner != binding.account)) return true
         }
-        return journal.heldRescues(binding.root).any { it.path == path || it.hash == hash }
+        return rescues.any { it.path == path || it.hash == hash }
     }
 
     private fun held(request: SyncPendingOperation, local: SyncLibraryFile?): Boolean = isHeld(PromptIdentity.Assigned(request.intent.id),

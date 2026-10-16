@@ -410,21 +410,36 @@ final class SyncPushEngine {
 
     private func snapshot(_ state: SyncState) throws -> SyncReconciliationSnapshot {
         let files = try mutations.listedFiles()
-        let heldPaths = try Set(files.filter { try isHeld($0.identity, path: RelativePath($0.path), hash: $0.hash) }
+        guard !files.isEmpty else { return SyncReconciliationSnapshot(binding: binding, files: files) }
+        let owner = try currentOwnership()
+        let rescues = try journal.heldRescues(in: binding.root)
+        let heldPaths = try Set(files.filter { try isHeld($0.identity, path: RelativePath($0.path), hash: $0.hash,
+            state: state, owner: owner, rescues: rescues) }
             .map { RelativePath($0.path) })
         return SyncReconciliationSnapshot(binding: binding, files: files, heldPaths: heldPaths)
     }
 
-    private func isHeld(_ identity: PromptIdentity, path: RelativePath, hash: SyncHash) throws -> Bool {
+    private func currentOwnership() throws -> SyncLibraryBinding? {
         let owner = try ownership()
         guard owner == nil || (owner?.root == binding.root && owner?.owner == binding.account) else { throw SyncError.bindingMismatch }
         try owner?.validate()
+        return owner
+    }
+
+    private func isHeld(_ identity: PromptIdentity, path: RelativePath, hash: SyncHash) throws -> Bool {
+        let owner = try currentOwnership()
+        return try isHeld(identity, path: path, hash: hash, state: currentState(), owner: owner,
+            rescues: journal.heldRescues(in: binding.root))
+    }
+
+    private func isHeld(_ identity: PromptIdentity, path: RelativePath, hash: SyncHash, state: SyncState,
+                        owner: SyncLibraryBinding?, rescues: [SyncRetainedRescue]) -> Bool {
         if owner?.isHeld(identity: identity, path: path, contentHash: hash) == true { return true }
-        if let location = SyncLocalScanner.location(of: path, binding: binding, groups: try currentState().groups),
+        if let location = SyncLocalScanner.location(of: path, binding: binding, groups: state.groups),
            case .group(let id) = location.scope, let folder = owner?.managedFolders.first(where: {
                $0.value.folder.utf8.elementsEqual(path.string.utf8.split(separator: 47).dropFirst().first ?? [])
            }), folder.key != id || folder.value.owner != binding.account { return true }
-        return try journal.heldRescues(in: binding.root).contains { $0.path == path || $0.hash == hash }
+        return rescues.contains { $0.path == path || $0.hash == hash }
     }
 
     private func held(_ request: SyncPendingOperation, local: SyncLibraryFile?) throws -> Bool {
