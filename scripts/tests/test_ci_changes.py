@@ -177,8 +177,8 @@ class SelectionTests(unittest.TestCase):
 
     def test_assistant_accounting_drivers_and_disclosure_job_selection(self):
         cases = {
-            "Tests/MonkeysPawCoreTests/Assistant/LlmConformanceTests.swift": SWIFT,
-            "Tests/MonkeysPawCoreTests/PromptConformanceTests.swift": SWIFT,
+            "Tests/MonkeysPawCoreTests/Assistant/LlmConformanceTests.swift": SWIFT | {"android-sync"},
+            "Tests/MonkeysPawCoreTests/PromptConformanceTests.swift": SWIFT | {"android-sync"},
             "android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/EveryFixtureTest.kt": {"android", "android-sync"},
             "android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/LlmConformanceTest.kt": {"android", "android-sync"},
             "android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/settings/AssistantSettingsPersistenceTest.kt": {"android", "android-sync"},
