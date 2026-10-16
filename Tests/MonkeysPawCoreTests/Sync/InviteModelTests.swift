@@ -82,6 +82,10 @@ final class InviteModelTests: XCTestCase {
         XCTAssertEqual(fake.clipboard.writes.count, 0)
         await gate.open()
         await settle(model, main)
+        XCTAssertEqual(fake.createCalls, 1)
+        XCTAssertEqual(fake.stageCalls, 0)
+        XCTAssertEqual(fake.acceptCalls, 0)
+        XCTAssertEqual(fake.clipboard.writes.count, 0)
     }
 
     func testCreationIsDisplayedOnceCopyIsExplicitAndDismissClearsIt() async throws {

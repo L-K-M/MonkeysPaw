@@ -54,6 +54,25 @@ final class SyncInviteLinkTests: XCTestCase {
         }
     }
 
+    func testDecodedValuesKeepServerNormalizationWithoutForwardingControls() throws {
+        let server = "https%3A%2F%2Fexample.test%2Fpaw"
+        for control in ["%0A", "%0D", "%09", "%00", "%23", "%5C"] {
+            assertInvalid("monkeyspaw://join?server=" + server + "/a" + control + "b&token=" + token)
+            assertInvalid("monkeyspaw://join?server=" + server + "&token=" + token.dropLast() + control)
+        }
+        assertInvalid("monkeyspaw://join?server=https%3A%2F%2Fevil%0D%0A.test&token=" + token)
+        assertInvalid("monkeyspaw://join?server=" + server + "%00&token=" + token)
+
+        // Keep SyncServerURL's surrounding-whitespace normalization, as on Kotlin.
+        for suffix in ["%0A", "%0D", "%09", "%20"] {
+            let parsed = try SyncInviteLink("monkeyspaw://join?server=" + server + suffix + "&token=" + token)
+            XCTAssertEqual(parsed.server.baseURL.absoluteString, "https://example.test/paw")
+            XCTAssertEqual(parsed.server.apiURL.absoluteString, "https://example.test/paw/api/v1")
+        }
+        let literal = try SyncInviteLink("monkeyspaw://join?server=https://example.test/paw&token=" + token)
+        XCTAssertEqual(literal.server.baseURL.absoluteString, "https://example.test/paw")
+    }
+
     func testRejectsMalformedPercentInvalidUTF8AndDoubleEncodedValues() throws {
         let server = "https%3A%2F%2Fexample.test"
         for value in ["%", "%Q0", "%0", "%FF", "%2541" + String(token.dropFirst()), String(repeating: "A", count: 42) + "B",
