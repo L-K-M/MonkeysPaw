@@ -3,13 +3,13 @@
 | Asset | Protection |
 |---|---|
 | API keys, device token | OS secret store. Never stored in settings, argv, or logs. `secret-tool` gets the secret on stdin. Types holding secrets have redacted descriptions and reflection output. |
-| Prompts on the device | Local files. They leave the machine only on an explicit assistant action (and `private: true` blocks that), or through sync to the user's own server. Android opts out of Auto Backup (§10.6). |
+| Prompts on the device | Local files. The app sends them only through explicit Assistant inputs (`private: true` blocks Review/Improve), or through enabled sync to the configured server. Android opts out of Auto Backup (§10.6). |
 | Prompts on the server | TLS in transit. On disk they are plaintext in SQLite. Volume encryption is the operator's job, and SECURITY.md says so. No end-to-end encryption in v1 (D12). |
 | Server accounts | bcrypt 12. Hashed device tokens. Login backoff. Invite-only. Admins cannot read private prompts through the API. |
 | Portal restore tokens | Private atomic `portal.json` record, mode 0600; never logged. Replace each returned token immediately after successful Start (§6.3). |
 | Remembered values | `values.json` mode 0600, never synced. "Forget values" removes one prompt's map and session draft; "Forget all values" atomically replaces the file (private 0600 temporary, then rename) with empty version-1 state without reading it first, so it also resets a corrupt or unreadable `values.json`, and clears all drafts (§5.4). A matching open form resets to defaults without delivery; failed actions keep drafts and fields. |
 | Repeat state | Separate version-1 `<data>/last-delivery.json`, atomic 0600 replacement, 1 MiB cap, never synced. Root/account binding, identity/path hint, source fingerprint, idless incarnation stamp, remembered fields, session-only marker and Copy intent only. Exact non-remembered values stay in session memory; template/rendered text and builtins never enter the record or logs. Restart requires a complete permitted snapshot. Forget/retirement persists a tombstone before success; failure disables repeat and reports unsuccessful clear, requiring a retry before graph replacement (§6.1). |
-| Injection surface | Keystrokes are injected only right after a user hotkey and a pick. D-Bus actions are on the session bus (same user). GNOME keybinding writes touch only rows named `Monkey's Paw:`. |
+| Injection surface | Paste follows an explicit delivery or Repeat intent. Session D-Bus actions are callable by other processes with session-bus access. X11 does not isolate input, focus or clipboard from same-session clients. Native GNOME keybinding writes require an explicit action and touch only owned `Monkey's Paw:` rows. Flatpak has no host dconf grant. |
 | LLM output | Treated as data: parsed, validated, diffed, applied only on Accept. Never executed. |
 | Transport | §7.1 rules for LLM providers. The sync client refuses redirects and requires HTTPS except on loopback and private ranges. |
 | Android keyboard | Picker-only: reads only `inputType`, `imeOptions` and connection readiness, never target text. Offers no prompts in text/visible/web or numeric password fields. The system warning at enable time is explained beforehand. |
@@ -98,16 +98,22 @@ with interaction suppressed per operation. A locked or unavailable Keychain
 skips that integration test; a skip does not satisfy acceptance. Real store
 and signed-build checks remain in the [assistant owner checklist](../platform/assistant.md).
 
-The [README](../../README.md#assistant-privacy-and-key-storage) carries M4's
-minimum assistant disclosures ([§19 B33](19-m4-m5-decisions.md)). Write sends
+The [Privacy document](../../PRIVACY.md#requests-and-recipients) carries the
+assistant disclosures required by [§19 B33](19-m4-m5-decisions.md). Write sends
 the supplied brief; Review and Improve send the current template source,
 including front matter, with Improve's instruction and selected findings.
 Explicit retries may send the session transcript and feedback. Requests also
 include system instructions, schema and model selection. `private: true`
 blocks Review and Improve for that prompt; Write never imports an open
 private template. Fill values, rendered fill previews and remembered values
-are never sent. Test connection sends only a model-list request. Full
-SECURITY.md and PRIVACY.md remain M7 work.
+are never sent automatically. Text explicitly included in a brief or template
+is part of the request. Test connection sends only a model-list request.
+[SECURITY.md](../../SECURITY.md) records trust boundaries and key/signing
+limits; [PRIVACY.md](../../PRIVACY.md) records outbound traffic, retention,
+Forget, repeat, clipboard restore and E28 invite exposure. GitHub private
+vulnerability reporting was disabled at the 2026-10-16 read-only check. The
+owner must enable it before release; no alternative private contact is
+verified. Track that prerequisite in the [M7 ledger](../platform/m7-acceptance.md#owner-prerequisites).
 
 Linux uses `service=ch.lkmc.monkeyspaw` and the namespaced account as
 Secret Service attributes, with a `Monkey's Paw: <account>` item label.
@@ -149,13 +155,21 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
   resets a password. The permission model protects members from each other,
   not from the operator.
 - The Linux file tier is not encrypted.
-- Desktop builds are unsigned or ad-hoc signed unless Q3 changes that, and
-  an ad-hoc signature resets Accessibility on each update.
+- Development desktop builds can be unsigned; macOS packaging is ad-hoc by
+  default with an optional configured identity and no notarization workflow.
+  Updates/signature changes can require Accessibility or Keychain approval.
+- Android debug and release share a committed public signer; it establishes
+  no publisher identity and permits third-party updates retaining app data.
+- Flatpak grants read/write access to the whole home, not just the library.
+  It uses isolated app state and filtered portal/Secret Service access, with
+  no host dconf, KGlobalAccel, host-spawn or native injection grant.
 
 `PRIVACY.md` lists every outbound request:
 
 - LLM calls and model listing.
 - Sync to the server the user configured.
+- Server healthcheck to loopback; optional Caddy HTTPS certificate management
+  belongs to that proxy's network/retention policy, not app telemetry.
 - The update check (from M7): an unauthenticated HTTPS GET to
   `https://api.github.com/repos/L-K-M/MonkeysPaw/releases/latest`. GitHub sees
   the source IP and `MonkeysPaw/<full-app-version>` User-Agent, plus fixed
@@ -176,7 +190,27 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
   Unversioned development/tests send no update traffic. Only explicit
   View release opens a constructed repository release page in the browser.
   D15 supplies Core; D17/D18 wire native runtimes and D19 owns disclosures.
-- Nothing else. No telemetry.
+- OS/desktop integration: local portal, D-Bus, Secret Service, shortcut,
+  notification and clipboard calls, plus explicit folder/page/settings
+  opening. The browser owns subsequent traffic/cookies/history. Android
+  entry and InputConnection/clipboard delivery use OS APIs. These are not
+  application telemetry; see the [outbound inventory](../../PRIVACY.md#requests-and-recipients).
+
+Invite links stage review and require Accept before redemption. E28's Linux
+launcher fallback exposes the one-use URI in argv; browsers and clipboard
+managers can retain it too. Neither an app-log policy nor Forget removes
+those external copies. Do not log or publish bearer links (§20 E28).
+
+Clipboard restore remains opt-in, text-only and bounded (§21 G13/G14).
+Revision/provider guards skip observed newer copies, including identical
+text; OS APIs do not offer atomic exclusion of a simultaneous external copy.
+The 750 ms delay can be too short for a slow target. No restore on Copy,
+fallback or self-test; prior text stays only in memory until restore/cancel.
+
+Desktop sync on the M7 branch comes from the M6 base awaiting main integration.
+The dedicated `docs/platform/sync.md` guide and sync acceptance are reserved
+for M6 Y34 / M10 Z27; this is a planned path, not an existing guide. M7's
+[owner ledger](../platform/m7-acceptance.md) starts NOT RUN and does not close sync.
 
 **Logging.**
 

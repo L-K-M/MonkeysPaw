@@ -1,5 +1,10 @@
 # Linux picker and delivery checks
 
+For current setup, see [README.linux.md](../../README.linux.md). Earlier
+milestone procedures retain their original unrun results; use the
+[current M7 procedure](#m7-current-desktop-procedures) and [M7 ledger](m7-acceptance.md)
+for the added behavior and exact-build owner evidence.
+
 ## Delivery and update Settings (M7 D18, NOT RUN)
 
 Record commit/artifact/version/hash, desktop/compositor/session, GTK/portal/
@@ -538,3 +543,37 @@ rerun "Test paste" to recheck after it recovers. The review suggestion to
 drop socket read checks was rejected because M1b requires unreadable sockets
 to report `permissionDenied`. Pending nonblocking connects are not treated
 as proof of a reachable daemon.
+
+## M7 current desktop procedures
+
+Status: **NOT RUN**. Record result/evidence and full main/artifact/session
+metadata in the [M7 ledger](m7-acceptance.md). Run the existing
+[Delivery/update Settings rows](#delivery-and-update-settings-m7-d18-not-run)
+plus the additions below on ordinary native X11, GNOME/KDE X11 where available,
+GNOME/KDE Wayland and both Flatpak hosts. Follow [GNOME](gnome.md), [KDE](kde.md)
+and [Flatpak](flatpak.md) for their mechanism/consent procedures. Earlier
+milestone descriptions above retain their original scope and unrun rows;
+M7's terminal policy, two actions and current portals supersede the older
+M1b-only behavior descriptions.
+
+Use disposable Unicode/multiline prompts with remembered/non-remembered and
+explicitly empty fields, plus date/time/clipboard builtins. Record no values,
+clipboard contents, tokens or raw errors. Duplicate ledger rows per backend,
+target app/version/field, terminal class, compositor/session and artifact.
+
+| Check | Required observation | Result | Evidence |
+|---|---|---|---|
+| Cold/resident actions | Inspect installed identity/desktop/service/actions, then invoke host toggle and repeat cold/resident. Toggle acts once; no usable repeat record shows Nothing to repeat. Manual actions do not falsely verify portal/KDE shortcuts. Verify real keys separately and clear/rebind one action without altering the other. | NOT RUN | NOT RUN |
+| Target and chords | Capture WM_CLASS before the panel on native X11. Test each allowlisted alias separately, unknown/lookalike and missing/timeout classes, saved default, explicit terminal and Fill standard/Copy overrides. Repeat into a different current target. Wayland/Flatpak performs no terminal detection. Multiline Return edits; the app sends no target Return. | NOT RUN | NOT RUN |
+| Real delivery and fallback | Run the same-build self-test plus exact browser/chat and terminal readback. Record each ladder backend, sent-but-not-received, denied/missing/stale-session cases, failure caching and Test paste recovery. Check hide/refocus, full-screen/multiple monitors and no duplicate/submission; do not equate tool exit with receipt. | NOT RUN | NOT RUN |
+| Repeat snapshot | Real paste, Copy and fallback each record once; cancelled forms/preview/self-test do not. Repeat preserves exact user fields/empty values and refreshes used builtins. Remember-only can survive restart; session-only requires reopening without reviving an older record. Changed/deleted/inaccessible source requires review. Busy/own-window invocations refuse or drop safely. | NOT RUN | NOT RUN |
+| Forget/retirement | Forget one/all clears applicable values/drafts/repeat. Library/account replacement and sign-out retire late work. Simulate an unwritable disposable state root: failure reports no successful invalidation, disables repeat and blocks retirement until repair/retry. Successfully cleared repeat remains cleared after restart. | NOT RUN | NOT RUN |
+| Restore off/on | Off adds no restore reads; with on, check previous text only after 750 ms, slow target readback and real post-hide clipboard ownership. A newer identical/different copy, new delivery, self-test, disable or retirement cancels restore. Copy/fallback keeps the result. Failed/oversized/late snapshots leave delivered text. Accept/disclose the simultaneous-copy OS limit. | NOT RUN | NOT RUN |
+| Settings and updates | Complete D18 rows: preferences/errors through restart, Delivery/Shortcuts/General plus Assistant/Account, off/restart zero checker traffic, default-on due traffic and explicit Check Now, real browser/portal View release, keyboard focus/Orca. Retired controls, graphs and timers never revive. Keep network evidence to safe metadata/counters. | NOT RUN | NOT RUN |
+
+[README.linux.md](../../README.linux.md) contains the current alias list and
+installation limits. XTerm smoke uses an altered binding and is not stock
+terminal acceptance. Count-based clipboard/privacy checks require appropriate
+instrumentation; without it leave those observations NOT RUN rather than
+inferring counts from unchanged output. Sync's Y34/Z27 guide and closure are
+separate from M7 clipboard and invite-staging evidence.
