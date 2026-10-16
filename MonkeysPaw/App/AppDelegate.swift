@@ -914,13 +914,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 })
             }
         }
+        let conflictProvider: LibraryViewState.ConflictProvider = { [weak self] in
+            guard isCurrent() else { return nil }
+            return self?.conflictModel
+        }
         if let libraryWindow {
             libraryWindow.rebind(to: browser, editor: editor, libraryPath: libraryDirectory.path, available: availability,
-                imports: imports, makeAssistant: makeAssistant)
+                imports: imports, makeAssistant: makeAssistant, conflictProvider: conflictProvider)
         } else {
             libraryWindow = LibraryWindowController(model: browser, editor: editor, libraryPath: libraryDirectory.path,
                 available: availability, mainThread: mainThread, activation: windowActivation,
                 presentDialog: editorDialog, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
+                conflictProvider: conflictProvider,
                 importChooser: importChooser,
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }

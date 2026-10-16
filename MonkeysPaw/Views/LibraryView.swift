@@ -15,6 +15,9 @@ struct LibraryView: View {
                 sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
                 importablePrompts.frame(minWidth: 180, idealWidth: 240)
                 editor.frame(minWidth: 240, maxWidth: .infinity)
+                if let conflict = presentation.conflict {
+                    LibraryConflictView(presentation: conflict).frame(minWidth: 520, idealWidth: 560)
+                }
                 if presentation.isAssistantVisible, let assistant = presentation.assistant {
                     LibraryAssistantView(presentation: assistant, close: presentation.closeAssistant)
                         .frame(minWidth: 320, idealWidth: 420)
@@ -103,7 +106,7 @@ struct LibraryView: View {
 
     private var standardSections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { section in
-            switch section.id { case .all, .favourites, .recent: return true; default: return false }
+            switch section.id { case .all, .favourites, .recent, .conflicts: return true; default: return false }
         }
     }
 
@@ -210,7 +213,7 @@ struct LibraryView: View {
             LibrarySourceEditor(source: presentation.editorState.source ?? "",
                 path: presentation.editorState.prompt?.relativePath,
                 revision: presentation.sourceRevision,
-                isEditable: presentation.libraryAvailable && presentation.editorState.canEdit,
+                isEditable: presentation.canEditSource,
                 onEdit: presentation.edit, highlight: presentation.quoteHighlight)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {

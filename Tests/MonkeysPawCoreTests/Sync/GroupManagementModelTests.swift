@@ -90,6 +90,7 @@ final class GroupManagementModelTests: XCTestCase {
         model.selectGroup(SyncTestValues.group)
         await settle(model, main)
         XCTAssertTrue(model.state.canManage)
+        let member = try XCTUnwrap(model.state.members.first { $0.userID == SyncTestValues.user.rawValue })
         XCTAssertFalse(model.state.canSetRole(userID: SyncTestValues.user.rawValue, role: .owner))
         model.setRole(userID: SyncTestValues.user.rawValue, role: .editor)
         main.flush()
@@ -98,6 +99,7 @@ final class GroupManagementModelTests: XCTestCase {
         model.setRole(userID: SyncTestValues.user.rawValue, role: .viewer)
         await settle(model, main)
         XCTAssertTrue(model.state.changeConfirmed)
+        XCTAssertEqual(model.state.members.first { $0.userID == member.userID }, member)
         XCTAssertTrue(model.state.canSetRole(userID: SyncTestValues.otherUser.rawValue, role: .owner))
         fake.memberList = fake.memberList.filter { $0.userID != SyncTestValues.user.rawValue }
         model.refresh()
@@ -312,69 +314,117 @@ private struct GroupReentrantMain: MainThread {
 }
 
 private final class GroupManagementFake: GroupManagementProviding {
+    private struct State {
+        var account: SyncAccount
+        var role: SyncAPI.Role
+        var hasGroup = true, metadataAvailable = true
+        var name = "Team"
+        var memberList: [SyncAPI.Member]
+        var issue: GroupManagementIssue?
+        var confirmed = false
+        var gate: SyncTransportGate?
+    }
+
     let main: SyncPresentationMain
     let clipboard = InviteTestClipboard()
     let token = String(repeating: "a", count: 42) + "A"
+    let kind: SyncAPI.AccountKind
     private let lock = NSLock()
     private var recorded: [SyncGroupCommand] = []
-    var account: SyncAccount
-    var role: SyncAPI.Role
-    let kind: SyncAPI.AccountKind
-    var hasGroup = true, metadataAvailable = true
-    var name = "Team"
-    var memberList: [SyncAPI.Member]
-    var issue: GroupManagementIssue?
-    var confirmed = false
-    var gate: SyncTransportGate?
+    private var state: State
+    var account: SyncAccount {
+        get { locked { state.account } }
+        set { locked { state.account = newValue } }
+    }
+    var role: SyncAPI.Role {
+        get { locked { state.role } }
+        set { locked { state.role = newValue } }
+    }
+    var hasGroup: Bool {
+        get { locked { state.hasGroup } }
+        set { locked { state.hasGroup = newValue } }
+    }
+    var metadataAvailable: Bool {
+        get { locked { state.metadataAvailable } }
+        set { locked { state.metadataAvailable = newValue } }
+    }
+    var memberList: [SyncAPI.Member] {
+        get { locked { state.memberList } }
+        set { locked { state.memberList = newValue } }
+    }
+    var issue: GroupManagementIssue? {
+        get { locked { state.issue } }
+        set { locked { state.issue = newValue } }
+    }
+    var confirmed: Bool {
+        get { locked { state.confirmed } }
+        set { locked { state.confirmed = newValue } }
+    }
+    var gate: SyncTransportGate? {
+        get { locked { state.gate } }
+        set { locked { state.gate = newValue } }
+    }
     var calls: [SyncGroupCommand] { locked { recorded } }
 
     init(main: SyncPresentationMain, role: SyncAPI.Role = .owner, kind: SyncAPI.AccountKind = .member) throws {
-        self.main = main; self.role = role; self.kind = kind
-        account = try XCTUnwrap(AccountPresentationFake.signedIn().account)
-        memberList = [SyncAPI.Member(userID: SyncTestValues.user.rawValue, username: "person", displayName: nil,
-            role: role, joinedAt: "2026-10-14T00:00:00.000Z"),
-            SyncAPI.Member(userID: SyncTestValues.otherUser.rawValue, username: "other", displayName: nil,
-                role: .viewer, joinedAt: "2026-10-14T00:00:00.000Z")]
+        self.main = main; self.kind = kind
+        state = State(account: try XCTUnwrap(AccountPresentationFake.signedIn().account), role: role,
+            memberList: [SyncAPI.Member(userID: SyncTestValues.user.rawValue, username: "person", displayName: nil,
+                role: role, joinedAt: "2026-10-14T00:00:00.000Z"),
+                SyncAPI.Member(userID: SyncTestValues.otherUser.rawValue, username: "other", displayName: nil,
+                    role: .viewer, joinedAt: "2026-10-14T00:00:00.000Z")])
     }
 
     var snapshot: SyncAccountSnapshot {
         XCTAssertFalse(main.isUI)
-        let user = SyncAPI.User(id: account.identity.userID.rawValue, username: "person", displayName: nil,
+        return locked { makeSnapshot(state) }
+    }
+
+    private func makeSnapshot(_ state: State) -> SyncAccountSnapshot {
+        let user = SyncAPI.User(id: state.account.identity.userID.rawValue, username: "person", displayName: nil,
             accountKind: kind, createdAt: "2026-10-14T00:00:00.000Z", disabledAt: nil)
-        return SyncAccountSnapshot(account: account, me: metadataAvailable ? SyncAPI.MeResponse(user: user,
-            groups: hasGroup ? [.init(groupID: SyncTestValues.group.rawValue, name: name, role: role)] : [],
+        return SyncAccountSnapshot(account: state.account, me: state.metadataAvailable ? SyncAPI.MeResponse(user: user,
+            groups: state.hasGroup ? [.init(groupID: SyncTestValues.group.rawValue, name: state.name, role: state.role)] : [],
             devices: [AccountPresentationFake.device(SyncTestValues.device, current: true)]) : nil, enabled: true)
     }
 
     func execute(_ command: SyncGroupCommand, expectedAccount: SyncAccount?) async -> SyncGroupResult {
         XCTAssertFalse(main.isUI)
-        if command.isMutation && expectedAccount != account {
-            return SyncGroupResult(snapshot: snapshot, issue: .accountChanged)
+        let current = snapshot
+        if command.isMutation && expectedAccount != current.account {
+            return SyncGroupResult(snapshot: current, issue: .accountChanged)
         }
-        locked { recorded.append(command) }
+        let gate = locked { recorded.append(command); return state.gate }
         if let gate { await gate.wait() }
-        var selected = command.groupID
-        var created: SyncInviteCreation?
-        if issue == nil {
-            switch command {
-            case .create(let name): self.name = name; hasGroup = true; role = .owner; selected = SyncTestValues.group
-            case .rename(_, let name): self.name = name
-            case .delete: hasGroup = false; selected = nil
-            case .setRole(_, let id, let role):
-                memberList.removeAll { $0.userID == id.rawValue }
-                memberList.append(.init(userID: id.rawValue, username: "other", displayName: nil,
-                    role: role, joinedAt: "2026-10-14T00:00:00.000Z"))
-            case .removeMember(_, let id): memberList.removeAll { $0.userID == id.rawValue }
-            case .createInvite(let group, let role):
-                created = SyncInviteCreation(link: try! SyncInviteLink(token, server: account.identity.serverURL.absoluteString).text,
-                    expiresAt: "2026-10-21T00:00:00.000Z", target: .group(groupID: group.rawValue, role: role), account: account)
-            case .refresh: break
+        return locked {
+            var selected = command.groupID
+            var created: SyncInviteCreation?
+            if state.issue == nil {
+                switch command {
+                case .create(let name): state.name = name; state.hasGroup = true; state.role = .owner; selected = SyncTestValues.group
+                case .rename(_, let name): state.name = name
+                case .delete: state.hasGroup = false; selected = nil
+                case .setRole(_, let id, let role):
+                    if let index = state.memberList.firstIndex(where: { $0.userID == id.rawValue }) {
+                        let member = state.memberList[index]
+                        state.memberList[index] = .init(userID: member.userID, username: member.username,
+                            displayName: member.displayName, role: role, joinedAt: member.joinedAt)
+                    } else {
+                        state.memberList.append(.init(userID: id.rawValue, username: "other", displayName: nil,
+                            role: role, joinedAt: "2026-10-14T00:00:00.000Z"))
+                    }
+                case .removeMember(_, let id): state.memberList.removeAll { $0.userID == id.rawValue }
+                case .createInvite(let group, let role):
+                    created = SyncInviteCreation(link: try! SyncInviteLink(token, server: state.account.identity.serverURL.absoluteString).text,
+                        expiresAt: "2026-10-21T00:00:00.000Z", target: .group(groupID: group.rawValue, role: role), account: state.account)
+                case .refresh: break
+                }
             }
+            if !state.hasGroup || !state.metadataAvailable { selected = nil }
+            return SyncGroupResult(snapshot: makeSnapshot(state), selectedGroupID: selected,
+                members: selected == nil ? [] : state.memberList, createdInvite: created,
+                changeConfirmed: state.confirmed || (command.isMutation && state.issue == nil), issue: state.issue)
         }
-        if !hasGroup || !metadataAvailable { selected = nil }
-        return SyncGroupResult(snapshot: snapshot, selectedGroupID: selected,
-            members: selected == nil ? [] : memberList, createdInvite: created,
-            changeConfirmed: confirmed || (command.isMutation && issue == nil), issue: issue)
     }
 
     func copy(_ created: SyncInviteCreation) throws { XCTAssertTrue(main.isUI); clipboard.writeText(created.link) }
