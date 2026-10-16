@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Exercise installed GApplication exports under a disposable bus and display.
 
-Needs python3-pyatspi and at-spi2-core. No product test hook or invite parser:
+Needs python3-pyatspi, python3-xlib and at-spi2-core. No product test hook or invite parser:
 read the existing GTK accessibility tree and record loopback HTTP requests.
 Never print subprocess arguments, invite input or accessibility tree contents.
 """
 
 import configparser
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
@@ -93,6 +94,8 @@ def invite_is_staged(nodes, destination, atspi):
 def main():
     import pyatspi
     from gi.repository import GLib
+    from Xlib.display import Display
+    from Xlib.protocol.event import ClientMessage
 
     if not os.environ.get("DISPLAY") or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
         raise RuntimeError("A private bus and required display are missing")
@@ -114,6 +117,23 @@ def main():
 
     def label_visible(label):
         return any(node.name == label and node.getState().contains(pyatspi.STATE_SHOWING) for node in nodes())
+
+    def repeat_windows():
+        return command("xdotool", "search", "--onlyvisible", "--all", "--class",
+                       "^ch[.]lkmc[.]monkeyspaw$", "--name", "^Repeat last$", allowed=(0, 1)).splitlines()
+
+    def dismiss_repeat_result():
+        windows = repeat_windows()
+        if len(windows) != 1:
+            return False
+        # Xvfb has no window manager or guaranteed titlebar Close button.
+        # Send the normal close request so GTK's hide-on-close keeps the window reusable.
+        with closing(Display()) as display:
+            window = display.create_resource_object("window", int(windows[0]))
+            window.send_event(ClientMessage(window=window, client_type=display.intern_atom("WM_PROTOCOLS"),
+                                           data=(32, [display.intern_atom("WM_DELETE_WINDOW"), 0, 0, 0, 0])))
+            display.sync()
+        return True
 
     def picker_visible():
         return bool(command("xdotool", "search", "--onlyvisible", "--all", "--class",
@@ -162,7 +182,12 @@ def main():
         action("repeat")
         wait_for(lambda: label_visible("Nothing to repeat"), "Cold repeat did not show its empty-record result")
         primary = owner()
+        wait_for(dismiss_repeat_result, "Cold repeat result could not be dismissed")
+        wait_for(lambda: not repeat_windows() and not label_visible("Nothing to repeat"),
+                 "Cold repeat result did not dismiss")
         action("repeat")
+        wait_for(lambda: repeat_windows() and label_visible("Nothing to repeat"),
+                 "Resident repeat did not show its empty-record result")
         singleton(primary)
         stop()
 

@@ -318,7 +318,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder bubblewrap \
             dbus libglib2.0-bin xvfb xauth x11-utils xdotool desktop-file-utils shellcheck \
-            python3 python3-yaml python3-pyatspi at-spi2-core
+            python3 python3-yaml python3-pyatspi python3-xlib at-spi2-core
           mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
           chmod 0700 "$XDG_RUNTIME_DIR"
           # Relax only this Ubuntu knob, only on this disposable runner, and
@@ -450,11 +450,19 @@ jobs:
             gio mime x-scheme-handler/monkeyspaw | grep -F "$APP_ID.desktop"
       - name: Check Platform tools and installed cold/resident actions and invites
         run: |
-          # The installed app uses Platform, without --devel or permission overrides.
+          # Keep the shipped permissions; set only the disposable smoke environment.
+          # Flatpak clears GDK_BACKEND and may supply runtime settings defaults.
+          export GTK_A11Y=atspi GSK_RENDERER=cairo GSETTINGS_BACKEND=memory GDK_BACKEND=x11
+          flatpak override --user --env=GTK_A11Y="$GTK_A11Y" --env=GSK_RENDERER="$GSK_RENDERER" \
+            --env=GSETTINGS_BACKEND="$GSETTINGS_BACKEND" --env=GDK_BACKEND="$GDK_BACKEND" "$APP_ID"
           # shellcheck disable=SC2016
           timeout 30s dbus-run-session -- flatpak run --user --die-with-parent --command=sh "$APP_ID" -eu -c '
             command -v secret-tool
             command -v gsettings
+            test "$GTK_A11Y" = atspi
+            test "$GSK_RENDERER" = cairo
+            test "$GSETTINGS_BACKEND" = memory
+            test "$GDK_BACKEND" = x11
             test "$XDG_CONFIG_HOME" = "$HOME/.var/app/$FLATPAK_ID/config"
             test "$XDG_DATA_HOME" = "$HOME/.var/app/$FLATPAK_ID/data"
             dependencies=$(ldd /app/bin/monkeyspaw)
@@ -464,9 +472,9 @@ jobs:
           ' _ "$ARTIFACT_VERSION"
           # The private daemon must discover the installed, rewritten service.
           export XDG_DATA_DIRS="$XDG_DATA_HOME/flatpak/exports/share:/usr/local/share:/usr/share"
-          export GTK_A11Y=atspi GSK_RENDERER=cairo GSETTINGS_BACKEND=memory GDK_BACKEND=x11
-          timeout --kill-after=5s 180s dbus-run-session -- xvfb-run -a --server-args='-screen 0 1280x2400x24' \
-            /usr/bin/python3 scripts/flatpak-smoke.py
+          # Start the bus after Xvfb so cold services inherit DISPLAY/XAUTHORITY.
+          timeout --kill-after=5s 180s xvfb-run -a --server-args='-screen 0 1280x2400x24' \
+            dbus-run-session -- /usr/bin/python3 scripts/flatpak-smoke.py
       - name: Upload the verified bundle and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

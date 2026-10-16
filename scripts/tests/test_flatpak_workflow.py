@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from test_release_workflow import JOBS, SOURCE, step_script
 
@@ -60,8 +61,15 @@ class FlatpakWorkflowTests(unittest.TestCase):
         self.assertIn("gio mime x-scheme-handler/monkeyspaw", job)
         self.assertIn("entry['MimeType'] == 'x-scheme-handler/monkeyspaw;'", job)
         self.assertIn("GTK_A11Y=atspi", job)
+        self.assertIn("python3-xlib", job)
         self.assertIn('XDG_DATA_DIRS="$XDG_DATA_HOME/flatpak/exports/share:', job)
-        self.assertIn("timeout --kill-after=5s 180s dbus-run-session -- xvfb-run -a", job)
+        self.assertIn("timeout --kill-after=5s 180s xvfb-run -a --server-args='-screen 0 1280x2400x24'", job)
+        self.assertIn("dbus-run-session -- /usr/bin/python3 scripts/flatpak-smoke.py", job)
+        self.assertIn("flatpak override --user", job)
+        for variable, value in (("GTK_A11Y", "atspi"), ("GSK_RENDERER", "cairo"),
+                                ("GSETTINGS_BACKEND", "memory"), ("GDK_BACKEND", "x11")):
+            self.assertIn(f'--env={variable}="${variable}"', job)
+            self.assertIn(f'test "${variable}" = {value}', job)
         self.assertIn("/usr/bin/python3 scripts/flatpak-smoke.py", job)
         self.assertNotIn("xdg-mime default", job)
 
@@ -96,6 +104,93 @@ class FlatpakWorkflowTests(unittest.TestCase):
                         file.unlink()
                         self.assertNotEqual(run().returncode, 0)
                         file.write_bytes(data)
+
+
+class RepeatProofComplete(Exception):
+    """Stop main after the action proof, before invite setup."""
+
+
+class RepeatProofTests(unittest.TestCase):
+    def run_proof(self, *, resident_noop=False, dismiss_noop=False, replace_owner=False,
+                  instances=1):
+        state = {"owner": None, "picker": False, "result": False, "repeats": 0}
+
+        def action(name):
+            state["owner"] = state["owner"] or ":1.42"
+            if name == "toggle":
+                state["picker"] = not state["picker"]
+            elif name == "repeat":
+                state["repeats"] += 1
+                if state["repeats"] == 1 or not resident_noop:
+                    state["result"] = True
+                if state["repeats"] == 2 and replace_owner:
+                    state["owner"] = ":1.43"
+
+        def stop():
+            state.update(owner=None, result=False)
+
+        def dismiss(event):
+            self.assertEqual(event["client_type"], "WM_PROTOCOLS")
+            self.assertEqual(event["data"], (32, ["WM_DELETE_WINDOW", 0, 0, 0, 0]))
+            if not dismiss_noop:
+                state["result"] = False
+
+        def wait_for(predicate, message):
+            if not predicate():
+                raise RuntimeError(message)
+
+        def command(*args, **_kwargs):
+            if args[:2] == ("flatpak", "ps"):
+                count = instances if state["repeats"] == 2 else 1
+                return "\n".join([smoke.APP_ID] * count)
+            if args[:2] == ("xdotool", "search"):
+                if args[-1] == "^Repeat last$":
+                    return "456" if state["result"] else ""
+                return "123" if state["picker"] else ""
+            return ""
+
+        result = SimpleNamespace(name="Nothing to repeat",
+                                 getState=lambda: SimpleNamespace(contains=lambda _: state["result"]))
+        display = SimpleNamespace(intern_atom=lambda name: name,
+                                  create_resource_object=lambda *_: SimpleNamespace(send_event=dismiss),
+                                  sync=lambda: None, close=lambda: None)
+        atspi = SimpleNamespace(STATE_SHOWING="showing",
+                                Registry=SimpleNamespace(getDesktop=lambda _: object()))
+        glib = SimpleNamespace(MainContext=SimpleNamespace(default=lambda: SimpleNamespace(pending=lambda: False)))
+        with (patch.dict("sys.modules", {"pyatspi": atspi, "gi.repository": SimpleNamespace(GLib=glib),
+                                        "Xlib.display": SimpleNamespace(Display=lambda: display),
+                                        "Xlib.protocol.event": SimpleNamespace(ClientMessage=lambda **event: event)}),
+              patch.dict(os.environ, DISPLAY=":99", DBUS_SESSION_BUS_ADDRESS="test"),
+              patch.object(smoke, "command", side_effect=command),
+              patch.object(smoke, "action", side_effect=action),
+              patch.object(smoke, "owner", side_effect=lambda: state["owner"]),
+              patch.object(smoke, "stop", side_effect=stop),
+              patch.object(smoke, "wait_for", side_effect=wait_for),
+              patch.object(smoke, "descendants", return_value=[result]),
+              patch.object(smoke, "ThreadingHTTPServer"), patch.object(smoke.threading, "Thread"),
+              patch.object(smoke.time, "sleep"),
+              patch.object(smoke.configparser, "ConfigParser", side_effect=RepeatProofComplete)):
+            smoke.main()
+
+    def test_cold_then_resident_repeat_reopens_the_dismissed_result(self):
+        with self.assertRaises(RepeatProofComplete):
+            self.run_proof()
+
+    def test_noop_resident_repeat_fails(self):
+        with self.assertRaisesRegex(RuntimeError, "Resident repeat did not show"):
+            self.run_proof(resident_noop=True)
+
+    def test_result_must_disappear_before_resident_repeat(self):
+        with self.assertRaisesRegex(RuntimeError, "Cold repeat result did not dismiss"):
+            self.run_proof(dismiss_noop=True)
+
+    def test_resident_repeat_must_keep_the_primary_owner(self):
+        with self.assertRaisesRegex(RuntimeError, "Activation replaced the primary application"):
+            self.run_proof(replace_owner=True)
+
+    def test_multiple_instances_fail(self):
+        with self.assertRaisesRegex(RuntimeError, "Expected exactly one installed application instance"):
+            self.run_proof(instances=2)
 
 
 class InviteProofTests(unittest.TestCase):
