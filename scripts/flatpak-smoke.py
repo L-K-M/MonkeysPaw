@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Exercise installed GApplication exports under a disposable bus and display.
+
+Needs python3-pyatspi and at-spi2-core. No product test hook or invite parser:
+read the existing GTK accessibility tree and record loopback HTTP requests.
+Never print subprocess arguments, invite input or accessibility tree contents.
+"""
+
+import configparser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
+from pathlib import Path
+import secrets
+import shlex
+import subprocess
+import sys
+import threading
+import time
+from urllib.parse import quote
+
+
+APP_ID = "ch.lkmc.monkeyspaw"
+
+
+def command(*args, allowed=(0,)):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+    if result.returncode not in allowed:
+        raise RuntimeError("Installed application command failed")
+    return result.stdout.strip()
+
+
+def bus(destination, method, *args):
+    path = "/org/freedesktop/DBus" if destination == "org.freedesktop.DBus" else "/ch/lkmc/monkeyspaw"
+    return command("gdbus", "call", "--session", "--dest", destination,
+                   "--object-path", path, "--method", method, *args)
+
+
+def owner():
+    exists = bus("org.freedesktop.DBus", "org.freedesktop.DBus.NameHasOwner", APP_ID)
+    return bus("org.freedesktop.DBus", "org.freedesktop.DBus.GetNameOwner", APP_ID) if exists == "(true,)" else None
+
+
+def wait_for(predicate, message):
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.2)
+    raise RuntimeError(message)
+
+
+def action(name):
+    command("gapplication", "action", APP_ID, name)
+
+
+def stop():
+    # A unique name cannot cold-activate a replacement during shutdown.
+    current = owner()
+    if current:
+        name = current.split("'")[1]
+        bus(name, "org.gtk.Actions.Activate", "quit", "[]", "{}")
+        wait_for(lambda: owner() is None, "Installed application did not quit")
+
+
+def singleton(expected):
+    if owner() != expected:
+        raise RuntimeError("Activation replaced the primary application")
+    instances = command("flatpak", "ps", "--columns=application").splitlines()
+    if instances.count(APP_ID) != 1:
+        raise RuntimeError("Expected exactly one installed application instance")
+
+
+def descendants(node):
+    yield node
+    for child in node:
+        if child is not None:
+            yield from descendants(child)
+
+
+def invite_is_staged(nodes, destination, atspi):
+    visible = [node for node in nodes if node.getState().contains(atspi.STATE_SHOWING)]
+    names = [node.name for node in visible]
+    return (
+        sum(node.name == "Settings" and node.getRole() == atspi.ROLE_FRAME for node in visible) == 1
+        and any(name.startswith("Invite server: " + destination + "\n") for name in names)
+        and "Review the server and account before accepting. Opening an invite does not use it." in names
+        and any(node.name == "Accept and create account"
+                and node.getState().contains(atspi.STATE_SENSITIVE) for node in visible)
+        and "Invite accepted." not in names
+    )
+
+
+def main():
+    import pyatspi
+    from gi.repository import GLib
+
+    if not os.environ.get("DISPLAY") or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        raise RuntimeError("A private bus and required display are missing")
+    command("xdpyinfo")
+    desktop = pyatspi.Registry.getDesktop(0)
+    context = GLib.MainContext.default()
+
+    def nodes():
+        # Drain accessibility lifecycle/property events between cold launches.
+        for _ in range(100):
+            if not context.pending():
+                break
+            context.iteration(False)
+        try:
+            return list(descendants(desktop))
+        except Exception:
+            # Accessibility objects can retire between a quit and a cold launch.
+            return []
+
+    def label_visible(label):
+        return any(node.name == label and node.getState().contains(pyatspi.STATE_SHOWING) for node in nodes())
+
+    def picker_visible():
+        return bool(command("xdotool", "search", "--onlyvisible", "--all", "--class",
+                            "^ch[.]lkmc[.]monkeyspaw$", "--name", "^Monkey's Paw$", allowed=(0, 1)))
+
+    def show_review():
+        windows = command("xdotool", "search", "--onlyvisible", "--all", "--class",
+                          "^ch[.]lkmc[.]monkeyspaw$", "--name", "^Settings$", allowed=(0, 1)).splitlines()
+        if len(windows) != 1:
+            return False
+        # Account's invite form is below its login form; keep both in view on
+        # the tall Xvfb screen, without clicking or typing into either form.
+        command("xdotool", "windowsize", windows[0], "1000", "2200")
+        return True
+
+    class Recorder(BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_POST(self):
+            type(self).requests += 1
+            self.send_response(403)
+            self.end_headers()
+
+        do_GET = do_POST
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    clients = []
+    bearers = []
+    try:
+        if owner() is not None:
+            raise RuntimeError("Proof requires a cold installed application")
+        action("toggle")
+        wait_for(picker_visible, "Cold toggle did not show the picker")
+        primary = owner()
+        # The action debounce must settle before the resident toggle.
+        time.sleep(1)
+        action("toggle")
+        wait_for(lambda: not picker_visible(), "Resident toggle did not hide the picker")
+        singleton(primary)
+        stop()
+        action("repeat")
+        wait_for(lambda: label_visible("Nothing to repeat"), "Cold repeat did not show its empty-record result")
+        primary = owner()
+        action("repeat")
+        singleton(primary)
+        stop()
+
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(Path(os.environ["XDG_DATA_HOME"]) / "flatpak/exports/share/applications" / (APP_ID + ".desktop"))
+        launcher = shlex.split(config["Desktop Entry"]["Exec"])
+        if "%u" not in launcher or Path(launcher[0]).name != "flatpak":
+            raise RuntimeError("Installed launcher does not forward an invite URI")
+
+        for route in ("cold-open", "resident-open", "resident-launcher", "cold-launcher"):
+            if route.startswith("cold"):
+                stop()
+            primary = owner()
+            token = secrets.token_urlsafe(32)
+            destination = f"http://127.0.0.1:{server.server_port}/paw%20base/a+b/{route}"
+            # Exercise double-escaped URL bytes, plus, and an encoded token byte.
+            uri = "monkeyspaw://join?server=" + quote(destination, safe="") + "&token=%" + f"{ord(token[0]):02X}" + token[1:]
+            bearers.extend((token.encode(), uri.encode()))
+            if route.endswith("open"):
+                bus(APP_ID, "org.freedesktop.Application.Open", "['" + uri + "']", "{}")
+            else:
+                arguments = [uri if value == "%u" else value for value in launcher]
+                child = subprocess.Popen(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                clients.append(child)
+                if primary:
+                    if child.wait(timeout=15) != 0:
+                        raise RuntimeError("Resident launcher failed")
+            wait_for(show_review, "Installed Settings window did not appear")
+            wait_for(lambda: invite_is_staged(nodes(), destination, pyatspi), "Installed invite review did not appear")
+            singleton(primary or owner())
+            if picker_visible():
+                raise RuntimeError("Invite activation toggled the picker")
+            if Recorder.requests:
+                raise RuntimeError("Invite activation made an HTTP request before Accept")
+        # Give any wrongly scheduled redemption time to reach the recorder.
+        time.sleep(1)
+        if Recorder.requests:
+            raise RuntimeError("Invite activation redeemed without Accept")
+        stop()
+        for child in clients:
+            if child.wait(timeout=15) != 0:
+                raise RuntimeError("Installed launcher exited unsuccessfully")
+        state = Path.home() / ".var/app" / APP_ID
+        for file in state.rglob("*"):
+            if file.is_file() and not file.is_symlink():
+                data = file.read_bytes()
+                if any(token in data for token in bearers):
+                    raise RuntimeError("Invite bearer was persisted")
+        print("Installed Flatpak: cold/resident actions and invite review passed; no redemption or persisted bearer")
+    finally:
+        command("flatpak", "kill", APP_ID, allowed=(0, 1))
+        for child in clients:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except RuntimeError as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        # Exception strings/tracebacks can include subprocess argv or UI input.
+        print("Installed Flatpak proof failed (no invite data is logged)", file=sys.stderr)
+        sys.exit(1)

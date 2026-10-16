@@ -214,6 +214,15 @@ mv "$fixture/payload/usr/bin/monkeyspaw" "$fixture/binary"
 make_deb "$fixture/input/missing-binary.deb"
 mv "$fixture/binary" "$fixture/payload/usr/bin/monkeyspaw"
 expect_failure 'wrong binary path' bash "$builder" "$fixture/input/missing-binary.deb" "$version"
+cp "$fixture/payload/usr/share/applications/$app_id.desktop" "$fixture/original.desktop"
+sed -i '/^MimeType=/d' "$fixture/payload/usr/share/applications/$app_id.desktop"
+make_deb "$fixture/input/missing-mime.deb"
+expect_failure 'missing invite MIME export' bash "$builder" "$fixture/input/missing-mime.deb" "$version"
+cp "$fixture/original.desktop" "$fixture/payload/usr/share/applications/$app_id.desktop"
+sed -i 's|^Exec=/usr/bin/monkeyspaw %u$|Exec=/usr/bin/monkeyspaw|' "$fixture/payload/usr/share/applications/$app_id.desktop"
+make_deb "$fixture/input/missing-uri.deb"
+expect_failure 'missing URI forwarding' bash "$builder" "$fixture/input/missing-uri.deb" "$version"
+cp "$fixture/original.desktop" "$fixture/payload/usr/share/applications/$app_id.desktop"
 
 for failure in extract builder changed-binary missing-library ldd bundle checksum signal; do
     case "$failure" in

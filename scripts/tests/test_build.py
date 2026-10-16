@@ -41,6 +41,9 @@ printf 'deb\n' >> "$BUILD_CALLS"
 mkdir -p dist
 printf 'fresh deb' > dist/monkeyspaw_0.2.0~rc~1_amd64.deb
 (cd dist && sha256sum monkeyspaw_0.2.0~rc~1_amd64.deb > monkeyspaw_0.2.0~rc~1_amd64.deb.sha256)
+if [[ "${FAKE_DEB_BAD_CHECKSUM:-}" == 1 ]]; then
+  printf 'changed after checksum' > dist/monkeyspaw_0.2.0~rc~1_amd64.deb
+fi
 ''')
         self.script(self.root / "scripts/build-flatpak.sh", '''
 [[ "$1" == dist/monkeyspaw_0.2.0~rc~1_amd64.deb && "$2" == 0.2.0-rc-1 ]]
@@ -86,6 +89,13 @@ fi
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(self.calls(), ["deb", "flatpak"])
 
+    def test_default_skips_an_unavailable_flatpak_without_rebuilding_deb(self):
+        (self.bin / "flatpak-builder").unlink()
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["deb"])
+        self.assertIn("flatpak: skipped (missing flatpak-builder)", result.stdout)
+
     def test_named_unavailable_runtime_architecture_and_tool_fail_without_building(self):
         for env, reason in (({"FAKE_MISSING_RUNTIME": "1"}, "GNOME 50"),
                             ({"FAKE_ARCH": "aarch64"}, "requires x86_64")):
@@ -116,6 +126,11 @@ fi
         result = self.run_build("flatpak", "android", FAKE_FLATPAK_FAILURE="1", FAKE_ANDROID_AVAILABLE="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.calls(), ["deb", "flatpak", "android"])
+
+    def test_corrupt_fresh_deb_cannot_reach_the_repacker(self):
+        result = self.run_build("flatpak", FAKE_DEB_BAD_CHECKSUM="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), ["deb"])
 
     def test_named_mac_fails_clearly_on_linux_and_app_flags_are_forwarded(self):
         result = self.run_build("mac")

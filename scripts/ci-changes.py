@@ -68,9 +68,12 @@ FILES = {
     "scripts/tests/test_package_android.py": frozenset({"core-linux"}),
     "scripts/tests/test_verify_android_release.py": frozenset({"core-linux"}),
     "scripts/tests/test_release_workflow.py": frozenset({"core-linux"}),
+    "scripts/tests/test_build.py": frozenset({"core-linux"}),
+    "scripts/tests/test_flatpak_workflow.py": frozenset({"core-linux", "deb", "flatpak"}),
     # The Flatpak job repacks the deb job's tested artifact.
-    "scripts/build-flatpak.sh": frozenset({"deb", "flatpak"}),
-    "scripts/tests/test-build-flatpak.sh": frozenset({"deb", "flatpak"}),
+    "scripts/build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
+    "scripts/tests/test-build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
+    "scripts/flatpak-smoke.py": frozenset({"core-linux", "deb", "flatpak"}),
     "scripts/ci-changes.py": ALL_JOBS,
     "scripts/tests/test_ci_changes.py": ALL_JOBS,
 }

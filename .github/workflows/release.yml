@@ -15,6 +15,9 @@ on:
       - .github/workflows/release.yml
       - server/Dockerfile
       - packaging/**
+      - flatpak/**
+      - scripts/build-flatpak.sh
+      - scripts/flatpak-smoke.py
       - scripts/package-macos.sh
       - scripts/package-android.sh
       - scripts/verify-android-release.py
@@ -164,6 +167,11 @@ jobs:
           deb_file="monkeyspaw_${deb_version}_$(dpkg --print-architecture).deb"
           test -s "dist/$deb_file"
           (cd dist && sha256sum -c "$deb_file.sha256")
+          test "$(dpkg-deb --field "dist/$deb_file" Package)" = monkeyspaw
+          test "$(dpkg-deb --field "dist/$deb_file" Architecture)" = amd64
+          test "$(dpkg-deb --field "dist/$deb_file" Version)" = "$deb_version"
+          apt-get install -y --no-install-recommends "./dist/$deb_file"
+          test "$(/usr/bin/monkeyspaw --version)" = "monkeyspaw ${RELEASE_TAG#v}"
           echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
       - name: Upload deb and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -187,6 +195,101 @@ jobs:
             cmp "dist/$file" "$RUNNER_TEMP/deb-roundtrip/$file"
           done
           (cd "$RUNNER_TEMP/deb-roundtrip" && sha256sum -c "$DEB_FILE.sha256")
+
+  flatpak:
+    name: Repack the release deb as a GNOME 50 Flatpak
+    needs: [tests, verify, linux]
+    # bwrap needs the bare runner's unprivileged user namespaces.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      APP_ID: ch.lkmc.monkeyspaw
+      VERSION: ${{ needs.verify.outputs.version }}
+      DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+    outputs:
+      bundle_file: ${{ steps.package.outputs.bundle_file }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the exact release deb and checksum
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MonkeysPaw-release-deb
+          path: ${{ runner.temp }}/monkeyspaw-tested-deb
+      - name: Prepare bounded user namespaces and GNOME 50
+        run: |
+          export XDG_DATA_HOME="$RUNNER_TEMP/monkeyspaw-flatpak-data"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/monkeyspaw-flatpak-runtime"
+          printf 'XDG_DATA_HOME=%s\nXDG_RUNTIME_DIR=%s\n' "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder bubblewrap dbus
+          mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+          chmod 0700 "$XDG_RUNTIME_DIR"
+          if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns \
+              > "$RUNNER_TEMP/monkeyspaw-flatpak-userns"
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          timeout 10s bwrap --unshare-user --uid 0 --gid 0 --ro-bind / / /usr/bin/true
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          timeout --kill-after=10s 15m dbus-run-session -- \
+            flatpak install --user --noninteractive --assumeyes --arch=x86_64 flathub \
+            org.gnome.Platform//50 org.gnome.Sdk//50
+      - name: Repack and verify the exact release bundle
+        id: package
+        run: |
+          (cd "$RUNNER_TEMP/monkeyspaw-tested-deb" && sha256sum --strict -c "$DEB_FILE.sha256")
+          timeout --kill-after=10s 5m dbus-run-session -- scripts/build-flatpak.sh \
+            "$RUNNER_TEMP/monkeyspaw-tested-deb/$DEB_FILE" "$VERSION"
+          bundle_file="monkeyspaw_${VERSION}_x86_64.flatpak"
+          (cd dist && sha256sum --strict -c "$bundle_file.sha256")
+          timeout --kill-after=10s 2m dbus-run-session -- \
+            flatpak install --user --noninteractive --assumeyes "dist/$bundle_file"
+          payload=$(mktemp -d "$RUNNER_TEMP/monkeyspaw-flatpak-payload.XXXXXX")
+          trap 'rm -rf -- "$payload"' EXIT
+          dpkg-deb --extract "$RUNNER_TEMP/monkeyspaw-tested-deb/$DEB_FILE" "$payload"
+          deployment=$(flatpak info --user --show-location "$APP_ID")
+          test "$(flatpak info --user --show-runtime "$APP_ID")" = org.gnome.Platform/x86_64/50
+          cmp "$payload/usr/bin/monkeyspaw" "$deployment/files/bin/monkeyspaw"
+          test "$(timeout 15s dbus-run-session -- flatpak run --user "$APP_ID" --version)" = "monkeyspaw $VERSION"
+          echo "bundle_file=$bundle_file" >> "$GITHUB_OUTPUT"
+      - name: Upload the verified bundle and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MonkeysPaw-release-flatpak
+          path: |
+            dist/${{ steps.package.outputs.bundle_file }}
+            dist/${{ steps.package.outputs.bundle_file }}.sha256
+          if-no-files-found: error
+          retention-days: 3
+      - name: Download the uploaded Flatpak artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: MonkeysPaw-release-flatpak
+          path: ${{ runner.temp }}/flatpak-roundtrip
+      - name: Byte-compare against original Flatpak outputs
+        env:
+          BUNDLE_FILE: ${{ steps.package.outputs.bundle_file }}
+        run: |
+          for file in "$BUNDLE_FILE" "$BUNDLE_FILE.sha256"; do
+            cmp "dist/$file" "$RUNNER_TEMP/flatpak-roundtrip/$file"
+          done
+          (cd "$RUNNER_TEMP/flatpak-roundtrip" && sha256sum --strict -c "$BUNDLE_FILE.sha256")
+      - name: Restore user namespaces and remove sandbox files
+        if: always()
+        run: |
+          export XDG_DATA_HOME="$RUNNER_TEMP/monkeyspaw-flatpak-data"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/monkeyspaw-flatpak-runtime"
+          timeout 10s flatpak kill "$APP_ID" >/dev/null 2>&1 || true
+          if [[ -f "$RUNNER_TEMP/monkeyspaw-flatpak-userns" ]]; then
+            sudo sysctl -w "kernel.apparmor_restrict_unprivileged_userns=$(cat "$RUNNER_TEMP/monkeyspaw-flatpak-userns")"
+          fi
+          rm -rf -- "$RUNNER_TEMP/monkeyspaw-flatpak-data" "$RUNNER_TEMP/monkeyspaw-flatpak-runtime" \
+            "$RUNNER_TEMP/monkeyspaw-tested-deb" "$RUNNER_TEMP/flatpak-roundtrip" "$HOME/.var/app/$APP_ID"
+          rm -f -- "$RUNNER_TEMP/monkeyspaw-flatpak-userns"
 
   macos:
     name: Build release macOS artifacts
@@ -330,7 +433,7 @@ jobs:
 
   artifacts:
     name: Verify all release assets
-    needs: [tests, verify, linux, macos, android-build, server-images]
+    needs: [tests, verify, linux, flatpak, macos, android-build, server-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -338,6 +441,7 @@ jobs:
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+      BUNDLE_FILE: ${{ needs.flatpak.outputs.bundle_file }}
       APK_FILE: ${{ needs.android-build.outputs.apk_file }}
     steps:
       - name: Assemble verified workflow artifacts
@@ -349,13 +453,14 @@ jobs:
       - name: Require every asset and verify checksums
         run: |
           for file in "$DEB_FILE" "$DEB_FILE.sha256" \
+            "$BUNDLE_FILE" "$BUNDLE_FILE.sha256" \
             "MonkeysPaw-$VERSION.dmg" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.sha256" \
             "$APK_FILE" "$APK_FILE.sha256"; do
             test -f "dist/$file" && test -s "dist/$file"
           done
           shopt -s nullglob dotglob
           files=(dist/*)
-          test "${#files[@]}" -eq 7
+          test "${#files[@]}" -eq 9 # Seven desktop assets plus APK/checksum.
           # Require each manifest to cover its exact payloads, once, in package order.
           verify_manifest() {
             local manifest="$1" digest filename
@@ -368,9 +473,10 @@ jobs:
             test "${names[*]}" = "$*"
           }
           verify_manifest "$DEB_FILE.sha256" "$DEB_FILE"
+          verify_manifest "$BUNDLE_FILE.sha256" "$BUNDLE_FILE"
           verify_manifest "MonkeysPaw-$VERSION.sha256" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.dmg"
           verify_manifest "$APK_FILE.sha256" "$APK_FILE"
-          (cd dist && sha256sum --strict -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256" "$APK_FILE.sha256")
+          (cd dist && sha256sum --strict -c "$DEB_FILE.sha256" "$BUNDLE_FILE.sha256" "MonkeysPaw-$VERSION.sha256" "$APK_FILE.sha256")
 
   server-images:
     name: Build and smoke server image (${{ matrix.arch }})
@@ -502,7 +608,7 @@ jobs:
 
   image-publish:
     name: Promote verified multiarch image
-    needs: [tests, verify, linux, macos, android-build, artifacts, server-images]
+    needs: [tests, verify, linux, flatpak, macos, android-build, artifacts, server-images]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'tag' && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -578,7 +684,7 @@ jobs:
   publish:
     name: Publish verified draft
     # Registry promotion precedes undrafting; a failed image keeps the release hidden.
-    needs: [tests, verify, linux, macos, android-build, artifacts, server-images, image-publish]
+    needs: [tests, verify, linux, flatpak, macos, android-build, artifacts, server-images, image-publish]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'tag' && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -590,6 +696,7 @@ jobs:
       RELEASE_TAG: ${{ needs.verify.outputs.tag }}
       VERSION: ${{ needs.verify.outputs.version }}
       DEB_FILE: ${{ needs.linux.outputs.deb_file }}
+      BUNDLE_FILE: ${{ needs.flatpak.outputs.bundle_file }}
       APK_FILE: ${{ needs.android-build.outputs.apk_file }}
       PRERELEASE: ${{ needs.verify.outputs.prerelease }}
     # No checkout or repository scripts execute with the write-enabled token.
@@ -603,14 +710,15 @@ jobs:
       - name: Create draft and attach every asset
         run: |
           for file in "$DEB_FILE" "$DEB_FILE.sha256" \
+            "$BUNDLE_FILE" "$BUNDLE_FILE.sha256" \
             "MonkeysPaw-$VERSION.dmg" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.sha256" \
             "$APK_FILE" "$APK_FILE.sha256"; do
             test -f "dist/$file" && test -s "dist/$file"
           done
           shopt -s nullglob dotglob
           files=(dist/*)
-          test "${#files[@]}" -eq 7
-          # Keep this check identical to assembly; no checkout runs with the write token.
+          test "${#files[@]}" -eq 9 # Seven desktop assets plus APK/checksum.
+          # Require each manifest to cover its exact payloads, once, in package order.
           verify_manifest() {
             local manifest="$1" digest filename
             shift
@@ -622,9 +730,10 @@ jobs:
             test "${names[*]}" = "$*"
           }
           verify_manifest "$DEB_FILE.sha256" "$DEB_FILE"
+          verify_manifest "$BUNDLE_FILE.sha256" "$BUNDLE_FILE"
           verify_manifest "MonkeysPaw-$VERSION.sha256" "MonkeysPaw-$VERSION.zip" "MonkeysPaw-$VERSION.dmg"
           verify_manifest "$APK_FILE.sha256" "$APK_FILE"
-          (cd dist && sha256sum --strict -c "$DEB_FILE.sha256" "MonkeysPaw-$VERSION.sha256" "$APK_FILE.sha256")
+          (cd dist && sha256sum --strict -c "$DEB_FILE.sha256" "$BUNDLE_FILE.sha256" "MonkeysPaw-$VERSION.sha256" "$APK_FILE.sha256")
           cat > "$RUNNER_TEMP/android-release-notes.md" <<'NOTES'
           Android requires API 26 or later. Download the APK and its .apk.sha256 together and verify the checksum before sideloading. The release APK is signed and shrunk with R8.
 
@@ -645,7 +754,7 @@ jobs:
             cmp "$file" "$RUNNER_TEMP/release-assets/$(basename "$file")"
           done
           downloaded=("$RUNNER_TEMP/release-assets/"*)
-          test "${#downloaded[@]}" -eq 7
+          test "${#downloaded[@]}" -eq 9 # Seven desktop assets plus APK/checksum.
       - name: Publish only after every comparison passes
         run: |
           latest=true

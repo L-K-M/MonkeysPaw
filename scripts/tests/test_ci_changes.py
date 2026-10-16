@@ -102,6 +102,12 @@ class SelectionTests(unittest.TestCase):
             "scripts/tests/test_package_android.py": frozenset({"core-linux"}),
             "scripts/tests/test_verify_android_release.py": frozenset({"core-linux"}),
             "scripts/tests/test_release_workflow.py": frozenset({"core-linux"}),
+            "scripts/tests/test_build.py": frozenset({"core-linux"}),
+            "scripts/tests/test_flatpak_workflow.py": frozenset({"core-linux", "deb", "flatpak"}),
+            "scripts/build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
+            "scripts/tests/test-build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
+            "scripts/flatpak-smoke.py": frozenset({"core-linux", "deb", "flatpak"}),
+            "flatpak/ch.lkmc.monkeyspaw.yml": frozenset({"deb", "flatpak"}),
             # A new test may run in any job; it selects everything until mapped.
             "scripts/tests/test_future.py": ALL,
             "README.md": frozenset({"core-linux", "deb"}),
