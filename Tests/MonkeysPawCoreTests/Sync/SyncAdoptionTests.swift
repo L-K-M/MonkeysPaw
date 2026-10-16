@@ -246,6 +246,39 @@ final class SyncAdoptionTests: XCTestCase {
             local: SyncScanTestSupport.scan(rig).snapshot, groups: [:]) else { return XCTFail("Moved during request") }
     }
 
+    func testPathTakenExcludesHeldDuplicateOwnersBeforeMatching() throws {
+        let rig = try SyncApplyTestRig()
+        let sent = SyncScanTestSupport.bytes(id: other)
+        let raw = SyncScanTestSupport.bytes(id: other, extra: "format: 999\n")
+        try rig.files.write(sent, at: "a.md")
+        try rig.files.write(raw, at: "Conflicts/raw.md")
+        let intent = try SyncConflictIntent(id: other, operation: .put, baseRev: 0,
+            scope: SyncScanTestSupport.personal, path: "a.md", sentBytes: sent, inputBytes: sent, accessGeneration: 0)
+        let head = try remote(rig)
+        let existing = SyncAPI.ExistingPrompt(id: id.rawValue, rev: head.rev, content: String(decoding: head.bytes, as: UTF8.self))
+        let snapshot = try SyncScanTestSupport.scan(rig, ids: []).snapshot
+        XCTAssertEqual(snapshot.heldPaths, ["Conflicts/raw.md"])
+        let decision = try SyncAdoption.pathTaken(existing, intent: intent, local: snapshot, groups: [:])
+        guard case .adopt = decision else { return XCTFail("Held raw IDs cannot claim the live create") }
+        XCTAssertEqual(try rig.journal.apply(application(decision, rig, snapshot)), .committed)
+        XCTAssertEqual(try rig.files.read(at: "a.md"), head.bytes)
+        XCTAssertEqual(try rig.files.read(at: "Conflicts/raw.md"), raw)
+
+        try rig.files.write(raw, at: "a.md")
+        let held = try SyncScanTestSupport.scan(rig, ids: []).snapshot
+        XCTAssertEqual(held.heldPaths, ["a.md", "Conflicts/raw.md"])
+        guard case .held = try SyncAdoption.pathTaken(existing, intent: intent, local: held, groups: [:]) else {
+            return XCTFail("Held-only owners stay held")
+        }
+
+        try rig.files.write(sent, at: "a.md")
+        try rig.files.write(sent, at: "Conflicts/raw.md")
+        let duplicates = SyncReconciliationSnapshot(binding: rig.binding, files: try rig.mutations.listedFiles())
+        XCTAssertThrowsError(try SyncAdoption.pathTaken(existing, intent: intent, local: duplicates, groups: [:])) {
+            XCTAssertEqual($0 as? SyncReconciliationError, .invalidLocalSnapshot)
+        }
+    }
+
     func testFreshReadBeforePublicationPreventsLosingPostPlanEdit() throws {
         let rig = try SyncApplyTestRig()
         try rig.files.write(SyncScanTestSupport.bytes(id: other), at: "a.md")

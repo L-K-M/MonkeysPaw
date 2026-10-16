@@ -65,9 +65,10 @@ enum SyncAdoption {
             rev: existing.rev, bytes: bytes, hash: SyncHash(bytes: bytes), mode: mode)
         try validate(remote, binding: local.binding, groups: groups)
         guard case .available = local.availability else { throw SyncReconciliationError.unavailableLibrary }
-        let owners = local.files.filter { $0.identityKey == intent.id.rawValue }
+        let candidates = local.files.filter { $0.identityKey == intent.id.rawValue }
+        let owners = candidates.filter { !isHeld($0, in: local) }
         guard owners.count <= 1 else { throw SyncReconciliationError.invalidLocalSnapshot }
-        guard let file = owners.first else { return .replan }
+        guard let file = owners.first ?? candidates.first else { return .replan }
         if isHeld(file, in: local) { return .held(RelativePath(file.path)) }
         guard let location = SyncLocalScanner.location(of: RelativePath(file.path), binding: local.binding, groups: groups),
               location.scope == intent.scope, try SyncNaming.pathKey(location.path) == SyncNaming.pathKey(intent.path) else {
