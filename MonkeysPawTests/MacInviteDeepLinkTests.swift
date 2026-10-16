@@ -241,7 +241,8 @@ final class MacInviteDeepLinkTests: XCTestCase {
         let view = try stagedView()
         XCTAssertFalse(view.canJoin)
         view.username = "person"
-        try secureField(SettingsInviteStrings.password).stringValue = "Runtime-password-" + UUID().uuidString
+        let password = "Runtime-password-" + UUID().uuidString
+        try secureField(SettingsInviteStrings.password).stringValue = password
         view.register()
         XCTAssertTrue(spin { view.state?.accepted == true && view.canOperate })
         let account = try XCTUnwrap(delegate.accountModel)
@@ -251,6 +252,7 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertFalse(transport.registerHadAuthorization)
         XCTAssertFalse(transport.foreignAuthorization)
         XCTAssertEqual(transport.putCount, 0)
+        try assertPrivate([token, password])
     }
 
     func testTabHideMinimizeAndCloseClearInputsWithoutRetiringTheSharedModel() throws {
@@ -353,7 +355,8 @@ final class MacInviteDeepLinkTests: XCTestCase {
         secrets.failWrite = true
         transport.failLogout = true
         view.username = "person"
-        try secureField(SettingsInviteStrings.password).stringValue = "Runtime-password-" + UUID().uuidString
+        let password = "Runtime-password-" + UUID().uuidString
+        try secureField(SettingsInviteStrings.password).stringValue = password
         view.register()
         XCTAssertTrue(spin { view.state?.accepted == true && view.canOperate })
         XCTAssertTrue(view.state?.error?.message.contains("The account was created.") == true)
@@ -361,6 +364,7 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertFalse(view.canAccept)
         XCTAssertTrue(delegate.accountModel?.state.enabled == false)
         XCTAssertEqual(transport.registerCount, 1)
+        try assertPrivate([token, password])
     }
 
     func testLibraryReplacementRevokesTheOldInviteAndItsCallbacks() throws {
@@ -404,6 +408,26 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertEqual(picker.state, .closed)
         XCTAssertEqual(clipboard.writes, 0)
         XCTAssertEqual(transport.redemptions, 0)
+    }
+
+    func testHTTPReleaseBeforeHoldAdmissionCannotStrandARequest() throws {
+        let transport = MacInviteHTTP()
+        transport.holdSuffix = "/register"
+        // Reproduce release between response preparation and hold admission.
+        transport.beforeHoldAdmission = { [weak transport] in transport?.release() }
+        defer { transport.release() }
+        let request = try HTTPRequest(url: URL(string: "https://example.test/paw/api/v1/register")!,
+            method: .post, deadline: ContinuousClock().now.advanced(by: .seconds(5)))
+        let finished = expectation(description: "A released request completes without another release")
+        Task.detached {
+            do {
+                let response = try await transport.send(request)
+                XCTAssertEqual(response.statusCode, 200)
+            } catch { XCTFail("The stub registration should succeed") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 1)
+        XCTAssertEqual(transport.heldCount, 0)
     }
 
     private func makeDelegate() {
@@ -553,10 +577,12 @@ private final class MacInviteHTTP: HTTPTransporting, @unchecked Sendable {
     private var joinAuth = false
     private var foreignAuth = false
     private var heldSuffix: String?
+    private var holdAdmission: (() -> Void)?
     private var logoutFailure = false
     private var held: [(CheckedContinuation<HTTPResponse, Error>, HTTPResponse)] = []
     var user: ULID { get { locked { storedUser } } set { locked { storedUser = newValue } } }
     var holdSuffix: String? { get { locked { heldSuffix } } set { locked { heldSuffix = newValue } } }
+    var beforeHoldAdmission: (() -> Void)? { get { locked { holdAdmission } } set { locked { holdAdmission = newValue } } }
     var failLogout: Bool { get { locked { logoutFailure } } set { locked { logoutFailure = newValue } } }
     var requestCount: Int { locked { paths.count } }
     var registerCount: Int { locked { paths.filter { $0.hasSuffix("/register") }.count } }
@@ -609,9 +635,15 @@ private final class MacInviteHTTP: HTTPTransporting, @unchecked Sendable {
             }
             return try http(SyncAPI.EmptyResponse())
         }
-        let shouldHold = locked { heldSuffix.map { request.url.path.hasSuffix($0) } ?? false }
-        guard shouldHold else { return response }
-        return try await withCheckedThrowingContinuation { continuation in locked { held.append((continuation, response)) } }
+        beforeHoldAdmission?()
+        return try await withCheckedThrowingContinuation { continuation in
+            let enqueued = locked {
+                guard let suffix = heldSuffix, request.url.path.hasSuffix(suffix) else { return false }
+                held.append((continuation, response))
+                return true
+            }
+            if !enqueued { continuation.resume(returning: response) }
+        }
     }
 
     func release() {
