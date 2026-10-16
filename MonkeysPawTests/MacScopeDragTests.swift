@@ -9,6 +9,27 @@ import XCTest
 /// Exercise the real item-provider bridge, editor guard and native sync graph.
 /// Pointer dragging and AppKit's drag image still require the owner check.
 final class MacScopeDragTests: XCTestCase {
+    func testFailedHarnessSetupRestoresMenuRetiresGraphAndRemovesFiles() throws {
+        let originalMenu = NSApp.mainMenu
+        var failedDirectory: URL?
+        var failedDelegate: AppDelegate?
+        defer {
+            failedDelegate?.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            NSApp.mainMenu = originalMenu
+            if let failedDirectory { try? FileManager.default.removeItem(at: failedDirectory) }
+        }
+        XCTAssertThrowsError(try MacScopeDragHarness(beforeHistoryWrite: { harness in
+            failedDirectory = harness.directory
+            failedDelegate = harness.delegate
+            throw MacScopeSetupError.injected
+        })) { error in
+            XCTAssertTrue(error is MacScopeSetupError)
+        }
+        XCTAssertTrue(NSApp.mainMenu === originalMenu)
+        XCTAssertNil(try XCTUnwrap(failedDelegate?.syncComposition).account)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(failedDirectory).path))
+    }
+
     func testEveryScopeDirectionAndFolderKeepsIdentityBytesAndHistory() throws {
         let h = try MacScopeDragHarness()
         defer { h.close() }
@@ -334,11 +355,15 @@ private final class MacScopeDragHarness {
     private let dialogs: MacScopeDialogs
     var view: LibraryViewState { delegate.libraryWindow!.presentation }
 
-    init(role: SyncAPI.Role = .editor, sourceInGroup: Bool = false, keepSyncRunning: Bool = false) throws {
+    init(role: SyncAPI.Role = .editor, sourceInGroup: Bool = false, keepSyncRunning: Bool = false,
+         beforeHistoryWrite: ((MacScopeDragHarness) throws -> Void)? = nil) throws {
         XCTAssertTrue(Thread.isMainThread)
         XCTAssertTrue(AppDelegate.isRunningTests)
         originalMenu = NSApp.mainMenu
-        directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-y29-" + UUID().uuidString)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("monkeyspaw-y29-" + UUID().uuidString)
+        self.directory = directory
+        var setupComplete = false
+        defer { if !setupComplete { try? FileManager.default.removeItem(at: directory) } }
         root = directory.appendingPathComponent("library")
         files = try RootedFileStore(root: root)
         data = try RootedFileStore(root: directory.appendingPathComponent("data"))
@@ -354,6 +379,7 @@ private final class MacScopeDragHarness {
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in false }),
                     mainThread: main, scheduler: scheduler, isTrusted: { false }, deactivateIfUnused: {})
             }, makeFileWatcher: { _, _ in MacScopeWatcher() })
+        defer { if !setupComplete { close() } }
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         let account = try XCTUnwrap(delegate.accountModel)
         XCTAssertTrue(spin { !account.state.isBusy })
@@ -369,7 +395,9 @@ private final class MacScopeDragHarness {
         XCTAssertTrue(spin { self.view.snapshot.rows.contains { $0.relativePath == RelativePath(path) } })
         view.selectPath(RelativePath(path))
         try waitForPath(path)
+        try beforeHistoryWrite?(self)
         try data.write(Data("Earlier history".utf8), at: "history/" + MacScopeTransport.prompt + "/20261001T130700.123Z-000000.md")
+        setupComplete = true
     }
 
     func provider(path: String? = nil) throws -> NSItemProvider {
@@ -450,6 +478,8 @@ private final class MacScopeDragHarness {
         return predicate()
     }
 }
+
+private enum MacScopeSetupError: Error { case injected }
 
 private final class MacScopeDialogs {
     private var response: ((LibraryEditorResponse) -> Void)?
