@@ -106,7 +106,8 @@ class ShareReceiverActivity : ComponentActivity() {
                                 onRename = editor::rename, onMove = editor::move, onDelete = editor::delete,
                                 onHistory = editor::loadHistory, onRevision = { editor.selectRevision(it.revision) },
                                 onRestore = { editor.restore(it.revision) }, onDecision = editor::resolveDecision,
-                                onConflict = editor::resolveConflict, modifier = modifier, backLabel = R.string.share_back)
+                                onConflict = editor::resolveConflict, onClearQuote = editor::clearReviewQuote,
+                                modifier = modifier, backLabel = R.string.share_back)
                         }
                         ShareDestination.Closed -> Unit
                     }

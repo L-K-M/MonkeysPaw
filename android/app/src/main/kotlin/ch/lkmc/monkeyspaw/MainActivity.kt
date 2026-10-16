@@ -21,6 +21,9 @@ import ch.lkmc.monkeyspaw.ui.editor.EditorDecisionDialogs
 import ch.lkmc.monkeyspaw.ui.editor.EditorViewModel
 import ch.lkmc.monkeyspaw.ui.assistant.WriteScreen
 import ch.lkmc.monkeyspaw.ui.assistant.WriteViewModel
+import ch.lkmc.monkeyspaw.ui.assistant.ReviewScreen
+import ch.lkmc.monkeyspaw.ui.assistant.ReviewViewModel
+import ch.lkmc.monkeyspaw.ui.assistant.ReviewDestination
 import ch.lkmc.monkeyspaw.ui.library.LibraryScreen
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
@@ -46,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private val keyboardTileSetup by lazy { AndroidKeyboardTileSetup(this) }
     private val assistantSettings: AssistantSettingsViewModel by viewModels()
     private val assistantWrite: WriteViewModel by viewModels()
+    private val assistantReview: ReviewViewModel by viewModels()
     private val fillLauncher = FillLauncher { path ->
         startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
     }
@@ -79,6 +83,7 @@ class MainActivity : ComponentActivity() {
         title = AppIdentity.displayName
         editor.onSelectionChanged = library::selectFromEditor
         assistantWrite.bind(editor)
+        assistantReview.bind(editor)
         enableEdgeToEdge()
 
         setContent {
@@ -98,7 +103,17 @@ class MainActivity : ComponentActivity() {
                         val editing = editor.state.collectAsStateWithLifecycle().value
                         val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
                         val writing = assistantWrite.state.collectAsStateWithLifecycle().value
-                        if (writing.isOpen) {
+                        val reviewing = assistantReview.state.collectAsStateWithLifecycle().value
+                        if (reviewing.isOpen && reviewing.destination == ReviewDestination.FINDINGS) {
+                            ReviewScreen(state = reviewing, onReview = assistantReview::review,
+                                onEffort = assistantReview::setEffort, onFinding = assistantReview::toggleFinding,
+                                onQuote = assistantReview::showQuote, onFeedback = assistantReview::editFeedback,
+                                onRetry = assistantReview::retryWithFeedback, onCancel = assistantReview::cancel,
+                                onBack = assistantReview::close, onReload = assistantReview::reload,
+                                onSettings = { assistantReview.close(); assistantSettings.open() },
+                                modifier = Modifier.padding(padding))
+                            EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)
+                        } else if (writing.isOpen) {
                             WriteScreen(state = writing, onBrief = assistantWrite::editBrief,
                                 onEffort = assistantWrite::setEffort, onWrite = assistantWrite::write,
                                 onFeedback = assistantWrite::editFeedback, onRetry = assistantWrite::retryWithFeedback,
@@ -120,11 +135,13 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(padding),
                         ) else if (editing.isOpen) EditorScreen(
                             state = editing, onEdit = editor::edit, onNewPath = editor::setNewPath,
-                            onTab = editor::setTab, onSave = editor::save, onBack = editor::close,
+                            onTab = editor::setTab, onSave = editor::save,
+                            onBack = { if (reviewing.isOpen) assistantReview.open() else editor.close() },
                             onReload = editor::reload, onRename = editor::rename, onMove = editor::move,
                             onDelete = editor::delete, onHistory = editor::loadHistory,
                             onRevision = { editor.selectRevision(it.revision) }, onRestore = { editor.restore(it.revision) },
                             onDecision = editor::resolveDecision, onConflict = editor::resolveConflict,
+                            onReview = assistantReview::open, onClearQuote = editor::clearReviewQuote,
                             modifier = Modifier.padding(padding),
                         ) else LibraryScreen(
                             state = library.state.collectAsStateWithLifecycle().value,
@@ -134,11 +151,11 @@ class MainActivity : ComponentActivity() {
                             onRefresh = library::refresh, modifier = Modifier.padding(padding),
                             // A row tap delivers (Fill); editing is an explicit action on the selection.
                             onOpen = ::openFill,
-                            onEdit = { editor.open(it) },
-                            onCreate = { editor.createDraft() },
+                            onEdit = { assistantReview.close(); editor.open(it) },
+                            onCreate = { assistantReview.close(); editor.createDraft() },
                             onSettings = setup::openSettings,
                             onAssistantSettings = assistantSettings::open,
-                            onWrite = assistantWrite::open,
+                            onWrite = { assistantReview.close(); assistantWrite.open() },
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,

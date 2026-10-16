@@ -67,6 +67,8 @@ internal class LibraryScreenBoundaryTest {
                 "ch.lkmc.monkeyspaw.core.ports.DeliveryMode",
                 "ch.lkmc.monkeyspaw.core.domain.llm.ConnectionTestResult", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderKind",
                 "ch.lkmc.monkeyspaw.core.domain.llm.AssistantEffort",
+                "ch.lkmc.monkeyspaw.core.domain.llm.LlmReview", "ch.lkmc.monkeyspaw.core.domain.llm.LlmReviewSeverity",
+                "ch.lkmc.monkeyspaw.core.domain.llm.LlmRubricCriterion",
                 "ch.lkmc.monkeyspaw.core.domain.llm.ProviderProfileID", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderSettingsError",
                 "ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError") })
         val forbidden = Regex("\\b(?:File|Files|Path|Context|LocalContext|Clipboard|LibraryRepository|LibraryService|EditingService|SeedInstaller|DataStore|Dispatchers|viewModelScope|LaunchedEffect|HttpTransport|URL|InputStream|OutputStream)\\b")

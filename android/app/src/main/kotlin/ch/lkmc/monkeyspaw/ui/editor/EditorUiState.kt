@@ -63,6 +63,8 @@ internal data class EditorUiState(
     val fields: List<PromptField> = emptyList(),
     val preview: String = "",
     val previewAvailable: Boolean = false,
+    val isPrivate: Boolean = false,
+    val quoteSelection: ReviewQuoteSelection? = null,
     val validating: Boolean = false,
     val readOnlyReason: SourceReadOnlyReason? = null,
     val failure: EditorFailure? = null,
@@ -88,7 +90,7 @@ internal data class EditorUiState(
 }
 
 internal data class EditorDocumentState(val title: String, val issues: List<PromptIssue>,
-    val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean)
+    val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean, val isPrivate: Boolean)
 
 /** Editor preview uses tokens directly: absent defaults remain markers, including choice fields. */
 internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId): EditorDocumentState {
@@ -110,5 +112,6 @@ internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId)
             }
         }
     }
-    return EditorDocumentState(document.frontMatter.title, document.issues, fields, preview, document.canRender)
+    return EditorDocumentState(document.frontMatter.title, document.issues, fields, preview, document.canRender,
+        document.frontMatter.isPrivate)
 }
