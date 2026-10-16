@@ -170,7 +170,12 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   remote revocation, failed secret deletion and failed metadata cleanup explicitly.
 - **Personal values and errors.** Group favourite `true` inserts, explicit
   `false` removes, and absent preserves the remembered value. There is no
-  group-private overlay. Origin is typed as conflict-of a ULID or rescued;
+  group-private overlay. A newer personal UI intent records an optional
+  group-only `favorite_input: {value: bool|null}` on its prompt state until
+  canonical ingest consumes the raw key. An unchanged true/false/absent input
+  cannot overwrite that intent after restart; a changed input still applies.
+  This private version-1 extension never crosses the wire.
+  Origin is typed as conflict-of a ULID or rescued;
   it is separate from server write origin and Assistant provenance (§9.6).
   Per-file errors store only a fixed issue code and an operation fingerprint
   of bytes, path, scope and access generation, never an error body. Repairing

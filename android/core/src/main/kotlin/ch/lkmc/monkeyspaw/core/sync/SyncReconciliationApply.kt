@@ -90,6 +90,9 @@ internal fun SyncReconciler.application(plan: SyncReconciliationPlan, mutations:
         edits.add(mutations.publication(remote.bytes, remote.libraryPath, target,
             SyncIdentityTransition(target?.identity, PromptIdentity.Assigned(remote.id)), remote.mode,
             markerIssue = ingest(remote.bytes, LibraryPath.filename(remote.path), remote.scope).issue))
+        // Installing canonical bytes consumes the old key; a later key is new input.
+        val identity = PromptIdentity.Assigned(remote.id)
+        prompts[identity]?.let { prompts[identity] = it.copy(favoriteInput = null) }
         val source = installation.source
         if (source != null && source.path != remote.libraryPath) removals[source.path] = source
     }

@@ -236,7 +236,7 @@ internal class SyncPushEngine(
         val key = PromptIdentity.Assigned(request.intent.id)
         val record = state.prompts[key] ?: request.recorded
         val next = state.copy(prompts = state.prompts + (key to SyncPromptState(record?.scope ?: request.intent.scope,
-            record?.path ?: request.intent.path, record?.rev ?: 0, record?.canonicalHash, record?.origin, issue)))
+            record?.path ?: request.intent.path, record?.rev ?: 0, record?.canonicalHash, record?.origin, issue, record?.favoriteInput)))
         commit(state, next)
         clearPending()
         return SyncPushResult.SKIPPED
@@ -246,14 +246,16 @@ internal class SyncPushEngine(
         val state = currentState()
         val key = PromptIdentity.Assigned(head.id)
         val previous = state.prompts[key]
-        val adopted = SyncPromptState(head.scope, head.path, head.rev, head.hash, head.origin)
+        val adopted = SyncPromptState(head.scope, head.path, head.rev, head.hash, head.origin,
+            favoriteInput = previous?.favoriteInput?.takeIf { head.scope is SyncScopeKey.Group })
         if (previous != request.recorded && previous != adopted) { clearPending(); return SyncPushResult.REPLAN }
         var next = setting(adopted, key, state)
         val edits = mutableListOf<SyncLibraryEdit>()
         val current = if (head.scope is SyncScopeKey.Group) mutations.read(request.libraryPath) else null
         if (current != null && same(current, request.file)) {
             val form = SyncLocalScanner.canonical(current.bytes, head.path, head.scope)
-            next = next.applyGroupFavorite(form.favorite, key)
+            next = next.copy(prompts = next.prompts + (key to adopted.copy(favoriteInput = null)))
+                .applyGroupFavorite(SyncFavoriteInput.preferred(form.favorite, previous?.favoriteInput), key)
             if (!form.bytes.contentEquals(current.bytes)) edits.add(mutations.publication(form.bytes, request.libraryPath, current,
                 SyncIdentityTransition(key, key), mode(head.scope, state)))
         }
@@ -297,7 +299,8 @@ internal class SyncPushEngine(
         val record = SyncPromptState(head.scope, head.path, head.rev, head.hash, head.origin, error)
         var next = setting(record, PromptIdentity.Assigned(head.id), state)
         val form = local?.let { runCatching { SyncLocalScanner.canonical(it.bytes, head.path, head.scope) }.getOrNull() }
-        if (head.scope is SyncScopeKey.Group && form != null) next = next.applyGroupFavorite(form.favorite, PromptIdentity.Assigned(head.id))
+        if (head.scope is SyncScopeKey.Group && form != null) next = next.applyGroupFavorite(
+            SyncFavoriteInput.preferred(form.favorite, state.prompts[PromptIdentity.Assigned(head.id)]?.favoriteInput), PromptIdentity.Assigned(head.id))
         // Identity-neutral adoption equality cannot discard private comments/formatting on a conflict.
         val operation = if (local != null && form?.bytes?.contentEquals(head.bytes) != true) {
             SyncReconciliationOperation.Preserve(SyncReconciliationPreservation(head.id,

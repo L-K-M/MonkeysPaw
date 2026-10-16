@@ -132,7 +132,8 @@ internal object SyncReconciler {
                         continue
                     }
                     prompts[identity] = SyncPromptState(remote.scope, remote.path, remote.rev, remote.hash,
-                        markers.origin, markers.issue?.let { markerError(it, remote) })
+                        markers.origin, markers.issue?.let { markerError(it, remote) },
+                        previous?.favoriteInput?.takeIf { remote.scope is SyncScopeKey.Group })
                     if (remote.scope is SyncScopeKey.User) favorites.remove(identity)
                     if (!LibraryPath.isPrompt(remote.libraryPath)) {
                         operations.add(SyncReconciliationOperation.LocalVisibility(remote))
@@ -160,8 +161,10 @@ internal object SyncReconciler {
                     }
                     val installation = SyncReconciliationInstall(remote, file, target)
                     val canonical = file?.let { canonical(it, remote.scope) }
-                    if (remote.scope is SyncScopeKey.Group && canonical?.favorite != null) {
-                        if (canonical.favorite == true) favorites[identity] = true else favorites.remove(identity)
+                    if (remote.scope is SyncScopeKey.Group) {
+                        SyncFavoriteInput.preferred(canonical?.favorite, previous?.favoriteInput)?.let {
+                            if (it) favorites[identity] = true else favorites.remove(identity)
+                        }
                     }
                     if (file != null && canonical?.canonicalHash != remote.hash.rawValue) {
                         if (mode == SyncReconciliationPlan.Mode.RESTORE) {

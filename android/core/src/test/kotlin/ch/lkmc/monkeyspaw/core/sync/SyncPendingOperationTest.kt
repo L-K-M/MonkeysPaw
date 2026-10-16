@@ -33,7 +33,8 @@ class SyncPendingOperationTest {
         val f = encoded.required("file").objectValue()
         assertEquals(setOf("path", "stamp", "identityKey", "bytes", "hash"), f.fields.keys)
         assertEquals(request.file.stamp.journalToken(), f.required("stamp").objectValue().text("token"))
-        assertEquals(setOf("scope_key", "path", "rev", "canonical_hash", "origin", "last_error"), encoded.required("recorded").objectValue().fields.keys)
+        assertEquals(setOf("scope_key", "path", "rev", "canonical_hash", "origin", "last_error", "favorite_input"),
+            encoded.required("recorded").objectValue().fields.keys)
         h.pending.save(request)
         val exact = h.data.read("sync/push.json")
         val loaded = h.restart().pending.load(h.binding)!!
@@ -47,6 +48,22 @@ class SyncPendingOperationTest {
         assertEquals(request.recorded, loaded.recorded)
         assertEquals(h.binding, loaded.binding)
         assertTrue(h.data.isPrivate("sync/push.json"))
+    }
+
+    @Test fun pendingGroupBaselineRetainsThreeWayFavoriteInputAcrossRestart() {
+        for (value in listOf(true, false, null)) {
+            val h = PushHarness().seed(3, groups = true, scope = v.groupScope)
+            h.states.update(h.binding) { it.copy(prompts = it.prompts +
+                (v.personalID to h.record.copy(favoriteInput = SyncFavoriteInput(value)))) }
+            val file = h.mutations.read("Groups/Team/a.md")!!
+            val record = h.record
+            val sent = SyncLocalScanner.canonical(file.bytes, record.path, record.scope).bytes
+            val intent = SyncConflictIntent(v.personal, SyncOperation.PUT, record.rev, record.scope, record.path,
+                sent, file.bytes, 7)
+            val request = SyncPendingOperation(h.binding, intent, file.path, file, record)
+            h.pending.save(request)
+            assertEquals(record, h.restart().pending.load(h.binding)!!.recorded)
+        }
     }
 
     @Test fun putMoveDeleteShapesPreserveOriginErrorFingerprintAndExplicitNulls() {

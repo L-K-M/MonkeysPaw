@@ -33,13 +33,22 @@ internal class SyncConnectionDocument(
  * Share one graph; account transition services own journal preparation and secret compensation.
  */
 class SyncAccountStore(files: StateStore, operations: SyncFileFlushing) {
-    private val connection = SyncPersistence(files, operations, "sync/account.json", connectionCodec)
-    private val ownership = SyncPersistence(files, operations, "sync/binding.json", bindingCodec)
+    private val connection = SyncPersistence(files, operations, "sync/account.json", connectionCodec) { document ->
+        document?.let { listOf(it.account?.identity, it.account?.connectionID, it.activation) }
+    }
+    private val ownership = SyncPersistence(files, operations, "sync/binding.json", bindingCodec) { libraries ->
+        libraries?.map { listOf(it.root, it.owner, it.managedFolders) }
+    }
 
     /** Cached diagnostics can be stale. Load and check errors before any sync decision. */
     internal val cachedAccount: SyncAccount? get() = connection.snapshot.value?.account
     internal val cachedBindings: List<SyncLibraryBinding> get() = ownership.snapshot.value.orEmpty()
     internal val readOnlyError: SyncError? get() = connection.snapshot.error ?: ownership.snapshot.error
+    internal val accessVersions: List<Long> get() = listOf(connection.snapshot.accessVersion, ownership.snapshot.accessVersion)
+    internal fun observeChanges(observer: () -> Unit) {
+        connection.observeChanges(observer)
+        ownership.observeChanges(observer)
+    }
 
     internal fun loadAccount(): SyncAccount? = loadConnection().account
 

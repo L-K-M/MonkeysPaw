@@ -8,7 +8,7 @@ import java.util.Collections
 
 class IndexedPrompt internal constructor(val entry: LibraryEntry, events: List<Instant>) {
     val useEvents: List<Instant> = Collections.unmodifiableList(events.toList())
-    internal val ranking = PromptRanking.Input(entry.relativePath, entry.document, useEvents)
+    internal val ranking = PromptRanking.Input(entry.relativePath, entry.document, useEvents, entry.favorite)
 }
 
 data class LocalSearchResult(val entry: LibraryEntry, val score: Double, val matchedFields: List<PromptSearchField>)
@@ -67,6 +67,11 @@ class PromptIndex internal constructor(private val library: LibraryService) {
         prompts = prompts.mapValues { (_, input) ->
             if (input.entry.identity == identity) IndexedPrompt(input.entry, events) else input
         }
+        version++
+    }
+
+    internal fun acceptAccess(snapshot: GroupAccessSnapshot) {
+        prompts = prompts.mapValues { (_, input) -> IndexedPrompt(input.entry.projected(snapshot), input.useEvents) }
         version++
     }
 }

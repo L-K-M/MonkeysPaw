@@ -43,7 +43,7 @@ internal object SyncStateJson {
             "favorites" to SyncObject(state.favorites.map { it.key.storageKey to wireBoolean(it.value) }.toMap()))
     }
 
-    private fun prompt(value: SyncObject): SyncPromptState {
+    internal fun prompt(value: SyncObject): SyncPromptState {
         val o = WireObject(value)
         return SyncPromptState(SyncScopeKey.parse(o.string("scope_key")), o.string("path"), o.long("rev"),
             value.optional("canonical_hash")?.stringValue()?.let(::SyncHash),
@@ -51,15 +51,22 @@ internal object SyncStateJson {
             value.optional("last_error")?.objectValue()?.let { error ->
                 val fields = WireObject(error)
                 SyncPromptError(SyncIssueCode.parse(fields.string("code")), fingerprint(error.required("fingerprint").objectValue()))
+            }, value.optional("favorite_input")?.objectValue()?.let { input ->
+                val raw = input.required("value")
+                SyncFavoriteInput(if (raw == WireValue.Null) null else
+                    (raw as? WireValue.BooleanValue)?.value ?: throw SyncError.InvalidState)
             })
     }
 
-    private fun prompt(value: SyncPromptState): SyncObject = syncObject(
+    internal fun prompt(value: SyncPromptState): SyncObject = syncObject(
         "scope_key" to wireString(value.scope.rawValue), "path" to wireString(value.path), "rev" to wireLong(value.rev),
         "canonical_hash" to wireNullable(value.canonicalHash?.rawValue),
         "origin" to (value.origin?.let(::origin) ?: WireValue.Null),
         "last_error" to (value.lastError?.let {
             syncObject("code" to wireString(it.code.rawValue), "fingerprint" to fingerprint(it.fingerprint))
+        } ?: WireValue.Null),
+        "favorite_input" to (value.favoriteInput?.let {
+            syncObject("value" to (it.value?.let(::wireBoolean) ?: WireValue.Null))
         } ?: WireValue.Null))
 
     fun origin(value: SyncPromptOrigin): SyncObject = when (value) {
