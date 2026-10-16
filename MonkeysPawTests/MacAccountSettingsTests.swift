@@ -475,6 +475,26 @@ final class MacAccountSettingsTests: XCTestCase {
         XCTAssertNil(next.state.connection)
     }
 
+    func testHTTPReleaseBeforeHoldAdmissionCannotStrandARequest() throws {
+        let transport = AccountSettingsHTTP()
+        transport.holdSuffix = "/login"
+        // Reproduce release between response preparation and hold admission.
+        transport.beforeHoldAdmission = { [weak transport] in transport?.release() }
+        defer { transport.release() }
+        let request = try HTTPRequest(url: URL(string: "https://example.test/paw/api/v1/login")!,
+            method: .post, deadline: ContinuousClock().now.advanced(by: .seconds(5)))
+        let finished = expectation(description: "A released request completes without another release")
+        Task.detached {
+            do {
+                let response = try await transport.send(request)
+                XCTAssertEqual(response.statusCode, 200)
+            } catch { XCTFail("The stub login should succeed") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 1)
+        XCTAssertEqual(transport.heldCount, 0)
+    }
+
     private func openAccount() throws -> AccountSettingsViewState {
         delegate.showSettings()
         let controller = try XCTUnwrap(delegate.settingsWindow)
@@ -606,10 +626,12 @@ private final class AccountSettingsHTTP: HTTPTransporting, @unchecked Sendable {
     private var offMain = true
     private var otherRevoked = false
     private var heldSuffix: String?
+    private var holdAdmission: (() -> Void)?
     private var logoutFailure = false
     private var held: [(CheckedContinuation<HTTPResponse, Error>, HTTPResponse)] = []
     var user: ULID { get { locked { storedUser } } set { locked { storedUser = newValue } } }
     var holdSuffix: String? { get { locked { heldSuffix } } set { locked { heldSuffix = newValue } } }
+    var beforeHoldAdmission: (() -> Void)? { get { locked { holdAdmission } } set { locked { holdAdmission = newValue } } }
     var failLogout: Bool { get { locked { logoutFailure } } set { locked { logoutFailure = newValue } } }
     var heldCount: Int { locked { held.count } }
     var requestCount: Int { locked { paths.count } }
@@ -653,10 +675,14 @@ private final class AccountSettingsHTTP: HTTPTransporting, @unchecked Sendable {
             }
             return try http(SyncAPI.EmptyResponse())
         }
-        let shouldHold = locked { heldSuffix.map { request.url.path.hasSuffix($0) } ?? false }
-        guard shouldHold else { return response }
+        beforeHoldAdmission?()
         return try await withCheckedThrowingContinuation { continuation in
-            locked { held.append((continuation, response)) }
+            let shouldHold = locked {
+                guard let suffix = heldSuffix, request.url.path.hasSuffix(suffix) else { return false }
+                held.append((continuation, response))
+                return true
+            }
+            if !shouldHold { continuation.resume(returning: response) }
         }
     }
 
