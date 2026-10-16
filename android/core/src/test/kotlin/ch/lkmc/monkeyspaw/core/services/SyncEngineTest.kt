@@ -13,6 +13,9 @@ import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.*
 
 internal class EngineHarness(val scheduler: TestCoroutineScheduler, scope: CoroutineScope,
@@ -283,19 +286,64 @@ class SyncEngineTest {
         h.engine.stop()
     }
 
-    @Test fun startupSweepsOnlyStalePrivatePullPagesAndAttemptsAllThrowableDeletes() = runTest {
+    @Test fun passSweepsOnlyStalePrivatePullPagesAndAttemptsAllThrowableDeletes() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
         for (path in listOf("sync/pull-old-0.json", "sync/pull-old-1.json", "sync/push-canary.json", "other/pull-safe.json")) h.data.put("canary", path)
         val attempted = mutableListOf<String>()
         h.data.onDelete = { attempted.add(it); if (it.endsWith("-0.json")) throw AssertionError("Synthetic failure") }
-        assertFailsWith<SyncPullCollectorError.StagingFailed> { h.start() }
+        h.start()
+        assertEquals(SyncBlockingIssue.RECOVERY_REQUIRED, h.engine.runBackground().blockingIssue)
         assertEquals(setOf("sync/pull-old-0.json", "sync/pull-old-1.json"), attempted.toSet())
-        assertFalse(h.engine.reports.value.enabled)
+        assertNull(h.engine.reports.value.lastSuccess)
         assertTrue(h.requests.isEmpty())
         h.data.onDelete = null
-        h.start()
+        h.engine.recoverJournal()
         assertNotNull(h.data.stamp("sync/push-canary.json"))
         assertNotNull(h.data.stamp("other/pull-safe.json"))
+        assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
+        h.engine.stop()
+    }
+
+    @Test fun stagingCleanupDoesNotHoldTheEngineLockOrBlockStop() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val h = EngineHarness(TestCoroutineScheduler(), scope)
+        val engine = SyncEngine(h.graph, scope, Dispatchers.IO, Clock { Instant.EPOCH },
+            { SyncTestValues.device }, MonotonicClock(System::nanoTime))
+        h.data.put("stale", "sync/pull-old-0.json")
+        val arrived = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        h.data.onDelete = {
+            arrived.countDown()
+            check(release.await(10, TimeUnit.SECONDS))
+        }
+        val controls = Executors.newSingleThreadExecutor { Thread(it).apply { isDaemon = true } }
+        val work = scope.launch {
+            engine.start(h.binding, h.client, "Device")
+            engine.runBackground()
+        }
+        try {
+            assertTrue(arrived.await(5, TimeUnit.SECONDS), "Cleanup must reach the blocked deletion")
+            val stopped = controls.submit<SyncStopResult> { engine.localSave(); engine.stop() }
+            assertEquals(SyncStopResult.BUSY, stopped.get(3, TimeUnit.SECONDS))
+            assertTrue(h.requests.isEmpty())
+        } finally {
+            release.countDown()
+            engine.stop(); work.join(); engine.drain(); scope.cancel(); controls.shutdownNow()
+        }
+    }
+
+    @Test fun cancelledStagingSweepDoesNotBecomeARecoveryFailure() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.start()
+        h.data.put("stale", "sync/pull-old-0.json")
+        h.data.onDelete = { throw CancellationException("Synthetic cancellation") }
+        val report = h.engine.runBackground()
+        assertNull(report.blockingIssue)
+        assertNull(report.lastSuccess)
+        assertEquals(0, h.engine.scheduling.value.retryCount)
+        assertTrue(h.requests.isEmpty())
+        h.data.onDelete = null
+        h.engine.recoverJournal()
         assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
         h.engine.stop()
     }
@@ -423,9 +471,10 @@ class SyncEngineTest {
         h.rig.libraryOperations.afterPublish = null
         h.start()
         assertEquals(SyncStopResult.RECOVERY_REQUIRED, h.engine.retire())
-        h.respond = { assertNull(h.rig.journal.pending); assertContentEquals(bytes, h.files.read("a.md")); null }
         h.engine.recoverJournal()
         assertTrue(h.requests.isEmpty())
+        assertNull(h.rig.journal.pending)
+        assertContentEquals(bytes, h.files.read("a.md"))
         assertEquals(SyncStopResult.STOPPED, h.engine.retire())
     }
 

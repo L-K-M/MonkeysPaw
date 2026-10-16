@@ -16,6 +16,28 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class SyncPullCollectorTest {
+    @Test fun stagingPreservesCancellationFromEveryFileOperation() {
+        val cancelled = CancellationException("Synthetic cancellation")
+        val failures = listOf(MemoryStore.Operation.PRIVATE_WRITE, MemoryStore.Operation.READ,
+            MemoryStore.Operation.DELETE).map { operation ->
+            val files = MemoryStore()
+            val staging = SyncPullStaging(files)
+            if (operation != MemoryStore.Operation.PRIVATE_WRITE) staging.append(response(personal(Mode.SNAPSHOT, 0, "0")))
+            files.fault = { current, _ -> cancelled.takeIf { current == operation } }
+            val failure = runCatching {
+                when (operation) {
+                    MemoryStore.Operation.PRIVATE_WRITE -> staging.append(response(personal(Mode.SNAPSHOT, 0, "0")))
+                    MemoryStore.Operation.READ -> staging.read(0)
+                    else -> staging.discard()
+                }
+            }.exceptionOrNull()
+            files.fault = null
+            staging.discard()
+            failure
+        }
+        failures.forEach { assertSame(cancelled, it) }
+    }
+
     @Test fun discardAttemptsEveryPageWhenADriverThrowsThrowable() = runTest {
         val files = MemoryStore()
         val staging = SyncPullStaging(files)

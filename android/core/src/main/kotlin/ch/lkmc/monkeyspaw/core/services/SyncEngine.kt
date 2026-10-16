@@ -76,7 +76,6 @@ class SyncEngine internal constructor(
         lock.withLock {
             requireStoppedGraph(binding.root)
             if (client.server.baseURL != binding.account.serverURL) throw SyncError.BindingMismatch
-            sweepPullStaging()
             context.ensureActive()
             scope.coroutineContext.ensureActive()
             invalidateTimers()
@@ -275,6 +274,7 @@ class SyncEngine internal constructor(
             counts = reports.value.counts.copy(pulled = 0, pushed = 0))
         run.task = scope.async(io + parent, start = CoroutineStart.LAZY) {
             val result = runCatching {
+                // Sweep only in serialized work, outside the engine lock.
                 permit.mutate { sweepPullStaging() }
                 if (kind == RunKind.RECOVERY) { coordinator.recoverJournal(); SyncPassResult() }
                 else coordinator.run(progress = { pass ->
@@ -443,6 +443,7 @@ class SyncEngine internal constructor(
         var failure = false
         for (file in graph.files.listFiles().filter { it.relativePath.startsWith("sync/pull-") }) {
             try { graph.files.delete(file.relativePath) }
+            catch (error: CancellationException) { throw error }
             catch (error: StoreError) { if (error != StoreError.NotFound) failure = true }
             catch (_: Throwable) { failure = true }
         }
