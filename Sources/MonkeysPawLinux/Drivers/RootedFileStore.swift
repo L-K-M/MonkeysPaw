@@ -257,7 +257,7 @@ final class RootedFileStore: FileStore, SyncFileOperations {
             if syncBound, rootIdentity != nil, try attributes(at: directory) == nil { throw FileStoreError.notFound }
             guard try ensureDirectory(directory, parents: parents) else { return false }
         }
-        let identity = try directoryStamp(at: root)
+        let identity = try directoryStamp(at: root, kind: syncBound ? .sync : .root)
         if syncBound, let rootIdentity, identity != rootIdentity { throw FileStoreError.invalidRoot }
         rootIdentity = identity
         return true

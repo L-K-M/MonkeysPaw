@@ -169,6 +169,19 @@ final class LinuxSyncFileOperationsTests: XCTestCase {
         }
     }
 
+    func testBoundRootWithoutBirthTimeFailsClosedWhileOrdinaryReadsWork() throws {
+        // procfs has no birth time; no mutation of this tree is needed.
+        let files = try RootedFileStore(root: URL(fileURLWithPath: "/proc", isDirectory: true))
+        try files.requireRoot()
+        XCTAssertThrowsError(try files.directories(at: nil)) {
+            XCTAssertEqual(($0 as? SyncFileOperationError)?.code, .ioFailure)
+        }
+        files.bindSyncRoot()
+        XCTAssertThrowsError(try files.requireRoot()) {
+            XCTAssertEqual($0 as? FileStoreError, .ioFailure)
+        }
+    }
+
     func testReplacedRootNeverCreatesAFileOrReportsAnEmptyLibrary() throws {
         try store.write(Data("original".utf8), at: "a.md")
         try FileManager.default.moveItem(at: root, to: temporary.appendingPathComponent("retired"))
