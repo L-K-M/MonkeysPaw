@@ -504,7 +504,7 @@ JVM test. Follow the [Android Keystore guidance](https://developer.android.com/p
 | StrongBox unavailable | Ordinary AndroidKeyStore fallback only on unavailability; other failures retain ciphertext | NOT RUN |
 | Restart and reboot | Save two synthetic credentials; force-stop/reopen and reboot; both remain readable without per-read authentication | NOT RUN |
 | Account and provider destination binding | Swapped account record rejects decryption; kind/origin changes require explicit re-entry or Clear in L9 | NOT RUN |
-| Alias loss or invalidation | Read/Save fail with typed static errors, ciphertext remains; Clear affects only the chosen account; no silent regeneration | NOT RUN |
+| Alias loss or invalidation | Read/Save retain ciphertext and fail with typed errors while entries remain; check the Settings recovery gap below before claiming Clear/Delete works | NOT RUN |
 | Disk/publication failure | Save/Clear failure retains the previous credential and unrelated account; retry is explicit | NOT RUN |
 | Persistence and diagnostics | Runtime synthetic sentinel absent in raw/base64/percent/JSON forms from settings, logs and temporary outputs; only encrypted payload persists; no raw key export | NOT RUN |
 
@@ -512,6 +512,15 @@ Do not put real credentials, sentinel contents, raw key material or platform
 exception bodies in this checklist or bug reports. Hardware that is
 unavailable remains a validation gap for K17/L20; an unchecked row does not
 satisfy milestone acceptance.
+
+Settings Clear/Delete currently reads the old credential for compensation.
+An inaccessible alias or unreadable credential therefore blocks these intents
+before deletion. The driver's decrypt-free Delete is not exposed by Settings.
+This is an unresolved recovery gap, carried from L9/L14; do not record it as a
+successful recovery. An empty ciphertext store can recover an unusable alias
+on explicit Save, but that does not make retained accounts recoverable through
+the current controls. A compensation-safe recovery contract and device proof
+are still required by §22 J7/J18.
 
 ## Android sync TLS and device-token checks (M10 Z6): NOT RUN
 
@@ -717,3 +726,149 @@ additional checks; all remain NOT RUN until runtime evidence is attached.
 
 Record only pass/fail, file paths/counts and sentinel-match counts, never the
 sentinels or private content. Required device gaps keep M9 open (§22 H12).
+
+## Android assistant (M11): NOT RUN (owner)
+
+M11 remains open. Local shared-fixture, JVM, lint and APK checks are distinct
+from latest-main CI/review and these owner checks. Follow
+[§7](../plan/07-llm-assistant.md), [§12](../plan/12-security-and-privacy.md),
+[§15](../plan/15-milestones.md) and
+[§22 J3/J18](../plan/22-m9-m11-decisions.md#m11-android-assistant).
+Every required NOT RUN, skipped or blocked row keeps the milestone open.
+Repeat all flows on the final signed, minified release APK after integration.
+
+### Assistant disclosures
+
+Calls happen only on your explicit action. Write sends your brief. Review and
+Improve send the current template front matter and body, including unsaved
+edits; Improve also sends your instruction and selected findings. Explicit
+feedback retries can send the session transcript and feedback with the fresh
+template and instruction. Requests include system instructions, output schema
+and model selection. Test connection sends only an authenticated model-list
+request, or a keyless list request for a keyless provider. Save, rename,
+switch and delete do not send provider requests. The host and model appear
+before sending, and token usage appears when returned. Providers can read
+what you send and may charge for it.
+
+Fill values, rendered previews, remembered values and IME target text are never
+sent to the assistant. `private: true` blocks Review and Improve; Write sends
+only the separately supplied brief while a private template is open. Session
+briefs, instructions, findings, feedback and transcripts stay in memory;
+Accept alone saves the validated candidate and local provenance/history.
+Reject writes nothing. The offline editor and Fill remain available without
+an assistant provider. There is no telemetry, HTTP logging, raw provider
+diagnostic display or logging of keys, prompt content or field values.
+
+Saved API keys are encrypted with AES-256-GCM using AndroidKeyStore. The
+separate singleton `filesDir/datastore/secrets.json` DataStore contains account
+names, IVs and ciphertext/tag only. Non-secret provider settings and capability
+records share `filesDir/datastore/settings.json`. There is no plaintext,
+environment or exported-key fallback. StrongBox is preferred where available;
+the **keystore** tier does not establish actual hardware backing. Re-entry or
+explicit Clear is required when a saved credential's kind or origin changes.
+The native recovery limitation above remains unresolved.
+
+### Evidence to record
+
+Use harmless disposable content and synthetic credentials for scans. Record
+only sanitized outcomes, counts and paths, never credentials, sentinels, prompt
+content, Fill values, transcripts or provider/platform error bodies. Each run
+must identify its exact APK and commit; local APK assembly is not installation
+or provider evidence.
+
+| Evidence | Status | Required record |
+|---|---|---|
+| Latest merged main commit and full CI/review | NOT RUN (owner/supervisor) | Commit SHA, CI URL, completed review and dispositions; both complete corpora and five Android tasks |
+| Final release APK | NOT RUN (owner) | Artifact URL, version/code, SHA-256, signer fingerprint, minified release build |
+| API 26-27 device | NOT RUN (owner) | Device/model/API, OS build, actual Keystore backing, tester/date |
+| StrongBox-capable API 28+ device | NOT RUN (owner) | Device/model/API, actual security level/backing, fallback results, tester/date; unavailable hardware stays a gap |
+| Provider identity for each run | NOT RUN (owner) | Protocol, endpoint scheme/host, actual model, Ollama version, tester/date; no credentials |
+| Real Keystore lifecycle | NOT RUN (owner) | All native secret-store rows above, restart/reboot, masked input and recovery outcomes |
+| Six provider/flow runs | NOT RUN (owner) | Each row below, expected/actual behavior, sanitized issue/evidence links |
+| Fill/IME/offline editor preservation | NOT RUN (owner) | Existing entry/delivery checks, offline edit/save/history, no network from IME startup |
+
+Use your own Anthropic key and an actually available model at
+`https://api.anthropic.com`. The planned default model and beta/fallback
+settings remain owner-unverified (§19 B31); a JVM golden is not proof of API
+availability. For keyless Ollama use the OpenAI-compatible profile with
+`http://localhost:11434/v1` on device loopback via USB reverse forwarding, or
+system-trusted HTTPS. Assistant plaintext LAN and `.local` endpoints remain
+refused; sync's LAN/user-CA policy does not apply to the assistant.
+
+| Provider | Flow | Settings/Test/manual model | Flow and device result | Evidence |
+|---|---|---|---|---|
+| Anthropic | Write | NOT RUN (owner) | NOT RUN (owner) | NOT RUN |
+| Anthropic | Review | NOT RUN (owner) | NOT RUN (owner) | NOT RUN |
+| Anthropic | Improve | NOT RUN (owner) | NOT RUN (owner) | NOT RUN |
+| Keyless Ollama | Write | NOT RUN (owner) | NOT RUN (owner) | NOT RUN |
+| Keyless Ollama | Review | NOT RUN (owner) | NOT RUN (owner) | NOT RUN |
+| Keyless Ollama | Improve | NOT RUN (owner) | NOT RUN (owner) | NOT RUN |
+
+For each provider, first verify masked key input and unavailable Copy/autofill,
+usable Paste, blank Keep, explicit Clear, staged metadata and profile
+selection/none. A stored key never reappears. Save, switch, Back/reopen and
+rotation clear typed input; rotation/opening never resend. Test suggestions
+and manual model IDs remain usable after empty/unsupported/failed listing.
+
+For both Write rows, inspect fields, validation issues, notes and the exact
+candidate source/identity. Reject must leave the library/history unchanged.
+Repeat and Accept; reopen and compare saved bytes with the displayed candidate,
+including LLM provenance and returned usage. Write must not import an open
+private template or Fill values.
+
+For both Review rows, review a validated unsaved template, inspect local
+issues, severities and rubric labels, and highlight an exact quote after emoji
+and combining text. Empty/unmatched quotes remain visible without unrelated
+highlights. Change the buffer away and back; stale highlights and selections
+remain disabled. Review creates no candidate, file, history or provenance.
+
+For both Improve rows, run instruction-only and selected-findings flows.
+Inspect separate front-matter/body diff panes, line numbers, placeholder
+warnings and horizontal scrolling on a narrow phone. Reject preserves every
+file. Accept saves exactly the preview, retaining existing identity/unknown
+metadata and creating one prior revision. Saved provenance/history warnings
+must not invite another write. Production group-role checks remain blocked
+until M10's live access authority replaces `AssistantAccess.LOCAL`; injected
+group-role tests do not prove that integration.
+
+In all six rows, verify explicit feedback retry, elapsed/Cancel, Back/gesture,
+rotation, background/resume, TalkBack and large text. Cancel or switch profile
+while a response is pending; an old reply cannot revive the session. Editing
+the buffer or changing disk bytes withdraws acceptance until fresh Show diff
+or the existing conflict decision. `private: true` refuses Review/Improve
+before HTTP. A harmless local endpoint inspected only in memory must receive
+template bytes rather than distinctive Fill/remembered values. Preserve actual
+committed outcomes after late cancellation; never repeat a committed save.
+
+### Runtime sentinel scan and automated proof
+
+Through production Settings on a disposable device, generate a new synthetic
+key in memory with a random UUID plus quote, backslash, slash, percent, plus
+and Unicode characters. Never place it in argv, environment, shell history,
+screenshots or evidence. Scan after Save, successful Test, failed Test with an
+in-memory diagnostic echo, force-stop/reopen graph reconstruction, rename,
+switch away, switch back, unrelated-account deletion and sentinel deletion.
+Cover app-private DataStore/state/library/cache/temp files, hidden files,
+logcat captures, logs and test/diagnostic outputs. Detect raw UTF-8, base64,
+percent encodings, JSON escaping (including Unicode and escaped slashes) and
+nested JSON credential payloads. Calibrate with deliberate copies in each
+encoding and remove them before each real checkpoint. Record paths/counts
+only. Zero matching files are permitted at every checkpoint, including the
+encrypted secrets DataStore; only the authenticated ciphertext record may
+persist while saved. Deleting one account preserves unrelated ciphertext.
+Use a local stub for deliberate failures, never a real paid key or HTTP logs.
+
+[AssistantSettingsPersistenceTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/settings/AssistantSettingsPersistenceTest.kt)
+uses real settings/secrets DataStores, JVM AES-GCM with injected keys, both
+production protocol clients and the OkHttp driver against MockWebServer.
+Its scanner is calibrated on hidden binary and encoded copies, captures
+stdout/stderr and logging, and reopens DataStores during graph reconstruction.
+This proves testable policy and persistence, not AndroidKeyStore, native key
+input, hardware, process death, rendering or live provider compatibility.
+[Swift accounting](../../Tests/MonkeysPawCoreTests/Assistant/LlmConformanceTests.swift)
+and [Kotlin accounting](../../android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/LlmConformanceTest.kt)
+require all schema/decode/merge/diff variants and each protocol's
+Write/Review/Improve/model-list exchanges; both full corpus gates still consume
+every owned category and reject unread expectations. Local results belong in
+the slice handoff; the main CI and owner rows above remain NOT RUN until
+actual evidence is recorded.

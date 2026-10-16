@@ -138,6 +138,39 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(changes.select_jobs("pull_request", []), frozenset())
         self.assertEqual(changes.select_jobs("pull_request", ["docs/a.md", "PLAN.md"]), frozenset())
 
+    def test_assistant_shared_families_select_both_semantic_consumers(self):
+        for family, filename in (
+            ("schema-artifact", "schema.json"), ("artifact-all-fields", "output.txt"),
+            ("anthropic-write-official-unset", "1-request.json"),
+            ("openai-ladder-none", "1-response.bin"),
+            ("merge-improve-typed-metadata", "candidate.md"),
+            ("diff-artifact-rename", "case.json"),
+        ):
+            with self.subTest(family=family):
+                self.assertEqual(changes.select_jobs("pull_request", [f"spec/fixtures/llm/{family}/{filename}"]), ALL)
+
+        for path in ("Assistant/Prompts/write.md", "Assistant/Prompts/review.md",
+                     "Assistant/Prompts/improve.md", "scripts/generate-assistant-prompts.py"):
+            with self.subTest(path=path):
+                self.assertEqual(changes.select_jobs("pull_request", [path]), ALL)
+
+    def test_assistant_accounting_drivers_and_disclosure_job_selection(self):
+        cases = {
+            "Tests/MonkeysPawCoreTests/Assistant/LlmConformanceTests.swift": SWIFT,
+            "Tests/MonkeysPawCoreTests/PromptConformanceTests.swift": SWIFT,
+            "android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/EveryFixtureTest.kt": {"android"},
+            "android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/LlmConformanceTest.kt": {"android"},
+            "android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/settings/AssistantSettingsPersistenceTest.kt": {"android"},
+            "android/app/src/main/kotlin/ch/lkmc/monkeyspaw/data/AndroidKeystoreSecretStore.kt": {"android"},
+            "android/app/src/main/kotlin/ch/lkmc/monkeyspaw/data/OkHttpHttpTransport.kt": {"android"},
+            "docs/platform/android.md": set(),
+            "docs/plan/15-milestones.md": set(),
+            "README.md": {"core-linux", "deb"},
+        }
+        for path, jobs in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(changes.select_jobs("pull_request", [path]), with_flatpak(jobs))
+
     def test_multiple_trees_union_their_jobs(self):
         self.assertEqual(changes.select_jobs("pull_request", [
             "android/core/build.gradle.kts", "MonkeysPaw/AppDelegate.swift",
