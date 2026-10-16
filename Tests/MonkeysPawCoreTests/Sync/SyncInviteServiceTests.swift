@@ -308,7 +308,10 @@ final class SyncInviteRig {
 
     func assertNoInvitePersistence(file: StaticString = #filePath, line: UInt = #line) throws {
         for entry in try sync.base.data.listFiles() {
-            let bytes = try sync.base.data.read(at: entry.relativePath)
+            // Background sync may delete a transient pull page between listing and reading.
+            let bytes: Data
+            do { bytes = try sync.base.data.read(at: entry.relativePath) }
+            catch FileStoreError.notFound { continue }
             let text = String(decoding: bytes, as: UTF8.self)
             XCTAssertFalse(text.contains(inviteToken) || text.contains(link.text) || text.contains(password), "Invite or password persisted", file: file, line: line)
         }

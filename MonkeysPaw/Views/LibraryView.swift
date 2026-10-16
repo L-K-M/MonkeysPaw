@@ -15,6 +15,9 @@ struct LibraryView: View {
                 sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
                 importablePrompts.frame(minWidth: 180, idealWidth: 240)
                 editor.frame(minWidth: 240, maxWidth: .infinity)
+                if let conflict = presentation.conflict {
+                    LibraryConflictView(presentation: conflict).frame(minWidth: 520, idealWidth: 560)
+                }
                 if presentation.isAssistantVisible, let assistant = presentation.assistant {
                     LibraryAssistantView(presentation: assistant, close: presentation.closeAssistant)
                         .frame(minWidth: 320, idealWidth: 420)
@@ -79,6 +82,11 @@ struct LibraryView: View {
         List(selection: Binding<LibrarySectionID?>(get: { presentation.snapshot.selectedSection },
             set: { if let section = $0 { presentation.selectSection(section) } })) {
             ForEach(standardSections, id: \.id, content: sectionRow)
+            if !groupSections.isEmpty {
+                Section(LibraryStrings.groups) {
+                    ForEach(groupSections, id: \.id, content: sectionRow)
+                }
+            }
             if !folderSections.isEmpty {
                 Section(LibraryStrings.folders) {
                     ForEach(folderSections, id: \.id, content: sectionRow)
@@ -98,12 +106,16 @@ struct LibraryView: View {
 
     private var standardSections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { section in
-            switch section.id { case .all, .favourites, .recent: return true; default: return false }
+            switch section.id { case .all, .favourites, .recent, .conflicts: return true; default: return false }
         }
     }
 
     private var folderSections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { if case .folder = $0.id { return true }; return false }
+    }
+
+    private var groupSections: [LibraryBrowserSection] {
+        presentation.snapshot.sections.filter { if case .group = $0.id { return true }; return false }
     }
 
     private var tagSections: [LibraryBrowserSection] {
@@ -113,11 +125,14 @@ struct LibraryView: View {
     private func sectionRow(_ section: LibraryBrowserSection) -> some View {
         HStack {
             Text(section.title).padding(.leading, CGFloat(section.depth) * 12)
+            if let role = section.role {
+                Text(LibraryStrings.role(role)).font(.caption).foregroundStyle(.secondary)
+            }
             Spacer()
             Text(String(section.count)).foregroundStyle(.secondary)
         }
         .tag(section.id)
-        .accessibilityLabel(section.title + ", " + String(section.count) + (section.count == 1 ? " prompt" : " prompts"))
+        .accessibilityLabel(LibraryStrings.sectionLabel(title: section.title, role: section.role, count: section.count))
     }
 
     @ViewBuilder
@@ -163,7 +178,7 @@ struct LibraryView: View {
                         .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("library-save")
                     Button(EditorStrings.revert, action: presentation.revert).disabled(!presentation.canRevert)
                         .accessibilityIdentifier("library-revert")
-                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSave)
+                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSaveAsCopy)
                         .accessibilityIdentifier("library-save-copy")
                 }
                 HStack {
@@ -198,7 +213,7 @@ struct LibraryView: View {
             LibrarySourceEditor(source: presentation.editorState.source ?? "",
                 path: presentation.editorState.prompt?.relativePath,
                 revision: presentation.sourceRevision,
-                isEditable: presentation.libraryAvailable && presentation.editorState.canEdit,
+                isEditable: presentation.canEditSource,
                 onEdit: presentation.edit, highlight: presentation.quoteHighlight)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
