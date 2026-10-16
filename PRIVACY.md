@@ -18,7 +18,7 @@ telemetry.
 |---|---|
 | Assistant Write | Your configured provider receives your brief, system instructions, output schema, model and request parameters. |
 | Assistant Review or Improve | Your provider receives the current template source, including front matter. Improve also sends your instruction and selected findings. Explicit retries can include the session's previous messages and your feedback. |
-| Assistant Test connection | Your provider receives an authenticated model-list request, without prompt content. |
+| Assistant Test connection | Your provider receives model-list requests, authenticated when a key is configured. They carry no prompt content. |
 | Desktop Account and sync | Your configured server receives sign-in/registration credentials and a device name, then a bearer device token for authenticated requests. Enabled sync sends and retrieves prompt source, IDs, paths, revisions and scope/group metadata, and polls in the background. Account, group, invite, conflict and device actions send their corresponding API requests. |
 | Desktop automatic updates or Check Now | GitHub receives the fixed release-metadata GET described below. |
 | Hosted server health/TLS | The server healthcheck requests its loopback `/api/health` endpoint without credentials. If you enable the optional Caddy HTTPS proxy, Caddy forwards client requests to the server and contacts its certificate services to obtain/renew certificates. Your hosting/proxy tools have their own network and retention policies. |
@@ -99,6 +99,8 @@ home-contained paths only. Prompt files are not encrypted by the app.
 | Desktop `sync/`, `Groups/` and `Conflicts/` | Account/root bindings, cursors, staged operations and recovery copies, plus managed group and conflict files in the library. Journals and retained recovery files can contain prompt source. Signing out is not a wipe of your library, history, conflicts or backups. |
 | Desktop `logs/monkeyspaw.log` | Diagnostics, warning level by default; active file plus four rotations, up to 1 MiB each. macOS also uses unified logging; Linux also uses stderr. OS/external log retention is outside this app. |
 | Server database and backups | Plaintext prompts/revisions and account metadata with credential hashes. Maintenance prunes to 200 revisions per prompt and purges eligible changes/tombstones older than 90 days; retained feeds/snapshots and backups can preserve content separately. Retired IDs retain scope/time metadata. The backup helper keeps 14 successful backups by default; other copies and pre-restore recovery files need operator cleanup. See [hosting and backup](docs/platform/server.md#server-backup-and-restore) and the [server specification](docs/plan/08-sync-server.md#81-data-model). |
+| Server login backoff buckets | Failed logins store attempted usernames and client IP addresses in separate buckets, with failure counts, update timestamps and lockout deadlines. These buckets have no automatic expiry; a successful login clears only its username bucket. |
+| Server audit events | Account, group, membership and invite actions store the actor (user ID or CLI operator), action, target/group IDs and timestamp. These records have no automatic expiry. |
 
 Application diagnostics exclude keys, tokens, passwords, prompt content,
 field values, prior clipboard text, invite URLs and raw provider/tool error
