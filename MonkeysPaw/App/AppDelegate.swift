@@ -522,7 +522,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             makeAssistant: {
                 AssistantSettingsModel(settings: providers, assistant: assistant,
                     work: backgroundWork, mainThread: mainThread)
-            }, onProviderChange: { [weak self] in self?.libraryWindow?.presentation.assistantProfileChanged() })
+            }, onProviderChange: { [weak self] in self?.libraryWindow?.presentation.assistantProfileChanged() },
+            makeAccount: { [weak self] in
+                guard let self, !self.isShutDown else { return nil }
+                return self.accountModel
+            }, onAccountOpen: { [weak self] in self?.groupManagementModel?.refresh() })
         settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
             guard let self else { return nil }
             if let message = self.syncTransitionMessage { return message }

@@ -507,6 +507,23 @@ Record outcomes without recording prompt content.
 | Closing or switching the library retires pending form callbacks; tab changes and command forms make no clipboard reads or writes | NOT RUN | |
 | Tab/Shift+Tab, Return in rename/move forms, Escape, resize and repeated use remain usable; Return never confirms Delete or a conflict overwrite; VoiceOver identifies revisions, preview, commands and all typed messages | NOT RUN | |
 
+## M6 Y20 Account settings: NOT RUN
+
+The Linux implementation host cannot build AppKit/SwiftUI or run hosted
+`MacAccountSettingsTests`. The Account tab uses the shared `AccountModel`
+and a native `NSSecureTextField`, following the Assistant secure-field pattern.
+Hosted tests use isolated roots, memory-only secrets and stub HTTP; they do
+not establish login-Keychain consent or signed-build access.
+
+- Commit / `macos-app` CI run / hosted Account test result:
+- macOS / hardware / signing identity / login-keychain state:
+- Date / tester / observed consent prompt count:
+
+| Check | Result | Details |
+|---|---|---|
+| Account device credential Keychain consent: sign in with a disposable account, allow/deny/cancel and lock/unlock the Keychain; the window remains responsive, failures stay visible and password text stays empty after submit, completion, tab change, hide, close and reopen | NOT RUN | Requires owner-run macOS and nonproduction credentials |
+| Restart and update with the intended signing identity: the saved device credential resumes only the configured account, the password field stays empty, and current-device revoke/sign-out disables sync; record any new Keychain consent and partial cleanup | NOT RUN | Requires owner-run signed builds |
+
 ## M4 A3 Keychain secrets: NOT RUN
 
 The Linux implementation host cannot compile Security or run hosted macOS
