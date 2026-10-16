@@ -4,16 +4,20 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.security.keystore.UserNotAuthenticatedException
 import androidx.annotation.RequiresApi
 import ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError
+import kotlinx.coroutines.CancellationException
 import java.security.KeyStore
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
 internal interface SecretKeyProvider {
+    /** False when a null lookup can also mean a temporary access failure. */
+    val confirmsMissingAlias: Boolean get() = true
     /** Lookup only. A missing key must never cause implicit generation. */
     fun read(): SecretKey?
     /** Only called after the complete ciphertext store is known to be empty. */
@@ -36,10 +40,14 @@ internal object StrongBoxPolicy {
 }
 
 internal class AndroidKeystoreKeyProvider(private val context: Context) : SecretKeyProvider {
+    // Legacy lookup can return null when the keystore service is temporarily inaccessible.
+    override val confirmsMissingAlias: Boolean get() = Build.VERSION.SDK_INT >= 31
+
     override fun read(): SecretKey? = sanitized {
         val store = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        if (!store.containsAlias(ALIAS)) return@sanitized null
-        store.getKey(ALIAS, null) as? SecretKey ?: throw SecretStoreError.Unavailable
+        // containsAlias can hide access failures even on newer APIs; query the key directly.
+        val key = store.getKey(ALIAS, null) ?: return@sanitized null
+        key as? SecretKey ?: throw SecretStoreError.Unavailable
     }
 
     override fun create(): SecretKey = sanitized {
@@ -79,12 +87,15 @@ internal class AndroidKeystoreKeyProvider(private val context: Context) : Secret
     private fun causedByStrongBox(error: Throwable): Boolean =
         generateSequence(error) { it.cause }.any { it is StrongBoxUnavailableException }
 
-    private fun <T> sanitized(work: () -> T): T = try { work() }
-    catch (_: UserNotAuthenticatedException) { throw SecretStoreError.Locked }
-    catch (error: SecretStoreError) { throw error }
-    catch (_: Exception) { throw SecretStoreError.Unavailable }
-
     companion object {
+        internal fun <T> sanitized(work: () -> T): T = try { work() }
+        catch (error: CancellationException) { throw error }
+        catch (_: UserNotAuthenticatedException) { throw SecretStoreError.Locked }
+        catch (_: KeyPermanentlyInvalidatedException) { throw SecretStoreError.Unavailable }
+        catch (error: SecretStoreError) { throw error }
+        // Unknown access failures may be transient; they must never authorize recovery deletion.
+        catch (_: Exception) { throw SecretStoreError.Locked }
+
         private const val PROVIDER = "AndroidKeyStore"
         private const val ALIAS = "ch.lkmc.monkeyspaw.secrets.v1"
     }

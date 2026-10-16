@@ -468,7 +468,7 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertNull(model.state.value.error)
         secrets.readError = IllegalStateException(sentinel)
         model.refresh(); runCurrent()
-        assertEquals(AssistantKeyStorage.Failed(ProviderSettingsError.Secret(SecretStoreError.ReadFailed)), model.state.value.keyStorage)
+        assertEquals(AssistantKeyStorage.Failed(ProviderSettingsError.Secret(SecretStoreError.Locked)), model.state.value.keyStorage)
         for (state in states) {
             val texts = listOf(state.toString(), state.draft.toString(), state.keyStorage.toString(),
                 state.error.toString(), state.testResult.toString()) +

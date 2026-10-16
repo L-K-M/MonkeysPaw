@@ -7,12 +7,16 @@ import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.services.ProviderSettingsService
 import ch.lkmc.monkeyspaw.core.services.ProviderSettingsStore
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.security.InvalidKeyException
+import java.security.KeyStoreException
+import java.security.ProviderException
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -375,7 +379,7 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
             val data = DataStoreFactory.create(serializer = SecretsSerializer, scope = scope,
                 produceFile = { throw IOException(value.withValue { it }) })
             val store = AndroidKeystoreSecretStore(data, TestKeys(), Dispatchers.IO)
-            assertError(SecretStoreError.ReadFailed) { store.read(first, SecretReadSource.EFFECTIVE) }
+            assertError(SecretStoreError.Locked) { store.read(first, SecretReadSource.EFFECTIVE) }
             assertError(SecretStoreError.WriteFailed) { store.write(value, first) }
             assertError(SecretStoreError.DeleteFailed) { store.delete(first) }
         } finally { scope.coroutineContext.job.cancelAndJoin() }
@@ -384,7 +388,7 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
         withStore(keys) { _, store ->
             store.write(value, first)
             keys.failure = IOException(value.withValue { it })
-            assertError(SecretStoreError.ReadFailed) { store.read(first, SecretReadSource.EFFECTIVE) }
+            assertError(SecretStoreError.Locked) { store.read(first, SecretReadSource.EFFECTIVE) }
             assertError(SecretStoreError.WriteFailed) { store.write(value, first) }
             keys.failure = CancellationException("cancelled")
             assertFailsWith<CancellationException> { store.read(first, SecretReadSource.EFFECTIVE) }
@@ -491,6 +495,141 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
     }
 
     @Test
+    fun `native keystore access failures remain retryable`() = runBlocking {
+        for (failure in listOf(IOException("lookup failed"), KeyStoreException("retry lookup"), ProviderException("keystore busy"))) {
+            assertError(SecretStoreError.Locked) { AndroidKeystoreKeyProvider.sanitized<SecretKey> { throw failure } }
+        }
+        assertFailsWith<CancellationException> { AndroidKeystoreKeyProvider.sanitized<SecretKey> { throw CancellationException() } }
+        Unit
+    }
+
+    @Test
+    fun `transient key lookup failures block explicit provider recovery without deleting ciphertext`() = runBlocking {
+        for (nativeBoundary in listOf(false, true)) {
+            for (failure in listOf(SecretStoreError.Locked, IOException("lookup failed"),
+                KeyStoreException("retry lookup"), ProviderException("keystore busy"))) {
+                val keys = TestKeys()
+                val provider = object : SecretKeyProvider by keys {
+                    override fun read(): SecretKey? = if (nativeBoundary) {
+                        AndroidKeystoreKeyProvider.sanitized { keys.read() }
+                    } else keys.read()
+                }
+                withStore(provider) { data, store ->
+                    val metadata = RootedFileStore(stateDir.resolve(UUID.randomUUID().toString()).toFile(), RootedFileStore.Scan.STATE)
+                    val service = ProviderSettingsService(ProviderSettingsStore(metadata), store, Dispatchers.IO)
+                    val old = SecretValue(UUID.randomUUID().toString())
+                    val draft = ProviderDraft(key = ProviderKeyEdit.Replace(old))
+                    service.save(draft)
+                    store.write(sentinel(), second)
+                    val retained = data.data.first().entries
+                    val bytes = Files.readAllBytes(path)
+                    val before = service.snapshot
+                    keys.failure = failure
+                    for (operation in listOf("clear", "delete", "replace")) {
+                        assertEquals(ProviderSettingsError.Secret(SecretStoreError.Locked), assertFailsWith<ProviderSettingsError> {
+                            recover(service, draft, operation)
+                        })
+                        assertEquals(retained, data.data.first().entries)
+                        assertContentEquals(bytes, Files.readAllBytes(path))
+                        assertEquals(before, service.snapshot)
+                        assertEquals(0, keys.creates)
+                        assertEquals(0, keys.replacements)
+                    }
+                    keys.failure = null
+                    assertTrue(service.connection(draft.id).key == old, "Retry must read the original credential")
+                    store.delete(SecretAccount.provider(draft.id))
+                    store.delete(second)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `transient DataStore reads block explicit provider recovery before any mutation`() = runBlocking {
+        val keys = TestKeys()
+        withStore(keys) { records, _ ->
+            var failRead = false
+            var mutations = 0
+            val failing = object : DataStore<SecretRecords> {
+                override val data = kotlinx.coroutines.flow.flow {
+                    if (failRead) throw IOException("read interrupted")
+                    emitAll(records.data)
+                }
+                override suspend fun updateData(transform: suspend (SecretRecords) -> SecretRecords): SecretRecords {
+                    mutations++
+                    return records.updateData(transform)
+                }
+            }
+            val store = AndroidKeystoreSecretStore(failing, keys, Dispatchers.IO)
+            val metadata = RootedFileStore(stateDir.toFile(), RootedFileStore.Scan.STATE)
+            val service = ProviderSettingsService(ProviderSettingsStore(metadata), store, Dispatchers.IO)
+            val old = SecretValue(UUID.randomUUID().toString())
+            val draft = ProviderDraft(key = ProviderKeyEdit.Replace(old))
+            service.save(draft)
+            val before = service.snapshot
+            val bytes = Files.readAllBytes(path)
+            failRead = true
+            for (operation in listOf("clear", "delete", "replace")) {
+                assertEquals(ProviderSettingsError.Secret(SecretStoreError.Locked), assertFailsWith<ProviderSettingsError> {
+                    recover(service, draft, operation)
+                })
+                assertEquals(1, mutations, "A failed read must never start recovery deletion")
+                assertEquals(before, service.snapshot)
+                assertContentEquals(bytes, Files.readAllBytes(path))
+            }
+            failRead = false
+            assertTrue(service.connection(draft.id).key == old, "Retry must read the original credential")
+        }
+    }
+
+    @Test
+    fun `ambiguous missing alias blocks provider recovery but permits creation with no ciphertext`() = runBlocking {
+        val keys = TestKeys()
+        val original = keys.key
+        val provider = object : SecretKeyProvider by keys {
+            override val confirmsMissingAlias = false
+        }
+        withStore(provider) { data, store ->
+            val metadata = RootedFileStore(stateDir.toFile(), RootedFileStore.Scan.STATE)
+            val service = ProviderSettingsService(ProviderSettingsStore(metadata), store, Dispatchers.IO)
+            val old = SecretValue(UUID.randomUUID().toString())
+            val draft = ProviderDraft(key = ProviderKeyEdit.Replace(old))
+            service.save(draft)
+            val before = service.snapshot
+            val retained = data.data.first().entries
+            val bytes = Files.readAllBytes(path)
+            keys.key = null
+            for (operation in listOf("clear", "delete", "replace")) {
+                assertEquals(ProviderSettingsError.Secret(SecretStoreError.Locked), assertFailsWith<ProviderSettingsError> {
+                    recover(service, draft, operation)
+                })
+                assertEquals(retained, data.data.first().entries)
+                assertContentEquals(bytes, Files.readAllBytes(path))
+                assertEquals(before, service.snapshot)
+                assertEquals(0, keys.creates)
+                assertEquals(0, keys.replacements)
+            }
+            keys.key = original
+            assertTrue(service.connection(draft.id).key == old, "Retry must read the original credential")
+
+            store.delete(SecretAccount.provider(draft.id))
+            keys.key = null
+            service.save(draft)
+            assertEquals(1, keys.creates)
+            assertTrue(service.connection(draft.id).key == old, "An empty store must permit initial creation")
+        }
+    }
+
+    @Test
+    fun `serializer IO failures remain retryable rather than corruption`() = runBlocking {
+        val input = object : InputStream() {
+            override fun read(): Int = throw IOException("read interrupted")
+        }
+        val failure = assertFailsWith<IOException> { SecretsSerializer.readFrom(input) }
+        assertFalse(failure is androidx.datastore.core.CorruptionException)
+    }
+
+    @Test
     fun `explicit provider Replace recovers a sole missing invalidated or wrong alias`() = runBlocking {
         for (failure in listOf("missing", "invalidated", "wrong")) {
             val keys = TestKeys()
@@ -527,6 +666,7 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
                 assertNoPlaintext(old, originalKey)
                 assertNoPlaintext(replacement, keys.key!!)
                 service.deleteProfile(draft.id)
+                assertTrue(data.data.first().entries.isEmpty(), "Delete must remove the recovered account ciphertext")
             }
         }
     }
@@ -562,7 +702,15 @@ internal class AndroidKeystoreSecretStoreTest : TemporaryFiles() {
         }
     }
 
-    private suspend fun withStore(keys: TestKeys, serializer: Serializer<SecretRecords> = SecretsSerializer,
+    private suspend fun recover(service: ProviderSettingsService, draft: ProviderDraft, operation: String) {
+        when (operation) {
+            "delete" -> service.deleteProfile(draft.id)
+            "replace" -> service.save(draft.copy(key = ProviderKeyEdit.Replace(SecretValue(UUID.randomUUID().toString()))))
+            else -> service.save(draft.copy(key = ProviderKeyEdit.Clear))
+        }
+    }
+
+    private suspend fun withStore(keys: SecretKeyProvider, serializer: Serializer<SecretRecords> = SecretsSerializer,
         io: CoroutineDispatcher = Dispatchers.IO, work: suspend (DataStore<SecretRecords>, AndroidKeystoreSecretStore) -> Unit) {
         val scope = CoroutineScope(SupervisorJob() + io)
         try {

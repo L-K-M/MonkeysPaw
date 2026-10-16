@@ -14,8 +14,11 @@ internal data class SecretRecords(val entries: Map<String, SecretEnvelope> = emp
 internal object SecretsSerializer : Serializer<SecretRecords> {
     override val defaultValue = SecretRecords()
 
-    override suspend fun readFrom(input: InputStream): SecretRecords = try {
-        val root = Json.parseToJsonElement(input.readBytes().decodeToString(throwOnInvalidSequence = true)) as? JsonObject
+    override suspend fun readFrom(input: InputStream): SecretRecords = decode(input.readBytes())
+
+    // Stream IO remains retryable; only bytes that were read successfully can establish corruption.
+    private fun decode(bytes: ByteArray): SecretRecords = try {
+        val root = Json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)) as? JsonObject
             ?: throw IllegalArgumentException()
         require(root.keys == setOf("version", "entries") && root["version"] == JsonPrimitive(SecretEnvelope.VERSION))
         val entries = root["entries"] as? JsonObject ?: throw IllegalArgumentException()

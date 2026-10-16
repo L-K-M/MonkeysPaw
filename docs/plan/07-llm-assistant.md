@@ -33,9 +33,18 @@ account's ciphertext without decryption, then write the replacement if supplied.
 There is no recoverable old payload to restore. If metadata cannot commit,
 report typed `writeFailed`, retain the old metadata and remove any replacement;
 failed replacement cleanup still reports `secretRollbackFailed` and blocks the
-instance. Locked/read-only reads do not take this path. Other accounts remain
-intact; a lost shared alias can be regenerated only after explicit removal of
+instance. Locked/read-only reads do not take this path. Authentication, keystore
+access/busy errors and DataStore stream I/O failures report `locked`, including
+unknown read failures; only confirmed key loss/invalidation or corrupt data can
+authorize recovery deletion. Other accounts remain intact; a lost shared alias
+can be regenerated only after explicit removal of
 all retained ciphertext (§22 J7/J9). Reads and Keep never trigger recovery.
+On API 26-30, a null native key lookup can also mean temporary inaccessibility.
+It reports `locked` while ciphertext remains, so Settings recovery based on
+alias absence stays blocked there. API 31+ uses the direct key lookup, whose
+missing-key result distinguishes absence from access errors; never gate it on
+`containsAlias`, which can hide access failures. Empty stores may still create
+their first key on every supported API (§22 J7).
 
 | Kind | Covers | Request | Auth |
 |---|---|---|---|

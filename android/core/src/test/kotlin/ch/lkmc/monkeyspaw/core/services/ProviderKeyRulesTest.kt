@@ -409,6 +409,12 @@ class ProviderKeyRulesTest {
                 assertNull(h.reopen().service.connection(draft.id).key)
                 recover(h.service, draft, operation)
                 assertFalse(h.service.snapshot.isReadOnly)
+                val persisted = h.reopen().service
+                when (operation) {
+                    "delete" -> assertFalse(persisted.snapshot.settings.profiles.any { it.id == draft.id })
+                    "replace" -> assertEquals(SecretValue("fixture-new"), persisted.connection(draft.id).key)
+                    else -> assertNull(persisted.snapshot.settings.profiles.first { it.id == draft.id }.secretReference)
+                }
             }
         }
     }
@@ -430,9 +436,10 @@ class ProviderKeyRulesTest {
         }
     }
 
-    @Test fun lockedReadOnlyAndCancelledReadsNeverTriggerRecoveryDeletion() = runTest {
+    @Test fun lockedReadOnlyUnknownAndCancelledReadsNeverTriggerRecoveryDeletion() = runTest {
         for (operation in listOf("clear", "delete", "replace")) {
-            for (failure in listOf(SecretStoreError.Locked, SecretStoreError.ReadOnly, CancellationException())) {
+            for (failure in listOf(SecretStoreError.Locked, SecretStoreError.ReadOnly,
+                IllegalStateException("fixture-only untrusted body"), CancellationException())) {
                 val h = ProviderSettingsHarness()
                 val draft = ProviderDraft(key = ProviderKeyEdit.typed("fixture-old"))
                 h.service.save(draft)
@@ -440,8 +447,8 @@ class ProviderKeyRulesTest {
                 val previous = h.secrets.persisted.toMap()
                 h.secrets.readError = failure
                 val actual = assertFailsWith<Exception> { recover(h.service, draft, operation) }
-                if (failure is SecretStoreError) assertEquals(ProviderSettingsError.Secret(failure), actual)
-                else assertIs<CancellationException>(actual)
+                if (failure is CancellationException) assertIs<CancellationException>(actual)
+                else assertEquals(ProviderSettingsError.Secret(failure as? SecretStoreError ?: SecretStoreError.Locked), actual)
                 assertEquals(before, h.service.snapshot)
                 assertEquals(previous, h.secrets.persisted)
                 assertTrue(h.secrets.deletions.isEmpty())

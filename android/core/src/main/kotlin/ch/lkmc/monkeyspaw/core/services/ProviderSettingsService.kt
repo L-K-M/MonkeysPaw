@@ -101,7 +101,7 @@ class ProviderSettingsService(private val store: ProviderSettingsStore, private 
         secrets.read(account, source)
     } catch (error: CancellationException) { throw error }
     catch (error: SecretStoreError) { throw ProviderSettingsError.Secret(error) }
-    catch (_: Exception) { throw ProviderSettingsError.Secret(SecretStoreError.ReadFailed) }
+    catch (_: Exception) { throw ProviderSettingsError.Secret(SecretStoreError.Locked) }
 
     private fun bindSecret(value: SecretValue, kind: ProviderKind, base: String): SecretValue = try {
         value.withValue { key -> SecretValue(ProviderSettingsJson.encode(JsonObject(mapOf(
@@ -133,6 +133,7 @@ class ProviderSettingsService(private val store: ProviderSettingsStore, private 
         var unreadable = false
         val previous = try { readSecret(account, SecretReadSource.PERSISTED) }
         catch (error: ProviderSettingsError.Secret) {
+            // Android reserves these for permanent key loss/corruption; transient reads report Locked.
             if (error.error != SecretStoreError.Unavailable && error.error != SecretStoreError.ReadFailed) throw error
             unreadable = true
             null

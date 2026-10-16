@@ -504,10 +504,11 @@ JVM test. Follow the [Android Keystore guidance](https://developer.android.com/p
 | StrongBox unavailable | Ordinary AndroidKeyStore fallback only on unavailability; other failures retain ciphertext | NOT RUN |
 | Restart and reboot | Save two synthetic credentials; force-stop/reopen and reboot; both remain readable without per-read authentication | NOT RUN |
 | Account and provider destination binding | Swapped account record rejects decryption; kind/origin changes require explicit re-entry or Clear in L9 | NOT RUN |
-| Alias loss or invalidation | Read/Keep retain ciphertext with typed read errors; explicit Settings Clear and Delete remove only the affected account without decryption; sole-account Replace saves a new usable key | NOT RUN |
+| Confirmed alias loss or invalidation | Reads report typed errors and retain ciphertext; Keep saved key leaves it unchanged; Clear saved key then Save and Delete profile remove only the affected account without decryption; sole-account replacement then Save stores a usable key | NOT RUN |
+| API 26-30 ambiguous alias lookup | Typed Locked retains ciphertext and blocks Settings Clear/Delete/Replace; retry can restore access, but missing-alias recovery through Settings remains blocked | NOT RUN |
 | Tampered credential or wrong alias key | Read retains ciphertext and reports a typed error; explicit Settings Clear/Delete/Replace recover only that profile and preserve other accounts | NOT RUN |
-| Lost shared alias with retained accounts | Replace reports typed Unavailable without regenerating the alias or changing unrelated ciphertext; explicitly Clear affected accounts before re-entry | NOT RUN |
-| Disk/publication failure | Readable credentials retain exact compensation; metadata failure after recovery reports typed WriteFailed, retains metadata and leaves the unreadable target and any replacement absent; retry is explicit | NOT RUN |
+| Confirmed lost shared alias with retained accounts | Replace reports typed Unavailable without regenerating the alias or changing unrelated ciphertext; explicitly Clear affected accounts before re-entry | NOT RUN |
+| Disk/publication failure | Metadata failure on readable edits restores the previous opaque credential and preserves unrelated accounts; metadata failure after unreadable recovery reports typed WriteFailed, retains metadata and leaves the target and any replacement absent; retry is explicit | NOT RUN |
 | Persistence and diagnostics | Runtime synthetic sentinel absent in raw/base64/percent/JSON forms from settings, logs and temporary outputs; only encrypted payload persists; no raw key export | NOT RUN |
 
 Do not put real credentials, sentinel contents, raw key material or platform
@@ -519,16 +520,25 @@ Native key-loss recovery remains NOT RUN. In an isolated installation with
 synthetic credentials, invalidate/remove the alias, restore ciphertext to a
 device without its key, and tamper one account's ciphertext in separate runs.
 Reopen Settings and verify that reading does not delete data. Exercise the
-existing Clear then Save, Delete profile, and typed replacement then Save
-controls. Confirm the resulting key-storage state/profile list after restart,
-typed failure on a failed metadata commit, and unchanged unrelated ciphertext.
+existing Keep saved key, Clear saved key then Save, Delete profile, and key
+input then Save controls. Confirm the resulting key-storage state/profile list
+after restart, typed failure on a failed metadata commit, and unchanged
+unrelated ciphertext.
 No unreadable payload can be restored after explicit recovery; a failed
 replacement commit removes the new key. Locked/read-only failures retain the
-old data. With a lost shared alias, replacement stays unavailable while other
-accounts remain; Clear each affected account explicitly before re-entry can
-create a new alias. Record native evidence for §22 J7/J18 before marking any
+old data. With confirmed loss of a shared alias, replacement reports typed
+Unavailable while other accounts retain ciphertext. Explicitly clear every
+affected account, then enter a credential and choose Save to create a new alias.
+Record native evidence for §22 J7/J18 before marking any
 row complete. JVM crypto/DataStore tests cover this policy, not AndroidKeyStore
 invalidation or hardware behavior.
+
+API 26-30 key lookups can hide temporary keystore access failures as an absent
+alias. An ambiguous absence reports Locked and retains ciphertext, including
+on explicit Settings Clear/Delete/Replace; missing-alias Settings recovery is
+not available there. API 31+ uses direct key lookup to distinguish missing keys
+from access errors. Initial Save with no ciphertext remains supported on every
+API. Verify both outcomes on devices before recording recovery acceptance.
 
 ## Android sync TLS and device-token checks (M10 Z6): NOT RUN
 
