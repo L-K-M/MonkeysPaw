@@ -289,8 +289,11 @@ class SyncAccountService internal constructor(
         // Resolving a persisted credential and /me share the remote five-second budget.
         cleanup = cleanup.copy(remote = remoteCleanup(session, connection?.account, readFailed, device))
         val ids = (connection?.cleanupConnections.orEmpty() + listOfNotNull(connection?.account?.connectionID, session?.account?.connectionID)).distinct()
-        try { accounts.saveInactive(null, ids); cleanup = cleanup.copy(metadataIssue = null) }
-        catch (error: Throwable) { cleanup = cleanup.copy(metadataIssue = metadataError(error)) }
+        try {
+            accounts.saveInactive(null, ids)
+            // A failed read may have hidden cleanup references preserved by this write.
+            if (!readFailed) cleanup = cleanup.copy(metadataIssue = null)
+        } catch (error: Throwable) { cleanup = cleanup.copy(metadataIssue = metadataError(error)) }
         try { sync.prepareSignOut(root) }
         catch (_: Throwable) { cleanup = cleanup.copy(recoveryRequired = true) }
         return deleteSecrets(ids, cleanup)

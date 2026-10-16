@@ -573,6 +573,47 @@ class SyncAccountServiceTest {
         assertEquals(requests, r.requests.size)
     }
 
+    @Test fun recoveredMetadataClearCannotHideUnreadPendingSecretCleanup() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        val account = r.login().account!!
+        val pending = UUID(0, 5)
+        r.h.accounts.setAccount(account, retiring = listOf(pending))
+        r.secrets.values[SecretAccount.device(pending)] = StoredSecret(SecretValue("unused synthetic"), SecretTier.KEYSTORE)
+        r.h.rig.dataOperations.onOperation = { op -> if (op == "file:sync/account.json") throw StoreError.IOFailure }
+        assertEquals(SyncError.DurabilityUncertain, assertFailsWith<SyncError> { r.h.accounts.disableAutomaticResume() })
+        r.h.rig.dataOperations.onOperation = null
+
+        val cleanup = r.service.signOut()
+        assertEquals(SyncRemoteRevocation.REVOKED, cleanup.remote)
+        assertEquals(SyncError.DurabilityUncertain, cleanup.metadataIssue)
+        assertFalse(cleanup.isComplete)
+        assertFalse(r.service.snapshot.enabled)
+        assertNull(r.secrets.values[account.secretAccount])
+        assertNotNull(r.secrets.values[SecretAccount.device(pending)])
+        assertEquals(listOf(pending), r.h.accounts.loadConnection().cleanupConnections)
+        assertTrue(r.service.signOut().isComplete)
+        assertTrue(r.secrets.values.isEmpty())
+        assertTrue(r.h.accounts.loadConnection().cleanupConnections.isEmpty())
+    }
+
+    @Test fun recoveredResumeDisableFailureCompletesCleanupOfKnownSecrets() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        r.login()
+        var failed = false
+        r.h.rig.dataOperations.onOperation = { op -> if (op == "file:sync/account.json" && !failed) {
+            failed = true
+            throw StoreError.IOFailure
+        } }
+
+        val cleanup = r.service.signOut()
+        assertTrue(failed)
+        assertTrue(cleanup.isComplete)
+        assertNull(cleanup.metadataIssue)
+        assertNull(r.h.accounts.loadAccount())
+        assertTrue(r.h.accounts.loadConnection().cleanupConnections.isEmpty())
+        assertTrue(r.secrets.values.isEmpty())
+    }
+
     @Test fun corruptOwnershipCannotHideCredentialCleanupAndIsNeverRewritten() = runTest {
         val r = AccountHarness(testScheduler, backgroundScope)
         val account = r.login().account!!
@@ -705,6 +746,33 @@ class SyncAccountServiceTest {
         assertNull(r.service.snapshot.tier)
         assertTrue(r.h.engine.reports.value.needsSignIn)
         assertFailsWith<SyncError> { r.h.engine.recoverJournal() }
+    }
+
+    @Test fun refreshUnauthorizedRetiresTheSessionWhenCancelledDuringDrain() = runTest {
+        val r = AccountHarness(testScheduler, backgroundScope)
+        r.login()
+        val release = CompletableDeferred<Unit>()
+        r.respond = { request -> when {
+            request.url.endsWith("/sync/pull") -> { withContext(NonCancellable) { release.await() }; null }
+            request.url.endsWith("/me") -> EngineHarness.errorResponse(401, FailureCode.UNAUTHORIZED)
+            else -> null
+        } }
+        launch { r.h.engine.runBackground() }
+        runCurrent()
+        assertEquals(1, r.h.pulls)
+        val refresh = launch { r.service.refresh() }
+        try {
+            runCurrent()
+            assertTrue(r.h.engine.reports.value.needsSignIn)
+            refresh.cancel(); runCurrent()
+            assertFalse(refresh.isCompleted)
+        } finally { release.complete(Unit) }
+        refresh.join()
+
+        assertFalse(r.service.snapshot.enabled)
+        assertNull(r.service.snapshot.me)
+        assertNull(r.service.snapshot.tier)
+        assertEquals(SyncAccountIssue.SignedOut, assertFailsWith<SyncAccountServiceError> { r.service.refresh() }.issue)
     }
 
     @Test fun oldCleanupReferenceSurvivesNewActivationAndDoubleCleanupFailure() = runTest {
