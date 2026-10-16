@@ -461,6 +461,42 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryStatusModel.libraryAvailable })
     }
 
+    func testReplacementIndexRepairRestoresLibraryStatus() throws {
+        let target = tools.directory.appendingPathComponent("second")
+        let worker = LinuxBackgroundWork()
+        let entered = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { directory in
+                if directory == target { worker.run { entered.set(); release.wait() } }
+                return LinuxSyncTestWatcher()
+            }, backgroundWork: worker, syncTransport: transport)
+        _ = environment.libraryStatusModel
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        let oldSync = environment.syncService
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        let usagePath = "usage/" + LinuxSyncTestTransport.personalPrompt
+        try data.write(Data("invalid usage".utf8), at: usagePath)
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nServer personal\n"
+        try RootedFileStore(root: target).write(Data(source.utf8), at: "a.md")
+        XCTAssertEqual(environment.switchLibrary(to: target), .syncDraining)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            entered.value && self.environment.syncService !== oldSync
+                && self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.libraryStatusModel.libraryAvailable })
+
+        try data.write(Data("{\"events\":[],\"version\":1}".utf8), at: usagePath)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.libraryAvailable })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryStatusModel.libraryAvailable })
+    }
+
     func testLostRootPreservesStateAndNeverSendsDeletes() throws {
         compose()
         try login()

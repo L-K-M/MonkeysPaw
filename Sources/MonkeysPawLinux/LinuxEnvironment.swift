@@ -1128,7 +1128,8 @@ final class LinuxEnvironment {
         graph.picker.libraryAvailable = true
         graph.imports.setLibraryAvailable(true)
         currentLibraryWindow?.setLibraryAvailable(true)
-        currentLibraryStatusModel?.update(.available)
+        // Finish a replacement whose initial reads were blocked by sync.
+        currentLibraryStatusModel?.libraryReplaced(available: true)
     }
 
     private func checkSyncRoot(in graph: LibraryGraph) {
