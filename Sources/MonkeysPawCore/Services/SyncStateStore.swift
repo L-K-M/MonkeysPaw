@@ -11,6 +11,14 @@ public final class SyncStateStore: @unchecked Sendable {
                                       path: "sync/state.json", version: Limits.syncStateVersion)
     }
 
+    /// Native composition must prove a recorded root's physical incarnation
+    /// before resuming its cursors. Another lexical root starts adoption.
+    public func requiresRootProof(for libraryRoot: String) -> Bool {
+        let cached = persistence.snapshot
+        guard cached.error == nil, let root = try? SyncLibraryRoot(libraryRoot) else { return true }
+        return cached.value?.binding.root == root
+    }
+
     var snapshot: SyncStoreSnapshot<SyncState> { persistence.snapshot }
 
     /// Only the stopped account transition inspects the previous binding.
