@@ -84,7 +84,7 @@ class LibraryService(
         permit.check()
         checkAssistantAccess(acceptance)
         val source = acceptance.candidate.context.editor
-        val current = checkAssistantSource(source)
+        val current = checkAssistantSource(source, acceptance.destination)
         val document = acceptance.candidate.content.document
         PromptCodec.write(document)
         val result = if (acceptance.destination == AssistantSaveDestination.IMPROVE) {
@@ -92,7 +92,9 @@ class LibraryService(
             saveDocument(document, source.relativePath, SaveMode.REPLACE, source.stamp, null, writePermit, acceptance, permit)
         } else {
             val id = document.frontMatter.id ?: throw LibraryError.PreviewMismatch
-            if (entries().any { it.document.frontMatter.id == id }) throw LibraryError.IdentityMismatch
+            val identity = PromptIdentity.Assigned(id)
+            if (id == source?.loadedID || identity in accessSnapshot.prompts || identity in accessSnapshot.unavailableIDs ||
+                entries().any { it.document.frontMatter.id == id }) throw LibraryError.IdentityMismatch
             val folder = if (acceptance.destination == AssistantSaveDestination.PRIVATE_COPY) "" else current?.entry?.folder.orEmpty()
             val name = PromptCreation.relativePath(document.frontMatter.title, clock.now())
             val preferred = (if (folder.isEmpty()) "" else "$folder/") + name
@@ -116,7 +118,7 @@ class LibraryService(
         result
     }
 
-    private fun checkAssistantSource(source: AssistantEditorSnapshot?): LoadedFile? {
+    private fun checkAssistantSource(source: AssistantEditorSnapshot?, destination: AssistantSaveDestination): LoadedFile? {
         if (source == null) return null
         val current = readCurrent(source.relativePath)
         if (current == null && source.stamp != null) throw AssistantSaveRefusal(
@@ -126,7 +128,9 @@ class LibraryService(
         if (current == null && !source.isNew) throw AssistantSaveRefusal(
             AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.Deleted))
         current?.let { LoadedPrompt(it.bytes, it.entry).readOnlyReason }?.let { reason ->
-            throw AssistantSaveRefusal(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.ReadOnly(reason)))
+            if (reason != SourceReadOnlyReason.GROUP_VIEWER || destination != AssistantSaveDestination.PRIVATE_COPY) {
+                throw AssistantSaveRefusal(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.ReadOnly(reason)))
+            }
         }
         return current
     }
@@ -341,7 +345,6 @@ class LibraryService(
                 try { history.archiveProvenance(previous, snapshot, current.bytes) }
                 catch (_: Exception) { provenanceFailed = true }
             }
-            requireMutation(path, current?.entry?.identity ?: targetIdentity, writePermit)
             when (mode) {
                 SaveMode.REPLACE -> {
                     if (prompts.stamp(path) != current?.entry?.stamp) throw LibraryError.Conflict
@@ -352,7 +355,7 @@ class LibraryService(
                 }
                 SaveMode.CREATE -> {
                     if (acceptance != null) {
-                        checkAssistantSource(creationSource)
+                        checkAssistantSource(creationSource, acceptance.destination)
                         checkAssistantAccess(acceptance)
                     }
                     permit?.check()

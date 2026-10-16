@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.services
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.canonical.CanonicalForm
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.sync.*
@@ -12,6 +13,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.test.*
 
@@ -43,10 +45,94 @@ private class AccessHarness(role: Role = Role.EDITOR, extra: String = "", tracke
     fun entry() = library.load(path)
     fun role(role: Role) = states.update(binding) { it.copy(groups = ScanHarness.groups(role)) }
     fun favorite(value: Boolean) = states.update(binding) { it.applyGroupFavorite(value, identity) }
+
+    fun acceptance(destination: AssistantSaveDestination): AssistantAcceptance {
+        val loaded = library.loadForEditing(path)
+        val artifact = LlmArtifact("Candidate", "", emptyList(), emptyList(), "Improved", "")
+        val content = if (destination == AssistantSaveDestination.IMPROVE) {
+            assertIs<ArtifactMergeResult.Ready>(ArtifactMerge.improve(artifact, loaded.entry.document)).candidate
+        } else {
+            assertIs<ArtifactMergeResult.Ready>(ArtifactMerge.write(artifact, SyncTestValues.personal)).candidate
+        }
+        val profile = ProviderProfile(ProviderProfileID(), "Test", ProviderKind.ANTHROPIC,
+            "https://example.test", "model")
+        // Composition still supplies LOCAL until Z24; committed service access must suffice.
+        val context = AssistantContext(UUID.randomUUID(), profile, AssistantEditorSnapshot(loaded.source,
+            path, 1, 1, loaded.entry.stamp, loaded.entry.document.frontMatter.id))
+        return AssistantAcceptance(AssistantCandidate(content, ArtifactDiff.compare(loaded.entry.document, content),
+            context, context.access.mutationAccess), destination, null)
+    }
 }
 
 class GroupAccessServiceTest {
     private val v = SyncTestValues
+
+    @Test fun assistantLocalPolicyCannotWriteViewerGroupButAllowsFreshPrivateCopy() {
+        for (destination in AssistantSaveDestination.entries) {
+            val h = AccessHarness(Role.VIEWER)
+            val acceptance = h.acceptance(destination)
+            val before = h.local.prompts.bytesSnapshot()
+            val outcome = h.local.editing.accept(acceptance, AssistantSavePermit())
+            if (destination == AssistantSaveDestination.PRIVATE_COPY) {
+                val entry = assertNotNull(outcome.committed).entry
+                assertEquals("Candidate.md", entry.relativePath)
+                assertNotEquals(h.identity, entry.identity)
+                assertContentEquals(acceptance.candidate.content.canonicalBytes, h.local.prompts.read(entry.relativePath))
+                assertEquals(before[h.path], h.local.prompts.bytesSnapshot()[h.path])
+                assertTrue(h.local.history.revisions(h.identity).isEmpty())
+            } else {
+                assertIs<AssistantAcceptanceOutcome.Failed>(outcome)
+                assertEquals(before, h.local.prompts.bytesSnapshot())
+            }
+        }
+    }
+
+    @Test fun assistantPermitRejectsInterveningDowngradeAndCancellationForEveryDestination() {
+        for (destination in AssistantSaveDestination.entries) for (cancel in listOf(false, true)) {
+            val h = AccessHarness()
+            val acceptance = h.acceptance(destination)
+            val permit = h.library.captureWritePermit()
+            if (cancel) permit.cancel() else {
+                h.role(Role.VIEWER)
+                h.role(Role.EDITOR)
+            }
+            val before = h.local.prompts.bytesSnapshot() to h.local.state.bytesSnapshot()
+            val outcome = assertIs<AssistantAcceptanceOutcome.Failed>(
+                h.local.editing.accept(acceptance, AssistantSavePermit(), permit))
+            if (cancel) assertEquals(AssistantAcceptanceFailure.Cancelled, outcome.reason)
+            else assertSame(LibraryError.AccessChanged, assertIs<AssistantAcceptanceFailure.Editing>(outcome.reason).error)
+            assertEquals(before, h.local.prompts.bytesSnapshot() to h.local.state.bytesSnapshot())
+        }
+    }
+
+    @Test fun assistantImproveRechecksCommittedAccessAfterHistoryStagingAndRollsBack() {
+        val h = AccessHarness()
+        val acceptance = h.acceptance(AssistantSaveDestination.IMPROVE)
+        val before = h.local.prompts.bytesSnapshot()
+        var staged = false
+        h.local.state.onWrite = { path ->
+            if (!staged && path.startsWith("history/")) {
+                staged = true
+                h.role(Role.VIEWER)
+            }
+        }
+        val outcome = h.local.editing.accept(acceptance, AssistantSavePermit())
+        assertTrue(staged)
+        assertIs<AssistantAcceptanceOutcome.Failed>(outcome)
+        assertEquals(before, h.local.prompts.bytesSnapshot())
+        assertTrue(h.local.history.revisions(h.identity).isEmpty())
+    }
+
+    @Test fun assistantPrivateCopyCannotReuseCommittedIdentityMissingFromDisk() {
+        val h = AccessHarness(Role.VIEWER)
+        val acceptance = h.acceptance(AssistantSaveDestination.PRIVATE_COPY)
+        h.states.update(h.binding) { state -> state.copy(prompts = state.prompts +
+            (v.personalID to SyncPromptState(v.userScope, "Missing.md", 1, v.hash))) }
+        val before = h.local.prompts.bytesSnapshot()
+        val outcome = assertIs<AssistantAcceptanceOutcome.Failed>(h.local.editing.accept(acceptance, AssistantSavePermit()))
+        assertSame(LibraryError.IdentityMismatch, assertIs<AssistantAcceptanceFailure.Editing>(outcome.reason).error)
+        assertEquals(before, h.local.prompts.bytesSnapshot())
+    }
 
     @Test fun everyLibraryMutationGuardsViewerSourceAndDestinationBeforeWriting() {
         val h = AccessHarness(Role.VIEWER)

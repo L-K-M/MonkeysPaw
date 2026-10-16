@@ -57,9 +57,10 @@ class EditingService(private val library: LibraryService) {
     }
 
     /** Always return the actual result, including publication that outlives its assistant/editor. */
-    fun accept(acceptance: AssistantAcceptance, permit: AssistantSavePermit): AssistantAcceptanceOutcome {
+    fun accept(acceptance: AssistantAcceptance, permit: AssistantSavePermit,
+               writePermit: LibraryWritePermit = library.currentWritePermit()): AssistantAcceptanceOutcome {
         if (!acceptance.claim()) return AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.NotReady)
-        return try { AssistantAcceptanceOutcome.saved(library.acceptAssistant(acceptance, permit)) }
+        return try { AssistantAcceptanceOutcome.saved(library.acceptAssistant(acceptance, permit, writePermit)) }
         catch (refusal: AssistantSaveRefusal) { refusal.outcome }
         catch (error: Exception) {
             val source = acceptance.candidate.context.editor
