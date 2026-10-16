@@ -1353,8 +1353,15 @@ final class LinuxEnvironment {
             guard let graph, let sync else { return }
             do {
                 try (graph.files as? RootedFileStore)?.requireRoot()
-                let checked = try paths.map { path -> SyncFileChange in
-                    guard let stamp = try graph.files.stamp(at: path.string) else {
+                let checked = try paths.compactMap { path -> SyncFileChange? in
+                    let stamp: FileStamp?
+                    do { stamp = try graph.files.stamp(at: path.string) }
+                    catch {
+                        // A path can change type without losing the pinned root.
+                        try (graph.files as? RootedFileStore)?.requireRoot()
+                        return nil
+                    }
+                    guard let stamp else {
                         return SyncFileChange(path: path, stamp: nil, hash: nil)
                     }
                     guard let bytes = try? graph.files.read(at: path.string) else {

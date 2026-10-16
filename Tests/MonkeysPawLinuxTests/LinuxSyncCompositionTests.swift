@@ -313,6 +313,47 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 1)
     }
 
+    func testOneInvalidWatcherPathDoesNotDisableSyncForOtherChanges() throws {
+        let worker = LinuxBackgroundWork()
+        let raw = LinuxSyncTestWatcher()
+        compose(watcher: raw, backgroundWork: worker)
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+
+        let entered = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        worker.run { entered.set(); release.wait() }
+        defer { release.signal() }
+        XCTAssertTrue(GTKTestSupport.spin { entered.value })
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nExternal edit\n"
+        try files().write(Data(source.utf8), at: "a.md")
+        try files().write(Data("Temporary prompt\n".utf8), at: "transient.md")
+        raw.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .modified)))
+        raw.emit(.file(FileStoreEvent(relativePath: "transient.md", kind: .created)))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.pickerModel.results.contains { $0.relativePath == "transient.md" }
+        })
+
+        // The UI indexed this regular file, but the queued stamp must now
+        // reject its replacement without treating the healthy root as lost.
+        let outside = tools.directory.appendingPathComponent("outside.md")
+        try Data("Outside\n".utf8).write(to: outside)
+        try FileManager.default.removeItem(at: libraryRoot.appendingPathComponent("transient.md"))
+        try FileManager.default.createSymbolicLink(at: libraryRoot.appendingPathComponent("transient.md"), withDestinationURL: outside)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.blockingIssue == .rootUnavailable
+                || self.transport.requests.contains { $0.method == .put }
+        }, timeout: .seconds(6)))
+        XCTAssertNil(environment.syncService?.report.blockingIssue)
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(raw.stopCount, 0)
+        XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 1)
+        XCTAssertEqual(try Data(contentsOf: outside), Data("Outside\n".utf8))
+    }
+
     func testRootReplacementDrainsHeldNetworkAndRejectsOldRepliesAndTimers() throws {
         let timer = LinuxSyncTestTimer()
         compose(timer: timer)
