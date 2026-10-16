@@ -15,7 +15,11 @@ internal fun <T> withPrivateTestRoot(prepare: (Path) -> Unit = ::privateDirector
 class ScenarioDecoderTest {
     private val directory get() = Path.of(System.getProperty("monkeyspaw.fixtures"), "sync")
     private val source get() = Files.readAllBytes(directory.resolve("01-round-trip.json"))
-    private fun changed(pointer: String, value: WireValue): ByteArray = WireJson.canonical(WireJson.parse(source).patching(mapOf(pointer to value)))
+    private fun changed(pointer: String, value: WireValue): ByteArray {
+        val patched = try { WireJson.parse(source).patching(mapOf(pointer to value)) }
+        catch (error: ScenarioFailure) { throw AssertionError("fixture mutation failed at $pointer", error) }
+        return WireJson.canonical(patched)
+    }
 
     @Test fun privateRootIsRemovedWhenDirectoryPreparationFails() {
         var allocated: Path? = null
@@ -37,6 +41,16 @@ class ScenarioDecoderTest {
         assertTrue(cases.any { it.id == "01-round-trip" })
         assertTrue(cases.any { it.steps.any { step -> step.action == "kill_client" } })
         println("Z15 structural decode: ${files.size} files, ${cases.size} cases; semantic execution remains partial")
+    }
+
+    @Test fun staleMutationPointersCannotSatisfyDecoderRejection() {
+        for (pointer in listOf("/cases/0/nowX", "/cases/0/steps/999/expected/file_count")) {
+            assertFailsWith<AssertionError> {
+                assertFailsWith<ScenarioFailure> {
+                    ScenarioDecoder.decode(changed(pointer, wireString("2026-02-30T00:00:00Z")))
+                }
+            }
+        }
     }
 
     @Test fun schemaRequiresNumericOneAndClosedEnvelope() {
