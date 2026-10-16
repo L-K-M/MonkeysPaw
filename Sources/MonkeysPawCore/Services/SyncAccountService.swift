@@ -343,8 +343,11 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         } else if connectionReadFailed || connection?.account != nil { cleanup.remote = .unconfirmed }
 
         let ids = Set((connection?.cleanupConnections ?? []) + [connection?.account?.connectionID, session?.account.connectionID].compactMap { $0 })
-        do { try accounts.saveInactive(nil, retiring: Array(ids)); cleanup.metadataIssue = nil }
-        catch { cleanup.metadataIssue = metadataError(error) }
+        do {
+            try accounts.saveInactive(nil, retiring: Array(ids))
+            // A failed read may have hidden cleanup references preserved by this write.
+            if !connectionReadFailed { cleanup.metadataIssue = nil }
+        } catch { cleanup.metadataIssue = metadataError(error) }
         do { try await sync.prepareSignOut(root: root) }
         catch { cleanup.recoveryRequired = true }
         deleteSecrets(Array(ids), cleanup: &cleanup)
