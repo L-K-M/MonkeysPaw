@@ -356,6 +356,27 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertEqual(environment.settingsModel.libraryFolderPath, target.path)
     }
 
+    func testQuitDuringLibraryDrainShowsFeedbackWithThePickerHidden() throws {
+        compose()
+        transport.holdPull = true
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: target), .syncDraining)
+        XCTAssertFalse(environment.panel.isVisible)
+        var approved = false
+        environment.requestQuit { approved = true }
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.notifications.notificationBodies.contains("Finishing sync work before quitting. Try Quit again when it finishes.")
+        })
+        XCTAssertFalse(approved)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.settingsModel.libraryFolderPath == target.path })
+        environment.requestQuit { approved = true }
+        XCTAssertTrue(GTKTestSupport.spin { approved })
+    }
+
     func testQuitWaitsForTheOldRequestAndCannotApplyItsLateResult() throws {
         compose()
         transport.holdPull = true
@@ -401,6 +422,45 @@ final class LinuxSyncCompositionTests: XCTestCase {
         try files().requireRoot()
     }
 
+    func testSyncAvailabilityWaitsForSuccessfulIndexRebuild() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        let previous = SyncLibraryIdentity(account: connection.identity,
+            root: try SyncLibraryRoot(tools.directory.appendingPathComponent("previous").path))
+        try SyncStateStore(files: data, operations: data).reset(for: previous)
+        let usagePath = "usage/" + LinuxSyncTestTransport.personalPrompt
+        try data.write(Data("invalid usage".utf8), at: usagePath)
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nServer personal\n"
+        try files().write(Data(source.utf8), at: "a.md")
+
+        let worker = LinuxBackgroundWork()
+        let entered = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        worker.run { entered.set(); release.wait() }
+        defer { release.signal() }
+        XCTAssertTrue(GTKTestSupport.spin { entered.value })
+        compose(backgroundWork: worker)
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        XCTAssertNil(environment.syncService?.report.blockingIssue)
+        XCTAssertFalse(environment.pickerModel.libraryAvailable,
+            "A queued index repair must not enable an unavailable library")
+
+        // Repair the input without another sync report. Only the queued rebuild
+        // can restore availability after its successful publication.
+        try data.write(Data("{\"events\":[],\"version\":1}".utf8), at: usagePath)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.pickerModel.libraryAvailable
+                && self.environment.pickerModel.results.contains { $0.relativePath == "a.md" }
+        })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryStatusModel.libraryAvailable })
+    }
+
     func testLostRootPreservesStateAndNeverSendsDeletes() throws {
         compose()
         try login()
@@ -428,11 +488,12 @@ final class LinuxSyncCompositionTests: XCTestCase {
     private static func deviceVariable(_ id: UUID) -> String {
         "MONKEYSPAW_DEVICE_" + id.uuidString.replacingOccurrences(of: "-", with: "") + "_TOKEN"
     }
-    private func compose(timer: Scheduler? = nil, watcher: FileStoreWatcher? = nil,
+    private func compose(timer: Scheduler? = nil, watcher: FileStoreWatcher? = nil, backgroundWork: BackgroundWork? = nil,
                          flush: @escaping (Int32) -> Int32 = Glibc.fsync) {
         let factory: ((URL) throws -> FileStoreWatcher)? = watcher.map { raw in { _ in raw } }
         environment = LinuxEnvironment(application: application, environment: tools.environment,
-            scheduler: timer, libraryWatcherFactory: factory, syncTransport: transport, syncDataFlush: flush)
+            scheduler: timer, libraryWatcherFactory: factory, backgroundWork: backgroundWork,
+            syncTransport: transport, syncDataFlush: flush)
         // Exercise the primary's watcher/index startup before account intents.
         _ = environment.libraryStatusModel
     }

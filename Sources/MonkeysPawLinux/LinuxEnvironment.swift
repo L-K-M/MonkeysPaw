@@ -806,7 +806,11 @@ final class LinuxEnvironment {
     /// The tray and GApplication action share this guarded quit path. A queued
     /// save or selection must finish before the quit decision can be approved.
     func requestQuit(_ approved: @escaping () -> Void) {
-        guard !isShutDown, !quitPending, syncReplacementTask == nil else { return }
+        guard !isShutDown, !quitPending else { return }
+        guard syncReplacementTask == nil else {
+            mp_notify(application, LinuxStrings.quit, LinuxStrings.syncFinishingBeforeQuit)
+            return
+        }
         guard let graph = currentLibraryGraph else { approved(); return }
         let state = graph.editor.state
         guard editorHasUnsavedWork(state) else {
@@ -1112,15 +1116,19 @@ final class LinuxEnvironment {
             if graph.index.lastSyncRefreshFailure != nil || report.blockingIssue != nil {
                 self.checkSyncRoot(in: graph)
             }
-            if report.blockingIssue == nil, graph.sync?.access.snapshot.isBlocked == false,
-               graph.initializationError == nil, !graph.rootUnavailable {
-                graph.picker.libraryAvailable = true
-                graph.imports.setLibraryAvailable(true)
-                self.currentLibraryWindow?.setLibraryAvailable(true)
-                self.currentLibraryStatusModel?.update(.available)
-            }
+            self.restoreLibraryAvailability(in: graph)
             if report.phase == .idle, graph.sync?.conflict?.state.isBusy == false { graph.sync?.conflict?.refresh() }
         }
+    }
+
+    private func restoreLibraryAvailability(in graph: LibraryGraph) {
+        guard graph.sync?.service.report.blockingIssue == nil, graph.index.lastSyncRefreshFailure == nil,
+              graph.sync?.access.snapshot.isBlocked == false,
+              graph.initializationError == nil, !graph.rootUnavailable else { return }
+        graph.picker.libraryAvailable = true
+        graph.imports.setLibraryAvailable(true)
+        currentLibraryWindow?.setLibraryAvailable(true)
+        currentLibraryStatusModel?.update(.available)
     }
 
     private func checkSyncRoot(in graph: LibraryGraph) {
@@ -1136,8 +1144,13 @@ final class LinuxEnvironment {
                 return
             }
             guard graph.index.lastSyncRefreshFailure != nil else { return }
-            do { try graph.index.rebuild(origin: .sync) }
-            catch {
+            do {
+                try graph.index.rebuild(origin: .sync)
+                graph.callbacks.run { [weak self, weak graph] in
+                    guard let graph else { return }
+                    self?.restoreLibraryAvailability(in: graph)
+                }
+            } catch {
                 graph.callbacks.run { [weak self, weak graph] in
                     guard let graph else { return }
                     self?.warnAboutLibrary(graph)
