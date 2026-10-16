@@ -288,12 +288,13 @@ class SyncEngineTest {
 
     @Test fun passSweepsOnlyStalePrivatePullPagesAndAttemptsAllThrowableDeletes() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
-        for (path in listOf("sync/pull-old-0.json", "sync/pull-old-1.json", "sync/push-canary.json", "other/pull-safe.json")) h.data.put("canary", path)
+        val stale = listOf("sync/pull-${SyncTestValues.uuid}-0.json", "sync/pull-${SyncTestValues.uuid}-1.json")
+        for (path in stale + listOf("sync/push-canary.json", "other/pull-safe.json")) h.data.put("canary", path)
         val attempted = mutableListOf<String>()
         h.data.onDelete = { attempted.add(it); if (it.endsWith("-0.json")) throw AssertionError("Synthetic failure") }
         h.start()
         assertEquals(SyncBlockingIssue.RECOVERY_REQUIRED, h.engine.runBackground().blockingIssue)
-        assertEquals(setOf("sync/pull-old-0.json", "sync/pull-old-1.json"), attempted.toSet())
+        assertEquals(stale.toSet(), attempted.toSet())
         assertNull(h.engine.reports.value.lastSuccess)
         assertTrue(h.requests.isEmpty())
         h.data.onDelete = null
@@ -304,12 +305,39 @@ class SyncEngineTest {
         h.engine.stop()
     }
 
+    @Test fun passPreservesUnrelatedPullFilesWhileDeletingRealLeftovers() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        val uuid = SyncTestValues.uuid
+        val stale = "sync/pull-$uuid-10.json"
+        val preserved = listOf("sync/pull-other.json", "sync/pull-backup/pull-$uuid-0.json", "sync/pull-$uuid-x.json")
+        for (path in preserved + stale) h.data.put("canary", path)
+        h.start()
+        assertNotNull(h.engine.runBackground().lastSuccess)
+        assertNull(h.data.stamp(stale))
+        for (path in preserved) assertEquals("canary", h.data.text(path), path)
+        h.engine.stop()
+    }
+
+    @Test fun explicitRecoveryPreservesUnrelatedPullFilesWhileDeletingRealLeftovers() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        val uuid = SyncTestValues.uuid
+        val stale = "sync/pull-$uuid-0.json"
+        val preserved = listOf("sync/pull-other.json", "sync/pull-backup/pull-$uuid-0.json", "sync/pull-$uuid-x.json")
+        for (path in preserved + stale) h.data.put("canary", path)
+        h.start(); h.engine.stop()
+        h.engine.recoverJournal()
+        assertTrue(h.requests.isEmpty())
+        assertNull(h.data.stamp(stale))
+        for (path in preserved) assertEquals("canary", h.data.text(path), path)
+        h.engine.stop()
+    }
+
     @Test fun stagingCleanupDoesNotHoldTheEngineLockOrBlockStop() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val h = EngineHarness(TestCoroutineScheduler(), scope)
         val engine = SyncEngine(h.graph, scope, Dispatchers.IO, Clock { Instant.EPOCH },
             { SyncTestValues.device }, MonotonicClock(System::nanoTime))
-        h.data.put("stale", "sync/pull-old-0.json")
+        h.data.put("stale", "sync/pull-${SyncTestValues.uuid}-0.json")
         val arrived = CountDownLatch(1)
         val release = CountDownLatch(1)
         h.data.onDelete = {
@@ -335,7 +363,7 @@ class SyncEngineTest {
     @Test fun cancelledStagingSweepDoesNotBecomeARecoveryFailure() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
         h.start()
-        h.data.put("stale", "sync/pull-old-0.json")
+        h.data.put("stale", "sync/pull-${SyncTestValues.uuid}-0.json")
         h.data.onDelete = { throw CancellationException("Synthetic cancellation") }
         val report = h.engine.runBackground()
         assertNull(report.blockingIssue)

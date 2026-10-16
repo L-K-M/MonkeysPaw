@@ -120,6 +120,12 @@ internal class SyncPullStaging(private val files: StateStore) {
 
     private fun path(index: Int): String = "sync/pull-$id-$index.json"
 
+    companion object {
+        private val stagingPath = Regex("""sync/pull-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}-[0-9]+\.json""")
+
+        fun isStagingPath(path: String): Boolean = stagingPath.matches(path)
+    }
+
     private fun <T> operation(body: () -> T): T = try { body() }
     catch (error: CancellationException) { throw error }
     catch (error: StoreError) { throw SyncPullCollectorError.StagingFailed(error) }

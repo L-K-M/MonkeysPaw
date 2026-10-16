@@ -441,7 +441,7 @@ class SyncEngine internal constructor(
     }
     private fun sweepPullStaging() {
         var failure = false
-        for (file in graph.files.listFiles().filter { it.relativePath.startsWith("sync/pull-") }) {
+        for (file in graph.files.listFiles().filter { SyncPullStaging.isStagingPath(it.relativePath) }) {
             try { graph.files.delete(file.relativePath) }
             catch (error: CancellationException) { throw error }
             catch (error: StoreError) { if (error != StoreError.NotFound) failure = true }
