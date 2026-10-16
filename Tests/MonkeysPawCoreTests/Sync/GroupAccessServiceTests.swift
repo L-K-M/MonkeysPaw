@@ -3,31 +3,114 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class GroupAccessServiceTests: XCTestCase {
+    func testGroupAccessBindingDoesNotWaitForLibraryIO() throws {
+        let rig = try GroupAccessRig(role: .viewer)
+        let entry = try rig.base.library.load(at: rig.path)
+        let holdingLibrary = DispatchSemaphore(value: 0)
+        let releaseLibrary = DispatchSemaphore(value: 0)
+        let releasedLibrary = DispatchSemaphore(value: 0)
+        let bound = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            rig.base.library.withSyncLock { _ in
+                holdingLibrary.signal()
+                releaseLibrary.wait()
+            }
+            releasedLibrary.signal()
+        }
+        XCTAssertEqual(holdingLibrary.wait(timeout: .now() + 5), .success)
+        DispatchQueue.global().async {
+            rig.base.library.bindGroupAccess(rig.access)
+            bound.signal()
+        }
+        let bindingResult = bound.wait(timeout: .now() + 5)
+        releaseLibrary.signal()
+        XCTAssertEqual(releasedLibrary.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(bindingResult, .success,
+            "Binding the cached access service must use its own lock rather than wait for library I/O")
+        DispatchQueue.concurrentPerform(iterations: 100) { iteration in
+            if iteration.isMultiple(of: 2) { rig.base.library.bindGroupAccess(rig.access) }
+            else { XCTAssertNotNil(rig.base.library.toggleFavorite(of: entry).savedEntry) }
+        }
+        XCTAssertEqual(try rig.base.files.read(at: rig.path), rig.bytes)
+    }
+
+    func testDeniedViewerScansPreserveFavoriteIntentUntilCanonicalIngest() throws {
+        let rig = try GroupAccessRig(role: .viewer)
+        let dirty = PromptCodec.parseFile(rig.bytes + Data("Unsynced".utf8), filename: "a.md")
+        let document = try PromptCodec.settingFavorite(false, in: dirty, filename: "a.md")
+        let bytes = Data(document.source.utf8)
+        try rig.base.files.write(bytes, at: rig.path)
+        let entry = try rig.base.library.load(at: rig.path)
+        XCTAssertNotNil(rig.base.library.toggleFavorite(of: entry).savedEntry)
+        for pass in 1...2 {
+            let state = try XCTUnwrap(rig.base.states.snapshot.value)
+            let scan = try SyncLocalScanner.scan(binding: rig.base.binding, state: state,
+                availability: .available, freshID: { SyncTestValues.personalPrompt }, mutations: rig.base.mutations)
+            XCTAssertEqual(scan.issues[RelativePath(rig.path)], .forbidden)
+            XCTAssertTrue(scan.changes.isEmpty)
+            if let preparation = scan.preparation {
+                XCTAssertTrue(preparation.edits.isEmpty)
+                XCTAssertEqual(try rig.base.journal.apply(preparation), .committed)
+            }
+            XCTAssertTrue(try rig.base.library.load(at: rig.path).favorite, "pass=\(pass)")
+            XCTAssertEqual(rig.base.states.snapshot.value?.prompts[entry.identity]?.favoriteInput,
+                SyncFavoriteInput(value: false), "A denied scan has not stripped the consumed raw key")
+            XCTAssertEqual(try rig.base.files.read(at: rig.path), bytes)
+        }
+        try rig.role(.editor)
+        let scan = try SyncLocalScanner.scan(binding: rig.base.binding, state: rig.base.states.snapshot.value,
+            availability: .available, freshID: { SyncTestValues.personalPrompt }, mutations: rig.base.mutations)
+        let preparation = try XCTUnwrap(scan.preparation)
+        XCTAssertEqual(preparation.edits.count, 1)
+        XCTAssertEqual(try rig.base.journal.apply(preparation), .committed)
+        XCTAssertTrue(try rig.base.library.load(at: rig.path).favorite)
+        XCTAssertNil(rig.base.states.snapshot.value?.prompts[entry.identity]?.favoriteInput)
+        XCTAssertEqual(try rig.base.files.read(at: rig.path), try CanonicalForm.group(bytes, filename: "a.md").bytes)
+    }
+
+    func testFolderRowsMatchCountsWhileGroupPromptAwaitsExternalMove() throws {
+        let rig = try GroupAccessRig(role: .editor)
+        try rig.base.files.move(from: rig.path, to: "Notes/group.md")
+        try rig.base.files.put("Local", at: "Notes/local.md")
+        try rig.index.rebuild()
+        let browser = LibraryBrowserModel(index: rig.index, usage: rig.base.usage, favorites: rig.base.library,
+            main: rig.main, editor: rig.model)
+        browser.selectSection(.folder("Notes"))
+        XCTAssertEqual(browser.sections.first { $0.id == .folder("Notes") }?.count, 1)
+        XCTAssertEqual(browser.rows.map(\.relativePath), ["Notes/local.md"])
+        browser.selectSection(.group(SyncTestValues.group))
+        XCTAssertEqual(browser.rows.map(\.relativePath), ["Notes/group.md"])
+    }
+
     func testNewLocalGroupFavoriteSurvivesRestartAndIngestWithoutUIByteWrites() throws {
-        for initial in [false, true] {
+        for initial in [nil, false, true] as [Bool?] {
             let rig = try GroupAccessRig(role: .editor)
             let path = "Groups/Team/new.md"
-            let document = PromptCodec.parse("---\ntitle: New\nfavorite: \(initial)\n---\nNew body", filename: "new.md")
+            let rawFavorite = initial.map { "favorite: \($0)\n" } ?? ""
+            let document = PromptCodec.parse("---\ntitle: New\n\(rawFavorite)---\nNew body", filename: "new.md")
             let entry = try rig.base.library.create(document, at: path)
-            XCTAssertEqual(entry.favorite, initial)
+            XCTAssertEqual(entry.favorite, initial ?? false)
             let bytes = try rig.base.files.read(at: path)
             let writes = rig.base.files.writeCount
             guard case .saved(let starred) = rig.base.library.toggleFavorite(of: entry) else {
                 XCTFail("A new group prompt must be favouritable while offline")
                 continue
             }
-            XCTAssertEqual(starred.favorite, !initial)
+            XCTAssertEqual(starred.favorite, !(initial ?? false))
             XCTAssertEqual(rig.base.files.writeCount, writes)
             XCTAssertEqual(try rig.base.files.read(at: path), bytes)
             let reopened = SyncStateStore(files: rig.base.data, operations: rig.base.dataOperations)
             let state = try XCTUnwrap(reopened.load(for: rig.base.binding))
             XCTAssertEqual(state.prompts[entry.identity]?.rev, 0)
             XCTAssertNil(state.prompts[entry.identity]?.canonicalHash)
-            XCTAssertEqual(state.favorites[entry.identity] == true, !initial)
+            XCTAssertEqual(state.favorites[entry.identity] == true, !(initial ?? false))
+            XCTAssertEqual(state.prompts[entry.identity]?.favoriteInput, SyncFavoriteInput(value: initial))
             let scan = try SyncLocalScanner.scan(binding: rig.base.binding, state: state,
                 availability: .available, freshID: { SyncTestValues.personalPrompt }, mutations: rig.base.mutations)
-            if let preparation = scan.preparation { XCTAssertEqual(try rig.base.journal.apply(preparation), .committed) }
-            XCTAssertEqual(rig.base.states.snapshot.value?.favorites[entry.identity] == true, !initial,
+            let preparation = try XCTUnwrap(scan.preparation, "Canonical ingest must consume the pending input")
+            XCTAssertEqual(try rig.base.journal.apply(preparation), .committed)
+            XCTAssertNil(rig.base.states.snapshot.value?.prompts[entry.identity]?.favoriteInput)
+            XCTAssertEqual(rig.base.states.snapshot.value?.favorites[entry.identity] == true, !(initial ?? false),
                 "Ingest must not undo the newer personal intent with an unchanged raw favourite key")
         }
     }
@@ -64,11 +147,13 @@ final class GroupAccessServiceTests: XCTestCase {
 
     func testAccountMetadataFailureAndResetRefreshAccessWithoutStateChange() throws {
         let rig = try GroupAccessRig(role: .editor)
+        let state = try XCTUnwrap(rig.base.states.snapshot.value)
         try rig.base.data.put("broken", at: "sync/account.json")
         XCTAssertThrowsError(try rig.accounts.loadAccount())
         XCTAssertTrue(rig.access.snapshot.isBlocked)
         XCTAssertThrowsError(try rig.base.library.create(PromptCodec.parse("Private", filename: "p.md"), at: "p.md"))
         try rig.accounts.resetAccount()
+        XCTAssertEqual(rig.base.states.snapshot.value, state)
         XCTAssertFalse(rig.access.snapshot.isBlocked)
         XCTAssertNil(try rig.base.library.loadForEditing(at: rig.path).readOnlyReason)
     }
@@ -430,7 +515,7 @@ final class GroupAccessServiceTests: XCTestCase {
         XCTAssertEqual(results.count, 1)
         XCTAssertNil(results.first?.committed)
         XCTAssertEqual(try rig.base.files.read(at: rig.path), rig.bytes)
-        XCTAssertNotEqual(rig.model.assistantSnapshot?.accessGeneration, source.accessGeneration)
+        XCTAssertNotEqual(try XCTUnwrap(rig.model.assistantSnapshot).accessGeneration, source.accessGeneration)
     }
 
     func testCommittedModeChangeRefreshesOpenDirtyEditorWithoutRewrite() throws {
@@ -475,11 +560,14 @@ final class GroupAccessServiceTests: XCTestCase {
             edits: [rig.base.mutations.trash(file)])), .committed)
         rig.settle()
         XCTAssertEqual(rig.model.state.source, dirty)
-        XCTAssertFalse(rig.model.state.conflict?.choices.contains(.keepMine) == true)
+        let conflict = try XCTUnwrap(rig.model.state.conflict)
+        XCTAssertEqual(conflict.origin, .sync)
+        XCTAssertFalse(conflict.choices.contains(.keepMine))
         rig.ui { rig.model.save() }
         rig.settle()
-        XCTAssertEqual(rig.model.state.conflict?.origin, .sync)
-        XCTAssertFalse(rig.model.state.conflict?.choices.contains(.keepMine) == true)
+        let saveConflict = try XCTUnwrap(rig.model.state.conflict)
+        XCTAssertEqual(saveConflict.origin, .sync)
+        XCTAssertFalse(saveConflict.choices.contains(.keepMine))
         rig.ui { rig.model.resolveConflict(.saveAsCopy) }
         rig.settle()
         XCTAssertTrue(try XCTUnwrap(rig.model.state.lastCopy).relativePath.string.hasPrefix("Conflicts/Personal/"))
@@ -501,6 +589,8 @@ final class GroupAccessServiceTests: XCTestCase {
         }
         rig.base.library.endSyncApply(permit)
         XCTAssertEqual(try rig.base.files.read(at: rig.path), rig.bytes)
+        XCTAssertNotNil(rig.base.library.toggleFavorite(of: entry).savedEntry,
+            "Favourite toggles must succeed after the apply fence is released")
     }
 
     func testSyncEnginePublishesRolesModesAndOverlayWithoutUpload() async throws {

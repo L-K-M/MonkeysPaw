@@ -289,7 +289,7 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         case .all: return true
         case .favourites: return row.favorite
         case .recent: return recentPaths.contains(row.relativePath)
-        case .folder(let folder): return Self.folderAncestors(row.relativePath).contains(folder)
+        case .folder(let folder): return row.access == .local && Self.folderAncestors(row.relativePath).contains(folder)
         case .tag(let tag): return row.tags.contains { FuzzyText.normalize($0) == tag }
         case .group(let id):
             if case .group(let group) = row.access { return group.id == id }

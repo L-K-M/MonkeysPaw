@@ -195,7 +195,10 @@ public final class LibraryService: PromptFavoriteEditing {
     /// history. Never reload a stale entry and then overwrite the external edit.
     public func toggleFavorite(of entry: LibraryEntry) -> PromptFavoriteOutcome {
         if accessSnapshot.access(at: entry.relativePath, identity: entry.identity) != .local {
-            return groupAccess?.toggleFavorite(of: entry) ?? .libraryFailure(.accessDenied)
+            accessLock.lock()
+            let service = groupAccess
+            accessLock.unlock()
+            return service?.toggleFavorite(of: entry) ?? .libraryFailure(.accessDenied)
         }
         do {
             let saved = try locked {
@@ -809,7 +812,9 @@ public final class LibraryService: PromptFavoriteEditing {
     }
 
     func bindGroupAccess(_ service: GroupAccessService) {
-        withSyncLock { _ in groupAccess = service }
+        accessLock.lock()
+        groupAccess = service
+        accessLock.unlock()
     }
 
     func installAccessSnapshot(_ snapshot: GroupAccessSnapshot) -> Bool {

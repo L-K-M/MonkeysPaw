@@ -175,12 +175,15 @@ enum SyncLocalScanner {
             let origin = try SyncConflictMetadata.origin(in: bytes, filename: LibraryPath.filename(file.path),
                                                         scope: location.scope.pathScope)
             let transferring = recorded.map { $0.scope != location.scope } ?? false
+            let denied = viewer && (recorded == nil || recorded?.canonicalHash?.rawValue != canonical.canonicalHash
+                || recorded?.scope != location.scope || recorded?.path != RelativePath(wire.path))
             // Keep an acknowledged baseline's scope/path/hash until Y8 commits
             // its rename/move/update. Only pending creates use the current path.
+            // Transfers and denied scans also leave the consumed raw favourite key on disk.
             let pending = try SyncPromptState(scope: recorded?.scope ?? location.scope,
                 path: recorded?.path ?? RelativePath(wire.path), rev: recorded?.rev ?? 0,
                 canonicalHash: recorded?.canonicalHash, origin: transferring ? recorded?.origin : origin,
-                lastError: recorded?.lastError, favoriteInput: transferring ? recorded?.favoriteInput : nil)
+                lastError: recorded?.lastError, favoriteInput: transferring || denied ? recorded?.favoriteInput : nil)
             if !duplicate, stateSource != identity {
                 next = try migrating(next, from: stateSource, to: identity)
             }
@@ -189,8 +192,7 @@ enum SyncLocalScanner {
                 let favorite = SyncFavoriteInput.preferred(canonical.favorite, after: recorded?.favoriteInput)
                 try next.applyGroupFavorite(favorite, for: identity)
             }
-            if viewer, recorded == nil || recorded?.canonicalHash?.rawValue != canonical.canonicalHash
-                || recorded?.scope != location.scope || recorded?.path != RelativePath(wire.path) {
+            if denied {
                 issues[localPath] = .forbidden
                 // Denial recovery must retain the original bytes before any
                 // group canonicalization can strip the user's local metadata.
