@@ -26,6 +26,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
          imports: LibraryImportViewState? = nil,
          makeAssistant: LibraryViewState.AssistantFactory? = nil,
          scheduler: MonkeysPawCore.Scheduler? = nil,
+         conflictProvider: LibraryViewState.ConflictProvider? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
@@ -34,11 +35,13 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         self.importChooser = importChooser
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
             mainThread: mainThread, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
+            conflictProvider: conflictProvider,
             revealLibrary: revealLibrary)
         super.init()
         connectImportChooser()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
         presentation.onAssistantVisibilityChange = { [weak self] in self?.updateAssistantWindowSize() }
+        presentation.onConflictVisibilityChange = { [weak self] in self?.updateAssistantWindowSize() }
         presentation.onConflictRequested = { [weak self] in
             self?.dismissedConflict = nil
             self?.updateDialog()
@@ -48,13 +51,14 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     deinit { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) } }
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
-                imports: LibraryImportViewState? = nil, makeAssistant: LibraryViewState.AssistantFactory? = nil) {
+                imports: LibraryImportViewState? = nil, makeAssistant: LibraryViewState.AssistantFactory? = nil,
+                conflictProvider: LibraryViewState.ConflictProvider? = nil) {
         guard !isTornDown else { return }
         endDialog()
         dismissedConflict = nil
         closeRequested = false
         presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available,
-            imports: imports, makeAssistant: makeAssistant)
+            imports: imports, makeAssistant: makeAssistant, conflictProvider: conflictProvider)
         connectImportChooser()
     }
 
@@ -96,6 +100,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        presentation.didHide()
         presentation.retireAssistant()
         presentation.imports?.cancelChoosing()
         endDialog()
@@ -186,7 +191,9 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     private func updateAssistantWindowSize() {
         guard let window else { return }
         let size = Limits.setupWindowSize
-        let width = CGFloat(size.width) + (presentation.isAssistantVisible ? 320 : 0)
+        var width = CGFloat(size.width)
+        if presentation.isAssistantVisible { width += 320 }
+        if presentation.conflict != nil { width += 520 }
         window.contentMinSize = NSSize(width: width, height: CGFloat(size.height))
         let current = window.contentRect(forFrameRect: window.frame).size
         if current.width < width { window.setContentSize(NSSize(width: width, height: current.height)) }
