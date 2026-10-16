@@ -215,7 +215,7 @@ final class MacSyncCompositionTests: XCTestCase {
         // ask again until a pass observes the new role.
         XCTAssertTrue(spin {
             if editor.state.readOnlyReason != nil { self.delegate.syncComposition?.sync.syncNow() }
-            return editor.state.readOnlyReason == nil
+            return editor.state.readOnlyReason == nil && editor.state.canEdit
         })
         XCTAssertEqual(editor.assistantAccess, .group(.editor))
         XCTAssertTrue(editor.state.canEdit)
@@ -572,6 +572,8 @@ final class MacSyncCompositionTests: XCTestCase {
             scheduler.after(.seconds(60)) { _ = owned; XCTFail("A retired timer must not fire") }
         }
         scheduler.tearDown()
+        // Dispatch source cancellation can release its handler after teardown returns.
+        XCTAssertTrue(spin { capture == nil }, "Cancelled timers must release their captures")
         XCTAssertNil(capture)
         scheduler.after(.zero) { XCTFail("A retired scheduler cannot admit a callback") }
         scheduler.tearDown()
