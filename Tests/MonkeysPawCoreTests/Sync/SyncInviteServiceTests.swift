@@ -163,6 +163,52 @@ final class SyncInviteServiceTests: XCTestCase {
         }
     }
 
+    func testMalformedRequestHasEndpointSpecificAcceptanceIssue() async throws {
+        let cases: [(InviteAcceptance, InviteIssue, String)] = [
+            (.existingAccount, .unavailableInvite, "/paw/api/v1/groups/join"),
+            (.newAccount, .account(.invalidInput), "/paw/api/v1/auth/register")
+        ]
+        for (mode, expected, path) in cases {
+            let rig = try SyncInviteRig()
+            if case .existingAccount = mode { try await rig.login() }
+            let staged = try rig.invites.stage(rig.link.text)
+            let previous = rig.account.snapshot
+            let requestsBefore = rig.sync.transport.requests.count
+            let normal = rig.sync.transport.handler
+            rig.sync.transport.handler = { index, request in
+                if request.url.path == path { return try SyncServiceRig.failure(.malformedRequest) }
+                return try await normal(index, request)
+            }
+            var password = rig.password
+            do {
+                _ = try await rig.invites.accept(staged, as: mode, username: "person", password: &password, deviceName: "Desktop")
+                XCTFail("Expected acceptance refusal for \(mode)")
+            } catch {
+                XCTAssertEqual(error as? InviteIssue, expected, "Unexpected issue for \(mode)")
+            }
+            XCTAssertTrue(password.isEmpty, "Password input was not consumed")
+            XCTAssertEqual(rig.sync.transport.requests.dropFirst(requestsBefore).map { $0.url.path }, [path])
+            XCTAssertEqual(rig.account.snapshot.account, previous.account)
+            XCTAssertEqual(rig.account.snapshot.enabled, previous.enabled)
+            try rig.assertNoInvitePersistence()
+        }
+    }
+
+    func testCreationMalformedRequestPreservesAccountIssue() async throws {
+        let rig = try SyncInviteRig()
+        try await rig.login()
+        let normal = rig.sync.transport.handler
+        rig.sync.transport.handler = { index, request in
+            if request.url.path.hasSuffix("/invites") { return try SyncServiceRig.failure(.malformedRequest) }
+            return try await normal(index, request)
+        }
+        await assertIssue(.account(.invalidInput)) {
+            try await rig.invites.create(groupID: SyncTestValues.group, role: .viewer)
+        }
+        XCTAssertTrue(rig.clipboard.writes.isEmpty)
+        try rig.assertNoInvitePersistence()
+    }
+
     func testRefreshFailureReportsAcceptedAndClearsStaleMemberships() async throws {
         let rig = try SyncInviteRig()
         try await rig.login()

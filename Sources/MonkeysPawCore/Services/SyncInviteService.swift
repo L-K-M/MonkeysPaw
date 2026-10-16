@@ -59,6 +59,9 @@ public final class SyncInviteService: CustomStringConvertible, CustomDebugString
         } catch let error as SyncInviteRegistrationFailure {
             return SyncInviteAcceptance(snapshot: account.snapshot,
                 issue: .registrationIncomplete(AccountIssue(error.failure.issue)), cleanup: error.failure.cleanup)
+        } catch let error as SyncAccountServiceError where mode == .existingAccount && error.issue == .http(.malformedRequest) {
+            // Registration also returns 400 for a taken username.
+            throw InviteIssue.unavailableInvite
         } catch { throw Self.issue(error) }
     }
 
@@ -81,7 +84,6 @@ public final class SyncInviteService: CustomStringConvertible, CustomDebugString
     private static func issue(_ error: Error) -> InviteIssue {
         if let issue = error as? InviteIssue { return issue }
         if let failure = error as? SyncAccountServiceError {
-            if case .http(.malformedRequest) = failure.issue { return .unavailableInvite }
             return .account(AccountIssue(failure.issue))
         }
         return .account(.invalidResponse)
