@@ -29,7 +29,7 @@ internal class EditorScreenBoundaryTest {
         for (intent in listOf("onEdit", "onSave", "onRename", "onMove", "onDelete", "onRestore", "onDecision", "onConflict")) {
             assertTrue(screen.contains(intent), intent)
         }
-        assertTrue(screen.contains("EditorSourceField(state.source, state.relativePath, state.quoteSelection, state.canEdit, onEdit, onClearQuote)"))
+        assertTrue(screen.contains("EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)"))
         val field = packageRoot.resolve("ui/editor/EditorSourceField.kt").readText()
         assertTrue(field.contains("readOnly = !editable"))
         assertTrue(field.contains("editorSourceValue(field, source, quote)"))

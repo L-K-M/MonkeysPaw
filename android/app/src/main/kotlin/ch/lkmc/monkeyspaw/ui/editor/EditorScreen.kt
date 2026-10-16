@@ -87,7 +87,7 @@ internal fun EditorScreen(
             EditorTab.EDIT -> {
                 item {
                     if (state.source == null) Text(stringResource(R.string.editor_source_unavailable))
-                    else EditorSourceField(state.source, state.relativePath, state.quoteSelection, state.canEdit, onEdit, onClearQuote)
+                    else EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)
                     if (state.validating) Text(stringResource(R.string.editor_validating))
                 }
                 items(state.issues) { issue ->

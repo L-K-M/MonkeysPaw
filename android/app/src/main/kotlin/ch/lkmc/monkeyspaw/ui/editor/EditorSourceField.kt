@@ -14,9 +14,9 @@ import ch.lkmc.monkeyspaw.R
 
 /** Native cursor/composition state only; the model owns the raw buffer and checked quote range. */
 @Composable
-internal fun EditorSourceField(source: String, path: String?, quote: ReviewQuoteSelection?, editable: Boolean,
+internal fun EditorSourceField(source: String, quote: ReviewQuoteSelection?, editable: Boolean,
     onEdit: (String) -> Unit, onClearQuote: () -> Unit) {
-    var field by remember(path) { mutableStateOf(TextFieldValue(source)) }
+    var field by rememberEditorSourceField(source)
     val focus = remember { FocusRequester() }
     LaunchedEffect(quote) { if (quote != null) focus.requestFocus() }
     OutlinedTextField(value = editorSourceValue(field, source, quote),
@@ -27,6 +27,10 @@ internal fun EditorSourceField(source: String, path: String?, quote: ReviewQuote
         }, readOnly = !editable, label = { Text(stringResource(R.string.editor_source)) }, minLines = 12,
         modifier = Modifier.fillMaxWidth().focusRequester(focus))
 }
+
+@Composable
+internal fun rememberEditorSourceField(source: String): MutableState<TextFieldValue> =
+    remember { mutableStateOf(TextFieldValue(source)) }
 
 internal fun editorSourceValue(field: TextFieldValue, source: String, quote: ReviewQuoteSelection?): TextFieldValue {
     val selection = quote?.let { TextRange(it.start, it.endExclusive) }

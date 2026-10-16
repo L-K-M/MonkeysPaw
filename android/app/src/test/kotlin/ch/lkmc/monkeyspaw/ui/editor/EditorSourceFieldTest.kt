@@ -1,10 +1,53 @@
 package ch.lkmc.monkeyspaw.ui.editor
 
+import androidx.compose.runtime.*
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.*
 
 internal class EditorSourceFieldTest {
+    @Test fun `editing the new file path retains source cursor and composition`() {
+        val document = mutableStateOf(EditorUiState(relativePath = "Untitled.md", source = "A composing body", isNew = true))
+        val recomposer = Recomposer(EmptyCoroutineContext)
+        val composition = Composition(object : AbstractApplier<Unit>(Unit) {
+            override fun insertTopDown(index: Int, instance: Unit) = Unit
+            override fun insertBottomUp(index: Int, instance: Unit) = Unit
+            override fun remove(index: Int, count: Int) = Unit
+            override fun move(from: Int, to: Int, count: Int) = Unit
+            override fun onClear() = Unit
+        }, recomposer)
+        lateinit var field: MutableState<TextFieldValue>
+        lateinit var rendered: TextFieldValue
+        fun render() {
+            composition.setContent {
+                val current = document.value
+                field = rememberEditorSourceField(current.source!!)
+                rendered = editorSourceValue(field.value, current.source, null)
+            }
+        }
+        try {
+            render()
+            val editing = TextFieldValue(document.value.source!!, TextRange(8), TextRange(2, 11))
+            field.value = editing
+            render()
+            assertEquals(editing, rendered)
+
+            document.value = document.value.copy(relativePath = "Corrected.md")
+            render()
+            assertEquals(editing, rendered)
+
+            document.value = document.value.copy(source = "Other document")
+            render()
+            assertEquals("Other document", rendered.text)
+            assertEquals(TextRange.Zero, rendered.selection)
+            assertNull(rendered.composition)
+        } finally {
+            composition.dispose()
+            recomposer.close()
+        }
+    }
+
     @Test fun `external replacement clears composition owned by the previous text`() {
         val field = TextFieldValue("Old composing text", TextRange(8), TextRange(4, 13))
         for (source in listOf("New replacement text", "Short", "")) {
