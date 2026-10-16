@@ -1145,6 +1145,65 @@ final class SyncApplyJournalTests: XCTestCase {
         }
     }
 
+    func testBindingMismatchBlocksUncertainStateRecoveryBeforeAcknowledgement() throws {
+        for flush in ["file:sync/state.json", "directory:sync", "directory:/"] {
+            let rig = try SyncApplyTestRig()
+            let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
+            let journal = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                mutations: rig.mutations, states: rig.states, accounts: accounts)
+            let owned = try SyncLibraryBinding(root: rig.binding.root, owner: rig.binding.account)
+            let statePlan = try rig.plan([rig.replacement()])
+            let plan = SyncApplyPlan(expectedState: statePlan.expectedState, nextState: statePlan.nextState,
+                edits: statePlan.edits, bindingChange: SyncBindingChange(expected: nil, next: owned))
+            var writingState = false
+            rig.data.onWrite = { if $0 == "sync/state.json" { writingState = true } }
+            rig.dataOperations.onOperation = { operation in
+                if writingState, operation == flush {
+                    rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+                }
+            }
+            XCTAssertThrowsError(try journal.apply(plan), flush) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain, flush)
+            }
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, flush)
+            XCTAssertEqual(rig.states.snapshot.error, .durabilityUncertain, flush)
+            XCTAssertEqual(try accounts.binding(for: owned.root), owned, flush)
+            rig.data.onWrite = nil
+            rig.dataOperations.onOperation = nil
+            rig.dataOperations.failOperationNumber = nil
+
+            // Ownership may change on disk while the state publication awaits recovery.
+            let bindingBytes = try rig.data.read(at: "sync/binding.json")
+            let unexpected = try SyncLibraryBinding(root: owned.root,
+                owner: SyncTestValues.account(userID: SyncTestValues.otherUser))
+            try SyncTestValues.write(["version": Limits.syncBindingVersion,
+                "libraries": [try SyncTestValues.object(unexpected)]], to: rig.data, path: "sync/binding.json")
+            let journalBytes = try rig.data.read(at: "sync/apply.json")
+            let stateBytes = try rig.data.read(at: "sync/state.json")
+            let operations = rig.dataOperations.operationCount
+            XCTAssertThrowsError(try journal.replay(), flush) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, flush)
+            }
+            XCTAssertEqual(rig.dataOperations.operationCount, operations, flush)
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, flush)
+            XCTAssertEqual(rig.states.snapshot.error, .durabilityUncertain, flush)
+            XCTAssertEqual(try rig.data.read(at: "sync/state.json"), stateBytes, flush)
+            XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), journalBytes, flush)
+            XCTAssertEqual(journal.pending?.id, plan.id, flush)
+            XCTAssertThrowsError(try rig.library.entries(), flush) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, flush)
+            }
+
+            try rig.data.writePrivate(bindingBytes, at: "sync/binding.json")
+            XCTAssertEqual(try journal.replay(), .committed, flush)
+            XCTAssertEqual(try journal.replay(), .committed, flush)
+            XCTAssertEqual(rig.states.snapshot.value, plan.nextState, flush)
+            XCTAssertNil(rig.states.snapshot.error, flush)
+            XCTAssertNil(journal.pending, flush)
+            XCTAssertNoThrow(try rig.library.entries(), flush)
+        }
+    }
+
     func testBindingWriteFailureReplaysOnTheSameGraphBeforeStateAcknowledgement() throws {
         let rig = try SyncApplyTestRig()
         let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
