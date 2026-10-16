@@ -568,8 +568,10 @@ final class LibraryViewState: ObservableObject {
             && state.status != .loading && state.status != .saving && state.status != .commandRunning
     }
 
+    var canStartScopeDrag: Bool { scopeDragReady && !isScopeDropPending }
+
     func canDragScopeRow(_ selection: LibraryPromptSelection) -> Bool {
-        scopeDragReady && !isScopeDropPending
+        canStartScopeDrag
             && model.rows.contains { $0.selection == selection && !$0.isReadOnly }
     }
 

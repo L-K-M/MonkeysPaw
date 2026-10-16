@@ -182,7 +182,7 @@ struct LibraryView: View {
     private func promptRow(_ row: LibraryBrowserRow) -> some View {
         let epoch = presentation.scopeDragEpoch
         let content = LibraryRowView(row: row, showsLastUse: presentation.snapshot.selectedSection == .recent)
-        if presentation.canDragScopeRow(row.selection) {
+        if presentation.canStartScopeDrag && !row.isReadOnly {
             content.onDrag { presentation.scopeDragProvider(for: row.selection, epoch: epoch) ?? NSItemProvider() }
         } else { content }
     }
