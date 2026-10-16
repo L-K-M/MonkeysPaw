@@ -33,7 +33,8 @@ final class SettingsViewState: ObservableObject {
          rememberedValues: RememberedValuesSettingsModel,
          delivery: DeliverySettingsModel, updates: UpdateSettingsModel,
          mainThread: MainThread, openSetup: @escaping () -> Void,
-         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {}) {
+         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {},
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         generalModel = general
         shortcutsModel = shortcuts
         rememberedValuesModel = rememberedValues
@@ -41,7 +42,8 @@ final class SettingsViewState: ObservableObject {
         self.openSetup = openSetup
         self.delivery = DeliverySettingsViewState(model: delivery, mainThread: mainThread)
         self.updates = UpdateSettingsViewState(model: updates, mainThread: mainThread)
-        account = AccountSettingsViewState(mainThread: mainThread, makeModel: makeAccount, onOpen: onAccountOpen)
+        account = AccountSettingsViewState(mainThread: mainThread, makeModel: makeAccount,
+            onOpen: onAccountOpen, makeGroups: makeGroups)
         self.general = general.state
         togglePicker = shortcuts.togglePicker
         repeatLast = shortcuts.repeatLast

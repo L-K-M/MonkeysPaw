@@ -32,12 +32,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
          makeAssistant: @escaping () -> AssistantSettingsModel,
          onProviderChange: @escaping () -> Void = {},
-         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {}) {
+         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {},
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          delivery: delivery, updates: updates,
                                          mainThread: mainThread, openSetup: openSetup,
-                                         makeAccount: makeAccount, onAccountOpen: onAccountOpen)
+                                         makeAccount: makeAccount, onAccountOpen: onAccountOpen,
+                                         makeGroups: makeGroups)
         self.mainThread = mainThread
         self.activation = activation
         self.folderChooser = folderChooser
