@@ -117,19 +117,14 @@ internal class ImeBoundaryTest {
     private interface InheritedSecret : ch.lkmc.monkeyspaw.core.ports.SecretStore
 
     private fun graphClosure(vararg roots: Class<*>): Set<Class<*>> {
-        val providers = AppModule::class.java.declaredMethods.associateBy { it.returnType }
+        val providers = AppModule::class.java.declaredMethods
+            .filter { it.getAnnotation(dagger.Provides::class.java) != null }.associateBy { it.returnType }
         val module = app.resolve("di/AppModule.kt").readText()
         val providerBodies = module.split("    @Provides").drop(1).associate { block ->
             Regex("fun (\\w+)\\(").find(block)!!.groupValues[1] to block
         }
         val reached = mutableSetOf<Class<*>>()
         val validatedSources = mutableSetOf<String>()
-        val classSources = (app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }
-            .flatMap { file ->
-                val source = file.readText()
-                val pkg = Regex("(?m)^package (\\S+)").find(source)!!.groupValues[1]
-                Regex("\\b(?:class|interface|object) (\\w+)").findAll(source).map { "$pkg.${it.groupValues[1]}" to source }
-            }.groupBy({ it.first }, { it.second })
         fun visit(type: Class<*>) {
             if (!reached.add(type)) return
             assertFalse(forbidden.containsMatchIn(type.simpleName), type.simpleName)
@@ -142,7 +137,7 @@ internal class ImeBoundaryTest {
             type.superclass?.let(::visit)
             type.interfaces.forEach(::visit)
             if (!type.name.startsWith("ch.lkmc.monkeyspaw.")) return
-            classSources[type.name.substringBefore('$')]?.forEach { validateGraphSource(it, visited = validatedSources) }
+            helperSources[type.name.substringBefore('$')]?.forEach { validateGraphSource(it, visited = validatedSources) }
             type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .forEach { visit(it.type) }
         }
@@ -240,6 +235,12 @@ internal class ImeBoundaryTest {
     @Test fun `type traversal preserves local values while following their private helpers`() {
         val helpers = indexSources(sequenceOf("package other\nclass Local\nclass Remote { fun run() = OkHttpClient() }"))
         validateGraphSource("package local\nimport other.Local\nfun work() = Local()", helpers)
+        val sharedImports = indexSources(sequenceOf("package other\nimport ch.lkmc.monkeyspaw.core.ports.HttpTransport as Network\n" +
+            "class Value(val count: Long)\nclass Client(val transport: Network)"))
+        validateGraphSource("package other\nfun work() = Value(0)", sharedImports)
+        assertFailsWith<AssertionError> {
+            validateGraphSource("package other\nfun work() = Client(transport)", sharedImports)
+        }
         assertFailsWith<AssertionError> {
             validateGraphSource("package local\nimport other.Remote\nfun work() = Remote()", helpers)
         }
@@ -274,7 +275,7 @@ internal class ImeBoundaryTest {
         val application = app.resolve("MonkeysPawApplication.kt").readText()
         validateLocal(application)
         assertTrue(application.contains("scope.launch { library.refresh() }"))
-        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope"),
+        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope", "workerFactory: Lazy<WorkerFactory>"),
             Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
         val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }").trim()
         assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
@@ -323,8 +324,15 @@ internal class ImeBoundaryTest {
     }
 
     private fun validateLocal(source: String, allowedReferences: Set<String> = emptySet()) {
-        val violation = forbidden.findAll(source).firstOrNull { it.value !in allowedReferences }
-        assertNull(violation, violation?.value)
+        val imports = Regex("(?m)^import ([\\w.*]+)(?: as (\\w+))?")
+        val body = source.replace(imports, "")
+        val usedImports = imports.findAll(source).filter { match ->
+            val name = match.groupValues[2].ifEmpty { match.groupValues[1].substringAfterLast('.') }
+            Regex("\\b${Regex.escape(name)}\\b").containsMatchIn(body)
+        }.joinToString("\n") { it.value }
+        val violation = forbidden.findAll(body + "\n" + usedImports).firstOrNull { it.value !in allowedReferences }
+        val declaration = Regex("\\b(?:class|interface|object|fun)\\s+\\w+").find(source)?.value
+        assertNull(violation, "${violation?.value} in $declaration")
     }
 
     private fun validateGraphSource(source: String, helpers: Map<String, List<String>> = helperSources,

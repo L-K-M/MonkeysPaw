@@ -892,6 +892,14 @@ the slice handoff; the main CI and owner rows above remain NOT RUN until
 actual evidence is recorded.
 ## Android sync scheduling (M10 Z20): NOT RUN
 
+WorkManager adds WAKE_LOCK, ACCESS_NETWORK_STATE, RECEIVE_BOOT_COMPLETED and
+FOREGROUND_SERVICE to the merged manifest's existing INTERNET permission.
+The merged-manifest gate pins those five permissions and the exact WorkManager
+and Room components, including system-protected exported components. Its
+default initializer remains removed alongside OkHttp and ProfileInstaller;
+component-only launch still performs local recovery without scheduling sync.
+This extends the permission baseline recorded for the earlier N8-only build.
+
 JVM policy and repository tests establish generation/due admission, coalescing,
 bounded retry and cancellation. They do not establish OS job timing. WorkManager's
 15-minute periodic interval is a minimum: network constraints, Doze, standby and

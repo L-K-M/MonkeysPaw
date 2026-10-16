@@ -85,6 +85,18 @@ internal class AppGraphTest {
         assertTrue(initialize >= 0 && initialize < provider.indexOf("OkHttpHttpTransport("))
     }
 
+    @Test fun `all production HTTP clients use the initialized provider including cold workers`() {
+        val kotlin = sources.resolve("kotlin")
+        val files = kotlin.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        val client = Regex("\\bOkHttpClient(?:\\.Builder)?\\s*\\(")
+        val transport = Regex("\\bOkHttpHttpTransport\\s*\\(")
+        assertEquals(listOf("ch/lkmc/monkeyspaw/data/OkHttpHttpTransport.kt"),
+            files.filter { client.containsMatchIn(it.readText()) }.map { it.relativeTo(kotlin).invariantSeparatorsPath })
+        assertEquals(listOf("ch/lkmc/monkeyspaw/di/AppModule.kt"), files.filter {
+            it.name != "OkHttpHttpTransport.kt" && transport.containsMatchIn(it.readText())
+        }.map { it.relativeTo(kotlin).invariantSeparatorsPath })
+    }
+
     @Test fun `profile installation is requested only by launcher startup through a data driver`() {
         val driver = sources.resolve("kotlin/ch/lkmc/monkeyspaw/data/ForegroundProfileInstaller.kt")
         assertTrue(driver.isFile)

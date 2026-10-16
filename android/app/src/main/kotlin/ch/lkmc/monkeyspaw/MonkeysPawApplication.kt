@@ -21,9 +21,9 @@ class MonkeysPawApplication : Application(), Configuration.Provider {
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory.get()).build()
 
+    // Local journals recover before index reads. Authentication requires an explicit entry intent.
     override fun onCreate() {
         super.onCreate()
-        // The repository recovers local journals before this read. Authentication is an explicit entry intent.
         scope.launch { library.refresh() }
     }
 }
