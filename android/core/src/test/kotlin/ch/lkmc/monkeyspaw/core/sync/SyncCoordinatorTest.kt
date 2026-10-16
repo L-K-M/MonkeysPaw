@@ -528,6 +528,25 @@ class SyncCoordinatorTest {
         assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
     }
 
+    @Test fun unchangedOrphanPreparationDoesNotPublishJournals() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        var drifted = false
+        val publications = mutableListOf<String>()
+        h.data.onWrite = { if (drifted) publications.add(it) }
+        assertFailsWith<SyncCoordinatorError.NoProgress> {
+            coordinator(h).run(phase = { phase ->
+                if (phase == SyncPhase.SCANNING && !drifted) {
+                    h.rig.libraryOperations.renameDirectory("Groups/Team", "Groups/team")
+                    drifted = true
+                }
+            })
+        }
+        assertTrue(drifted)
+        assertTrue(publications.isEmpty(), "An unchanged stale-folder plan must not publish a journal or state")
+        assertNotNull(h.files.stamp("Groups/team/a.md"))
+    }
+
     @Test fun requiredSnapshotRecollectionIsBoundedWithoutAnyStatePublication() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
         h.states.update(h.binding) { SyncState(h.binding, v.uuid, mapOf(v.userScope to "0")) }

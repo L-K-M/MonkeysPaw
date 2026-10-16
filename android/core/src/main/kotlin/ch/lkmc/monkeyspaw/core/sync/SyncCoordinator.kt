@@ -263,7 +263,8 @@ internal class SyncCoordinator(
             val local = scan(state)
             if (local.orphanFiles.isNotEmpty()) {
                 phase(SyncPhase.GROUP_FOLDERS)
-                commit(SyncGroupFolders.stale(state, ownership(), inventory(local.snapshot), date(), freshID, mutations))
+                val stale = SyncGroupFolders.stale(state, ownership(), inventory(local.snapshot), date(), freshID, mutations)
+                if (changed(stale)) commit(stale)
             } else if (local.preparation != null) commit(local.preparation)
             else {
                 val denied = local.issues.keys.sortedWith(::comparePaths).firstOrNull { local.issues[it] == SyncIssueCode.Forbidden }
