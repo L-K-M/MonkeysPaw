@@ -106,18 +106,59 @@ class FlatpakWorkflowTests(unittest.TestCase):
                         file.write_bytes(data)
 
 
+class VisibleWindowTests(unittest.TestCase):
+    def window(self, identifier, *, title="Monkey's Paw", classes=(smoke.APP_ID, "Ch.lkmc.monkeyspaw"),
+               map_state=2):
+        return SimpleNamespace(id=identifier, get_wm_name=lambda: title, get_wm_class=lambda: classes,
+                               get_attributes=lambda: SimpleNamespace(map_state=map_state))
+
+    def visible(self, windows, title="Monkey's Paw"):
+        class BadWindow(Exception):
+            pass
+
+        display = SimpleNamespace(screen=lambda: SimpleNamespace(root=SimpleNamespace(
+            query_tree=lambda: SimpleNamespace(children=windows))), close=lambda: None)
+        with patch.dict("sys.modules", {"Xlib": SimpleNamespace(X=SimpleNamespace(IsViewable=2)),
+                                        "Xlib.display": SimpleNamespace(Display=lambda: display),
+                                        "Xlib.error": SimpleNamespace(BadWindow=BadWindow)}):
+            return smoke.visible_windows(title)
+
+    def test_requires_mapped_app_class_and_exact_title(self):
+        windows = [self.window(1), self.window(2, classes=("other", "Other")),
+                   self.window(3, title="Repeat last"), self.window(4, map_state=0),
+                   self.window(5, classes=None), self.window(6, title=None),
+                   self.window(7, map_state=1)]
+        self.assertEqual(self.visible(windows), [1])
+        self.assertEqual(self.visible(windows, "Repeat last"), [3])
+        self.assertEqual(self.visible(windows, "Settings"), [])
+
+    def test_accepts_the_app_identity_in_either_wm_class_field(self):
+        windows = [self.window(1, classes=(smoke.APP_ID, "Other")),
+                   self.window(2, classes=("other", "Ch.lkmc.monkeyspaw"))]
+        self.assertEqual(self.visible(windows), [1, 2])
+
+    def test_a_retired_window_does_not_hide_other_matches(self):
+        def retired():
+            from Xlib.error import BadWindow
+            raise BadWindow()
+
+        window = self.window(1)
+        window.get_attributes = retired
+        self.assertEqual(self.visible([window, self.window(2)]), [2])
+
+
 class RepeatProofComplete(Exception):
     """Stop main after the action proof, before invite setup."""
 
 
 class RepeatProofTests(unittest.TestCase):
     def run_proof(self, *, resident_noop=False, dismiss_noop=False, replace_owner=False,
-                  instances=1):
+                  instances=1, toggle_noop=False):
         state = {"owner": None, "picker": False, "result": False, "repeats": 0}
 
         def action(name):
             state["owner"] = state["owner"] or ":1.42"
-            if name == "toggle":
+            if name == "toggle" and not toggle_noop:
                 state["picker"] = not state["picker"]
             elif name == "repeat":
                 state["repeats"] += 1
@@ -143,11 +184,12 @@ class RepeatProofTests(unittest.TestCase):
             if args[:2] == ("flatpak", "ps"):
                 count = instances if state["repeats"] == 2 else 1
                 return "\n".join([smoke.APP_ID] * count)
-            if args[:2] == ("xdotool", "search"):
-                if args[-1] == "^Repeat last$":
-                    return "456" if state["result"] else ""
-                return "123" if state["picker"] else ""
             return ""
+
+        def visible_windows(title):
+            if title == "Repeat last":
+                return [456] if state["result"] else []
+            return [123] if state["picker"] else []
 
         result = SimpleNamespace(name="Nothing to repeat",
                                  getState=lambda: SimpleNamespace(contains=lambda _: state["result"]))
@@ -162,6 +204,7 @@ class RepeatProofTests(unittest.TestCase):
                                         "Xlib.protocol.event": SimpleNamespace(ClientMessage=lambda **event: event)}),
               patch.dict(os.environ, DISPLAY=":99", DBUS_SESSION_BUS_ADDRESS="test"),
               patch.object(smoke, "command", side_effect=command),
+              patch.object(smoke, "visible_windows", side_effect=visible_windows),
               patch.object(smoke, "action", side_effect=action),
               patch.object(smoke, "owner", side_effect=lambda: state["owner"]),
               patch.object(smoke, "stop", side_effect=stop),
@@ -175,6 +218,10 @@ class RepeatProofTests(unittest.TestCase):
     def test_cold_then_resident_repeat_reopens_the_dismissed_result(self):
         with self.assertRaises(RepeatProofComplete):
             self.run_proof()
+
+    def test_noop_cold_toggle_fails_without_a_mapped_picker(self):
+        with self.assertRaisesRegex(RuntimeError, "Cold toggle did not show the picker"):
+            self.run_proof(toggle_noop=True)
 
     def test_noop_resident_repeat_fails(self):
         with self.assertRaisesRegex(RuntimeError, "Resident repeat did not show"):

@@ -2,7 +2,7 @@
 """Exercise installed GApplication exports under a disposable bus and display.
 
 Needs python3-pyatspi, python3-xlib and at-spi2-core. No product test hook or invite parser:
-read the existing GTK accessibility tree and record loopback HTTP requests.
+observe mapped X11 windows, read the GTK accessibility tree and record loopback HTTP requests.
 Never print subprocess arguments, invite input or accessibility tree contents.
 """
 
@@ -71,6 +71,27 @@ def singleton(expected):
         raise RuntimeError("Expected exactly one installed application instance")
 
 
+def visible_windows(title):
+    from Xlib import X
+    from Xlib.display import Display
+    from Xlib.error import BadWindow
+
+    # Xvfb has no window manager: app toplevels are direct root children.
+    # Match class and title independently; xdotool search accepts only one pattern.
+    with closing(Display()) as display:
+        matches = []
+        for window in display.screen().root.query_tree().children:
+            try:
+                if (window.get_attributes().map_state == X.IsViewable
+                        and any(value.lower() == APP_ID for value in (window.get_wm_class() or ()))
+                        and window.get_wm_name() == title):
+                    matches.append(window.id)
+            except BadWindow:
+                # A window may close between enumeration and property reads.
+                continue
+        return matches
+
+
 def descendants(node):
     yield node
     for child in node:
@@ -119,8 +140,7 @@ def main():
         return any(node.name == label and node.getState().contains(pyatspi.STATE_SHOWING) for node in nodes())
 
     def repeat_windows():
-        return command("xdotool", "search", "--onlyvisible", "--all", "--class",
-                       "^ch[.]lkmc[.]monkeyspaw$", "--name", "^Repeat last$", allowed=(0, 1)).splitlines()
+        return visible_windows("Repeat last")
 
     def dismiss_repeat_result():
         windows = repeat_windows()
@@ -136,17 +156,15 @@ def main():
         return True
 
     def picker_visible():
-        return bool(command("xdotool", "search", "--onlyvisible", "--all", "--class",
-                            "^ch[.]lkmc[.]monkeyspaw$", "--name", "^Monkey's Paw$", allowed=(0, 1)))
+        return bool(visible_windows("Monkey's Paw"))
 
     def show_review():
-        windows = command("xdotool", "search", "--onlyvisible", "--all", "--class",
-                          "^ch[.]lkmc[.]monkeyspaw$", "--name", "^Settings$", allowed=(0, 1)).splitlines()
+        windows = visible_windows("Settings")
         if len(windows) != 1:
             return False
         # Account's invite form is below its login form; keep both in view on
         # the tall Xvfb screen, without clicking or typing into either form.
-        command("xdotool", "windowsize", windows[0], "1000", "2200")
+        command("xdotool", "windowsize", str(windows[0]), "1000", "2200")
         return True
 
     class Recorder(BaseHTTPRequestHandler):
