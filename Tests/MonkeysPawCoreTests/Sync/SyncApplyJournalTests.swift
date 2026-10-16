@@ -1015,6 +1015,220 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertEqual(restarted.libraryOperations.modes["Groups/Team/a.md"], .readOnly)
     }
 
+    func testEveryOwnershipCommitFlushFailureRecoversOnTheSameGraphBeforeStateAcknowledgement() throws {
+        for flush in ["file:sync/binding.json", "directory:sync", "directory:/"] {
+            let rig = try SyncApplyTestRig()
+            let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
+            let journal = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                mutations: rig.mutations, states: rig.states, accounts: accounts)
+            let hold = try SyncHeldPrompt(identity: .assigned(SyncTestValues.personalPrompt), path: "private.md",
+                sourceAccount: rig.binding.account, contentHash: SyncHash(bytes: Data("held".utf8)))
+            let owned = try SyncLibraryBinding(root: rig.binding.root, owner: rig.binding.account, holds: [hold])
+            let statePlan = try rig.plan([])
+            let plan = SyncApplyPlan(expectedState: statePlan.expectedState, nextState: statePlan.nextState,
+                edits: [], bindingChange: SyncBindingChange(expected: nil, next: owned))
+            var committing = false
+            rig.data.onWrite = { if $0 == "sync/binding.json" { committing = true } }
+            rig.dataOperations.onOperation = { operation in
+                if committing, operation == flush {
+                    rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+                }
+            }
+            XCTAssertThrowsError(try journal.apply(plan), flush) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain, flush)
+            }
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, flush)
+            XCTAssertFalse(rig.dataOperations.flushedFiles.contains("sync/state.json"), flush)
+            XCTAssertEqual(accounts.readOnlyError, .durabilityUncertain, flush)
+            XCTAssertThrowsError(try accounts.binding(for: owned.root), flush) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain, flush)
+            }
+            XCTAssertThrowsError(try rig.library.entries(), flush) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, flush)
+            }
+            var recoveryOperations: [String] = []
+            var operationsBeforeBindingWrite: Int?
+            rig.dataOperations.onOperation = { recoveryOperations.append($0) }
+            rig.data.onWrite = { path in
+                if path == "sync/binding.json" { operationsBeforeBindingWrite = recoveryOperations.count }
+            }
+            rig.dataOperations.failOperationNumber = nil
+            do {
+                let outcome = try journal.replay()
+                XCTAssertEqual(outcome, .committed, flush)
+                XCTAssertEqual(try journal.replay(), .committed, flush)
+                XCTAssertEqual(Array(recoveryOperations.prefix(3)),
+                    ["file:sync/binding.json", "directory:sync", "directory:/"], flush)
+                XCTAssertEqual(operationsBeforeBindingWrite, 3, flush)
+                XCTAssertEqual(try accounts.binding(for: owned.root), owned, flush)
+                XCTAssertEqual(rig.states.snapshot.value, plan.nextState, flush)
+                XCTAssertNil(journal.pending, flush)
+                XCTAssertNoThrow(try rig.library.entries(), flush)
+            } catch { XCTFail("Same-graph replay failed at \(flush): \(error)") }
+        }
+    }
+
+    func testUncertainBindingRecoveryRejectsOtherBindingsBeforeFlushAndKeepsTheLatch() throws {
+        for mismatch in ["owner", "holds", "folders", "missing root"] {
+            let rig = try SyncApplyTestRig()
+            let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
+            let journal = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                mutations: rig.mutations, states: rig.states, accounts: accounts)
+            let hold = try SyncHeldPrompt(identity: .assigned(SyncTestValues.personalPrompt), path: "private.md",
+                sourceAccount: rig.binding.account, contentHash: SyncHash(bytes: Data("held".utf8)))
+            let expected = try SyncLibraryBinding(root: rig.binding.root, owner: rig.binding.account, holds: [hold])
+            let otherRoot = try SyncLibraryBinding(root: SyncLibraryRoot("/other"),
+                owner: SyncTestValues.account(userID: SyncTestValues.otherUser))
+            try accounts.updateBinding(for: expected.root) { _ in expected }
+            try accounts.updateBinding(for: otherRoot.root) { _ in otherRoot }
+            let expectedBytes = try rig.data.read(at: "sync/binding.json")
+            var intended = expected
+            intended.managedFolders[SyncTestValues.group] = try SyncManagedFolder(owner: expected.owner, folder: "Team")
+            let statePlan = try rig.plan([])
+            let plan = SyncApplyPlan(expectedState: statePlan.expectedState, nextState: statePlan.nextState,
+                edits: [], bindingChange: SyncBindingChange(expected: expected, next: intended))
+            rig.dataOperations.onOperation = { operation in
+                if operation == "file:sync/binding.json" {
+                    rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+                }
+            }
+            XCTAssertThrowsError(try journal.apply(plan), mismatch) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain, mismatch)
+            }
+            rig.dataOperations.onOperation = nil
+            rig.dataOperations.failOperationNumber = nil
+            var unexpected = intended
+            switch mismatch {
+            case "owner": unexpected.owner = try SyncTestValues.account(userID: SyncTestValues.otherUser)
+            case "holds": unexpected.holds = []
+            case "folders":
+                unexpected.managedFolders[SyncTestValues.group] = try SyncManagedFolder(owner: expected.owner, folder: "Other")
+            default: break
+            }
+            let libraries = mismatch == "missing root" ? [otherRoot] : [unexpected, otherRoot]
+            try SyncTestValues.write(["version": Limits.syncBindingVersion,
+                "libraries": try libraries.map { try SyncTestValues.object($0) }], to: rig.data, path: "sync/binding.json")
+            let bindingBytes = try rig.data.read(at: "sync/binding.json")
+            let journalBytes = try rig.data.read(at: "sync/apply.json")
+            let operations = rig.dataOperations.operationCount
+            XCTAssertThrowsError(try journal.replay(), mismatch) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, mismatch)
+            }
+            XCTAssertEqual(rig.dataOperations.operationCount, operations, mismatch)
+            XCTAssertEqual(try rig.data.read(at: "sync/binding.json"), bindingBytes, mismatch)
+            XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), journalBytes, mismatch)
+            XCTAssertEqual(accounts.readOnlyError, .durabilityUncertain, mismatch)
+            XCTAssertEqual(accounts.cachedBindings, [expected, otherRoot], mismatch)
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, mismatch)
+            XCTAssertThrowsError(try rig.library.entries(), mismatch) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, mismatch)
+            }
+
+            // Restoring the expected binding still requires a successful reflush.
+            try rig.data.writePrivate(expectedBytes, at: "sync/binding.json")
+            rig.dataOperations.failOperationNumber = operations + 1
+            XCTAssertThrowsError(try journal.replay(), mismatch) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain, mismatch)
+            }
+            XCTAssertEqual(accounts.readOnlyError, .durabilityUncertain, mismatch)
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, mismatch)
+            XCTAssertThrowsError(try rig.library.entries(), mismatch) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, mismatch)
+            }
+            rig.dataOperations.failOperationNumber = nil
+            XCTAssertEqual(try journal.replay(), .committed, mismatch)
+            XCTAssertEqual(try journal.replay(), .committed, mismatch)
+            XCTAssertEqual(try accounts.binding(for: expected.root), intended, mismatch)
+            XCTAssertEqual(try accounts.binding(for: otherRoot.root), otherRoot, mismatch)
+            XCTAssertEqual(rig.states.snapshot.value, plan.nextState, mismatch)
+            XCTAssertNoThrow(try rig.library.entries(), mismatch)
+        }
+    }
+
+    func testBindingMismatchBlocksUncertainStateRecoveryBeforeAcknowledgement() throws {
+        for flush in ["file:sync/state.json", "directory:sync", "directory:/"] {
+            let rig = try SyncApplyTestRig()
+            let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
+            let journal = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+                mutations: rig.mutations, states: rig.states, accounts: accounts)
+            let owned = try SyncLibraryBinding(root: rig.binding.root, owner: rig.binding.account)
+            let statePlan = try rig.plan([rig.replacement()])
+            let plan = SyncApplyPlan(expectedState: statePlan.expectedState, nextState: statePlan.nextState,
+                edits: statePlan.edits, bindingChange: SyncBindingChange(expected: nil, next: owned))
+            var writingState = false
+            rig.data.onWrite = { if $0 == "sync/state.json" { writingState = true } }
+            rig.dataOperations.onOperation = { operation in
+                if writingState, operation == flush {
+                    rig.dataOperations.failOperationNumber = rig.dataOperations.operationCount
+                }
+            }
+            XCTAssertThrowsError(try journal.apply(plan), flush) {
+                XCTAssertEqual($0 as? SyncError, .durabilityUncertain, flush)
+            }
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, flush)
+            XCTAssertEqual(rig.states.snapshot.error, .durabilityUncertain, flush)
+            XCTAssertEqual(try accounts.binding(for: owned.root), owned, flush)
+            rig.data.onWrite = nil
+            rig.dataOperations.onOperation = nil
+            rig.dataOperations.failOperationNumber = nil
+
+            // Ownership may change on disk while the state publication awaits recovery.
+            let bindingBytes = try rig.data.read(at: "sync/binding.json")
+            let unexpected = try SyncLibraryBinding(root: owned.root,
+                owner: SyncTestValues.account(userID: SyncTestValues.otherUser))
+            try SyncTestValues.write(["version": Limits.syncBindingVersion,
+                "libraries": [try SyncTestValues.object(unexpected)]], to: rig.data, path: "sync/binding.json")
+            let journalBytes = try rig.data.read(at: "sync/apply.json")
+            let stateBytes = try rig.data.read(at: "sync/state.json")
+            let operations = rig.dataOperations.operationCount
+            XCTAssertThrowsError(try journal.replay(), flush) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, flush)
+            }
+            XCTAssertEqual(rig.dataOperations.operationCount, operations, flush)
+            XCTAssertEqual(rig.states.snapshot.value, plan.expectedState, flush)
+            XCTAssertEqual(rig.states.snapshot.error, .durabilityUncertain, flush)
+            XCTAssertEqual(try rig.data.read(at: "sync/state.json"), stateBytes, flush)
+            XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), journalBytes, flush)
+            XCTAssertEqual(journal.pending?.id, plan.id, flush)
+            XCTAssertThrowsError(try rig.library.entries(), flush) {
+                XCTAssertEqual($0 as? LibraryError, .recoveryRequired, flush)
+            }
+
+            try rig.data.writePrivate(bindingBytes, at: "sync/binding.json")
+            XCTAssertEqual(try journal.replay(), .committed, flush)
+            XCTAssertEqual(try journal.replay(), .committed, flush)
+            XCTAssertEqual(rig.states.snapshot.value, plan.nextState, flush)
+            XCTAssertNil(rig.states.snapshot.error, flush)
+            XCTAssertNil(journal.pending, flush)
+            XCTAssertNoThrow(try rig.library.entries(), flush)
+        }
+    }
+
+    func testBindingWriteFailureReplaysOnTheSameGraphBeforeStateAcknowledgement() throws {
+        let rig = try SyncApplyTestRig()
+        let accounts = SyncAccountStore(files: rig.data, operations: rig.dataOperations)
+        let journal = try SyncApplyJournal(files: rig.data, operations: rig.dataOperations,
+            mutations: rig.mutations, states: rig.states, accounts: accounts)
+        let owned = try SyncLibraryBinding(root: rig.binding.root, owner: rig.binding.account)
+        let statePlan = try rig.plan([])
+        let plan = SyncApplyPlan(expectedState: statePlan.expectedState, nextState: statePlan.nextState,
+            edits: [], bindingChange: SyncBindingChange(expected: nil, next: owned))
+        // The empty plan writes its journal, then binding, before state.
+        rig.data.failWriteNumber = rig.data.writeCount + 2
+        XCTAssertThrowsError(try journal.apply(plan)) { XCTAssertEqual($0 as? SyncError, .writeFailed(.ioFailure)) }
+        XCTAssertEqual(rig.states.snapshot.value, plan.expectedState)
+        XCTAssertNil(try accounts.binding(for: owned.root))
+        XCTAssertNil(accounts.readOnlyError)
+        XCTAssertNotNil(journal.pending)
+        XCTAssertThrowsError(try rig.library.entries()) { XCTAssertEqual($0 as? LibraryError, .recoveryRequired) }
+        rig.data.failWriteNumber = nil
+        XCTAssertEqual(try journal.replay(), .committed)
+        XCTAssertEqual(try journal.replay(), .committed)
+        XCTAssertEqual(try accounts.binding(for: owned.root), owned)
+        XCTAssertEqual(rig.states.snapshot.value, plan.nextState)
+        XCTAssertNoThrow(try rig.library.entries())
+    }
+
     func testUncertainStateFlushNeverAcknowledgesAndReplayReflushesIt() throws {
         let rig = try SyncApplyTestRig()
         let edit = try rig.replacement()

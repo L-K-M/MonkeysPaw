@@ -276,7 +276,15 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertTrue(old.importURLs([flat]))
         work.runNext()
         XCTAssertTrue(model.state.isImporting)
-        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        XCTAssertEqual(delegate.switchLibrary(to: other), .syncBusy)
+        // Sync composition drains the retired import before replacing its graph.
+        let deadline = Date().addingTimeInterval(5)
+        while delegate.libraryDirectory != other, Date() < deadline {
+            work.drain()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(delegate.libraryDirectory, other)
+        XCTAssertTrue(delegate.pickerModel?.libraryAvailable == true)
         work.drain()
         XCTAssertFalse(old.canImport)
         XCTAssertTrue(old.files.isEmpty)
@@ -415,24 +423,31 @@ private final class MacImportTestChoice {
 }
 
 private final class MacImportTestWork: BackgroundWork {
+    private let lock = NSLock()
     private var pending: [() -> Void] = []
     var onEnqueue: (() -> Void)?
     func run(_ work: @escaping () -> Void) {
-        guard Thread.isMainThread else { XCTFail("Import work must be enqueued on main"); return }
+        lock.lock()
         pending.append(work)
-        onEnqueue?()
+        lock.unlock()
+        DispatchMainThread().run { [weak self] in self?.onEnqueue?() }
     }
     func runNext() {
         guard Thread.isMainThread else { XCTFail("Import test work must run on main"); return }
-        if !pending.isEmpty { pending.removeFirst()() }
+        takeNext()?()
     }
     func drain() {
         guard Thread.isMainThread else { XCTFail("Import test work must drain on main"); return }
         for _ in 0..<100 {
-            guard !pending.isEmpty else { return }
-            runNext()
+            guard let next = takeNext() else { return }
+            next()
         }
         XCTFail("Import worker did not settle in 100 jobs")
+    }
+    private func takeNext() -> (() -> Void)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending.isEmpty ? nil : pending.removeFirst()
     }
 }
 
