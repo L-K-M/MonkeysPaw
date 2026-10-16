@@ -554,6 +554,8 @@ final class LinuxLibraryWindow {
               let preview = model.state.preview, preview.copy == editor.state.prompt,
               preview.copy == browser?.selection else { return }
         if editor.state.isDirty || editor.state.conflict != nil {
+            guard editor.state.pendingDecision?.action != .revert,
+                  !editor.state.queuedActions.contains(.revert) else { return }
             let revision = bindingRevision
             editor.request(.revert) { [weak self, weak model] result in
                 guard let self, let model, !self.isDestroyed, self.isVisible,

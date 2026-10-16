@@ -198,7 +198,9 @@ final class LinuxConflictViewTests: XCTestCase {
         let buffer = gtk_text_view_get_buffer(mp_text_view(try widget("library-source")))!
         gtk_text_buffer_set_text(buffer, draft, Int32(draft.utf8.count))
         XCTAssertTrue(GTKTestSupport.spin { editor.state.isDirty })
-        try click("conflict-keep-mine")
+        let resolve = try widget("conflict-keep-mine")
+        emitClick(resolve)
+        emitClick(resolve)
         XCTAssertTrue(GTKTestSupport.spin { editor.state.pendingDecision != nil })
         drain()
         XCTAssertEqual(try label("conflict-status"), "Waiting for the Library to be ready before resolving this copy.")
