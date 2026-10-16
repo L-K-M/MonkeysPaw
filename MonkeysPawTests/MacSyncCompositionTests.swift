@@ -154,11 +154,14 @@ final class MacSyncCompositionTests: XCTestCase {
         let record = data.appendingPathComponent("last-delivery.json")
         try FileManager.default.removeItem(at: record)
         try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
-        let requests = transport.requests.count
+        // Login starts sync independently of the account/repeat drain.
+        let requests = transport.accountChangeRequests.count
+        let connection = account.state.connection
         account.signOut()
         XCTAssertTrue(spin { !account.state.isBusy && account.state.error == .recoveryRequired })
-        XCTAssertEqual(transport.requests.count, requests, "Failed retirement cannot send logout or change the account")
-        XCTAssertEqual(account.state.connection?.userID, MacSyncTransport.user)
+        XCTAssertEqual(transport.accountChangeRequests.count, requests, "Failed retirement cannot send logout or change the account")
+        XCTAssertEqual(account.state.connection, connection)
+        XCTAssertTrue(account.state.enabled)
         XCTAssertEqual(delegate.repeatModel?.availability, .unavailable(.invalidationFailed))
         try FileManager.default.removeItem(at: record)
         try dataFiles.writePrivate(bytes, at: "last-delivery.json")
@@ -166,6 +169,8 @@ final class MacSyncCompositionTests: XCTestCase {
         account.signOut()
         XCTAssertTrue(spin { !account.state.isBusy && account.state.connection == nil
             && self.delegate.repeatModel?.availability == .nothingToRepeat })
+        XCTAssertEqual(transport.accountChangeRequests.count, requests + 1)
+        XCTAssertTrue(transport.accountChangeRequests.last?.url.path.hasSuffix("/logout") == true)
         XCTAssertNil(try storedRepeatBinding())
         copyPrompt()
         XCTAssertEqual(try storedRepeatBinding(), try RepeatBinding(root: root.path))
@@ -591,6 +596,9 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
     private var pullHeld = false
     private var loginHeld = false
     var requests: [HTTPRequest] { locked { stored } }
+    var accountChangeRequests: [HTTPRequest] {
+        requests.filter { $0.url.path.contains("/api/v1/auth/") || $0.url.path.contains("/api/v1/me/devices/") }
+    }
     var heldCount: Int { locked { held.count } }
     var role: SyncAPI.Role? { get { locked { storedRole } } set { locked { storedRole = newValue } } }
     var includePersonalPrompt: Bool { get { locked { personal } } set { locked { personal = newValue } } }
