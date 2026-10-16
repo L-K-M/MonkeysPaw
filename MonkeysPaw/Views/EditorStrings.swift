@@ -32,6 +32,8 @@ enum EditorStrings {
 
     static func readOnly(_ reason: PromptReadOnlyReason) -> String {
         switch reason {
+        case .groupViewer: return "Read-only: you are a viewer in this group. Save a private copy to keep your edits."
+        case .groupUnavailable: return "Read-only: group access is unavailable. Save a private copy to keep your edits."
         case .invalidUTF8: return "Read-only: encode this file as UTF-8 before editing it."
         case .sourceTooLarge: return "Read-only: this file exceeds the supported prompt size."
         case .unsupportedFormat: return "Read-only: this file uses a newer prompt format."

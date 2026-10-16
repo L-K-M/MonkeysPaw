@@ -280,7 +280,7 @@ final class SyncPushEngine {
         if head.scope.pathScope == .group, let current = try mutations.read(at: request.libraryPath),
            same(current, request.file) {
             let form = try SyncLocalScanner.canonical(current.bytes, path: head.path, scope: head.scope)
-            try next.applyGroupFavorite(form.favorite, for: key)
+            try next.applyGroupFavorite(SyncFavoriteInput.preferred(form.favorite, after: state.prompts[key]?.favoriteInput), for: key)
             if form.bytes != current.bytes {
                 edits.append(try mutations.publication(form.bytes, at: request.libraryPath, expecting: current,
                     transition: SyncIdentityTransition(from: key, to: key), mode: mode(head.scope, state: state)))
@@ -338,7 +338,8 @@ final class SyncPushEngine {
         var next = try setting(record, for: .assigned(head.id), in: state)
         if head.scope.pathScope == .group, let local,
            let form = try? SyncLocalScanner.canonical(local.bytes, path: head.path, scope: head.scope) {
-            try next.applyGroupFavorite(form.favorite, for: .assigned(head.id))
+            try next.applyGroupFavorite(SyncFavoriteInput.preferred(form.favorite,
+                after: state.prompts[.assigned(head.id)]?.favoriteInput), for: .assigned(head.id))
         }
         let operation: SyncReconciliationOperation
         // B5 is only for adoption. Private formatting/comments are real losing

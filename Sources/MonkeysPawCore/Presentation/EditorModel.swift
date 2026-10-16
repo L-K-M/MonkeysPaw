@@ -37,16 +37,19 @@ public struct EditorConflict: Equatable, Sendable {
     public fileprivate(set) var readOnlyReason: PromptReadOnlyReason?
     public fileprivate(set) var isLoading = false
     public fileprivate(set) var failure: PromptEditingFailure?
+    public fileprivate(set) var origin = PromptChangeOrigin.external
 
     public var choices: [EditorConflictChoice] {
-        kind == .deleted ? [.keepMine, .saveAsCopy, .discard] : [.keepMine, .takeTheirs, .saveAsCopy]
+        let canOverwrite = readOnlyReason == nil && !(origin == .sync && kind == .deleted)
+        let rest: [EditorConflictChoice] = kind == .deleted ? [.saveAsCopy, .discard] : [.takeTheirs, .saveAsCopy]
+        return canOverwrite ? [.keepMine] + rest : rest
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.kind == rhs.kind && lhs.stamp == rhs.stamp
             && editorSourceEqual(lhs.theirsSource, rhs.theirsSource)
             && lhs.readOnlyReason == rhs.readOnlyReason && lhs.isLoading == rhs.isLoading
-            && lhs.failure == rhs.failure
+            && lhs.failure == rhs.failure && lhs.origin == rhs.origin
     }
 }
 
@@ -76,12 +79,18 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var provenanceMaintenanceFailed = false
     public fileprivate(set) var lastCopy: LibraryPromptSelection?
     public fileprivate(set) var history = EditorHistoryState()
+    public fileprivate(set) var access = PromptAccessState.local
+    public fileprivate(set) var accessGeneration: UInt64 = 0
     fileprivate(set) var committedSelectionChange: EditorCommittedSelectionChange?
 
     public var canEdit: Bool {
         source != nil && readOnlyReason == nil && status != .loading && status != .commandRunning
     }
     public var canSave: Bool { canEdit && status != .saving }
+    public var canSaveAsCopy: Bool {
+        source != nil && status != .loading && status != .saving && status != .commandRunning
+            && (readOnlyReason == nil || readOnlyReason == .groupViewer || readOnlyReason == .groupUnavailable)
+    }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.prompt == rhs.prompt && editorSourceEqual(lhs.source, rhs.source)
@@ -93,6 +102,7 @@ public struct EditorState: Equatable, Sendable {
             && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed
             && lhs.provenanceMaintenanceFailed == rhs.provenanceMaintenanceFailed && lhs.lastCopy == rhs.lastCopy
             && lhs.history == rhs.history && lhs.committedSelectionChange == rhs.committedSelectionChange
+            && lhs.access == rhs.access && lhs.accessGeneration == rhs.accessGeneration
     }
 }
 
@@ -161,6 +171,7 @@ public final class EditorModel: @unchecked Sendable {
 
     /// Read-only buffers can have a live session without a decodable snapshot.
     public var assistantSession: PromptEditingSession? { isActive ? session : nil }
+    public var assistantAccess: AssistantAccessState { state.access.assistantAccess }
 
     /// Capture at the assistant action, before any later edit can change its
     /// baseline. Conflicts, guard decisions and editor I/O must first be resolved.
@@ -176,7 +187,8 @@ public final class EditorModel: @unchecked Sendable {
         let snapshotSession = PromptEditingSession(token: session.token, isInactive: session.isInactive,
                                                    loadedID: baseline?.document.frontMatter.id)
         return AssistantEditorSnapshot(source: source, relativePath: prompt.relativePath,
-            revision: assistantRevision, session: snapshotSession, stamp: stamp, availability: availability)
+            revision: assistantRevision, session: snapshotSession, stamp: stamp, availability: availability,
+            accessGeneration: state.accessGeneration)
     }
 
     @discardableResult
@@ -282,7 +294,7 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     public func saveAsCopy() {
-        guard isActive, state.canSave else { return }
+        guard isActive, state.canSaveAsCopy else { return }
         startSave(.copy, expectedStamp: nil)
     }
 
@@ -309,6 +321,9 @@ public final class EditorModel: @unchecked Sendable {
     /// so an app-owned stamp cannot become a delayed false conflict.
     public func toggleFavorite(of entry: LibraryEntry) -> PromptFavoriteOutcome? {
         guard isActive, state.prompt?.relativePath == RelativePath(entry.relativePath) else { return nil }
+        if editing.accessSnapshot.access(at: entry.relativePath, identity: entry.identity) != .local {
+            return editing.toggleGroupFavorite(of: entry)
+        }
         guard state.canEdit, let document else {
             if case .unsupportedFormat(let format) = state.readOnlyReason {
                 return .writeFailure(.unsupportedFormat(format))
@@ -348,7 +363,7 @@ public final class EditorModel: @unchecked Sendable {
         }
         if let committedEntry {
             session = editing.beginSession(forCommitted: committedEntry, onExternalChange: onExternalChange)
-        } else { session = editing.beginSession(at: path, onExternalChange: onExternalChange) }
+        } else { session = editing.beginSession(at: path, identity: state.prompt?.identity, onExternalChange: onExternalChange) }
     }
 
     private func retireSession() {
@@ -410,13 +425,16 @@ public final class EditorModel: @unchecked Sendable {
                 // draft typed after adoption rather than replacing it.
                 if loaded.stamp != state.stamp {
                     if state.isDirty || state.conflict != nil {
+                        let origin = state.conflict?.origin ?? .external
                         state.conflict = EditorConflict(kind: .modified, stamp: loaded.stamp,
-                            theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason)
+                            theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason, origin: origin)
                     } else { accept(loaded); state.status = .idle }
                 }
             } else if purpose == .inspectConflict {
+                let origin = state.conflict?.origin ?? .external
                 state.conflict = EditorConflict(kind: .modified, stamp: loaded.stamp,
                     theirsSource: loaded.source, readOnlyReason: loaded.readOnlyReason)
+                state.conflict?.origin = origin
             } else {
                 accept(loaded)
                 state.status = .idle
@@ -424,7 +442,8 @@ public final class EditorModel: @unchecked Sendable {
             }
         case .deleted:
             if state.isDirty || state.conflict != nil || purpose == .reconcileCopy {
-                state.conflict = EditorConflict(kind: .deleted, stamp: nil)
+                let origin = state.conflict?.origin ?? .external
+                state.conflict = EditorConflict(kind: .deleted, stamp: nil, origin: origin)
                 if purpose != .inspectConflict { state.status = .idle }
             } else { resetEditor() }
         case .failed(let failure):
@@ -454,6 +473,16 @@ public final class EditorModel: @unchecked Sendable {
     }
 
     private func externalChange(_ change: PromptExternalChange) {
+        if change.kind == .accessChanged {
+            assistantPermit?.invalidate(.failed(.staleContext))
+            changed()
+            return
+        }
+        if let destination = change.renamedTo {
+            let previous = state.prompt
+            state.prompt = destination
+            recordCommittedSelection(from: previous)
+        }
         if let assistantPermit, isWriting {
             assistantPermit.invalidate(.conflict(change.newStamp.map { .modified(currentStamp: $0) } ?? .deleted))
             commandHasExternalChange = true
@@ -467,19 +496,21 @@ public final class EditorModel: @unchecked Sendable {
             return
         }
         if state.isDirty || state.conflict != nil {
-            openConflict(stamp: change.newStamp)
+            openConflict(stamp: change.newStamp, origin: change.origin)
         } else if change.kind == .deleted {
             resetEditor()
             changed()
         } else { load(.replace) }
     }
 
-    private func openConflict(stamp: FileStamp?) {
+    private func openConflict(stamp: FileStamp?, origin: PromptChangeOrigin? = nil) {
         // Invalidate earlier rereads immediately, including deletion while a
         // modified snapshot is still in the worker/UI queue.
         loadGeneration &+= 1
         if state.status == .loading { state.status = .idle }
-        state.conflict = EditorConflict(kind: stamp == nil ? .deleted : .modified, stamp: stamp)
+        let origin = origin ?? state.conflict?.origin ?? .external
+        state.conflict = EditorConflict(kind: stamp == nil ? .deleted : .modified, stamp: stamp,
+            readOnlyReason: state.readOnlyReason, origin: origin)
         changed()
         if stamp != nil { load(.inspectConflict) }
     }
@@ -497,7 +528,10 @@ public final class EditorModel: @unchecked Sendable {
                 self.saved(outcome, submitted: source, purpose: purpose)
             }
         }
-        if purpose == .copy { editing.createCopy(source, near: path, session: session, completion: completion) }
+        if purpose == .copy {
+            editing.createCopy(source, near: path, session: session, origin: state.conflict?.origin ?? .external,
+                completion: completion)
+        }
         else { editing.save(source, session: session, expectedStamp: expectedStamp, completion: completion) }
     }
 
@@ -714,7 +748,25 @@ public final class EditorModel: @unchecked Sendable {
         state.committedSelectionChange = .adopted(from: previous, to: prompt, id: UUID())
     }
 
-    private func changed() { main.run { [weak self] in self?.publishLatest() } }
+    private func changed() {
+        refreshAccess()
+        main.run { [weak self] in self?.publishLatest() }
+    }
+
+    private func refreshAccess() {
+        guard let prompt = state.prompt else { return }
+        let snapshot = editing.accessSnapshot
+        state.access = snapshot.access(at: prompt.relativePath.string, identity: prompt.identity)
+        state.accessGeneration = snapshot.generation
+        let fileReason: PromptReadOnlyReason?
+        switch baseline?.readOnlyReason {
+        case .groupViewer?, .groupUnavailable?: fileReason = nil
+        default: fileReason = baseline?.readOnlyReason
+        }
+        let reason = fileReason ?? state.access.readOnlyReason
+        state.readOnlyReason = reason
+        state.conflict?.readOnlyReason = reason
+    }
 
     private func publishLatest() {
         guard isActive, !isPublishing else { return }

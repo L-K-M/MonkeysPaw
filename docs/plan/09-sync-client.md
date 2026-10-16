@@ -342,6 +342,18 @@ instead of doubling.
   Invalid/future inputs fail rather than compare equal. This comparison
   never assigns an id and never substitutes for the stored-byte hash.
 - **Remembered values** are never synced.
+- **UI favourites** for group prompts edit only the account/root-bound state.
+  Viewers and dirty editors use the same intent. Access snapshots, browser
+  counts and picker ranking project that overlay without rewriting canonical
+  prompt bytes, history or file modes. Sign-out clears the projection; a new
+  account never inherits the previous account's favourites (§20 E17).
+  A new local group prompt can be favourited before its first upload. This
+  creates an unacknowledged state record (`rev: 0`, no canonical hash), without
+  rewriting the prompt. Optional group-only `favorite_input: {value: bool|null}`
+  in that record remembers the raw key consumed by the UI intent. Until normal
+  ingest strips that key, an unchanged raw value cannot undo the newer overlay;
+  an actually changed key still follows true/false/absent ingest semantics.
+  The marker survives restart and is cleared by canonical ingest/adoption.
 
 ### 9.6 Conflicts and errors
 
