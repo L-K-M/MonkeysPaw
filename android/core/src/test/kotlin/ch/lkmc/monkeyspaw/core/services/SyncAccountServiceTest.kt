@@ -790,13 +790,23 @@ class SyncAccountServiceTest {
     @Test fun inviteRegistrationSharesActivationAndReportsCommittedAccountOnLocalFailure() = runTest {
         val r = AccountHarness(testScheduler, backgroundScope)
         val invite = InviteLink("C".repeat(42) + "A", r.server)
+        var consumed = false
+        r.respond = { request ->
+            if (!request.url.endsWith("/auth/register")) null
+            else if (consumed) EngineHarness.errorResponse(400, FailureCode.MALFORMED_REQUEST)
+            else { consumed = true; null }
+        }
         r.secrets.writeError = SecretStoreError.WriteFailed
         val error = assertFailsWith<SyncAccountServiceError> { r.service.register(invite, null, "person", r.password, "Android") }
         assertTrue(error.registrationCommitted)
+        assertTrue(consumed)
         assertEquals(SyncRemoteRevocation.REVOKED, error.cleanup.remote)
         assertNull(r.h.accounts.loadAccount())
         r.secrets.writeError = null
-        assertTrue(r.service.register(invite, null, "person", r.password, "Android").enabled)
+        val rejected = assertFailsWith<SyncAccountServiceError> { r.service.register(invite, null, "person", r.password, "Android") }
+        assertEquals(SyncHTTPClientError.MalformedRequest, assertIs<SyncAccountIssue.Http>(rejected.issue).error)
+        assertFalse(rejected.registrationCommitted)
+        assertTrue(r.login().enabled)
         for (file in r.h.data.listFiles()) invite.token.withValue { assertFalse(r.h.data.text(file.relativePath).contains(it)) }
     }
 

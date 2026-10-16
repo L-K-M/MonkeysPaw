@@ -65,6 +65,19 @@ class InviteLinkTest {
         }
     }
 
+    @Test fun decodedValuesKeepServerNormalizationWithoutForwardingControls() {
+        for (control in listOf("%0A", "%09", "%00")) {
+            invalid("monkeyspaw://join?server=${percent(server)}/a${control}b&token=$token")
+            invalid("monkeyspaw://join?server=${percent(server)}&token=${token.dropLast(1)}$control")
+        }
+        invalid("monkeyspaw://join?server=${percent(server)}%00&token=$token")
+        // P5 uses SyncServerURL's Swift-compatible surrounding-whitespace normalization.
+        for (suffix in listOf("%0A", "%09", "%20")) {
+            assertEquals(server, InviteLink("monkeyspaw://join?server=${percent(server)}$suffix&token=$token").server.baseURL)
+        }
+        assertEquals(server, InviteLink("monkeyspaw://join?server=$server&token=$token").server.baseURL)
+    }
+
     @Test fun tokenGrammarRequiresCanonicalUnpadded32Bytes() {
         for (value in listOf(token.drop(1), token + "A", token + "=", token + "+", token.dropLast(1) + "B",
             token.dropLast(1) + "/", token.dropLast(1) + "%", token.dropLast(1) + "é", token.dropLast(1) + "\u0000")) {

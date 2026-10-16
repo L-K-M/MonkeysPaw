@@ -72,15 +72,17 @@ private class InviteHarness(scheduler: TestCoroutineScheduler, scope: CoroutineS
     } + "&token=$token"
     fun stage(server: String? = null) = service.stage(server?.let(::linkFor) ?: link)
     suspend fun register(staged: StagedInvite = stage()) = service.accept(staged, InviteAcceptance.NEW_ACCOUNT, "person", password, "Android")
-    fun assertNoInviteOrPasswordPersistence() {
+    fun assertNoInviteOrPasswordPersistence(retiredTokens: List<String> = emptyList()) {
         val values = listOf(token, link) + password.withValue { listOf(it) }
         val needles = values + values.map { Base64.getEncoder().encodeToString(it.encodeToByteArray()) }
+        val bearers = retiredTokens + r.token
         for (file in r.h.data.listFiles()) {
             val text = r.h.data.text(file.relativePath)
-            assertFalse(needles.any(text::contains) || text.contains(r.token), "Credential in non-secret state")
+            assertFalse(needles.any(text::contains) || bearers.any(text::contains), "Credential in non-secret state")
         }
         for (bytes in r.h.files.bytesSnapshot().values) {
-            assertFalse(needles.any(bytes.toByteArray().decodeToString()::contains), "Invite/password in library")
+            val text = bytes.toByteArray().decodeToString()
+            assertFalse(needles.any(text::contains) || bearers.any(text::contains), "Credential in non-secret library")
         }
         for (secret in r.secrets.values.values) secret.value.withValue { text ->
             assertFalse(needles.any(text::contains), "Invite/password in SecretStore")
@@ -89,6 +91,22 @@ private class InviteHarness(scheduler: TestCoroutineScheduler, scope: CoroutineS
 }
 
 class InviteAcceptanceServiceTest {
+    @Test fun persistenceScanDetectsCurrentAndRetiredBearersInStateAndLibrary() = runTest {
+        for (retired in listOf(true, false)) for (library in listOf(false, true)) {
+            val h = InviteHarness(testScheduler, backgroundScope)
+            val bearer = h.r.token
+            val retiredTokens = if (retired) {
+                h.r.token = "C".repeat(42) + "A"
+                listOf(bearer)
+            } else emptyList()
+            val files = if (library) h.r.h.files else h.r.h.data
+            files.put(bearer, "credential-sentinel.txt")
+            assertFailsWith<AssertionError>("Bearer scan missed retired=$retired library=$library") {
+                h.assertNoInviteOrPasswordPersistence(retiredTokens)
+            }
+        }
+    }
+
     @Test fun stagingOnlyDisplaysDestinationAndAccountWithoutSecretOrIO() = runTest {
         val h = InviteHarness(testScheduler, backgroundScope)
         val before = h.r.h.data.bytesSnapshot()
@@ -275,10 +293,10 @@ class InviteAcceptanceServiceTest {
         assertEquals(1, h.r.h.accounts.binding(h.r.root)?.holds?.size)
         assertTrue("old.md" in h.r.h.files.bytesSnapshot())
         assertFalse(h.r.secrets.values.containsKey(old.secretAccount))
-        h.assertNoInviteOrPasswordPersistence()
+        h.assertNoInviteOrPasswordPersistence(listOf(oldToken))
     }
 
-    @Test fun expiredUsedAndUnknownInvitesHaveTheSameFixedJoinAndRegisterError() = runTest {
+    @Test fun expiredUsedAndUnknownInvitesHaveFixedEndpointSpecificErrors() = runTest {
         for (state in listOf("expired", "used", "unknown")) for (mode in InviteAcceptance.entries) {
             val h = InviteHarness(testScheduler, backgroundScope)
             if (mode == InviteAcceptance.EXISTING_ACCOUNT) h.r.login()
@@ -290,8 +308,14 @@ class InviteAcceptanceServiceTest {
             val issue = assertFailsWith<InviteAcceptanceIssue>("Unavailable invite accepted ($state)") {
                 h.service.accept(stage, mode, "person", h.password, "Android")
             }
-            assertSame(InviteAcceptanceIssue.UnavailableInvite, issue)
-            assertEquals("This invite could not be used. It may have expired or already been used.", issue.message)
+            if (mode == InviteAcceptance.EXISTING_ACCOUNT) {
+                assertSame(InviteAcceptanceIssue.UnavailableInvite, issue)
+                assertEquals("This invite could not be used. It may have expired or already been used.", issue.message)
+            } else {
+                val account = assertIs<InviteAcceptanceIssue.Account>(issue)
+                assertEquals(SyncHTTPClientError.MalformedRequest, assertIs<SyncAccountIssue.Http>(account.failure.issue).error)
+                assertFalse(account.failure.registrationCommitted)
+            }
             assertNull(issue.cause)
             assertEquals(before + 1, h.r.requests.size)
             assertTrue(h.r.logouts.isEmpty())
@@ -392,6 +416,21 @@ class InviteAcceptanceServiceTest {
         h.assertNoInviteOrPasswordPersistence()
     }
 
+    @Test fun registrationRequestRejectionDoesNotClaimTheInviteIsUnavailable() = runTest {
+        val h = InviteHarness(testScheduler, backgroundScope)
+        // A taken username has the same response as an unavailable invite.
+        h.intercept = { if (it.url.endsWith("/auth/register")) EngineHarness.errorResponse(400, FailureCode.MALFORMED_REQUEST) else null }
+        val stage = h.stage()
+        val issue = assertIs<InviteAcceptanceIssue.Account>(assertFailsWith<InviteAcceptanceIssue> { h.register(stage) })
+        assertEquals(SyncHTTPClientError.MalformedRequest, assertIs<SyncAccountIssue.Http>(issue.failure.issue).error)
+        assertFalse(issue.failure.registrationCommitted)
+        assertFalse(stage.canAccept)
+        assertFalse(h.consumed)
+        assertTrue(h.r.secrets.values.isEmpty())
+        assertTrue(h.r.logouts.isEmpty())
+        h.assertNoInviteOrPasswordPersistence()
+    }
+
     @Test fun invalidRegistrationFieldsConsumeOnlyTheLocalStageBeforeAnyRequest() = runTest {
         for (field in listOf("username", "password", "device")) {
             val h = InviteHarness(testScheduler, backgroundScope)
@@ -414,6 +453,7 @@ class InviteAcceptanceServiceTest {
             val h = InviteHarness(testScheduler, backgroundScope)
             val old = h.r.login().account!!
             val oldSecret = h.r.secrets.values.getValue(old.secretAccount)
+            val oldToken = h.r.token
             val stage = h.stage("https://other.test/paw")
             h.r.user = SyncTestValues.otherUser
             h.r.token = "C".repeat(42) + "A"
@@ -441,7 +481,7 @@ class InviteAcceptanceServiceTest {
                 h.r.reopen().startup()
                 assertEquals(requests, h.r.requests.size)
             }
-            h.assertNoInviteOrPasswordPersistence()
+            h.assertNoInviteOrPasswordPersistence(listOf(oldToken))
         }
     }
 
@@ -489,7 +529,8 @@ class InviteAcceptanceServiceTest {
         val result = h.register()
         assertIs<InviteAcceptanceIssue.RegistrationIncomplete>(result.issue)
         assertTrue(h.consumed)
-        assertSame(InviteAcceptanceIssue.UnavailableInvite, assertFailsWith<InviteAcceptanceIssue> { h.register() })
+        val rejected = assertIs<InviteAcceptanceIssue.Account>(assertFailsWith<InviteAcceptanceIssue> { h.register() })
+        assertEquals(SyncHTTPClientError.MalformedRequest, assertIs<SyncAccountIssue.Http>(rejected.failure.issue).error)
         assertEquals(2, h.registerCalls)
         h.r.secrets.writeError = null
         val newService = h.r.reopen()
@@ -572,6 +613,8 @@ class InviteAcceptanceServiceTest {
         started.await()
         task.cancelAndJoin()
         assertFalse(h.r.service.isBusy)
+        assertTrue(h.r.service.snapshot.enabled)
+        assertFalse(h.r.h.engine.reports.value.needsSignIn)
         assertFalse(stage.canAccept)
         assertEquals(1, h.r.requests.count { it.url.endsWith("/groups/join") })
         assertSame(InviteAcceptanceIssue.NoInvite, assertFailsWith<InviteAcceptanceIssue> { h.service.accept(stage, InviteAcceptance.EXISTING_ACCOUNT) })
@@ -585,12 +628,13 @@ class InviteAcceptanceServiceTest {
         val release = CompletableDeferred<Unit>()
         h.r.secrets.beforeWrite = { started.complete(Unit); release.await() }
         val task = async { h.register(stage) }
-        started.await()
-        task.cancel()
-        runCurrent()
-        assertFalse(task.isCompleted)
-        assertTrue(h.r.service.isBusy)
-        release.complete(Unit)
+        try {
+            started.await()
+            task.cancel()
+            runCurrent()
+            assertFalse(task.isCompleted)
+            assertTrue(h.r.service.isBusy)
+        } finally { release.complete(Unit) }
         task.join()
         assertFalse(h.r.service.isBusy)
         assertTrue(h.r.secrets.values.isEmpty())

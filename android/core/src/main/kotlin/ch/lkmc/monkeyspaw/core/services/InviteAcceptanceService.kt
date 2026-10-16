@@ -77,7 +77,9 @@ class InviteAcceptanceService(private val account: SyncAccountService) {
         catch (error: SyncAccountServiceError) {
             if (error.registrationCommitted) return InviteAcceptanceResult(account.snapshot,
                 InviteAcceptanceIssue.RegistrationIncomplete(error), error.cleanup)
-            if ((error.issue as? SyncAccountIssue.Http)?.error == SyncHTTPClientError.MalformedRequest) throw InviteAcceptanceIssue.UnavailableInvite
+            // Registration also returns 400 for a taken username; it cannot identify an unusable invite.
+            if (asAccount == InviteAcceptance.EXISTING_ACCOUNT &&
+                (error.issue as? SyncAccountIssue.Http)?.error == SyncHTTPClientError.MalformedRequest) throw InviteAcceptanceIssue.UnavailableInvite
             throw InviteAcceptanceIssue.Account(error)
         }
     }
