@@ -107,6 +107,70 @@ final class SyncApplyJournalTests: XCTestCase {
         XCTAssertEqual(try rig.files.read(at: "a.md"), plan.edits[0].bytes)
     }
 
+    func testReplanRetainedReadCancellationDoesNotPublishReplacement() throws {
+        let rig = try SyncApplyTestRig()
+        let first = try rig.plan([rig.replacement()])
+        try rig.files.write(SyncApplyTestRig.bytes("Changed"), at: "a.md")
+        XCTAssertEqual(try rig.journal.apply(first), .replanAsConflict(operationID: first.edits[0].id))
+        let original = try rig.data.read(at: "sync/apply.json")
+        let replacement = try rig.plan([rig.replacement()])
+        let path = "sync/retained/" + first.id.uuidString.lowercased() + "-journal.json"
+        let writes = rig.data.writeCount
+        let libraryWrites = rig.files.writeCount
+        var cancellations = 0
+        rig.data.onRead = { readPath in
+            if readPath == path {
+                cancellations += 1
+                throw CancellationError()
+            }
+        }
+
+        XCTAssertThrowsError(try rig.journal.replan(replacement)) {
+            XCTAssertTrue($0 is CancellationError, "Expected cancellation, got \($0)")
+        }
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertEqual(rig.data.writeCount, writes)
+        XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), original)
+        XCTAssertEqual(rig.journal.pending?.id, first.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, first.id)
+        XCTAssertNil(try rig.data.stamp(at: path))
+        XCTAssertNil(try rig.data.stamp(at: "sync/state.json"))
+        XCTAssertNil(rig.states.snapshot.value)
+        XCTAssertEqual(rig.files.writeCount, libraryWrites)
+    }
+
+    func testReplanRetainedWriteCancellationDoesNotPublishReplacement() throws {
+        let rig = try SyncApplyTestRig()
+        let first = try rig.plan([rig.replacement()])
+        try rig.files.write(SyncApplyTestRig.bytes("Changed"), at: "a.md")
+        XCTAssertEqual(try rig.journal.apply(first), .replanAsConflict(operationID: first.edits[0].id))
+        let original = try rig.data.read(at: "sync/apply.json")
+        let replacement = try rig.plan([rig.replacement()])
+        let path = "sync/retained/" + first.id.uuidString.lowercased() + "-journal.json"
+        let writes = rig.data.writeCount
+        let libraryWrites = rig.files.writeCount
+        var cancellations = 0
+        rig.data.onPrivateWrite = { writePath in
+            if writePath == path {
+                cancellations += 1
+                throw CancellationError()
+            }
+        }
+
+        XCTAssertThrowsError(try rig.journal.replan(replacement)) {
+            XCTAssertTrue($0 is CancellationError, "Expected cancellation, got \($0)")
+        }
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertEqual(rig.data.writeCount, writes)
+        XCTAssertEqual(try rig.data.read(at: "sync/apply.json"), original)
+        XCTAssertEqual(rig.journal.pending?.id, first.id)
+        XCTAssertEqual(rig.mutations.pendingPermit?.id, first.id)
+        XCTAssertNil(try rig.data.stamp(at: path))
+        XCTAssertNil(try rig.data.stamp(at: "sync/state.json"))
+        XCTAssertNil(rig.states.snapshot.value)
+        XCTAssertEqual(rig.files.writeCount, libraryWrites)
+    }
+
     func testReplanPreparationConflictKeepsTypedErrorAndOriginalJournal() throws {
         let rig = try SyncApplyTestRig()
         try rig.files.write(SyncApplyTestRig.bytes("Old"), at: "a.md")

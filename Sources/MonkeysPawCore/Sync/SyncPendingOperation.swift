@@ -128,7 +128,8 @@ final class SyncPendingOperationStore {
             if try files.stamp(at: path) == nil { try files.writePrivate(bytes, at: path) }
             else if try files.read(at: path) != bytes { throw SyncError.invalidState }
             try SyncDurability.flushFileAndParents(path, operations: operations)
-        } catch let error as SyncError { throw error }
+        } catch let error as CancellationError { throw error }
+        catch let error as SyncError { throw error }
         catch let error as SyncFileOperationError { throw error }
         catch let error as FileStoreError { throw SyncError.writeFailed(error) }
         catch { throw SyncError.writeFailed(.ioFailure) }

@@ -585,6 +585,7 @@ final class SyncApplyJournal {
     }
 
     private static func safe(_ error: Error) -> Error {
+        if let error = error as? CancellationError { return error }
         if let error = error as? SyncError { return error }
         if let error = error as? LibraryError { return error }
         if let error = error as? SyncFileOperationError { return error }
