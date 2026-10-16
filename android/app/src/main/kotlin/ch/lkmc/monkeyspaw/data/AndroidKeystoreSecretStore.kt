@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.data
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.UserNotAuthenticatedException
+import androidx.datastore.core.CorruptionException
 import androidx.datastore.core.DataStore
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.SecretStore
@@ -11,7 +12,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.nio.charset.CharacterCodingException
 import java.security.InvalidKeyException
+import javax.crypto.AEADBadTagException
 
 /** One process-scoped driver owns the separate secrets DataStore and serializes all key access. */
 internal class AndroidKeystoreSecretStore(
@@ -22,10 +25,15 @@ internal class AndroidKeystoreSecretStore(
     private val mutex = Mutex()
 
     override suspend fun read(account: SecretAccount, source: SecretReadSource): StoredSecret? =
-        operation(SecretStoreError.ReadFailed) {
-            val envelope = store.data.first().entries[account.rawValue] ?: return@operation null
-            val key = keys.read() ?: throw SecretStoreError.Unavailable
-            StoredSecret(SecretEnvelope.open(envelope, account, key), SecretTier.KEYSTORE)
+        operation(SecretStoreError.Locked) {
+            val records = try { store.data.first() }
+            catch (_: CorruptionException) { throw SecretStoreError.ReadFailed }
+            val envelope = records.entries[account.rawValue] ?: return@operation null
+            val key = keys.read() ?: throw if (keys.confirmsMissingAlias) SecretStoreError.Unavailable else SecretStoreError.Locked
+            val value = try { SecretEnvelope.open(envelope, account, key) }
+            catch (_: AEADBadTagException) { throw SecretStoreError.ReadFailed }
+            catch (_: CharacterCodingException) { throw SecretStoreError.ReadFailed }
+            StoredSecret(value, SecretTier.KEYSTORE)
         }
 
     override suspend fun write(value: SecretValue, account: SecretAccount): SecretTier =

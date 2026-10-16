@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.ui.settings
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.core.DataStoreFactory
 import androidx.lifecycle.ViewModelStore
 import ch.lkmc.monkeyspaw.core.domain.llm.*
@@ -88,9 +89,11 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
         val sentinel = UUID.randomUUID().toString() + "\"\\/%+雪😀"
         val owner = Thread.currentThread()
         var persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        lateinit var state: AndroidStateStore
+        lateinit var state: StateStore
+        lateinit var secretData: DataStore<SecretRecords>
         lateinit var secrets: AndroidKeystoreSecretStore
         var readUnavailable = false
+        var failNextSettingsWrite = false
         val keys = object : SecretKeyProvider {
             private val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
             override fun read(): SecretKey {
@@ -103,9 +106,19 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
         fun openStores() {
             val metadata = AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = persistenceScope,
                 produceFile = { filesDir.resolve("datastore/settings.json").toFile() }))
-            state = AndroidStateStore(stateDir.toFile(), settings = metadata, isMainThread = { Thread.currentThread() == owner })
-            secrets = AndroidKeystoreSecretStore(DataStoreFactory.create(serializer = SecretsSerializer, scope = persistenceScope,
-                produceFile = { filesDir.resolve("datastore/secrets.json").toFile() }), keys, Dispatchers.IO)
+            val base = AndroidStateStore(stateDir.toFile(), settings = metadata, isMainThread = { Thread.currentThread() == owner })
+            state = object : StateStore by base {
+                override fun write(bytes: ByteArray, path: String) {
+                    if (path == "provider-settings.json" && failNextSettingsWrite) {
+                        failNextSettingsWrite = false
+                        throw StoreError.IOFailure
+                    }
+                    base.write(bytes, path)
+                }
+            }
+            secretData = DataStoreFactory.create(serializer = SecretsSerializer, scope = persistenceScope,
+                produceFile = { filesDir.resolve("datastore/secrets.json").toFile() })
+            secrets = AndroidKeystoreSecretStore(secretData, keys, Dispatchers.IO)
         }
         openStores()
         val server = MockWebServer().apply { start() }
@@ -207,19 +220,52 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
             model.renameProfile("Renamed"); model.save(); settled(model)
             checkpoint("rename")
 
-            val savedMetadata = Files.readAllBytes(filesDir.resolve("datastore/settings.json"))
-            val savedCiphertext = Files.readAllBytes(filesDir.resolve("datastore/secrets.json"))
-            readUnavailable = true
-            model.clearKey(); model.save(); settled(model)
-            assertEquals(ProviderSettingsError.Secret(SecretStoreError.Unavailable), model.state.value.error)
-            checkpoint("unavailable alias refuses Settings Clear")
-            model.deleteProfile(first); settled(model)
-            assertEquals(ProviderSettingsError.Secret(SecretStoreError.Unavailable), model.state.value.error)
-            assertTrue(savedMetadata.contentEquals(Files.readAllBytes(filesDir.resolve("datastore/settings.json"))))
-            assertTrue(savedCiphertext.contentEquals(Files.readAllBytes(filesDir.resolve("datastore/secrets.json"))))
-            checkpoint("unavailable alias refuses Settings Delete")
-            readUnavailable = false
-            model.refresh(); settled(model)
+            suspend fun recoverCredential(operation: String) {
+                val retainedDevice = secretData.data.first().entries.getValue(device.rawValue)
+                for (failCommit in listOf(true, false)) {
+                    val savedMetadata = Files.readAllBytes(filesDir.resolve("datastore/settings.json"))
+                    readUnavailable = operation != "replace"
+                    if (operation == "replace") {
+                        // A readable alias with an account-swapped envelope must require explicit recovery.
+                        secretData.updateData { SecretRecords(it.entries + (account to retainedDevice)) }
+                    }
+                    val savedCiphertext = Files.readAllBytes(filesDir.resolve("datastore/secrets.json"))
+                    model.refresh(); settled(model)
+                    val failure = if (readUnavailable) SecretStoreError.Unavailable else SecretStoreError.ReadFailed
+                    assertEquals(AssistantKeyStorage.Failed(ProviderSettingsError.Secret(failure)), model.state.value.keyStorage)
+                    assertContentEquals(savedMetadata, Files.readAllBytes(filesDir.resolve("datastore/settings.json")))
+                    assertContentEquals(savedCiphertext, Files.readAllBytes(filesDir.resolve("datastore/secrets.json")))
+                    failNextSettingsWrite = failCommit
+                    when (operation) {
+                        "delete" -> model.deleteProfile(first)
+                        "replace" -> { model.renameProfile("Replaced"); model.setKeyInput(sentinel); model.save() }
+                        else -> { model.clearKey(); model.save() }
+                    }
+                    settled(model)
+                    assertEquals(if (failCommit) ProviderSettingsError.WriteFailed else null, model.state.value.error)
+                    val accounts = if (operation == "replace" && !failCommit) setOf(account, device.rawValue) else setOf(device.rawValue)
+                    assertEquals(retainedDevice, secretData.data.first().entries[device.rawValue])
+                    checkpoint("$operation recovery, metadata failure=$failCommit", accounts)
+                    readUnavailable = false
+                    if (failCommit) {
+                        assertContentEquals(savedMetadata, Files.readAllBytes(filesDir.resolve("datastore/settings.json")))
+                        assertNull(requireNotNull(provider).connection(first).key)
+                        assertFalse(model.state.value.isReadOnly)
+                        model.setKeyInput(sentinel); model.save(); settled(model)
+                        assertNull(model.state.value.error)
+                    } else when (operation) {
+                        "delete" -> assertTrue(model.state.value.profiles.isEmpty())
+                        "replace" -> assertEquals(AssistantKeyStorage.Saved(SecretTier.KEYSTORE), model.state.value.keyStorage)
+                        else -> {
+                            assertEquals(AssistantKeyStorage.None, model.state.value.keyStorage)
+                            assertNull(model.state.value.profiles.single().secretReference)
+                        }
+                    }
+                }
+            }
+            recoverCredential("clear")
+            model.setKeyInput(sentinel); model.save(); settled(model)
+            recoverCredential("replace")
 
             model.addProfile(); model.save(); settled(model)
             val second = model.state.value.draft!!.id
@@ -231,7 +277,7 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
             checkpoint("switch back")
             model.deleteProfile(second); settled(model)
             checkpoint("unrelated profile deletion")
-            model.deleteProfile(first); settled(model)
+            recoverCredential("delete")
             assertNull(secrets.read(SecretAccount.provider(first), SecretReadSource.PERSISTED))
             assertTrue(model.state.value.profiles.isEmpty())
             assertEquals(2, server.requestCount, "Only the two explicit Test intents issue requests")
