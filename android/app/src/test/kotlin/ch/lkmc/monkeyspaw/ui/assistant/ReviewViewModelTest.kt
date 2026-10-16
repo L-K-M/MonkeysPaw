@@ -209,6 +209,8 @@ internal class ReviewViewModelTest : TemporaryFiles() {
         assertEquals(source.substring(0, start).encodeToByteArray().size, match.startByte)
         assertTrue(match.startByte > start)
         h.model.toggleFinding(0)
+        h.model.editFeedback("Keep this feedback")
+        val review = h.model.state.value.assistant!!.review
         h.editor.setTab(EditorTab.PREVIEW)
         h.model.showQuote(0)
         assertEquals(ReviewDestination.EDITOR, h.model.state.value.destination)
@@ -217,7 +219,9 @@ internal class ReviewViewModelTest : TemporaryFiles() {
         assertEquals(finding.quote, source.substring(h.editor.state.value.quoteSelection!!.start, h.editor.state.value.quoteSelection!!.endExclusive))
         h.model.open()
         assertEquals(ReviewDestination.FINDINGS, h.model.state.value.destination)
+        assertSame(review, h.model.state.value.assistant!!.review)
         assertEquals(setOf(0), h.model.state.value.assistant?.selectedFindings)
+        assertEquals("Keep this feedback", h.model.state.value.feedback)
         assertEquals(1, h.client.calls.size)
         h.unchanged()
     }
@@ -241,6 +245,34 @@ internal class ReviewViewModelTest : TemporaryFiles() {
         assertTrue(h.model.state.value.assistant!!.selectedFindings.isEmpty())
         assertEquals(AssistantPhase.DRAFT, h.model.state.value.assistant?.phase)
         h.unchanged()
+    }
+
+    @Test fun `explicit blank feedback retry replaces findings and rejects stale selection indices`() = runTest {
+        for (kind in ProviderKind.entries) {
+            val h = Harness(this, kind)
+            h.configure()
+            h.review()
+            h.model.toggleFinding(2)
+            assertEquals(setOf(2), h.model.state.value.assistant!!.selectedFindings)
+            h.client.quotes = listOf("Cafe\u0301")
+            val reply = CompletableDeferred<Unit>().also { h.client.held = it }
+            h.model.retryWithFeedback()
+            assertTrue(h.model.state.value.isWorking)
+            assertTrue(h.model.state.value.assistant!!.selectedFindings.isEmpty())
+            runCurrent()
+            reply.complete(Unit); runCurrent()
+            val result = h.model.state.value.assistant!!
+            assertEquals(1, result.review!!.findings.size)
+            assertTrue(result.selectedFindings.isEmpty())
+            for (index in listOf(-1, 2, Int.MAX_VALUE)) h.model.toggleFinding(index)
+            assertTrue(h.model.state.value.assistant!!.selectedFindings.isEmpty())
+            h.model.toggleFinding(0)
+            assertEquals(setOf(0), h.model.state.value.assistant!!.selectedFindings)
+            assertEquals(2, h.client.calls.size)
+            assertEquals("", h.client.calls.last().feedback)
+            assertEquals(2, h.client.calls.last().transcript.size)
+            h.unchanged()
+        }
     }
 
     @Test fun `buffer changes clear highlights and selections synchronously and returning to identical text cannot revive them`() = runTest {

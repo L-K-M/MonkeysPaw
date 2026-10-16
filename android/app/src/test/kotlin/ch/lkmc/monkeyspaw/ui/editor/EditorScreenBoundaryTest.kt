@@ -29,14 +29,14 @@ internal class EditorScreenBoundaryTest {
         for (intent in listOf("onEdit", "onSave", "onRename", "onMove", "onDelete", "onRestore", "onDecision", "onConflict")) {
             assertTrue(screen.contains(intent), intent)
         }
-        assertTrue(screen.contains("EditorSourceField(state.source, state.relativePath, state.quoteSelection, state.canEdit, onEdit, onClearQuote)"))
+        assertTrue(screen.contains("EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)"))
         val field = packageRoot.resolve("ui/editor/EditorSourceField.kt").readText()
         assertTrue(field.contains("readOnly = !editable"))
         assertTrue(field.contains("editorSourceValue(field, source, quote)"))
         assertTrue(screen.contains("selected.canRestore && state.canCommand"))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("editor.onSelectionChanged = library::selectFromEditor"))
-        assertTrue(activity.contains("onEdit = { assistantReview.close(); editor.open(it) }"))
+        assertTrue(activity.contains("onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) }"))
         assertTrue(activity.contains("if (editing.isOpen) EditorScreen("))
         assertTrue(activity.contains("editor::resolveDecision"))
         assertTrue(activity.contains("editor.refresh()"))

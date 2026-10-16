@@ -27,6 +27,7 @@ internal fun ReviewScreen(
     onEffort: (AssistantEffort?) -> Unit,
     onFinding: (Int) -> Unit,
     onQuote: (Int) -> Unit,
+    onImprove: () -> Unit,
     onFeedback: (String) -> Unit,
     onRetry: () -> Unit,
     onCancel: () -> Unit,
@@ -81,6 +82,9 @@ internal fun ReviewScreen(
                     Text(stringResource(R.string.assistant_review_summary), style = MaterialTheme.typography.titleMedium)
                     SelectionContainer { Text(review.summary) }
                     if (review.findings.isEmpty()) Text(stringResource(R.string.assistant_review_empty))
+                    Button(onClick = onImprove, enabled = state.canImproveWithThese) {
+                        Text(stringResource(R.string.assistant_improve_selected))
+                    }
                 }
                 itemsIndexed(review.findings) { index, finding ->
                     Card(Modifier.fillMaxWidth()) {
