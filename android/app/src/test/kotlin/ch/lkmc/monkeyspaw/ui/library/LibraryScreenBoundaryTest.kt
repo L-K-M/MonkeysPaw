@@ -39,7 +39,7 @@ internal class LibraryScreenBoundaryTest {
     }
 
     @Test
-    fun `assistant settings stays behind setup and seeds and is offered only in browser mode`() {
+    fun `assistant entries stay behind setup and seeds and are offered only in browser mode`() {
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         val setup = activity.indexOf("if (setupState.loading")
         val settings = activity.indexOf("else if (setupState.settingsOpen)")
@@ -49,9 +49,12 @@ internal class LibraryScreenBoundaryTest {
         assertTrue(activity.contains("onSettings = setup::openSettings"))
         assertTrue(activity.contains("onAssistantSettings = assistantSettings::open"))
         val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
-        assertTrue(screen.contains("if (mode == LibraryMode.BROWSER) {\n                onAssistantSettings?.let"))
+        val browserControls = screen.substringAfter("if (mode == LibraryMode.BROWSER) {").substringBefore("\n            }")
+        assertTrue(browserControls.contains("onWrite?.let"))
+        assertTrue(browserControls.contains("onAssistantSettings?.let"))
         val ime = packageRoot.resolve("ime/ImeScreen.kt").readText()
         assertTrue(ime.contains("mode = LibraryMode.IME_PICKER"))
+        assertFalse(ime.contains("onWrite"))
         assertFalse(ime.contains("onAssistantSettings"))
     }
 
@@ -63,6 +66,7 @@ internal class LibraryScreenBoundaryTest {
                 "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance",
                 "ch.lkmc.monkeyspaw.core.ports.DeliveryMode",
                 "ch.lkmc.monkeyspaw.core.domain.llm.ConnectionTestResult", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderKind",
+                "ch.lkmc.monkeyspaw.core.domain.llm.AssistantEffort",
                 "ch.lkmc.monkeyspaw.core.domain.llm.ProviderProfileID", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderSettingsError",
                 "ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError") })
         val forbidden = Regex("\\b(?:File|Files|Path|Context|LocalContext|Clipboard|LibraryRepository|LibraryService|EditingService|SeedInstaller|DataStore|Dispatchers|viewModelScope|LaunchedEffect|HttpTransport|URL|InputStream|OutputStream)\\b")

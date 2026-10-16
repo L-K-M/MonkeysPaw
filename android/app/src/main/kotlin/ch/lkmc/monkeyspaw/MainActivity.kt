@@ -17,7 +17,10 @@ import ch.lkmc.monkeyspaw.data.ForegroundProfileInstaller
 import ch.lkmc.monkeyspaw.entry.FillActivity
 import ch.lkmc.monkeyspaw.entry.FillLauncher
 import ch.lkmc.monkeyspaw.ui.editor.EditorScreen
+import ch.lkmc.monkeyspaw.ui.editor.EditorDecisionDialogs
 import ch.lkmc.monkeyspaw.ui.editor.EditorViewModel
+import ch.lkmc.monkeyspaw.ui.assistant.WriteScreen
+import ch.lkmc.monkeyspaw.ui.assistant.WriteViewModel
 import ch.lkmc.monkeyspaw.ui.library.LibraryScreen
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
@@ -42,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private val setup: KeyboardTileSetupViewModel by viewModels()
     private val keyboardTileSetup by lazy { AndroidKeyboardTileSetup(this) }
     private val assistantSettings: AssistantSettingsViewModel by viewModels()
+    private val assistantWrite: WriteViewModel by viewModels()
     private val fillLauncher = FillLauncher { path ->
         startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
     }
@@ -74,6 +78,7 @@ class MainActivity : ComponentActivity() {
         profiles.initialize()
         title = AppIdentity.displayName
         editor.onSelectionChanged = library::selectFromEditor
+        assistantWrite.bind(editor)
         enableEdgeToEdge()
 
         setContent {
@@ -92,7 +97,18 @@ class MainActivity : ComponentActivity() {
                     } else if (startup == SeedOfferUiState.Ready) {
                         val editing = editor.state.collectAsStateWithLifecycle().value
                         val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
-                        if (assistant.isOpen) AssistantSettingsScreen(
+                        val writing = assistantWrite.state.collectAsStateWithLifecycle().value
+                        if (writing.isOpen) {
+                            WriteScreen(state = writing, onBrief = assistantWrite::editBrief,
+                                onEffort = assistantWrite::setEffort, onWrite = assistantWrite::write,
+                                onFeedback = assistantWrite::editFeedback, onRetry = assistantWrite::retryWithFeedback,
+                                onShowDiff = assistantWrite::showDiff, onAccept = assistantWrite::accept,
+                                onReject = assistantWrite::reject, onCancel = assistantWrite::cancel,
+                                onBack = assistantWrite::close, onReload = assistantWrite::reload,
+                                onSettings = { assistantWrite.close(); assistantSettings.open() },
+                                modifier = Modifier.padding(padding))
+                            EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)
+                        } else if (assistant.isOpen) AssistantSettingsScreen(
                             state = assistant, onBack = assistantSettings::close, onAdd = { assistantSettings.addProfile() },
                             onSelect = assistantSettings::selectProfile, onDelete = assistantSettings::deleteProfile,
                             onRename = assistantSettings::renameProfile, onKind = assistantSettings::setKind,
@@ -122,6 +138,7 @@ class MainActivity : ComponentActivity() {
                             onCreate = { editor.createDraft() },
                             onSettings = setup::openSettings,
                             onAssistantSettings = assistantSettings::open,
+                            onWrite = assistantWrite::open,
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,

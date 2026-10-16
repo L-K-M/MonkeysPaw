@@ -169,7 +169,7 @@ private fun testResultMessage(result: ConnectionTestResult): String = when (resu
     is ConnectionTestResult.ProviderFailure -> stringResource(R.string.assistant_test_provider_failure, result.statusCode)
 }
 
-private fun settingsErrorResource(error: ProviderSettingsError): Int = when (error) {
+internal fun settingsErrorResource(error: ProviderSettingsError): Int = when (error) {
     is ProviderSettingsError.FutureVersion -> R.string.assistant_error_future
     is ProviderSettingsError.UnsupportedVersion -> R.string.assistant_error_version
     ProviderSettingsError.CorruptFile -> R.string.assistant_error_corrupt

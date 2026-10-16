@@ -183,6 +183,13 @@ internal fun EditorScreen(
             }, enabled = state.canCommand) { Text(stringResource(R.string.editor_confirm)) }
         }, dismissButton = { TextButton(onClick = { dialog = null }) { Text(stringResource(R.string.editor_cancel)) } })
     }
+    EditorDecisionDialogs(state, onDecision, onConflict)
+}
+
+/** The assistant uses the editor's existing save/decision contract while its route is visible. */
+@Composable
+internal fun EditorDecisionDialogs(state: EditorUiState,
+    onDecision: (Long, EditorDecision) -> Unit, onConflict: (EditorConflictChoice) -> Unit) {
     val conflict = state.conflict
     if (conflict?.presentation == EditorConflictPresentation.DIALOG) {
         AlertDialog(onDismissRequest = { if (!state.writing) onConflict(EditorConflictChoice.CANCEL) },
