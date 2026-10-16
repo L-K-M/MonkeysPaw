@@ -290,20 +290,29 @@ Rollout by milestone:
     `dist/MonkeysPaw-<version>.sha256` records both files; download all three
     together and run `shasum -a 256 -c MonkeysPaw-<version>.sha256` before
     installation (`docs/platform/macos.md`).
-- **Local build orchestration.** `scripts/build.sh [mac|deb|flatpak|android ...] [--no-open]`
+- **Local build orchestration.** `scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--no-open]`
   builds every artifact this host can produce by default. An unavailable
   toolchain skips a default target but fails an explicitly named target.
-  Outputs go to `dist/`, followed by one Summary block. On macOS it opens
-  `dist/` when an artifact was built, unless `--no-open` was passed.
+  File outputs go to `dist/`, followed by one Summary block. On macOS it opens
+  `dist/` when a file artifact was built, unless `--no-open` was passed.
   `mac` calls the packager above; `deb` calls the builder below with the
   committed version; `flatpak` reuses that invocation's exact deb, building it
   once if needed even when targets are repeated or reversed. Failed or missing
   deb output cannot reuse a stale artifact. The default builds deb then Flatpak
   once when the toolchains and user-installed GNOME 50 runtime/SDK are available;
   a named unavailable target fails. `android` calls `scripts/package-android.sh`
-  with that version. `scripts/build.sh app [lkm-build flags]` preserves the
+  with that version. `server-image` requires Docker, git and a reachable Linux
+  Docker engine, including a Linux VM on macOS. It builds `server/Dockerfile`
+  for the engine's default platform and stores `monkeyspaw-server:<version>`
+  in that engine's image store; the Summary prints the image reference.
+  `VERSION` is the committed version, `REVISION` is `git rev-parse HEAD`, and
+  `CREATED` is `git show -s --format=%cI HEAD`, matching release metadata.
+  Missing Docker, a failing `docker info`, or a non-Linux engine skips the
+  default target and fails a named target. Registry publication and multiarch
+  assembly remain in the release workflow.
+  `scripts/build.sh app [lkm-build flags]` preserves the
   app-only engine path, including `--clean`, `--debug`, `--run`, `--install`,
-  `--zip` and `--dmg`. Server packaging remains separate.
+  `--zip` and `--dmg`.
 - **Local Android packaging.** `scripts/package-android.sh [version]` builds
   `:app:assembleRelease` through `android/gradlew` with two workers. It
   requires executable wrapper/JDK 17+ tools, SDK platform `android-37.0`
