@@ -572,6 +572,8 @@ final class MacSyncCompositionTests: XCTestCase {
             scheduler.after(.seconds(60)) { _ = owned; XCTFail("A retired timer must not fire") }
         }
         scheduler.tearDown()
+        // Dispatch source cancellation can release its handler after teardown returns.
+        XCTAssertTrue(spin { capture == nil }, "Cancelled timers must release their captures")
         XCTAssertNil(capture)
         scheduler.after(.zero) { XCTFail("A retired scheduler cannot admit a callback") }
         scheduler.tearDown()
