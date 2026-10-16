@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import MonkeysPawCore
 import SwiftUI
@@ -31,9 +32,30 @@ final class MacConflictViewTests: XCTestCase {
         XCTAssertEqual(renderer.accessibilityID, "library-assistant-diff")
         let host = NSHostingView(rootView: LibraryConflictView(presentation: view))
         host.frame = NSRect(x: 0, y: 0, width: 560, height: 640)
+        let window = NSPanel(contentRect: host.frame, styleMask: [.titled, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
+        window.contentView = host
+        defer { window.close() }
+        window.orderFrontRegardless()
         host.layoutSubtreeIfNeeded()
-        let content = try XCTUnwrap(h.delegate.libraryWindow?.window?.contentView)
-        XCTAssertTrue(h.spin { self.accessibilityLabels(content).contains("Comparison") })
+        // Initialize SwiftUI's lazy accessibility tree without requiring key-window focus.
+        let accessibilityReady = expectation(description: "Conflict accessibility client query completed")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+            var children: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(application, kAXChildrenAttribute as CFString, &children)
+            XCTAssertEqual(status, .success, "Hosted accessibility initialization failed: \(status.rawValue)")
+            accessibilityReady.fulfill()
+        }
+        wait(for: [accessibilityReady], timeout: 5)
+        let expectedHeadings: Set<String> = ["Resolve conflict", "Comparison"]
+        var headings = Set<String>()
+        XCTAssertTrue(h.spin {
+            headings = self.accessibilityHeadings(host)
+            return expectedHeadings.isSubset(of: headings)
+        }, "Expected distinct conflict and comparison headings; observed: \(headings.sorted())")
         XCTAssertTrue(h.transport.originalPuts.isEmpty)
         view.requestResolution(.keepMine)
         h.drainResolver()
@@ -349,24 +371,31 @@ final class MacConflictViewTests: XCTestCase {
         wait(for: [finished], timeout: 5)
     }
 
-    private func accessibilityLabels(_ element: NSObject) -> Set<String> {
-        var labels = Set<String>()
+    private func accessibilityHeadings(_ element: NSObject) -> Set<String> {
+        var headings = Set<String>()
         // SwiftUI children expose accessibility selectors without full protocol conformance.
-        for selector in [#selector(NSAccessibilityProtocol.accessibilityLabel),
-                         #selector(NSAccessibilityProtocol.accessibilityTitle)] {
-            guard element.responds(to: selector),
-                  let value = element.perform(selector)?.takeUnretainedValue() else { continue }
-            let label = (value as? String) ?? (value as? NSAttributedString)?.string
-            if let label, !label.isEmpty { labels.insert(label); break }
+        let roleSelector = #selector(NSAccessibilityProtocol.accessibilityRole)
+        if element.responds(to: roleSelector),
+           let role = element.perform(roleSelector)?.takeUnretainedValue() as? String,
+           role == kAXHeadingRole {
+            // Native text can expose its content as a value rather than a label or title.
+            for selector in [#selector(NSAccessibilityProtocol.accessibilityLabel),
+                             #selector(NSAccessibilityProtocol.accessibilityTitle),
+                             #selector(NSAccessibilityProtocol.accessibilityValue)] {
+                guard element.responds(to: selector),
+                      let value = element.perform(selector)?.takeUnretainedValue() else { continue }
+                let name = (value as? String) ?? (value as? NSAttributedString)?.string
+                if let name, !name.isEmpty { headings.insert(name); break }
+            }
         }
         let childrenSelector = #selector(NSAccessibilityProtocol.accessibilityChildren)
         if element.responds(to: childrenSelector),
            let children = element.perform(childrenSelector)?.takeUnretainedValue() as? [Any] {
             for child in children {
-                if let child = child as? NSObject { labels.formUnion(accessibilityLabels(child)) }
+                if let child = child as? NSObject { headings.formUnion(accessibilityHeadings(child)) }
             }
         }
-        return labels
+        return headings
     }
 }
 

@@ -7,6 +7,7 @@ struct LibraryConflictView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(LibraryConflictStrings.title).font(.headline)
+                .accessibilityAddTraits(.isHeader)
             ScrollView {
                 if let diff = presentation.diff {
                     LibraryDiffView(diff: diff, title: LibraryConflictStrings.comparison,

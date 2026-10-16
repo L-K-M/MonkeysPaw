@@ -13,6 +13,7 @@ struct LibraryDiffView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.headline)
+                .accessibilityAddTraits(.isHeader)
             ForEach(Array(diff.placeholderWarnings.enumerated()), id: \.offset) { item in
                 Text(LibraryAssistantStrings.placeholder(item.element)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
