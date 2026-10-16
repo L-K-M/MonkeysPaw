@@ -165,6 +165,9 @@ final class AccountSettingsViewState: ObservableObject {
         selectedHeld.removeAll()
         passwordInput.clear()
         passwordInputReset = UUID()
+        server = ""
+        username = ""
+        deviceName = SettingsAccountStrings.defaultDeviceName
         state = nil
     }
 }

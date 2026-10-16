@@ -397,6 +397,36 @@ final class MacAccountSettingsTests: XCTestCase {
         XCTAssertEqual(transport.loginCount, 0)
     }
 
+    func testUnavailableAccountBindingClearsFieldsAndRebindingRestoresConnection() throws {
+        try login(try openAccount())
+        let model = try XCTUnwrap(delegate.accountModel)
+        let connection = try XCTUnwrap(model.state.connection)
+        var active: AccountModel? = model
+        let view = AccountSettingsViewState(mainThread: DispatchMainThread(), makeModel: { active })
+        view.show()
+        defer { view.hide() }
+        XCTAssertEqual(view.server, connection.serverURL.absoluteString)
+        XCTAssertEqual(view.username, connection.username)
+        XCTAssertEqual(view.deviceName, connection.deviceName)
+
+        active = nil
+        view.refreshBinding()
+        XCTAssertNil(view.state)
+        XCTAssertFalse(view.canOperate)
+        XCTAssertEqual(view.connectionMessage, SettingsAccountStrings.unavailable)
+        XCTAssertTrue(view.server.isEmpty)
+        XCTAssertTrue(view.username.isEmpty)
+        XCTAssertEqual(view.deviceName, SettingsAccountStrings.defaultDeviceName)
+
+        active = model
+        view.refreshBinding()
+        XCTAssertEqual(view.state, model.state)
+        XCTAssertTrue(view.canOperate)
+        XCTAssertEqual(view.server, connection.serverURL.absoluteString)
+        XCTAssertEqual(view.username, connection.username)
+        XCTAssertEqual(view.deviceName, connection.deviceName)
+    }
+
     func testStaleLoginCannotCrossIntoAReplacementGraph() throws {
         let old = try XCTUnwrap(delegate.accountModel)
         XCTAssertTrue(spin { !old.state.isBusy })
