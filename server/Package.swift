@@ -51,7 +51,8 @@ let package = Package(
             path: "Tests/MonkeysPawSyncIntegrationTests",
             exclude: ["InProcessHTTPTransport.swift", "ScenarioDecoder.swift", "SyncScenarioTests.swift",
                       "SyncServerHarness.swift", "SyncRestoreRetentionScenarioTests.swift", "SyncCrashScenarioTests.swift",
-                      "SyncConflictMoveScenarioTests.swift", "SyncGroupScenarioTests.swift", "ConflictResolutionTests.swift"],
+                      "SyncConflictMoveScenarioTests.swift", "SyncGroupScenarioTests.swift", "ConflictResolutionTests.swift",
+                      "SyncInviteIntegrationTests.swift"],
             sources: ["ScenarioAdapters.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

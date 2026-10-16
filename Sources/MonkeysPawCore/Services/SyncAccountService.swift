@@ -42,9 +42,22 @@ struct SyncAccountSnapshot: Equatable, Sendable {
     var cleanup = SyncAccountCleanup()
 }
 
+/// Registration consumed its invite before local activation failed. Retrying
+/// that invite cannot undo account creation; presentation must offer sign-in.
+struct SyncInviteRegistrationFailure: Error, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    let failure: SyncAccountServiceError
+    var description: String { "<invite registration failure redacted>" }
+    var debugDescription: String { description }
+    var customMirror: Mirror { Mirror(self, children: ["error": description]) }
+}
+
 /// Call async intents off UI. One admitted account operation owns all compound
 /// secret/metadata edits; native composition must use this graph's account store.
 public final class SyncAccountService: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    private enum AuthenticationIntent {
+        case login
+        case register(invite: SyncInviteLink, expectedAccount: SyncAccount?)
+    }
     private struct Session {
         let account: SyncAccount
         let client: SyncHTTPClient
@@ -105,6 +118,19 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
     func login(server input: String, username: String, password: inout String, deviceName: String) async throws -> SyncAccountSnapshot {
         let supplied = SecretValue(password)
         password = ""
+        return try await connect(server: input, username: username, password: supplied, deviceName: deviceName, intent: .login)
+    }
+
+    func register(invite: SyncInviteLink, expectedAccount: SyncAccount?, username: String,
+                  password: inout String, deviceName: String) async throws -> SyncAccountSnapshot {
+        let supplied = SecretValue(password)
+        password = ""
+        return try await connect(server: invite.server.baseURL.absoluteString, username: username, password: supplied,
+            deviceName: deviceName, intent: .register(invite: invite, expectedAccount: expectedAccount))
+    }
+
+    private func connect(server input: String, username: String, password supplied: SecretValue,
+                         deviceName: String, intent: AuthenticationIntent) async throws -> SyncAccountSnapshot {
         try enter()
         defer { leave() }
         let previous: SyncConnectionDocument
@@ -112,12 +138,26 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
         do {
             previous = try accounts.recoverConnection()
             server = try SyncServerURL(input)
-        } catch { throw failure(error) }
+            if case .register(_, let expected) = intent {
+                guard previous.account == expected, snapshot.account == expected else { throw InviteIssue.accountChanged }
+            }
+        } catch let error as InviteIssue { throw error }
+        catch { throw failure(error) }
 
         let authentication: SyncAuthentication
         do {
-            authentication = try await SyncHTTPClient(server: server, transport: transport).login(
-                supplied.withValue { SyncAPI.LoginRequest(username: username, password: $0, deviceName: deviceName) })
+            let client = SyncHTTPClient(server: server, transport: transport)
+            switch intent {
+            case .login:
+                authentication = try await client.login(supplied.withValue {
+                    SyncAPI.LoginRequest(username: username, password: $0, deviceName: deviceName)
+                })
+            case .register(let invite, _):
+                authentication = try await client.register(invite.token.withValue { token in
+                    supplied.withValue { SyncAPI.RegisterRequest(inviteToken: token, username: username,
+                        password: $0, deviceName: deviceName) }
+                })
+            }
         } catch { throw failure(error) }
         let client = SyncHTTPClient(server: server, transport: transport, credential: authentication.credential)
         var candidate: SyncAccount?
@@ -180,8 +220,61 @@ public final class SyncAccountService: CustomStringConvertible, CustomDebugStrin
                 deleteSecrets([candidate.connectionID], cleanup: &result.cleanup)
             }
             locked { cached.cleanup = result.cleanup }
+            if case .register = intent { throw SyncInviteRegistrationFailure(failure: result) }
             throw result
         }
+    }
+
+    /// The expectation includes the local connection UUID, so reauthentication
+    /// as the same user also invalidates a previously staged redemption.
+    func joinInvite(_ invite: SyncInviteLink, expectedAccount: SyncAccount) async throws
+        -> (snapshot: SyncAccountSnapshot, refreshFailure: SyncAccountServiceError?) {
+        try enter()
+        defer { leave() }
+        let current = try inviteSession(expectedAccount, server: invite.server)
+        do {
+            _ = try await current.client.joinGroup(invite.token.withValue { SyncAPI.JoinGroupRequest(inviteToken: $0) })
+        } catch { throw await inviteFailure(error) }
+        // The token is now consumed even if /me fails. Do not retain stale roles.
+        locked { cached.me = nil }
+        do {
+            let me = try await current.client.me()
+            let device = try Self.validate(me, userID: current.account.identity.userID)
+            guard device.id == current.account.deviceID.rawValue else { throw SyncAccountServiceError(issue: .tokenBindingMismatch) }
+            locked { cached.me = me }
+            sync.syncNow()
+            return (snapshot, nil)
+        } catch {
+            let issue = await inviteFailure(error)
+            sync.syncNow()
+            return (snapshot, issue)
+        }
+    }
+
+    func createInvite(groupID: ULID, role: SyncAPI.InviteRole, expectedAccount: SyncAccount) async throws -> SyncIssuedInvite {
+        try enter()
+        defer { leave() }
+        let current = try inviteSession(expectedAccount, server: SyncServerURL(expectedAccount.identity.serverURL.absoluteString))
+        do { return try await current.client.createInvite(groupID: groupID, request: .init(role: role)) }
+        catch { throw await inviteFailure(error) }
+    }
+
+    private func inviteSession(_ expected: SyncAccount, server: SyncServerURL) throws -> Session {
+        guard snapshot.account == expected else { throw InviteIssue.accountChanged }
+        guard expected.identity.serverURL == server.baseURL else { throw InviteIssue.wrongServer }
+        let current = try session()
+        guard current.account == expected, snapshot.enabled else { throw InviteIssue.accountChanged }
+        return current
+    }
+
+    private func inviteFailure(_ error: Error) async -> SyncAccountServiceError {
+        let result = failure(error)
+        if Self.requiresSignIn(result.issue) {
+            sync.requireSignIn()
+            await sync.drain()
+            locked { active = nil; cached.enabled = false; cached.me = nil }
+        }
+        return result
     }
 
     /// No connection, or an inactive one, means no secret lookup or HTTP. Raw
