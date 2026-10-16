@@ -539,6 +539,56 @@ final class SyncAccountServiceTests: XCTestCase {
         XCTAssertFalse(rig.sync.service.report.enabled)
     }
 
+    func testRecoveredMetadataClearCannotHideUnreadPendingSecretCleanup() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        let account = try XCTUnwrap(rig.account.snapshot.account)
+        let pending = SyncTestValues.uuid
+        try rig.sync.accounts.setAccount(account, retiring: [pending])
+        rig.secrets.persisted[.device(pending)] = StoredSecret(value: SecretValue("unused synthetic"), tier: .secretService)
+        rig.sync.base.dataOperations.failFlushNumber = rig.sync.base.dataOperations.flushCount + 1
+        XCTAssertThrowsError(try rig.sync.accounts.disableAutomaticResume()) {
+            XCTAssertEqual($0 as? SyncError, .durabilityUncertain)
+        }
+        rig.sync.base.dataOperations.failFlushNumber = nil
+
+        let cleanup = try await rig.account.signOut()
+        XCTAssertEqual(cleanup.remote, .revoked)
+        XCTAssertEqual(cleanup.metadataIssue, .durabilityUncertain)
+        XCTAssertFalse(cleanup.isComplete)
+        XCTAssertFalse(rig.account.snapshot.enabled)
+        XCTAssertNil(rig.secrets.persisted[account.secretAccount])
+        XCTAssertNotNil(rig.secrets.persisted[.device(pending)])
+        XCTAssertEqual(try rig.sync.accounts.loadConnection().cleanupConnections, [pending])
+        let retry = try await rig.account.signOut()
+        XCTAssertTrue(retry.isComplete)
+        XCTAssertTrue(rig.secrets.persisted.isEmpty)
+        XCTAssertTrue(try rig.sync.accounts.loadConnection().cleanupConnections.isEmpty)
+    }
+
+    func testRecoveredResumeDisableFailureCompletesCleanupOfKnownSecrets() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        var failed = false
+        rig.sync.base.dataOperations.onOperation = { operation in
+            if operation == "file:sync/account.json", !failed {
+                failed = true
+                rig.sync.base.dataOperations.failOperationNumber = rig.sync.base.dataOperations.operationCount
+            }
+        }
+
+        let cleanup = try await rig.account.signOut()
+        rig.sync.base.dataOperations.onOperation = nil
+        XCTAssertTrue(failed)
+        XCTAssertTrue(cleanup.isComplete)
+        XCTAssertNil(cleanup.metadataIssue)
+        XCTAssertNil(try rig.sync.accounts.loadAccount())
+        XCTAssertTrue(try rig.sync.accounts.loadConnection().cleanupConnections.isEmpty)
+        XCTAssertTrue(rig.secrets.persisted.isEmpty)
+    }
+
     func testBusyLoginAlsoConsumesPasswordAndMakesNoSecondRequest() async throws {
         let rig = try SyncAccountRig()
         let normal = rig.sync.transport.handler
