@@ -33,21 +33,49 @@ internal class ImeBoundaryTest {
         sources.flatMap { source ->
             val pkg = Regex("(?m)^package (\\S+)").find(source)!!.groupValues[1]
             // Follow local constructions and object calls that reflection cannot see.
-            // Same-line annotations with arguments and imported members still need semantic analysis.
+            // Imported members still need semantic analysis; unparsed declarations stay in file context.
             val modifiers = "(?:(?:@[\\w.]+|private|internal|public|expect|actual|external|infix|operator|suspend|inline|tailrec|sealed|data|abstract|open|value|enum|annotation|final)\\s+)*"
             val functions = Regex("(?m)^${modifiers}fun (?:<[^\\n>]+> )?(?:[^\\n(]+\\.)?(\\w+)\\(").findAll(source).toList()
             val types = Regex("(?m)^$modifiers(?:fun )?(?:class|interface|object) (\\w+)").findAll(source).toList()
             val properties = Regex("(?m)^${modifiers}(?:(?:const|lateinit)\\s+)?(?:val|var) \\w+").findAll(source).toList()
             val starts = (functions + types + properties).map { it.range.first }.sorted()
-            val header = Regex("(?m)^(?:package|import) [^\\n]+").findAll(source).joinToString("\n") { it.value }
             fun body(start: Int): String = source.substring(start, starts.firstOrNull { it > start } ?: source.length)
-            // File initialization and shared property access remain conservatively in every closure.
-            val initializers = properties.joinToString("\n") { body(it.range.first) }
+            // Remove only bounded declarations, retaining preamble, aliases, initializers and unparsed tails.
+            val context = (functions + types).sortedByDescending { it.range.first }.fold(source) { remaining, declaration ->
+                val limit = starts.firstOrNull { it > declaration.range.first } ?: source.length
+                remaining.replaceRange(declaration.range.first, declarationEnd(source, declaration, limit), "\n")
+            }
             (functions + types).asSequence().map { declaration ->
                 // Follow each declaration's calls without pulling in unrelated siblings.
-                "$pkg.${declaration.groupValues[1]}" to "$header\n${body(declaration.range.first)}\n$initializers"
+                "$pkg.${declaration.groupValues[1]}" to "$context\n${body(declaration.range.first)}"
+            } + Regex("\\b(?:class|interface|object) (\\w+)").findAll(context).map {
+                // Reflection previously scanned whole files even for types the declaration index missed.
+                "$pkg.${it.groupValues[1]}" to context
             }
         }.groupBy({ it.first }, { it.second })
+
+    private fun declarationEnd(source: String, declaration: MatchResult, limit: Int): Int {
+        val start = declaration.range.first
+        val tokens = Regex("""//[^\n]*|/\*[\s\S]*?\*/|"{3}[\s\S]*?"{3}|"(?:\\.|[^"\\\n])*+"|'(?:\\.|[^'\\\n])*+'|`[^`\n]*`|[(){}\[\];\n]""")
+        val closing = mutableListOf<Char>()
+        for (token in tokens.findAll(source.substring(start, limit))) {
+            val value = token.value
+            // Ambiguous comment/string syntax keeps the entire span in the conservative context.
+            if (value.startsWith("/*") && value.drop(2).contains("/*") ||
+                value.startsWith("\"\"\"") || value.startsWith('"') && '$' in value) return start
+            if (value.length > 1) continue
+            val character = value.single()
+            when {
+                character in "({[" -> closing += ")}]"["({[".indexOf(character)]
+                character in ")}]" -> {
+                    if (closing.removeLastOrNull() != character) return start
+                    if (character == '}' && closing.isEmpty()) return start + token.range.last + 1
+                }
+                closing.isEmpty() && start + token.range.first > declaration.range.last -> return start + token.range.first
+            }
+        }
+        return if (closing.isEmpty()) limit else start
+    }
 
     @Test fun `IME is exported only behind system binding permission with exact filter and metadata in one process`() {
         val manifest = xml("AndroidManifest.xml")
@@ -277,6 +305,69 @@ internal class ImeBoundaryTest {
                     validateGraphSource("package local\nimport other.prepare\nfun work() = prepare()", helpers)
                 }
             }
+        }
+    }
+
+    @Test fun `declaration traversal retains aliases before the first indexed declaration`() {
+        val source = "package other\ntypealias Stealth = java.lang.StringBuilder\n" +
+            "class Unrelated { fun run() = java.net.Socket() }\n" +
+            "class Local { fun run() = prepare() }\nprivate fun prepare() = Stealth()"
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        validateGraphSource(local, indexSources(sequenceOf(source)))
+        val mutant = source.replace("java.lang.StringBuilder", "java.net.Socket")
+        val helpers = indexSources(sequenceOf(mutant))
+        assertTrue("other.prepare" in helpers)
+        assertFailsWith<AssertionError> { validateGraphSource(local, helpers) }
+    }
+
+    @Test fun `declaration traversal retains aliases around excluded siblings`() {
+        val alias = "typealias Stealth = java.lang.StringBuilder"
+        val reached = "class Local { fun run() = prepare() }\nprivate fun prepare() = Stealth()"
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        for (sibling in listOf("class Unrelated { fun run() = java.net.Socket() }",
+            "fun unrelated() = java.net.Socket()")) {
+            for (declarations in listOf("$sibling\n$alias\n$reached", "$reached\n$sibling\n$alias",
+                "$reached\n$alias\n$sibling")) {
+                val source = "package other\n$declarations"
+                validateGraphSource(local, indexSources(sequenceOf(source)))
+                val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+                assertFailsWith<AssertionError>(declarations) { validateGraphSource(local, helpers) }
+            }
+        }
+    }
+
+    @Test fun `declaration traversal retains unindexed annotated and semicolon helpers`() {
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        for (declarations in listOf("class Unrelated\n@Deprecated(\"legacy\") private fun prepare()",
+            "class Unrelated; private fun prepare()")) {
+            val source = "package other\n$declarations = java.lang.StringBuilder()\n" +
+                "class Local { fun run() = prepare() }"
+            validateGraphSource(local, indexSources(sequenceOf(source)))
+            val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+            assertFailsWith<AssertionError>(declarations) { validateGraphSource(local, helpers) }
+        }
+    }
+
+    @Test fun `declaration traversal retains directly reached unindexed annotated types`() {
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        for (prefix in listOf("@Deprecated(\"legacy\")", "class Unrelated;")) {
+            val source = "package other\n$prefix class Local { fun run() = java.lang.StringBuilder() }"
+            validateGraphSource(local, indexSources(sequenceOf(source)))
+            val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+            assertFailsWith<AssertionError>(prefix) { validateGraphSource(local, helpers) }
+        }
+    }
+
+    @Test fun `declaration context retains aliases around literal and comment delimiters`() {
+        val local = "package local\nimport other.prepare\nfun work() = prepare()"
+        for (contents in listOf("val text = \"}\\\";{\"", "val brace = '}' // {",
+            "val text = \"\"\"}\n{\"\"\"", "val text = \"${'$'}{listOf(\"}\")}\"",
+            "/* outer /* inner */ } */ val text = Unit")) {
+            val source = "package other\nclass Unrelated {\n    $contents\n}\n" +
+                "typealias Stealth = java.lang.StringBuilder\nfun prepare() = Stealth()"
+            validateGraphSource(local, indexSources(sequenceOf(source)))
+            val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+            assertFailsWith<AssertionError>(contents) { validateGraphSource(local, helpers) }
         }
     }
 
