@@ -296,6 +296,41 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
         } finally { r.close() }
     }
 
+    @Test fun `background entry resumes a restored original root without local auto resume`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler))
+        try {
+            r.login()
+            r.remote()
+            r.sync.setExecutionMode(SyncExecutionMode.BACKGROUND)
+            assertEquals(SyncStatus.IDLE, r.sync.runBackground().status)
+            runCurrent()
+            val pulls = r.requests.count { it.url.endsWith("/sync/pull") }
+            assertEquals(1, pulls)
+            val requests = r.requests.size
+
+            Files.move(libraryDir, filesDir.resolve("lost-library"))
+            assertNotNull(r.repository.refresh().error)
+            runCurrent()
+            assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
+            assertEquals(requests, r.requests.size)
+
+            Files.move(filesDir.resolve("lost-library"), libraryDir)
+            assertNull(r.repository.refresh().error)
+            runCurrent()
+            assertTrue(r.startup.rootAvailable.value)
+            assertEquals(requests, r.requests.size, "A local Application/IME read cannot dispatch background sync")
+            assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
+
+            val completed = r.sync.runBackground()
+            runCurrent()
+            assertEquals(pulls + 1, r.requests.count { it.url.endsWith("/sync/pull") }, "Background entry must collect again")
+            assertNull(completed.blockingIssue)
+            assertEquals(SyncStatus.IDLE, completed.status)
+            assertTrue(completed.enabled)
+            assertNull(r.sync.reports.value!!.blockingIssue)
+        } finally { r.close() }
+    }
+
     @Test fun `corrupt metadata or journal blocks the first local read without making a root`() = runTest {
         for (path in listOf("sync/state.json", "sync/account.json", "sync/binding.json", "sync/apply.json")) {
             put(stateDir.resolve(path), "{\"version\":999}".encodeToByteArray())
