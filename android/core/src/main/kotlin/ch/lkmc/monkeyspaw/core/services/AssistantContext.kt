@@ -53,9 +53,10 @@ data class AssistantContext(
     val editor: AssistantEditorSnapshot? = null,
     val access: AssistantAccessState = AssistantAccessState.PRIVATE_PROMPT,
     val credentialGeneration: Long = 0,
+    val accessGeneration: Long = 0,
 ) {
     internal fun sameSession(other: AssistantContext): Boolean = libraryID == other.libraryID &&
-        profile == other.profile && credentialGeneration == other.credentialGeneration &&
+        profile == other.profile && credentialGeneration == other.credentialGeneration && accessGeneration == other.accessGeneration &&
         editor?.session == other.editor?.session && access == other.access
 
     fun matchesCandidate(other: AssistantContext): Boolean = sameSession(other) && when {

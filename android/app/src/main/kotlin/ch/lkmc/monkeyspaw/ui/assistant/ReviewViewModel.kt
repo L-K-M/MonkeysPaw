@@ -193,7 +193,7 @@ internal class ReviewViewModel @Inject constructor(
             source == null -> ReviewUnavailable.SOURCE
             source.availability == AssistantEditorAvailability.CONFLICTED -> ReviewUnavailable.CONFLICT
             source.availability == AssistantEditorAvailability.BUSY -> ReviewUnavailable.BUSY
-            source.readOnlyReason != null -> ReviewUnavailable.READ_ONLY
+            source.readOnlyReason != null || editorState.readOnlyReason != null -> ReviewUnavailable.READ_ONLY
             source.source == null -> ReviewUnavailable.SOURCE
             editorState.validating -> ReviewUnavailable.VALIDATING
             !editorState.previewAvailable -> ReviewUnavailable.INVALID

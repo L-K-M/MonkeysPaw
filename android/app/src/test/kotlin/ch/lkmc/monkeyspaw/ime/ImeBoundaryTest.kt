@@ -102,7 +102,8 @@ internal class ImeBoundaryTest {
         assertTrue(access.contains("val LOCAL = AssistantAccess { AssistantAccessState.PRIVATE_PROMPT }"))
         val module = app.resolve("di/AppModule.kt").readText()
         assertTrue(module.contains("LibraryService(prompts, state, clock, entropy, access)"))
-        assertTrue(module.contains("fun assistantAccess(): AssistantAccess = AssistantAccess.LOCAL"))
+        assertTrue(module.contains("fun assistantAccess(library: Lazy<LibraryService>)"))
+        assertTrue(module.contains("library.get().accessSnapshot"))
         for (name in localSaveReferences) {
             validateGraphSource(name)
             // Source references are allowed; an instance in the runtime graph remains forbidden.
