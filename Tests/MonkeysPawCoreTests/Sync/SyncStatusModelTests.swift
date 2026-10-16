@@ -117,6 +117,23 @@ final class SyncStatusModelTests: XCTestCase {
         XCTAssertEqual(model.state.footer, .syncing)
     }
 
+    func testSyncNowRechecksServiceAfterReentrantPublication() {
+        let (model, sync, main) = makeModel()
+        var report = SyncReport()
+        report.enabled = true
+        sync.report = report
+        model.onChange = {
+            report.needsSignIn = true
+            sync.send(report)
+        }
+        model.syncNow()
+        main.flush()
+        XCTAssertEqual(sync.syncRequests, 0)
+        main.flush()
+        main.flush()
+        XCTAssertEqual(model.state.footer, .needsSignIn)
+    }
+
     func testErrorDetailsUseFixedReasonsAndNeverRetainUnknownBodyOrCode() {
         let (model, sync, main) = makeModel()
         let sentinel = "server-body-token-" + UUID().uuidString

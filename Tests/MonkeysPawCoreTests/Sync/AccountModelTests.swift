@@ -220,6 +220,56 @@ final class AccountModelTests: XCTestCase {
         XCTAssertEqual(fake.holds, [hold])
     }
 
+    func testFailedIntentAndHoldReadPreserveLastKnownHeldDecisions() async throws {
+        let readFailures: [Error] = [SyncAccountServiceError(issue: .metadata(.readFailed(.ioFailure))),
+            AccountSensitiveFailure(description: UUID().uuidString)]
+        for failure in readFailures {
+            let (model, fake, main) = makeModel()
+            let first = try AccountPresentationFake.hold()
+            let second = try AccountPresentationFake.hold(SyncTestValues.groupPrompt, path: "rescued.md")
+            fake.snapshot = try AccountPresentationFake.signedIn(user: SyncTestValues.otherUser)
+            fake.holds = [first, second]
+            await settle(model, main)
+            model.decideHeld([first.identity], decision: .keepLocal)
+            await settle(model, main)
+            let previous = model.state.heldPrompts
+            fake.handler = { _ in throw SyncAccountServiceError(issue: .http(.transport(.networkFailure))) }
+            fake.holdsError = failure
+            model.refresh()
+            await settle(model, main)
+            XCTAssertEqual(model.state.error, .offline)
+            XCTAssertEqual(model.state.heldPrompts, previous)
+            XCTAssertEqual(model.state.keptLocal, [first.identity])
+            XCTAssertTrue(model.state.needsHeldDecision)
+
+            fake.holdsError = nil
+            fake.handler = nil
+            model.decideHeld([second.identity], decision: .include)
+            await settle(model, main)
+            XCTAssertEqual(fake.calls, [.refresh, .include([second.identity])])
+            XCTAssertNil(model.state.error)
+            XCTAssertEqual(model.state.heldPrompts.map(\.identity), [first.identity])
+            XCTAssertEqual(model.state.keptLocal, [first.identity])
+            XCTAssertFalse(model.state.needsHeldDecision)
+        }
+    }
+
+    func testSuccessfulInclusionWithFailedHoldReadDoesNotRestoreOldHolds() async throws {
+        let (model, fake, main) = makeModel()
+        let hold = try AccountPresentationFake.hold()
+        fake.snapshot = try AccountPresentationFake.signedIn(user: SyncTestValues.otherUser)
+        fake.holds = [hold]
+        await settle(model, main)
+        fake.holdsError = SyncAccountServiceError(issue: .metadata(.readFailed(.ioFailure)))
+        model.decideHeld([hold.identity], decision: .include)
+        await settle(model, main)
+        XCTAssertEqual(fake.calls, [.include([hold.identity])])
+        XCTAssertTrue(fake.holds.isEmpty)
+        XCTAssertEqual(model.state.error, .storageRead)
+        XCTAssertTrue(model.state.heldPrompts.isEmpty)
+        XCTAssertTrue(model.state.keptLocal.isEmpty)
+    }
+
     func testAccountChangeAndNewHoldsRequireAnotherDecision() async throws {
         let (model, fake, main) = makeModel()
         let hold = try AccountPresentationFake.hold()

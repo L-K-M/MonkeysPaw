@@ -153,6 +153,7 @@ public final class AccountModel: CustomStringConvertible, CustomDebugStringConve
         let id = UUID()
         request = id
         let previous = state
+        let previousHolds = state.heldPrompts
         state.operation = operation
         state.error = nil
         state.reservedFolders = []
@@ -173,7 +174,8 @@ public final class AccountModel: CustomStringConvertible, CustomDebugStringConve
                 issue = .invalidResponse
                 snapshot = account.snapshot
             }
-            var holds: [AccountHeldPrompt] = []
+            // Successful mutations can invalidate the previously displayed holds.
+            var holds = issue == nil ? [] : previousHolds
             do { holds = try account.heldPrompts().map(AccountHeldPrompt.init) }
             catch let failure as SyncAccountServiceError {
                 if issue == nil { issue = AccountIssue(failure.issue) }
