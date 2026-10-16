@@ -45,11 +45,10 @@ class ScenarioDecoderTest {
 
     @Test fun staleMutationPointersCannotSatisfyDecoderRejection() {
         for (pointer in listOf("/cases/0/nowX", "/cases/0/steps/999/expected/file_count")) {
-            assertFailsWith<AssertionError> {
-                assertFailsWith<ScenarioFailure> {
-                    ScenarioDecoder.decode(changed(pointer, wireString("2026-02-30T00:00:00Z")))
-                }
+            val failure = assertFailsWith<AssertionError> {
+                changed(pointer, wireString("2026-02-30T00:00:00Z"))
             }
+            assertIs<ScenarioFailure>(failure.cause)
         }
     }
 
