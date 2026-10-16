@@ -111,6 +111,44 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
         XCTAssertFalse(environment.inviteModel?.state.canAccept == true)
     }
 
+    func testInviteReopensAccountAfterClosingOnGeneralTab() throws {
+        try open(link())
+        let first = try XCTUnwrap(window)
+        let notebook = try settingsWidget("settings-tabs", in: first)
+        let account = try settingsWidget("settings-account-page", in: first)
+        let page = gtk_notebook_page_num(mp_notebook(notebook), account)
+        XCTAssertGreaterThanOrEqual(page, 0)
+        gtk_notebook_set_current_page(mp_notebook(notebook), 0)
+        gtk_window_close(mp_window(first))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(first) == 0 })
+        XCTAssertNotEqual(gtk_widget_get_visible(account), 0)
+
+        try open(link())
+
+        XCTAssertEqual(window, first)
+        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(notebook)), page)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_mapped(account) != 0 })
+        XCTAssertTrue(http.requests.isEmpty)
+    }
+
+    func testDestroyedAccountPageConsumesInviteWithoutStaging() throws {
+        let model = try XCTUnwrap(environment.inviteModel)
+        let page = LinuxAccountSettingsPage(makeModel: { self.environment.accountModel }, makeInvite: { model })
+        let parent = try XCTUnwrap(gtk_application_window_new(application))
+        gtk_window_set_child(mp_window(parent), page.widget)
+        page.show()
+        page.retire(.destroyed)
+        gtk_window_destroy(mp_window(parent))
+
+        var supplied = link()
+        page.stageInvite(&supplied)
+        drainUI()
+
+        XCTAssertTrue(supplied.isEmpty, "Destroyed Account page did not consume invite input")
+        XCTAssertNil(model.state.destination)
+        XCTAssertTrue(http.requests.isEmpty)
+    }
+
     func testBareTokenNeedsExplicitServerAndHTTPWarningIsVisible() throws {
         environment.showInviteSettings()
         try findWindow()
@@ -263,7 +301,7 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.activation.ownerPID() != nil })
         let pid = try XCTUnwrap(activation.ownerPID())
         XCTAssertEqual(pid, child.processIdentifier)
-        XCTAssertNil(activation.visibleSettings(pid: pid))
+        XCTAssertNil(try activation.visibleSettings(pid: pid))
         let remote = try activation.launch([link(server: "https://example.test/paw%20base/a+b")])
         XCTAssertTrue(GTKTestSupport.spin(until: { !remote.isRunning }, timeout: .seconds(15)))
         XCTAssertEqual(remote.terminationStatus, 0)
@@ -283,6 +321,45 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
         _ = try activation.waitForSettings(pid: child.processIdentifier)
         try activation.assertNoPicker(pid: child.processIdentifier)
         try activation.assertPrivate(token: token, link: link())
+    }
+
+    func testStoppingAfterPrimaryExitDoesNotReactivateService() throws {
+        activation = try InviteActivation(root: tools.directory)
+        let child = try activation.launch([link()])
+        XCTAssertTrue(GTKTestSupport.spin { self.activation.ownerPID() == child.processIdentifier })
+        _ = try activation.waitForSettings(pid: child.processIdentifier)
+        kill(child.processIdentifier, SIGKILL)
+        XCTAssertTrue(GTKTestSupport.spin { !child.isRunning && self.activation.ownerPID() == nil })
+
+        activation.stop()
+
+        XCTAssertEqual(activation.trace.components(separatedBy: "application.startup").count - 1, 1,
+            "Teardown activated a replacement primary")
+    }
+
+    func testActivationUsesExecutableBesideCurrentTestBuild() throws {
+        let build = tools.directory.appendingPathComponent("custom-build/release")
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        let binary = build.appendingPathComponent("monkeyspaw")
+        try Data("#!/bin/sh\nexit 23\n".utf8).write(to: binary)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: binary.path)
+        activation = try InviteActivation(root: tools.directory,
+            testExecutable: build.appendingPathComponent("MonkeysPawPackageTests.xctest"))
+
+        let child = try activation.launch(["--version"])
+        XCTAssertTrue(GTKTestSupport.spin { !child.isRunning })
+
+        XCTAssertEqual(child.terminationStatus, 23, "Activation launched a binary from another build")
+        XCTAssertEqual(child.executableURL, binary)
+    }
+
+    func testMissingWindowInspectionToolFailsNegativeAssertion() throws {
+        let daemon = try XCTUnwrap(LinuxToolRunner().executable("dbus-daemon"))
+        try FileManager.default.createSymbolicLink(at: tools.directory.appendingPathComponent("dbus-daemon"),
+            withDestinationURL: daemon)
+        activation = try InviteActivation(root: tools.directory, toolRunner: tools.runner)
+
+        XCTAssertThrowsError(try activation.assertNoPicker(pid: getpid()))
     }
 
     func testDesktopHandlerAndServiceKeepSharedIdentity() throws {
@@ -435,20 +512,19 @@ private final class InviteActivation {
     private let daemon = Process()
     private let capture = InviteCapture()
     private var children: [Process] = []
-    private var primaryPID: Int32?
     private let runner: LinuxToolRunner
     private let binary: URL
     private var environment: [String: String]
     var trace: String { capture.text }
 
-    init(root: URL) throws {
+    init(root: URL, testExecutable: URL = URL(fileURLWithPath: CommandLine.arguments[0]),
+         toolRunner: LinuxToolRunner? = nil) throws {
         directory = root.appendingPathComponent("activation")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        binary = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent(".build/debug/monkeyspaw")
+        binary = testExecutable.deletingLastPathComponent().appendingPathComponent("monkeyspaw")
         environment = ProcessInfo.processInfo.environment
         if let libraries = environment["MONKEYSPAW_HOST_X11_LIBRARIES"] { environment["LD_LIBRARY_PATH"] = libraries }
-        runner = LinuxToolRunner(environment: environment)
+        runner = toolRunner ?? LinuxToolRunner(environment: environment)
         let address = "unix:path=" + directory.appendingPathComponent("socket").path
         environment["DBUS_SESSION_BUS_ADDRESS"] = address
         environment["HOME"] = directory.path
@@ -503,26 +579,25 @@ private final class InviteActivation {
                       "--method", "org.freedesktop.Application.Open", "['" + uri + "']", "{}"])
     }
 
-    func ownerPID() -> Int32? {
+    func ownerPID(_ name: String = AppIdentity.linuxAppID) -> Int32? {
         guard let reply = try? call(["--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
-                                    "--method", "org.freedesktop.DBus.GetConnectionUnixProcessID", "ch.lkmc.monkeyspaw"]) else { return nil }
-        let value = reply.split(whereSeparator: { !$0.isNumber }).last.flatMap { Int32($0) }
-        if let value { primaryPID = value }
-        return value
+                                    "--method", "org.freedesktop.DBus.GetConnectionUnixProcessID", name]) else { return nil }
+        return reply.split(whereSeparator: { !$0.isNumber }).last.flatMap { Int32($0) }
     }
 
-    func visibleSettings(pid: Int32) -> String? { visible(title: LinuxStrings.settings, pid: pid).first }
+    func visibleSettings(pid: Int32) throws -> String? { try visible(title: LinuxStrings.settings, pid: pid).first }
 
     func waitForSettings(pid: Int32) throws -> String {
-        XCTAssertTrue(GTKTestSupport.spin(until: { self.visibleSettings(pid: pid) != nil }, timeout: .seconds(15)))
-        let windows = visible(title: LinuxStrings.settings, pid: pid)
+        XCTAssertTrue(GTKTestSupport.spin(until: { (try? self.visibleSettings(pid: pid)) != nil }, timeout: .seconds(15)))
+        let windows = try visible(title: LinuxStrings.settings, pid: pid)
         XCTAssertEqual(windows.count, 1, "Invite activation created another Settings window")
         return try XCTUnwrap(windows.first)
     }
 
     func assertNoPicker(pid: Int32) throws {
         for title in [AppIdentity.displayName, LinuxStrings.onboarding, LinuxStrings.setup] {
-            XCTAssertTrue(visible(title: title, pid: pid).isEmpty, "Invite activation opened another surface")
+            let windows = try visible(title: title, pid: pid)
+            XCTAssertTrue(windows.isEmpty, "Invite activation opened another surface")
         }
     }
 
@@ -539,10 +614,17 @@ private final class InviteActivation {
     }
 
     func stop() {
-        if daemon.isRunning, let pid = primaryPID ?? ownerPID() {
-            _ = try? call(["--dest", "ch.lkmc.monkeyspaw", "--object-path", "/ch/lkmc/monkeyspaw",
+        if daemon.isRunning,
+           let reply = try? call(["--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                                  "--method", "org.freedesktop.DBus.GetNameOwner", AppIdentity.linuxAppID]),
+           let name = reply.split(separator: "'").dropFirst().first, name.hasPrefix(":") {
+            // A unique bus name cannot activate a replacement after its owner exits.
+            let owner = String(name)
+            let pid = ownerPID(owner)
+            _ = try? call(["--dest", owner, "--object-path", "/ch/lkmc/monkeyspaw",
                            "--method", "org.gtk.Actions.Activate", "quit", "[]", "{}"])
-            if !GTKTestSupport.spin(until: { self.ownerPID() == nil }, timeout: .seconds(5)) { kill(pid, SIGKILL) }
+            if let pid, !GTKTestSupport.spin(until: { self.ownerPID(owner) == nil }, timeout: .seconds(5)),
+               ownerPID(owner) == pid { kill(pid, SIGKILL) }
         }
         for child in children {
             if child.isRunning { kill(child.processIdentifier, SIGKILL) }
@@ -563,10 +645,10 @@ private final class InviteActivation {
         return output.text
     }
 
-    private func visible(title: String, pid: Int32) -> [String] {
-        guard case .success(let output) = runner.run("xdotool", arguments: ["search", "--onlyvisible", "--all",
+    private func visible(title: String, pid: Int32) throws -> [String] {
+        let output = try runner.run("xdotool", arguments: ["search", "--onlyvisible", "--all",
             "--pid", String(pid), "--name", "^" + NSRegularExpression.escapedPattern(for: title) + "$"],
-            timeout: .seconds(1), acceptedStatuses: [0, 1]) else { return [] }
+            timeout: .seconds(1), acceptedStatuses: [0, 1]).get()
         return output.text.split(separator: "\n").map(String.init)
     }
 }
