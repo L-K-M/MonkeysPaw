@@ -215,7 +215,7 @@ final class MacSyncCompositionTests: XCTestCase {
         // ask again until a pass observes the new role.
         XCTAssertTrue(spin {
             if editor.state.readOnlyReason != nil { self.delegate.syncComposition?.sync.syncNow() }
-            return editor.state.readOnlyReason == nil
+            return editor.state.readOnlyReason == nil && editor.state.canEdit
         })
         XCTAssertEqual(editor.assistantAccess, .group(.editor))
         XCTAssertTrue(editor.state.canEdit)
