@@ -90,12 +90,15 @@ class SyncAccountService internal constructor(
             client.login(password.withValue { LoginRequest(username, it, deviceName) })
         }
 
-    internal suspend fun register(server: String, username: String, password: SecretValue, inviteToken: SecretValue,
-                                  deviceName: String): SyncAccountSnapshot = authenticate(server, AuthenticationKind.REGISTER) { client ->
-        client.register(inviteToken.withValue { invite -> password.withValue { RegisterRequest(invite, username, it, deviceName) } })
+    internal suspend fun register(invite: InviteLink, expectedAccount: SyncAccount?, username: String, password: SecretValue,
+                                  deviceName: String): SyncAccountSnapshot = authenticate(invite.server.baseURL, AuthenticationKind.REGISTER, { previous ->
+        if (previous.account != expectedAccount || snapshot.account != expectedAccount) throw InviteAcceptanceIssue.AccountChanged
+    }) { client ->
+        client.register(invite.token.withValue { token -> password.withValue { RegisterRequest(token, username, it, deviceName) } })
     }
 
     private suspend fun authenticate(input: String, kind: AuthenticationKind,
+                                     checkAccount: (SyncConnectionDocument) -> Unit = {},
                                      authenticate: suspend (SyncHTTPClient) -> SyncAuthentication): SyncAccountSnapshot = withContext(io) {
         enter()
         try {
@@ -105,8 +108,10 @@ class SyncAccountService internal constructor(
             try {
                 previous = accounts.recoverConnection()
                 server = SyncServerURL(input)
+                checkAccount(previous)
                 authentication = authenticate(SyncHTTPClient(server, transport, clock = clock))
-            } catch (error: Throwable) { throwFailure(error) }
+            } catch (error: InviteAcceptanceIssue) { throw error }
+            catch (error: Throwable) { throwFailure(error) }
             val client = SyncHTTPClient(server, transport, authentication.credential, clock)
             var candidate: SyncAccount? = null
             var staged = false
@@ -170,6 +175,48 @@ class SyncAccountService internal constructor(
                 throw SyncAccountServiceError(result.issue, cleanup, registrationCommitted = kind == AuthenticationKind.REGISTER)
             }
         } finally { leave() }
+    }
+
+    /** Reauthentication changes the UUID too, invalidating an older staged redemption. */
+    internal suspend fun joinInvite(invite: InviteLink, expectedAccount: SyncAccount): Pair<SyncAccountSnapshot, SyncAccountServiceError?> = operation {
+        if (snapshot.account != expectedAccount) throw InviteAcceptanceIssue.AccountChanged
+        if (expectedAccount.identity.serverURL != invite.server.baseURL) throw InviteAcceptanceIssue.WrongServer
+        val current = session()
+        if (current.account != expectedAccount || !snapshot.enabled) throw InviteAcceptanceIssue.AccountChanged
+        try {
+            current.client.joinGroup(invite.token.withValue(::JoinGroupRequest))
+        } catch (error: Throwable) {
+            val result = inviteFailure(error)
+            currentCoroutineContext().ensureActive()
+            if (error is CancellationException) throw error
+            throw result
+        }
+        // Redemption committed. A failed refresh must not expose cached roles or retry the invite.
+        cached.value = snapshot.copy(me = null)
+        try {
+            val me = current.client.me()
+            validateCurrent(me, current.account)
+            cached.value = snapshot.copy(me = me)
+            sync.syncNow()
+            snapshot to null
+        } catch (error: Throwable) {
+            val result = inviteFailure(error)
+            sync.syncNow()
+            currentCoroutineContext().ensureActive()
+            if (error is CancellationException) throw error
+            snapshot to result
+        }
+    }
+
+    private suspend fun inviteFailure(error: Throwable): SyncAccountServiceError {
+        val result = failure(error)
+        if (requiresSignIn(result.issue)) {
+            sync.stopAccountSession()
+            sync.requireSignIn()
+            withContext(NonCancellable) { sync.drain() }
+            lock.withLock { active = null; cached.value = snapshot.copy(enabled = false, me = null, tier = null) }
+        }
+        return result
     }
 
     /** Inactive/signed-out startup performs no secret read or HTTP, including pending cleanup. */
