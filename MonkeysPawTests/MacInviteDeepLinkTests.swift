@@ -289,6 +289,71 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertEqual(transport.redemptions, 0)
     }
 
+    func testInviteAndGroupSectionsBindHideAndRebindTogether() throws {
+        start()
+        let controller = try XCTUnwrap(delegate.settingsWindow)
+        let account = controller.presentation.account
+        let invites = account.invites
+        let groups = account.groups
+        XCTAssertNil(invites.state)
+        XCTAssertNil(groups.state)
+
+        route(link())
+        _ = try stagedView()
+        let oldInvite = try XCTUnwrap(delegate.inviteModel)
+        let oldGroups = try XCTUnwrap(delegate.groupManagementModel)
+        XCTAssertEqual(try XCTUnwrap(invites.state), oldInvite.state)
+        XCTAssertEqual(try XCTUnwrap(groups.state), oldGroups.state)
+        XCTAssertTrue(groups.canRefresh)
+        let linkField = try secureField(SettingsInviteStrings.input)
+        let passwordField = try secureField(SettingsInviteStrings.password)
+        linkField.stringValue = token
+        passwordField.stringValue = "discarded-input"
+        groups.createName = "Discarded group draft"
+
+        controller.presentation.selectedTab = .general
+        XCTAssertNil(invites.state)
+        XCTAssertNil(groups.state)
+        XCTAssertFalse(oldInvite.state.canAccept)
+        XCTAssertTrue(linkField.stringValue.isEmpty)
+        XCTAssertTrue(passwordField.stringValue.isEmpty)
+        XCTAssertTrue(groups.createName.isEmpty)
+
+        delegate.showAccount()
+        XCTAssertTrue(spin { invites.canOperate && groups.canRefresh })
+        XCTAssertEqual(try XCTUnwrap(invites.state), oldInvite.state)
+        XCTAssertEqual(try XCTUnwrap(groups.state), oldGroups.state)
+        XCTAssertFalse(invites.canAccept)
+        route(link())
+        _ = try stagedView()
+        groups.createName = "Stale group draft"
+
+        let nextRoot = directory.appendingPathComponent("replacement", isDirectory: true)
+        try FileManager.default.createDirectory(at: nextRoot, withIntermediateDirectories: false)
+        try XCTUnwrap(delegate.generalSettingsModel).chooseFolder(nextRoot.path)
+        XCTAssertTrue(spin { self.delegate.libraryDirectory == nextRoot && invites.canOperate && groups.canRefresh })
+        let nextInvite = try XCTUnwrap(delegate.inviteModel)
+        let nextGroups = try XCTUnwrap(delegate.groupManagementModel)
+        XCTAssertFalse(nextInvite === oldInvite)
+        XCTAssertFalse(nextGroups === oldGroups)
+        XCTAssertEqual(try XCTUnwrap(invites.state), nextInvite.state)
+        XCTAssertEqual(try XCTUnwrap(groups.state), nextGroups.state)
+        XCTAssertFalse(invites.canAccept)
+        XCTAssertTrue(groups.createName.isEmpty)
+        var supplied = link()
+        oldInvite.stage(&supplied)
+        oldGroups.refresh()
+        XCTAssertTrue(supplied.isEmpty)
+        XCTAssertEqual(try XCTUnwrap(invites.state), nextInvite.state)
+        XCTAssertEqual(try XCTUnwrap(groups.state), nextGroups.state)
+
+        try XCTUnwrap(controller.window).close()
+        XCTAssertNil(invites.state)
+        XCTAssertNil(groups.state)
+        XCTAssertEqual(transport.requestCount, 0)
+        XCTAssertEqual(clipboard.writes, 0)
+    }
+
     func testClosedAcceptanceFinishesButDoesNotReviveTheHiddenPrompt() throws {
         start()
         route(link())

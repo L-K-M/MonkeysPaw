@@ -33,13 +33,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          makeAssistant: @escaping () -> AssistantSettingsModel,
          onProviderChange: @escaping () -> Void = {},
          makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {},
-         makeInvite: @escaping () -> InviteModel? = { nil }) {
+         makeInvite: @escaping () -> InviteModel? = { nil },
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          delivery: delivery, updates: updates,
                                          mainThread: mainThread, openSetup: openSetup,
                                          makeAccount: makeAccount, onAccountOpen: onAccountOpen,
-                                         makeInvite: makeInvite)
+                                         makeInvite: makeInvite, makeGroups: makeGroups)
         self.mainThread = mainThread
         self.activation = activation
         self.folderChooser = folderChooser
