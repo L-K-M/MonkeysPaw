@@ -32,6 +32,8 @@ final class MacConflictViewTests: XCTestCase {
         let host = NSHostingView(rootView: LibraryConflictView(presentation: view))
         host.frame = NSRect(x: 0, y: 0, width: 560, height: 640)
         host.layoutSubtreeIfNeeded()
+        let content = try XCTUnwrap(h.delegate.libraryWindow?.window?.contentView)
+        XCTAssertTrue(h.spin { self.accessibilityLabels(content).contains("Comparison") })
         XCTAssertTrue(h.transport.originalPuts.isEmpty)
         view.requestResolution(.keepMine)
         h.drainResolver()
@@ -309,6 +311,63 @@ final class MacConflictViewTests: XCTestCase {
         XCTAssertTrue(h.delegate.libraryWindow?.window === window)
         XCTAssertTrue(view.canResolve(.keepBoth))
     }
+
+    func testReleasingBeforeHoldRegistrationDoesNotStrandResponse() throws {
+        let transport = MacConflictTransport()
+        transport.holdNext = .get
+        transport.beforeHoldRegistration = { [weak transport] in transport?.releaseHeld() }
+        let request = try HTTPRequest(url: URL(string: "https://sync.example.test/" + MacConflictTransport.original)!,
+            method: .get, deadline: .now.advanced(by: .seconds(5)))
+        let finished = expectation(description: "Released request completes")
+        Task.detached {
+            do {
+                let response = try await transport.send(request)
+                XCTAssertEqual(response.statusCode, 200)
+            } catch { XCTFail("Released request failed") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 5)
+        transport.releaseHeld()
+    }
+
+    func testHeldMalformedRequestPreservesItsDecodingError() throws {
+        let transport = MacConflictTransport()
+        transport.holdNext = .put
+        let request = try HTTPRequest(url: URL(string: "https://sync.example.test/" + MacConflictTransport.original)!,
+            method: .put, body: Data("malformed JSON".utf8), deadline: .now.advanced(by: .seconds(5)))
+        let finished = expectation(description: "Malformed request completes")
+        Task.detached {
+            do {
+                _ = try await transport.send(request)
+                XCTFail("Malformed request unexpectedly succeeded")
+            } catch { XCTAssertTrue(error is DecodingError) }
+            finished.fulfill()
+        }
+        let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in transport.hasHeld }, object: nil)
+        wait(for: [held], timeout: 5)
+        transport.releaseHeld()
+        wait(for: [finished], timeout: 5)
+    }
+
+    private func accessibilityLabels(_ element: NSObject) -> Set<String> {
+        var labels = Set<String>()
+        // SwiftUI children expose accessibility selectors without full protocol conformance.
+        for selector in [#selector(NSAccessibilityProtocol.accessibilityLabel),
+                         #selector(NSAccessibilityProtocol.accessibilityTitle)] {
+            guard element.responds(to: selector),
+                  let value = element.perform(selector)?.takeUnretainedValue() else { continue }
+            let label = (value as? String) ?? (value as? NSAttributedString)?.string
+            if let label, !label.isEmpty { labels.insert(label); break }
+        }
+        let childrenSelector = #selector(NSAccessibilityProtocol.accessibilityChildren)
+        if element.responds(to: childrenSelector),
+           let children = element.perform(childrenSelector)?.takeUnretainedValue() as? [Any] {
+            for child in children {
+                if let child = child as? NSObject { labels.formUnion(accessibilityLabels(child)) }
+            }
+        }
+        return labels
+    }
 }
 
 private final class MacConflictHarness {
@@ -464,6 +523,7 @@ private final class MacConflictTransport: HTTPTransporting, @unchecked Sendable 
     var getFailure: SyncAPI.FailureCode? { get { locked { storedGetFailure } } set { locked { storedGetFailure = newValue } } }
     var putFailure: SyncAPI.FailureCode? { get { locked { storedPutFailure } } set { locked { storedPutFailure = newValue } } }
     var holdNext: HTTPMethod? { get { locked { storedHold } } set { locked { storedHold = newValue } } }
+    var beforeHoldRegistration: (() -> Void)?
     var hasHeld: Bool { locked { held != nil } }
     var sentOnMain: Bool { locked { mainRequest } }
     var revision: Int64 { locked { rev } }
@@ -476,20 +536,28 @@ private final class MacConflictTransport: HTTPTransporting, @unchecked Sendable 
             requests.append(request)
             mainRequest = mainRequest || Thread.isMainThread
             guard storedHold == request.method, request.url.lastPathComponent == Self.original else { return false }
-            storedHold = nil
             return true
         }
         if hold {
-            return try await withCheckedThrowingContinuation { continuation in locked { held = (request, continuation) } }
+            beforeHoldRegistration?()
+            return try await withCheckedThrowingContinuation { continuation in
+                let parked = locked {
+                    guard storedHold == request.method else { return false }
+                    storedHold = nil
+                    held = (request, continuation)
+                    return true
+                }
+                if !parked { continuation.resume(with: Result { try response(to: request) }) }
+            }
         }
         return try response(to: request)
     }
 
     func releaseHeld() {
-        let pending = locked { let value = held; held = nil; return value }
+        // Teardown also cancels a hold whose continuation has not registered yet.
+        let pending = locked { storedHold = nil; let value = held; held = nil; return value }
         guard let (request, continuation) = pending else { return }
-        do { continuation.resume(returning: try response(to: request)) }
-        catch { continuation.resume(throwing: HTTPTransportError.invalidResponse) }
+        continuation.resume(with: Result { try response(to: request) })
     }
 
     private func response(to request: HTTPRequest) throws -> HTTPResponse {

@@ -2,6 +2,7 @@ import MonkeysPawCore
 
 enum LibraryConflictStrings {
     static let title = "Resolve conflict"
+    static let comparison = "Comparison"
     static let serverVersion = "Server version"
     static let myVersion = "My version"
     static let keepServer = "Keep server"

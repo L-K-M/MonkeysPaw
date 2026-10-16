@@ -9,7 +9,7 @@ struct LibraryConflictView: View {
             Text(LibraryConflictStrings.title).font(.headline)
             ScrollView {
                 if let diff = presentation.diff {
-                    LibraryDiffView(diff: diff, title: LibraryConflictStrings.title,
+                    LibraryDiffView(diff: diff, title: LibraryConflictStrings.comparison,
                         originalTitle: LibraryConflictStrings.serverVersion,
                         candidateTitle: LibraryConflictStrings.myVersion,
                         accessibilityID: "library-conflict-diff")
