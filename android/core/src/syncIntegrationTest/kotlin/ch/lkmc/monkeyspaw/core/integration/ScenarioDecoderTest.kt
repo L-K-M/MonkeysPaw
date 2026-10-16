@@ -6,10 +6,9 @@ import java.nio.file.Path
 import java.util.Comparator
 import kotlin.test.*
 
-internal fun <T> withPrivateTestRoot(body: (Path) -> T): T {
+internal fun <T> withPrivateTestRoot(prepare: (Path) -> Unit = ::privateDirectory, body: (Path) -> T): T {
     val root = Files.createTempDirectory("monkeyspaw-sync-test-")
-    privateDirectory(root)
-    try { return body(root) }
+    try { prepare(root); return body(root) }
     finally { Files.walk(root).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { Files.delete(it) } } }
 }
 
@@ -17,6 +16,19 @@ class ScenarioDecoderTest {
     private val directory get() = Path.of(System.getProperty("monkeyspaw.fixtures"), "sync")
     private val source get() = Files.readAllBytes(directory.resolve("01-round-trip.json"))
     private fun changed(pointer: String, value: WireValue): ByteArray = WireJson.canonical(WireJson.parse(source).patching(mapOf(pointer to value)))
+
+    @Test fun privateRootIsRemovedWhenDirectoryPreparationFails() {
+        var allocated: Path? = null
+        try {
+            assertFailsWith<ScenarioFailure> {
+                withPrivateTestRoot(prepare = { root ->
+                    allocated = root
+                    throw ScenarioFailure("injected directory preparation failure")
+                }) { fail("body ran after failed preparation") }
+            }
+            assertFalse(Files.exists(assertNotNull(allocated)))
+        } finally { allocated?.let(Files::deleteIfExists) }
+    }
 
     @Test fun currentCorpusIsStructurallyDecodedWithoutClaimingExecution() {
         val (files, cases) = SyncScenarioCorpus.load(directory)
