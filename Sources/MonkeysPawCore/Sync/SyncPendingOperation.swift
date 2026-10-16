@@ -101,6 +101,12 @@ final class SyncPendingOperationStore {
 
     func recoverForAccountTransition() throws -> SyncPendingOperation? { try persistence.recover() }
 
+    func recover(for binding: SyncLibraryIdentity) throws -> SyncPendingOperation? {
+        try persistence.recover { pending in
+            guard pending == nil || pending?.binding == binding else { throw SyncError.bindingMismatch }
+        }
+    }
+
     func save(_ pending: SyncPendingOperation) throws {
         try persistence.update { old in
             guard old == nil else { throw SyncError.invalidState }

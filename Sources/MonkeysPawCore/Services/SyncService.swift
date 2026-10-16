@@ -454,8 +454,11 @@ public final class SyncService {
             return
         }
         if let error = error as? SyncPullCollectorError {
-            if case .noProgress = error { current.retrying = true; retry(after: nil); return }
-            current.blockingIssue = .invalidProtocol
+            switch error {
+            case .noProgress: current.retrying = true; retry(after: nil); return
+            case .stagingFailed: current.blockingIssue = .recoveryRequired
+            default: current.blockingIssue = .invalidProtocol
+            }
         } else if let error = error as? SyncCoordinatorError {
             switch error {
             case .noProgress: current.retrying = true; retry(after: nil); return

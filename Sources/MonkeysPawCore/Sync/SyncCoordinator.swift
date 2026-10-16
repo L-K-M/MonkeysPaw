@@ -153,6 +153,7 @@ enum SyncCoordinatorError: Error { case recoveryRequired, noProgress, fileErrors
 /// and owns triggers/UI; each coordinator belongs to exactly one graph epoch.
 final class SyncCoordinator {
     let permit: SyncWorkPermit
+    private let files: FileStore
     private let states: SyncStateStore
     private let accounts: SyncAccountStore
     private let mutations: SyncLibraryMutations
@@ -173,6 +174,7 @@ final class SyncCoordinator {
          device: String, freshID: @escaping () throws -> ULID,
          date: @escaping () -> Date, now: @escaping () -> ContinuousClock.Instant) throws {
         permit = SyncWorkPermit(binding: binding, epoch: epoch)
+        self.files = files
         self.states = states
         self.accounts = accounts
         self.mutations = mutations
@@ -193,6 +195,7 @@ final class SyncCoordinator {
     func run(progress: (SyncPassResult) -> Void = { _ in }, phase: (SyncPhase) -> Void) async throws -> SyncPassResult {
         try permit.check()
         phase(.recovering)
+        try permit.mutate { try SyncPullStaging.sweep(files: files) }
         _ = try currentState()
         if let record = journal.pending {
             try permit.validate(record.nextState.binding)
@@ -207,6 +210,7 @@ final class SyncCoordinator {
         var recollected = false
         var foldersPrepared = false
         var pull: SyncCollectedPull?
+        // Preserve the primary failure; the next pass/recovery retries leftovers.
         defer { try? pull?.discard() }
 
         for _ in 0..<Limits.syncPreparationLimit {
@@ -338,11 +342,13 @@ final class SyncCoordinator {
     /// This does not collect a new pull or scan/push unrelated local changes.
     func recoverJournal() async throws {
         try permit.check()
+        try permit.mutate { try SyncPullStaging.sweep(files: files) }
         _ = try currentState()
         if let record = journal.pending {
             try permit.validate(record.nextState.binding)
             try requireCommit(journal.replay(permit: permit))
         }
+        _ = try permit.mutate { try pending.recover(for: permit.binding) }
         _ = try await performingPush { try await self.push.resume(availability: .available, accessGeneration: self.accessGeneration) }
         try permit.check()
         guard journal.pending == nil, try pending.load(for: permit.binding) == nil else {

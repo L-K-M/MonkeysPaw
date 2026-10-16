@@ -29,6 +29,7 @@ final class MemoryFileStore: FileStore {
     var onRead: ((String) throws -> Void)?
     var onWrite: ((String) -> Void)?
     var onCreate: ((String) throws -> Void)?
+    var onDelete: ((String) throws -> Void)?
     var onMove: ((String, String) throws -> Void)?
     private(set) var accessCount = 0
     private(set) var listCount = 0
@@ -115,6 +116,7 @@ final class MemoryFileStore: FileStore {
     }
 
     func delete(at path: String) throws {
+        try onDelete?(path)
         try locked {
             accessCount += 1
             try FileStorePath.validate(path)

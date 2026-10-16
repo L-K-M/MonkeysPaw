@@ -81,6 +81,18 @@ final class SyncPullStaging {
     init(files: FileStore) { self.files = files }
     deinit { try? discard() }
 
+    /// Call only between serialized passes/recovery, when no collection is live.
+    static func sweep(files: FileStore) throws {
+        let pages = try operation { try files.listFiles() }
+        var failure: SyncPullCollectorError?
+        for page in pages where page.relativePath.hasPrefix("sync/pull-") {
+            do { try operation { try files.delete(at: page.relativePath) } }
+            catch SyncPullCollectorError.stagingFailed(.notFound) { continue }
+            catch { failure = error as? SyncPullCollectorError ?? .stagingFailed(.ioFailure) }
+        }
+        if let failure { throw failure }
+    }
+
     func append(_ response: SyncAPI.PullResponse) throws {
         guard !discarded else { throw SyncPullCollectorError.invalidResponse }
         let bytes = try JSONEncoder().encode(response)
@@ -88,12 +100,12 @@ final class SyncPullStaging {
         let path = path(pageCount)
         // A failed publication can still leave a file. Include it in cleanup.
         pageCount += 1
-        try operation { try files.writePrivate(bytes, at: path) }
+        try Self.operation { try files.writePrivate(bytes, at: path) }
     }
 
     func read(_ index: Int) throws -> SyncAPI.PullResponse {
         guard !discarded else { throw SyncPullCollectorError.invalidResponse }
-        let bytes = try operation { try files.read(at: path(index)) }
+        let bytes = try Self.operation { try files.read(at: path(index)) }
         guard bytes.count <= Limits.syncResponseCap else { throw SyncPullCollectorError.invalidResponse }
         do { return try JSONDecoder().decode(SyncAPI.PullResponse.self, from: bytes) }
         catch { throw SyncPullCollectorError.invalidResponse }
@@ -103,7 +115,7 @@ final class SyncPullStaging {
         guard !discarded else { return }
         var failure: SyncPullCollectorError?
         for index in 0..<pageCount {
-            do { try operation { try files.delete(at: path(index)) } }
+            do { try Self.operation { try files.delete(at: path(index)) } }
             catch SyncPullCollectorError.stagingFailed(.notFound) { continue }
             catch { failure = error as? SyncPullCollectorError ?? .stagingFailed(.ioFailure) }
         }
@@ -113,7 +125,7 @@ final class SyncPullStaging {
 
     private func path(_ index: Int) -> String { "sync/pull-" + id + "-" + String(index) + ".json" }
 
-    private func operation<Value>(_ body: () throws -> Value) throws -> Value {
+    private static func operation<Value>(_ body: () throws -> Value) throws -> Value {
         do { return try body() }
         catch let error as FileStoreError { throw SyncPullCollectorError.stagingFailed(error) }
         catch { throw SyncPullCollectorError.stagingFailed(.ioFailure) }

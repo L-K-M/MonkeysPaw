@@ -100,7 +100,8 @@ struct SyncPullCollector {
                 request = .init(databaseID: response.databaseID, cursors: cursors)
             }
         } catch {
-            try staging.discard()
+            // Preserve the collection error; the next serialized run sweeps leftovers.
+            try? staging.discard()
             throw error
         }
     }
