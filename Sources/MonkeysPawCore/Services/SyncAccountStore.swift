@@ -172,6 +172,15 @@ public final class SyncAccountStore: @unchecked Sendable {
         return try ownership.load()?.libraries.first { $0.root == root }
     }
 
+    /// Journal replay validates ownership before reestablishing uncertain durability.
+    func recoverBinding(for root: SyncLibraryRoot,
+                        validating validate: (SyncLibraryBinding?) throws -> Void) throws {
+        defer { notify() }
+        _ = try ownership.recover { document in
+            try validate(document?.libraries.first { $0.root == root })
+        }
+    }
+
     func updateBinding(for root: SyncLibraryRoot,
                        _ change: (SyncLibraryBinding?) throws -> SyncLibraryBinding) throws {
         defer { notify() }
