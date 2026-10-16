@@ -101,6 +101,12 @@ final class SyncPendingOperationStore {
 
     func recoverForAccountTransition() throws -> SyncPendingOperation? { try persistence.recover() }
 
+    func recover(for binding: SyncLibraryIdentity) throws -> SyncPendingOperation? {
+        try persistence.recover { pending in
+            guard pending == nil || pending?.binding == binding else { throw SyncError.bindingMismatch }
+        }
+    }
+
     func save(_ pending: SyncPendingOperation) throws {
         try persistence.update { old in
             guard old == nil else { throw SyncError.invalidState }
@@ -122,7 +128,8 @@ final class SyncPendingOperationStore {
             if try files.stamp(at: path) == nil { try files.writePrivate(bytes, at: path) }
             else if try files.read(at: path) != bytes { throw SyncError.invalidState }
             try SyncDurability.flushFileAndParents(path, operations: operations)
-        } catch let error as SyncError { throw error }
+        } catch let error as CancellationError { throw error }
+        catch let error as SyncError { throw error }
         catch let error as SyncFileOperationError { throw error }
         catch let error as FileStoreError { throw SyncError.writeFailed(error) }
         catch { throw SyncError.writeFailed(.ioFailure) }

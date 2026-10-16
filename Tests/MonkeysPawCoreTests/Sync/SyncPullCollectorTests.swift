@@ -16,6 +16,32 @@ final class SyncPullCollectorTests: XCTestCase {
         .init(databaseID: database, cursors: [userKey: "original user / Ω +=", groupKey: "original group"])
     }
 
+    func testStagingPreservesCancellationFromEveryFileOperation() throws {
+        enum Operation: CaseIterable { case write, read, delete }
+        let page = response([personal(.snapshot, head: 0, cursor: "0")])
+        for operation in Operation.allCases {
+            let files = MemoryFileStore()
+            let staging = SyncPullStaging(files: files)
+            if operation != .write { try staging.append(page) }
+            files.onPrivateWrite = { _ in if operation == .write { throw CancellationError() } }
+            files.onRead = { _ in if operation == .read { throw CancellationError() } }
+            files.onDelete = { _ in if operation == .delete { throw CancellationError() } }
+            do {
+                switch operation {
+                case .write: try staging.append(page)
+                case .read: _ = try staging.read(0)
+                case .delete: try staging.discard()
+                }
+                XCTFail("Expected cancellation from \(operation)")
+            } catch { XCTAssertTrue(error is CancellationError, "\(operation): \(error)") }
+            files.onPrivateWrite = nil
+            files.onRead = nil
+            files.onDelete = nil
+            try staging.discard()
+            XCTAssertTrue(try staged(files).isEmpty)
+        }
+    }
+
     func testMovePairSplitAcrossPagesRetainsSourceScopesAndOpaqueCursors() async throws {
         let transport = try script([
             response([personal(head: 10, cursor: "advanced user", items: [.moveOut(seq: 10, id: prompt.rawValue)]),

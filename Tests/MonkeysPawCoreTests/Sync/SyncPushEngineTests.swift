@@ -600,6 +600,43 @@ final class SyncPushEngineTests: XCTestCase {
         XCTAssertEqual(rig.states.snapshot.value?.cursors, before.cursors)
     }
 
+    func testHeldRetentionPreservesPortCancellation() throws {
+        for retainedExists in [false, true] {
+            let rig = try fixture()
+            let file = try XCTUnwrap(rig.mutations.read(at: "a.md"))
+            let intent = try SyncConflictIntent(id: id, operation: .put, baseRev: 0, scope: personal,
+                path: "a.md", sentBytes: file.bytes, inputBytes: file.bytes, accessGeneration: 0)
+            let request = try SyncPendingOperation(binding: rig.binding, intent: intent, libraryPath: "a.md",
+                file: file, recorded: rig.states.snapshot.value?.prompts[.assigned(id)])
+            let pending = SyncPendingOperationStore(files: rig.data, operations: rig.dataOperations)
+            try pending.save(request)
+            if retainedExists { try pending.retainHeld(request) }
+            let original = try rig.data.read(at: "sync/push.json")
+            let state = rig.states.snapshot.value
+            let writes = rig.data.writeCount
+            var cancellations = 0
+            let cancel: (String) throws -> Void = { path in
+                if path.hasPrefix("sync/retained/push-") {
+                    cancellations += 1
+                    throw CancellationError()
+                }
+            }
+            if retainedExists { rig.data.onRead = cancel }
+            else { rig.data.onPrivateWrite = cancel }
+
+            XCTAssertThrowsError(try pending.retainHeld(request)) {
+                XCTAssertTrue($0 is CancellationError, "Expected cancellation, got \($0)")
+            }
+            XCTAssertEqual(cancellations, 1)
+            XCTAssertEqual(rig.data.writeCount, writes)
+            XCTAssertEqual(try rig.data.read(at: "sync/push.json"), original)
+            XCTAssertEqual(pending.snapshot.value?.intent.sentBytes, request.intent.sentBytes)
+            XCTAssertEqual(rig.states.snapshot.value, state)
+            XCTAssertNil(rig.journal.pending)
+            XCTAssertNil(try rig.data.stamp(at: "sync/apply.json"))
+        }
+    }
+
     func testHeldAccountFilesNeverUploadEvenWhenScanPredatesHoldOrFileWasEditedAndRenamed() async throws {
         let rig = try fixture()
         let change = try candidate(rig)

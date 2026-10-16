@@ -28,7 +28,9 @@ final class MemoryFileStore: FileStore {
     var onStamp: ((String, FileStamp?) throws -> Void)?
     var onRead: ((String) throws -> Void)?
     var onWrite: ((String) -> Void)?
+    var onPrivateWrite: ((String) throws -> Void)?
     var onCreate: ((String) throws -> Void)?
+    var onDelete: ((String) throws -> Void)?
     var onMove: ((String, String) throws -> Void)?
     private(set) var accessCount = 0
     private(set) var listCount = 0
@@ -91,6 +93,7 @@ final class MemoryFileStore: FileStore {
     }
 
     func writePrivate(_ data: Data, at path: String) throws {
+        try onPrivateWrite?(path)
         try store(data, at: path, isPrivate: true)
     }
 
@@ -115,6 +118,7 @@ final class MemoryFileStore: FileStore {
     }
 
     func delete(at path: String) throws {
+        try onDelete?(path)
         try locked {
             accessCount += 1
             try FileStorePath.validate(path)
