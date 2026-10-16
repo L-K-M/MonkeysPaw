@@ -36,9 +36,11 @@ final class MacSyncCompositionTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func start(work: BackgroundWork = DispatchBackgroundWork(), clipboard: Clipboard = MacRepeatClipboard()) throws {
+    private func start(work: BackgroundWork = DispatchBackgroundWork(), clipboard: Clipboard = MacRepeatClipboard(),
+                       editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog) throws {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, backgroundWork: work,
             httpTransport: transport, secrets: secrets, clipboard: clipboard,
+            editorDialog: editorDialog,
             replyToTermination: { [weak self] in self?.terminationReplies.append($0) },
             setActivationPolicy: { _ in }, activateApplication: {}, makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in false }),
@@ -473,6 +475,67 @@ final class MacSyncCompositionTests: XCTestCase {
         XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateNow)
     }
 
+    func testIndexRefreshCanRetryAfterItsCompletionArrivesDuringCancelledQuit() throws {
+        let files = try RootedFileStore(root: root)
+        try files.createRoot()
+        try files.write(MacSyncTransport.incomingBytes, at: "incoming.md")
+        let work = MacSyncHeldWork()
+        try start(work: work, editorDialog: { _, _, _ in {} })
+        let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
+        presentation.selectPath("incoming.md")
+        work.drain()
+        XCTAssertTrue(spin { presentation.editorState.source == String(decoding: MacSyncTransport.incomingBytes, as: UTF8.self) })
+        presentation.edit("Unsaved draft")
+
+        // A bad usage record fails only the index refresh, after sync commits.
+        let appData = try RootedFileStore(root: data)
+        let usagePath = "usage/" + MacSyncTransport.prompt.rawValue
+        try appData.write(Data("invalid".utf8), at: usagePath)
+        transport.includePersonalPrompt = true
+        try login()
+        XCTAssertTrue(spin { self.delegate.syncIndexRefreshFailure != nil && work.pendingCount == 1 })
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateLater)
+        let decision = try XCTUnwrap(delegate.editorModel?.state.pendingDecision)
+        work.drain()
+        var completionDelivered = false
+        DispatchQueue.main.async { completionDelivered = true }
+        XCTAssertTrue(spin { completionDelivered }, "The index completion must arrive while quit is pending")
+        delegate.editorModel?.resolveDecision(.cancel, id: decision.id)
+        XCTAssertTrue(spin { self.terminationReplies == [false] })
+
+        try appData.delete(at: usagePath)
+        let graph = try XCTUnwrap(delegate.syncComposition)
+        graph.onStatusChange?(try XCTUnwrap(delegate.syncStatusModel).state)
+        XCTAssertEqual(work.pendingCount, 1, "Cancelling quit must allow another index refresh")
+        work.drain()
+        XCTAssertTrue(spin { self.delegate.syncIndexRefreshFailure == nil })
+        XCTAssertTrue(delegate.libraryBrowserModel?.state.rows.contains { $0.relativePath == "incoming.md" } == true)
+        XCTAssertEqual(presentation.editorState.source, "Unsaved draft")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateLater)
+        let cleanup = try XCTUnwrap(delegate.editorModel?.state.pendingDecision)
+        delegate.editorModel?.resolveDecision(.discard, id: cleanup.id)
+        XCTAssertTrue(spin { self.terminationReplies == [false, true] })
+    }
+
+    func testTransportReleaseBeforeReplyRegistrationDoesNotStrandTheRequest() throws {
+        transport.holdLogin = true
+        transport.beforeReplyRegistration = { [weak transport] in transport?.releaseHeldRequests() }
+        let request = try HTTPRequest(url: XCTUnwrap(URL(string: "https://example.test/paw/api/v1/auth/login")),
+            method: .post, deadline: ContinuousClock.now.advanced(by: .seconds(5)))
+        let completed = expectation(description: "A release racing reply registration resumes the request")
+        let main = DispatchMainThread()
+        var response: HTTPResponse?
+        Task.detached { [transport = try XCTUnwrap(transport)] in
+            let result = try? await transport.send(request)
+            main.run { response = result; completed.fulfill() }
+        }
+        defer { transport.releaseHeldRequests() }
+        wait(for: [completed], timeout: 5)
+        XCTAssertEqual(response?.statusCode, 200)
+        XCTAssertEqual(transport.heldCount, 0)
+    }
+
     func testQueuedOldEditorReadAndWatcherCallbackCannotReviveTheNewGraph() throws {
         let work = MacSyncHeldWork()
         try start(work: work)
@@ -595,6 +658,7 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
     private var personal = false
     private var pullHeld = false
     private var loginHeld = false
+    private var beforeReply: (() -> Void)?
     var requests: [HTTPRequest] { locked { stored } }
     var accountChangeRequests: [HTTPRequest] {
         requests.filter { $0.url.path.contains("/api/v1/auth/") || $0.url.path.contains("/api/v1/me/devices/") }
@@ -604,6 +668,7 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
     var includePersonalPrompt: Bool { get { locked { personal } } set { locked { personal = newValue } } }
     var holdPull: Bool { get { locked { pullHeld } } set { locked { pullHeld = newValue } } }
     var holdLogin: Bool { get { locked { loginHeld } } set { locked { loginHeld = newValue } } }
+    var beforeReplyRegistration: (() -> Void)? { get { locked { beforeReply } } set { locked { beforeReply = newValue } } }
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         let response = try locked { () throws -> HTTPResponse in
@@ -640,11 +705,18 @@ private final class MacSyncTransport: HTTPTransporting, @unchecked Sendable {
             }
             return try http(SyncAPI.EmptyResponse())
         }
-        let shouldHold = locked { request.url.path.hasSuffix("/sync/pull") && pullHeld || request.url.path.hasSuffix("/login") && loginHeld }
-        if !shouldHold { return response }
+        beforeReplyRegistration?()
         // Ignore cancellation deliberately: composition must drain even a
         // transport callback that arrives after its graph has been stopped.
-        return try await withCheckedThrowingContinuation { reply in locked { held.append((reply, response)) } }
+        return try await withCheckedThrowingContinuation { reply in
+            let immediate = locked {
+                let shouldHold = request.url.path.hasSuffix("/sync/pull") && pullHeld
+                    || request.url.path.hasSuffix("/login") && loginHeld
+                if shouldHold { held.append((reply, response)) }
+                return !shouldHold
+            }
+            if immediate { reply.resume(returning: response) }
+        }
     }
 
     func releaseHeldRequests() {

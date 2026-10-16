@@ -970,9 +970,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do { try files?.requireRoot(); try index.rebuild(origin: .sync); refreshed = true }
             catch { refreshed = false }
             self?.mainThread.run { [weak self] in
-                guard let self, !self.isShutDown, self.libraryGeneration == generation,
-                      self.libraryTransition == nil, !self.terminationPending else { return }
+                guard let self, !self.isShutDown, self.libraryGeneration == generation else { return }
                 self.syncIndexRetryPending = false
+                guard self.libraryTransition == nil, !self.terminationPending else { return }
                 self.syncIndexRefreshFailure = index.lastSyncRefreshFailure
                 guard refreshed, self.syncRecoveryWaiting else { return }
                 self.syncRecoveryWaiting = false
