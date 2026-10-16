@@ -183,27 +183,49 @@ final class LinuxSyncFileOperationsTests: XCTestCase {
     }
 
     func testIndependentStoresCanInitializeTheSameTrashConcurrently() throws {
-        let bytes = Data("recoverable\n".utf8)
-        let inputs = try (0..<16).map { index -> (RootedFileStore, FileStamp) in
-            let files = try RootedFileStore(root: temporary.appendingPathComponent("library-\(index)"), trashRoot: trash)
-            try files.write(bytes, at: "a.md")
-            return (files, try XCTUnwrap(files.stamp(at: "a.md")))
+        for attempt in 0..<16 {
+            trash = temporary.appendingPathComponent("missing-\(attempt)/shared-parent/Trash")
+            let bytes = Data("recoverable\n".utf8)
+            let inputs = try (0..<16).map { index -> (RootedFileStore, FileStamp) in
+                let files = try RootedFileStore(root: temporary.appendingPathComponent("library-\(attempt)-\(index)"), trashRoot: trash)
+                try files.write(bytes, at: "a.md")
+                return (files, try XCTUnwrap(files.stamp(at: "a.md")))
+            }
+            let lock = NSLock()
+            var failures: [SyncFileFailureCode] = []
+            DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
+                let (files, stamp) = inputs[index]
+                do { try files.trash(at: "a.md", expecting: .matching(stamp: stamp, bytes: bytes)) }
+                catch {
+                    lock.lock()
+                    failures.append((error as? SyncFileOperationError)?.code ?? .invalidState)
+                    lock.unlock()
+                }
+            }
+            XCTAssertTrue(failures.isEmpty, "Shared trash initialization failed: \(failures)")
+            let trashed = try FileManager.default.contentsOfDirectory(at: trash.appendingPathComponent("files"), includingPropertiesForKeys: nil)
+            XCTAssertEqual(trashed.count, inputs.count)
+            for file in trashed { XCTAssertEqual(try Data(contentsOf: file), bytes) }
         }
-        let lock = NSLock()
-        var failures: [SyncFileFailureCode] = []
-        DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
-            let (files, stamp) = inputs[index]
-            do { try files.trash(at: "a.md", expecting: .matching(stamp: stamp, bytes: bytes)) }
-            catch {
-                lock.lock()
-                failures.append((error as? SyncFileOperationError)?.code ?? .invalidState)
-                lock.unlock()
+    }
+
+    func testTrashKeepsPrivateModesUnderOwnerRestrictiveUmasks() throws {
+        let bytes = Data("recoverable\n".utf8)
+        for mask: mode_t in [0o222, 0o777] {
+            let selectedTrash = temporary.appendingPathComponent("Trash-\(mask)")
+            let files = try RootedFileStore(root: root, trashRoot: selectedTrash)
+            try files.write(bytes, at: "a.md")
+            let stamp = try XCTUnwrap(files.stamp(at: "a.md"))
+            do {
+                let previous = umask(mask)
+                defer { _ = umask(previous) }
+                try files.trash(at: "a.md", expecting: .matching(stamp: stamp, bytes: bytes))
+            }
+            XCTAssertNil(try files.stamp(at: "a.md"))
+            for directory in [selectedTrash, selectedTrash.appendingPathComponent("files"), selectedTrash.appendingPathComponent("info")] {
+                XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int, 0o700)
             }
         }
-        XCTAssertTrue(failures.isEmpty, "Shared trash initialization failed: \(failures)")
-        let trashed = try FileManager.default.contentsOfDirectory(at: trash.appendingPathComponent("files"), includingPropertiesForKeys: nil)
-        XCTAssertEqual(trashed.count, inputs.count)
-        for file in trashed { XCTAssertEqual(try Data(contentsOf: file), bytes) }
     }
 
     func testReplacedRootNeverCreatesAFileOrReportsAnEmptyLibrary() throws {

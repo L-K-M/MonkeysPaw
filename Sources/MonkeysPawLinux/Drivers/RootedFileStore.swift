@@ -274,8 +274,8 @@ final class RootedFileStore: FileStore, SyncFileOperations {
             return true
         }
         guard parents == .create else { return false }
-        try manager.createDirectory(at: url, withIntermediateDirectories: false)
-        return true
+        guard mkdir(url.path, 0o777) == 0 || errno == EEXIST else { throw FileStoreError.ioFailure }
+        return try ensureDirectory(url, parents: .existing)
     }
 
     private func collect(in directory: URL, prefix: String, into result: inout [StoredFile]) throws {
@@ -588,12 +588,11 @@ final class RootedFileStore: FileStore, SyncFileOperations {
         let files = trashRoot.appendingPathComponent("files")
         let info = trashRoot.appendingPathComponent("info")
         for url in [trashRoot, files, info] {
-            if try attributes(at: url) == nil {
-                do {
-                    try manager.createDirectory(at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-                } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
-                    // Other libraries/processes share this trash; verify the winner below.
-                }
+            let created = mkdir(url.path, 0o700) == 0
+            guard created || errno == EEXIST else { throw SyncFileOperationError(.ioFailure) }
+            if created {
+                // Restore owner bits removed by a restrictive umask, only on our new directory.
+                guard chmod(url.path, 0o700) == 0 else { throw SyncFileOperationError(.ioFailure) }
             }
             _ = try ensureDirectory(url, parents: .existing)
             var attributes = Glibc.stat()
