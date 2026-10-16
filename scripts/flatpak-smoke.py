@@ -105,7 +105,7 @@ def descendants(node):
 
 def invite_is_staged(nodes, destination, atspi):
     visible = [node for node in nodes if node.getState().contains(atspi.STATE_SHOWING)]
-    names = [node.name for node in visible]
+    names = [node.name or "" for node in visible]
     return (
         sum(node.name == "Settings" and node.getRole() == atspi.ROLE_FRAME for node in visible) == 1
         and any(name.startswith("Invite server: " + destination + "\n") for name in names)
@@ -258,16 +258,27 @@ def main():
                 data = file.read_bytes()
                 if any(token in data for token in bearers):
                     raise RuntimeError("Invite bearer was persisted")
-        print("Installed Flatpak: cold/resident actions and invite review passed; no redemption or persisted bearer")
     finally:
-        command("flatpak", "kill", APP_ID, allowed=(0, 1))
+        proof_failed = sys.exc_info()[0] is not None
+        cleanup_error = None
+        try:
+            command("flatpak", "kill", APP_ID, allowed=(0, 1))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            cleanup_error = error
         for child in clients:
-            if child.poll() is None:
-                child.kill()
-            child.wait(timeout=5)
+            try:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+            except (OSError, subprocess.SubprocessError) as error:
+                cleanup_error = cleanup_error or error
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        # Keep the proof's original error while still attempting every cleanup.
+        if cleanup_error is not None and not proof_failed:
+            raise cleanup_error
+    print("Installed Flatpak: cold/resident actions and invite review passed; no redemption or persisted bearer")
 
 
 if __name__ == "__main__":

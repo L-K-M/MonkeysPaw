@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from test_release_workflow import JOBS, SOURCE, step_script
 
@@ -304,6 +304,82 @@ class RepeatProofTests(unittest.TestCase):
             self.run_proof(instances=2)
 
 
+class CleanupProofTests(unittest.TestCase):
+    def run_proof(self, *, proof_fails=True, kill_error=None, child_timeout=False):
+        self.server = Mock(server_port=1234)
+        self.thread = Mock()
+        child = Mock()
+        child.poll.return_value = None
+        launcher = Mock(return_value=child)
+        config = smoke.configparser.ConfigParser(interpolation=None)
+        config["Desktop Entry"] = {"Exec": "flatpak run " + smoke.APP_ID + " %u"}
+
+        def command(*args, **_kwargs):
+            if args[:2] == ("flatpak", "kill") and kill_error is not None:
+                raise kill_error
+            return ""
+
+        def wait_for(_predicate, _message):
+            if proof_fails and launcher.called:
+                raise RuntimeError("Installed invite review did not appear")
+
+        def wait(*, timeout):
+            if child_timeout and timeout == 5:
+                raise subprocess.TimeoutExpired("launcher", timeout)
+            return 0
+
+        child.wait.side_effect = wait
+        with (tempfile.TemporaryDirectory(prefix="monkeyspaw-flatpak-cleanup-") as directory,
+              patch.dict("sys.modules", {"pyatspi": Mock(), "gi.repository": Mock(),
+                                        "Xlib.display": Mock(), "Xlib.protocol.event": Mock()}),
+              patch.dict(os.environ, DISPLAY=":99", DBUS_SESSION_BUS_ADDRESS="test", XDG_DATA_HOME=directory),
+              patch.object(smoke, "command", side_effect=command),
+              patch.object(smoke, "visible_windows", return_value=[]),
+              patch.object(smoke, "owner", return_value=None), patch.object(smoke, "stop"),
+              patch.object(smoke, "singleton"), patch.object(smoke, "wait_for", side_effect=wait_for),
+              patch.object(smoke, "ThreadingHTTPServer", return_value=self.server),
+              patch.object(smoke.threading, "Thread", return_value=self.thread),
+              patch.object(smoke.time, "sleep"),
+              patch.object(smoke.configparser, "ConfigParser", return_value=config),
+              patch.object(smoke.subprocess, "Popen", launcher),
+              patch.object(smoke.Path, "home", return_value=Path(directory)),
+              patch.object(smoke, "print", create=True) as output):
+            self.output = output
+            smoke.main()
+
+    def assert_server_closed(self):
+        self.server.shutdown.assert_called_once()
+        self.server.server_close.assert_called_once()
+        self.thread.join.assert_called_once_with(timeout=5)
+
+    def test_kill_failure_preserves_proof_failure_and_closes_server(self):
+        for error in (RuntimeError("Installed application command failed"),
+                      subprocess.TimeoutExpired("flatpak", 15)):
+            with self.subTest(error=type(error).__name__):
+                with self.assertRaisesRegex(RuntimeError, "Installed invite review did not appear"):
+                    self.run_proof(kill_error=error)
+                self.assert_server_closed()
+
+    def test_launcher_wait_timeout_preserves_proof_failure_and_closes_server(self):
+        with self.assertRaisesRegex(RuntimeError, "Installed invite review did not appear"):
+            self.run_proof(child_timeout=True)
+        self.assert_server_closed()
+
+    def test_cleanup_failure_cannot_report_a_successful_proof(self):
+        for kwargs, error in (({"kill_error": RuntimeError("Installed application command failed")}, RuntimeError),
+                              ({"child_timeout": True}, subprocess.TimeoutExpired)):
+            with self.subTest(cleanup=kwargs.keys()):
+                with self.assertRaises(error):
+                    self.run_proof(proof_fails=False, **kwargs)
+                self.assert_server_closed()
+                self.output.assert_not_called()
+
+    def test_successful_proof_closes_server_and_reports_success(self):
+        self.run_proof(proof_fails=False)
+        self.assert_server_closed()
+        self.output.assert_called_once()
+
+
 class InviteProofTests(unittest.TestCase):
     atspi = SimpleNamespace(STATE_SHOWING="visible", STATE_SENSITIVE="sensitive", ROLE_FRAME="frame")
     destination = "http://127.0.0.1:1234/paw%20base/a+b/cold-open"
@@ -322,6 +398,17 @@ class InviteProofTests(unittest.TestCase):
 
     def staged(self):
         return smoke.invite_is_staged(self.nodes, self.destination, self.atspi)
+
+    def test_unnamed_visible_nodes_do_not_hide_the_review(self):
+        self.nodes.insert(0, self.node(None))
+        for name in (None, ""):
+            with self.subTest(name=name):
+                self.nodes[0].name = name
+                self.assertTrue(self.staged())
+
+    def test_an_unnamed_destination_does_not_satisfy_review(self):
+        self.nodes[1] = self.node(None)
+        self.assertFalse(self.staged())
 
     def test_requires_visible_exact_destination_and_an_enabled_accept_control(self):
         self.assertTrue(self.staged())
