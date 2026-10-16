@@ -24,6 +24,82 @@ class SyncCoordinatorTest {
     private val groupScope = PromptScope.Group(v.group.rawValue)
     private val groupPath = "Groups/Team/a.md"
 
+    @Test fun groupPushCanonicalizationEmitsACommittedRefresh() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(path = groupPath, group = true)
+        h.groups[v.group] = h.groups.getValue(v.group).copy(role = Role.EDITOR)
+        h.states.update(h.binding) { it.copy(groups = h.groups) }
+        h.files.put(SyncLocalScanner.canonical(EngineHarness.source("Earlier edit"), "a.md", v.groupScope).bytes, groupPath)
+        val raw = EngineHarness.source("Saved before upload", "private: true\nfavorite: true\n# local formatting\n")
+        var refreshes = 0
+        var beforePush = -1
+
+        val result = coordinator(h) { refreshes++ }.run(phase = { phase ->
+            if (phase == SyncPhase.PUSHING) {
+                // A save after the final scan is reread by push and canonicalized by its acknowledgement.
+                h.files.put(raw, groupPath)
+                beforePush = refreshes
+            }
+        })
+        assertEquals(1, result.counts.pushed)
+        assertFalse(result.rerun)
+        assertContentEquals(SyncLocalScanner.canonical(raw, "a.md", v.groupScope).bytes, h.files.read(groupPath))
+        assertEquals(true, h.state.favorites[v.personalID])
+        assertTrue(beforePush >= 0)
+        assertTrue(refreshes > beforePush, "The push commit must refresh consumers after canonical publication")
+    }
+
+    @Test fun pushConflictRefreshesTheInstalledHeadAndPrivateCopy() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed()
+        h.files.put(EngineHarness.source("Local edit"), "a.md")
+        val server = EngineHarness.source("Concurrent server edit")
+        var beforePush = -1L
+        h.respond = { request -> if (request.method != HttpMethod.PUT) null else {
+            beforePush = h.engine.libraryVersion.value
+            h.remote[v.personal.rawValue] = EngineHarness.prompt(server, 2)
+            HttpResponse(409, body = ErrorResponse.codec.encode(ErrorResponse.Conflict(
+                ConflictHead(2, PromptScope.User, "a.md", server.decodeToString()))))
+        } }
+        h.start()
+        assertNull(h.engine.runBackground().blockingIssue)
+        assertContentEquals(server, h.files.read("a.md"))
+        val copy = h.files.listFiles().single { it.relativePath.startsWith("Conflicts/") }
+        assertTrue("Local edit" in h.files.text(copy.relativePath))
+        assertTrue(beforePush >= 0)
+        assertTrue(h.engine.libraryVersion.value > beforePush, "The installed head and private copy must refresh consumers")
+        assertEquals(1, h.pulls)
+        h.engine.stop()
+    }
+
+    @Test fun pendingPushRecoveryRefreshesAcknowledgementsAndConflictCopiesWithoutCollecting() = runTest {
+        for (conflict in listOf(false, true)) {
+            val h = EngineHarness(testScheduler, backgroundScope)
+            h.seed()
+            val local = EngineHarness.source("Local edit")
+            h.files.put(local, "a.md")
+            h.respond = { request -> if (request.method == HttpMethod.PUT) throw HttpTransportError.NetworkFailure else null }
+            h.start()
+            assertEquals(SyncStatus.OFFLINE, h.engine.runBackground().status)
+            assertNotNull(h.pending.load(h.binding))
+            val server = if (conflict) EngineHarness.source("Concurrent server edit") else local
+            h.remote[v.personal.rawValue] = EngineHarness.prompt(server, 2)
+            h.respond = null
+            val beforeRecovery = h.engine.libraryVersion.value
+            val pulls = h.pulls
+            val writes = h.writes.size
+
+            h.engine.recoverJournal()
+            assertContentEquals(server, h.files.read("a.md"))
+            assertEquals(if (conflict) 1 else 0, h.files.listFiles().count { it.relativePath.startsWith("Conflicts/") })
+            assertTrue(h.engine.libraryVersion.value > beforeRecovery, "Pending replay must publish its committed refresh")
+            assertEquals(pulls, h.pulls)
+            assertEquals(writes, h.writes.size)
+            assertNull(h.pending.load(h.binding))
+            h.engine.stop()
+        }
+    }
+
     @Test fun explicitRecoveryReflushesUncertainPushPublicationOnTheSameGraph() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
         h.seed(rev = 0)
@@ -473,9 +549,9 @@ class SyncCoordinatorTest {
         }
     }
 
-    private fun coordinator(h: EngineHarness) = SyncCoordinator(SyncWorkPermit(h.binding, 1), h.client, h.data,
+    private fun coordinator(h: EngineHarness, committed: () -> Unit = {}) = SyncCoordinator(SyncWorkPermit(h.binding, 1), h.client, h.data,
         h.states, h.accounts, h.rig.mutations, h.rig.journal, h.pending, "Device", { v.device },
-        { Instant.parse("2026-10-14T12:00:00Z") }, MonotonicClock { h.scheduler.currentTime * 1_000_000 })
+        { Instant.parse("2026-10-14T12:00:00Z") }, MonotonicClock { h.scheduler.currentTime * 1_000_000 }, committed = committed)
 
     private suspend fun SyncCoordinator.restoreDeniedForTest(path: String, state: SyncState,
                                                             local: SyncReconciliationSnapshot): Boolean =

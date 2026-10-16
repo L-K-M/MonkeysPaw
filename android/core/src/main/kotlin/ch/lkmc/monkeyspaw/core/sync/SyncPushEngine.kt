@@ -35,6 +35,7 @@ internal class SyncPushEngine(
     private val freshID: () -> ULID,
     private val now: () -> Instant = Instant::now,
     private val permit: SyncWorkPermit? = null,
+    private val committed: () -> Unit = {},
 ) {
     private val lock = ReentrantLock()
     private var running = false
@@ -408,6 +409,7 @@ internal class SyncPushEngine(
 
     private fun requireCommit(result: SyncApplyOutcome) {
         if (result != SyncApplyOutcome.Committed) throw SyncPushError.ApplyRequired(result)
+        committed()
     }
 
     private fun wireScope(scope: SyncScopeKey): PromptScope = when (scope) {

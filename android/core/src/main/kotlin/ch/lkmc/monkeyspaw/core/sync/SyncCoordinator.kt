@@ -46,7 +46,7 @@ internal class SyncCoordinator(
     private val client = client.permitting(permit)
     private val collector = SyncPullCollector(this.client, files, permit.binding.account.userID, clock)
     private val push = SyncPushEngine(permit.binding, this.client, states, pending, mutations, journal,
-        ::ownership, device, freshID, date, permit)
+        ::ownership, device, freshID, date, permit, committed)
     private var accessGeneration = 0L
     private val available = SyncReconciliationSnapshot.Availability.AVAILABLE
 
