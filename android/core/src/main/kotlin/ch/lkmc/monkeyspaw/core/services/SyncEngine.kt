@@ -260,7 +260,8 @@ class SyncEngine internal constructor(
 
     private fun newActive(kind: RunKind): Active {
         val session = session ?: throw SyncError.InvalidAccount
-        val parent = Job(scope.coroutineContext[Job])
+        // A reported recovery failure must leave the graph alive for another explicit attempt.
+        val parent = SupervisorJob(scope.coroutineContext[Job])
         val permit = SyncWorkPermit(session.binding, epoch, parent)
         val generation = epoch
         val coordinator = SyncCoordinator(permit, session.client, graph.files, graph.states, graph.accounts,

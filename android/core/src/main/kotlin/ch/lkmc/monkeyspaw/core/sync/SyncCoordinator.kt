@@ -155,6 +155,7 @@ internal class SyncCoordinator(
         check()
         recoverApply()
         currentState()
+        permit.mutate { pending.recover(permit.binding) }
         performingPush { push.resume(available, accessGeneration) }
         check()
         if (journal.pending != null || pending.load(permit.binding) != null) throw SyncCoordinatorError.RecoveryRequired

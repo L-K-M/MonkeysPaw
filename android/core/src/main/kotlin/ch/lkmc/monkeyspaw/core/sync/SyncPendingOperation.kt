@@ -41,6 +41,10 @@ internal class SyncPendingOperationStore(private val files: StateStore, private 
 
     fun recoverForAccountTransition(): SyncPendingOperation? = persistence.recover()
 
+    fun recover(binding: SyncLibraryIdentity): SyncPendingOperation? = persistence.recover {
+        if (it != null && it.binding != binding) throw SyncError.BindingMismatch
+    }
+
     fun save(pending: SyncPendingOperation) = persistence.update { old ->
         if (old != null) throw SyncError.InvalidState
         pending

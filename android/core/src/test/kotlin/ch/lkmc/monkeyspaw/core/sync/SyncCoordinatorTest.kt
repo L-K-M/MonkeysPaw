@@ -24,6 +24,91 @@ class SyncCoordinatorTest {
     private val groupScope = PromptScope.Group(v.group.rawValue)
     private val groupPath = "Groups/Team/a.md"
 
+    @Test fun explicitRecoveryReflushesUncertainPushPublicationOnTheSameGraph() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(rev = 0)
+        h.start()
+        h.rig.dataOperations.onOperation = {
+            if (it == "file:sync/push.json") throw SyncFileOperationError(SyncFileFailureCode.DURABILITY_FAILED)
+        }
+        assertNull(h.engine.runBackground().lastSuccess)
+        val exact = h.data.read("sync/push.json")
+        assertEquals(SyncError.DurabilityUncertain, h.pending.snapshot.error)
+        assertTrue(h.writes.isEmpty())
+        val requests = h.requests.size
+        assertFailsWith<SyncError.DurabilityUncertain> { h.engine.recoverJournal() }
+        assertEquals(requests, h.requests.size)
+
+        h.rig.dataOperations.onOperation = null
+        h.rig.dataOperations.calls.clear()
+        h.respond = { request ->
+            assertEquals(HttpMethod.GET, request.method)
+            assertContentEquals(exact, h.data.read("sync/push.json"))
+            assertTrue(h.rig.dataOperations.calls.containsAll(
+                listOf("file:sync/push.json", "directory:sync", "directory:<root>")))
+            null
+        }
+        h.engine.recoverJournal()
+        assertEquals(requests + 1, h.requests.size)
+        assertNull(h.pending.load(h.binding))
+        assertContentEquals(EngineHarness.source(), h.files.read("a.md"))
+        assertTrue(h.writes.isEmpty())
+        assertNull(h.engine.reports.value.blockingIssue)
+        assertEquals(SyncStopResult.STOPPED, h.engine.stop())
+    }
+
+    @Test fun explicitRecoveryReflushesUncertainPushDeletionOnTheSameGraph() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(rev = 0)
+        h.start()
+        h.data.onDelete = { path -> if (path == "sync/push.json") {
+            h.rig.dataOperations.onOperation = {
+                if (it == "directory:sync") throw SyncFileOperationError(SyncFileFailureCode.DURABILITY_FAILED)
+            }
+        } }
+        assertNull(h.engine.runBackground().lastSuccess)
+        assertEquals(SyncError.DurabilityUncertain, h.pending.snapshot.error)
+        assertNull(h.data.stamp("sync/push.json"))
+        assertEquals(1, h.state.prompts[v.personalID]!!.rev)
+        assertEquals(1, h.writes.size)
+        val requests = h.requests.size
+
+        h.data.onDelete = null
+        h.rig.dataOperations.onOperation = null
+        h.rig.dataOperations.calls.clear()
+        h.engine.recoverJournal()
+        assertEquals(listOf("directory:sync", "directory:<root>"), h.rig.dataOperations.calls)
+        assertEquals(requests, h.requests.size)
+        assertNull(h.pending.load(h.binding))
+        assertNull(h.engine.reports.value.blockingIssue)
+        assertEquals(SyncStopResult.STOPPED, h.engine.stop())
+    }
+
+    @Test fun explicitRecoveryValidatesUncertainPushBindingBeforeReflush() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.seed(rev = 0)
+        h.start()
+        h.rig.dataOperations.onOperation = {
+            if (it == "file:sync/push.json") throw SyncFileOperationError(SyncFileFailureCode.DURABILITY_FAILED)
+        }
+        h.engine.runBackground()
+        val exact = h.data.read("sync/push.json")
+        val rebound = WireJson.parse(exact).objectValue().setting("root", wireString("/another"))
+        h.data.put(syncDocumentBytes(rebound), "sync/push.json")
+        h.rig.dataOperations.onOperation = null
+        h.rig.dataOperations.calls.clear()
+        val requests = h.requests.size
+
+        assertFailsWith<SyncError.BindingMismatch> { h.engine.recoverJournal() }
+        assertEquals(SyncError.DurabilityUncertain, h.pending.snapshot.error)
+        assertTrue(h.rig.dataOperations.calls.isEmpty())
+        assertEquals(requests, h.requests.size)
+        h.data.put(exact, "sync/push.json")
+        h.engine.recoverJournal()
+        assertNull(h.pending.load(h.binding))
+        assertEquals(SyncStopResult.STOPPED, h.engine.stop())
+    }
+
     @Test fun successfulPassSurvivesPullCleanupFailureAndStartupSweepsTheLeftovers() = runTest {
         for (failure in listOf<Throwable>(StoreError.IOFailure, AssertionError("Synthetic cleanup failure"))) {
             val h = EngineHarness(testScheduler, backgroundScope)
