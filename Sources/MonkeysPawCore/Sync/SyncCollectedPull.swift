@@ -85,7 +85,7 @@ final class SyncPullStaging {
     static func sweep(files: FileStore) throws {
         let pages = try operation { try files.listFiles() }
         var failure: SyncPullCollectorError?
-        for page in pages where page.relativePath.hasPrefix("sync/pull-") {
+        for page in pages where isStagingPath(page.relativePath) {
             do { try operation { try files.delete(at: page.relativePath) } }
             catch SyncPullCollectorError.stagingFailed(.notFound) { continue }
             catch { failure = error as? SyncPullCollectorError ?? .stagingFailed(.ioFailure) }
@@ -123,7 +123,17 @@ final class SyncPullStaging {
         discarded = true
     }
 
-    private func path(_ index: Int) -> String { "sync/pull-" + id + "-" + String(index) + ".json" }
+    private static let pathPrefix = "sync/pull-"
+    private static let pathSuffix = ".json"
+
+    private func path(_ index: Int) -> String { Self.pathPrefix + id + "-" + String(index) + Self.pathSuffix }
+
+    private static func isStagingPath(_ path: String) -> Bool {
+        guard path.hasPrefix(pathPrefix), path.hasSuffix(pathSuffix) else { return false }
+        let name = path.dropFirst(pathPrefix.count).dropLast(pathSuffix.count)
+        return name.range(of: #"\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}-[0-9]+\z"#,
+            options: .regularExpression) != nil
+    }
 
     private static func operation<Value>(_ body: () throws -> Value) throws -> Value {
         do { return try body() }

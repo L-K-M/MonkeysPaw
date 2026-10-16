@@ -157,11 +157,21 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(rig.transport.requests.count, 1)
         XCTAssertEqual(try staged(rig), pages)
 
-        try rig.base.data.put("canary", at: "sync/retained/canary.json")
+        let collectionID = "a6025558-8a7b-4fe7-a7e1-69555d7a1304"
+        let unrelated = [
+            "sync/retained/canary.json",
+            "sync/pull-other.json",
+            "sync/pull-backup/pull-\(collectionID)-0.json",
+            "sync/pull-\(collectionID)-x.json",
+            "sync/pull-\(collectionID.uppercased())-0.json",
+            "sync/pull-\(collectionID)--1.json",
+            "sync/pull-\(collectionID)-0.json.bak"
+        ]
+        for path in unrelated { try rig.base.data.put("canary", at: path) }
         rig.base.data.onDelete = nil
         try await rig.service.recoverJournal()
-        XCTAssertTrue(try staged(rig).isEmpty)
-        XCTAssertEqual(try rig.base.data.text(at: "sync/retained/canary.json"), "canary")
+        for page in pages { XCTAssertNil(try rig.base.data.stamp(at: page.relativePath)) }
+        for path in unrelated { XCTAssertEqual(try rig.base.data.text(at: path), "canary", path) }
         XCTAssertEqual(rig.transport.requests.count, 1)
         XCTAssertNil(rig.service.report.blockingIssue)
         XCTAssertEqual(rig.service.stop(), .stopped)
