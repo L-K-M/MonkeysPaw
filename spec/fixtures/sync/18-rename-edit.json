@@ -1,0 +1,387 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "18-rename-dirty-edit",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Renamed.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nRemote edit.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/Team/Sample (conflict b 2026-10-14 0000).md",
+          "name": "copy"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Renamed.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nRemote edit.\n"
+              },
+              {
+                "path": "Conflicts/Team/Sample (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Groups/Team/Sample.md"
+            ],
+            "file_count": 2,
+            "prompt_count": 2,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Renamed.md",
+                "rev": 2,
+                "hash": "bf7abfd71f78137e2a9c72fcad5c58c65b27b6576053f8435c35192c5ea3de02"
+              },
+              {
+                "id": "${prompt.copy}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Team/Sample (conflict b 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              },
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2,
+            "writes": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "18-rename-edit-with-replaced-old-path",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Groups/Team/Sample.md",
+          "destination": "Groups/Team/Staged.md"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Staged.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nUnrelated occupant.\n"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Renamed.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nRemote edit.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/Team/Staged (conflict b 2026-10-14 0000).md",
+          "name": "copy"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Renamed.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nRemote edit.\n"
+              },
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nUnrelated occupant.\n"
+              },
+              {
+                "path": "Conflicts/Team/Staged (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Groups/Team/Staged.md"
+            ],
+            "file_count": 3,
+            "prompt_count": 3,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Renamed.md",
+                "rev": 2,
+                "hash": "bf7abfd71f78137e2a9c72fcad5c58c65b27b6576053f8435c35192c5ea3de02"
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 1
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.q}",
+                "count": 1,
+                "status": 200
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nUnrelated occupant.\n"
+          }
+        }
+      ]
+    }
+  ]
+}

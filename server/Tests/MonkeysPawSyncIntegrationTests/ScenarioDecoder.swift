@@ -101,15 +101,32 @@ enum ScenarioStep {
     case move(device: String, source: String, destination: String)
     case symlink(device: String, path: String)
     case sync(String), restart(String), signOut(String), resetMetrics(String)
+    case network(device: String, mode: ScenarioNetworkMode)
     case watch(device: String, path: String)
     case fireTimers(device: String, seconds: Int)
     case bindPrompt(device: String, path: String, name: String)
+    case bindCursor(device: String, scope: String, name: String)
+    case bindText(device: String, name: String, unit: String, count: Int)
     case seedKeyed(device: String, path: String)
     case favorite(device: String, id: String, value: Bool)
     case http(ScenarioHTTP)
-    case beforeRequest(device: String, method: HTTPMethod, path: String, then: ScenarioHTTP)
+    indirect case beforeRequest(device: String, method: HTTPMethod, path: String, skip: Int, then: ScenarioStep)
+    indirect case afterResponse(device: String, method: HTTPMethod, path: String, then: ScenarioStep)
+    case interrupt(device: String, method: HTTPMethod, path: String, phase: ScenarioInterruption)
+    case httpSeries(ScenarioHTTP, ids: [String])
+    case raceHTTP([ScenarioRaceRequest])
     case rewrite(ScenarioRewrite)
     case expect(ScenarioExpectation)
+}
+
+enum ScenarioInterruption { case beforeDispatch, afterCommit }
+enum ScenarioNetworkMode: String { case online, offline }
+
+struct ScenarioRaceRequest {
+    let device: String
+    let method: HTTPMethod
+    let path: String
+    let body: ScenarioValue
 }
 
 struct ScenarioHTTP {
@@ -138,7 +155,8 @@ struct ScenarioExpectation {
 
 enum ScenarioDecoder {
     static let expectationKeys: Set<String> = ["files", "absent", "file_count", "status", "blocking_issue", "state",
-        "prompt_count", "cursor_count", "held_count", "account_user", "writes", "trash_count", "requests", "history_count"]
+        "prompt_count", "cursor_count", "held_count", "account_user", "writes", "trash_count", "requests", "history_count",
+        "unique_ids", "protected_ids", "state_absent", "groups", "group_count", "pages"]
 
     static func decode(_ data: Data) throws -> [SyncScenario] {
         var envelope = try ScenarioObject(JSONDecoder().decode(ScenarioValue.self, from: data))
@@ -199,26 +217,65 @@ enum ScenarioDecoder {
         case "restart": step = .restart(device)
         case "sign_out": step = .signOut(device)
         case "reset_metrics": step = .resetMetrics(device)
+        case "network":
+            guard let mode = ScenarioNetworkMode(rawValue: try object.string("mode")) else {
+                throw ScenarioFailure.invalid("unknown network mode")
+            }
+            step = .network(device: device, mode: mode)
         case "watch": step = .watch(device: device, path: try object.string("path"))
         case "fire_timers": step = .fireTimers(device: device, seconds: try object.required("delay_seconds").integer())
         case "bind_prompt": step = .bindPrompt(device: device, path: try object.string("path"), name: try object.string("name"))
+        case "bind_cursor": step = .bindCursor(device: device, scope: try object.string("scope"), name: try object.string("name"))
+        case "bind_text":
+            let name = try object.string("name")
+            let unit = try object.string("unit")
+            let count = try object.required("count").integer()
+            guard !unit.isEmpty, count > 0, count <= Limits.maxPromptBytes / unit.utf8.count else {
+                throw ScenarioFailure.invalid("text expansion exceeds prompt budget")
+            }
+            step = .bindText(device: device, name: name, unit: unit, count: count)
         case "seed_keyed": step = .seedKeyed(device: device, path: try object.string("path"))
         case "favorite": step = .favorite(device: device, id: try object.string("id"), value: try object.required("value").boolean())
-        case "http":
+        case "http", "http_series":
             let method = try method(object.string("method"))
             let path = try object.string("path")
             let body = object.take("body")
             let status = try object.required("status").integer()
             let expected = try object.take("expected")?.object() ?? [:]
             let bindings = try object.take("bind")?.object().mapValues { try $0.string() } ?? [:]
-            step = .http(.init(device: device, method: method, path: path, body: body, status: status, expected: expected, bindings: bindings))
+            let request = ScenarioHTTP(device: device, method: method, path: path, body: body, status: status, expected: expected, bindings: bindings)
+            if action == "http_series" {
+                let ids = try object.strings("ids")
+                guard !ids.isEmpty, ids.count <= 200, Set(ids).count == ids.count, bindings.isEmpty else {
+                    throw ScenarioFailure.invalid("invalid HTTP series")
+                }
+                for id in ids { _ = try SyncIdentifiers.ulid(id) }
+                step = .httpSeries(request, ids: ids)
+            } else { step = .http(request) }
         case "before_next_request":
             let method = try method(object.string("method"))
             let path = try object.string("path")
-            guard case .http(let next) = try decodeStep(object.required("then")) else {
-                throw ScenarioFailure.invalid("network race must execute an HTTP action")
+            let skip = try object.take("skip")?.integer() ?? 0
+            let next = try networkStep(object.required("then"))
+            step = .beforeRequest(device: device, method: method, path: path, skip: skip, then: next)
+        case "after_next_response":
+            step = .afterResponse(device: device, method: try method(object.string("method")),
+                path: try object.string("path"), then: try networkStep(object.required("then")))
+        case "drop_next_response", "fail_next_request":
+            step = .interrupt(device: device, method: try method(object.string("method")), path: try object.string("path"),
+                phase: action == "drop_next_response" ? .afterCommit : .beforeDispatch)
+        case "race_http":
+            let writers = try object.required("writers").array().map { item in
+                var writer = try ScenarioObject(item)
+                let result = ScenarioRaceRequest(device: try writer.string("device"), method: try method(writer.string("method")),
+                    path: try writer.string("path"), body: try writer.required("body"))
+                try writer.finish()
+                return result
             }
-            step = .beforeRequest(device: device, method: method, path: path, then: next)
+            guard writers.count == 2, writers[0].device != writers[1].device, writers.contains(where: { $0.device == device }) else {
+                throw ScenarioFailure.invalid("CAS race requires two devices")
+            }
+            step = .raceHTTP(writers)
         case "rewrite_next_request", "rewrite_next_response":
             let method = try method(object.string("method"))
             let path = try object.string("path")
@@ -236,6 +293,14 @@ enum ScenarioDecoder {
         return step
     }
 
+    private static func networkStep(_ value: ScenarioValue) throws -> ScenarioStep {
+        let step = try decodeStep(value)
+        switch step {
+        case .http, .write, .expect: return step
+        default: throw ScenarioFailure.invalid("network hook requires HTTP, write or expect")
+        }
+    }
+
     private static func method(_ text: String) throws -> HTTPMethod {
         guard let method = HTTPMethod(rawValue: text) else { throw ScenarioFailure.invalid("unknown HTTP method") }
         return method
@@ -248,6 +313,9 @@ enum ScenarioDecoder {
     private static func validateExpectations(_ fields: [String: ScenarioValue]) throws {
         for (key, value) in fields {
             switch key {
+            case "unique_ids": _ = try value.boolean()
+            case "protected_ids", "state_absent": _ = try value.array().map { try $0.string() }
+            case "groups", "pages": try validateGroupCheckpoint(key, value)
             case "files", "state", "requests":
                 let allowed: Set<String>
                 if key == "files" { allowed = ["path", "content", "mode"] }
@@ -286,7 +354,10 @@ enum SyncScenarioCorpus {
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             .filter { !$0.lastPathComponent.hasPrefix(".") }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let names = Set(files.map(\.lastPathComponent))
-        let required: Set<String> = ["01-round-trip.json", "11-path-clashes.json", "12-untrusted-paths.json", "13-copied-library.json",
+        let required: Set<String> = ["01-round-trip.json", "02-offline-conflict.json", "03-edit-delete.json", "04-viewer-denied.json",
+            "05-scope-transfers.json", "06-removed-offline.json", "07-added-member.json", "09-paired-move.json", "10-group-lifecycle.json",
+            "18-rename-edit.json", "19-racing-moves.json", "20-move-echo-pages.json", "21-remote-rename.json",
+            "11-path-clashes.json", "12-untrusted-paths.json", "13-copied-library.json",
             "14-account-change.json", "15-group-favourite.json", "16-invalid-content.json"]
         guard required.isSubset(of: names) else { throw ScenarioFailure.invalid("missing acceptance fixture") }
         var ids = Set<String>()

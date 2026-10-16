@@ -1,0 +1,409 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "21-remote-rename-clean",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Remote.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Remote.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              }
+            ],
+            "absent": [
+              "Groups/Team/Sample.md"
+            ],
+            "file_count": 1,
+            "prompt_count": 1,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "history_count": 1,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Remote.md",
+                "rev": 2,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                },
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              },
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "file_count": 1,
+            "unique_ids": true,
+            "history_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "Remote.md",
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "/rev": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "21-remote-rename-replaced-occupant",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "seed_keyed",
+          "device": "b",
+          "path": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "path": "Remote.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "group_id": "${group.team}"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nUnrelated occupant.\n"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Remote.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.q}\ntitle: Sample\n---\nUnrelated occupant.\n"
+              }
+            ],
+            "file_count": 2,
+            "prompt_count": 2,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "history_count": 1,
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Remote.md",
+                "rev": 2,
+                "history": 1,
+                "uses": 1,
+                "values": {
+                  "field": "remembered locally"
+                },
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              },
+              {
+                "method": "DELETE",
+                "path": "*",
+                "count": 0
+              },
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "file_count": 2,
+            "unique_ids": true,
+            "history_count": 1,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/path": "Remote.md",
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n",
+            "/rev": 2
+          }
+        }
+      ]
+    }
+  ]
+}

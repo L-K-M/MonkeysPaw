@@ -17,6 +17,7 @@ final class SyncScenarioTests: XCTestCase {
             do {
                 try await SyncServerHarness.run(scenario)
                 guard executed.insert(scenario.id).inserted else { throw ScenarioFailure.invalid("duplicate case execution") }
+                FileHandle.standardOutput.write(Data(("Executed sync scenario " + scenario.id + " against the real router.\n").utf8))
             } catch {
                 XCTFail((error as? ScenarioFailure)?.description ?? scenario.id + ": setup failed (" + String(describing: type(of: error)) + ")")
             }
@@ -125,10 +126,10 @@ final class SyncScenarioTests: XCTestCase {
         let original = try Data(contentsOf: fixtures.appendingPathComponent("11-path-clashes.json"))
         let baseline = try XCTUnwrap(ScenarioDecoder.decode(original).first { $0.id == "11-path-clash-exact" })
         let steps = baseline.steps.prefix(4).map { step -> ScenarioStep in
-            guard case .beforeRequest(let device, let method, let path, let action) = step else { return step }
-            return .beforeRequest(device: device, method: method, path: path, then: .init(device: action.device,
+            guard case .beforeRequest(let device, let method, let path, let skip, .http(let action)) = step else { return step }
+            return .beforeRequest(device: device, method: method, path: path, skip: skip, then: .http(.init(device: action.device,
                 method: action.method, path: action.path, body: action.body, status: action.status,
-                expected: ["/rev": .integer(999)], bindings: [:]))
+                expected: ["/rev": .integer(999)], bindings: [:])))
         }
         let scenario = SyncScenario(id: "negative-racing-http-checkpoint", now: baseline.now, servers: baseline.servers,
             users: baseline.users, devices: baseline.devices, prompts: baseline.prompts,
@@ -162,11 +163,11 @@ final class SyncScenarioTests: XCTestCase {
         let original = try Data(contentsOf: fixtures.appendingPathComponent("11-path-clashes.json"))
         let baseline = try XCTUnwrap(ScenarioDecoder.decode(original).first { $0.id == "11-path-clash-exact" })
         let steps = baseline.steps.prefix(4).map { step -> ScenarioStep in
-            guard case .beforeRequest(let device, let method, let path, let action) = step else { return step }
-            return .beforeRequest(device: device, method: method, path: path, then: .init(device: action.device,
+            guard case .beforeRequest(let device, let method, let path, let skip, .http(let action)) = step else { return step }
+            return .beforeRequest(device: device, method: method, path: path, skip: skip, then: .http(.init(device: action.device,
                 method: action.method, path: action.path,
                 body: .object(["content": .string(String(repeating: "x", count: SyncAPI.requestEnvelopeMaxBytes + 1))]),
-                status: action.status, expected: [:], bindings: [:]))
+                status: action.status, expected: [:], bindings: [:])))
         }
         let scenario = SyncScenario(id: "negative-racing-http-request", now: baseline.now, servers: baseline.servers,
             users: baseline.users, devices: baseline.devices, prompts: baseline.prompts,

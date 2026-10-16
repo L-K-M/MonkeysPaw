@@ -17,7 +17,9 @@ enum SyncServerHarness {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let clock = ScenarioClock(scenario.now)
-        try await withScenarioDeadline(ContinuousClock.now.advanced(by: .seconds(120))) {
+        // The 200-item acceptance case performs real setup writes and then
+        // durably applies the complete page on debug builds of the shared host.
+        try await withScenarioDeadline(ContinuousClock.now.advanced(by: .seconds(300))) {
             try await withServers(scenario, root: root, clock: clock, index: 0, clients: [:], symbols: [:]) { clients, symbols in
                 let runner = try ScenarioRunner(scenario: scenario, root: root, clients: clients, symbols: symbols)
                 do {
@@ -135,7 +137,9 @@ final class ScenarioDevice {
     }
 
     func settle() async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        // A complete byte-boundary page also journals and verifies its files.
+        // Keep a bounded drain without treating that disk work as HTTP latency.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(180))
         try await withScenarioDeadline(deadline) { [self] in
             repeat {
                 await sync.drain()
@@ -219,8 +223,8 @@ final class ScenarioRunner {
         for device in devices.values { device.sync.stop(); await device.sync.drain() }
     }
 
-    private func device(_ name: String) throws -> ScenarioDevice {
-        guard let device = devices[name] else { throw ScenarioFailure.invalid("unknown device") }
+    func device(_ name: String) throws -> ScenarioDevice {
+        guard let device = devices[try expand(name)] else { throw ScenarioFailure.invalid("unknown device") }
         return device
     }
 
@@ -261,6 +265,7 @@ final class ScenarioRunner {
             let device = try device(name)
             device.files.resetMetrics()
             device.transport.resetMetrics()
+        case .network(let name, let mode): try device(name).transport.setNetworkMode(mode)
         case .watch(let name, let path):
             let device = try device(name)
             let path = try expand(path)
@@ -275,6 +280,15 @@ final class ScenarioRunner {
             let entry = try device(name).library.load(at: expand(path))
             guard case .assigned(let id) = entry.identity else { throw ScenarioFailure.invalid("cannot bind an idless prompt") }
             try bind("prompt." + symbol, id.rawValue)
+        case .bindCursor(let name, let scope, let symbol):
+            guard let state = try device(name).states.loadForAccountTransition(),
+                  let cursor = state.cursors.first(where: { $0.key.rawValue == (try? expand(scope)) })?.value else {
+                throw ScenarioFailure.invalid("missing cursor binding")
+            }
+            try bind("cursor." + symbol, cursor)
+        case .bindText(let deviceName, let name, let unit, let count):
+            _ = try device(deviceName)
+            try bind("text." + name, String(repeating: unit, count: count))
         case .seedKeyed(let name, let path):
             let device = try device(name)
             let entry = try device.library.load(at: expand(path))
@@ -290,26 +304,36 @@ final class ScenarioRunner {
             }
         case .http(let action):
             try await http(action)
-        case .beforeRequest(let name, let method, let path, let then):
-            try device(name).transport.before(method: method, path: expand(path)) { [self] in
-                do { try await http(then) }
+        case .httpSeries(let action, let ids): try await httpSeries(action, ids: ids)
+        case .raceHTTP(let writers): try await raceHTTP(writers)
+        case .beforeRequest(let name, let method, let path, let skip, let then):
+            try device(name).transport.before(method: method, path: expand(path), skip: skip) { [self] in
+                do { try await execute(then) }
                 catch let error as ScenarioFailure { throw error }
                 catch { throw ScenarioFailure.invalid(safeFailure(error)) }
             }
+        case .afterResponse(let name, let method, let path, let then):
+            try device(name).transport.after(method: method, path: expand(path)) { [self] in
+                do { try await execute(then) }
+                catch let error as ScenarioFailure { throw error }
+                catch { throw ScenarioFailure.invalid(safeFailure(error)) }
+            }
+        case .interrupt(let name, let method, let path, let phase):
+            try device(name).transport.interrupt(method: method, path: expand(path), phase: phase)
         case .rewrite(let action):
             let rewrite = ScenarioRewrite(device: action.device, phase: action.phase, method: action.method,
-                path: try expand(action.path), patch: try action.patch.mapValues(expand))
+                path: try expand(action.path), patch: try expandFields(action.patch))
             try device(action.device).transport.rewrite(rewrite)
         case .expect(let expectation): try expect(expectation)
         }
     }
 
-    private func http(_ action: ScenarioHTTP) async throws {
+    func http(_ action: ScenarioHTTP) async throws {
         let response = try await device(action.device).request(method: action.method, path: expand(action.path), body: action.body.map(expand))
-        try check(response.statusCode == action.status, "HTTP status")
+        try check(response.statusCode == action.status, "HTTP status (actual \(response.statusCode), expected \(action.status))")
         if !action.expected.isEmpty || !action.bindings.isEmpty {
             let json = try JSONDecoder().decode(ScenarioValue.self, from: response.body)
-            for (pointer, expected) in action.expected { try check(json.at(pointer) == expand(expected), "HTTP JSON checkpoint") }
+            for (pointer, expected) in action.expected { try check(json.at(expand(pointer)) == expand(expected), "HTTP JSON checkpoint") }
             for (name, pointer) in action.bindings { try bind(name, json.at(pointer).string()) }
         }
     }
@@ -319,6 +343,8 @@ final class ScenarioRunner {
         let state = try device.states.loadForAccountTransition()
         for (key, expected) in expectation.fields {
             switch key {
+            case "unique_ids", "protected_ids", "state_absent": try expectIdentities(key, expected, state: state, device: device)
+            case "groups", "group_count", "pages": try expectGroups(key, expected, state: state, device: device)
             case "files":
                 for value in try expected.array() {
                     var file = try ScenarioObject(value)
@@ -333,7 +359,7 @@ final class ScenarioRunner {
                     try file.finish()
                 }
             case "absent": for path in try expected.array() { try check(device.files.stamp(at: expand(path.string())) == nil, "file must be absent") }
-            case "file_count": try check(device.files.listFiles().count == expected.integer(), "file count")
+            case "file_count": try check(device.files.listFiles().count == expected.integer(), "file count (actual \(device.files.listFiles().count))")
             case "status": try check(device.sync.report.status.rawValue == expected.string(), "sync status (" + device.sync.report.status.rawValue +
                 ", pending \(device.sync.report.counts.pending), errors \(device.sync.report.counts.fileErrors), " + (device.sync.report.blockingIssue?.rawValue ?? "none") + ")")
             case "blocking_issue": try check((device.sync.report.blockingIssue?.rawValue ?? "none") == expected.string(), "blocking issue")
@@ -355,18 +381,18 @@ final class ScenarioRunner {
                     let path = try expand(object.string("path"))
                     let status = try object.take("status")?.integer()
                     let count = try object.required("count").integer()
-                    let body = try object.take("body")?.object().mapValues(expand) ?? [:]
+                    let body = try object.take("body").map { try expandFields($0.object()) } ?? [:]
                     let local = try object.take("local_exists")?.string()
                     let localPath = try local.map(expand)
-                    let actual = try device.transport.traces.filter { trace in
+                    let actual = device.transport.traces.filter { trace in
                         guard (method == "*" || trace.method == method) && (path == "*" || trace.path == path) && (status == nil || status == trace.status) else { return false }
                         if let localPath, !trace.localPaths.contains(where: { $0.utf8.elementsEqual(localPath.utf8) }) { return false }
                         for (pointer, expected) in body {
-                            guard let payload = trace.body, try payload.at(pointer) == expected else { return false }
+                            guard let payload = trace.body, let value = try? payload.at(pointer), value == expected else { return false }
                         }
                         return true
                     }
-                    try check(actual.count == count, "request count")
+                    try check(actual.count == count, "request count (\(method), actual \(actual.count), expected \(count))")
                     try object.finish()
                 }
             default: throw ScenarioFailure.invalid("unconsumed expectation")
@@ -396,12 +422,12 @@ final class ScenarioRunner {
         try object.finish()
     }
 
-    private func bind(_ name: String, _ value: String) throws {
+    func bind(_ name: String, _ value: String) throws {
         guard symbols[name] == nil || symbols[name] == value else { throw ScenarioFailure.invalid("symbol rebound") }
         symbols[name] = value
     }
 
-    private func expand(_ text: String) throws -> String {
+    func expand(_ text: String) throws -> String {
         var result = text
         while let start = result.range(of: "${"), let end = result.range(of: "}", range: start.upperBound..<result.endIndex) {
             let name = String(result[start.upperBound..<end.lowerBound])
@@ -412,16 +438,26 @@ final class ScenarioRunner {
         return result
     }
 
-    private func expand(_ value: ScenarioValue) throws -> ScenarioValue {
+    func expand(_ value: ScenarioValue) throws -> ScenarioValue {
         switch value {
         case .string(let text): return .string(try expand(text))
         case .array(let items): return .array(try items.map(expand))
-        case .object(let fields): return .object(try fields.mapValues(expand))
+        case .object(let fields): return .object(try expandFields(fields))
         default: return value
         }
     }
 
-    private func check(_ success: @autoclosure () throws -> Bool, _ reason: String) throws {
+    private func expandFields(_ fields: [String: ScenarioValue]) throws -> [String: ScenarioValue] {
+        var result: [String: ScenarioValue] = [:]
+        for (key, value) in fields {
+            let key = try expand(key)
+            guard result[key] == nil else { throw ScenarioFailure.invalid("duplicate expanded member") }
+            result[key] = try expand(value)
+        }
+        return result
+    }
+
+    func check(_ success: @autoclosure () throws -> Bool, _ reason: String) throws {
         guard try success() else { throw ScenarioFailure.invalid(reason) }
     }
 }

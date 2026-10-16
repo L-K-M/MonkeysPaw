@@ -1,0 +1,586 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "19-racing-moves-b-wins",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Other"
+          },
+          "bind": {
+            "group.other": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "Groups/Team/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Sample.md",
+          "destination": "Groups/Other/Sample.md"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "before_next_request",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/prompts/${prompt.p}/move",
+          "then": {
+            "action": "http",
+            "device": "b",
+            "method": "POST",
+            "path": "/api/v1/prompts/${prompt.p}/move",
+            "status": 200,
+            "body": {
+              "base_rev": 1,
+              "scope": "group",
+              "path": "Sample.md",
+              "group_id": "${group.other}"
+            },
+            "expected": {
+              "/rev": 2
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/Personal/Sample (conflict a 2026-10-14 0000).md",
+          "name": "copy"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Other/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Conflicts/Personal/Sample (conflict a 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md",
+              "Groups/Team/Sample.md"
+            ],
+            "file_count": 2,
+            "prompt_count": 2,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.other}",
+                "path": "Sample.md",
+                "rev": 2,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              },
+              {
+                "id": "${prompt.copy}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/Sample (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 409
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Other/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Conflicts/Personal/Sample (conflict a 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 2,
+            "prompt_count": 2,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 2,
+            "/group_id": "${group.other}",
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "writes": 0,
+            "file_count": 2,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "19-racing-moves-a-wins",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Sample.md",
+            "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Other"
+          },
+          "bind": {
+            "group.other": "/id"
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "move",
+          "device": "b",
+          "source": "Sample.md",
+          "destination": "Groups/Other/Sample.md"
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "Groups/Other/Sample.md",
+          "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nLocal edit.\n"
+        },
+        {
+          "action": "move",
+          "device": "a",
+          "source": "Sample.md",
+          "destination": "Groups/Team/Sample.md"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "before_next_request",
+          "device": "b",
+          "method": "POST",
+          "path": "/api/v1/prompts/${prompt.p}/move",
+          "then": {
+            "action": "http",
+            "device": "a",
+            "method": "POST",
+            "path": "/api/v1/prompts/${prompt.p}/move",
+            "status": 200,
+            "body": {
+              "base_rev": 1,
+              "scope": "group",
+              "path": "Sample.md",
+              "group_id": "${group.team}"
+            },
+            "expected": {
+              "/rev": 2
+            }
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/Personal/Sample (conflict b 2026-10-14 0000).md",
+          "name": "copy"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Conflicts/Personal/Sample (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "absent": [
+              "Sample.md",
+              "Groups/Other/Sample.md"
+            ],
+            "file_count": 2,
+            "prompt_count": 2,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "group:${group.team}",
+                "path": "Sample.md",
+                "rev": 2,
+                "hash": "bd4fac2e2d50c6850db4dfd67385f0dc99215ecfb3a3f442f6dcf61d9c3069a8"
+              },
+              {
+                "id": "${prompt.copy}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/Sample (conflict b 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 409
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "files": [
+              {
+                "path": "Groups/Team/Sample.md",
+                "content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+              },
+              {
+                "path": "Conflicts/Personal/Sample (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.copy}\ntitle: Sample\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit.\n"
+              }
+            ],
+            "file_count": 2,
+            "prompt_count": 2,
+            "unique_ids": true,
+            "protected_ids": [
+              "${prompt.p}"
+            ],
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 1,
+                "status": 200
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "expected": {
+            "/rev": 2,
+            "/group_id": "${group.team}",
+            "/content": "---\nid: ${prompt.p}\ntitle: Sample\n---\nBase.\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "writes": 0,
+            "file_count": 2,
+            "requests": [
+              {
+                "method": "POST",
+                "path": "/api/v1/prompts/${prompt.p}/move",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
