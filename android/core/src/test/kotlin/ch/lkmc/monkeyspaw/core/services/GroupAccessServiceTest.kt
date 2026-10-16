@@ -330,6 +330,29 @@ class GroupAccessServiceTest {
         }
     }
 
+    @Test fun favoriteInputSurvivesRepairOfInvalidAndFutureGroupSource() {
+        for (raw in listOf(true, false)) for (future in listOf(false, true)) {
+            val extra = "favorite: $raw\n"
+            val source = ScanHarness.bytes(if (future) "Body" else "{{broken", v.groupPrompt,
+                extra + if (future) "format: 2\n" else "")
+            val h = AccessHarness(source = source)
+            h.favorite(raw)
+            assertEquals(!raw, h.library.toggleFavorite(h.entry()).entry.favorite)
+            val input = h.states.snapshot.value!!.prompts.getValue(h.identity).favoriteInput
+            assertContentEquals(source, h.local.prompts.read(h.path))
+
+            val restarted = ScanHarness(h.scan.rig.restart())
+            restarted.files.put(ScanHarness.bytes("Body", v.groupPrompt, extra), h.path)
+            restarted.prepare()
+            val state = restarted.states.snapshot.value!!
+            assertEquals(!raw, state.favorites[h.identity] == true,
+                "Unchanged favorite must not replay after source repair: raw=$raw, future=$future")
+            assertEquals(SyncFavoriteInput(raw), input)
+            assertNull(state.prompts.getValue(h.identity).favoriteInput)
+            assertNull(CanonicalForm.group(restarted.files.read(h.path), "a.md").favorite)
+        }
+    }
+
     @Test fun adoptionConsumesTheRawKeyWithoutUndoingTheNewerOverlay() {
         val h = AccessHarness(Role.VIEWER, extra = "favorite: true\n")
         h.favorite(true)

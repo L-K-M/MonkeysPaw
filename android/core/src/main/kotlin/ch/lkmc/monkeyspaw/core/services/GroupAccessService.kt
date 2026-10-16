@@ -1,7 +1,7 @@
 package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.ULID
-import ch.lkmc.monkeyspaw.core.domain.canonical.CanonicalForm
+import ch.lkmc.monkeyspaw.core.domain.format.PortableYaml
 import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathCaseFold
 import ch.lkmc.monkeyspaw.core.domain.sync.*
 import ch.lkmc.monkeyspaw.core.syncapi.Role
@@ -166,8 +166,9 @@ class GroupAccessService(
                 SyncPromptState(SyncScopeKey.Group(access.group.id), current.relativePath.removePrefix(prefix), 0)
             }
             if (recorded.scope !is SyncScopeKey.Group || recorded.scope.id !in state.groups) throw LibraryError.AccessDenied
-            val input = runCatching { CanonicalForm.group(current.document.source.encodeToByteArray(),
-                LibraryPath.filename(current.relativePath)).favorite }.getOrNull()
+            // Preserve the observed key even while unrelated source errors prevent canonicalization.
+            val input = current.document.preservedHeader?.entries
+                ?.firstOrNull { PortableYaml.string(it.key) == "favorite" }?.let { PortableYaml.boolean(it.value) }
             state.copy(prompts = state.prompts + (current.identity to recorded.copy(favoriteInput = SyncFavoriteInput(input))))
                 .applyGroupFavorite(!current.favorite, current.identity)
         }

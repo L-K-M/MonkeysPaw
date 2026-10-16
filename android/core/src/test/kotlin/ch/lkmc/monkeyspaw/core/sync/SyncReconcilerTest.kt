@@ -36,6 +36,32 @@ class SyncReconcilerTest {
         }
     }
 
+    @Test fun canonicalPullConsumesFavoriteInputBeforeTheSameKeyIsAddedAgain() {
+        for (raw in listOf(true, false)) for (mode in listOf(Mode.SNAPSHOT, Mode.DELTA)) {
+            val h = ReconciliationHarness()
+            val path = "Groups/Team/a.md"
+            val local = ScanHarness.bytes(extra = "favorite: $raw\n")
+            h.baseline(h.record(bytes = CanonicalForm.group(local, "a.md").bytes, scope = team))
+            h.put(local, path)
+            h.states.update(h.rig.binding) { it.copy(prompts = it.prompts +
+                (v.personalID to it.prompts.getValue(v.personalID).copy(favoriteInput = SyncFavoriteInput(raw))),
+                favorites = if (raw) emptyMap() else mapOf(v.personalID to true)) }
+            val remote = CanonicalForm.group(ScanHarness.bytes("Remote edit"), "a.md").bytes
+            h.collected(h.scope(), h.scope(team, mode, items = listOf(h.upsert(10, rev = 2, bytes = remote)))).use { pull ->
+                assertEquals(SyncApplyOutcome.Committed, h.apply(h.plan(pull)))
+            }
+            assertContentEquals(remote, h.files.read(path))
+            assertEquals(!raw, h.states.snapshot.value!!.favorites[v.personalID] == true)
+
+            val restarted = ScanHarness(h.rig.restart())
+            restarted.files.put(ScanHarness.bytes("Remote edit", extra = "favorite: $raw\n"), path)
+            restarted.prepare()
+            assertEquals(raw, restarted.states.snapshot.value!!.favorites[v.personalID] == true,
+                "A key added after canonical pull is new input: raw=$raw, mode=$mode")
+            assertNull(restarted.states.snapshot.value!!.prompts.getValue(v.personalID).favoriteInput)
+        }
+    }
+
     @Test fun ownEchoAndOlderDeltaKeepDirtyContentAndAcknowledgedBaseline() {
         for (rev in listOf(2L, 7L)) {
             val h = ReconciliationHarness()
