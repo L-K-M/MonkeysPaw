@@ -7,6 +7,28 @@ final class SyncPushEngineTests: XCTestCase {
     private let personal = SyncScanTestSupport.personal
     private let team = SyncScanTestSupport.team
 
+    func testPushMetadataIODoesNotGrowWithUnrelatedLibraryFiles() async throws {
+        var stateReads: [Int] = []
+        var retainedInventories: [Int] = []
+        for count in [0, 32] {
+            let rig = try fixture()
+            let change = try candidate(rig)
+            for index in 0..<count {
+                try rig.files.write(Data("Unrelated \(index)".utf8), at: "other-\(index).md")
+            }
+            let engine = try engine(rig, PushTransport { _ in try Self.ack(1) })
+            var reads = 0
+            rig.data.onRead = { if $0 == "sync/state.json" { reads += 1 } }
+            let inventories = rig.data.listCount
+            let result = try await engine.push(change, availability: .available)
+            XCTAssertEqual(result, .acknowledged)
+            stateReads.append(reads)
+            retainedInventories.append(rig.data.listCount - inventories)
+        }
+        XCTAssertEqual(stateReads.first, stateReads.last, "State reads must not grow per file")
+        XCTAssertEqual(retainedInventories.first, retainedInventories.last, "Retained inventories must not grow per file")
+    }
+
     func testCreateRereadsDiskAndJournalsExactFreshBytesBeforeHTTP() async throws {
         let rig = try fixture()
         let change = try candidate(rig)

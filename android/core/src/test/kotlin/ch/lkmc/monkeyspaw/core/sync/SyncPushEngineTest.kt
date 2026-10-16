@@ -70,6 +70,23 @@ class SyncPushEngineTest {
     private val v = SyncTestValues
     private val available = SyncReconciliationSnapshot.Availability.AVAILABLE
 
+    @Test fun pushMetadataIODoesNotGrowWithUnrelatedLibraryFiles() = runTest {
+        val stateReads = mutableListOf<Int>()
+        val retainedInventories = mutableListOf<Int>()
+        for (count in listOf(0, 32)) {
+            val h = PushHarness().seed()
+            val change = h.candidate()
+            repeat(count) { h.files.put("Unrelated $it", "other-$it.md") }
+            h.data.reads.clear()
+            h.operations.calls.clear()
+            assertEquals(SyncPushResult.ACKNOWLEDGED, h.engine(PushTransport { ack(1) }).push(change, available))
+            stateReads.add(h.data.reads.count { it == "sync/state.json" })
+            retainedInventories.add(h.operations.calls.count { it == "inventory" })
+        }
+        assertEquals(stateReads.first(), stateReads.last(), "State reads must not grow per file")
+        assertEquals(retainedInventories.first(), retainedInventories.last(), "Retained inventories must not grow per file")
+    }
+
     @Test fun rereadsFreshBytesAndFlushesExactPrivateRequestBeforeHTTPWithoutAdvancingCursors() = runTest {
         val h = PushHarness().seed()
         val change = h.candidate()
