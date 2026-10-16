@@ -122,7 +122,7 @@ internal class SyncCoordinator(
                 commit(application(plan, local))
                 result = result.copy(counts = result.counts.copy(pulled = plan.operations.size))
                 progress(result)
-                runCatching { collected.discard() }
+                collected.discard()
                 pull = null
                 phase(SyncPhase.SCANNING)
                 // A denied-head collision resets a scope. Never return push candidates until it is recollected.
@@ -146,7 +146,7 @@ internal class SyncCoordinator(
             }
             throw SyncCoordinatorError.NoProgress
         } finally {
-            // Cleanup must also run on cancellation/fatal driver errors. Start sweeps any failed deletion next time.
+            // Preserve the original failure; the next serialized pass/recovery sweeps failed deletions.
             runCatching { pull?.discard() }
         }
     }

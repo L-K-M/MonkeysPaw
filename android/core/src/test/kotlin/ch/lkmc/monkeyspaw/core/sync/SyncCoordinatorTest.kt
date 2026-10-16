@@ -185,7 +185,7 @@ class SyncCoordinatorTest {
         assertEquals(SyncStopResult.STOPPED, h.engine.stop())
     }
 
-    @Test fun successfulPassSurvivesPullCleanupFailureAndStartupSweepsTheLeftovers() = runTest {
+    @Test fun pullCleanupFailureBlocksSuccessAndExplicitRecoveryRetriesWithoutRestarting() = runTest {
         for (failure in listOf<Throwable>(StoreError.IOFailure, AssertionError("Synthetic cleanup failure"))) {
             val h = EngineHarness(testScheduler, backgroundScope)
             val bytes = EngineHarness.source("Downloaded head")
@@ -194,21 +194,66 @@ class SyncCoordinatorTest {
             h.data.onDelete = { if (it.startsWith("sync/pull-")) throw failure }
 
             val result = h.engine.runBackground()
-            assertEquals(SyncStatus.IDLE, result.status)
-            assertNotNull(result.lastSuccess)
+            assertEquals(SyncBlockingIssue.RECOVERY_REQUIRED, result.blockingIssue)
+            assertNull(result.lastSuccess)
             assertEquals(1, result.counts.pulled)
             assertContentEquals(bytes, h.files.read("a.md"))
             assertEquals("user-1", h.state.cursors[v.userScope])
             assertTrue(h.data.listFiles().any { it.relativePath.startsWith("sync/pull-") })
 
-            h.engine.stop()
-            h.data.onDelete = null
             val requests = h.requests.size
-            h.start()
+            val pages = h.data.listFiles().filter { it.relativePath.startsWith("sync/pull-") }
+            assertFailsWith<SyncPullCollectorError.StagingFailed> { h.engine.recoverJournal() }
             assertEquals(requests, h.requests.size)
-            assertTrue(h.engine.reports.value.enabled)
+            assertEquals(pages, h.data.listFiles().filter { it.relativePath.startsWith("sync/pull-") })
+            h.data.onDelete = null
+            h.engine.recoverJournal()
+            assertEquals(requests, h.requests.size)
+            assertNull(h.engine.reports.value.blockingIssue)
             assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
-            assertNotNull(h.engine.runBackground().lastSuccess)
+            assertEquals(SyncStopResult.STOPPED, h.engine.stop())
+        }
+    }
+
+    @Test fun laterPassSweepsFailedCollectionCleanupBeforeCollectingMorePages() = runTest {
+        for (storageRecovered in listOf(true, false)) {
+            val h = EngineHarness(testScheduler, backgroundScope)
+            val bytes = EngineHarness.source("Downloaded head")
+            h.remote[v.personal.rawValue] = EngineHarness.prompt(bytes)
+            h.start()
+            h.data.onDelete = { if (it.startsWith("sync/pull-")) throw StoreError.IOFailure }
+            h.respond = { request -> if (!request.url.endsWith("/sync/pull")) null else {
+                if (h.pulls > 1) throw HttpTransportError.NetworkFailure
+                val page = PullResponse.codec.decode(h.pullResponse().body)
+                HttpResponse(200, body = PullResponse.codec.encode(page.copy(
+                    scopes = page.scopes.map { it.copy(cursor = "next-page", hasMore = true) })))
+            } }
+            assertEquals(SyncStatus.OFFLINE, h.engine.runBackground().status)
+            val pages = h.data.listFiles().filter { it.relativePath.startsWith("sync/pull-") }.map { it.relativePath }
+            assertTrue(pages.isNotEmpty())
+            val pulls = h.pulls
+            if (storageRecovered) h.data.onDelete = null
+            var leftoversAtCollection: List<String>? = null
+            h.respond = { request ->
+                if (request.url.endsWith("/sync/pull")) {
+                    leftoversAtCollection = pages.filter { h.data.stamp(it) != null }
+                }
+                null
+            }
+            advanceTimeBy(5_001)
+
+            val result = h.engine.runBackground()
+            if (storageRecovered) {
+                assertEquals(emptyList(), leftoversAtCollection, "Sweep old pages before another collection")
+                assertNotNull(result.lastSuccess)
+                assertContentEquals(bytes, h.files.read("a.md"))
+                assertTrue(h.data.listFiles().none { it.relativePath.startsWith("sync/pull-") })
+            } else {
+                assertEquals(pulls, h.pulls)
+                assertNull(result.lastSuccess)
+                assertEquals(SyncBlockingIssue.RECOVERY_REQUIRED, result.blockingIssue)
+                assertEquals(pages, h.data.listFiles().filter { it.relativePath.startsWith("sync/pull-") }.map { it.relativePath })
+            }
             h.engine.stop()
         }
     }

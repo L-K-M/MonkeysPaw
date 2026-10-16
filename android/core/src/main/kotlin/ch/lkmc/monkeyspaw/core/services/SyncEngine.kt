@@ -275,6 +275,7 @@ class SyncEngine internal constructor(
             counts = reports.value.counts.copy(pulled = 0, pushed = 0))
         run.task = scope.async(io + parent, start = CoroutineStart.LAZY) {
             val result = runCatching {
+                permit.mutate { sweepPullStaging() }
                 if (kind == RunKind.RECOVERY) { coordinator.recoverJournal(); SyncPassResult() }
                 else coordinator.run(progress = { pass ->
                     lock.withLock {

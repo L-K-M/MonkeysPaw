@@ -116,7 +116,7 @@ internal class SyncPullCollector(
             }
         } catch (error: Throwable) {
             // Keep the primary outcome (especially cancellation/auth) while attempting every owned deletion.
-            try { staging.discard() } catch (_: Throwable) { /* Engine startup sweeps private orphans. */ }
+            try { staging.discard() } catch (_: Throwable) { /* The next serialized engine run sweeps private orphans. */ }
             throw error
         }
     }
