@@ -28,6 +28,9 @@ object Limits {
     const val syncStateVersion = 1
     const val syncAccountVersion = 1
     const val syncBindingVersion = 1
+    internal const val syncDeviceSecretVersion = 1
+    internal const val syncLogoutTimeoutMillis = 5_000L
+    internal const val syncSecretCleanupTimeoutMillis = 5_000L
     const val syncApplyJournalVersion = 1
     const val syncPushJournalVersion = 1
     const val syncRecordMaxBytes = 16 * 1024 * 1024
