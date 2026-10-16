@@ -87,6 +87,7 @@ final class SyncPullStaging {
         var failure: SyncPullCollectorError?
         for page in pages where isStagingPath(page.relativePath) {
             do { try operation { try files.delete(at: page.relativePath) } }
+            catch let error as CancellationError { throw error }
             catch SyncPullCollectorError.stagingFailed(.notFound) { continue }
             catch { failure = error as? SyncPullCollectorError ?? .stagingFailed(.ioFailure) }
         }
@@ -116,6 +117,7 @@ final class SyncPullStaging {
         var failure: SyncPullCollectorError?
         for index in 0..<pageCount {
             do { try Self.operation { try files.delete(at: path(index)) } }
+            catch let error as CancellationError { throw error }
             catch SyncPullCollectorError.stagingFailed(.notFound) { continue }
             catch { failure = error as? SyncPullCollectorError ?? .stagingFailed(.ioFailure) }
         }
@@ -137,6 +139,7 @@ final class SyncPullStaging {
 
     private static func operation<Value>(_ body: () throws -> Value) throws -> Value {
         do { return try body() }
+        catch let error as CancellationError { throw error }
         catch let error as FileStoreError { throw SyncPullCollectorError.stagingFailed(error) }
         catch { throw SyncPullCollectorError.stagingFailed(.ioFailure) }
     }

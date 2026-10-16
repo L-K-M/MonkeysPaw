@@ -3,6 +3,84 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncCoordinatorTests: XCTestCase {
+    func testCancelledStagingSweepDoesNotBecomeARecoveryFailure() async throws {
+        let rig = try SyncServiceRig()
+        let path = "sync/pull-a6025558-8a7b-4fe7-a7e1-69555d7a1304-0.json"
+        try rig.base.data.put("stale", at: path)
+        rig.base.data.onDelete = { _ in throw CancellationError() }
+        defer { rig.base.data.onDelete = nil; rig.service.stop() }
+
+        try rig.start()
+        await rig.settle()
+        XCTAssertNil(rig.service.report.blockingIssue)
+        XCTAssertNil(rig.service.report.lastSuccess)
+        XCTAssertFalse(rig.service.report.retrying)
+        XCTAssertTrue(rig.transport.requests.isEmpty)
+        XCTAssertNotNil(try rig.base.data.stamp(at: path))
+
+        do {
+            try await rig.service.recoverJournal()
+            XCTFail("Expected sweep cancellation")
+        } catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        XCTAssertNil(rig.service.report.blockingIssue)
+        XCTAssertTrue(rig.transport.requests.isEmpty)
+
+        rig.base.data.onDelete = nil
+        try await rig.service.recoverJournal()
+        XCTAssertNil(try rig.base.data.stamp(at: path))
+        XCTAssertTrue(rig.transport.requests.isEmpty)
+    }
+
+    func testUnchangedOrphanPreparationDoesNotPublishJournals() async throws {
+        let rig = try SyncServiceRig()
+        let bytes = try CanonicalForm.group(SyncScanTestSupport.bytes(id: SyncTestValues.groupPrompt), filename: "a.md").bytes
+        try rig.base.files.write(bytes, at: "Groups/Team/a.md")
+        try SyncScanTestSupport.installState(rig.base, groups: SyncScanTestSupport.groups(),
+            prompts: [.assigned(SyncTestValues.groupPrompt): SyncScanTestSupport.record(bytes, scope: SyncScanTestSupport.team)])
+        let group = SyncAPI.SyncScope(identity: .group(groupID: SyncTestValues.group.rawValue, name: "Team", role: .editor),
+            mode: .snapshot, head: 1, cursor: "group-cursor", hasMore: false,
+            items: [.upsert(seq: 1, prompt: .init(id: SyncTestValues.groupPrompt.rawValue, rev: 1, path: "a.md",
+                content: String(decoding: bytes, as: UTF8.self)))])
+        rig.transport.handler = { _, request in
+            XCTAssertEqual(request.method, .post)
+            return try SyncServiceRig.pull(groups: [group])
+        }
+        let server = try SyncServerURL(rig.base.binding.account.serverURL.absoluteString)
+        let client = SyncHTTPClient(server: server, transport: rig.transport,
+            credential: .init(server: server, token: SecretValue(String(repeating: "a", count: 42) + "A")))
+        let coordinator = try SyncCoordinator(binding: rig.base.binding, epoch: 1, client: client,
+            files: rig.base.data, states: rig.base.states, accounts: rig.accounts, mutations: rig.base.mutations,
+            journal: rig.journal, pending: rig.pending, device: "Desktop", freshID: { SyncTestValues.device },
+            date: rig.clock.now, now: rig.clock.instant)
+        var drifted = false
+        var scans = 0
+        var stateBytes: Data?
+        var publications: [String] = []
+        rig.base.data.onWrite = { if drifted { publications.append($0) } }
+        defer { rig.base.data.onWrite = nil }
+        do {
+            _ = try await coordinator.run { phase in
+                guard phase == .scanning else { return }
+                scans += 1
+                guard !drifted else { return }
+                do {
+                    try rig.base.libraryOperations.renameDirectory(from: "Groups/Team", to: "Groups/team")
+                    stateBytes = try rig.base.data.read(at: "sync/state.json")
+                    drifted = true
+                } catch { XCTFail("Could not rename managed folder: \(error)") }
+            }
+            XCTFail("Expected bounded no progress")
+        } catch SyncCoordinatorError.noProgress { }
+        catch { XCTFail("Unexpected preparation failure: \(error)") }
+        XCTAssertTrue(drifted)
+        XCTAssertEqual(scans, Limits.syncPreparationLimit + 1)
+        XCTAssertTrue(publications.isEmpty, "An unchanged plan published \(publications.count) journal/state records")
+        XCTAssertEqual(try rig.base.data.read(at: "sync/state.json"), try XCTUnwrap(stateBytes))
+        XCTAssertEqual(try rig.base.files.read(at: "Groups/team/a.md"), bytes)
+        XCTAssertNil(rig.journal.pending)
+        XCTAssertEqual(rig.transport.requests.map(\.method), [.post])
+    }
+
     func testExplicitRecoveryReflushesUncertainPushPublicationOnSameGraph() async throws {
         let rig = try SyncServiceRig()
         let bytes = SyncScanTestSupport.bytes()

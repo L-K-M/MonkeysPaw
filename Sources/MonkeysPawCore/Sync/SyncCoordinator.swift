@@ -463,8 +463,9 @@ final class SyncCoordinator {
                 phase(.groupFolders)
                 let inventory = try SyncGroupFolders.inventory(binding: permit.binding, availability: .available,
                     heldPaths: local.snapshot.heldPaths, mutations: mutations)
-                try commit(SyncGroupFolders.stale(state: state, ownership: ownership(), inventory: inventory,
-                    at: date(), freshID: freshID, mutations: mutations))
+                let stale = try SyncGroupFolders.stale(state: state, ownership: ownership(), inventory: inventory,
+                    at: date(), freshID: freshID, mutations: mutations)
+                if changed(stale) { try commit(stale) }
             } else if let preparation = local.preparation {
                 try commit(preparation)
             } else if let path = local.issues.keys.sorted().first(where: { local.issues[$0] == .forbidden }), let state {

@@ -439,6 +439,7 @@ public final class SyncService {
     }
 
     private func handle(_ error: Error) {
+        if error is CancellationError { return }
         if let error = error as? SyncHTTPClientError {
             switch error {
             case .unauthorized:
