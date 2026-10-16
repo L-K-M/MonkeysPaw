@@ -1220,9 +1220,17 @@ final class LinuxEditorBackgroundWorkTests: XCTestCase {
 }
 
 private final class EditorHeldWork: BackgroundWork {
+    // Services may enqueue from their own threads while the test drains.
+    private let lock = NSLock()
     private var work: [() -> Void] = []
-    func run(_ work: @escaping () -> Void) { self.work.append(work) }
-    func runAll() { while !work.isEmpty { work.removeFirst()() } }
+    func run(_ work: @escaping () -> Void) { lock.lock(); self.work.append(work); lock.unlock() }
+    func runAll() { while let next = take() { next() } }
+
+    private func take() -> (() -> Void)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return work.isEmpty ? nil : work.removeFirst()
+    }
 }
 
 private final class EditorClipboard: Clipboard {
