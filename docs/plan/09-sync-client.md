@@ -220,6 +220,11 @@ saves, and on demand.
      entries its scope owns. Items are matched by id and canonical hash,
      never by rev order: after a restore, server revs can be lower than
      recorded ones. The `database_id` comparison is made once per pull.
+     - On a normal resync, an item with exactly the acknowledged scope, path,
+       rev and hash is an unchanged head. Keep queued local edits, renames,
+       deletions and conflict-marker removal for the following push, including
+       when a zero cursor produces another snapshot. This shortcut never applies
+       after a database restore.
      - An id present on both sides with an identical hash: record the
        snapshot `rev`.
      - An id present on both sides, different content, on a normal resync:
@@ -381,6 +386,8 @@ instead of doubling.
     copies, renames and private sync preserve the keys; clearing them clears
     state origin on ingest. The Conflicts filter uses marker-derived origin,
     never the file name. Copies from another device remain listed anywhere.
+    It includes rescued prompts; without a known original, only Keep both
+    (retain the copy and clear its marker) is available.
   - The resolve view reuses the improve diff (§7.3). The actions are: keep
     server, keep mine (re-push on the new head), or keep both.
 - **Dispatch by envelope code.** A `409 conflict`, including on `/move`,

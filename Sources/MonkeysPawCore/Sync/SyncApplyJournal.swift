@@ -194,6 +194,16 @@ final class SyncApplyJournal {
 
     var pending: SyncApplyRecord? { persistence.snapshot.value }
 
+    /// Explicit resolutions retain sent facts without queuing an automatic
+    /// retry. The private copy remains the recovery source until acknowledgement.
+    func retainResolution(_ bytes: Data) throws {
+        guard bytes.count <= Limits.syncRecordMaxBytes else { throw SyncError.invalidState }
+        let path = "sync/retained/resolution-" + SyncHash(bytes: bytes).rawValue + ".json"
+        if try files.stamp(at: path) == nil { try files.writePrivate(bytes, at: path) }
+        guard try files.read(at: path) == bytes else { throw SyncError.invalidState }
+        try SyncDurability.flushFileAndParents(path, operations: operations)
+    }
+
     func apply(_ plan: SyncApplyPlan, permit: SyncWorkPermit? = nil) throws -> SyncApplyOutcome {
         if let permit {
             try permit.validate(plan.nextState.binding)

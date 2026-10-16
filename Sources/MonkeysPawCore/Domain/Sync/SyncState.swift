@@ -62,13 +62,13 @@ enum SyncScopeKey: Hashable, Sendable, Codable {
     }
 }
 
-enum SyncPromptOrigin: Equatable, Sendable, Codable {
+public enum SyncPromptOrigin: Equatable, Sendable, Codable {
     case conflictOf(ULID)
     case rescued
 
     private enum CodingKeys: String, CodingKey { case kind, promptID = "prompt_id" }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let value = try decoder.container(keyedBy: CodingKeys.self)
         switch try value.decode(String.self, forKey: .kind) {
         case "conflict_of": self = .conflictOf(try SyncIdentifiers.ulid(value.decode(String.self, forKey: .promptID)))
@@ -79,7 +79,7 @@ enum SyncPromptOrigin: Equatable, Sendable, Codable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var value = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .conflictOf(let id):

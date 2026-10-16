@@ -34,7 +34,7 @@ enum SyncServerHarness {
         }
     }
 
-    private static func withServers(_ scenario: SyncScenario, root: URL, clock: ScenarioClock, index: Int,
+    static func withServers(_ scenario: SyncScenario, root: URL, clock: ScenarioClock, index: Int,
                                    clients: [String: ScenarioDeployment], symbols: [String: String],
                                    operation: @escaping ([String: ScenarioDeployment], [String: String]) async throws -> Void) async throws {
         guard index < scenario.servers.count else { try await operation(clients, symbols); return }

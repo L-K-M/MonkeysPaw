@@ -17,15 +17,32 @@ public struct ArtifactDiff: Equatable, Sendable {
     /// separately. nil is the empty baseline for a newly written document.
     public static func compare(original: PromptDocument?, candidate: ArtifactMergeCandidate) throws -> ArtifactDiff {
         let oldSource = try original.map { try PromptCodec.write($0) } ?? ""
+        return try compare(original: original, originalBytes: Data(oldSource.utf8),
+                           candidate: candidate.document, candidateBytes: candidate.canonicalBytes)
+    }
+
+    /// Diff the supplied storage bytes, including header presentation and body
+    /// line endings. Resolution previews must show the exact bytes sent by CAS.
+    public static func compare(originalBytes: Data, candidateBytes: Data) throws -> ArtifactDiff {
+        let original = PromptCodec.parseFile(originalBytes, filename: "server.md")
+        let candidate = PromptCodec.parseFile(candidateBytes, filename: "candidate.md")
+        _ = try CanonicalForm.user(originalBytes, filename: "server.md")
+        _ = try CanonicalForm.user(candidateBytes, filename: "candidate.md")
+        return try compare(original: original, originalBytes: originalBytes,
+                           candidate: candidate, candidateBytes: candidateBytes)
+    }
+
+    private static func compare(original: PromptDocument?, originalBytes: Data,
+                                candidate: PromptDocument, candidateBytes: Data) throws -> ArtifactDiff {
         let oldBody = original?.body ?? ""
-        let newBody = candidate.document.body
-        let oldHeader = Data(oldSource.utf8).dropLast(oldBody.utf8.count)
-        let newHeader = candidate.canonicalBytes.dropLast(newBody.utf8.count)
+        let newBody = candidate.body
+        let oldHeader = originalBytes.dropLast(oldBody.utf8.count)
+        let newHeader = candidateBytes.dropLast(newBody.utf8.count)
         let headerDiff = try MyersLineDiff.compare(String(decoding: oldHeader, as: UTF8.self),
                                                   String(decoding: newHeader, as: UTF8.self))
         let bodyDiff = try MyersLineDiff.compare(oldBody, newBody)
         let oldTemplate = original?.template ?? Template.parse("")
-        let newTemplate = candidate.document.template
+        let newTemplate = candidate.template
         let oldNames = Set(oldTemplate.names), newNames = Set(newTemplate.names)
         let removed = oldTemplate.names.filter { !newNames.contains($0) }
         let added = newTemplate.names.filter { !oldNames.contains($0) }

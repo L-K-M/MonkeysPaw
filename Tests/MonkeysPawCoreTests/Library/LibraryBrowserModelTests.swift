@@ -3,6 +3,36 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class LibraryBrowserModelTests: XCTestCase {
+    func testConflictsFilterUsesValidOriginThroughRenameAndMarkerRemoval() throws {
+        let h = PromptFlowHarness()
+        let original = SyncTestValues.personalPrompt
+        let copyID = SyncTestValues.device
+        let marked = try SyncConflictMetadata.settingOrigin(.conflictOf(original), in:
+            SyncScanTestSupport.bytes("Losing bytes", id: copyID), filename: "copy.md")
+        _ = try h.put(String(decoding: marked, as: UTF8.self), at: "from-another-device.md")
+        _ = try h.put("Ordinary content", at: "Conflicts/Personal/ordinary (conflict Desktop 2026-10-14 1200).md")
+        _ = try h.put("---\nx-monkeyspaw-conflict-of: false\n---\nInvalid marker", at: "invalid.md")
+        _ = try h.put("---\nx-monkeyspaw-rescued: true\n---\nRescued", at: "rescued.md")
+        try h.index.rebuild()
+        let model = browser(h)
+        model.selectSection(.conflicts)
+        XCTAssertEqual(model.rows.map(\.relativePath), ["from-another-device.md", "rescued.md"])
+        XCTAssertEqual(model.rows.first?.conflictOf, original)
+        model.selectPrompt(model.rows.first?.selection)
+        try h.library.move(from: "from-another-device.md", to: "ordinary-name.md")
+        try h.index.rebuild(origin: .sync)
+        XCTAssertEqual(model.rows.map(\.relativePath), ["ordinary-name.md", "rescued.md"])
+        XCTAssertEqual(model.selectedEntry?.relativePath, "ordinary-name.md")
+        XCTAssertEqual(count(.conflicts, in: model), 2)
+        model.setFilter("no match")
+        XCTAssertTrue(model.rows.isEmpty)
+        XCTAssertEqual(count(.conflicts, in: model), 2)
+        let cleared = try SyncConflictMetadata.settingOrigin(nil, in: marked, filename: "ordinary-name.md")
+        try h.library.write(cleared, at: "ordinary-name.md")
+        try h.index.rebuild(origin: .sync)
+        XCTAssertEqual(count(.conflicts, in: model), 1)
+    }
+
     func testSectionsCountsNestedFoldersAndNormalizedTagsIncludeAllStates() throws {
         let h = PromptFlowHarness()
         _ = try h.put("---\ntitle: Alpha\ntags: [CODE, code, review]\nfavorite: true\n---\nBody", at: "work/deep/a.md")
@@ -221,7 +251,7 @@ final class LibraryBrowserModelTests: XCTestCase {
     func testUnreadableContentStaysVisibleReadOnlyAndEmptyLibraryHasZeroCounts() throws {
         let h = PromptFlowHarness()
         let model = browser(h)
-        XCTAssertEqual(model.sections.map(\.count), [0, 0, 0])
+        XCTAssertEqual(model.sections.map(\.count), [0, 0, 0, 0])
         XCTAssertTrue(model.rows.isEmpty)
         try h.library.write(Data([0xff]), at: "bytes.md")
         try h.library.write(Data(repeating: 65, count: Limits.maxPromptBytes + 1), at: "oversize.md")
