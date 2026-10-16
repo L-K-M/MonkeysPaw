@@ -589,7 +589,11 @@ final class RootedFileStore: FileStore, SyncFileOperations {
         let info = trashRoot.appendingPathComponent("info")
         for url in [trashRoot, files, info] {
             if try attributes(at: url) == nil {
-                try manager.createDirectory(at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                do {
+                    try manager.createDirectory(at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
+                    // Other libraries/processes share this trash; verify the winner below.
+                }
             }
             _ = try ensureDirectory(url, parents: .existing)
             var attributes = Glibc.stat()
