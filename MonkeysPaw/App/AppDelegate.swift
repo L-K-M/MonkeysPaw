@@ -528,7 +528,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             makeAccount: { [weak self] in
                 guard let self, !self.isShutDown else { return nil }
                 return self.accountModel
-            }, onAccountOpen: { [weak self] in self?.groupManagementModel?.refresh() })
+            }, makeGroups: { [weak self] in
+                guard let self, !self.isShutDown else { return nil }
+                return self.groupManagementModel
+            })
         settingsWindow?.presentation.librarySwitchMessage = { [weak self] in
             guard let self else { return nil }
             if let message = self.syncTransitionMessage { return message }

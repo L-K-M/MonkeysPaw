@@ -94,6 +94,8 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// Cached diagnostics may be stale until load; readOnlyError blocks use for
     /// sync decisions. Each snapshot is locked, not a cross-document transaction.
     var cachedAccount: SyncAccount? { connection.snapshot.value?.account }
+    /// Non-secret onboarding predicate; a locked credential still has a server.
+    public var hasConfiguredServer: Bool { cachedAccount != nil }
     var cachedBindings: [SyncLibraryBinding] { ownership.snapshot.value?.libraries ?? [] }
     var readOnlyError: SyncError? { connection.snapshot.error ?? ownership.snapshot.error }
 
