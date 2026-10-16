@@ -70,7 +70,14 @@ may corrupt a real request/response or commit a peer request before another
 request. Restarts reopen the device's persisted library, state and secret roots.
 Temporary roots are removed on success and failure; scenario/request deadlines
 bound startup and execution. These disk adapters do not prove native system
-trash or process-kill recovery. Scenarios:
+trash or power loss. Row 17 uses the live loopback harness and a test-only
+SyncCrashWorker, with real SIGKILL after partial durable file publications,
+before state publication and after durable state commit before journal cleanup.
+Fresh workers recover the same roots; all child paths have bounded cleanup and
+stdin-only credentials. Retention and restore scenarios use the production
+services, including closing database users for offline restore. Bulk snapshot
+paging and expiry assertions exercise Core's collector without applying files.
+Scenarios:
 
 - a basic round trip; our own pushes echoed back are no-ops
 - offline edits on both devices → conflict copy in `Conflicts/`, never in the group folder

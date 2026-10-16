@@ -1,0 +1,1182 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "17-killed-one-file",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nOriginal\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nOriginal Q\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nOriginal R\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "P.md",
+          "content": "---\nid: ${prompt.p}\n---\nLocal edit survives kill\n"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "kill_client",
+          "device": "a",
+          "checkpoint": "after_files",
+          "file_count": 1
+        },
+        {
+          "action": "resume_client",
+          "device": "a"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+          "name": "loser"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "trash_count": 0,
+            "journal_present": false,
+            "cursors": {
+              "user:${user.main.alice}": "6"
+            },
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+              },
+              {
+                "path": "Q.md",
+                "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+              },
+              {
+                "path": "R.md",
+                "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+              },
+              {
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.loser}",
+          "status": 200,
+          "expected": {
+            "/rev": 1,
+            "/path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+            "/content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "writes": 0,
+            "trash_count": 0,
+            "journal_present": false,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "17-killed-several-files",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nOriginal\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nOriginal Q\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nOriginal R\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "P.md",
+          "content": "---\nid: ${prompt.p}\n---\nLocal edit survives kill\n"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "kill_client",
+          "device": "a",
+          "checkpoint": "after_files",
+          "file_count": 2
+        },
+        {
+          "action": "resume_client",
+          "device": "a"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+          "name": "loser"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "trash_count": 0,
+            "journal_present": false,
+            "cursors": {
+              "user:${user.main.alice}": "6"
+            },
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+              },
+              {
+                "path": "Q.md",
+                "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+              },
+              {
+                "path": "R.md",
+                "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+              },
+              {
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.loser}",
+          "status": 200,
+          "expected": {
+            "/rev": 1,
+            "/path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+            "/content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "writes": 0,
+            "trash_count": 0,
+            "journal_present": false,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "17-killed-before-state",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nOriginal\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nOriginal Q\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nOriginal R\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "P.md",
+          "content": "---\nid: ${prompt.p}\n---\nLocal edit survives kill\n"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "kill_client",
+          "device": "a",
+          "checkpoint": "before_state",
+          "file_count": 4
+        },
+        {
+          "action": "resume_client",
+          "device": "a"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+          "name": "loser"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "trash_count": 0,
+            "journal_present": false,
+            "cursors": {
+              "user:${user.main.alice}": "6"
+            },
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+              },
+              {
+                "path": "Q.md",
+                "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+              },
+              {
+                "path": "R.md",
+                "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+              },
+              {
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.loser}",
+          "status": 200,
+          "expected": {
+            "/rev": 1,
+            "/path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+            "/content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "writes": 0,
+            "trash_count": 0,
+            "journal_present": false,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "17-killed-after-state",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nOriginal\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nOriginal Q\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nOriginal R\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "write",
+          "device": "a",
+          "path": "P.md",
+          "content": "---\nid: ${prompt.p}\n---\nLocal edit survives kill\n"
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "kill_client",
+          "device": "a",
+          "checkpoint": "after_state",
+          "file_count": 4
+        },
+        {
+          "action": "resume_client",
+          "device": "a"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "a",
+          "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+          "name": "loser"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "trash_count": 0,
+            "journal_present": false,
+            "cursors": {
+              "user:${user.main.alice}": "6"
+            },
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nServer winner\n"
+              },
+              {
+                "path": "Q.md",
+                "content": "---\nid: ${prompt.q}\n---\nRemote Q\n"
+              },
+              {
+                "path": "R.md",
+                "content": "---\nid: ${prompt.r}\n---\nRemote R\n"
+              },
+              {
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.loser}",
+          "status": 200,
+          "expected": {
+            "/rev": 1,
+            "/path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+            "/content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.p}\n---\nLocal edit survives kill\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "a"
+        },
+        {
+          "action": "restart",
+          "device": "a"
+        },
+        {
+          "action": "sync",
+          "device": "a"
+        },
+        {
+          "action": "expect",
+          "device": "a",
+          "expected": {
+            "file_count": 4,
+            "prompt_count": 4,
+            "writes": 0,
+            "trash_count": 0,
+            "journal_present": false,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ],
+            "cursors": {
+              "user:${user.main.alice}": "7"
+            },
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/P (conflict a 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.p}"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

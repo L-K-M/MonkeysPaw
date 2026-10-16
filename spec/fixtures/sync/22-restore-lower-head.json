@@ -1,0 +1,871 @@
+{
+  "schema": 1,
+  "category": "sync",
+  "cases": [
+    {
+      "id": "22-lower-heads-equal-different-and-missing-across-scopes",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nEqual\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nOld private\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.g}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "G.md",
+            "content": "---\nid: ${prompt.g}\n---\nOld group\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "backup",
+          "device": "a",
+          "server": "main",
+          "name": "baseline"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.p}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "P.md",
+            "content": "---\nid: ${prompt.p}\n---\nEqual\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nNew private\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.g}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "G.md",
+            "content": "---\nid: ${prompt.g}\n---\nNew group\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "R.md",
+            "content": "---\nid: ${prompt.r}\n---\nMissing private\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.s}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "S.md",
+            "content": "---\nid: ${prompt.s}\n---\nMissing group\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.g}",
+                "scope": "group:${group.team}",
+                "path": "G.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.r}",
+                "scope": "user:${user.main.alice}",
+                "path": "R.md",
+                "rev": 1
+              },
+              {
+                "id": "${prompt.s}",
+                "scope": "group:${group.team}",
+                "path": "S.md",
+                "rev": 1
+              }
+            ]
+          }
+        },
+        {
+          "action": "write",
+          "device": "b",
+          "path": "R.md",
+          "content": "---\nid: ${prompt.r}\n---\nMissing private offline edit\n"
+        },
+        {
+          "action": "restore",
+          "device": "a",
+          "server": "main",
+          "name": "baseline",
+          "bind": "db.restored"
+        },
+        {
+          "action": "server_expect",
+          "device": "a",
+          "server": "main",
+          "scope": "user:${user.main.alice}",
+          "expected": {
+            "head": 2,
+            "changes": 2,
+            "snapshots": 0
+          }
+        },
+        {
+          "action": "server_expect",
+          "device": "a",
+          "server": "main",
+          "scope": "group:${group.team}",
+          "expected": {
+            "head": 3,
+            "changes": 1,
+            "snapshots": 0
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/rescued-2026-10-14/R.md",
+          "name": "rescued_private"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/rescued-2026-10-14/Groups/Team/S.md",
+          "name": "rescued_group"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 5,
+            "prompt_count": 5,
+            "trash_count": 2,
+            "database_id": "${db.restored}",
+            "cursors": {
+              "user:${user.main.alice}": "2",
+              "group:${group.team}": "3"
+            },
+            "journal_present": false,
+            "absent": [
+              "R.md",
+              "Groups/Team/S.md"
+            ],
+            "files": [
+              {
+                "path": "P.md",
+                "content": "---\nid: ${prompt.p}\n---\nEqual\n"
+              },
+              {
+                "path": "Q.md",
+                "content": "---\nid: ${prompt.q}\n---\nNew private\n"
+              },
+              {
+                "path": "Groups/Team/G.md",
+                "content": "---\nid: ${prompt.g}\n---\nNew group\n"
+              },
+              {
+                "path": "Conflicts/rescued-2026-10-14/R.md",
+                "content": "---\nid: ${prompt.rescued_private}\nx-monkeyspaw-rescued: true\n---\nMissing private offline edit\n"
+              },
+              {
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/S.md",
+                "content": "---\nid: ${prompt.rescued_group}\nx-monkeyspaw-rescued: true\n---\nMissing group\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.p}",
+                "scope": "user:${user.main.alice}",
+                "path": "P.md",
+                "rev": 1
+              },
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.g}",
+                "scope": "group:${group.team}",
+                "path": "G.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.rescued_private}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/rescued-2026-10-14/R.md",
+                "rev": 1,
+                "origin": "rescued"
+              },
+              {
+                "id": "${prompt.rescued_group}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/rescued-2026-10-14/Groups/Team/S.md",
+                "rev": 1,
+                "origin": "rescued"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.p}",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.q}",
+                "count": 1,
+                "body": {
+                  "/base_rev": 1
+                }
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.g}",
+                "count": 1,
+                "body": {
+                  "/base_rev": 1
+                }
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.r}",
+                "count": 0
+              },
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.s}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.r}",
+          "status": 404
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.s}",
+          "status": 404
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "expected": {
+            "/rev": 2,
+            "/content": "---\nid: ${prompt.q}\n---\nNew private\n"
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.g}",
+          "status": 200,
+          "expected": {
+            "/rev": 2,
+            "/content": "---\nid: ${prompt.g}\n---\nNew group\n"
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 5,
+            "prompt_count": 5,
+            "writes": 0,
+            "trash_count": 0,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "22-viewer-restore-preserves-newer-bytes-privately",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "bob",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "POST",
+          "path": "/api/v1/groups",
+          "status": 200,
+          "body": {
+            "name": "Team"
+          },
+          "bind": {
+            "group.team": "/id"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/groups/${group.team}/members/${user.main.bob}",
+          "status": 200,
+          "body": {
+            "role": "viewer"
+          }
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.g}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "G.md",
+            "content": "---\nid: ${prompt.g}\n---\nBackup group\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "backup",
+          "device": "a",
+          "server": "main",
+          "name": "baseline"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.g}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "group",
+            "group_id": "${group.team}",
+            "path": "G.md",
+            "content": "---\nid: ${prompt.g}\n---\nViewer retained\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "restore",
+          "device": "a",
+          "server": "main",
+          "name": "baseline",
+          "bind": "db.restored"
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/Team/G (conflict b 2026-10-14 0000).md",
+          "name": "viewer_copy"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2,
+            "prompt_count": 2,
+            "trash_count": 0,
+            "database_id": "${db.restored}",
+            "files": [
+              {
+                "path": "Groups/Team/G.md",
+                "content": "---\nid: ${prompt.g}\n---\nBackup group\n",
+                "mode": "readOnly"
+              },
+              {
+                "path": "Conflicts/Team/G (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.viewer_copy}\nx-monkeyspaw-conflict-of: ${prompt.g}\n---\nViewer retained\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.g}",
+                "scope": "group:${group.team}",
+                "path": "G.md",
+                "rev": 1
+              },
+              {
+                "id": "${prompt.viewer_copy}",
+                "scope": "user:${user.main.bob}",
+                "path": "Conflicts/Team/G (conflict b 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.g}"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.g}",
+                "count": 0
+              }
+            ]
+          }
+        },
+        {
+          "action": "http",
+          "device": "b",
+          "method": "GET",
+          "path": "/api/v1/prompts/${prompt.g}",
+          "status": 200,
+          "expected": {
+            "/rev": 1,
+            "/content": "---\nid: ${prompt.g}\n---\nBackup group\n"
+          }
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "22-restore-CAS-race-preserves-loser-on-409",
+      "now": "2026-10-14T00:00:00Z",
+      "servers": [
+        "main"
+      ],
+      "users": [
+        "alice",
+        "bob"
+      ],
+      "devices": [
+        {
+          "name": "a",
+          "entropy_seed": 1
+        },
+        {
+          "name": "b",
+          "entropy_seed": 2
+        }
+      ],
+      "prompts": {
+        "p": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "q": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+        "r": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+        "g": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "s": "01ARZ3NDEKTSV4RRFFQ69G5FB3"
+      },
+      "steps": [
+        {
+          "action": "login",
+          "device": "a",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "login",
+          "device": "b",
+          "user": "alice",
+          "server": "main"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 0,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nBackup\n"
+          },
+          "expected": {
+            "/rev": 1
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "backup",
+          "device": "a",
+          "server": "main",
+          "name": "baseline"
+        },
+        {
+          "action": "http",
+          "device": "a",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "status": 200,
+          "body": {
+            "base_rev": 1,
+            "scope": "user",
+            "path": "Q.md",
+            "content": "---\nid: ${prompt.q}\n---\nLocal retained\n"
+          },
+          "expected": {
+            "/rev": 2
+          }
+        },
+        {
+          "action": "sync",
+          "device": "b"
+        },
+        {
+          "action": "restore",
+          "device": "a",
+          "server": "main",
+          "name": "baseline",
+          "bind": "db.restored"
+        },
+        {
+          "action": "before_next_request",
+          "device": "b",
+          "method": "PUT",
+          "path": "/api/v1/prompts/${prompt.q}",
+          "then": {
+            "action": "http",
+            "device": "a",
+            "method": "PUT",
+            "path": "/api/v1/prompts/${prompt.q}",
+            "status": 200,
+            "body": {
+              "base_rev": 1,
+              "scope": "user",
+              "path": "Q.md",
+              "content": "---\nid: ${prompt.q}\n---\nConcurrent server\n"
+            },
+            "expected": {
+              "/rev": 2
+            }
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "bind_prompt",
+          "device": "b",
+          "path": "Conflicts/Personal/Q (conflict b 2026-10-14 0000).md",
+          "name": "loser"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2,
+            "prompt_count": 2,
+            "trash_count": 0,
+            "database_id": "${db.restored}",
+            "files": [
+              {
+                "path": "Q.md",
+                "content": "---\nid: ${prompt.q}\n---\nConcurrent server\n"
+              },
+              {
+                "path": "Conflicts/Personal/Q (conflict b 2026-10-14 0000).md",
+                "content": "---\nid: ${prompt.loser}\nx-monkeyspaw-conflict-of: ${prompt.q}\n---\nLocal retained\n"
+              }
+            ],
+            "state": [
+              {
+                "id": "${prompt.q}",
+                "scope": "user:${user.main.alice}",
+                "path": "Q.md",
+                "rev": 2
+              },
+              {
+                "id": "${prompt.loser}",
+                "scope": "user:${user.main.alice}",
+                "path": "Conflicts/Personal/Q (conflict b 2026-10-14 0000).md",
+                "rev": 1,
+                "origin": "conflict_of ${prompt.q}"
+              }
+            ],
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "/api/v1/prompts/${prompt.q}",
+                "status": 409,
+                "count": 1,
+                "body": {
+                  "/base_rev": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "action": "reset_metrics",
+          "device": "b"
+        },
+        {
+          "action": "restart",
+          "device": "b"
+        },
+        {
+          "action": "expect",
+          "device": "b",
+          "expected": {
+            "file_count": 2,
+            "prompt_count": 2,
+            "requests": [
+              {
+                "method": "PUT",
+                "path": "*",
+                "count": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

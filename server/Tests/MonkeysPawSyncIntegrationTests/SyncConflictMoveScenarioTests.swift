@@ -1,4 +1,5 @@
 import Foundation
+@testable import SyncScenarioSupport
 import XCTest
 @testable import MonkeysPawCore
 
