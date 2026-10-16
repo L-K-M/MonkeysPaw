@@ -617,7 +617,11 @@ final class LibraryViewState: ObservableObject {
                       self.model.moveDestination(for: section) != nil,
                       let row = self.model.rows.first(where: {
                           !$0.isReadOnly && bytes == self.scopePayload($0.selection, epoch: epoch)
-                      }) else { self.cancelScopeDrop(); return }
+                      }) else {
+                    self.cancelScopeDrop()
+                    self.commandMessage = LibraryCommandStrings.moveUnavailable
+                    return
+                }
                 self.scopeDrop = ScopeDrop(selection: row.selection, section: section,
                     openApproved: self.editor.state.prompt == row.selection)
                 if self.scopeDrop?.openApproved == true { self.finishScopeDrop(); return }
@@ -639,7 +643,10 @@ final class LibraryViewState: ObservableObject {
         if editor.state.status == .loading { return }
         cancelScopeDrop()
         guard scopeDragReady, editor.state.prompt == drop.selection, editor.state.canEdit,
-              editor.state.stamp != nil, let destination = model.moveDestination(for: drop.section) else { return }
+              editor.state.stamp != nil, let destination = model.moveDestination(for: drop.section) else {
+            commandMessage = LibraryCommandStrings.moveUnavailable
+            return
+        }
         editor.move(to: destination.string, completion: commandCompletion(success: LibraryCommandStrings.moved))
     }
 

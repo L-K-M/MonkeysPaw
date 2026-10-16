@@ -105,6 +105,23 @@ final class MacScopeDragTests: XCTestCase {
         XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.occupied)
     }
 
+    func testSourceBecomingReadOnlyDuringOpenReportsAnUnmovedDrop() throws {
+        let h = try MacScopeDragHarness()
+        defer { h.close() }
+        let provider = try h.provider(path: "Folder/seed.md")
+        // Keep the indexed row writable until the drop opens the newer disk bytes.
+        let replacement = Data("---\nid: \"\(MacScopeTransport.seed)\"\nformat: 2\n---\nFuture".utf8)
+        try h.files.write(replacement, at: "Folder/seed.md")
+        XCTAssertTrue(h.drop(provider, onto: .group(h.team)))
+        XCTAssertTrue(h.spin { !h.view.isScopeDropPending })
+        XCTAssertEqual(h.view.editorState.prompt?.relativePath, "Folder/seed.md")
+        XCTAssertFalse(h.view.editorState.canEdit)
+        XCTAssertNotNil(h.view.editorState.readOnlyReason)
+        XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moveUnavailable)
+        XCTAssertEqual(try h.files.read(at: "Folder/seed.md"), replacement)
+        XCTAssertNil(try h.files.stamp(at: "Groups/Team/seed.md"))
+    }
+
     func testViewerSourceAndDestinationRefuseMovesAndKeepPrivateCopyAction() throws {
         let destination = try MacScopeDragHarness(role: .viewer)
         defer { destination.close() }
@@ -131,6 +148,7 @@ final class MacScopeDragTests: XCTestCase {
             XCTAssertTrue(h.drop(MacScopeDragHarness.provider(bytes), onto: .group(h.team)))
             XCTAssertTrue(h.spin { !h.view.isScopeDropPending })
             XCTAssertEqual(h.view.editorState.prompt?.relativePath, "a.md")
+            XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moveUnavailable)
         }
         for section in [LibrarySectionID.favourites, .recent, .conflicts, .tag("tag"), .folder("../outside")] {
             XCTAssertFalse(h.drop(try h.provider(), onto: section))
@@ -215,6 +233,7 @@ final class MacScopeDragTests: XCTestCase {
         XCTAssertTrue(h.spin { !h.view.isScopeDropPending })
         XCTAssertNotNil(try h.files.stamp(at: "renamed.md"))
         XCTAssertNil(try h.files.stamp(at: "Groups/Team/renamed.md"))
+        XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moveUnavailable)
     }
 
     func testSelectingARowKeepsItsRenderedDragSourceUsable() throws {
