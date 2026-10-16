@@ -14,6 +14,7 @@ enum LinuxConflictStrings {
     static let choose = "Choose which version to keep. Keep both retains your private copy and clears its conflict marker."
     static let chooseAgain = "Your copy was reloaded. Review the comparison and choose again."
     static let unavailable = "Sign in to sync before resolving this copy."
+    static let waitingForLibrary = "Waiting for the Library to be ready before resolving this copy."
 
     static func failure(_ failure: ConflictResolutionFailure) -> String {
         switch failure {

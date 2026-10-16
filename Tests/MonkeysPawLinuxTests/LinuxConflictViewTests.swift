@@ -200,11 +200,18 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { editor.state.isDirty })
         try click("conflict-keep-mine")
         XCTAssertTrue(GTKTestSupport.spin { editor.state.pendingDecision != nil })
+        drain()
+        XCTAssertEqual(try label("conflict-status"), "Waiting for the Library to be ready before resolving this copy.")
+        XCTAssertFalse(try sensitive("conflict-keep-mine"))
+        XCTAssertFalse(try sensitive("conflict-refresh"))
         XCTAssertTrue(transport.originalPuts.isEmpty)
         try respondToDraft(2) // Cancel preserves the draft and the old comparison.
         XCTAssertTrue(GTKTestSupport.spin { editor.state.pendingDecision == nil })
         XCTAssertTrue(editor.state.isDirty)
         XCTAssertEqual(editor.state.source, draft)
+        XCTAssertEqual(try label("conflict-status"), LinuxConflictStrings.choose)
+        XCTAssertTrue(try sensitive("conflict-keep-mine"))
+        XCTAssertNotEqual(gtk_text_view_get_editable(mp_text_view(try widget("library-source"))), 0)
         try click("conflict-keep-mine")
         XCTAssertTrue(GTKTestSupport.spin { editor.state.pendingDecision != nil })
         try respondToDraft(0) // Save, then compare the newly committed bytes.
@@ -216,6 +223,39 @@ final class LinuxConflictViewTests: XCTestCase {
         try click("conflict-keep-mine")
         try resolved(.keepMine)
         XCTAssertEqual(transport.originalPuts.count, 1)
+    }
+
+    func testRepeatedResolutionSignalsSendOnlyOneWrite() throws {
+        try open()
+        transport.holdNext = .put
+        let button = try widget("conflict-keep-mine")
+        emitClick(button)
+        emitClick(button) // Both activations precede the model's queued busy transition.
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        emitClick(button)
+        drain()
+        XCTAssertEqual(transport.originalPuts.count, 1)
+        transport.releaseHeld()
+        try resolved(.keepMine)
+        XCTAssertEqual(transport.originalPuts.count, 1)
+    }
+
+    func testChangedStampReloadsTheSameSelectionAndEnablesFreshChoice() throws {
+        try open()
+        let selection = environment.editorModel.state.prompt
+        let changed = transport.copyBytes + Data("\nChanged on disk\n".utf8)
+        try files.write(changed, at: ConflictViewTransport.copyPath)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.conflictModel?.state.preview?.candidateBytes.map {
+                String(decoding: $0, as: UTF8.self).contains("Changed on disk")
+            } == true && self.environment.conflictModel?.state.isBusy == false
+        })
+        try ready()
+        XCTAssertEqual(environment.editorModel.state.prompt, selection)
+        XCTAssertTrue(try text("conflict-diff-body-after").contains("Changed on disk"))
+        XCTAssertEqual(try label("conflict-status"), LinuxConflictStrings.choose)
+        XCTAssertTrue(try sensitive("conflict-keep-mine"))
+        XCTAssertTrue(transport.originalPuts.isEmpty)
     }
 
     func testWorkerCompletionUpdatesGTKOnlyOnMainLoopAndDisablesEditingDuringWrite() throws {

@@ -151,6 +151,7 @@ final class LinuxConflictView {
         if model == nil { text = LinuxConflictStrings.unavailable }
         else if state?.operation == .loading || refreshPending || opening { text = LinuxConflictStrings.loading }
         else if state?.operation == .resolving { text = LinuxConflictStrings.resolving }
+        else if !available { text = LinuxConflictStrings.waitingForLibrary }
         else if let failure = state?.error ?? state?.preview?.mineRefusal { text = LinuxConflictStrings.failure(failure) }
         else if let action = state?.resolved { text = LinuxConflictStrings.resolved(action) }
         else { text = notice ?? LinuxConflictStrings.choose }
