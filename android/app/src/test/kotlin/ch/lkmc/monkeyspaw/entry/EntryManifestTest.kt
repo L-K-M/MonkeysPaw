@@ -146,7 +146,19 @@ internal class EntryManifestTest {
                 assertTrue(filters.isEmpty())
                 continue
             }
-            val filter = filters.single()
+            val filter = if (component.attr("name") == ".MainActivity") {
+                assertEquals("singleTop", component.attr("launchMode"))
+                assertEquals(2, filters.size)
+                val join = filters.single { it.children("action").single().attr("name") == "android.intent.action.VIEW" }
+                assertEquals(listOf("android.intent.category.DEFAULT", "android.intent.category.BROWSABLE").sorted(),
+                    join.children("category").map { it.attr("name") }.sorted())
+                val data = join.children("data").single()
+                assertEquals("monkeyspaw", data.attr("scheme"))
+                assertEquals("join", data.attr("host"))
+                assertEquals(2, data.attributes.length)
+                assertEquals(4, join.children().size)
+                filters.single { it !== join }
+            } else filters.single()
             assertEquals(listOf(contract.action), filter.children("action").map { it.attr("name") })
             assertEquals(listOfNotNull(contract.category), filter.children("category").map { it.attr("name") })
             val data = filter.children("data")
