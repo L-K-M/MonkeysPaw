@@ -40,6 +40,12 @@ object Limits {
     internal const val syncPathSegmentMaxBytes = 255
     internal const val syncConflictDeviceMaxBytes = 64
     internal const val syncRescuePathHashLength = 12
+    const val syncIntervalMillis = 60_000L
+    const val syncDebounceMillis = 3_000L
+    const val syncBackoffMinMillis = 5_000L
+    const val syncBackoffMaxMillis = 600_000L
+    internal const val syncPreparationLimit = 1_024
+    internal const val syncImmediateRerunLimit = 1
 
     const val llmBudgetNanos = 300_000_000_000L
     const val assistantElapsedTickNanos = 1_000_000_000L

@@ -9,13 +9,14 @@ import ch.lkmc.monkeyspaw.core.ports.StoreError
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import java.util.Collections
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 internal sealed class SyncPullCollectorError private constructor() : Exception("Sync collection failed.", null, false, true) {
     enum class Reason { SNAPSHOT_EXPIRED, DATABASE_CHANGED, STALLED_CONTINUATION, COLLECTION_DEADLINE }
-    class NoProgress(val reason: Reason) : SyncPullCollectorError()
+    data class NoProgress(val reason: Reason) : SyncPullCollectorError()
     data object InvalidRequest : SyncPullCollectorError()
     data object InvalidResponse : SyncPullCollectorError()
-    class StagingFailed(val error: StoreError) : SyncPullCollectorError()
+    data class StagingFailed(val error: StoreError) : SyncPullCollectorError()
 
     final override fun toString(): String = "<sync collection error redacted>"
 }
@@ -107,9 +108,11 @@ internal class SyncPullStaging(private val files: StateStore) {
         var failure: SyncPullCollectorError.StagingFailed? = null
         for (index in 0 until pageCount) {
             try { operation { files.delete(path(index)) } }
+            catch (error: CancellationException) { throw error }
             catch (error: SyncPullCollectorError.StagingFailed) {
                 if (error.error != StoreError.NotFound) failure = error
             }
+            catch (_: Throwable) { failure = SyncPullCollectorError.StagingFailed(StoreError.IOFailure) }
         }
         if (failure != null) throw failure
         discarded = true
@@ -117,7 +120,14 @@ internal class SyncPullStaging(private val files: StateStore) {
 
     private fun path(index: Int): String = "sync/pull-$id-$index.json"
 
+    companion object {
+        private val stagingPath = Regex("""sync/pull-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}-[0-9]+\.json""")
+
+        fun isStagingPath(path: String): Boolean = stagingPath.matches(path)
+    }
+
     private fun <T> operation(body: () -> T): T = try { body() }
+    catch (error: CancellationException) { throw error }
     catch (error: StoreError) { throw SyncPullCollectorError.StagingFailed(error) }
     catch (_: Exception) { throw SyncPullCollectorError.StagingFailed(StoreError.IOFailure) }
 }
