@@ -5,6 +5,7 @@ import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathCaseFold
 import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathValidator
 import ch.lkmc.monkeyspaw.core.domain.paths.UnicodeText
 import ch.lkmc.monkeyspaw.core.domain.sync.SyncHash
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncIdentifiers
 import ch.lkmc.monkeyspaw.core.ports.StorePath
 import ch.lkmc.monkeyspaw.core.services.LibraryPath
 import com.ibm.icu.lang.UCharacter
@@ -25,6 +26,20 @@ internal sealed class SyncNamingError private constructor() : Exception("Sync na
 
 /** Separate from editor/import copy names; every private destination fits the wire path cap. */
 internal object SyncNaming {
+    fun groupFolder(name: String, occupied: Collection<String>): String {
+        val stem = component(name, "Group", Limits.syncPathSegmentMaxBytes)
+        val keys = occupied.map(::pathKey).toSet()
+        // Truncation can make the bare stem equal a numbered candidate.
+        for (number in 1..keys.size + 2) {
+            val suffix = if (number == 1) "" else " ($number)"
+            val shortened = prefix(stem, Limits.syncPathSegmentMaxBytes - byteCount(suffix)).trim(' ', '.')
+            val folder = shortened.ifEmpty { "Group" } + suffix
+            SyncIdentifiers.folder(folder)
+            if (pathKey(folder) !in keys) return folder
+        }
+        throw SyncNamingError.Exhausted
+    }
+
     fun pathKey(path: String): String = try {
         StorePath.validate(path)
         UnicodeText.nfc(SyncPathCaseFold.fold(UnicodeText.nfc(path)))
