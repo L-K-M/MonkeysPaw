@@ -64,11 +64,15 @@ def stop():
 
 
 def singleton(expected):
-    if owner() != expected:
-        raise RuntimeError("Activation replaced the primary application")
-    instances = command("flatpak", "ps", "--columns=application").splitlines()
-    if instances.count(APP_ID) != 1:
-        raise RuntimeError("Expected exactly one installed application instance")
+    def one_instance():
+        if not expected or owner() != expected:
+            raise RuntimeError("Activation replaced the primary application")
+        instances = command("flatpak", "ps", "--columns=application").splitlines()
+        return instances.count(APP_ID) == 1
+
+    # Flatpak retains newly created instance records for at least three seconds,
+    # including exited tooling sandboxes and resident URI-forwarding launchers.
+    wait_for(one_instance, "Expected exactly one installed application instance")
 
 
 def visible_windows(title):

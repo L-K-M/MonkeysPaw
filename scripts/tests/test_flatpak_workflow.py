@@ -151,6 +151,70 @@ class RepeatProofComplete(Exception):
     """Stop main after the action proof, before invite setup."""
 
 
+class SingletonTests(unittest.TestCase):
+    def check(self, snapshots, *, owners=(":1.42",), expected=":1.42"):
+        elapsed = 0
+        commands = []
+        remaining = iter(snapshots)
+        current = snapshots[-1]
+        remaining_owners = iter(owners)
+        current_owner = owners[-1]
+
+        def command(*args):
+            nonlocal current
+            self.assertEqual(args, ("flatpak", "ps", "--columns=application"))
+            commands.append(args)
+            current = next(remaining, current)
+            return current
+
+        def owner():
+            nonlocal current_owner
+            current_owner = next(remaining_owners, current_owner)
+            return current_owner
+
+        def sleep(seconds):
+            nonlocal elapsed
+            elapsed += seconds
+
+        with (patch.object(smoke, "command", side_effect=command),
+              patch.object(smoke, "owner", side_effect=owner),
+              patch.object(smoke.time, "monotonic", side_effect=lambda: elapsed),
+              patch.object(smoke.time, "sleep", side_effect=sleep)):
+            smoke.singleton(expected)
+        return len(commands)
+
+    def test_flatpak_process_tree_is_one_sandbox(self):
+        # flatpak/bwrap -> bwrap -> monkeyspaw, plus xdg-dbus-proxy and
+        # flatpak-session-helper, yields one application row, not one per PID.
+        self.assertEqual(self.check([smoke.APP_ID]), 1)
+
+    def test_exited_tool_or_launcher_sandbox_record_can_expire(self):
+        # Flatpak 1.14.6 keeps fresh, unlocked records for at least three
+        # seconds. The live bwrap/app tree stays registered throughout.
+        stale_and_live = "\n".join([smoke.APP_ID] * 2)
+        self.assertGreater(self.check([stale_and_live] * 20 + [smoke.APP_ID]), 20)
+
+    def test_other_applications_do_not_count(self):
+        self.assertEqual(self.check(["org.gnome.Other\n" + smoke.APP_ID]), 1)
+
+    def test_zero_or_persistent_multiple_sandboxes_fail(self):
+        for snapshot in ("", "\n".join([smoke.APP_ID] * 2)):
+            with self.subTest(snapshot=snapshot):
+                with self.assertRaisesRegex(RuntimeError, "Expected exactly one installed application instance"):
+                    self.check([snapshot])
+
+    def test_no_primary_owner_cannot_pass_on_a_stale_record(self):
+        with self.assertRaisesRegex(RuntimeError, "Activation replaced the primary application"):
+            self.check([smoke.APP_ID], owners=(None,), expected=None)
+
+    def test_owner_must_survive_instance_cleanup(self):
+        for replacement in (None, ":1.43"):
+            with self.subTest(replacement=replacement):
+                with self.assertRaisesRegex(RuntimeError, "Activation replaced the primary application"):
+                    self.check(["\n".join([smoke.APP_ID] * 2), smoke.APP_ID],
+                               owners=(":1.42", replacement))
+
+
 class RepeatProofTests(unittest.TestCase):
     def run_proof(self, *, resident_noop=False, dismiss_noop=False, replace_owner=False,
                   instances=1, toggle_noop=False):
