@@ -9,6 +9,7 @@ import ch.lkmc.monkeyspaw.core.llm.messages
 import ch.lkmc.monkeyspaw.core.llm.transcriptMessage
 import ch.lkmc.monkeyspaw.core.ports.MonotonicClock
 import java.util.Collections
+import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +31,8 @@ data class AssistantState internal constructor(
     val usage: AssistantTokenUsage? = null,
     val elapsedSeconds: Double = 0.0,
     val isStale: Boolean = false,
+    val isAccepting: Boolean = false,
+    val acceptanceOutcome: AssistantAcceptanceOutcome? = null,
     val providerHost: String? = null,
     val modelID: String? = null,
     val mutationAccess: AssistantMutationAccess = AssistantMutationAccess.UNAVAILABLE,
@@ -62,12 +65,17 @@ class AssistantSession(
     private var operation: AssistantOperation<*>? = null
     private var started: Long? = null
     private var elapsedJob: Job? = null
+    private var acceptanceID: UUID? = null
+    private var savingPermit: AssistantSavePermit? = null
+    private var cancelAcceptanceGuard: (() -> Unit)? = null
 
-    val canRetry: Boolean get() = active && attempt != null && state.value.phase != AssistantPhase.WORKING
+    val canRetry: Boolean get() = active && attempt != null && state.value.phase != AssistantPhase.WORKING && !state.value.isAccepting
     val canShowDiff: Boolean get() = active && state.value.artifact != null && attempt != null &&
-        attempt?.command != AssistantCommand.Review && state.value.phase != AssistantPhase.WORKING
+        attempt?.command != AssistantCommand.Review && state.value.phase != AssistantPhase.WORKING && !state.value.isAccepting
 
-    /** L16 can recheck this seam before starting its checked publication path. */
+    val canAccept: Boolean get() = isCandidateCurrent && !state.value.isAccepting
+
+    /** Guard availability alone preserves an already previewed candidate. */
     val isCandidateCurrent: Boolean get() {
         val current = state.value
         val candidate = current.candidate ?: return false
@@ -87,12 +95,22 @@ class AssistantSession(
             // A guard can become busy without changing the already displayed candidate.
             return
         }
-        if (!previous.sameSession(latest)) reset()
+        if (!previous.sameSession(latest)) {
+            savingPermit?.invalidate(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.StaleContext))
+            reset()
+        }
         else {
             contextGeneration++
+            savingPermit?.invalidate(AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.ChangedBuffer))
+            val cancelGuard = cancelAcceptanceGuard
+            cancelAcceptanceGuard = null
+            if (savingPermit == null) acceptanceID = null
             val current = state.value
             publish(current.copy(candidate = null, selectedFindings = emptySet(), isStale = true,
+                isAccepting = current.isAccepting && savingPermit != null,
                 phase = if (current.phase in listOf(AssistantPhase.READY, AssistantPhase.SAVED)) AssistantPhase.DRAFT else current.phase))
+            // A worker already started still owes its actual outcome; only a queued guard completes now.
+            cancelGuard?.invoke()
         }
         publish(footer(state.value))
     }
@@ -100,6 +118,7 @@ class AssistantSession(
     /** Credential edits retire a conversation even when the profile is byte-identical. */
     fun profileChanged() {
         if (!active) return
+        savingPermit?.invalidate(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.StaleContext))
         reset()
         context = currentContext()
         publish(footer(state.value))
@@ -114,7 +133,7 @@ class AssistantSession(
 
     fun toggleFinding(index: Int) {
         contextChanged()
-        if (!active || reviewContext != context || state.value.phase == AssistantPhase.WORKING ||
+        if (!active || reviewContext != context || state.value.phase == AssistantPhase.WORKING || state.value.isAccepting ||
             state.value.review?.findings?.indices?.contains(index) != true) return
         val selected = state.value.selectedFindings.toMutableSet()
         if (!selected.add(index)) selected.remove(index)
@@ -165,6 +184,72 @@ class AssistantSession(
         if (active) publish(state.value.copy(elapsedSeconds = ((monotonic.nowNanos() - start) / 1e9).coerceAtLeast(0.0)))
     }
 
+    /** Pure issuance for adapters; checked publication consumes the token exactly once. */
+    fun accept(): AssistantAcceptance? {
+        contextChanged()
+        if (!canAccept) return null
+        val candidate = state.value.candidate ?: return null
+        val destination = when {
+            candidate.mutationAccess == AssistantMutationAccess.PRIVATE_COPY -> AssistantSaveDestination.PRIVATE_COPY
+            attempt?.command is AssistantCommand.Write || candidate.context.editor?.isNew == true -> AssistantSaveDestination.NEW_PROMPT
+            else -> AssistantSaveDestination.IMPROVE
+        }
+        val acceptance = AssistantAcceptance(candidate, destination, state.value.usage)
+        acceptanceID = acceptance.id
+        publish(state.value.copy(isAccepting = true, acceptanceOutcome = null))
+        return acceptance.takeIf { acceptanceID == it.id }
+    }
+
+    fun accept(using: AssistantAcceptanceEditor, completion: (AssistantAcceptanceOutcome) -> Unit = {}) {
+        val acceptance = accept()
+        if (acceptance == null) {
+            completion(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.NotReady))
+            return
+        }
+        val permit = AssistantSavePermit { service.isCurrent(acceptance.candidate.context) }
+        savingPermit = permit
+        cancelAcceptanceGuard = { using.cancelAssistantAcceptance(permit) }
+        using.acceptAssistant(acceptance, permit, validate = validation@ {
+            permit.refusal?.let { return@validation it }
+            val latest = currentContext()
+            when {
+                !active || acceptanceID != acceptance.id -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled)
+                !acceptance.candidate.context.sameSession(latest) || !service.isCurrent(acceptance.candidate.context) ->
+                    AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.StaleContext)
+                !acceptance.candidate.context.matchesCandidate(latest) ->
+                    AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.ChangedBuffer)
+                else -> null
+            }
+        }) { outcome ->
+            completeAcceptance(acceptance.id, outcome)
+            completion(outcome)
+        }
+    }
+
+    /** Adoption precedes editor notifications. A retired token cannot replace an actual commit. */
+    fun completeAcceptance(id: UUID, outcome: AssistantAcceptanceOutcome): Boolean {
+        if (!active || acceptanceID != id) return false
+        if (outcome.committed == null) {
+            contextChanged()
+            if (!active || acceptanceID != id) return false
+        }
+        acceptanceID = null
+        savingPermit = null
+        cancelAcceptanceGuard = null
+        if (outcome.committed != null) retainedID = null
+        context = currentContext()
+        publish(footer(state.value.copy(isAccepting = false, acceptanceOutcome = outcome, candidate = null,
+            failure = null, isStale = outcome is AssistantAcceptanceOutcome.Conflict,
+            phase = when (outcome) {
+                is AssistantAcceptanceOutcome.Saved, is AssistantAcceptanceOutcome.CommittedWithProvenanceWarning -> AssistantPhase.SAVED
+                is AssistantAcceptanceOutcome.Conflict -> AssistantPhase.DRAFT
+                is AssistantAcceptanceOutcome.Failed -> AssistantPhase.FAILED
+            })))
+        return true
+    }
+
+    fun cancelPendingAcceptance() { cancelAcceptanceGuard?.invoke() }
+
     fun cancel() {
         if (!active) return
         reset()
@@ -183,7 +268,7 @@ class AssistantSession(
     private fun begin(command: AssistantCommand, effort: AssistantEffort?,
                       transcript: List<AssistantMessage> = emptyList(), feedback: String? = null) {
         contextChanged()
-        if (!active) return
+        if (!active || state.value.isAccepting) return
         invalidateWork()
         if (feedback == null) retainedID = null
         attempt = null
@@ -309,12 +394,18 @@ class AssistantSession(
     }
 
     private fun reset() {
+        savingPermit?.invalidate(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled))
+        val cancelGuard = cancelAcceptanceGuard
+        acceptanceID = null
+        savingPermit = null
+        cancelAcceptanceGuard = null
         invalidateWork()
         stopElapsed()
         attempt = null
         reviewContext = null
         retainedID = null
         publish(footer(AssistantState()))
+        cancelGuard?.invoke()
     }
 
     private fun footer(state: AssistantState): AssistantState = state.copy(

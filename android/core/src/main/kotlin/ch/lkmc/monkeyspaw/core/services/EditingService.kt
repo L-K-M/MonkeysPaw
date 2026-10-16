@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.services
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.ports.*
+import java.util.concurrent.CancellationException
 
 sealed interface EditResult {
     data class Saved(val commit: LibrarySaveResult) : EditResult
@@ -47,6 +48,28 @@ class EditingService(private val library: LibraryService) {
             is PromptLoadResult.Failed -> return@writeSource EditResult.Failed(current.error)
         }
         EditResult.Saved(library.save(document, path, expectedStamp))
+    }
+
+    /** Always return the actual result, including publication that outlives its assistant/editor. */
+    fun accept(acceptance: AssistantAcceptance, permit: AssistantSavePermit): AssistantAcceptanceOutcome {
+        if (!acceptance.claim()) return AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.NotReady)
+        return try { AssistantAcceptanceOutcome.saved(library.acceptAssistant(acceptance, permit)) }
+        catch (refusal: AssistantSaveRefusal) { refusal.outcome }
+        catch (error: Exception) {
+            val source = acceptance.candidate.context.editor
+            if (error is LibraryError.Conflict && acceptance.destination == AssistantSaveDestination.IMPROVE && source != null) {
+                when (val current = load(source.relativePath)) {
+                    PromptLoadResult.Missing -> AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.Deleted)
+                    is PromptLoadResult.Loaded -> AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.Modified(current.prompt.entry.stamp))
+                    is PromptLoadResult.Failed -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Editing(current.error))
+                }
+            } else when (error) {
+                is CancellationException -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled)
+                is PromptWriteError.UnsupportedFormat -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.ReadOnly(SourceReadOnlyReason.FUTURE_FORMAT))
+                PromptWriteError.InvalidPrompt -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Invalid(acceptance.candidate.content.document.issues))
+                else -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Editing(sanitized(error)))
+            }
+        }
     }
 
     fun rename(path: String, filename: String, expectedStamp: FileStamp): EditResult {

@@ -23,6 +23,7 @@ import kotlin.test.*
 @OptIn(ExperimentalCoroutinesApi::class)
 internal class ShareEntryTest : TemporaryFiles() {
     private val dispatcher = StandardTestDispatcher()
+    private val applicationScope = CoroutineScope(SupervisorJob() + dispatcher)
     private val entries = ViewModelStore()
     private val events = mutableListOf<String>()
     private val clipboard = FakeClipboard()
@@ -39,7 +40,7 @@ internal class ShareEntryTest : TemporaryFiles() {
     private var host = Any()
 
     @BeforeTest fun setMain() { Dispatchers.setMain(dispatcher) }
-    @AfterTest fun clearModels() { entries.clear(); Dispatchers.resetMain() }
+    @AfterTest fun clearModels() { entries.clear(); applicationScope.cancel(); Dispatchers.resetMain() }
 
     @Test fun `chooser creates no form file remembered state or clipboard effect`() = runTest {
         graph()
@@ -533,7 +534,7 @@ internal class ShareEntryTest : TemporaryFiles() {
             fillCreations++
             endpoints.add(endpoint)
             factory.create(session, endpoint)
-        }, copy, EditorViewModelFactory(repository, dispatcher, clock))
+        }, copy, EditorViewModelFactory(repository, dispatcher, clock, applicationScope))
         entries.put("entry", entry)
         entry.attach(host)
         entry.setForeground(host, true)

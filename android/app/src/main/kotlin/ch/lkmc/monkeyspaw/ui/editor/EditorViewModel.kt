@@ -3,11 +3,13 @@ package ch.lkmc.monkeyspaw.ui.editor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.library.PromptCreation
 import ch.lkmc.monkeyspaw.core.ports.Clock
 import ch.lkmc.monkeyspaw.core.ports.FileStamp
 import ch.lkmc.monkeyspaw.core.ports.StoreError
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.data.LibraryRepository
+import ch.lkmc.monkeyspaw.di.ApplicationScope
 import ch.lkmc.monkeyspaw.di.IoDispatcher
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,12 +24,16 @@ internal class EditorViewModel @Inject constructor(
     private val repository: LibraryRepository,
     @IoDispatcher private val worker: CoroutineDispatcher,
     private val clock: Clock,
-) : ViewModel() {
+    @ApplicationScope private val applicationScope: CoroutineScope,
+) : ViewModel(), AssistantAcceptanceEditor {
     private enum class LoadPurpose { REPLACE, RECONCILE, RELOCATED }
     private enum class DraftAcceptance { REPLACE, KEEP_NEWER }
     private data class Baseline(val entry: LibraryEntry, val source: String?,
         val readOnlyReason: SourceReadOnlyReason?, val projection: EditorDocumentState)
-    private data class Request(val decision: EditorPendingDecision, val session: Long)
+    private enum class GuardMode { UNSAVED_EDITS, PREVIEWED_BUFFER }
+    private data class Request(val decision: EditorPendingDecision, val session: Long,
+        val mode: GuardMode = GuardMode.UNSAVED_EDITS, val operation: (() -> Unit)? = null,
+        val cancelled: (() -> Unit)? = null)
     private data class Observation(val load: PromptLoadResult, val projection: EditorDocumentState?)
     private data class CommandResult(val result: EditResult, val projection: EditorDocumentState?)
 
@@ -56,6 +62,11 @@ internal class EditorViewModel @Inject constructor(
     private var validationJob: Job? = null
     private var loadJob: Job? = null
     private var historyRequested = false
+    private var assistantPermit: AssistantSavePermit? = null
+    private var assistantSource: AssistantEditorSnapshot? = null
+    private var assistantDecision: Long? = null
+    private var adoptingAssistant = false
+    private var adoptingBaseline = false
 
     init {
         viewModelScope.launch {
@@ -99,10 +110,149 @@ internal class EditorViewModel @Inject constructor(
     fun removeAssistantContextObserver(token: Long) { assistantObservers.remove(token) }
 
     private fun notifyAssistantContext() {
+        if (adoptingAssistant) return
         val captured = assistantSnapshot
         if (captured == notifiedAssistantSnapshot) return
         notifiedAssistantSnapshot = captured
+        val permit = assistantPermit
+        if (permit != null && captured?.copy(availability = AssistantEditorAvailability.AVAILABLE) !=
+            assistantSource?.copy(availability = AssistantEditorAvailability.AVAILABLE)) {
+            val outcome = if (!active || captured?.session != assistantSource?.session) {
+                AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Inactive)
+            } else AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.ChangedBuffer)
+            permit.invalidate(outcome)
+            if (assistantDecision != null) cancelAssistantAcceptance(permit)
+        }
         assistantObservers.values.toList().forEach { it() }
+    }
+
+    override fun acceptAssistant(acceptance: AssistantAcceptance, permit: AssistantSavePermit,
+        validate: () -> AssistantAcceptanceOutcome?, completion: (AssistantAcceptanceOutcome) -> Unit) {
+        if (!active) { completion(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Inactive)); return }
+        if (reading || state.value.writing || state.value.status == EditorStatus.LOADING ||
+            state.value.conflict != null || assistantPermit != null) {
+            completion(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.EditorBusy))
+            return
+        }
+        assistantPermit = permit
+        assistantSource = acceptance.candidate.context.editor
+        val epoch = session
+        var completed = false
+        val finish: (AssistantAcceptanceOutcome) -> Unit = { outcome ->
+            if (!completed) {
+                completed = true
+                releaseAssistantPermit(permit)
+                completion(outcome)
+            }
+        }
+        val start = {
+            assistantDecision = null
+            val refusal = permit.refusal ?: validate() ?: when {
+                !active || epoch != session -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Inactive)
+                reading || state.value.writing || state.value.status == EditorStatus.LOADING || state.value.conflict != null ->
+                    AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.EditorBusy)
+                assistantSnapshot?.copy(availability = AssistantEditorAvailability.AVAILABLE) !=
+                    acceptance.candidate.context.editor?.copy(availability = AssistantEditorAvailability.AVAILABLE) ->
+                    AssistantAcceptanceOutcome.Conflict(AssistantAcceptanceConflict.ChangedBuffer)
+                else -> null
+            }
+            if (refusal != null) { permit.invalidate(refusal); finish(refusal) }
+            else startAssistantSave(acceptance, permit, epoch, finish)
+        }
+        val source = acceptance.candidate.context.editor
+        val path = PromptCreation.relativePath(
+            acceptance.candidate.content.document.frontMatter.title, clock.now())
+        val action = if (acceptance.destination == AssistantSaveDestination.IMPROVE && state.value.selection != null) {
+            EditorAction.Open(checkNotNull(state.value.selection))
+        } else EditorAction.New(path)
+        val id = ++nextDecision
+        assistantDecision = id
+        requests.addLast(Request(EditorPendingDecision(id, action), source?.session ?: epoch,
+            if (acceptance.destination == AssistantSaveDestination.IMPROVE) GuardMode.PREVIEWED_BUFFER else GuardMode.UNSAVED_EDITS,
+            start, { finish(permit.refusal ?: AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled)) }))
+        drain()
+    }
+
+    override fun cancelAssistantAcceptance(permit: AssistantSavePermit) {
+        if (assistantPermit !== permit) return
+        val id = assistantDecision
+        val request = if (id != null && pending?.decision?.id == id) {
+            pending.also { pending = null; savingDecision = null }
+        } else requests.indexOfFirst { it.decision.id == id }.takeIf { it >= 0 }?.let { requests.removeAt(it) }
+        releaseAssistantPermit(permit)
+        if (request != null) {
+            currentState = state.value.copy(pendingDecision = pending?.decision,
+                queuedActions = requests.map { it.decision.action })
+            request.cancelled?.invoke()
+            drain()
+        }
+    }
+
+    private fun releaseAssistantPermit(permit: AssistantSavePermit) {
+        if (assistantPermit !== permit) return
+        assistantPermit = null
+        assistantSource = null
+        assistantDecision = null
+    }
+
+    private fun startAssistantSave(acceptance: AssistantAcceptance, permit: AssistantSavePermit, epoch: Long,
+        completion: (AssistantAcceptanceOutcome) -> Unit) {
+        loadGeneration++
+        historyGeneration++
+        loadJob?.cancel()
+        reading = false
+        currentState = state.value.copy(status = EditorStatus.SAVING, failure = null, saveIssues = emptyList())
+        // Accepted publication outlives the ViewModel, just like the settings mutation contract.
+        applicationScope.launch(Dispatchers.Main.immediate) {
+            var projection: EditorDocumentState? = null
+            val outcome = try {
+                repository.withLibrary { _, editing ->
+                    editing.accept(acceptance, permit).also { result ->
+                        projection = result.committed?.entry?.document?.let(::project)
+                    }
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Editing(error))
+            }
+            releaseAssistantPermit(permit)
+            // Adopt first, complete the token second, notify observers last.
+            adoptingAssistant = true
+            try {
+                currentState = state.value.copy(assistantAcceptanceOutcome = outcome)
+                if (active && session == epoch) {
+                    currentState = state.value.copy(status = if (state.value.isOpen) EditorStatus.READY else EditorStatus.CLOSED)
+                    val commit = outcome.committed
+                    if (commit != null) {
+                        val source = acceptance.candidate.context.editor
+                        val unchanged = source?.revision == assistantSnapshot?.revision && source?.source == state.value.source
+                        val command = CommandResult(EditResult.Saved(LibrarySaveResult(commit.entry,
+                            commit.historyMaintenanceFailed, outcome is AssistantAcceptanceOutcome.CommittedWithProvenanceWarning)), projection)
+                        if (acceptance.destination == AssistantSaveDestination.IMPROVE || unchanged) {
+                            if (acceptance.destination != AssistantSaveDestination.IMPROVE) session++
+                            acceptCommit(command, if (unchanged) DraftAcceptance.REPLACE else DraftAcceptance.KEEP_NEWER)
+                        } else currentState = state.value.copy(lastAssistantCopy = selection(commit.entry),
+                            historyMaintenanceFailed = commit.historyMaintenanceFailed,
+                            provenanceMaintenanceFailed = outcome is AssistantAcceptanceOutcome.CommittedWithProvenanceWarning)
+                    } else when (outcome) {
+                        is AssistantAcceptanceOutcome.Conflict -> when (val reason = outcome.reason) {
+                            is AssistantAcceptanceConflict.Modified -> applyFailure(EditResult.Conflict(reason.currentStamp))
+                            AssistantAcceptanceConflict.Deleted -> applyFailure(EditResult.Missing)
+                            AssistantAcceptanceConflict.ChangedBuffer -> Unit
+                        }
+                        is AssistantAcceptanceOutcome.Failed -> when (val reason = outcome.reason) {
+                            is AssistantAcceptanceFailure.Editing -> applyFailure(EditResult.Failed(reason.error))
+                            is AssistantAcceptanceFailure.Invalid -> applyFailure(EditResult.Invalid(reason.issues))
+                            is AssistantAcceptanceFailure.ReadOnly -> applyFailure(EditResult.ReadOnly(reason.reason))
+                            else -> Unit
+                        }
+                        else -> Unit
+                    }
+                }
+                completion(outcome)
+            } finally { adoptingAssistant = false; notifyAssistantContext() }
+            if (active) drain()
+        }
     }
 
     fun open(selection: LibrarySelection) = request(EditorAction.Open(selection))
@@ -186,14 +336,20 @@ internal class EditorViewModel @Inject constructor(
                 save()
             }
             EditorDecision.DISCARD -> {
-                baseline?.let { acceptBaseline(it) }
+                if (baseline != null) acceptBaseline(checkNotNull(baseline)) else {
+                    revision++
+                    currentState = state.value.copy(source = "", validating = true)
+                    validate()
+                }
                 currentState = state.value.copy(dirty = false, conflict = null, failure = null)
                 finishDecision()
             }
             EditorDecision.CANCEL -> {
+                val cancelled = pending
                 pending = null
                 savingDecision = null
                 currentState = state.value.copy(pendingDecision = null)
+                cancelled?.cancelled?.invoke()
                 drain()
             }
         }
@@ -241,6 +397,8 @@ internal class EditorViewModel @Inject constructor(
     }
 
     private fun drain() {
+        // Cancelling an assistant guard during Save must wait for baseline/selection adoption.
+        if (adoptingBaseline) return
         while (active && !state.value.writing && pending == null && requests.isNotEmpty()) {
             val next = requests.first()
             val action = next.decision.action
@@ -251,12 +409,16 @@ internal class EditorViewModel @Inject constructor(
             }
             if (state.value.status == EditorStatus.LOADING && isCommand(action)) break
             requests.removeFirst()
-            if (state.value.dirty) {
+            if (next.operation != null && next.session != session) {
+                next.cancelled?.invoke()
+                continue
+            }
+            if (state.value.dirty && next.mode == GuardMode.UNSAVED_EDITS) {
                 pending = next
                 currentState = state.value.copy(pendingDecision = next.decision)
                 break
             }
-            perform(action)
+            perform(next)
         }
         currentState = state.value.copy(queuedActions = requests.map { it.decision.action })
     }
@@ -267,9 +429,13 @@ internal class EditorViewModel @Inject constructor(
         savingDecision = null
         currentState = state.value.copy(pendingDecision = null)
         if (request != null && (!isCommand(request.decision.action) || request.session == session)) {
-            perform(request.decision.action)
+            perform(request)
         }
         drain()
+    }
+
+    private fun perform(request: Request) {
+        if (request.operation != null) request.operation.invoke() else perform(request.decision.action)
     }
 
     private fun perform(action: EditorAction) {
@@ -504,15 +670,19 @@ internal class EditorViewModel @Inject constructor(
     }
 
     private fun acceptBaseline(loaded: Baseline) {
-        baseline = loaded
-        revision++
-        validationJob?.cancel()
-        currentState = state.value.copy(relativePath = loaded.entry.relativePath,
-            selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
-            readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
-            conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
-            provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
-        applyProjection(loaded.projection)
+        val previous = adoptingBaseline
+        adoptingBaseline = true
+        try {
+            baseline = loaded
+            revision++
+            validationJob?.cancel()
+            currentState = state.value.copy(relativePath = loaded.entry.relativePath,
+                selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
+                readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
+                conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
+                provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
+            applyProjection(loaded.projection)
+        } finally { adoptingBaseline = previous }
     }
 
     private fun applyProjection(projection: EditorDocumentState) {
@@ -553,6 +723,10 @@ internal class EditorViewModel @Inject constructor(
 
     override fun onCleared() {
         active = false
+        assistantPermit?.let { permit ->
+            permit.invalidate(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Inactive))
+            cancelAssistantAcceptance(permit)
+        }
         reset()
         pending = null
         requests.clear()
