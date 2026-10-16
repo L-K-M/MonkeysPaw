@@ -37,12 +37,15 @@ internal class ImeBoundaryTest {
             val modifiers = "(?:(?:@[\\w.]+|private|internal|public|expect|actual|external|infix|operator|suspend|inline|tailrec|sealed|data|abstract|open|value|enum|annotation|final)\\s+)*"
             val functions = Regex("(?m)^${modifiers}fun (?:<[^\\n>]+> )?(?:[^\\n(]+\\.)?(\\w+)\\(").findAll(source).toList()
             val types = Regex("(?m)^$modifiers(?:fun )?(?:class|interface|object) (\\w+)").findAll(source).toList()
-            val starts = (functions + types).map { it.range.first }.sorted()
+            val properties = Regex("(?m)^${modifiers}(?:(?:const|lateinit)\\s+)?(?:val|var) \\w+").findAll(source).toList()
+            val starts = (functions + types + properties).map { it.range.first }.sorted()
             val header = Regex("(?m)^(?:package|import) [^\\n]+").findAll(source).joinToString("\n") { it.value }
-            functions.asSequence().map { "$pkg.${it.groupValues[1]}" to source } + types.asSequence().map { type ->
-                // A shared file can contain an inert value alongside an unrelated capability.
-                val end = starts.firstOrNull { it > type.range.first } ?: source.length
-                "$pkg.${type.groupValues[1]}" to "$header\n${source.substring(type.range.first, end)}"
+            fun body(start: Int): String = source.substring(start, starts.firstOrNull { it > start } ?: source.length)
+            // File initialization and shared property access remain conservatively in every closure.
+            val initializers = properties.joinToString("\n") { body(it.range.first) }
+            (functions + types).asSequence().map { declaration ->
+                // Follow each declaration's calls without pulling in unrelated siblings.
+                "$pkg.${declaration.groupValues[1]}" to "$header\n${body(declaration.range.first)}\n$initializers"
             }
         }.groupBy({ it.first }, { it.second })
 
@@ -79,6 +82,9 @@ internal class ImeBoundaryTest {
         assertTrue(reached.any { it.simpleName == "FillService" })
         assertTrue(reached.any { it.simpleName == "Clipboard" })
         assertTrue(reached.any { it.simpleName == "AndroidSettingsStore" })
+        assertTrue(reached.any { it.simpleName == "AndroidSyncStartup" })
+        assertTrue(reached.any { it.simpleName == "SyncLocalGraph" })
+        assertTrue(reached.any { it.simpleName == "SyncEngineGraph" })
         assertFalse(reached.any { it.simpleName == "CoroutineScope" })
         val graph = app.resolve("ime/ImeLocalGraph.kt").readText()
         assertTrue(graph.contains("ImeTextDelivery(gateway, session.isActive, copy)"))
@@ -124,12 +130,6 @@ internal class ImeBoundaryTest {
         }
         val reached = mutableSetOf<Class<*>>()
         val validatedSources = mutableSetOf<String>()
-        val classSources = (app.walkTopDown() + core.walkTopDown()).filter { it.isFile && it.extension == "kt" }
-            .flatMap { file ->
-                val source = file.readText()
-                val pkg = Regex("(?m)^package (\\S+)").find(source)!!.groupValues[1]
-                Regex("\\b(?:class|interface|object) (\\w+)").findAll(source).map { "$pkg.${it.groupValues[1]}" to source }
-            }.groupBy({ it.first }, { it.second })
         fun visit(type: Class<*>) {
             if (!reached.add(type)) return
             assertFalse(forbidden.containsMatchIn(type.simpleName), type.simpleName)
@@ -142,7 +142,7 @@ internal class ImeBoundaryTest {
             type.superclass?.let(::visit)
             type.interfaces.forEach(::visit)
             if (!type.name.startsWith("ch.lkmc.monkeyspaw.")) return
-            classSources[type.name.substringBefore('$')]?.forEach { validateGraphSource(it, visited = validatedSources) }
+            helperSources[type.name.substringBefore('$')]?.forEach { validateGraphSource(it, visited = validatedSources) }
             type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .forEach { visit(it.type) }
         }
@@ -254,6 +254,32 @@ internal class ImeBoundaryTest {
         }
     }
 
+    @Test fun `local helper declarations exclude siblings but retain actual forbidden calls`() {
+        val source = "package other\nclass Local { fun run() = prepare() }\n" +
+            "private fun prepare() = Unit\nclass Remote { fun run() = HttpTransport() }"
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        validateGraphSource(local, indexSources(sequenceOf(source)))
+        for (call in listOf("Remote()", "HttpTransport()", "SyncEngine()", "SecretStore()",
+            "WorkManager.getInstance()", "AppModule.applicationScope(io)")) {
+            val mutant = source.replace("prepare() = Unit", "prepare() = $call")
+            assertFailsWith<AssertionError>(call) {
+                validateGraphSource(local, indexSources(sequenceOf(mutant)))
+            }
+        }
+    }
+
+    @Test fun `declaration traversal retains file initializers around unrelated siblings`() {
+        for (initializer in listOf("private val eager = HttpTransport()", "val eager by lazy { SecretStore() }")) {
+            for (declarations in listOf("$initializer\nclass Unrelated\nfun prepare() = Unit",
+                "fun prepare() = Unit\nclass Unrelated\n$initializer")) {
+                val helpers = indexSources(sequenceOf("package other\n$declarations"))
+                assertFailsWith<AssertionError>(declarations) {
+                    validateGraphSource("package local\nimport other.prepare\nfun work() = prepare()", helpers)
+                }
+            }
+        }
+    }
+
     @Test fun `provider bodies resolve helper aliases without scanning unrelated module imports`() {
         val context = "package local\nimport other.Helper as Ready\nimport other.SecretStore"
         val helpers = indexSources(sequenceOf("package other\nclass Helper { fun run() = SyncScheduler() }"))
@@ -272,12 +298,7 @@ internal class ImeBoundaryTest {
 
     @Test fun `application startup only warms local index and service reads only allowed metadata without extracted UI`() {
         val application = app.resolve("MonkeysPawApplication.kt").readText()
-        validateLocal(application)
-        assertTrue(application.contains("scope.launch { library.refresh() }"))
-        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope"),
-            Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
-        val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }").trim()
-        assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
+        assertLocalStartup(application)
         val service = app.resolve("ime/MonkeysPawImeService.kt").readText()
         validateLocal(service)
         assertTrue(service.contains("onEvaluateFullscreenMode(): Boolean = false"))
@@ -296,6 +317,28 @@ internal class ImeBoundaryTest {
         assertTrue(service.contains("@AndroidEntryPoint"))
         assertEquals(1, Regex("@Inject").findAll(service).count())
         assertTrue(service.contains("lateinit var localGraph: ImeLocalGraph"))
+    }
+
+    @Test fun `startup comments preserve the exact local call boundary`() {
+        val application = app.resolve("MonkeysPawApplication.kt").readText()
+            .replace("scope.launch {", "// Warm the local index.\n        scope.launch {")
+        assertLocalStartup(application)
+        for (call in listOf("prepareBackground()", "HttpTransport()", "SyncEngine()",
+            "SecretStore()", "WorkManager.getInstance()")) {
+            assertFailsWith<AssertionError>(call) {
+                assertLocalStartup(application.replace("scope.launch {", "$call\n        scope.launch {"))
+            }
+        }
+    }
+
+    private fun assertLocalStartup(application: String) {
+        validateLocal(application)
+        assertTrue(application.contains("scope.launch { library.refresh() }"))
+        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope"),
+            Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
+        val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }")
+            .lineSequence().filterNot { it.trimStart().startsWith("//") }.joinToString("\n").trim()
+        assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
     }
 
     @Test fun `password screen branches before reused controls and inline hosts request no software keyboard or own IME inset`() {
