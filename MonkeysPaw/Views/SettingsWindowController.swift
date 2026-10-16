@@ -21,6 +21,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var confirmationRequest: UUID?
     private var cancelConfirmation: (() -> Void)?
     private var isTornDown = false
+    private var visibilityObservers: [NSObjectProtocol] = []
+    private var isClosing = false
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
          rememberedValues: RememberedValuesSettingsModel,
@@ -29,11 +31,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          mainThread: MainThread, activation: WindowActivationCoordinator,
          folderChooser: @escaping FolderChooser, openSetup: @escaping () -> Void,
          makeAssistant: @escaping () -> AssistantSettingsModel,
-         onProviderChange: @escaping () -> Void = {}) {
+         onProviderChange: @escaping () -> Void = {},
+         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {},
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         presentation = SettingsViewState(general: general, shortcuts: shortcuts,
                                          rememberedValues: rememberedValues,
                                          delivery: delivery, updates: updates,
-                                         mainThread: mainThread, openSetup: openSetup)
+                                         mainThread: mainThread, openSetup: openSetup,
+                                         makeAccount: makeAccount, onAccountOpen: onAccountOpen,
+                                         makeGroups: makeGroups)
         self.mainThread = mainThread
         self.activation = activation
         self.folderChooser = folderChooser
@@ -43,9 +49,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         super.init()
         presentation.onChooseFolder = { [weak self] in self?.chooseFolder() }
         presentation.onRememberedValuesChange = { [weak self] in self?.updateForgetAllConfirmation() }
+        for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+            visibilityObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+                [weak self] _ in self?.refreshAccountVisibility()
+            })
+        }
     }
 
     deinit {
+        for observer in visibilityObservers { NotificationCenter.default.removeObserver(observer) }
         let cancel = cancelConfirmation
         let cancelChooser = self.cancelChooser
         let window = self.window
@@ -58,6 +70,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             presentation.assistant?.retire()
             presentation.delivery.retire()
             presentation.updates.retire()
+            presentation.windowHidden()
             window?.delegate = nil
             window?.close()
         }
@@ -71,6 +84,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             self.presentation.retireAssistant()
             self.presentation.delivery.retire()
             self.presentation.updates.retire()
+            self.presentation.windowHidden()
             self.window?.delegate = nil
             // willClose also stops both shortcut recorders' native monitors.
             self.window?.close()
@@ -91,11 +105,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             let window = self.window ?? self.makeWindow()
             if self.window == nil { window.center() }
             self.window = window
+            self.isClosing = false
             self.activation.show(window)
+            self.refreshAccountVisibility()
         }
     }
 
     func windowWillClose(_ notification: Notification) {
+        isClosing = true
+        presentation.windowHidden()
         cancelPendingPanels()
         presentation.delivery.hide()
         presentation.updates.hide()
@@ -112,6 +130,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         presentation.cancelForgetAll()
         // The native window is retained for reopening, along with its draft.
         presentation.assistant?.cancelTest()
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) { presentation.windowHidden() }
+    func windowDidDeminiaturize(_ notification: Notification) { refreshAccountVisibility() }
+    func windowDidBecomeKey(_ notification: Notification) { refreshAccountVisibility() }
+    func windowDidChangeOcclusionState(_ notification: Notification) { refreshAccountVisibility() }
+
+    private func refreshAccountVisibility() {
+        mainThread.run { [weak self] in
+            guard let self else { return }
+            if !self.isTornDown, !self.isClosing, !NSApp.isHidden, let window = self.window,
+               window.isVisible, !window.isMiniaturized {
+                self.presentation.windowShown()
+            } else { self.presentation.windowHidden() }
+        }
     }
 
     private func updateForgetAllConfirmation() {
