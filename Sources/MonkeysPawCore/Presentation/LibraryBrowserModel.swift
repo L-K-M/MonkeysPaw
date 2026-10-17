@@ -141,6 +141,20 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         update(section: selectedSection, filter: filter)
     }
 
+    /// Resolve native move targets from the current graph, including empty
+    /// groups. Display names and dropped text are never filesystem paths.
+    public func moveDestination(for section: LibrarySectionID) -> RelativePath? {
+        guard isActive, sections.contains(where: { $0.id == section }) else { return nil }
+        switch section {
+        case .all: return RelativePath("")
+        case .folder(let path): return path
+        case .group(let id):
+            guard let group = index.accessSnapshot.groups[id], group.role != .viewer else { return nil }
+            return RelativePath("Groups/" + group.folder.string)
+        default: return nil
+        }
+    }
+
     /// The open editor owns its buffer and stamped save. Unrelated prompts
     /// continue through the favourite port; only committed entries enter the index.
     @discardableResult
