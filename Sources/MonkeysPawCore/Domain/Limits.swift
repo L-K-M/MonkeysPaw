@@ -231,7 +231,7 @@ public enum Limits {
     static let syncPushJournalVersion: Int = 1
 
     /// §9.2: fail closed rather than truncate oversized state/ownership records.
-    static let syncRecordMaxBytes: Int = 16 * mebibyte
+    public static let syncRecordMaxBytes: Int = 16 * mebibyte
 
     /// §9.1: viewer replacements and role transitions must retain mode 0444.
     public static let readOnlyFileMode: Int = 0o444

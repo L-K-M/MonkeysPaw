@@ -215,6 +215,8 @@ final class LinuxOnboardingWindow {
         if previousStep == .tour && state.step == .complete { hide() }
     }
 
+    func refreshLibrarySwitchMessage() { renderFolder() }
+
     private func renderFolder() {
         guard !isDestroyed else { return }
         let state = general.state

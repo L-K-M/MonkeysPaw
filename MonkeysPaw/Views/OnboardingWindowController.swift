@@ -18,9 +18,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     init(model: OnboardingModel, activeLibraryPath: String, defaultLibraryPath: String,
          mainThread: MainThread, activateApplication: @escaping () -> Void,
          folderChooser: @escaping SettingsWindowController.FolderChooser,
-         openSettings: @escaping () -> Void) {
+         openSettings: @escaping () -> Void, openInvite: @escaping () -> Void = {}) {
         presentation = OnboardingViewState(model: model, activeLibraryPath: activeLibraryPath,
-            defaultLibraryPath: defaultLibraryPath, mainThread: mainThread, openSettings: openSettings)
+            defaultLibraryPath: defaultLibraryPath, mainThread: mainThread,
+            openSettings: openSettings, openInvite: openInvite)
         self.mainThread = mainThread
         self.activateApplication = activateApplication
         self.folderChooser = folderChooser
