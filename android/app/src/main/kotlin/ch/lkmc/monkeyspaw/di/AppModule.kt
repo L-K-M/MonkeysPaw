@@ -2,6 +2,9 @@ package ch.lkmc.monkeyspaw.di
 
 import android.content.Context
 import androidx.datastore.core.DataStoreFactory
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.WorkerFactory
+import android.os.Build
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.EditingService
 import ch.lkmc.monkeyspaw.core.services.FillService
@@ -14,9 +17,12 @@ import ch.lkmc.monkeyspaw.core.services.AssistantAccess
 import ch.lkmc.monkeyspaw.core.services.AssistantService
 import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
 import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
+import ch.lkmc.monkeyspaw.core.services.SyncEngine
+import ch.lkmc.monkeyspaw.core.services.SyncAccountService
 import ch.lkmc.monkeyspaw.data.*
 import dagger.Module
 import dagger.Provides
+import dagger.Lazy
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
@@ -35,6 +41,10 @@ internal annotation class IoDispatcher
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 internal annotation class ApplicationScope
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+internal annotation class SyncWorkerFactory
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -60,8 +70,12 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun state(@ApplicationContext context: Context, settings: AndroidSettingsStore): StateStore =
+    fun state(@ApplicationContext context: Context, settings: AndroidSettingsStore): AndroidStateStore =
         AndroidStateStore(File(context.filesDir, "state"), settings = settings)
+
+    @Provides
+    @Singleton
+    fun stateStore(state: AndroidStateStore): StateStore = state
 
     @Provides
     @Singleton
@@ -117,7 +131,47 @@ internal object AppModule {
     @Provides
     @Singleton
     fun repository(library: LibraryService, editing: EditingService, prompts: AndroidPromptStore,
-        @IoDispatcher io: CoroutineDispatcher): LibraryRepository = LibraryRepository(library, editing, prompts, io)
+        @IoDispatcher io: CoroutineDispatcher, startup: AndroidSyncStartup): LibraryRepository =
+        LibraryRepository(library, editing, prompts, io) { startup.ready() }
+
+    @Provides
+    @Singleton
+    fun syncStartup(@ApplicationContext context: Context, library: LibraryService, prompts: AndroidPromptStore,
+        state: AndroidStateStore, @IoDispatcher io: CoroutineDispatcher): AndroidSyncStartup =
+        AndroidSyncStartup(library, prompts, state, File(context.filesDir, "library").absolutePath, io)
+
+    @Provides
+    @Singleton
+    fun syncRepository(startup: AndroidSyncStartup, library: LibraryService, repository: LibraryRepository,
+        @ApplicationScope scope: CoroutineScope, @IoDispatcher io: CoroutineDispatcher, clock: Clock,
+        entropy: Entropy, monotonic: MonotonicClock, secrets: Lazy<SecretStore>, http: Lazy<HttpTransport>,
+        settings: AndroidSettingsStore, work: SyncWorkHooks = SyncWorkHooks.None): AndroidSyncRepository =
+        AndroidSyncRepository(startup, library, repository, scope, io,
+            { local -> SyncEngine(local, scope, io, clock, entropy, monotonic) },
+            { engine, local -> SyncAccountService(engine, local.accounts, secrets.get(), http.get(), startup.libraryRoot, io, monotonic,
+                tlsTrust = { server -> settings.read().syncTls?.trustFor(server) ?: SyncTLSTrust.SYSTEM }) }, settings, work)
+
+    @Provides
+    @Singleton
+    fun syncWorkHooks(scheduler: Lazy<SyncWorkScheduler>): SyncWorkHooks = object : SyncWorkHooks {
+        override suspend fun authenticated(connection: String) { scheduler.get().authenticated(connection) }
+        override suspend fun signedOut() { scheduler.get().signedOut() }
+        override suspend fun authenticationStopped() = scheduler.get().authenticationStopped()
+        override suspend fun saved() { scheduler.get().saved() }
+        override suspend fun changed() { scheduler.get().changed() }
+    }
+
+    @Provides
+    @Singleton
+    fun syncWorkScheduler(@ApplicationContext context: Context, startup: AndroidSyncStartup, state: AndroidStateStore,
+        repository: Lazy<AndroidSyncRepository>, clock: Clock, @IoDispatcher io: CoroutineDispatcher): SyncWorkScheduler =
+        SyncWorkScheduler(SyncWorkPolicy(SyncWorkStateStore(state, state.syncOperations), AndroidSyncWorkQueue(context),
+            AndroidSyncWorkSession(startup, repository), { clock.now().toEpochMilli() }, Build.VERSION.SDK_INT), io)
+
+    @Provides
+    @Singleton
+    @SyncWorkerFactory
+    fun syncWorkerFactory(factory: HiltWorkerFactory): WorkerFactory = factory
 
     @Provides
     @Singleton

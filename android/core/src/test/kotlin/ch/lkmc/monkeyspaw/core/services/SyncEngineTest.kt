@@ -103,6 +103,42 @@ internal class EngineHarness(val scheduler: TestCoroutineScheduler, scope: Corou
 }
 
 class SyncEngineTest {
+    @Test fun restoredNativeEligibilityUsesExistingForegroundRetryAndKeepsManualOverride() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.start()
+        h.engine.restoreWorkEligibility(4, Instant.parse("2026-10-14T12:00:40Z"))
+        h.engine.setExecutionMode(SyncExecutionMode.FOREGROUND)
+        runCurrent()
+        assertEquals(0, h.pulls)
+        assertEquals(4, h.engine.scheduling.value.retryCount)
+        advanceTimeBy(39_999); runCurrent()
+        assertEquals(0, h.pulls)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(1, h.pulls)
+        h.engine.setExecutionMode(SyncExecutionMode.BACKGROUND)
+        h.engine.restoreWorkEligibility(8, Instant.parse("2026-10-14T13:00:00Z"))
+        h.engine.syncNow(); runCurrent()
+        assertEquals(2, h.pulls)
+        h.engine.stop()
+    }
+
+    @Test fun restoredNativeEligibilityCannotRestartAuthenticationOrOverflowIntoImmediateWork() = runTest {
+        val h = EngineHarness(testScheduler, backgroundScope)
+        h.start()
+        h.engine.restoreWorkEligibility(8, Instant.ofEpochMilli(Long.MAX_VALUE))
+        assertTrue(h.engine.scheduling.value.nextEligibleAt!! > Instant.parse("2026-10-14T13:00:00Z"))
+        h.engine.runBackground()
+        assertEquals(0, h.pulls)
+        h.engine.requireSignIn()
+        h.engine.restoreWorkEligibility(0, Instant.EPOCH)
+        h.engine.setExecutionMode(SyncExecutionMode.FOREGROUND)
+        h.engine.syncNow(); h.engine.runBackground()
+        runCurrent()
+        assertEquals(0, h.pulls)
+        assertTrue(h.engine.reports.value.needsSignIn)
+        h.engine.stop()
+    }
+
     @Test fun backgroundActivationIsLocalAndRunsOnePassWithoutTimers() = runTest {
         val h = EngineHarness(testScheduler, backgroundScope)
         h.files.put(EngineHarness.source(), "a.md")

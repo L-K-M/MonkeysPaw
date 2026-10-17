@@ -512,6 +512,23 @@ Record outcomes without recording prompt content.
 | Closing or switching the library retires pending form callbacks; tab changes and command forms make no clipboard reads or writes | NOT RUN | |
 | Tab/Shift+Tab, Return in rename/move forms, Escape, resize and repeated use remain usable; Return never confirms Delete or a conflict overwrite; VoiceOver identifies revisions, preview, commands and all typed messages | NOT RUN | |
 
+## M6 Y20 Account settings: NOT RUN
+
+The Linux implementation host cannot build AppKit/SwiftUI or run hosted
+`MacAccountSettingsTests`. The Account tab uses the shared `AccountModel`
+and a native `NSSecureTextField`, following the Assistant secure-field pattern.
+Hosted tests use isolated roots, memory-only secrets and stub HTTP; they do
+not establish login-Keychain consent or signed-build access.
+
+- Commit / `macos-app` CI run / hosted Account test result:
+- macOS / hardware / signing identity / login-keychain state:
+- Date / tester / observed consent prompt count:
+
+| Check | Result | Details |
+|---|---|---|
+| Account device credential Keychain consent: sign in with a disposable account, allow/deny/cancel and lock/unlock the Keychain; the window remains responsive, failures stay visible and password text stays empty after submit, completion, tab change, hide, close and reopen | NOT RUN | Requires owner-run macOS and nonproduction credentials |
+| Restart and update with the intended signing identity: the saved device credential resumes only the configured account, the password field stays empty, and current-device revoke/sign-out disables sync; record any new Keychain consent and partial cleanup | NOT RUN | Requires owner-run signed builds |
+
 ## M4 A3 Keychain secrets: NOT RUN
 
 The Linux implementation host cannot compile Security or run hosted macOS
@@ -744,3 +761,22 @@ Never attach those values or prior clipboard contents to the evidence.
 Application data and the opt-in restoration limits are described in
 [Privacy](../../PRIVACY.md); signing/Keychain access still require the actual
 installed build. Native sync/Account acceptance stays with M6 Y34, not M7.
+
+## M6 Y23 invite activation: NOT RUN
+
+The Linux host cannot compile or run the native app. Record `macos-app`
+Debug compilation and the hosted `MacInviteDeepLinkTests`, plus
+`macos-artifacts` universal Release compilation and the dmg/zip plist
+assertions, before running the installed-app checks below. The hosted suite
+also checks the Debug app's scheme, accessory policy and version keys.
+
+Use disposable accounts/invites. Never record a full link, token or password
+in this checklist, screenshots or logs.
+
+| Check | Result | Details |
+|---|---|---|
+| With the installed app stopped, use `open` and a browser's invite link; Account opens once with the exact destination and no redemption before explicit acceptance | NOT RUN | |
+| Repeat while the app is resident, with Settings hidden/closed and with a fill draft open; reuse Account, preserve the local draft, and leave paste/delivery inactive | NOT RUN | |
+| Paste a link or enter a bare token with an explicit server; verify the HTTP warning, current-account join and new-account registration, wrong-server/account refusal, one-use failure and visible partial cleanup | NOT RUN | |
+| Close, minimize, hide the app or leave Account; secure inputs and staged links clear, late replies stay hidden, and reopening requires a fresh invite | NOT RUN | |
+| Onboarding's Join with an invite opens the same Account window; VoiceOver and Tab/Shift+Tab reach destination, secure inputs and both explicit accept actions | NOT RUN | |

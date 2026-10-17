@@ -115,6 +115,7 @@ final class LinuxEnvironment {
         var started = false
         var warningLogged = false
         var rootUnavailable = false
+        var completesOnboardingFolder = false
         var assistant: AssistantModel?
         var makeAssistant: (() -> AssistantModel)?
         var assistantObserver: UUID?
@@ -188,6 +189,7 @@ final class LinuxEnvironment {
         var conflict: ConflictModel?
         var observer: UUID?
         var startupRequested = false
+        var startupReserved = false
         var started = false
         var retired = false
         var drained = false
@@ -281,7 +283,7 @@ final class LinuxEnvironment {
     var assistantModel: AssistantModel? { libraryGraph.assistant }
     // Native Y21/Y24/Y26/Y28/Y33 views consume these shared models.
     var accountModel: AccountModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.account }
-    var syncStatusModel: SyncStatusModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.status }
+    var syncStatusModel: SyncStatusModel? { libraryGraph.sync?.status }
     var inviteModel: InviteModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.invite }
     var groupManagementModel: GroupManagementModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.groups }
     var conflictModel: ConflictModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.conflict }
@@ -290,7 +292,14 @@ final class LinuxEnvironment {
         guard let sync = libraryGraph.sync else { return .recoveryRequired }
         return sync.access.snapshot.isBlocked ? .invalidState : nil
     }
-    private(set) var syncReplacementIssue: LibrarySwitchResult?
+    private(set) var syncReplacementIssue: LibrarySwitchResult? {
+        didSet {
+            // The shared models retain their busy outcome while the native
+            // override publishes completion, even if their state is unchanged.
+            currentSettingsWindow?.refreshLibrarySwitchMessage()
+            currentOnboardingWindow?.refreshLibrarySwitchMessage()
+        }
+    }
     private var syncReplacementTask: Task<Void, Never>?
     private let suppliedSyncTransport: HTTPTransporting?
     private let suppliedSyncTimer: Scheduler?
@@ -724,9 +733,9 @@ final class LinuxEnvironment {
             + " recovery=\(libraryStatusModel.needsLibraryFolderStep)")
     }
 
-    private enum SettingsDestination { case general, invite(SecretValue?) }
+    private enum SettingsDestination { case page(LinuxSettingsWindow.Page), invite(SecretValue?) }
 
-    func showSettings() { showSettings(destination: .general) }
+    func showSettings(page: LinuxSettingsWindow.Page = .current) { showSettings(destination: .page(page)) }
 
     func showInviteSettings() { showSettings(destination: .invite(nil)) }
 
@@ -781,10 +790,19 @@ final class LinuxEnvironment {
                         guard let self, !self.isShutDown,
                               self.libraryGraph.sync?.retired == false else { return nil }
                         return self.inviteModel
+                    },
+                    makeGroups: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.groupManagementModel
+                    }, accountStartupPending: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              let sync = self.currentLibraryGraph?.sync, !sync.retired else { return false }
+                        return sync.startupReserved
                     })
             }
             switch destination {
-            case .general: self.currentSettingsWindow?.show()
+            case .page(let page): self.currentSettingsWindow?.show(page: page)
             case .invite(let supplied):
                 if let supplied {
                     var input = supplied.withValue { $0 }
@@ -819,10 +837,17 @@ final class LinuxEnvironment {
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
             let graph = libraryGraph
+            // Browsing alone must not start account-model loading work.
             currentLibraryWindow = LinuxLibraryWindow(application: application,
                 browser: libraryBrowserModel, editor: editorModel,
                 imports: .init(state: libraryImportState, chooser: importChooser),
-                assistant: { [weak graph] in graph?.assistant }, openFolder: { [weak self] in
+                assistant: { [weak graph] in graph?.assistant },
+                conflict: { [weak graph] in graph?.sync?.conflict },
+                syncStatus: graph.sync?.status,
+                syncNavigation: { [weak self, weak graph] action in
+                    guard let graph else { return }
+                    self?.navigateSyncStatus(action, in: graph)
+                }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
@@ -830,6 +855,21 @@ final class LinuxEnvironment {
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         libraryImportState.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         currentLibraryWindow?.show()
+    }
+
+    private func navigateSyncStatus(_ action: SyncStatusAction, in graph: LibraryGraph) {
+        guard !isShutDown, graph.callbacks.isActive, currentLibraryGraph === graph,
+              graph.sync?.retired == false else { return }
+        switch action {
+        case .account: showSettings(page: .account)
+        case .conflicts, .errors:
+            showLibrary()
+            graph.callbacks.run { [weak self, weak graph] in
+                guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return }
+                if action == .conflicts { self.currentLibraryWindow?.showSyncConflicts() }
+            }
+        case .syncNow, .none: break // The status view forwards Sync now to its model.
+        }
     }
 
     /// The tray and GApplication action share this guarded quit path. A queued
@@ -892,7 +932,10 @@ final class LinuxEnvironment {
 
     private var librarySwitchMessage: String? {
         if syncReplacementTask != nil { return "Finishing sync work before changing the library." }
-        if syncReplacementIssue == .syncRecoveryRequired { return "Local sync recovery must finish before changing the library." }
+        if syncReplacementIssue == .syncRecoveryRequired {
+            return "Your library could not be recovered safely. Choose another folder, or restore the original folder and restart Monkey's Paw."
+        }
+        if let syncReplacementIssue { return GeneralSettingsStrings.message(for: syncReplacementIssue.settingsOutcome) }
         guard let graph = currentLibraryGraph else { return nil }
         if editorHasUnsavedWork(graph.editor.state) { return LinuxEditorStrings.librarySwitchRefused }
         // An empty override hides a past busy refusal once the work resolves.
@@ -1077,6 +1120,9 @@ final class LinuxEnvironment {
             }, openSettings: { [weak self, weak callbacks] in
                 guard callbacks?.isActive == true else { return }
                 self?.showSettings()
+            }, syncStatus: sync?.status, syncNavigation: { [weak self, weak graph] action in
+                guard let graph else { return }
+                self?.navigateSyncStatus(action, in: graph)
             }, requestedIntent: { [weak self, weak graph] intent in
                 guard let graph, graph.callbacks.isActive else { return }
                 self?.handle(intent, in: graph)
@@ -1103,7 +1149,10 @@ final class LinuxEnvironment {
                 scheduler: timer, mainThread: mainThread, clock: clock, entropy: SystemEntropy())
             let account = try SyncAccountService(sync: service, accounts: accounts, secrets: secretStore,
                 transport: suppliedSyncTransport ?? assistantTransport, libraryRoot: directory.path)
-            return SyncGraph(service: service, accounts: accounts, accountService: account, access: access, scheduler: timer)
+            let graph = SyncGraph(service: service, accounts: accounts, accountService: account, access: access, scheduler: timer)
+            // Status observes reports without starting Account's asynchronous load.
+            graph.status = SyncStatusModel(sync: service, mainThread: mainThread)
+            return graph
         } catch {
             timer.retire()
             log.write(.warning, "Sync unavailable; local recovery is required")
@@ -1114,15 +1163,13 @@ final class LinuxEnvironment {
     private func prepareSyncModels(in graph: LibraryGraph) {
         guard let sync = graph.sync, !sync.retired, sync.account == nil else { return }
         sync.account = AccountModel(account: sync.accountService, mainThread: mainThread)
-        sync.status = SyncStatusModel(sync: sync.service, mainThread: mainThread)
         sync.invite = InviteModel(service: SyncInviteService(account: sync.accountService, clipboard: clipboard), mainThread: mainThread)
         sync.groups = GroupManagementModel(service: SyncGroupService(account: sync.accountService, clipboard: clipboard), mainThread: mainThread)
         sync.conflict = ConflictModel(service: ConflictResolutionService(sync: sync.service), mainThread: mainThread)
         _ = sync.account?.addObserver { [weak self, weak graph, weak sync] state in
             guard let self, let graph, let sync, !sync.retired, self.currentLibraryGraph === graph else { return }
             if sync.startupRequested, !state.isBusy {
-                sync.startupRequested = false
-                sync.account?.startup()
+                self.startAccount(in: graph)
             }
             self.onboardingModel.refresh()
         }
@@ -1134,10 +1181,26 @@ final class LinuxEnvironment {
         // A healthy local-only primary has no account work to start. Opening
         // Account still loads its models, and explicit login starts this engine.
         guard sync.accounts.hasConfiguredServer || sync.access.snapshot.isBlocked else { return }
+        // Reserve the initial snapshot-to-startup gap against native intents.
+        sync.startupReserved = true
         prepareSyncModels(in: graph)
         // Account's initial loading publication must complete before startup.
         if sync.account?.state.isBusy == true { sync.startupRequested = true }
-        else { sync.account?.startup() }
+        else { startAccount(in: graph) }
+    }
+
+    private func startAccount(in graph: LibraryGraph) {
+        guard let sync = graph.sync, !sync.retired, currentLibraryGraph === graph else { return }
+        sync.startupRequested = false
+        sync.account?.startup()
+        // Account admission precedes release at the same GLib priority. Its
+        // current loading state then owns the ordinary native intent gates.
+        mainThread.run { [weak self, weak graph, weak sync] in
+            guard let self, let graph, let sync, !self.isShutDown,
+                  !sync.retired, self.currentLibraryGraph === graph else { return }
+            sync.startupReserved = false
+            self.currentSettingsWindow?.refreshAccountStartup()
+        }
     }
 
     private func observeSync(in graph: LibraryGraph) {
@@ -1161,6 +1224,14 @@ final class LinuxEnvironment {
         currentLibraryWindow?.setLibraryAvailable(true)
         // Finish a replacement whose initial reads were blocked by sync.
         currentLibraryStatusModel?.libraryReplaced(available: true)
+        completeOnboardingFolder(in: graph)
+    }
+
+    private func completeOnboardingFolder(in graph: LibraryGraph) {
+        guard currentLibraryGraph === graph, graph.completesOnboardingFolder,
+              graph.picker.libraryAvailable else { return }
+        graph.completesOnboardingFolder = false
+        onboardingModel.chooseFolder(graph.directory.path)
     }
 
     private func checkSyncRoot(in graph: LibraryGraph) {
@@ -1196,6 +1267,7 @@ final class LinuxEnvironment {
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
         guard !isShutDown else { return .libraryUnavailable(.ioFailure) }
         guard syncReplacementTask == nil else { return .syncDraining }
+        syncReplacementIssue = nil
         let target = directory ?? defaultLibraryDirectory
         // Refuse unsupported chooser/portal paths before touching the active graph.
         guard paths.supportsLibrary(at: target) else { return .outsideSandboxHome }
@@ -1221,7 +1293,7 @@ final class LinuxEnvironment {
             sync.drained = true
         }
 
-        // A failed tombstone keeps the binding and graph, with repeat disabled
+        // A failed tombstone keeps the original binding, with repeat disabled
         // until a durable retry. No late record may write into the replacement.
         do {
             if let repeatService = old.repeatService { try repeatService.retire() }
@@ -1249,13 +1321,7 @@ final class LinuxEnvironment {
         let startupError = startLibrary(libraryGraph)
         let graph = libraryGraph
         if resumeSync { startSync(in: graph) }
-        currentSettingsWindow?.rebindAccount()
-        currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
-            assistant: { [weak graph] in graph?.assistant })
-        currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
-        // Never create the status here: its first read starts the current
-        // graph. A later first read derives health from the replacement.
-        currentLibraryStatusModel?.libraryReplaced(available: libraryGraph.picker.libraryAvailable)
+        rebindLibraryWindows(to: graph)
         if let startupError { return .libraryUnavailable(startupError) }
 
         // Keep the usable graph for this session if saving fails. SettingsModel
@@ -1264,6 +1330,20 @@ final class LinuxEnvironment {
         else { settingsModel.clearLibraryFolder() }
         if let error = settingsModel.error { return .persistenceFailed(error) }
         return .switched
+    }
+
+    private func rebindLibraryWindows(to graph: LibraryGraph) {
+        currentSettingsWindow?.rebindAccount()
+        currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
+            assistant: { [weak graph] in graph?.assistant }, conflict: { [weak graph] in graph?.sync?.conflict },
+            syncStatus: graph.sync?.status, syncNavigation: { [weak self, weak graph] action in
+                guard let graph else { return }
+                self?.navigateSyncStatus(action, in: graph)
+            })
+        currentLibraryWindow?.setLibraryAvailable(graph.picker.libraryAvailable)
+        // Never create the status here: its first read starts the current
+        // graph. A later first read derives health from the replacement.
+        currentLibraryStatusModel?.libraryReplaced(available: graph.picker.libraryAvailable)
     }
 
     private func beginSyncReplacement(_ graph: LibraryGraph, directory: URL?) {
@@ -1291,15 +1371,67 @@ final class LinuxEnvironment {
                 }
                 sync.drained = true
                 // Target health and editor/delivery admission are checked again.
-                let result = self.switchLibrary(to: directory)
+                var result = self.switchLibrary(to: directory)
+                if self.currentLibraryGraph === graph {
+                    switch result {
+                    case .invalidTarget, .outsideSandboxHome, .repeatInvalidationFailed:
+                        if !self.restoreDrainedLibrary(graph) { result = .syncRecoveryRequired }
+                    default: break
+                    }
+                }
                 self.syncReplacementIssue = result == .switched ? nil : result
                 guard result == .switched else { self.generalSettingsModel.refresh(); return }
-                if self.onboardingModel.state.step == .libraryFolder, result == .switched {
-                    self.onboardingModel.chooseFolder(self.libraryGraph.directory.path)
-                } else if let directory { self.generalSettingsModel.chooseFolder(directory.path) }
-                else { self.generalSettingsModel.chooseFolder(self.defaultLibraryDirectory.path) }
+                let replacement = self.libraryGraph
+                self.generalSettingsModel.chooseFolder(replacement.directory.path)
+                if self.onboardingModel.state.step == .libraryFolder {
+                    // A new sync root can still be waiting for its first index
+                    // refresh. Retrying onboarding before then drains it again.
+                    replacement.completesOnboardingFolder = true
+                    self.completeOnboardingFolder(in: replacement)
+                }
             }
         }
+    }
+
+    private func restoreDrainedLibrary(_ old: LibraryGraph) -> Bool {
+        // Reuse the pinned store, never prepare/create the default again or
+        // adopt a different incarnation at the same path during rollback.
+        guard !old.rootUnavailable, old.initializationError == nil,
+              !editorHasUnsavedWork(old.editor.state),
+              let files = old.files as? RootedFileStore else { return false }
+        do {
+            try files.requireOriginalRoot(at: old.directory)
+            _ = try files.listFiles()
+        } catch {
+            degradeLibrary(old, error as? FileStoreError)
+            return false
+        }
+
+        let selection = old.editor.state.prompt
+        let browser = old.browser.state
+        let graph = makeLibraryGraph(directory: old.directory, files: files)
+        libraryGraph = graph
+        let startupError = startLibrary(graph)
+        guard startupError == nil, graph.sync != nil,
+              graph.sync?.access.snapshot.isBlocked == false, !graph.rootUnavailable else {
+            degradeLibrary(graph, startupError)
+            rebindLibraryWindows(to: graph)
+            return false
+        }
+        if old.sync?.started == true || old.sync?.account?.state.enabled == true { startSync(in: graph) }
+        rebindLibraryWindows(to: graph)
+        // Index publications precede this callback. Restore only selections
+        // still present, without presenting a window or changing paste focus.
+        graph.callbacks.run { [weak graph] in
+            guard let graph else { return }
+            graph.browser.selectPrompt(browser.selection)
+            graph.browser.selectSection(browser.selectedSection)
+            graph.browser.setFilter(browser.filter)
+            if let selection, graph.index.search("").contains(where: {
+                $0.identity == selection.identity && RelativePath($0.relativePath) == selection.relativePath
+            }) { graph.editor.open(selection) }
+        }
+        return true
     }
 
     @discardableResult

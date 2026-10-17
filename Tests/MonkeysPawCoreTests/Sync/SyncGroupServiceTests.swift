@@ -171,10 +171,30 @@ final class SyncGroupTestRig {
     private var name: String?
     private var members = [SyncAPI.Member(userID: SyncTestValues.user.rawValue, username: "person", displayName: nil,
         role: .owner, joinedAt: "2026-10-14T00:00:00.000Z")]
-    var failure: SyncAPI.FailureCode?
-    var memberFailure: SyncAPI.FailureCode?
-    var failMe = false, failMembers = false
-    var mutationGate: SyncTransportGate?
+    private var _failure: SyncAPI.FailureCode?
+    private var _memberFailure: SyncAPI.FailureCode?
+    private var _failMe = false, _failMembers = false
+    private var _mutationGate: SyncTransportGate?
+    var failure: SyncAPI.FailureCode? {
+        get { locked { _failure } }
+        set { locked { _failure = newValue } }
+    }
+    var memberFailure: SyncAPI.FailureCode? {
+        get { locked { _memberFailure } }
+        set { locked { _memberFailure = newValue } }
+    }
+    var failMe: Bool {
+        get { locked { _failMe } }
+        set { locked { _failMe = newValue } }
+    }
+    var failMembers: Bool {
+        get { locked { _failMembers } }
+        set { locked { _failMembers = newValue } }
+    }
+    var mutationGate: SyncTransportGate? {
+        get { locked { _mutationGate } }
+        set { locked { _mutationGate = newValue } }
+    }
     var requests: [HTTPRequest] { base.sync.transport.requests }
 
     init() throws {

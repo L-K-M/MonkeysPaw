@@ -197,6 +197,9 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+    ksp(libs.androidx.hilt.compiler)
+    implementation(libs.androidx.hilt.work)
+    implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.datastore)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
@@ -241,6 +244,12 @@ tasks.withType<Test>().configureEach {
     inputs.files(graphSources.file("kotlin/ch/lkmc/monkeyspaw/entry/FillActivity.kt"),
         graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/AndroidClipboard.kt"))
         .withPropertyName("fillBoundarySources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/LibraryRepository.kt"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/AndroidSyncStartup.kt"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/SyncWorkScheduler.kt"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/data/SyncWorker.kt"),
+        graphSources.file("kotlin/ch/lkmc/monkeyspaw/ime/ImeInputPolicy.kt"))
+        .withPropertyName("localSyncBoundarySources").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/entry"), graphSources.dir("res"))
         .withPropertyName("entrySources").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir(graphSources.dir("kotlin/ch/lkmc/monkeyspaw/ime"))

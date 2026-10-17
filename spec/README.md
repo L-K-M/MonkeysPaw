@@ -2,18 +2,23 @@
 
 The Swift `PromptConformanceTests` and Kotlin `EveryFixtureTest` both
 semantically consume every case and visible file in the ten content categories.
-The separate server-package `MonkeysPawSyncIntegrationTests` owns `sync/` and
-executes its entire corpus against the real router. Content consumers explicitly
-delegate that directory; they do not claim sync execution. Kotlin engine replay
-arrives in M10 (§20 E34).
+The server-package `MonkeysPawSyncIntegrationTests` and Kotlin
+`:core:syncIntegrationTest` each execute the entire `sync/` corpus against the
+same-head real server. Content consumers explicitly delegate that directory;
+structural enumeration does not count as sync execution. The mandatory
+`android-sync` CI job combines successful content and sync ownership.
 From the repository root:
 
 ```sh
 swift test --filter PromptConformanceTests
 swift test --package-path server
 android/gradlew -p android --max-workers=2 :core:test
-# Run only the Kotlin full-corpus gate:
+# Run only the Kotlin content gate (sync requires the separate task):
 android/gradlew -p android --max-workers=2 :core:test --tests '*EveryFixtureTest'
+# Complete Kotlin acceptance, using a fresh same-head production server image:
+python3 scripts/android-sync-ci.py -- android/gradlew -p android \
+    :core:test :core:syncIntegrationTest --no-daemon --max-workers=2
+python3 scripts/android-sync-ci.py --verify-reports
 # Android CI gate, including lint, R8 and both APKs:
 android/gradlew -p android --max-workers=2 :core:test testDebugUnitTest \
     lintDebug assembleDebug assembleRelease
@@ -28,6 +33,40 @@ From `android/`, the equivalent Kotlin command is
 `./gradlew --max-workers=2 :core:test`. Gradle supplies absolute fixture/schema
 paths from its root project and tracks both directories as test inputs;
 neither is copied into resources or packaged in the app.
+
+The integration task requires a private version-1 `MONKEYSPAW_SYNC_MANIFEST`
+and fails when the server or Docker is missing. It never reuses an up-to-date
+or cached integration success. The wrapper creates 0700 disposable roots,
+0600 password/manifest files, loopback-only containers and fresh databases for
+each case. A native local proof may set `MONKEYSPAW_SYNC_SERVER_EXECUTABLE` to
+the absolute same-head `monkeyspaw-server` executable and use the same private
+manifest shape; it still provisions real users and separate case databases.
+Set `MONKEYSPAW_REQUIRE_SYNC_SERVER=1` for required local runs. Secrets are
+runtime-only; never print the manifest's password files or issued tokens.
+
+Kotlin's external controls stop serve and acquire its nonblocking database
+flock before aging only `changes.at`, `prompts.deleted_at`, or snapshot
+creation/expiry timestamps. Immutable triggers are temporarily removed and
+restored within that exclusive transaction; a fingerprint proves all other
+columns and triggers unchanged. Disposable audit triggers count actual
+committed retention deletes and floor raises, including multiple batches;
+startup production maintenance performs every purge. Controls do not write
+heads, floors, sequences, revisions, prompt bytes or frozen manifests. Restore
+uses the shipped offline admin CLI and checks UUID rotation/recovery copy.
+The forked JVM pauses at checked disk operations, is killed with SIGKILL and
+reaped, then two fresh JVMs replay the same roots. Additional state-file and
+state-directory flush interruptions complement row 17. These tests prove
+process death and portable checked NIO operations; Android Os, Keystore,
+hardware and power-loss behavior retain their owner checks.
+
+Every file, case, action (including hooks and series) and expectation must be
+consumed. Wrong/unknown checkpoints, unknown actions/members, duplicate IDs,
+missing families, unconsumed hooks and unrecovered killed devices fail. On
+failure CI uploads only `sync-acceptance.json` numeric counts, produced by
+`python3 scripts/android-sync-ci.py --reports`; raw JUnit text, roots, databases,
+passwords, tokens and request bodies are excluded. All child and container
+paths have deadlines and cleanup; labeled case/admin containers are also
+removed if the runner is interrupted.
 
 The Kotlin full gate reuses the category tests' semantic adapters. Content
 checks cover metadata, tokens, first-use fields, ordered issues, rendering,
@@ -1171,11 +1210,11 @@ Every action requires `action` and `device`. The additional members are:
 | `fail_next_request` | `method`, `path`; fail one matching request before dispatch. The trace's status is zero, so it cannot count as a server rejection or committed write. |
 | `http_series` | All `http` fields plus `ids`, one to 200 distinct canonical ULIDs. Bindings are forbidden. Substitute `${item.id}` and zero-based `${item.index}` in path, body and expectations; send/check every request individually through the router. |
 | `race_http` | `writers`: exactly two objects containing `device`, `method`, `path`, `body`. The action's device must be one writer. Concurrent PUTs target one ID with equal CAS baselines. Require exactly one 200 and one 409 conflict, whose head matches the successful content/path/scope/rev. Bind `${race.winner}`, `${race.loser}`, `${race.content}` and `${race.losing_content}`; device references may use these symbols. |
-| `advance_server` | `server`, positive `seconds`; advance that deployment's injected wall clock, without advancing independent device clocks. |
+| `advance_server` | `server`, positive `seconds`; Swift advances the deployment's injected clock. Kotlin ages disposable snapshot timestamps offline and carries the elapsed offset into retention. Host and device clocks do not change. |
 | `retention` | `server`, nonempty `expected` count map (`changes`, `floors`, `tombstones`, `revisions`); invoke the production RetentionService and check every supplied committed count. Optional nonnegative `clock_offset_seconds` advances only this maintenance run's clock. This explicitly tests purge while the feed clock still considers a frozen manifest live. |
 | `server_expect` | `server`, `scope`, nonempty `expected` map (`head`, `floor`, `changes`, `tombstones`, `revisions`, `retired_ids`, `snapshots`); read the actual database without mutation and check exact scope counts/high-water marks. |
 | `backup` | `server`, unique lowercase `name`; run ServerBackupService's consistent backup, storing it within the disposable scenario root. |
-| `restore` | `server`, existing backup `name`, `bind`; stop/drain device graphs, close all database users, run the production offline restore, require a rotated UUID and recovery copy, reopen/migrate the database and replace the router. Bind the new wire UUID. A later `restart` reopens the device graph. Live deployments refuse restore. |
+| `restore` | `server`, existing backup `name`, `bind`; stop/drain device graphs, close all database users, run the production offline restore, require a rotated UUID and recovery copy, reopen/migrate the database and replace the router. Bind the new wire UUID. A later `restart` reopens the device graph. Swift live-loopback deployments refuse restore; Kotlin stops its disposable loopback serve process/container before the shipped CLI runs. |
 | `set_cursor` | `scope`, `value` (nonempty opaque string or null for absence); durably edit the device's real state, for missing/zero/above-head trigger tests. |
 | `collect` | `expected` object requiring `scope`, `head`, `cursor`, `item_count`; optional `prompts` (exact `id`, `rev`, `path`, `content`) and `absent` IDs. Run the real Core pull collector against the router without applying a bulk library plan. Enumerate every collected snapshot page, reject repeated IDs, check every expectation, require unchanged state and clean up private staging. Paging, purge and manifest restart use this seam; full SyncService file/state recovery is exercised by row 17. |
 | `kill_client` | `checkpoint` (`after_files`, `before_state`, `after_state`), positive `file_count`; stop/drain the parent graph and start the required debug SyncCrashWorker on the same roots. Require a live pause marker, inspect the persisted journal/files/state, send SIGKILL and require signal termination. `after_files` proves exactly that many publications and an incomplete plan with old state; state checkpoints prove all planned publications, then old or intended state respectively. |

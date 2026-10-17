@@ -35,10 +35,13 @@ group roles; they do not protect you from the operator. Server prompts,
 revisions, SQLite journals and backups are plaintext. There is no end-to-end
 encryption. Passwords use bcrypt cost 12; device and invite tokens are hashed.
 
-Desktop Account and invite handling exist on this branch's M6 base, which is
-still awaiting integration into main. This document describes those code
-paths without asserting sync acceptance. The dedicated sync guide and final
-acceptance remain M6 Y34 and M10 Z27 work; see the
+Desktop Account, invite handling, sync status, groups and conflict resolution
+are available on main. Automated device-token privacy fixtures passed both
+native CI suites. The desktop sync guide and checks of deployed servers,
+signed installations, real keyrings and physical devices remain M6 Y34 work.
+Android's repository and background scheduling foundations are on main, but
+its connected sync UI is not yet integrated. Android sync acceptance remains
+M10 Z27 work; see the
 [milestone record](docs/plan/15-milestones.md).
 
 ## Credentials

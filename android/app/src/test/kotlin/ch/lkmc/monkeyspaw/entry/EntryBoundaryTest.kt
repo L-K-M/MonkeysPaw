@@ -29,7 +29,11 @@ internal class EntryBoundaryTest {
         val startup = children(manifest, "provider").single()
         assertEquals("androidx.startup.InitializationProvider", startup.attr("name"))
         assertEquals("false", startup.attr("exported"))
+        assertEquals("merge", startup.getAttributeNS("http://schemas.android.com/tools", "node"))
         assertTrue(children(startup, "meta-data").all { it.getAttributeNS("http://schemas.android.com/tools", "node") == "remove" })
+        assertEquals(setOf("okhttp3.internal.platform.PlatformInitializer",
+            "androidx.profileinstaller.ProfileInstallerInitializer", "androidx.work.WorkManagerInitializer"),
+            children(startup, "meta-data").map { it.attr("name") }.toSet())
         // Only the assistant/sync transport's INTERNET permission is requested; anything merged in is removed.
         for (permission in children(manifest, "uses-permission")) {
             if (permission.attr("name") == "android.permission.INTERNET") continue

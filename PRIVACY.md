@@ -2,8 +2,8 @@
 
 Monkey's Paw has no telemetry. Your library and remembered field values stay
 on your device unless the behavior below sends them or you place files in a
-folder managed by another service. This document covers the desktop code on
-this branch and the Android features already merged into main. Real platform
+folder managed by another service. This document covers the desktop and
+Android features merged into main. Real platform
 and privacy checks remain in the [owner checklists](docs/platform/m7-acceptance.md)
 and [Android record](docs/platform/android.md).
 
@@ -37,11 +37,15 @@ read and charge for requests; their retention policies are outside this app.
 Sync does not transmit `values.json`, usage, local history or repeat records.
 It does transmit prompt source, so defaults or sensitive text written into a
 template are included. The server operator can read it; there is no end-to-end
-encryption. Desktop sync on this branch comes from the M6 base awaiting main
-integration. A dedicated sync guide and acceptance remain Y34/Z27 work.
-Android has portable sync components but no connected Account/sync UI in the
-merged app. No Android background sync or desktop-style update checker is
-claimed. See [Android usage](README.android.md) and [security boundaries](SECURITY.md).
+encryption. Desktop Account, invite handling, sync status, groups and conflict
+resolution are available on main. Automated device-token privacy fixtures
+passed both native CI suites. The desktop sync guide and checks of deployed
+servers, signed installations, real keyrings and physical devices remain
+M6 Y34 work. Android's sync repository and background scheduling foundations
+are on main, but its connected Account/group/invite/conflict-resolution UI
+is not yet available. Android sync acceptance remains M10 Z27 work. No Android
+desktop-style update checker is claimed. See
+[Android usage](README.android.md) and [security boundaries](SECURITY.md).
 
 ### Desktop update requests
 

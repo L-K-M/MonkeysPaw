@@ -78,6 +78,14 @@ final class RootedFileStore: FileStore, SyncFileOperations {
         }
     }
 
+    /// A default-folder alias may change while its pinned canonical tree lives.
+    /// Check both the selected location and the original incarnation on rollback.
+    func requireOriginalRoot(at directory: URL) throws {
+        let selected = try RootedFileStore(root: directory, trashRoot: trashRoot)
+        guard selected.root.path.utf8.elementsEqual(root.path.utf8) else { throw FileStoreError.invalidRoot }
+        try requireRoot()
+    }
+
     /// Sync pins its live tree; ordinary FileStore callers may recreate roots.
     func bindSyncRoot() {
         rootLock.lock()

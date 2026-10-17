@@ -5,6 +5,8 @@ import ch.lkmc.monkeyspaw.core.ports.PromptStore
 import ch.lkmc.monkeyspaw.core.ports.StoredFile
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
@@ -14,6 +16,31 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 internal class LibraryRepositoryTest : TemporaryFiles() {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `a sync commit cannot join a foreground scan that already captured older files`() = runTest {
+        val io = StandardTestDispatcher(testScheduler)
+        val callerScheduler = TestCoroutineScheduler()
+        val caller = StandardTestDispatcher(callerScheduler)
+        val callerScope = CoroutineScope(SupervisorJob() + caller)
+        val repository = repository(io)
+        repository.withLibrary { _, editing -> editing.create("old", "old.md") }
+        try {
+            val foreground = callerScope.async { repository.refresh() }
+            callerScheduler.runCurrent()
+            runCurrent()
+            assertFalse(foreground.isCompleted, "The scan finished but its caller has not resumed")
+            put(libraryDir.resolve("new.md"))
+            val committed = async { repository.refreshAfterCommit() }
+            runCurrent()
+            callerScheduler.runCurrent()
+            runCurrent()
+            foreground.await()
+            assertEquals(listOf("new.md", "old.md"), committed.await().snapshot.prompts.map { it.entry.relativePath })
+            assertEquals(listOf("new.md", "old.md"), repository.state.value.snapshot.prompts.map { it.entry.relativePath })
+        } finally { callerScope.cancel() }
+    }
+
     @Test
     fun `startup and own mutations refresh on a worker and share the same graph`() = runBlocking {
         Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { worker ->

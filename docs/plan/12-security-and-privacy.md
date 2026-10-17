@@ -207,9 +207,14 @@ text; OS APIs do not offer atomic exclusion of a simultaneous external copy.
 The 750 ms delay can be too short for a slow target. No restore on Copy,
 fallback or self-test; prior text stays only in memory until restore/cancel.
 
-Desktop sync on the M7 branch comes from the M6 base awaiting main integration.
-The dedicated `docs/platform/sync.md` guide and sync acceptance are reserved
-for M6 Y34 / M10 Z27; this is a planned path, not an existing guide. M7's
+Desktop Account, invites, sync status, groups and conflict resolution are
+available on main. Automated device-token privacy fixtures passed both native
+CI suites. The dedicated `docs/platform/sync.md` guide remains a planned path,
+not an existing guide. M6 Y34 still owns the guide and checks of deployed
+servers, signed installations, real keyrings and physical devices. Android's
+repository and background scheduling foundations are on main, but its
+connected Account/group/invite/conflict-resolution UI is not yet integrated;
+Android sync acceptance remains M10 Z27 work. M7's
 [owner ledger](../platform/m7-acceptance.md) starts NOT RUN and does not close sync.
 
 **Logging.**

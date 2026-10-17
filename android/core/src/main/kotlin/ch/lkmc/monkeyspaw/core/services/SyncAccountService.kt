@@ -15,9 +15,9 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 internal enum class SyncAccountIntent { LOGIN, STARTUP }
-internal enum class SyncRemoteRevocation { NOT_NEEDED, REVOKED, UNCONFIRMED }
+enum class SyncRemoteRevocation { NOT_NEEDED, REVOKED, UNCONFIRMED }
 
-internal sealed interface SyncAccountIssue {
+sealed interface SyncAccountIssue {
     data object Busy : SyncAccountIssue
     data object SignedOut : SyncAccountIssue
     data object CredentialsRequired : SyncAccountIssue
@@ -32,7 +32,7 @@ internal sealed interface SyncAccountIssue {
 }
 
 /** Only fixed failures and non-secret references survive incomplete compensation. */
-internal data class SyncAccountCleanup(
+data class SyncAccountCleanup(
     val remote: SyncRemoteRevocation = SyncRemoteRevocation.NOT_NEEDED,
     val secretFailures: List<UUID> = emptyList(),
     val secretIssue: SecretStoreError? = null,
@@ -44,7 +44,7 @@ internal data class SyncAccountCleanup(
     override fun toString(): String = "<sync account cleanup redacted>"
 }
 
-internal class SyncAccountServiceError(
+class SyncAccountServiceError(
     val issue: SyncAccountIssue,
     val cleanup: SyncAccountCleanup = SyncAccountCleanup(),
     val registrationCommitted: Boolean = false,
@@ -52,7 +52,7 @@ internal class SyncAccountServiceError(
     override fun toString(): String = "<sync account error redacted>"
 }
 
-internal data class SyncAccountSnapshot(
+data class SyncAccountSnapshot(
     val account: SyncAccount? = null, val me: MeResponse? = null, val tier: SecretTier? = null,
     val enabled: Boolean = false, val cleanup: SyncAccountCleanup = SyncAccountCleanup(),
 ) {
@@ -64,12 +64,15 @@ class SyncAccountService internal constructor(
     private val sync: SyncEngine, private val accounts: SyncAccountStore,
     private val secrets: SecretStore, private val transport: HttpTransport,
     private val root: SyncLibraryRoot, private val io: CoroutineDispatcher,
-    private val clock: MonotonicClock, private val connectionID: () -> UUID,
+    private val clock: MonotonicClock,
+    private val tlsTrust: suspend (SyncServerURL) -> SyncTLSTrust = { SyncTLSTrust.SYSTEM },
+    private val connectionID: () -> UUID,
 ) {
     constructor(sync: SyncEngine, accounts: SyncAccountStore, secrets: SecretStore, transport: HttpTransport,
                 libraryRoot: String, io: CoroutineDispatcher = Dispatchers.IO,
-                monotonicClock: MonotonicClock = MonotonicClock(System::nanoTime)) :
-        this(sync, accounts, secrets, transport, SyncLibraryRoot(libraryRoot), io, monotonicClock, UUID::randomUUID)
+                monotonicClock: MonotonicClock = MonotonicClock(System::nanoTime),
+                tlsTrust: suspend (SyncServerURL) -> SyncTLSTrust = { SyncTLSTrust.SYSTEM }) :
+        this(sync, accounts, secrets, transport, SyncLibraryRoot(libraryRoot), io, monotonicClock, tlsTrust, UUID::randomUUID)
 
     private class Session(val account: SyncAccount, val client: SyncHTTPClient, val tier: SecretTier)
     private enum class AuthenticationKind { LOGIN, REGISTER }
@@ -77,15 +80,15 @@ class SyncAccountService internal constructor(
     private var busy = false
     private var active: Session? = null
     private val cached = MutableStateFlow(SyncAccountSnapshot())
-    internal val snapshots = cached.asStateFlow()
-    internal val snapshot: SyncAccountSnapshot get() = cached.value
-    internal val isBusy: Boolean get() = lock.withLock { busy }
+    val snapshots = cached.asStateFlow()
+    val snapshot: SyncAccountSnapshot get() = cached.value
+    val isBusy: Boolean get() = lock.withLock { busy }
 
     init { if (sync.graph.accounts !== accounts) throw SyncError.InvalidAccount }
     override fun toString(): String = "<sync account service redacted>"
 
     /** Passwords/invites are transient SecretValues; presentation clears its drafts before awaiting. */
-    internal suspend fun login(server: String, username: String, password: SecretValue, deviceName: String): SyncAccountSnapshot =
+    suspend fun login(server: String, username: String, password: SecretValue, deviceName: String): SyncAccountSnapshot =
         authenticate(server, AuthenticationKind.LOGIN) { client ->
             client.login(password.withValue { LoginRequest(username, it, deviceName) })
         }
@@ -105,14 +108,16 @@ class SyncAccountService internal constructor(
             val previous: SyncConnectionDocument
             val server: SyncServerURL
             val authentication: SyncAuthentication
+            val trust: SyncTLSTrust
             try {
                 previous = accounts.recoverConnection()
                 server = SyncServerURL(input)
                 checkAccount(previous)
-                authentication = authenticate(SyncHTTPClient(server, transport, clock = clock))
+                trust = tlsTrust(server)
+                authentication = authenticate(SyncHTTPClient(server, transport, clock = clock, trust = trust))
             } catch (error: InviteAcceptanceIssue) { throw error }
             catch (error: Throwable) { throwFailure(error) }
-            val client = SyncHTTPClient(server, transport, authentication.credential, clock)
+            val client = SyncHTTPClient(server, transport, authentication.credential, clock, trust)
             var candidate: SyncAccount? = null
             var staged = false
             var secretAttempted = false
@@ -220,7 +225,7 @@ class SyncAccountService internal constructor(
     }
 
     /** Inactive/signed-out startup performs no secret read or HTTP, including pending cleanup. */
-    internal suspend fun startup(): SyncAccountSnapshot = operation {
+    suspend fun startup(): SyncAccountSnapshot = operation {
         sync.stopAccountSession()
         sync.drain()
         lock.withLock { active = null; cached.value = snapshot.copy(enabled = false, me = null, tier = null) }
@@ -247,7 +252,7 @@ class SyncAccountService internal constructor(
         }
     }
 
-    internal suspend fun refresh(): SyncAccountSnapshot = operation {
+    suspend fun refresh(): SyncAccountSnapshot = operation {
         try {
             val session = session()
             val me = session.client.me()
@@ -265,13 +270,13 @@ class SyncAccountService internal constructor(
         }
     }
 
-    internal suspend fun devices(): List<Device> = refresh().me?.devices.orEmpty()
-    internal suspend fun heldPrompts(): List<SyncHeldPrompt> = withContext(io) {
+    suspend fun devices(): List<Device> = refresh().me?.devices.orEmpty()
+    suspend fun heldPrompts(): List<SyncHeldPrompt> = withContext(io) {
         try { accounts.binding(root)?.holds.orEmpty() } catch (error: Throwable) { throwFailure(error) }
     }
 
     /** Only this explicit selected intent releases prior-account upload holds. */
-    internal suspend fun includeHeld(identities: Set<PromptIdentity>): SyncAccountSnapshot = operation {
+    suspend fun includeHeld(identities: Set<PromptIdentity>): SyncAccountSnapshot = operation {
         val session = session()
         val binding = SyncLibraryIdentity(session.account.identity, root)
         try {
@@ -304,7 +309,7 @@ class SyncAccountService internal constructor(
         }
     }
 
-    internal suspend fun revokeDevice(id: ULID): SyncAccountSnapshot = operation {
+    suspend fun revokeDevice(id: ULID): SyncAccountSnapshot = operation {
         val session = session()
         if (id == session.account.deviceID) {
             val cleanup = withContext(NonCancellable) { signOut(session, id) }
@@ -316,7 +321,7 @@ class SyncAccountService internal constructor(
         snapshot
     }
 
-    internal suspend fun signOut(): SyncAccountCleanup = operation {
+    suspend fun signOut(): SyncAccountCleanup = operation {
         val cleanup = withContext(NonCancellable) { signOut(lock.withLock { active }, null) }
         cached.value = snapshot.copy(cleanup = cleanup)
         cleanup
@@ -366,8 +371,11 @@ class SyncAccountService internal constructor(
                 SecretValue(value.string("token", WireValidation::token))
             }
         } catch (_: Exception) { throw SyncAccountServiceError(SyncAccountIssue.TokenBindingMismatch) }
-        return Session(account, SyncHTTPClient(server, transport, SyncCredential(server, token), clock), stored.tier)
+        return Session(account, client(server, SyncCredential(server, token)), stored.tier)
     }
+
+    private suspend fun client(server: SyncServerURL, credential: SyncCredential? = null) =
+        SyncHTTPClient(server, transport, credential, clock, tlsTrust(server))
 
     /** Cancellation/deadline can finish even when a native read remains blocked. */
     private suspend fun readSecret(account: SecretAccount, source: SecretReadSource): StoredSecret? {

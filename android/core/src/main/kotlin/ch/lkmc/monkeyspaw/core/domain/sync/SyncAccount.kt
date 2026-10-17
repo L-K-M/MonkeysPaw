@@ -11,7 +11,8 @@ import java.net.URI
 import java.util.UUID
 
 /** Already normalized deployment base. This syntax check does not authorize HTTP. */
-internal data class SyncAccountIdentity(val serverURL: String, val userID: ULID) {
+@ConsistentCopyVisibility
+data class SyncAccountIdentity internal constructor(val serverURL: String, val userID: ULID) {
     init {
         val valid = try {
             val url = URI(serverURL)
@@ -56,7 +57,8 @@ internal data class SyncLibraryRoot(val path: String) {
 internal data class SyncLibraryIdentity(val account: SyncAccountIdentity, val root: SyncLibraryRoot)
 
 /** Only metadata: the server device ID is distinct from the local secret connection UUID. */
-internal data class SyncAccount(
+@ConsistentCopyVisibility
+data class SyncAccount internal constructor(
     val identity: SyncAccountIdentity,
     val username: String,
     val deviceID: ULID,
@@ -64,7 +66,7 @@ internal data class SyncAccount(
     val connectionID: UUID,
 ) {
     init { syncValidated { WireValidation.username(username); WireValidation.name(deviceName) } }
-    val secretAccount: SecretAccount get() = SecretAccount.device(connectionID)
+    internal val secretAccount: SecretAccount get() = SecretAccount.device(connectionID)
 }
 
 internal data class SyncManagedFolder(val owner: SyncAccountIdentity, val folder: String) {
@@ -72,11 +74,12 @@ internal data class SyncManagedFolder(val owner: SyncAccountIdentity, val folder
 }
 
 /** Edits never release a hold; transition/scanner code migrates its identity and path. */
-internal data class SyncHeldPrompt(
+@ConsistentCopyVisibility
+data class SyncHeldPrompt internal constructor(
     val identity: PromptIdentity,
     val path: String,
     val sourceAccount: SyncAccountIdentity,
-    val contentHash: SyncHash,
+    internal val contentHash: SyncHash,
 ) {
     init { syncValidated { identity.storageKey; StorePath.validate(path) } }
 }

@@ -59,14 +59,15 @@ internal class RootedFileStore(
     private var rootIdentity: FileStamp? = null
     private val createdRootDirectories = linkedSetOf<Path>()
 
-    fun prepareRoot() = sanitized {
+    // Startup recovery and library operations have distinct owners on IO threads.
+    @Synchronized fun prepareRoot() = sanitized {
         if (rootPrepared) return@sanitized requireRoot()
         rootExists(Parents.CREATE)
         pinRoot()
         rootPrepared = true
     }
 
-    fun requireRoot() = sanitized {
+    @Synchronized fun requireRoot() = sanitized {
         if (!rootExists(Parents.EXISTING)) throw StoreError.NotFound
         pinRoot()
         rootPrepared = true
@@ -196,7 +197,7 @@ internal class RootedFileStore(
         return directory
     }
 
-    private fun rootExists(parents: Parents): Boolean {
+    @Synchronized private fun rootExists(parents: Parents): Boolean {
         if (parents == Parents.CREATE && rootPrepared) {
             if (!rootExists(Parents.EXISTING)) throw StoreError.NotFound
             return true
@@ -244,7 +245,7 @@ internal class RootedFileStore(
         return directory
     }
 
-    internal fun rootDurabilityDirectories(): List<Path> =
+    @Synchronized internal fun rootDurabilityDirectories(): List<Path> =
         (createdRootDirectories.flatMap { listOf(it, it.parent) } + listOf(root, root.parent))
             .distinct().sortedByDescending { it.nameCount }
 

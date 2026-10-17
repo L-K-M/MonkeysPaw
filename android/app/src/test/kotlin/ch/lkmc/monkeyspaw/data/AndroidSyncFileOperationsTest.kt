@@ -10,6 +10,7 @@ import java.nio.file.attribute.UserDefinedFileAttributeView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
@@ -75,6 +76,47 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
         state.syncOperations.flushFile("sync/state.json")
         state.syncOperations.flushDirectory("sync")
         state.syncOperations.flushDirectory(null)
+    }
+
+    @Test
+    fun concurrentRootPinningFlushesTheEstablishedRootOnce() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val overlap = CountDownLatch(1)
+        val secondStarted = CountDownLatch(1)
+        val flushes = AtomicInteger()
+        val checked = object : JvmCheckedSyncIO() {
+            override fun flushDirectory(path: Path) {
+                if (path == libraryDir) {
+                    if (flushes.incrementAndGet() == 1) {
+                        entered.countDown()
+                        check(release.await(5, TimeUnit.SECONDS))
+                    } else overlap.countDown()
+                }
+                super.flushDirectory(path)
+            }
+        }
+        val prompts = AndroidPromptStore(libraryDir.toFile(), io = checked)
+        prompts.prepareRoot()
+        prompts.create(original, "p.md")
+        val operations = prompts.syncOperations
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit { operations.flushFile("p.md") }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val second = pool.submit { secondStarted.countDown(); operations.flushFile("p.md") }
+            assertTrue(secondStarted.await(5, TimeUnit.SECONDS))
+            val overlapped = overlap.await(1, TimeUnit.SECONDS)
+            release.countDown()
+            first.get(5, TimeUnit.SECONDS)
+            second.get(5, TimeUnit.SECONDS)
+            assertFalse(overlapped, "A concurrent entry initialized the root before its first durability check completed")
+            assertEquals(1, flushes.get())
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+            assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
+        }
     }
 
     @Test
