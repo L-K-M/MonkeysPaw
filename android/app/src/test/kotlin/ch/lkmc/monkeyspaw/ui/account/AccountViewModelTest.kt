@@ -5,6 +5,9 @@ package ch.lkmc.monkeyspaw.ui.account
 import androidx.datastore.core.DataStoreFactory
 import androidx.datastore.core.DataStore
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelLazy
+import androidx.lifecycle.ViewModelProvider
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.llm.*
@@ -78,6 +81,7 @@ internal class AccountViewModelTest : TemporaryFiles() {
         val requests = mutableListOf<HttpRequest>()
         val enqueued = mutableListOf<SyncWorkRequest>()
         val canceled = mutableListOf<String>()
+        val modes = mutableListOf<SyncExecutionMode>()
         var userID = userA
         var memberships = emptyList<GroupMembership>()
         var handler: (suspend (HttpRequest) -> HttpResponse?)? = null
@@ -103,11 +107,14 @@ internal class AccountViewModelTest : TemporaryFiles() {
             }
         }
         val scheduler: SyncWorkScheduler by lazy {
+            val session = AndroidSyncWorkSession(startup, Lazy { sync })
             SyncWorkScheduler(SyncWorkPolicy(SyncWorkStateStore(files, files.syncOperations), object : SyncWorkQueue {
                 override suspend fun periodic(generation: String, intervalMillis: Long) {}
                 override suspend fun once(request: SyncWorkRequest) { enqueued.add(request) }
                 override suspend fun cancel(generation: String) { canceled.add(generation) }
-            }, AndroidSyncWorkSession(startup, Lazy { sync }), { Instant.parse(time).toEpochMilli() }, 31), dispatcher)
+            }, object : SyncWorkSession by session {
+                override suspend fun mode(value: SyncExecutionMode) { session.mode(value); modes.add(value) }
+            }, { Instant.parse(time).toEpochMilli() }, 31), dispatcher)
         }
         private val hooks = object : SyncWorkHooks {
             override suspend fun authenticationStopped() = scheduler.authenticationStopped()
@@ -129,6 +136,12 @@ internal class AccountViewModelTest : TemporaryFiles() {
 
     private fun rig() = Rig().also { rigs.add(it) }
     private fun model(rig: Rig) = AccountViewModel(rig.sync, rig.scheduler).also { models.put("model-${rigs.size}", it) }
+    private fun accountDelegate(createModel: () -> AccountViewModel) = ViewModelLazy(AccountViewModel::class, { models }, {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = createModel() as T
+        }
+    })
     private fun credentials(model: AccountViewModel, selectedServer: String = server) {
         model.setServer(selectedServer)
         model.setUsername("person")
@@ -915,6 +928,147 @@ internal class AccountViewModelTest : TemporaryFiles() {
         assertEquals(1, count(r, "/auth/logout"))
         m.acceptInvite(); runCurrent()
         assertEquals(1, count(r, "/auth/register"))
+    }
+
+    @Test fun `unleased stop leaves an unused AndroidX delegate and authenticated graph unconstructed`() = runTest(dispatcher) {
+        var constructions = 0
+        val account = accountDelegate {
+            constructions++
+            val r = rig()
+            AccountViewModel(r.sync, r.scheduler)
+        }
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertEquals(0, constructions)
+        assertFalse(account.isInitialized())
+        assertTrue(rigs.isEmpty())
+    }
+
+    @Test fun `unleased stop clears a settled invite and password without replacing the retained model`() = runTest(dispatcher) {
+        val r = rig()
+        var constructions = 0
+        val account = accountDelegate { constructions++; AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink); runCurrent()
+        assertTrue(m.state.value.inviteReady)
+        m.setPassword(password)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertFalse(m.state.value.inviteReady)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        m.acceptInvite(); runCurrent()
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        val recreated = accountDelegate { constructions++; AccountViewModel(r.sync, r.scheduler) }
+        assertSame(m, recreated.value)
+        assertEquals(1, constructions)
+    }
+
+    @Test fun `unleased stop cancels queued staging before it can publish a late invite`() = runTest(dispatcher) {
+        val r = rig()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink)
+        assertEquals(AccountAction.STAGE_INVITE, m.state.value.busy)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertFalse(m.state.value.inviteReady)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertNull(r.sync.accounts.value)
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
+    }
+
+    @Test fun `unleased stop cancels accepted registration before HTTP admission`() = runTest(dispatcher) {
+        val r = rig()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink); runCurrent()
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        m.acceptInvite()
+        assertEquals(AccountAction.ACCEPT_INVITE, m.state.value.busy)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertFalse(m.state.value.inviteReady)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        m.acceptInvite(); runCurrent()
+        assertEquals(0, count(r, "/auth/register"))
+        assertEquals(0, count(r, "/groups/join"))
+        assertTrue(r.secrets.values.isEmpty())
+    }
+
+    @Test fun `owned stop clears presentation and releases foreground exactly once`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        m.setForeground(SyncForegroundOwner.ACCOUNT); runCurrent()
+        assertEquals(listOf(SyncExecutionMode.FOREGROUND), r.modes)
+        route(m, inviteLink); runCurrent()
+        m.setPassword(password)
+        val modes = r.modes.toList()
+
+        repeat(2) { stopAccountPresentation(account, AccountStopMode.RELEASE_FOREGROUND); runCurrent() }
+        assertNull(m.state.value.invite)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertEquals(modes + SyncExecutionMode.BACKGROUND, r.modes)
+        assertEquals(r.modes.count { it == SyncExecutionMode.FOREGROUND }, r.modes.count { it == SyncExecutionMode.BACKGROUND })
+        val requests = r.requests.size
+        advanceTimeBy(61_000); runCurrent()
+        assertEquals(requests, r.requests.size)
+        assertEquals(0, count(r, "/groups/join"))
+    }
+
+    @Test fun `unleased clearing preserves another owners foreground admission`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        r.scheduler.enter(SyncForegroundOwner.LIBRARY)
+        runCurrent()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink); runCurrent()
+        val modes = r.modes.toList()
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertEquals(modes, r.modes)
+        val pulls = count(r, "/sync/pull")
+        advanceTimeBy(61_000); runCurrent()
+        assertTrue(count(r, "/sync/pull") > pulls)
+        r.scheduler.leave(SyncForegroundOwner.LIBRARY)
+        assertEquals(listOf(SyncExecutionMode.FOREGROUND, SyncExecutionMode.BACKGROUND), r.modes)
+    }
+
+    @Test fun `unleased stop retains confirmed sign out while clearing held passwords`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        runCurrent()
+        val release = CompletableDeferred<Unit>()
+        r.signOutRelease = release
+        m.requestSignOut(); m.signOut()
+        m.setPassword(password)
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        try {
+            assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+            assertTrue(m.state.value.draft.password.isEmpty())
+        } finally { release.complete(Unit); runCurrent() }
+        assertNull(m.state.value.account.account)
+        assertTrue(r.secrets.values.isEmpty())
+        assertEquals(1, count(r, "/auth/logout"))
+        assertEquals(0, count(r, "/groups/join"))
+        assertEquals(0, count(r, "/auth/register"))
     }
 
     private companion object {
