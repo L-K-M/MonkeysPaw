@@ -1223,7 +1223,7 @@ final class LinuxEnvironment {
             sync.drained = true
         }
 
-        // A failed tombstone keeps the binding and graph, with repeat disabled
+        // A failed tombstone keeps the original binding, with repeat disabled
         // until a durable retry. No late record may write into the replacement.
         do {
             if let repeatService = old.repeatService { try repeatService.retire() }
@@ -1300,7 +1300,7 @@ final class LinuxEnvironment {
                 var result = self.switchLibrary(to: directory)
                 if self.currentLibraryGraph === graph {
                     switch result {
-                    case .invalidTarget, .outsideSandboxHome:
+                    case .invalidTarget, .outsideSandboxHome, .repeatInvalidationFailed:
                         if !self.restoreDrainedLibrary(graph) { result = .syncRecoveryRequired }
                     default: break
                     }

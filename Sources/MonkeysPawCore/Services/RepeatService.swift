@@ -80,6 +80,7 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
                 pasteChord: ((DeliveryInvocation) -> PasteChord)? = nil) {
         self.binding = binding
         self.store = store
+        blocked = store.requiresInvalidation ? .invalidationFailed : nil
         self.library = library
         self.index = index
         self.fill = fill

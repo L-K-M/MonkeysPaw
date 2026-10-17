@@ -505,6 +505,101 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
     }
 
+    func testRepeatRefusalAfterDrainRestoresLibraryWithoutRevivingStaleRepeat() throws {
+        let clipboard = LinuxSyncRepeatClipboard()
+        var watchers: [LinuxSyncTestWatcher] = []
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { _ in
+                let watcher = LinuxSyncTestWatcher()
+                watchers.append(watcher)
+                return watcher
+            }, syncTransport: transport, clipboard: clipboard)
+        _ = environment.libraryStatusModel
+        defer { transport.releaseHeld(); clipboard.release("late clipboard") }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService?.report.lastSuccess != nil })
+        let originalFiles = try files()
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\n{{clipboard}}\n"
+        try originalFiles.write(Data(source.utf8), at: "a.md")
+        watchers.last?.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .modified)))
+        environment.syncService?.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.requests.contains { $0.method == .put } })
+        environment.pickerModel.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.results.contains { $0.relativePath == "a.md" } })
+        let position = try XCTUnwrap(environment.pickerModel.results.firstIndex { $0.relativePath == "a.md" })
+        environment.pickerModel.selectResult(at: position)
+        environment.pickerModel.use(mode: .copyOnly)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.repeatModel?.availability == .ready })
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+        let oldPicker = environment.pickerModel
+        let oldRepeat = try XCTUnwrap(environment.repeatModel)
+        clipboard.hold = true
+        oldRepeat.repeatLast()
+        XCTAssertTrue(GTKTestSupport.spin { clipboard.pending != nil })
+        let writes = clipboard.writes.count
+        let record = paths.dataDirectory.appendingPathComponent("last-delivery.json")
+        let saved = paths.dataDirectory.appendingPathComponent("saved-record")
+        let previousRecord = try Data(contentsOf: record)
+        transport.holdPull = true
+        environment.syncService?.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
+        // A deterministic private-store failure, independent of user privileges.
+        try FileManager.default.moveItem(at: record, to: saved)
+        try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncReplacementIssue == .repeatInvalidationFailed })
+        try originalFiles.requireRoot()
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, libraryRoot.path)
+        XCTAssertTrue(environment.pickerModel !== oldPicker, "Recovery requires fresh capabilities")
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.libraryAvailable }, "A failed Repeat tombstone must not disable the healthy library")
+        XCTAssertEqual(oldRepeat.state, .inactive)
+        XCTAssertFalse(oldPicker.libraryAvailable)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+
+        // Repairing storage alone must not resurrect the uncommitted record in
+        // a fresh RepeatService. Only a durable tombstone may release its latch.
+        try FileManager.default.removeItem(at: record)
+        try FileManager.default.moveItem(at: saved, to: record)
+        clipboard.release("late clipboard")
+        let recoveredRepeat = try XCTUnwrap(environment.repeatModel)
+        recoveredRepeat.load()
+        XCTAssertTrue(GTKTestSupport.spin { recoveredRepeat.state == .idle })
+        XCTAssertEqual(recoveredRepeat.availability, .unavailable(.invalidationFailed))
+        recoveredRepeat.repeatLast()
+        XCTAssertTrue(GTKTestSupport.spin { recoveredRepeat.result != nil })
+        XCTAssertEqual(recoveredRepeat.result, .unavailable(.invalidationFailed))
+        XCTAssertEqual(clipboard.writes.count, writes)
+        XCTAssertEqual(try Data(contentsOf: record), previousRecord, "No late record write is authorized")
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("settings-library-message") != nil })
+        let message = try XCTUnwrap(findWidget("settings-library-message"))
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))),
+            GeneralSettingsStrings.message(for: .repeatInvalidationFailed))
+        environment.showLibrary()
+        let selection = LibraryPromptSelection(identity: .assigned(try XCTUnwrap(ULID(LinuxSyncTestTransport.personalPrompt))), relativePath: "a.md")
+        environment.libraryBrowserModel.selectPrompt(selection)
+        environment.editorModel.open(selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-save-copy").map { gtk_widget_get_sensitive($0) != 0 } == true })
+
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.settingsModel.libraryFolderPath == target.path
+                && self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertNil(environment.syncReplacementIssue)
+        XCTAssertNil(environment.generalSettingsModel.state.lastSwitchMessage)
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))), "")
+        XCTAssertNil(try LastDeliveryStore(files: RootedFileStore(root: paths.dataDirectory)).load())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+    }
+
     func testFailedTargetReadmissionDoesNotRecreateMissingOldRoot() throws {
         try assertFailedReadmissionRejectsChangedRoot(.missing)
     }
@@ -888,6 +983,23 @@ final class LinuxSyncCompositionTests: XCTestCase {
             windows = node.pointee.next
         }
         return nil
+    }
+}
+
+private final class LinuxSyncRepeatClipboard: Clipboard {
+    var writes: [String] = []
+    var hold = false
+    var pending: (@Sendable (String?) -> Void)?
+    func writeText(_ text: String) { writes.append(text) }
+    func readText(_ completion: @escaping @Sendable (String?) -> Void) {
+        if hold { pending = completion }
+        else { completion("initial clipboard") }
+    }
+    func release(_ text: String) {
+        let completion = pending
+        pending = nil
+        hold = false
+        completion?(text)
     }
 }
 
