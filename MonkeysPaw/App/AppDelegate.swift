@@ -124,6 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var syncRecoveryWaiting = false
     private var syncStarted = false
     private var pendingSyncLibraryChoice: (directory: URL, choice: URL?)?
+    private var inviteRoutingReady = false
+    private var pendingInvite: SecretValue?
     private var watcher: LibraryWatcher?
     private var libraryGeneration: UInt64 = 0
     private var libraryStarted = false
@@ -230,6 +232,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The hosted application's default delegate has production roots.
         // Only explicitly injected test graphs may access the filesystem.
         guard !isShutDown, !Self.isRunningTests || rootsAreInjected else { return }
+        defer {
+            inviteRoutingReady = true
+            presentPendingInvite()
+        }
         let log = CompositeLogSink(
             sinks: [OSLogSink(), FileLogSink(dataDirectory: dataDirectory)],
             policy: LogLevelPolicy(environmentValue: ProcessInfo.processInfo.environment["MONKEYSPAW_LOG"]))
@@ -253,6 +259,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         startSync()
         beginOnboarding()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // AppKit can deliver this before didFinishLaunching. Preserve the URI
+        // text; Core alone decodes and validates it, without redeeming it.
+        guard !Self.isRunningTests || rootsAreInjected else { return }
+        let link = urls.last { $0.scheme?.lowercased() == "monkeyspaw" }.map { SecretValue($0.absoluteString) }
+        guard let link else { return }
+        mainThread.run { [weak self] in
+            guard let self, !self.isShutDown else { return }
+            self.pendingInvite = link
+            self.presentPendingInvite()
+        }
+    }
+
+    private func presentPendingInvite() {
+        guard inviteRoutingReady, !isShutDown, let settingsWindow, let link = pendingInvite else { return }
+        pendingInvite = nil
+        cancelPickerForOwnedWindow()
+        var input = link.withValue { $0 }
+        settingsWindow.openInvite(&input)
     }
 
     func applicationWillTerminate(_ notification: Notification) { tearDown() }
@@ -341,6 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateService?.stop()
         delivery?.invalidatePendingPresentation()
         delivery?.shutdown()
+        pendingInvite = nil
         let graph = syncComposition
         graph?.retireModels()
         Task.detached { _ = await graph?.drainAndRetire() }
@@ -528,6 +556,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             makeAccount: { [weak self] in
                 guard let self, !self.isShutDown else { return nil }
                 return self.accountModel
+            }, makeInvite: { [weak self] in
+                guard let self, !self.isShutDown else { return nil }
+                return self.inviteModel
             }, makeGroups: { [weak self] in
                 guard let self, !self.isShutDown else { return nil }
                 return self.groupManagementModel
@@ -565,7 +596,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = OnboardingWindowController(model: onboarding, activeLibraryPath: libraryDirectory.path,
             defaultLibraryPath: defaultLibraryDirectory.path, mainThread: mainThread,
             activateApplication: activateApplication, folderChooser: folderChooser,
-            openSettings: { [weak self] in self?.showSettings() })
+            openSettings: { [weak self] in self?.showSettings() },
+            openInvite: { [weak self] in self?.showAccount() })
         window.onStateChange = { [weak self] in self?.presentPendingOnboarding() }
         window.onClose = { [weak self] in
             guard let self, !self.isShutDown else { return }
@@ -1441,6 +1473,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, !self.isShutDown else { return }
             self.cancelPickerForOwnedWindow()
             self.settingsWindow?.show()
+        }
+    }
+
+    func showAccount() {
+        mainThread.run { [weak self] in
+            guard let self, !self.isShutDown else { return }
+            self.cancelPickerForOwnedWindow()
+            self.settingsWindow?.showAccount()
         }
     }
 
