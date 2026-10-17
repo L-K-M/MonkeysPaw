@@ -982,6 +982,14 @@ internal class AccountViewModelTest : TemporaryFiles() {
         assertTrue(r.requests.isEmpty())
         assertEquals(0, r.secrets.reads)
         assertTrue(r.modes.isEmpty())
+        assertNull(m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
     }
 
     @Test fun `unleased stop cancels accepted registration before HTTP admission`() = runTest(dispatcher) {
@@ -1003,6 +1011,14 @@ internal class AccountViewModelTest : TemporaryFiles() {
         assertEquals(0, count(r, "/auth/register"))
         assertEquals(0, count(r, "/groups/join"))
         assertTrue(r.secrets.values.isEmpty())
+        assertNull(m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
     }
 
     @Test fun `owned stop clears presentation and releases foreground exactly once`() = runTest(dispatcher) {
@@ -1015,8 +1031,11 @@ internal class AccountViewModelTest : TemporaryFiles() {
         route(m, inviteLink); runCurrent()
         m.setPassword(password)
         val modes = r.modes.toList()
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
 
         repeat(2) { stopAccountPresentation(account, AccountStopMode.RELEASE_FOREGROUND); runCurrent() }
+        assertNull(m.state.value.busy)
         assertNull(m.state.value.invite)
         assertTrue(m.state.value.draft.password.isEmpty())
         assertEquals(modes + SyncExecutionMode.BACKGROUND, r.modes)
@@ -1036,9 +1055,12 @@ internal class AccountViewModelTest : TemporaryFiles() {
         val m = account.value
         route(m, inviteLink); runCurrent()
         val modes = r.modes.toList()
+        route(m, inviteLink)
+        assertEquals(AccountAction.STAGE_INVITE, m.state.value.busy)
 
         stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
         runCurrent()
+        assertNull(m.state.value.busy)
         assertNull(m.state.value.invite)
         assertEquals(modes, r.modes)
         val pulls = count(r, "/sync/pull")
@@ -1059,16 +1081,104 @@ internal class AccountViewModelTest : TemporaryFiles() {
         m.requestSignOut(); m.signOut()
         m.setPassword(password)
         stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
         runCurrent()
         try {
             assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
             assertTrue(m.state.value.draft.password.isEmpty())
         } finally { release.complete(Unit); runCurrent() }
+        assertNull(m.state.value.busy)
         assertNull(m.state.value.account.account)
         assertTrue(r.secrets.values.isEmpty())
         assertEquals(1, count(r, "/auth/logout"))
         assertEquals(0, count(r, "/groups/join"))
         assertEquals(0, count(r, "/auth/register"))
+    }
+
+    @Test fun `dismissing queued invite commands releases busy for the next intended operation`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink)
+        m.dismissInvite()
+        assertNull(m.state.value.busy)
+        route(m, inviteLink)
+        assertEquals(AccountAction.STAGE_INVITE, m.state.value.busy)
+        runCurrent()
+        assertTrue(m.state.value.inviteReady)
+        assertNull(m.state.value.busy)
+
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        m.acceptInvite()
+        m.dismissInvite()
+        assertNull(m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertNull(m.state.value.invite)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertTrue(r.requests.isEmpty())
+        assertTrue(r.secrets.values.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
+    }
+
+    @Test fun `cancelled command draining cleanup cannot reset a newer commands busy or password`() = runTest(dispatcher) {
+        val r = rig()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        val firstEntered = CompletableDeferred<Unit>()
+        val cleanupEntered = CompletableDeferred<Unit>()
+        val cleanupRelease = CompletableDeferred<Unit>()
+        val nextEntered = CompletableDeferred<Unit>()
+        val nextRelease = CompletableDeferred<Unit>()
+        var verifications = 0
+        r.handler = { request ->
+            when {
+                request.url.endsWith("/me") -> {
+                    if (++verifications == 1) { firstEntered.complete(Unit); awaitCancellation() }
+                    nextEntered.complete(Unit)
+                    nextRelease.await()
+                }
+                request.url.endsWith("/auth/logout") -> { cleanupEntered.complete(Unit); cleanupRelease.await() }
+            }
+            null
+        }
+        try {
+            credentials(m)
+            m.signIn(); runCurrent()
+            assertTrue(firstEntered.isCompleted)
+            stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+            assertNull(m.state.value.busy)
+            runCurrent()
+            assertTrue(cleanupEntered.isCompleted)
+            assertTrue(m.state.value.draft.password.isEmpty())
+
+            credentials(m)
+            m.signIn()
+            assertEquals(AccountAction.SIGN_IN, m.state.value.busy)
+            m.setPassword("new synthetic secret")
+            runCurrent()
+            assertEquals(1, count(r, "/auth/login"))
+            cleanupRelease.complete(Unit); runCurrent()
+            assertTrue(nextEntered.isCompleted)
+            assertEquals(AccountAction.SIGN_IN, m.state.value.busy)
+            assertEquals("new synthetic secret", m.state.value.draft.password)
+        } finally {
+            cleanupRelease.complete(Unit)
+            nextRelease.complete(Unit)
+            runCurrent()
+        }
+        assertNull(m.state.value.busy)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertEquals(AccountCondition.ACTIVE, m.state.value.condition)
+        assertEquals(2, count(r, "/auth/login"))
+        assertEquals(1, count(r, "/auth/logout"))
+        assertEquals(0, count(r, "/auth/register"))
+        assertEquals(0, count(r, "/groups/join"))
     }
 
     private companion object {

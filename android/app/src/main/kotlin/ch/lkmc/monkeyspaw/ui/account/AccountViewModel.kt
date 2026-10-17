@@ -72,7 +72,7 @@ internal class AccountViewModel @Inject constructor(
         clearInvite()
         mutableState.value = state.value.copy(draft = state.value.draft.copy(password = ""),
             revokeConfirmation = null, signOutConfirmation = false, includeConfirmation = false)
-        if (state.value.busy != AccountAction.SIGN_OUT) command?.cancel()
+        cancelCommand()
     }
 
     fun cancel() { hide() }
@@ -157,7 +157,7 @@ internal class AccountViewModel @Inject constructor(
 
     fun dismissInvite() {
         clearInvite()
-        if (state.value.busy == AccountAction.STAGE_INVITE || state.value.busy == AccountAction.ACCEPT_INVITE) command?.cancel()
+        if (state.value.busy == AccountAction.STAGE_INVITE || state.value.busy == AccountAction.ACCEPT_INVITE) cancelCommand()
     }
 
     private fun clearInvite(message: Int? = null) {
@@ -343,6 +343,16 @@ internal class AccountViewModel @Inject constructor(
         val settings = settingsMutex.withLock { repository.tlsSettings() }
         mutableState.value = state.value.copy(holds = holds, selectedHolds = state.value.selectedHolds.intersect(holds.map { it.identity }.toSet()),
             trust = settings?.takeIf { it.server == state.value.server }?.trust ?: SyncTLSTrust.SYSTEM)
+    }
+
+    private fun cancelCommand() {
+        if (state.value.busy == null || state.value.busy == AccountAction.SIGN_OUT) return
+        // A job cancelled before first dispatch never enters run's finally.
+        ++commandVersion
+        command?.cancel()
+        mutableState.value = state.value.copy(busy = null)
+        projectCondition()
+        if (repository.reports.value?.enabled == true) updateForeground()
     }
 
     private fun run(action: AccountAction, replace: Boolean = false, body: suspend () -> Unit) {
