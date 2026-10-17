@@ -43,7 +43,8 @@ extension AppDelegate: NSMenuItemValidation {
 
     private func libraryCommandTarget(in candidate: NSWindow?) -> LibraryViewState? {
         guard let window = libraryWindow?.window, candidate === window, window.isVisible,
-              window.attachedSheet == nil, libraryWindow?.presentation.fileCommandRequest == nil else { return nil }
+              window.attachedSheet == nil, libraryWindow?.presentation.fileCommandRequest == nil,
+              libraryWindow?.presentation.isScopeDropPending == false else { return nil }
         return libraryWindow?.presentation
     }
 }

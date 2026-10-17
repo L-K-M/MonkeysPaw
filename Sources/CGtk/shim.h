@@ -30,6 +30,26 @@
 #define MONKEYSPAW_CGTK_SHIM_H
 
 #include <gtk/gtk.h>
+#include <fcntl.h>
+#include <linux/stat.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+/* Swift cannot call variadic syscall; never replace an occupied sync target. */
+static inline int mp_rename_exclusive(const char *source, const char *destination) {
+    return (int)syscall(SYS_renameat2, AT_FDCWD, source, AT_FDCWD, destination, RENAME_NOREPLACE);
+}
+
+/* Birth time distinguishes an immediately reused inode without using mtime. */
+static inline int mp_directory_birth(const char *path, int64_t *seconds, uint32_t *nanos) {
+    struct statx info;
+    if (syscall(SYS_statx, AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_BTIME, &info) != 0
+        || !(info.stx_mask & STATX_BTIME)) return -1;
+    *seconds = info.stx_btime.tv_sec;
+    *nanos = info.stx_btime.tv_nsec;
+    return 0;
+}
 
 /* GtkTextTag properties require a C variadic; the buffer's table owns the tag. */
 static inline GtkTextTag *mp_text_buffer_background_tag(GtkTextBuffer *buffer,
