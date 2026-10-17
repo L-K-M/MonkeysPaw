@@ -27,6 +27,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
          makeAssistant: LibraryViewState.AssistantFactory? = nil,
          scheduler: MonkeysPawCore.Scheduler? = nil,
          conflictProvider: LibraryViewState.ConflictProvider? = nil,
+         syncStatus: SyncStatusViewState? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
@@ -35,7 +36,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         self.importChooser = importChooser
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
             mainThread: mainThread, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
-            conflictProvider: conflictProvider,
+            conflictProvider: conflictProvider, syncStatus: syncStatus,
             revealLibrary: revealLibrary)
         super.init()
         connectImportChooser()
@@ -52,13 +53,13 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
                 imports: LibraryImportViewState? = nil, makeAssistant: LibraryViewState.AssistantFactory? = nil,
-                conflictProvider: LibraryViewState.ConflictProvider? = nil) {
+                conflictProvider: LibraryViewState.ConflictProvider? = nil, syncStatus: SyncStatusViewState? = nil) {
         guard !isTornDown else { return }
         endDialog()
         dismissedConflict = nil
         closeRequested = false
         presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available,
-            imports: imports, makeAssistant: makeAssistant, conflictProvider: conflictProvider)
+            imports: imports, makeAssistant: makeAssistant, conflictProvider: conflictProvider, syncStatus: syncStatus)
         connectImportChooser()
     }
 

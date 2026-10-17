@@ -44,6 +44,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var assistantSaveMessage: String?
     @Published private(set) var quoteHighlight: LibrarySourceHighlight?
     @Published private(set) var conflict: LibraryConflictViewState?
+    @Published private(set) var syncStatus: SyncStatusViewState?
     @Published private(set) var scopeDragEpoch = UUID()
     @Published private(set) var isScopeDropPending = false
     var onEditorChange: (() -> Void)?
@@ -76,6 +77,7 @@ final class LibraryViewState: ObservableObject {
          mainThread: MainThread, imports: LibraryImportViewState? = nil,
          makeAssistant: AssistantFactory? = nil, scheduler: MonkeysPawCore.Scheduler? = nil,
          conflictProvider: ConflictProvider? = nil,
+         syncStatus: SyncStatusViewState? = nil,
          revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
@@ -89,12 +91,13 @@ final class LibraryViewState: ObservableObject {
         self.revealLibrary = revealLibrary
         self.makeAssistant = makeAssistant
         self.conflictProvider = conflictProvider
+        self.syncStatus = syncStatus
         self.scheduler = scheduler
         observeModel()
         refresh()
     }
 
-    deinit { assistant?.retire(); conflict?.retire(); detachObservers() }
+    deinit { assistant?.retire(); conflict?.retire(); syncStatus?.retire(); detachObservers() }
 
     var isResolvingConflict: Bool { conflict?.isResolving == true }
     var canEditSource: Bool { isActive && libraryAvailable && !isResolvingConflict && editorState.canEdit }
@@ -228,11 +231,14 @@ final class LibraryViewState: ObservableObject {
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
                 imports: LibraryImportViewState? = nil, makeAssistant: AssistantFactory? = nil,
-                conflictProvider: ConflictProvider? = nil) {
+                conflictProvider: ConflictProvider? = nil, syncStatus: SyncStatusViewState? = nil) {
         guard isActive else { return }
         retireScopeDrags()
         retireAssistant()
         retireConflict()
+        self.syncStatus?.retire()
+        self.syncStatus = syncStatus
+        if isPresented { syncStatus?.show() }
         self.makeAssistant = makeAssistant
         self.conflictProvider = conflictProvider
         assistantSaveMessage = nil
@@ -266,6 +272,7 @@ final class LibraryViewState: ObservableObject {
         retireAssistant()
         retireConflict()
         conflictProvider = nil
+        syncStatus?.retire()
         imports?.deactivate()
         isActive = false
         bindingRevision &+= 1
@@ -284,6 +291,7 @@ final class LibraryViewState: ObservableObject {
 
     func setLibraryAvailable(_ available: Bool) {
         guard isActive else { return }
+        syncStatus?.refreshBinding()
         let becameAvailable = available && !libraryAvailable
         libraryAvailable = available
         imports?.setLibraryAvailable(available)
@@ -297,6 +305,7 @@ final class LibraryViewState: ObservableObject {
     func didShow() {
         guard isActive else { return }
         isPresented = true
+        syncStatus?.show()
         lastClosedPromptPath = nil
         refresh()
         focusRevision &+= 1
@@ -305,6 +314,7 @@ final class LibraryViewState: ObservableObject {
 
     func didHide() {
         isPresented = false
+        syncStatus?.hide()
         retireScopeDrags()
         retireConflict()
     }
