@@ -27,6 +27,43 @@ internal class FillBoundaryTest {
     }
 
     @Test
+    fun `IME graph has no scheduler and Application resolves its qualified factory only on OS request`() {
+        val application = root.resolve("MonkeysPawApplication.kt").readText()
+        assertTrue(application.contains("Application(), Configuration.Provider"))
+        assertTrue(application.contains("@Inject @SyncWorkerFactory internal lateinit var workerFactory: Lazy<WorkerFactory>"))
+        val onCreate = application.substringAfter("override fun onCreate()")
+        assertFalse(Regex("\\b(?:workerFactory|workManagerConfiguration|getInstance|SyncWorkScheduler)\\b").containsMatchIn(onCreate))
+        val module = root.resolve("di/AppModule.kt").readText()
+        val factory = module.substringAfter("fun syncWorkerFactory(").substringBefore("@Provides")
+        assertTrue(factory.contains("HiltWorkerFactory"))
+        assertFalse(Regex("\\b(?:SyncWorkScheduler|AndroidSyncRepository|SecretStore|HttpTransport)\\b").containsMatchIn(factory))
+        val worker = root.resolve("data/SyncWorker.kt").readText()
+        assertTrue(worker.contains("private val scheduler: Lazy<SyncWorkScheduler>"))
+        for (path in listOf("data/AndroidSyncStartup.kt", "data/LibraryRepository.kt", "ui/fill/FillViewModelFactory.kt",
+            "ime/ImeInputPolicy.kt", "entry/FillActivity.kt", "entry/ProcessTextActivity.kt")) {
+            assertFalse(Regex("\\b(?:SyncWorkHooks|SyncWorkPolicy|SyncWorkSession|WorkerFactory|SyncWorkScheduler|WorkManager)\\b")
+                .containsMatchIn(root.resolve(path).readText()), path)
+        }
+    }
+
+    @Test
+    fun `native work is connected unique and appends successors with API safe quota fallback`() {
+        val queue = root.resolve("data/SyncWorkScheduler.kt").readText()
+        assertTrue(queue.contains("setRequiredNetworkType(NetworkType.CONNECTED)"))
+        assertTrue(queue.contains("ExistingPeriodicWorkPolicy.KEEP"))
+        assertTrue(queue.contains("ExistingWorkPolicy.APPEND_OR_REPLACE"))
+        assertTrue(queue.contains("OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST"))
+        assertTrue(queue.contains("if (request.delayMillis > 0) builder.setInitialDelay"))
+        assertTrue(queue.contains("else if (request.expedited) builder.setExpedited"))
+        assertTrue(queue.contains("WorkManager.getInstance(context)"))
+        val worker = root.resolve("data/SyncWorker.kt").readText()
+        assertFalse(worker.contains("Result.retry()"))
+        assertFalse(queue.contains("ExistingWorkPolicy.REPLACE"))
+        val input = queue.substringAfter("private fun input(").substringBefore("companion object")
+        assertEquals(listOf("putString", "putLong"), Regex("\\bput[A-Z][a-zA-Z]+(?=\\()").findAll(input).map { it.value }.toList())
+    }
+
+    @Test
     fun `handoff route carries only an opaque token and retained model avoids consuming it after rotation`() {
         val route = root.resolve("entry/FillRoute.kt").readText()
         assertEquals(1, Regex("\\bputExtra\\(").findAll(route).count())

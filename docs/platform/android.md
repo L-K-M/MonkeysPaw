@@ -1,5 +1,8 @@
 # Android acceptance
 
+For installation and merged app behavior, see [README.android.md](../../README.android.md).
+This link changes no acceptance result below; all earlier owner rows remain.
+
 ## M8 acceptance record
 
 **M8 is code-complete, but NOT closed.** K1–K19 are merged. K20's owner
@@ -890,3 +893,35 @@ Write/Review/Improve/model-list exchanges; both full corpus gates still consume
 every owned category and reject unread expectations. Local results belong in
 the slice handoff; the main CI and owner rows above remain NOT RUN until
 actual evidence is recorded.
+## Android sync scheduling (M10 Z20): NOT RUN
+
+WorkManager adds WAKE_LOCK, ACCESS_NETWORK_STATE, RECEIVE_BOOT_COMPLETED and
+FOREGROUND_SERVICE to the merged manifest's existing INTERNET permission.
+The merged-manifest gate pins those five permissions and the exact WorkManager
+and Room components, including system-protected exported components. Its
+default initializer remains removed alongside OkHttp and ProfileInstaller;
+component-only launch still performs local recovery without scheduling sync.
+This extends the permission baseline recorded for the earlier N8-only build.
+
+JVM policy and repository tests establish generation/due admission, coalescing,
+bounded retry and cancellation. They do not establish OS job timing. WorkManager's
+15-minute periodic interval is a minimum: network constraints, Doze, standby and
+quota can delay dispatch. API 31+ expedited saves fall back to ordinary work when
+quota is exhausted. Older APIs and delayed saves always use ordinary work.
+Force-stop prevents jobs until the user launches the app again; no exact delivery
+time or scheduling while force-stopped is promised.
+
+Repeat these checks through Z21's Account/Library lifecycle on the minified release
+APK. Record commit, APK hash/signer, device/API, server/desktop versions, tester/date
+and PASS/FAIL/BLOCKED evidence. Required NOT RUN rows keep M10 open.
+
+| Check | Status |
+|---|---|
+| Signed-out Application/IME/delivery launch schedules no sync, reads no token and sends no HTTP | NOT RUN |
+| Signed-in background periodic work requires connectivity, survives reboot and respects Doze/standby delay | NOT RUN |
+| Saves coalesce; API 26-30 uses ordinary work; API 31+ expedited quota exhaustion falls back without a foreground-service crash | NOT RUN |
+| Leave foreground during debounce, kill/restart, then reconnect: due work resumes without losing the save | NOT RUN |
+| A save during a running pass gets a successor; foreground/worker overlap sends no duplicate pass | NOT RUN |
+| Cancel a background pass: HTTP cancels and durable pending work survives | NOT RUN |
+| Sign out or receive 401, restart/reboot: old jobs do no HTTP; failed login keeps the stop and successful reauthentication clears it | NOT RUN |
+| Force-stop suppresses dispatch until manual launch; minified Hilt worker factory resolves after reboot | NOT RUN |

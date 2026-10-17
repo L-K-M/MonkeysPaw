@@ -111,7 +111,8 @@ and [§13.1](../plan/13-testing.md#131-sync-tests) define execution:
 
 - Swift: [SyncScenarioTests.testEverySyncFixtureExecutesAgainstTheRouter](../../server/Tests/MonkeysPawSyncIntegrationTests/SyncScenarioTests.swift)
   owns all 87 through Core and the real Hummingbird router/auth/services/repositories
-  on migrated temporary SQLite. Existing server CI runs this suite once.
+  on migrated temporary SQLite. The existing server-suite command runs it once
+  per selected server job; PR path selection can skip that job.
 - Kotlin: [ScenarioRunnerTest](../../android/core/src/syncIntegrationTest/kotlin/ch/lkmc/monkeyspaw/core/integration/ScenarioRunnerTest.kt)
   owns all 87 in `:core:syncIntegrationTest` through the production engine/shared
   OkHttp driver and same-head live server. The mandatory [android-sync CI job](../../.github/workflows/ci.yml)

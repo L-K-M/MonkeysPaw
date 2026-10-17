@@ -1,5 +1,12 @@
 # CI and releases
 
+For installation and first use, see the [platform guides](README.md#install).
+[Security](SECURITY.md) covers trust/signing and confidential reporting;
+[Privacy](PRIVACY.md) covers requests and retention. The
+[M7 ledger](docs/platform/m7-acceptance.md) tracks owner prerequisites and
+installed-artifact checks separately from CI. No owner acceptance is inferred
+from the pipeline description below.
+
 `.github/workflows/ci.yml` runs on main pushes, all PRs and manual dispatches,
 and is callable by the release workflow from the same commit. It builds Core
 without GTK on Linux, runs Core/Linux tests and the X11 smoke test, tests Core
@@ -51,6 +58,14 @@ Ubuntu runners, bounded bwrap/user-namespace setup, read-only tokens and
 cleanup that restores the original sysctl and removes sandbox state. GNOME 50
 unavailability or ABI failure blocks the run; no runtime fallback is selected.
 
+Install or replace the downloaded bundle using the
+[Linux guide](README.linux.md#flatpak); a single-file bundle supplies no app
+update feed. The desktop update checker opens a release page only. It does
+not download/install packages or invoke a package manager. macOS packaging
+records the full version in `MonkeysPawReleaseVersion` before signing while
+keeping the numeric `CFBundleShortVersionString`; the artifact gate checks
+both so beta-to-stable comparisons retain the suffix.
+
 `android-build` runs after tests and version verification, in parallel with
 Linux packaging. It uses the same pinned wrapper validation, Temurin 17,
 SDK packages and Gradle setup as ordinary CI. JVM tests, debug lint and R8
@@ -99,6 +114,9 @@ a draft with all nine assets, downloads them again from the release, and
 byte-compares each before publishing. A failed upload or
 comparison leaves the release unpublished. Hyphenated tags are prereleases
 and are explicitly excluded from `latest`.
+Generated release notes link to `CHANGELOG.md` at the full release tag, retain
+Android checksum/sideload and public-signer guidance, and include Flatpak
+checksum/install instructions and Linux x86_64/GNOME Platform 50 requirements.
 Assembly waits for both native image builds. Android failure reports use
 `MonkeysPaw-android-release-reports`, outside the release asset glob and
 distinct from ordinary CI reports, so retained reports cannot contaminate
