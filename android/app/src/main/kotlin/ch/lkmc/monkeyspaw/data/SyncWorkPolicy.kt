@@ -123,7 +123,13 @@ internal class SyncWorkPolicy(
                 if (foreground[owner] != admission) return
                 reconcile(store.read())
             }
-            if (entry.needsSignIn) { session.requireSignIn(); return }
+            if (entry.needsSignIn) {
+                session.requireSignIn()
+                mutex.withLock {
+                    if (foreground[owner] == admission) foreground.remove(owner)
+                }
+                return
+            }
             session.resume()
             mutex.withLock {
                 // A leaving screen or newer entry owns the mode after a suspended credential resume.

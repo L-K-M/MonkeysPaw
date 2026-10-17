@@ -558,6 +558,41 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
         } finally { reopened.close() }
     }
 
+    @Test fun `stopped Account entry permits native work after login without leaving the screen`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher, scheduled = true)
+        r.login()
+        r.respond = { if (it.url.endsWith("/sync/pull")) HttpResponse(401,
+            body = ErrorResponse.codec.encode(ErrorResponse.Failure(FailureCode.UNAUTHORIZED))) else null }
+        r.scheduler.dispatch(r.requestsForWork.single())
+        runCurrent()
+        assertTrue(r.workStore.read().needsSignIn)
+        val stoppedGeneration = r.workStore.read().generation
+        r.close()
+        val reopened = Rig(dispatcher, r.secrets, scheduled = true)
+        try {
+            reopened.scheduler.enter(SyncForegroundOwner.ACCOUNT)
+            runCurrent()
+            assertTrue(reopened.requests.isEmpty())
+            reopened.login()
+            runCurrent()
+            val pending = reopened.workStore.read()
+            assertFalse(pending.needsSignIn)
+            assertTrue(pending.pending)
+            assertNotEquals(stoppedGeneration, pending.generation)
+            val runnable = assertNotNull(reopened.requestsForWork.lastOrNull())
+            assertEquals(pending.generation, runnable.generation)
+            reopened.scheduler.dispatch(runnable)
+            runCurrent()
+            assertEquals(1, reopened.requests.count { it.url.endsWith("/sync/pull") })
+            assertNotNull(reopened.sync.reports.value!!.lastSuccess)
+            assertFalse(reopened.workStore.read().pending)
+            reopened.scheduler.leave(SyncForegroundOwner.ACCOUNT)
+            runCurrent()
+            assertEquals(1, reopened.requests.count { it.url.endsWith("/sync/pull") })
+        } finally { reopened.close() }
+    }
+
     @Test fun `changed checked flush failure leaves every repository observer running`() = runTest {
         val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
         try {
