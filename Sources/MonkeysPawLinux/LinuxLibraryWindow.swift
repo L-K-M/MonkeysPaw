@@ -225,6 +225,8 @@ final class LinuxLibraryWindow {
             self.render()
         }
         commands.bind(editor: editor, browser: browser)
+        renderedSections = []
+        renderedRowsSection = nil
         historyPrompt = nil
         historyReloadPending = false
         if let imports { importView?.bind(imports) }
@@ -662,6 +664,9 @@ final class LinuxLibraryWindow {
                 if case .folder(let path) = section.id { accessibleTitle = path.string }
                 else { accessibleTitle = section.title }
                 mp_accessible_label(label, "\(accessibleTitle) (\(section.count))")
+                if browser?.moveDestination(for: section.id) != nil {
+                    commands.installDrop(on: label, section: section.id)
+                }
                 gtk_list_box_append(mp_list_box(sidebar), label)
             }
             select(in: sidebar, position: state.sections.firstIndex { $0.id == state.selectedSection }, focus: hadFocus)
@@ -673,7 +678,8 @@ final class LinuxLibraryWindow {
 
     private func renderRows(_ state: LibraryBrowserState) {
         let hadFocus = containsFocus(list)
-        if renderedRows != state.rows || (renderedRowsSection == .recent) != (state.selectedSection == .recent) {
+        if renderedRowsSection == nil || renderedRows != state.rows
+            || (renderedRowsSection == .recent) != (state.selectedSection == .recent) {
             clear(list)
             renderedRows = state.rows
             for row in state.rows {
@@ -689,6 +695,7 @@ final class LinuxLibraryWindow {
                 }
                 if !badges.isEmpty { gtk_box_append(mp_box(content), rowLabel(badges.joined(separator: " · "))) }
                 mp_accessible_label(content, ([title, row.relativePath.string] + badges).joined(separator: ", "))
+                commands.installDrag(on: content, selection: row.selection)
                 gtk_list_box_append(mp_list_box(list), content)
             }
         }

@@ -272,8 +272,15 @@ final class SyncGroupIntegrationTests: XCTestCase {
 }
 
 private final class GroupIntegrationClipboard: Clipboard {
-    var writes: [String] = []
-    func writeText(_ text: String) { writes.append(text) }
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    var writes: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return recorded
+    }
+    func writeText(_ text: String) {
+        lock.lock(); recorded.append(text); lock.unlock()
+    }
     func readText(_ completion: @escaping @Sendable (String?) -> Void) { completion(writes.last) }
 }
 
