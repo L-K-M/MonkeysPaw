@@ -39,11 +39,12 @@ It does transmit prompt source, so defaults or sensitive text written into a
 template are included. The server operator can read it; there is no end-to-end
 encryption. Desktop Account, invite handling, sync status, groups and conflict
 resolution are available on main. Automated device-token privacy fixtures
-passed both native CI suites. The desktop sync guide and checks of deployed
-servers, signed installations, real keyrings and physical devices remain
-M6 Y34 work. Android's sync repository and background scheduling foundations
-are on main, but its connected Account/group/invite/conflict-resolution UI
-is not yet available. Android sync acceptance remains M10 Z27 work. No Android
+passed both native CI suites. The [desktop sync guide](docs/platform/sync.md)
+records automated proof and open checks of deployed servers, signed
+installations, real keyrings and physical devices, which remain M6 Y34 work.
+Android's sync repository, background scheduling and Account/status screens
+are on main; Library sync, group, invite and conflict-resolution UI integration
+and Android sync acceptance remain M10 Z27 work. No Android
 desktop-style update checker is claimed. See
 [Android usage](README.android.md) and [security boundaries](SECURITY.md).
 

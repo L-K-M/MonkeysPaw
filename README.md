@@ -53,10 +53,12 @@ Follow the [Docker Compose hosting, TLS and backup guide](docs/platform/server.m
 The operator can read server prompts and backups; there is no end-to-end
 encryption. Desktop Account, invite handling, sync status, groups and conflict
 resolution are available on main. Automated device-token privacy fixtures
-passed native CI. The desktop sync guide and checks of deployed servers,
-signed installations, real keyrings and physical devices remain M6 Y34 work.
-Android's repository and background scheduling foundations are on main;
-connected sync UI and phone/desktop acceptance remain M10 Z27 work, tracked in
+passed native CI. The [desktop sync guide](docs/platform/sync.md) records the
+automated proof and open checks of deployed servers, signed installations,
+real keyrings and physical devices, which remain M6 Y34 work.
+Android's repository, background scheduling and Account/status screens are
+on main; Library sync, group, invite and conflict-resolution UI integration
+and phone/desktop acceptance remain M10 Z27 work, tracked in
 [PLAN.md](PLAN.md).
 
 ## Troubleshooting

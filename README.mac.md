@@ -71,6 +71,7 @@ See [macOS procedures](docs/platform/macos.md#m7-current-desktop-procedures),
 [Assistant setup](docs/platform/assistant.md), [hosting](docs/platform/server.md#host-the-sync-server)
 and [build/release prerequisites](CICD.md). Desktop Account, invites, sync
 status, groups and conflict resolution are available on main. Automated
-device-token privacy fixtures passed native CI. The sync guide and owner
-checks of deployed servers, signed installations and real Keychain consent
-remain M6 Y34 work.
+device-token privacy fixtures passed native CI. The
+[desktop sync guide](docs/platform/sync.md) records automated proof and owner
+checks of deployed servers, signed installations and real Keychain consent;
+those owner checks remain M6 Y34 work.
