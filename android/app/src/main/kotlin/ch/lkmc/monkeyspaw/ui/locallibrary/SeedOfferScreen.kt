@@ -18,6 +18,7 @@ internal fun SeedOfferScreen(
     onDecline: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    onSettings: (() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(stringResource(R.string.local_library_title), style = MaterialTheme.typography.headlineMedium)
@@ -39,6 +40,7 @@ internal fun SeedOfferScreen(
                 Button(onClick = onRefresh) {
                     Text(stringResource(if (state.partial == null) R.string.retry else R.string.continue_to_library))
                 }
+                onSettings?.let { TextButton(onClick = it) { Text(stringResource(R.string.account_settings)) } }
             }
         }
     }

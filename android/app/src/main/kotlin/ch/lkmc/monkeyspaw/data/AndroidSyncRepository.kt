@@ -139,6 +139,8 @@ internal class AndroidSyncRepository(
         settings.selectSyncServer(server).syncTls
     }
 
+    suspend fun tlsSettings(): SyncTlsSettings? = withContext(io) { settings.read().syncTls }
+
     suspend fun setTlsTrust(server: SyncServerURL, trust: SyncTLSTrust): SyncTlsSettings = withContext(io) {
         synchronized(lifecycleLock) { checkActive() }
         checkNotNull(settings.setSyncTlsTrust(server, trust).syncTls)

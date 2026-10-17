@@ -4,16 +4,20 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
 import ch.lkmc.monkeyspaw.data.AndroidKeyboardTileSetup
 import ch.lkmc.monkeyspaw.data.ForegroundProfileInstaller
+import ch.lkmc.monkeyspaw.data.SyncForegroundOwner
+import ch.lkmc.monkeyspaw.ui.account.*
 import ch.lkmc.monkeyspaw.entry.FillActivity
 import ch.lkmc.monkeyspaw.entry.FillLauncher
 import ch.lkmc.monkeyspaw.ui.editor.EditorScreen
@@ -41,6 +45,9 @@ import ch.lkmc.monkeyspaw.ui.setup.SettingsScreen
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
+/** Launcher-only routes. Entry activities keep their local Library/Fill graph. */
+internal enum class MainDestination { LIBRARY, ACCOUNT, SYNC_DETAILS }
+
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject internal lateinit var profiles: ForegroundProfileInstaller
@@ -53,6 +60,10 @@ class MainActivity : ComponentActivity() {
     private val assistantWrite: WriteViewModel by viewModels()
     private val assistantReview: ReviewViewModel by viewModels()
     private val assistantImprove: ImproveViewModel by viewModels()
+    private val account: AccountViewModel by viewModels()
+    private var destination by mutableStateOf(MainDestination.LIBRARY)
+    private var foreground by mutableStateOf(false)
+    private var ownsSync = false
     private val fillLauncher = FillLauncher { path ->
         startActivity(Intent(this, FillActivity::class.java).putExtra(FillActivity.promptPathExtra, path))
     }
@@ -76,8 +87,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        foreground = true
         if (seedOffer.state.value == SeedOfferUiState.Ready) library.refresh() else seedOffer.refresh()
         editor.refresh()
+    }
+
+    override fun onStop() {
+        foreground = false
+        if (ownsSync) account.setForeground(null)
+        super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,9 +110,30 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                Scaffold { padding ->
-                    val startup = seedOffer.state.collectAsStateWithLifecycle().value
-                    val setupState = setup.state.collectAsStateWithLifecycle().value
+                val startup = seedOffer.state.collectAsStateWithLifecycle().value
+                val setupState = setup.state.collectAsStateWithLifecycle().value
+                val editing = editor.state.collectAsStateWithLifecycle().value
+                val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
+                val writing = assistantWrite.state.collectAsStateWithLifecycle().value
+                val reviewing = assistantReview.state.collectAsStateWithLifecycle().value
+                val improving = assistantImprove.state.collectAsStateWithLifecycle().value
+                val ready = !setupState.loading && !setupState.visible &&
+                    setupState.error != KeyboardTileSetupError.LOAD && !setupState.settingsOpen
+                val sync = if (ready && (startup == SeedOfferUiState.Ready || destination != MainDestination.LIBRARY))
+                    account.state.collectAsStateWithLifecycle().value else null
+                LaunchedEffect(startup, destination, foreground, ready) {
+                    if (sync != null) {
+                        ownsSync = true
+                        account.setForeground(if (!foreground) null
+                            else if (destination == MainDestination.ACCOUNT) SyncForegroundOwner.ACCOUNT else SyncForegroundOwner.LIBRARY)
+                    } else if (ownsSync) account.setForeground(null)
+                }
+                BackHandler(enabled = ready && destination != MainDestination.LIBRARY) { navigate(MainDestination.LIBRARY) }
+                Scaffold(bottomBar = {
+                    if (sync != null && destination == MainDestination.LIBRARY && !editing.isOpen &&
+                        !assistant.isOpen && !writing.isOpen && !reviewing.isOpen && !improving.isOpen)
+                        SyncFooter(sync.sync, onDetails = { navigate(MainDestination.SYNC_DETAILS) })
+                }) { padding ->
                     if (setupState.loading || setupState.visible || setupState.error == KeyboardTileSetupError.LOAD) {
                         KeyboardTileSetupScreen(state = setupState, onEnable = setup::enableKeyboard,
                             onSelect = setup::selectKeyboard, onAddTile = setup::addTile,
@@ -103,12 +142,22 @@ class MainActivity : ComponentActivity() {
                     } else if (setupState.settingsOpen) {
                         SettingsScreen(onKeyboardTileSetup = setup::reopen, onBack = setup::closeSettings,
                             modifier = Modifier.padding(padding))
+                    } else if (destination == MainDestination.ACCOUNT) {
+                        AccountScreen(state = checkNotNull(sync), onServer = account::setServer, onUsername = account::setUsername,
+                            onPassword = account::setPassword, onDeviceName = account::setDeviceName,
+                            onSignIn = account::signIn, onRefresh = account::refresh, onCancel = account::cancel,
+                            onBack = { navigate(MainDestination.LIBRARY) }, onTrust = account::setTrust,
+                            onRequestSignOut = account::requestSignOut, onSignOut = account::signOut,
+                            onRequestRevoke = account::requestRevoke, onRevoke = account::revokeDevice,
+                            onSelectHold = account::selectHold, onRequestInclude = account::requestInclude,
+                            onInclude = account::includeSelected, onDismissConfirmation = account::dismissConfirmation,
+                            onSyncNow = account::syncNow, onSyncDetails = { navigate(MainDestination.SYNC_DETAILS) },
+                            onRecover = account::recover, modifier = Modifier.padding(padding))
+                    } else if (destination == MainDestination.SYNC_DETAILS) {
+                        SyncStatusScreen(state = checkNotNull(sync), onSyncNow = account::syncNow, onAccount = ::openAccount,
+                            onBack = { navigate(MainDestination.LIBRARY) }, onRecover = account::recover,
+                            modifier = Modifier.padding(padding))
                     } else if (startup == SeedOfferUiState.Ready) {
-                        val editing = editor.state.collectAsStateWithLifecycle().value
-                        val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
-                        val writing = assistantWrite.state.collectAsStateWithLifecycle().value
-                        val reviewing = assistantReview.state.collectAsStateWithLifecycle().value
-                        val improving = assistantImprove.state.collectAsStateWithLifecycle().value
                         if (improving.isOpen) {
                             ImproveScreen(state = improving, onInstruction = assistantImprove::editInstruction,
                                 onEffort = assistantImprove::setEffort, onImprove = assistantImprove::improve,
@@ -171,16 +220,24 @@ class MainActivity : ComponentActivity() {
                             onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) },
                             onCreate = { assistantImprove.close(); assistantReview.close(); editor.createDraft() },
                             onSettings = setup::openSettings,
+                            onAccount = ::openAccount,
                             onAssistantSettings = assistantSettings::open,
                             onWrite = { assistantImprove.close(); assistantReview.close(); assistantWrite.open() },
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,
-                            onRefresh = seedOffer::refresh, modifier = Modifier.padding(padding))
+                            onRefresh = seedOffer::refresh, modifier = Modifier.padding(padding), onSettings = ::openAccount)
                     }
                 }
             }
         }
+    }
+
+    internal fun openAccount() = navigate(MainDestination.ACCOUNT)
+
+    private fun navigate(next: MainDestination) {
+        if (destination == MainDestination.ACCOUNT && next != destination) account.hide()
+        destination = next
     }
 
     private fun openFill(selection: LibrarySelection) {
