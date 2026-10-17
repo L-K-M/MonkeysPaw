@@ -819,10 +819,12 @@ final class LinuxEnvironment {
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
             let graph = libraryGraph
+            // Browsing alone must not start account-model loading work.
             currentLibraryWindow = LinuxLibraryWindow(application: application,
                 browser: libraryBrowserModel, editor: editorModel,
                 imports: .init(state: libraryImportState, chooser: importChooser),
-                assistant: { [weak graph] in graph?.assistant }, openFolder: { [weak self] in
+                assistant: { [weak graph] in graph?.assistant },
+                conflict: { [weak graph] in graph?.sync?.conflict }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
@@ -1251,7 +1253,7 @@ final class LinuxEnvironment {
         if resumeSync { startSync(in: graph) }
         currentSettingsWindow?.rebindAccount()
         currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
-            assistant: { [weak graph] in graph?.assistant })
+            assistant: { [weak graph] in graph?.assistant }, conflict: { [weak graph] in graph?.sync?.conflict })
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.

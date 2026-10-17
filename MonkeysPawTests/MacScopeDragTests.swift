@@ -134,8 +134,33 @@ final class MacScopeDragTests: XCTestCase {
         let replacement = Data("---\nid: \"\(MacScopeTransport.seed)\"\nformat: 2\n---\nFuture".utf8)
         try h.files.write(replacement, at: "Folder/seed.md")
         XCTAssertTrue(h.drop(provider, onto: .group(h.team)))
-        XCTAssertTrue(h.spin { !h.view.isScopeDropPending })
+        XCTAssertTrue(h.spin {
+            !h.view.isScopeDropPending && h.view.editorState.status != .loading
+                && h.view.editorState.prompt?.relativePath == "Folder/seed.md"
+                && h.view.commandMessage == LibraryCommandStrings.moveUnavailable
+        }, String(describing: h.view.editorState.status))
         XCTAssertEqual(h.view.editorState.prompt?.relativePath, "Folder/seed.md")
+        XCTAssertFalse(h.view.editorState.canEdit)
+        XCTAssertNotNil(h.view.editorState.readOnlyReason)
+        XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moveUnavailable)
+        XCTAssertEqual(try h.files.read(at: "Folder/seed.md"), replacement)
+        XCTAssertNil(try h.files.stamp(at: "Groups/Team/seed.md"))
+    }
+
+    func testRepeatedFilterPreservesDropUntilReadOnlySourceLoads() throws {
+        let h = try MacScopeDragHarness()
+        defer { h.close() }
+        let held = MacScopeHeldProvider(bytes: try h.bytes(from: h.provider(path: "Folder/seed.md")))
+        let replacement = Data("---\nid: \"\(MacScopeTransport.seed)\"\nformat: 2\n---\nFuture".utf8)
+        try h.files.write(replacement, at: "Folder/seed.md")
+        XCTAssertTrue(h.drop(held.provider, onto: .group(h.team)))
+        XCTAssertTrue(h.spin { held.isRequested })
+        // The text binding can repeat its value while the provider is loading.
+        h.view.setFilter(h.view.snapshot.filter)
+        h.view.setFilter(h.view.snapshot.filter)
+        XCTAssertTrue(h.view.isScopeDropPending)
+        held.release()
+        try h.waitForPath("Folder/seed.md")
         XCTAssertFalse(h.view.editorState.canEdit)
         XCTAssertNotNil(h.view.editorState.readOnlyReason)
         XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moveUnavailable)
@@ -203,10 +228,10 @@ final class MacScopeDragTests: XCTestCase {
         XCTAssertFalse(h.drop(provider, onto: .all))
     }
 
-    func testHeldProviderCannotMoveAfterRebindHideOrAvailabilityLoss() throws {
+    func testHeldProviderCannotMoveAfterRetirementOrFilterChange() throws {
         let h = try MacScopeDragHarness()
         defer { h.close() }
-        for retirement in 0..<3 {
+        for retirement in 0..<4 {
             let held = MacScopeHeldProvider(bytes: try h.bytes(from: h.provider()))
             XCTAssertTrue(h.drop(held.provider, onto: .group(h.team)))
             XCTAssertTrue(h.spin { held.isRequested })
@@ -214,7 +239,8 @@ final class MacScopeDragTests: XCTestCase {
             switch retirement {
             case 0: h.view.rebind(to: h.view.model, editor: h.view.editor, libraryPath: h.root.path, available: true)
             case 1: h.view.didHide(); h.view.didShow()
-            default: h.view.setLibraryAvailable(false); h.view.setLibraryAvailable(true)
+            case 2: h.view.setLibraryAvailable(false); h.view.setLibraryAvailable(true)
+            default: h.view.setFilter("Folder")
             }
             held.release()
             XCTAssertTrue(h.spin { !h.view.isScopeDropPending })
