@@ -472,6 +472,13 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin(until: {
             self.environment.syncService?.report.lastSuccess != nil && self.environment.accountModel?.state.enabled == true
         }, timeout: .seconds(10)), "The recovered account must finish startup before a later watcher edit")
+        let recoveredStatus = try XCTUnwrap(environment.syncStatusModel)
+        recoveredStatus.showErrorDetails()
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let details = self.findWidget("library-sync-file-errors") else { return false }
+            return gtk_widget_is_visible(details) != 0
+        }, "The recovered Library must observe its current graph's sync status")
+        recoveredStatus.dismissErrorDetails()
         let refreshed = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\ntitle: Updated watcher\n---\nWatcher refresh\n"
         try files().write(Data(refreshed.utf8), at: "a.md")
         watchers.last?.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .modified)))
