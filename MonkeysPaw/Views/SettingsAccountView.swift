@@ -12,6 +12,7 @@ final class AccountSettingsViewState: ObservableObject {
     @Published private(set) var passwordInputReset = UUID()
     @Published private var pendingIntent: UUID? = nil
     let passwordInput = AccountPasswordInput()
+    let invites: InviteViewState
     let groups: GroupManagementViewState
 
     private let makeModel: () -> AccountModel?
@@ -24,10 +25,12 @@ final class AccountSettingsViewState: ObservableObject {
     private var renderedConnection: AccountConnection?
 
     init(mainThread: MainThread, makeModel: @escaping () -> AccountModel?, onOpen: @escaping () -> Void = {},
+         makeInvite: @escaping () -> InviteModel? = { nil },
          makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         self.mainThread = mainThread
         self.makeModel = makeModel
         self.onOpen = onOpen
+        invites = InviteViewState(mainThread: mainThread, makeModel: makeInvite, makeAccount: makeModel)
         groups = GroupManagementViewState(mainThread: mainThread, makeModel: makeGroups)
         groups.onBusyChange = { [weak self] in self?.objectWillChange.send() }
     }
@@ -58,11 +61,13 @@ final class AccountSettingsViewState: ObservableObject {
         guard !isShown else { refreshBinding(); return }
         isShown = true
         refreshBinding()
+        invites.show()
         onOpen()
     }
 
     func hide() {
         isShown = false
+        invites.hide()
         groups.hide()
         detach()
     }
@@ -71,6 +76,7 @@ final class AccountSettingsViewState: ObservableObject {
     /// switches. Recheck identity without owning the graph's switch/drain policy.
     func refreshBinding() {
         guard isShown else { return }
+        invites.refreshBinding()
         let next = makeModel()
         guard next !== model else { groups.refreshBinding(); return }
         groups.hide()
@@ -256,6 +262,8 @@ struct SettingsAccountView: View {
                 reservedFolders
                 devices
                 heldFiles
+                Divider()
+                SettingsInviteView(presentation: presentation.invites)
                 Divider()
                 if presentation.groups.isBusy { Text(GroupManagementStrings.busyAccount) }
                 GroupManagementView(presentation: presentation.groups)

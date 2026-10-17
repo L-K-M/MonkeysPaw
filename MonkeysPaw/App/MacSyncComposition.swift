@@ -27,6 +27,7 @@ final class MacSyncComposition {
     private var active = true
     private var startupPending = false
     private var lastConnection: AccountConnection?
+    private var inviteAcceptanceInFlight = false
 
     init(sync: SyncService, accounts: SyncAccountStore, states: SyncStateStore, access: GroupAccessService,
          accountService: SyncAccountService, inviteService: SyncInviteService, groupService: SyncGroupService,
@@ -62,7 +63,9 @@ final class MacSyncComposition {
                 if self.lastConnection != state.connection {
                     self.lastConnection = state.connection
                     self.groupStorage?.dismiss()
-                    self.inviteStorage?.dismiss()
+                    // Registration refreshes Account after acceptance. Keep its
+                    // receipt/cleanup visible until the native view is hidden.
+                    if self.inviteStorage?.state.accepted != true { self.inviteStorage?.dismiss() }
                     self.conflicts.close()
                 }
                 self.onAccountChange?()
@@ -78,7 +81,18 @@ final class MacSyncComposition {
 
     var invites: InviteModel? {
         guard active else { return nil }
-        if inviteStorage == nil { inviteStorage = InviteModel(service: inviteService, mainThread: main) }
+        if inviteStorage == nil {
+            let model = InviteModel(service: inviteService, mainThread: main)
+            inviteStorage = model
+            model.addObserver { [weak self] state in
+                guard let self, self.active else { return }
+                let finished = self.inviteAcceptanceInFlight && state.operation == nil
+                self.inviteAcceptanceInFlight = state.operation == .accepting
+                // Hidden acceptance still changes the shared service snapshot.
+                // Refresh Account after completion even when its view detached.
+                if finished { self.account?.refresh() }
+            }
+        }
         return inviteStorage
     }
 
@@ -154,6 +168,7 @@ final class MacSyncComposition {
     func restoreModelsAfterFailedDrain() {
         accountStorage = nil
         inviteStorage = nil
+        inviteAcceptanceInFlight = false
         groupStorage = nil
         status = SyncStatusModel(sync: sync, mainThread: main)
         conflicts = ConflictModel(service: conflictService, mainThread: main)

@@ -5,6 +5,7 @@ import MonkeysPawCore
 /// A reusable view over Settings presentation state.
 /// GTK owns the window and children; Swift keeps guarded borrowed pointers.
 final class LinuxSettingsWindow {
+    enum Page { case current, account }
     private let window: GTK.Widget
     private let notebook: GTK.Widget
     private let general: GeneralSettingsModel
@@ -121,8 +122,11 @@ final class LinuxSettingsWindow {
         account.retire(isDestroyed ? .destroyed : .hidden)
     }
 
-    func show() {
+    func show(page: Page = .current) {
         guard !isDestroyed else { return }
+        if page == .account {
+            gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        }
         general.refresh()
         renderGeneral()
         shortcuts.refresh()
