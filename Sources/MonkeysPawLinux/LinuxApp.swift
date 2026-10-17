@@ -19,6 +19,7 @@ public enum MonkeysPawLinuxApp {
     private static let usage = """
         Usage:
           monkeyspaw
+          monkeyspaw <invite-uri>
           monkeyspaw --version
           monkeyspaw --gapplication-service
           monkeyspaw --selftest
@@ -30,14 +31,6 @@ public enum MonkeysPawLinuxApp {
         case interactive
         case service
         case selftest
-
-        var arguments: [String] {
-            switch self {
-            case .interactive: return [AppIdentity.binaryName]
-            case .service: return [AppIdentity.binaryName, "--gapplication-service"]
-            case .selftest: return [AppIdentity.binaryName, "--selftest"]
-            }
-        }
     }
 
     public static func main() -> Int32 {
@@ -60,11 +53,13 @@ public enum MonkeysPawLinuxApp {
             return 0
         case ["--gapplication-service"]:
             // The session bus starts the app with GLib's service convention.
-            return runPanel(mode: .service)
+            return runPanel(mode: .service, arguments: arguments)
         case ["--selftest"]:
-            return runPanel(mode: .selftest)
+            return runPanel(mode: .selftest, arguments: arguments)
         case []:
-            return runPanel(mode: .interactive)
+            return runPanel(mode: .interactive, arguments: arguments)
+        case let values where values.count == 1 && values[0].lowercased().hasPrefix("monkeyspaw:"):
+            return runPanel(mode: .interactive, arguments: arguments)
         default:
             try? FileHandle.standardError.write(contentsOf: Data("\(usage)\n".utf8))
             return 2
@@ -79,7 +74,7 @@ public enum MonkeysPawLinuxApp {
         _ = Glibc.signal(SIGPIPE, SIG_IGN)
     }
 
-    private static func runPanel(mode: LaunchMode) -> Int32 {
+    private static func runPanel(mode: LaunchMode, arguments suppliedArguments: [String]) -> Int32 {
         LinuxPickerTrace.record("launch", "mode=\(mode)")
         // This identity is also the D-Bus name, desktop basename and StartupWMClass.
         // IS_SERVICE rejects an existing primary during registration. Register
@@ -88,13 +83,18 @@ public enum MonkeysPawLinuxApp {
         // the desktop identity so FocusTracker can reliably exclude our windows.
         g_set_prgname(AppIdentity.linuxAppID)
         let flags = GApplicationFlags(rawValue: mp_app_default_flags().rawValue
-            | G_APPLICATION_HANDLES_COMMAND_LINE.rawValue)
+            | G_APPLICATION_HANDLES_COMMAND_LINE.rawValue | G_APPLICATION_HANDLES_OPEN.rawValue)
         let application = gtk_application_new(AppIdentity.linuxAppID, flags)!
         defer { g_object_unref(application) }
 
         let gapp = mp_gapp(application)
         let environment = LinuxEnvironment(application: application)
         defer { environment.shutdown() }
+        GTK.onOpen(application) { uri in
+            LinuxPickerTrace.record("activation", "source=open")
+            var input = uri
+            environment.openInvite(&input)
+        }
         g_application_add_main_option(gapp, "selftest", 0, G_OPTION_FLAG_NONE,
                                       G_OPTION_ARG_NONE, "Run the paste self-test and print JSON", nil)
 
@@ -190,6 +190,17 @@ public enum MonkeysPawLinuxApp {
                 return 0
             }
 
+            var count: gint = 0
+            if let argv = g_application_command_line_get_arguments(command, &count) {
+                defer { g_strfreev(argv) }
+                if count == 2, let argument = argv[1] {
+                    // HANDLES_COMMAND_LINE owns CLI forwarding; use the same
+                    // open signal as desktop D-Bus Open without parsing twice.
+                    mp_application_open_uri(gapp, argument)
+                    return 0
+                }
+            }
+
             // Ordinary launches resume pending onboarding in the resident
             // primary too. Only the explicit toggle action toggles the picker.
             environment.presentFromLauncher(source: remote ? "command-line.remote" : "command-line.local")
@@ -207,7 +218,7 @@ public enum MonkeysPawLinuxApp {
 
         // Service mode prevents an automatic activation before a cold toggle,
         // which would otherwise show the window and immediately hide it again.
-        let arguments = mode.arguments
+        let arguments = [AppIdentity.binaryName] + suppliedArguments
         var argv = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
 

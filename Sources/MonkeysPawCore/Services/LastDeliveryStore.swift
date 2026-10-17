@@ -30,6 +30,11 @@ public final class LastDeliveryStore: @unchecked Sendable {
     private let files: FileStore
     private let lock = NSLock()
     private let path = "last-delivery.json"
+    // A failed clear must survive fresh services sharing this store. Only a
+    // durable tombstone can reopen recording and repeat.
+    private var invalidationFailed = false
+
+    var requiresInvalidation: Bool { lock.withLock { invalidationFailed } }
 
     public init(files: FileStore) { self.files = files }
 
@@ -51,6 +56,7 @@ public final class LastDeliveryStore: @unchecked Sendable {
 
     func save(_ record: LastDeliveryRecord?) throws {
         try lock.withLock {
+            guard record == nil || !invalidationFailed else { throw RepeatFailure.invalidationFailed }
             do {
                 try record?.validate()
                 let encoder = JSONEncoder()
@@ -58,8 +64,11 @@ public final class LastDeliveryStore: @unchecked Sendable {
                 let bytes = try encoder.encode(Payload(record: record))
                 guard bytes.count <= Limits.lastDeliveryFileCapBytes else { throw RepeatFailure.recordTooLarge }
                 try files.writePrivate(bytes, at: path)
-            } catch let error as RepeatFailure { throw error }
-            catch { throw RepeatFailure.writeFailed }
+                if record == nil { invalidationFailed = false }
+            } catch {
+                if record == nil { invalidationFailed = true }
+                throw error as? RepeatFailure ?? .writeFailed
+            }
         }
     }
 }

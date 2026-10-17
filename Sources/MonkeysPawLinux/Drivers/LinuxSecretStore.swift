@@ -24,9 +24,8 @@ final class LinuxSecretStore: SecretStore {
     }
 
     func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
-        if source == .effective, account.namespace == "provider",
-           let uuid = UUID(uuidString: account.name),
-           let value = runner.environment[ProviderProfileID(uuid).environmentVariable], !value.isEmpty {
+        if source == .effective, let variable = environmentVariable(for: account),
+           let value = runner.environment[variable], !value.isEmpty {
             return StoredSecret(value: SecretValue(value), tier: .environment)
         }
         try requireWorker()
@@ -42,6 +41,15 @@ final class LinuxSecretStore: SecretStore {
             // service as a missing key and accidentally proceed without auth.
             if let stored = try fileSecret(account) { return stored }
             throw error
+        }
+    }
+
+    private func environmentVariable(for account: SecretAccount) -> String? {
+        guard let uuid = UUID(uuidString: account.name) else { return nil }
+        switch account.namespace {
+        case "provider": return ProviderProfileID(uuid).environmentVariable
+        case "device": return "MONKEYSPAW_DEVICE_" + uuid.uuidString.replacingOccurrences(of: "-", with: "") + "_TOKEN"
+        default: return nil
         }
     }
 

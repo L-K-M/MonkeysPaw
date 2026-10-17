@@ -245,6 +245,9 @@ jobs:
           test -x "$payload/usr/bin/monkeyspaw"
           cmp packaging/linux/ch.lkmc.monkeyspaw.desktop \
             "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          desktop-file-validate "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          grep -Fxq 'Exec=monkeyspaw %u' "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          grep -Fxq 'MimeType=x-scheme-handler/monkeyspaw;' "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
           cmp packaging/linux/ch.lkmc.monkeyspaw.service \
             "$payload/usr/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
           cmp packaging/debian/copyright "$payload/usr/share/doc/monkeyspaw/copyright"
@@ -769,6 +772,7 @@ jobs:
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == "${ARTIFACT_VERSION%%-*}" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" == "$ARTIFACT_BUILD_NUMBER" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" == true ]]
+            [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$app/Contents/Info.plist")" == monkeyspaw ]]
           }
 
           smoke_launch() {

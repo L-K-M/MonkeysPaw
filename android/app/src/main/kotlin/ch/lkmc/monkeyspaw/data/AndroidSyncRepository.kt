@@ -208,7 +208,7 @@ internal class AndroidSyncRepository(
     /** Resume is explicit so Z20 can restore its durable authentication stop before dispatch. */
     suspend fun runBackground(expectedEpoch: Long? = null, version: Long? = null): SyncReport = withContext(io) {
         val graph = graph()
-        startup.ready()
+        readyForSync(graph)
         graph.engine.runBackground(expectedEpoch, version)
     }
 

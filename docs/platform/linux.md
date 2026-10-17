@@ -21,6 +21,23 @@ ownership after hiding the panel. Earlier NOT RUN rows remain owner gates.
 | Window and graph lifetime | Close/reopen Settings during a manual check, change library, and quit during pending work. Accepted checks/preferences retain their outcomes, detached controls do nothing, and retired timers/models never revive or deliver. Unsupported outside-home Flatpak choices preserve the current library. | NOT RUN |
 | Keyboard and Orca | Navigate Delivery and General updates with visible focus; read preferences, limitations, permission/backend facts, progress, errors and disabled controls. Preserve the existing General, Shortcuts, Assistant and Account procedures. | NOT RUN |
 
+## Invite activation (M6 Y24, NOT RUN)
+
+Record the commit, installed deb version, date, desktop/compositor, browser
+and tester. Use disposable invites and accounts. Never include invite links,
+tokens or passwords in the recorded evidence. Xvfb/private-bus tests cover
+activation and staging; they do not prove installed launcher/browser handling.
+Flatpak URI registration remains M7 work.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Installed registration | The installed desktop entry advertises `x-scheme-handler/monkeyspaw` and `Exec=monkeyspaw %u`; the D-Bus service retains `--gapplication-service`. Select Monkey's Paw as the handler if another app is registered. | NOT RUN |
+| Cold browser/launcher | With the app stopped, open an invite from a browser or launcher on GNOME and KDE. One primary opens Account with the invite's server and current account shown. No picker or onboarding window appears and no request consumes the invite. | NOT RUN |
+| Resident browser/launcher | Open a second invite while the service is resident, then while Account is visible. Reuse the same Settings window and primary; the picker stays hidden. A launcher without D-Bus activation forwards its `%u` argument to that primary. | NOT RUN |
+| Explicit acceptance | Review the destination and HTTP warning. Explicitly accept through new-account registration, then test a group invite with an existing account on the same server. A different server disables current-account join; sign in there and review the invite again. | NOT RUN |
+| Hide and recovery | Leaving Account, closing Settings and switching libraries clear native link/password input and staged acceptance. Reopen and paste a link or bare token with an explicit server. Onboarding's invite button opens the same form. | NOT RUN |
+| Privacy and accessibility | Orca labels and keyboard focus identify destination and the two acceptance choices. Input is secure and clears after submission/hide. App diagnostics contain no URI, invite bearer, password or argv dump. | NOT RUN |
+
 ## Library import (M3, NOT RUN)
 
 - Commit / artifact / GTK version / desktop / compositor:
@@ -312,6 +329,7 @@ not complete these owner checks.
 | Restore and refusals | Restore a valid revision: the editor and history reload and the current id stays. Forensic and future-format revisions remain selectable; Restore reports the typed refusal without changing the file. | NOT RUN |
 | Rename | Use Rename… in the editor header with a .md filename. File bytes and front-matter title stay; the selection follows the new path, including an unassigned prompt. Occupied, ignored and invalid names show an error without replacing another file. | NOT RUN |
 | Move | Choose an existing folder, type a new nested relative folder, then move to the root with an empty input. Parents are created and selection follows. Occupied destinations and invalid paths are refused. | NOT RUN |
+| Scope drag (M6, Wayland and X11) | Drag prompt rows onto group, All (personal root) and folder destinations. Repeat personal to group, group to personal and group to group with Save/Discard/Cancel, occupied destinations and viewer/creator denial. Identity and history stay with the prompt; denied transfers retain a private copy. External file drops still import. | NOT RUN |
 | Delete and Cancel | Delete… names the exact relative path and initially focuses Cancel. Cancel, Escape and native close preserve the file. Confirming closes the editor and clears selection while keeping history. | NOT RUN |
 | Unsaved decisions | Repeat Rename, Move, Delete and Restore with a dirty draft. Save commits before the command; Discard uses the loaded baseline; Cancel preserves draft, file, history and selection. A failed save keeps the decision pending. | NOT RUN |
 | Stale or missing file | Change or delete the file externally while a form is open, then confirm. The existing modified/deleted conflict dialog opens without overwriting or recreating it. Resolve it, then retry the intended command. | NOT RUN |

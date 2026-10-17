@@ -5,6 +5,23 @@ import XCTest
 final class SyncStateStoreTests: XCTestCase {
     private let path = "sync/state.json"
 
+    func testRootProofRequiresTheRecordedLexicalRootAndFailsClosedForUnreadableState() throws {
+        let files = MemoryFileStore()
+        let operations = MemorySyncFileOperations(files: files)
+        let store = SyncStateStore(files: files, operations: operations)
+        let state = try SyncTestValues.state()
+        XCTAssertFalse(store.requiresRootProof(for: state.binding.root.path))
+        try store.update(for: state.binding) { $0 = state }
+        XCTAssertTrue(store.requiresRootProof(for: state.binding.root.path))
+        XCTAssertFalse(store.requiresRootProof(for: "/different-library"))
+        XCTAssertTrue(store.requiresRootProof(for: "/library/../escape"))
+        XCTAssertTrue(SyncStateStore(files: files, operations: operations).requiresRootProof(for: state.binding.root.path))
+        try files.put("broken", at: path)
+        let corrupt = SyncStateStore(files: files, operations: operations)
+        XCTAssertTrue(corrupt.requiresRootProof(for: "/different-library"))
+        XCTAssertEqual(try files.text(at: path), "broken")
+    }
+
     func testRoundTripUsesPrivateWriteAndCheckedFlushes() throws {
         let files = MemoryFileStore()
         let operations = MemorySyncFileOperations(files: files)
