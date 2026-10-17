@@ -3,6 +3,70 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SyncAccountServiceTests: XCTestCase {
+    func testRefusedAccountRetirementPreservesBindingAndCredentialsBeforeAnyRequest() async throws {
+        let rig = try SyncAccountRig()
+        try await rig.login()
+        await rig.sync.settle()
+        var admissions = 0
+        var allowed = false
+        let gated = rig.reopenAccount(beforeAccountChange: { admissions += 1; return allowed })
+        _ = try await gated.startup()
+        _ = try await gated.refresh()
+        await rig.sync.settle()
+        XCTAssertEqual(admissions, 0, "Startup and refresh must preserve repeat across restarts")
+        let old = try rig.sync.accounts.loadAccount()
+        let requests = rig.sync.transport.requests.count
+        let secrets = Set(rig.secrets.persisted.keys)
+        var password = rig.password
+        let login = await failure {
+            try await gated.login(server: rig.server, username: "person", password: &password, deviceName: "Desktop")
+        }
+        XCTAssertEqual(password, "")
+        XCTAssertEqual(login.issue, .recoveryRequired)
+        let invite = try SyncInviteLink(String(repeating: "a", count: 42) + "A", server: rig.server)
+        password = rig.password
+        let registration = await failure {
+            try await gated.register(invite: invite, expectedAccount: old, username: "person",
+                                     password: &password, deviceName: "Desktop")
+        }
+        XCTAssertEqual(registration.issue, .recoveryRequired)
+        XCTAssertEqual(password, "")
+        let signOut = await failure { try await gated.signOut() }
+        let revoke = await failure { try await gated.revokeDevice(rig.device) }
+        XCTAssertEqual(signOut.issue, .recoveryRequired)
+        XCTAssertEqual(revoke.issue, .recoveryRequired)
+        XCTAssertEqual(admissions, 4)
+        XCTAssertEqual(rig.sync.transport.requests.count, requests)
+        XCTAssertEqual(try rig.sync.accounts.loadAccount(), old)
+        XCTAssertEqual(Set(rig.secrets.persisted.keys), secrets)
+        XCTAssertTrue(gated.snapshot.enabled)
+
+        allowed = true
+        _ = try await gated.signOut()
+        XCTAssertEqual(admissions, 5)
+        XCTAssertNil(try rig.sync.accounts.loadAccount())
+        XCTAssertTrue(rig.secrets.persisted.isEmpty)
+    }
+
+    func testReconstructedServiceExposesCachedMetadataWithoutResumingOrReadingSecrets() async throws {
+        let rig = try SyncAccountRig()
+        let signedIn = try await rig.login()
+        await rig.sync.settle()
+        let requests = rig.sync.transport.requests.count
+        let reads = rig.secrets.reads.count
+        let reconstructed = rig.reopenAccount()
+        XCTAssertEqual(reconstructed.snapshot.account, signedIn.account)
+        XCTAssertFalse(reconstructed.snapshot.enabled)
+        XCTAssertNil(reconstructed.snapshot.me)
+        XCTAssertNil(reconstructed.snapshot.tier)
+        let native = try SyncAccountService(sync: rig.sync.service, accounts: rig.sync.accounts, secrets: rig.secrets,
+            transport: rig.sync.transport, libraryRoot: rig.sync.base.binding.root.path)
+        XCTAssertEqual(native.snapshot.account, signedIn.account)
+        XCTAssertFalse(native.snapshot.enabled)
+        XCTAssertEqual(rig.sync.transport.requests.count, requests)
+        XCTAssertEqual(rig.secrets.reads.count, reads)
+    }
+
     func testLoginConsumesPasswordAndPersistsOnlyBoundTokenAndMetadata() async throws {
         let rig = try SyncAccountRig()
         var password = rig.password
@@ -1006,9 +1070,9 @@ private final class SyncAccountRig {
         return result
     }
 
-    func reopenAccount() -> SyncAccountService {
+    func reopenAccount(beforeAccountChange: @escaping () async -> Bool = { true }) -> SyncAccountService {
         SyncAccountService(sync: sync.service, accounts: sync.accounts, secrets: secrets, transport: sync.transport,
-            root: sync.base.binding.root, connectionID: UUID.init)
+            root: sync.base.binding.root, connectionID: UUID.init, beforeAccountChange: beforeAccountChange)
     }
 
     func user(_ id: ULID? = nil) -> SyncAPI.User {

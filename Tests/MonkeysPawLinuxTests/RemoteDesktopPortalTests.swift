@@ -193,6 +193,8 @@ final class RemoteDesktopPortalTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { heldKey != nil })
         var busyCompletions = 0
         injector.allow { busyCompletions += 1 }
+        // The bus barrier cannot admit an Allow intent queued on GLib.
+        XCTAssertTrue(GTKTestSupport.spin { busyCompletions == 1 })
         PortalSessionTestSupport.barrier(transport)
         XCTAssertEqual(busyCompletions, 1)
         XCTAssertTrue(results.isEmpty)

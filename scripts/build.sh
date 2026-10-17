@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Build every Monkey's Paw artifact this host can produce, into dist/.
 #
-# Usage: scripts/build.sh [mac|deb|android ...] [--no-open]
+# Usage: scripts/build.sh [mac|deb|flatpak|android ...] [--no-open]
 #   No targets: build every feasible target; skip unavailable toolchains.
 #   Named targets: an unavailable toolchain fails the run.
 #   mac        universal Release dmg, zip and .sha256 (macOS, Xcode, create-dmg)
 #   deb        Ubuntu 24.04+ deb and .deb.sha256 (Linux, Swift 6.4, GTK 4, dpkg-dev)
+#   flatpak    GNOME 50 x86_64 bundle and checksum, reusing this run's deb
 #   android    signed release APK and .apk.sha256 (wrapper, JDK 17+, Android SDK)
 #   --no-open  do not open dist/ in Finder after a successful macOS build
 #   --help     print this header
@@ -47,7 +48,13 @@ explicit=false
 no_open=false
 for argument in "$@"; do
   case "$argument" in
-    mac|deb|android) targets+=("$argument"); explicit=true ;;
+    mac|deb|flatpak|android)
+      explicit=true
+      case " ${targets[*]:-} " in
+        *" $argument "*) ;;
+        *) targets+=("$argument") ;;
+      esac
+      ;;
     --no-open) no_open=true ;;
     -h|--help) usage; exit 0 ;;
     --clean|--debug|--run|--install|--zip|--dmg)
@@ -56,7 +63,7 @@ for argument in "$@"; do
   esac
 done
 if [[ ${#targets[@]} -eq 0 ]]; then
-  targets=(mac deb android)
+  targets=(mac deb flatpak android)
 fi
 
 repo_root="$(cd "$(dirname "$script_path")/.." && pwd)" || exit 1
@@ -88,12 +95,49 @@ feasible() {
       done
       pkg-config --exists gtk4 || { reason='requires libgtk-4-dev'; return 1; }
       ;;
+    flatpak)
+      feasible deb || return 1
+      [[ "$(uname -m)" == x86_64 ]] || { reason='requires x86_64'; return 1; }
+      for tool in flatpak flatpak-builder; do
+        command -v "$tool" >/dev/null 2>&1 || { reason="missing $tool"; return 1; }
+      done
+      for tool in org.gnome.Platform org.gnome.Sdk; do
+        flatpak info --user "$tool/x86_64/50" >/dev/null 2>&1 || {
+          reason="requires $tool/x86_64/50 (install GNOME 50 from Flathub)"; return 1;
+        }
+      done
+      ;;
     android)
       reason="$(/bin/bash scripts/package-android.sh --check 2>&1)" || {
         reason="${reason#!! }"; return 1;
       }
       ;;
   esac
+}
+
+# Track the exact output of one deb invocation, even if flatpak precedes deb.
+# Removing only that output before building prevents a no-output success from
+# reusing a package left by an earlier run.
+deb_attempted=false
+deb_succeeded=false
+deb_path=
+build_deb() {
+  if [[ "$deb_attempted" == true ]]; then [[ "$deb_succeeded" == true ]]; return; fi
+  deb_attempted=true
+  local deb_version architecture
+  deb_version="$(python3 scripts/check-version.py --deb-version "$version")" || return 1
+  architecture="$(dpkg --print-architecture)" || return 1
+  deb_path="dist/monkeyspaw_${deb_version}_${architecture}.deb"
+  rm -f -- "$deb_path" "$deb_path.sha256" || return 1
+  /bin/bash packaging/build-deb.sh "$version" || return 1
+  [[ -s "$deb_path" && -s "$deb_path.sha256" ]] || return 1
+  (cd dist && sha256sum --strict -c "$(basename "$deb_path").sha256") || return 1
+  deb_succeeded=true
+}
+
+build_flatpak() {
+  build_deb || return 1
+  /bin/bash scripts/build-flatpak.sh "$deb_path" "$version"
 }
 
 results=()
@@ -113,7 +157,8 @@ for target in "${targets[@]}"; do
   printf '==> Building %s\n' "$target"
   case "$target" in
     mac) build_command=(/bin/bash scripts/package-macos.sh) ;;
-    deb) build_command=(/bin/bash packaging/build-deb.sh "$version") ;;
+    deb) build_command=(build_deb) ;;
+    flatpak) build_command=(build_flatpak) ;;
     android) build_command=(/bin/bash scripts/package-android.sh "$version") ;;
   esac
   if "${build_command[@]}"; then

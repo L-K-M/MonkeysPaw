@@ -139,7 +139,7 @@ Rollout by milestone:
     Both artifacts are uploaded for three days. Hosted tests remain in
     `macos-app`; this gate does not prove Gatekeeper, real installation or
     delivery on a Mac (§15 and `docs/platform/macos.md`).
-  - Linux jobs run in the `swift:6.4-noble` container. The Linux Core test
+  - Linux Swift jobs run in the `swift:6.4-noble` container. The Linux Core test
     job is the portability gate.
   - The existing server job builds/tests the server package. Its single
     `swift test --package-path server` invocation also executes the complete
@@ -154,8 +154,18 @@ Rollout by milestone:
     installed paths, requires noble's `libglib2.0-0t64` plus
     `libglib2.0-bin`, rejects dynamic Swift/Foundation dependencies, installs
     with apt, and checks the installed binary's version.
-  - The flatpak job runs on the bare runner, because bwrap needs a sysctl
-    that a container cannot set (Vervellum).
+  - The Flatpak job downloads the deb job's exact tested artifact and runs
+    on bare Ubuntu for bwrap's user namespaces. A bounded probe must pass;
+    any temporary sysctl change is restored in always-run cleanup. It installs
+    GNOME Platform/SDK 50, checks runtime ELF linking/version and tool presence,
+    installs the generated bundle, and compares its binary with the deb.
+    Exported desktop/service/icons, actions, MIME registration and permissions
+    must match. Under a required display/private bus, installed cold/resident
+    toggle/repeat and D-Bus Open/launcher fallback reach the existing invite
+    review. Accessibility checks destination and enabled Accept; a loopback
+    request recorder proves no launch redemption. Bearers must not persist.
+    Bundle/checksum upload/download must compare byte-for-byte. Real browsers,
+    portals, consent and focus remain owner-run; CI never sets a MIME default.
 - **release.yml.**
   - Trigger: tag `v*`, or `workflow_dispatch` with `dry_run` defaulting to
     true. PRs touching Android, shared fixtures/seeds, packaging,
@@ -182,22 +192,23 @@ Rollout by milestone:
       `--static-swift-stdlib` (plus `--build-system native` until swift-build
       links static Foundation; §16) and `dpkg-shlibdeps`, plus `.deb.sha256`.
     - Android: the signed R8 `monkeyspaw-v<full-version>.apk` and `.apk.sha256`.
-    - Flatpak: repacked from the deb (from M7).
-      Its separate CI artifact does not join release assembly until that
-      release wiring lands; it must then add the pair to every asset gate.
+    - Flatpak: `monkeyspaw_<full-version>_x86_64.flatpak` and `.flatpak.sha256`,
+      repacked from the Linux job's exact installed/version-verified amd64 deb.
+      Its bare-runner read-only job builds no Swift, verifies the GNOME 50
+      runtime and installed binary, and round-trips both uploaded files.
   - In M2 the Linux job runs first; the macOS job `needs` it, so a broken
     deb fails the tag before a release exists. Native server image builds
     run alongside macOS packaging after the Linux and version gates;
     Android follows tests/version verification without waiting for Linux;
-    flatpak joins in M7.
+    Flatpak follows the tested release deb, alongside macOS/image packaging.
   - Server image builds run natively on `ubuntu-24.04` (amd64) and hosted
     `ubuntu-24.04-arm` (arm64), without QEMU/binfmt. Each passes `VERSION`,
     `REVISION` (commit SHA) and `CREATED` (commit timestamp), checks OCI
     labels, then smoke-tests container health and `/api/health` 200 with a
     throwaway admin password file bind-mounted read-only. OCI archives and
     digests use separate workflow artifacts outside `MonkeysPaw-release-*`.
-  - Image publishing requires tests, verify, Linux, macOS, Android, artifacts and
-    both native image builds. It pushes untagged digests, creates a
+  - Image publishing requires tests, verify, Linux, Flatpak, macOS, Android,
+    artifacts and both native image builds. It pushes untagged digests, creates a
     multiarch manifest and verifies exactly amd64 and arm64 with the
     expected digests for each tag before GitHub publishing can run. This
     ordering keeps a failed image publish from undrafting the release;
@@ -213,12 +224,14 @@ Rollout by milestone:
   - Each packaging job downloads its workflow artifact and byte-compares
     every file, including checksums, against the originals. Android also
     validates APK ID/full version/committed code/API levels and the recorded
-    public signer before upload. Ordinary CI stages and round-trips the signed
-    R8 APK pair too. An assembly job requires exactly seven nonempty assets,
+    public signer before upload. Ordinary CI round-trips both the signed
+    R8 APK pair and the Flatpak pair. An assembly job requires seven desktop assets
+    plus the explicit two Android assets, exactly nine nonempty files,
     rejects missing/extra files (including hidden entries), requires exact
-    payload membership in each manifest and checks all three manifests.
-    The publish job repeats the asset gate, creates a draft with all seven
-    assets, downloads every release asset and
+    payload membership in each manifest and checks all four manifests.
+    Assembly and both publish jobs depend on the verified Flatpak job.
+    The publish job repeats the identical asset gate, creates a draft with all
+    nine assets, downloads every release asset and
     byte-compares against those verified build outputs before undrafting.
     Any failure leaves the release unpublished. PRs and manual dry runs do
     every build and workflow-artifact verification, including both image
@@ -266,14 +279,18 @@ Rollout by milestone:
     `dist/MonkeysPaw-<version>.sha256` records both files; download all three
     together and run `shasum -a 256 -c MonkeysPaw-<version>.sha256` before
     installation (`docs/platform/macos.md`).
-- **Local build orchestration.** `scripts/build.sh [mac|deb|android ...] [--no-open]`
+- **Local build orchestration.** `scripts/build.sh [mac|deb|flatpak|android ...] [--no-open]`
   builds every artifact this host can produce by default. An unavailable
   toolchain skips a default target but fails an explicitly named target.
   Outputs go to `dist/`, followed by one Summary block. On macOS it opens
   `dist/` when an artifact was built, unless `--no-open` was passed.
   `mac` calls the packager above; `deb` calls the builder below with the
-  committed version; `android` calls `scripts/package-android.sh` with that
-  version. `scripts/build.sh app [lkm-build flags]` preserves the
+  committed version; `flatpak` reuses that invocation's exact deb, building it
+  once if needed even when targets are repeated or reversed. Failed or missing
+  deb output cannot reuse a stale artifact. The default builds deb then Flatpak
+  once when the toolchains and user-installed GNOME 50 runtime/SDK are available;
+  a named unavailable target fails. `android` calls `scripts/package-android.sh`
+  with that version. `scripts/build.sh app [lkm-build flags]` preserves the
   app-only engine path, including `--clean`, `--debug`, `--run`, `--install`,
   `--zip` and `--dmg`. Server packaging remains separate.
 - **Local Android packaging.** `scripts/package-android.sh [version]` builds
@@ -311,8 +328,9 @@ Rollout by milestone:
   `scripts/make-icons.sh`.
 - **Flatpak.** App id `ch.lkmc.monkeyspaw`, runtime `org.gnome.Platform` 50,
   SDK `org.gnome.Sdk` 50, command `monkeyspaw`, x86_64 only (M7 G18).
-  `scripts/build-flatpak.sh <deb-path> <app-version>` repacks an explicit
-  tested amd64 deb with a matching Debian version. It copies `/usr` under
+  `scripts/build-flatpak.sh <deb-path> [expected-app-version]` repacks an explicit
+  tested amd64 deb. Its control metadata supplies the version; an explicit
+  expected version must match. It copies `/usr` under
   `/app`, preserving executable bytes, icons and copyright, and rewrites
   only desktop/service executable paths. No Swift build runs in Flatpak.
   GNOME 50 runtime dependency/version checks must pass; unavailable GNOME
@@ -351,6 +369,14 @@ Rollout by milestone:
   registered. Quit the other route before testing; no second identity or
   automatic takeover is provided. Portals handle dialogs, URIs, notifications,
   shortcut and delivery consent; sandbox delivery remains portal -> copy.
+
+  The staged desktop retains E28's `MimeType=x-scheme-handler/monkeyspaw;`,
+  `Exec=monkeyspaw %u` and all desktop actions. The service keeps its Name and
+  uses `Exec=/app/bin/monkeyspaw --gapplication-service`; Flatpak exports/rewrites
+  the host files. Opening an invite only stages it in Account, shows the
+  destination and requires explicit Accept. No MIME default is set. E28's
+  one-use URI fallback still exposes the link in launcher argv and potentially
+  browser history; tokens/URIs must never appear in application or test logs.
 
   CI asserts that `secret-tool` and `gsettings` exist in the runtime.
   Documented limits:

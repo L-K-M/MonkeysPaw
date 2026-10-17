@@ -12,14 +12,16 @@ final class OnboardingViewState: ObservableObject {
     var onChooseFolder: (() -> Void)?
     var onClose: (() -> Void)?
     private let openSettings: () -> Void
+    private let openInvite: () -> Void
 
     init(model: OnboardingModel, activeLibraryPath: String, defaultLibraryPath: String,
-         mainThread: MainThread, openSettings: @escaping () -> Void) {
+         mainThread: MainThread, openSettings: @escaping () -> Void, openInvite: @escaping () -> Void = {}) {
         self.model = model
         state = model.state
         self.activeLibraryPath = activeLibraryPath
         self.defaultLibraryPath = defaultLibraryPath
         self.openSettings = openSettings
+        self.openInvite = openInvite
         model.onChange = { [weak self] in
             mainThread.run { [weak self] in
                 guard let self else { return }
@@ -59,6 +61,7 @@ final class OnboardingViewState: ObservableObject {
     func declineSeeds() { if canOfferSeeds { model.declineSeeds() } }
     func completeTour() { if canCompleteTour { model.completeTour() } }
     func showSettings() { openSettings() }
+    func showInvite() { openInvite() }
     func close() {
         if state.step == .tour { completeTour() }
         else { onClose?() }
@@ -73,6 +76,8 @@ struct OnboardingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     step
+                    Button(SettingsInviteStrings.title, action: presentation.showInvite)
+                        .accessibilityIdentifier("onboarding-invite")
                     ForEach(presentation.messages, id: \.self) { message in
                         Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("onboarding-message")

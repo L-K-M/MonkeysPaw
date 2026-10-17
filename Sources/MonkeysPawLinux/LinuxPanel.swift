@@ -30,6 +30,7 @@ final class LinuxPanel: PanelWindow {
     private var transientStatus: String?
     private var queryPreedit: Preedit?
     private var openSettings: (() -> Void)?
+    private var syncStatusView: LinuxSyncStatusView?
 
     private var queryEntry: GTK.Widget!
     private var stack: GTK.Widget!
@@ -66,6 +67,7 @@ final class LinuxPanel: PanelWindow {
             guard let self else { return }
             // GTK owns the window; its Swift wrapper and queued UI work can outlive it.
             self.isDestroyed = true
+            self.syncStatusView?.retire(.destroyed)
             self.blurRevision += 1
             self.trace("destroy", reason: "native")
         }
@@ -96,13 +98,23 @@ final class LinuxPanel: PanelWindow {
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "is-active") { [weak self] in self?.focusChanged() }
         GTK.onNotify(UnsafeMutableRawPointer(window), "focus-widget") { [weak self] in self?.fieldFocusChanged() }
+        GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
+            guard let self, !self.isDestroyed else { return }
+            if self.isVisible { self.syncStatusView?.show() }
+            else { self.syncStatusView?.suspend() }
+        }
     }
+
+    deinit { syncStatusView?.retire(isDestroyed ? .destroyed : .rebind) }
 
     func rebind(picker: PickerModel, session: DesktopSession, openSetup: @escaping () -> Void,
                 openSettings: @escaping () -> Void,
+                syncStatus: SyncStatusModel? = nil,
+                syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in },
                 requestedIntent: @escaping (PickerModel.Intent) -> Void,
                 createPrompt: @escaping (String) -> Void) {
         guard !isDestroyed else { return }
+        syncStatusView?.retire()
         self.picker?.onChange = nil
         self.picker = nil
         blurRevision += 1 // Retire a blur timeout queued by the previous view.
@@ -252,7 +264,12 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_name(hint, "picker-hint")
         gtk_box_append(mp_box(content), hint)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.pickerSession(session)))
+        let syncView = LinuxSyncStatusView(surface: .picker)
+        syncStatusView = syncView
+        syncView.bind(syncStatus, navigate: syncNavigation)
+        gtk_box_append(mp_box(content), syncView.widget)
         gtk_window_set_child(mp_window(window), content)
+        if isVisible { syncView.show() }
 
         picker.onChange = { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }

@@ -33,7 +33,16 @@ final class LinuxLibraryImportTests: XCTestCase {
     override func tearDown() {
         work?.runAll()
         drain()
-        environment?.shutdown()
+        if let environment {
+            environment.shutdown()
+            let drained = DispatchGroup()
+            drained.enter()
+            Task.detached { await environment.drainSync(); drained.leave() }
+            XCTAssertTrue(GTKTestSupport.spin {
+                self.work.runAll()
+                return drained.wait(timeout: .now()) == .success
+            })
+        }
         environment = nil
         drain()
         if let application { GTKTestSupport.destroy(application) }
@@ -95,6 +104,25 @@ final class LinuxLibraryImportTests: XCTestCase {
         XCTAssertNil(model.onChange)
         XCTAssertFalse(state.canImport)
         XCTAssertNil(try files.stamp(at: "Imported/queued.md"))
+    }
+
+    func testHeldWorkerAcceptsConcurrentTeardownSubmissionsWhileDraining() {
+        let queued = ImportTestWork()
+        let producer = DispatchGroup()
+        let completions = DispatchGroup()
+        for _ in 0..<1_000 { completions.enter() }
+        producer.enter()
+        DispatchQueue.global().async {
+            for _ in 0..<1_000 { queued.run { completions.leave() } }
+            producer.leave()
+        }
+        let deadline = ContinuousClock().now.advanced(by: .seconds(10))
+        while producer.wait(timeout: .now()) != .success, ContinuousClock().now < deadline {
+            queued.runAll()
+        }
+        XCTAssertEqual(producer.wait(timeout: .now()), .success)
+        queued.runAll()
+        XCTAssertEqual(completions.wait(timeout: .now()), .success)
     }
 
     func testImportBindingAttachesActionsAndReport() throws {
@@ -632,15 +660,26 @@ private final class ImportTestChooser: LinuxImportChoosing {
 }
 
 private final class ImportTestWork: BackgroundWork {
+    private let lock = NSLock()
     private var work: [() -> Void] = []
-    func run(_ work: @escaping () -> Void) { self.work.append(work) }
+    func run(_ work: @escaping () -> Void) {
+        lock.lock(); self.work.append(work); lock.unlock()
+    }
     func runAll(file: StaticString = #filePath, line: UInt = #line) {
         for _ in 0..<10_000 {
-            guard !work.isEmpty else { return }
-            work.removeFirst()()
+            guard let next = take() else { return }
+            next()
         }
-        XCTAssertTrue(work.isEmpty, "Import work exceeded 10,000 tasks; check for a re-enqueue loop", file: file, line: line)
+        lock.lock()
+        let isEmpty = work.isEmpty
         work.removeAll()
+        lock.unlock()
+        XCTAssertTrue(isEmpty, "Import work exceeded 10,000 tasks; check for a re-enqueue loop", file: file, line: line)
+    }
+
+    private func take() -> (() -> Void)? {
+        lock.lock(); defer { lock.unlock() }
+        return work.isEmpty ? nil : work.removeFirst()
     }
 }
 #endif
