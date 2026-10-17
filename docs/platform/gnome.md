@@ -1,5 +1,10 @@
 # GNOME portal owner checks
 
+For current setup, see [README.gnome.md](../../README.gnome.md). Earlier
+milestone procedures retain their original unrun results; use the
+[current M7 procedure](#m7-current-desktop-procedures) and [M7 ledger](m7-acceptance.md)
+for the added behavior and exact-build owner evidence.
+
 Status: **NOT RUN**. The M1c coding slice has private-bus fixtures and CI
 checks; this host has no real GNOME/Wayland session or packaged flatpak.
 M1c acceptance stays open until these results are recorded. Never include
@@ -100,3 +105,26 @@ route and verify the activated process is the sandbox before these checks.
   Include a home symlink leading outside home. Keep the library in home or
   use the native app; an outside-home filesystem override does not remove
   the app's home-only boundary.
+
+## M7 current desktop procedures
+
+Status: **NOT RUN**. Keep all earlier owner rows. Use the
+[Linux M7 procedure](linux.md#m7-current-desktop-procedures) for Repeat, Forget,
+restore, chords, Settings and update metadata, then record these GNOME-specific
+results in the [M7 ledger](m7-acceptance.md). Record exact main/artifact hash,
+GNOME/compositor/session, hardware/keyboard, actual portal capabilities/backend,
+permission state, target versions and tester/date. Probe capabilities rather
+than deriving them from a GNOME release number.
+
+| Check | Required observation | Result | Evidence |
+|---|---|---|---|
+| Portal two-action path | Explicitly configure picker and Repeat, preserving saved keys/unbinding. Real action events verify the matching row only. Check one effective action, no duplicate binding, no consent from startup/refresh/self-test, cancellation/revocation/session loss and explicit recovery. | NOT RUN | NOT RUN |
+| No-GlobalShortcuts native path | On a session lacking the interface, explicitly install/assign each owned toggle/repeat row. Preserve edited/foreign rows and fail safely on unreadable state. Native startup/service/diagnostics make no host dconf writes; cancelled portal consent installs nothing. Restart keeps keys/unbinding. | NOT RUN | NOT RUN |
+| Cold and current target | Invoke toggle/repeat cold and resident, verify the active route and then verify real shortcuts. Run self-test plus browser/chat/terminal Unicode/multiline readback, current-target Repeat, no Return event, compositor focus/full-screen and exact default/explicit chord behavior. | NOT RUN | NOT RUN |
+| Failure and clipboard | Denied/stale/missing RemoteDesktop falls through native portal → ydotool → Copy, or Flatpak portal → Copy. Check cache/reset, Copy text survival after hide, restore off/on/slow target and competing identical/different copies without collecting clipboard contents. | NOT RUN | NOT RUN |
+| Settings, privacy and accessibility | Complete Linux M7 Repeat/restart/Forget/retirement and D18 settings/update rows, including real browser opening, automatic-off traffic and Orca/keyboard. Consent persistence and paste-privacy prompts require this owner session. | NOT RUN | NOT RUN |
+| Installed Flatpak | Complete all GNOME columns in the [Flatpak procedure](flatpak.md), including home permission/state, Secret Service, no host dconf, optional tray and browser/URI staging with explicit Accept and no launch redemption. | NOT RUN | NOT RUN |
+
+For user setup, see [README.gnome.md](../../README.gnome.md). If a required
+session is unavailable when attempted, record BLOCKED with the reason; it
+cannot be replaced by an unrelated X11 CI result.

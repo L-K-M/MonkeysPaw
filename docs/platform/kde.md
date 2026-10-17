@@ -1,5 +1,10 @@
 # KDE shortcut selection and delivery owner check
 
+For current setup, see [README.kde.md](../../README.kde.md). Earlier
+milestone procedures retain their original unrun results; use the
+[current M7 procedure](#m7-current-desktop-procedures) and [M7 ledger](m7-acceptance.md)
+for the added behavior and exact-build owner evidence.
+
 Status: NOT RUN
 
 Coupled private-bus tests exercise native/portal component ownership and
@@ -143,3 +148,24 @@ the sandbox before testing.
   native app; an outside-home filesystem override cannot remove this boundary.
 
 Results: no owner session, version record or real KDE test has been run.
+
+## M7 current desktop procedures
+
+Status: **NOT RUN**. Keep all earlier transition and Flatpak rows. Apply the
+[Linux M7 procedure](linux.md#m7-current-desktop-procedures) to native KDE
+Wayland and X11 where available, then record these results and exact
+main/artifact/session metadata in the [M7 ledger](m7-acceptance.md). Record
+actual GlobalShortcuts/RemoteDesktop capabilities, backend versions, keyboard,
+signing, permission state, targets and tester/date.
+
+| Check | Required observation | Result | Evidence |
+|---|---|---|---|
+| Two native actions | In System Settings inspect picker and Repeat. Assign/verify custom keys, alternative multi-chords and deliberate unbinding for each; restart and independently clear/rebind. Real native releases verify the matching action, without duplicates or replacing another app's keys. | NOT RUN | NOT RUN |
+| Both-action handoff matrix | Rerun every earlier portal/native transition row with both actions present. Compare complete assignments before/after Create/List/Bind/Close and native return. Include edits/foreign contexts, denial/cancel, daemon loss, pending parenting and settings races. Uncertain state fails closed; saved keys survive and both routes never fire together. | NOT RUN | NOT RUN |
+| Cold actions and delivery | Toggle/repeat cold and resident; manual actions verify neither native nor portal route. Then real keys, self-test plus browser/chat/Konsole readback in normal/full-screen/multiple monitors. Confirm current-target Repeat, default/explicit chords and no Return event. | NOT RUN | NOT RUN |
+| Failure/clipboard/privacy | Native ydotool → short portal → Copy and sandbox portal → Copy; test missing/denied/stale cases and cache reset. Execute Linux M7 restart/Forget/retirement, restore off/on/slow target and competing identical/different copy cases with sanitized evidence. | NOT RUN | NOT RUN |
+| Settings and updates | Complete D18 persistence/failure/lifetime, General update traffic/browser and Delivery/Shortcuts/Orca/keyboard rows; preserve Assistant/Account. Do not count a sent event or successful tool exit as target readback. | NOT RUN | NOT RUN |
+| Installed Flatpak | Complete all KDE columns in the [Flatpak procedure](flatpak.md): no native KGlobalAccel/uinput route, real portal consent/focus, optional tray app subname, home/state/Secret Service, cold actions and browser/URI staging without launch redemption. | NOT RUN | NOT RUN |
+
+See [README.kde.md](../../README.kde.md) for setup. Missing required sessions
+become BLOCKED when attempted and keep acceptance open.

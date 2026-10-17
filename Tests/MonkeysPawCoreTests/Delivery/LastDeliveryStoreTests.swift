@@ -113,6 +113,25 @@ final class LastDeliveryStoreTests: XCTestCase {
         XCTAssertNil(try h.store.load())
     }
 
+    func testFailedTombstoneLatchesSharedStoreUntilDurableClear() throws {
+        let h = try RepeatHarness()
+        let entry = try h.put("body")
+        let record = try LastDeliveryRecord(binding: h.binding, entry: entry, values: [:], mode: .copyOnly)
+        try h.store.save(record)
+        let previous = try h.flow.data.read(at: "last-delivery.json")
+        h.flow.data.failNextWrite = true
+        XCTAssertThrowsError(try h.store.save(nil)) { XCTAssertEqual($0 as? RepeatFailure, .writeFailed) }
+        XCTAssertTrue(h.store.requiresInvalidation)
+        XCTAssertEqual(try h.store.load()?.identity, entry.identity, "Raw reads retain the failed-clear evidence")
+        XCTAssertThrowsError(try h.store.save(record)) { XCTAssertEqual($0 as? RepeatFailure, .invalidationFailed) }
+        XCTAssertEqual(try h.flow.data.read(at: "last-delivery.json"), previous)
+        try h.store.save(nil)
+        XCTAssertFalse(h.store.requiresInvalidation)
+        XCTAssertNil(try h.store.load())
+        try h.store.save(record)
+        XCTAssertEqual(try h.store.load()?.identity, entry.identity)
+    }
+
     func testBindingUsesExactRootAndCanonicalAccountIdentity() throws {
         let user = try XCTUnwrap(ULID("01ARZ3NDEKTSV4RRFFQ69G5FAV"))
         let signedIn = try RepeatBinding(root: "/library", serverURL: "https://sync.example", userID: user)

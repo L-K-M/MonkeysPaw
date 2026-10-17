@@ -105,6 +105,28 @@ enum GTK {
         init(_ call: @escaping (UnsafeMutablePointer<GApplicationCommandLine>) -> Int32) { self.call = call }
     }
 
+    private final class OpenBox {
+        let call: (String) -> Void
+        init(_ call: @escaping (String) -> Void) { self.call = call }
+    }
+
+    /// GApplication's open signal carries GFile**, count and hint before data.
+    static func onOpen(_ application: UnsafeMutablePointer<GtkApplication>, _ handler: @escaping (String) -> Void) {
+        let box = Unmanaged.passRetained(OpenBox(handler)).toOpaque()
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<OpaquePointer?>?,
+                                        gint, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void = { _, files, count, _, data in
+            guard let files, count == 1, let file = files[0], let data,
+                  let uri = g_file_get_uri(file) else { return }
+            defer { g_free(uri) }
+            Unmanaged<OpenBox>.fromOpaque(data).takeUnretainedValue().call(String(cString: uri))
+        }
+        let release: GClosureNotify = { data, _ in
+            guard let data else { return }
+            Unmanaged<OpenBox>.fromOpaque(data).release()
+        }
+        mp_connect(UnsafeMutableRawPointer(application), "open", unsafeBitCast(trampoline, to: GCallback.self), box, release)
+    }
+
     /// notify signals include a GParamSpec between the instance and user data.
     static func onNotify(_ instance: UnsafeMutableRawPointer, _ property: String,
                          _ handler: @escaping () -> Void) {
