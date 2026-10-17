@@ -314,10 +314,13 @@ constants.
 - **Sync engine.** The §9 algorithm, ported to Kotlin in `core`. It is the
   same protocol and passes the same scenario suite (§13.1), run against the
   real server in CI.
-  - Opening the IME stays local, with no sync, assistant or transport access
-    (§22 H11). Sync runs when the app is opened, after local edits (an expedited
-    one-time work request), and every 15 minutes through WorkManager with a
-    connected-network constraint. 15 minutes is the platform floor.
+  - Authorized Library/Account sessions use §9's foreground timers. Application,
+    IME and delivery launch perform local recovery only, without authentication
+    or sync scheduling. Background work uses one unique connected-network
+    periodic job every 15 minutes plus coalesced one-time work (§23 P11/P12).
+    Foreground save debounce precedes optional API 31+ expedited dispatch;
+    interrupted/background debounce uses ordinary delayed work.
+    Opening the IME has no assistant or transport access (§22 H11).
   - There is no push channel; FCM does not fit a self-hosted server.
 - **Network.** HTTPS by default. The network security config permits
   cleartext so that LAN servers work. The client allows `http://` only for
@@ -350,8 +353,8 @@ constants.
     as an in-app banner.
   - It registers `monkeyspaw://`, so join links open the app.
 - **The device token and API keys** use the Keystore-backed secret store. The
-  keys require no user authentication, because WorkManager reads them in the
-  background. The IME graph has no secret-store access (§22 H11).
+  keys require no user authentication so authorized background sync can read
+  them. The IME has no credential or scheduler dependency (§22 H11).
 
 ### 10.7 One behaviour, two languages
 

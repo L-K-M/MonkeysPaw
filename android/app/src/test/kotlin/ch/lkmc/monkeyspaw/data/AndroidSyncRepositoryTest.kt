@@ -35,8 +35,9 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
     }
 
     private inner class Rig(val dispatcher: CoroutineDispatcher, val secrets: Secrets = Secrets(),
-                            mono: MonotonicClock = MonotonicClock(System::nanoTime)) {
-        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+                            mono: MonotonicClock = MonotonicClock(System::nanoTime), val scheduled: Boolean = false) {
+        val backgroundErrors = mutableListOf<Throwable>()
+        val scope = CoroutineScope(SupervisorJob() + dispatcher + CoroutineExceptionHandler { _, error -> backgroundErrors.add(error) })
         val checked = JvmCheckedSyncIO()
         val prompts = AndroidPromptStore(libraryDir.toFile(), io = checked)
         val files = AndroidStateStore(stateDir.toFile(), isMainThread = { false }, io = checked)
@@ -55,6 +56,28 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
         var sequence = 1L
         var secretConstructions = 0
         var transportConstructions = 0
+        var schedulerConstructions = 0
+        var workTime = Instant.parse(timestamp).toEpochMilli()
+        val requestsForWork = mutableListOf<SyncWorkRequest>()
+        val periodicWork = linkedMapOf<String, Long>()
+        val canceledWork = mutableListOf<String>()
+        var beforeWorkEnqueue: suspend () -> Unit = {}
+        val workStore = SyncWorkStateStore(files, files.syncOperations)
+        val scheduler: SyncWorkScheduler by lazy {
+            schedulerConstructions++
+            SyncWorkScheduler(SyncWorkPolicy(workStore, object : SyncWorkQueue {
+                override suspend fun periodic(generation: String, intervalMillis: Long) { periodicWork[generation] = intervalMillis }
+                override suspend fun once(request: SyncWorkRequest) { beforeWorkEnqueue(); requestsForWork.add(request) }
+                override suspend fun cancel(generation: String) { canceledWork.add(generation); periodicWork.remove(generation) }
+            }, AndroidSyncWorkSession(startup, Lazy { sync }), { workTime }, 31), dispatcher)
+        }
+        val hooks = object : SyncWorkHooks {
+            override suspend fun authenticationStopped() = scheduled && scheduler.authenticationStopped()
+            override suspend fun authenticated(connection: String) { if (scheduled) scheduler.authenticated(connection) }
+            override suspend fun signedOut() { if (scheduled) scheduler.signedOut() }
+            override suspend fun saved() { if (scheduled) scheduler.saved() }
+            override suspend fun changed() { if (scheduled) scheduler.changed() }
+        }
         val transport = HttpTransport { request ->
             requests.add(request)
             respond?.invoke(request) ?: when {
@@ -74,8 +97,8 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
             }
         }
         val sync = AppModule.syncRepository(startup, library, repository, scope, dispatcher,
-            Clock { Instant.parse(timestamp) }, Entropy { ByteArray(it) { index -> index.toByte() } }, mono,
-            Lazy { secretConstructions++; secrets }, Lazy { transportConstructions++; transport }, settings)
+            Clock { Instant.ofEpochMilli(workTime) }, Entropy { ByteArray(it) { index -> index.toByte() } }, mono,
+            Lazy { secretConstructions++; secrets }, Lazy { transportConstructions++; transport }, settings, hooks)
 
         private fun user() = User(userID, "person", null, AccountKind.MEMBER, timestamp, null)
         private fun pull(): HttpResponse {
@@ -500,6 +523,377 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
             assertFalse(Files.exists(libraryDir))
             assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
             assertFalse(r.requests.any { it.method == HttpMethod.DELETE || it.method == HttpMethod.PUT })
+        } finally { r.close() }
+    }
+
+    @Test fun `local launch with native scheduling hooks still constructs no scheduler or authenticated graph`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.repository.refresh()
+            runCurrent()
+            assertEquals(0, r.schedulerConstructions)
+            assertEquals(0, r.secretConstructions)
+            assertEquals(0, r.transportConstructions)
+            assertTrue(r.requestsForWork.isEmpty())
+            assertFalse(Files.exists(stateDir.resolve("sync/work.json")))
+        } finally { r.close() }
+    }
+
+    @Test fun `native worker dispatch shares the account graph consumes once and arms no foreground timers`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            runCurrent()
+            val request = r.requestsForWork.single()
+            assertEquals(listOf(900_000L), r.periodicWork.values.toList())
+            assertEquals(0, r.requests.count { it.url.endsWith("/sync/pull") })
+            r.scheduler.dispatch(request)
+            runCurrent()
+            assertNotNull(r.sync.reports.value!!.lastSuccess)
+            assertFalse(r.workStore.read().pending)
+            r.scheduler.dispatch(request)
+            advanceTimeBy(3_600_000)
+            runCurrent()
+            assertEquals(1, r.requests.count { it.url.endsWith("/sync/pull") })
+            assertEquals(1, r.secretConstructions)
+            assertEquals(1, r.transportConstructions)
+        } finally { r.close() }
+    }
+
+    @Test fun `native 401 is durable and reconstructed worker resume and foreground entry read no credentials`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher, scheduled = true)
+        r.login()
+        r.respond = { if (it.url.endsWith("/sync/pull")) HttpResponse(401,
+            body = ErrorResponse.codec.encode(ErrorResponse.Failure(FailureCode.UNAUTHORIZED))) else null }
+        val request = r.requestsForWork.single()
+        r.scheduler.dispatch(request)
+        runCurrent()
+        assertTrue(r.workStore.read().needsSignIn)
+        val readsBeforeRestart = r.secrets.reads
+        r.close()
+        val reopened = Rig(dispatcher, r.secrets, scheduled = true)
+        try {
+            reopened.scheduler.dispatch(request)
+            reopened.sync.resume()
+            reopened.sync.reconnect()
+            reopened.scheduler.enter(SyncForegroundOwner.ACCOUNT)
+            reopened.sync.syncNow()
+            runCurrent()
+            assertEquals(readsBeforeRestart, reopened.secrets.reads)
+            assertTrue(reopened.requests.isEmpty())
+            assertTrue(reopened.sync.reports.value!!.needsSignIn)
+            assertNotNull(reopened.sync.accounts.value!!.account)
+            reopened.scheduler.leave(SyncForegroundOwner.ACCOUNT)
+            reopened.login()
+            assertFalse(reopened.workStore.read().needsSignIn)
+            assertNotEquals(request.generation, reopened.workStore.read().generation)
+            reopened.scheduler.dispatch(reopened.requestsForWork.last())
+            assertEquals(1, reopened.requests.count { it.url.endsWith("/sync/pull") })
+        } finally { reopened.close() }
+    }
+
+    @Test fun `stopped Account entry permits native work after login without leaving the screen`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val r = Rig(dispatcher, scheduled = true)
+        r.login()
+        r.respond = { if (it.url.endsWith("/sync/pull")) HttpResponse(401,
+            body = ErrorResponse.codec.encode(ErrorResponse.Failure(FailureCode.UNAUTHORIZED))) else null }
+        r.scheduler.dispatch(r.requestsForWork.single())
+        runCurrent()
+        assertTrue(r.workStore.read().needsSignIn)
+        val stoppedGeneration = r.workStore.read().generation
+        r.close()
+        val reopened = Rig(dispatcher, r.secrets, scheduled = true)
+        try {
+            reopened.scheduler.enter(SyncForegroundOwner.ACCOUNT)
+            runCurrent()
+            assertTrue(reopened.requests.isEmpty())
+            reopened.login()
+            runCurrent()
+            val pending = reopened.workStore.read()
+            assertFalse(pending.needsSignIn)
+            assertTrue(pending.pending)
+            assertNotEquals(stoppedGeneration, pending.generation)
+            val runnable = assertNotNull(reopened.requestsForWork.lastOrNull())
+            assertEquals(pending.generation, runnable.generation)
+            reopened.scheduler.dispatch(runnable)
+            runCurrent()
+            assertEquals(1, reopened.requests.count { it.url.endsWith("/sync/pull") })
+            assertNotNull(reopened.sync.reports.value!!.lastSuccess)
+            assertFalse(reopened.workStore.read().pending)
+            reopened.scheduler.leave(SyncForegroundOwner.ACCOUNT)
+            runCurrent()
+            assertEquals(1, reopened.requests.count { it.url.endsWith("/sync/pull") })
+        } finally { reopened.close() }
+    }
+
+    @Test fun `changed checked flush failure leaves every repository observer running`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            failNextWorkFlush(r)
+            r.sync.graph().engine.committedMutation(SyncChangeOrigin.USER)
+            runCurrent()
+            assertEquals(1, r.backgroundErrors.size)
+            assertObservationContinues(r)
+        } finally { r.close() }
+    }
+
+    @Test fun `saved checked flush failure denies that mutation and preserves later observation`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            val trigger = r.sync.graph().engine.scheduling.value.triggerVersion
+            failNextWorkFlush(r)
+            r.repository.withLibrary { _, editing -> editing.create("first", "first.md") }
+            runCurrent()
+            assertEquals(1, r.backgroundErrors.size)
+            assertEquals(trigger, r.sync.graph().engine.scheduling.value.triggerVersion)
+            assertObservationContinues(r)
+        } finally { r.close() }
+    }
+
+    @Test fun `unreadable work state fails closed per save without killing repository observers`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            val path = stateDir.resolve("sync/work.json")
+            val good = Files.readAllBytes(path)
+            val trigger = r.sync.graph().engine.scheduling.value.triggerVersion
+            val pulls = r.requests.count { it.url.endsWith("/sync/pull") }
+            Files.writeString(path, "unreadable-state")
+            repeat(2) { index ->
+                r.repository.withLibrary { _, editing -> editing.create("held$index", "held$index.md") }
+                runCurrent()
+            }
+            assertEquals(2, r.backgroundErrors.size)
+            assertEquals(trigger, r.sync.graph().engine.scheduling.value.triggerVersion)
+            assertEquals(pulls, r.requests.count { it.url.endsWith("/sync/pull") })
+            assertEquals("unreadable-state", Files.readString(path))
+            Files.write(path, good)
+            assertObservationContinues(r)
+        } finally { r.close() }
+    }
+
+    @Test fun `saved enqueue failure retains durable intent forwards eligible mutations and later recovers`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            val trigger = r.sync.graph().engine.scheduling.value.triggerVersion
+            var attempts = 0
+            r.beforeWorkEnqueue = {
+                attempts++
+                val durable = SyncWorkStateStore(r.files, r.files.syncOperations).read()
+                assertTrue(durable.pending)
+                assertEquals(SyncWorkReason.SAVE, durable.reason)
+                error("Synthetic enqueue failure with private diagnostics")
+            }
+            r.repository.withLibrary { _, editing -> editing.create("first", "first.md") }
+            runCurrent()
+            assertTrue(r.workStore.read().pending)
+            assertEquals(trigger + 1, r.sync.graph().engine.scheduling.value.triggerVersion)
+            assertTrue(attempts in 1..2, "No immediate retry loop")
+            val settled = attempts
+            runCurrent()
+            assertEquals(settled, attempts)
+            assertTrue(r.backgroundErrors.isNotEmpty())
+            assertTrue(r.backgroundErrors.all { it.message == "Sync scheduling failed." && it.cause == null })
+            r.beforeWorkEnqueue = {}
+            val queued = r.requestsForWork.size
+            r.repository.withLibrary { _, editing -> editing.create("recovered", "recovered.md") }
+            runCurrent()
+            assertEquals(trigger + 2, r.sync.graph().engine.scheduling.value.triggerVersion)
+            assertEquals(queued + 1, r.requestsForWork.size)
+            r.workTime += 3_000
+            r.scheduler.dispatch(r.requestsForWork.last())
+            runCurrent()
+            assertFalse(r.workStore.read().pending)
+            assertEquals(2, r.requests.count { it.url.endsWith("/sync/pull") })
+            assertObservationContinues(r)
+        } finally { r.close() }
+    }
+
+    @Test fun `saved enqueue cancellation propagates without forwarding or reporting a recoverable failure`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            val trigger = r.sync.graph().engine.scheduling.value.triggerVersion
+            r.beforeWorkEnqueue = { throw CancellationException("Synthetic cancellation") }
+            r.repository.withLibrary { _, editing -> editing.create("first", "first.md") }
+            runCurrent()
+            assertTrue(r.workStore.read().pending)
+            assertEquals(trigger, r.sync.graph().engine.scheduling.value.triggerVersion)
+            assertTrue(r.backgroundErrors.isEmpty())
+        } finally { r.close() }
+    }
+
+    private fun failNextWorkFlush(r: Rig) {
+        r.checked.onFlush = { path ->
+            if (path == stateDir.resolve("sync/work.json")) {
+                r.checked.onFlush = {}
+                throw java.io.IOException("Synthetic checked flush failure")
+            }
+        }
+    }
+
+    private suspend fun TestScope.assertObservationContinues(r: Rig) {
+        val graph = r.sync.graph()
+        val trigger = graph.engine.scheduling.value.triggerVersion
+        r.repository.withLibrary { _, editing -> editing.create("later", "later.md") }
+        runCurrent()
+        assertEquals(trigger + 1, graph.engine.scheduling.value.triggerVersion, "Later USER mutation reaches shared engine")
+        r.groupRole = Role.VIEWER
+        r.remote(group = true)
+        r.sync.runBackground()
+        r.respond = { request -> if (request.url.endsWith("/me")) HttpResponse(200, body = MeResponse.codec.encode(
+            MeResponse(User(userID, "updated", null, AccountKind.MEMBER, timestamp, null), emptyList(),
+                listOf(Device(deviceID, "Android", timestamp, null, null, true))))) else null }
+        r.sync.refreshAccount()
+        runCurrent()
+        assertEquals("updated", r.sync.accounts.value!!.me!!.user.username)
+        assertEquals(Role.VIEWER, r.sync.access.value!!.groups.values.single().role)
+        assertNotNull(r.sync.reports.value!!.lastSuccess)
+        assertEquals(graph.engine.scheduling.value, r.sync.scheduling.value)
+        assertTrue(r.repository.state.value.snapshot.prompts.any { it.entry.relativePath.endsWith("remote.md") })
+        Files.move(libraryDir, filesDir.resolve("lost-library"))
+        assertNotNull(r.repository.refresh().error)
+        runCurrent()
+        assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, graph.engine.reports.value.blockingIssue, "Root collector remains active")
+        assertEquals(SyncBlockingIssue.ROOT_UNAVAILABLE, r.sync.reports.value!!.blockingIssue)
+    }
+
+    @Test fun `canceling native worker cancels its HTTP pass but keeps restartable pending work`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            val entered = CompletableDeferred<Unit>()
+            r.respond = { if (it.url.endsWith("/sync/pull")) { entered.complete(Unit); awaitCancellation() } else null }
+            val work = launch { r.scheduler.dispatch(r.requestsForWork.single()) }
+            entered.await()
+            work.cancelAndJoin()
+            runCurrent()
+            assertTrue(r.workStore.read().pending)
+            assertEquals(10_000, r.requestsForWork.last().delayMillis)
+            r.respond = null
+            r.workTime += 10_000
+            r.scheduler.dispatch(r.requestsForWork.last())
+            runCurrent()
+            assertFalse(r.workStore.read().pending)
+            assertNotNull(r.sync.reports.value!!.lastSuccess)
+        } finally { r.close() }
+    }
+
+    @Test fun `native save during worker completion preserves one queued successor`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            r.respond = { if (it.url.endsWith("/sync/pull")) { entered.complete(Unit); release.await(); null } else null }
+            val work = launch { r.scheduler.dispatch(r.requestsForWork.single()) }
+            entered.await()
+            r.repository.withLibrary { _, editing -> editing.create("saved", "saved.md") }
+            runCurrent()
+            assertEquals(1, r.requestsForWork.size)
+            release.complete(Unit)
+            work.join()
+            runCurrent()
+            assertTrue(r.workStore.read().pending)
+            assertEquals(2, r.requestsForWork.size)
+            assertEquals(3_000, r.requestsForWork.last().delayMillis)
+            r.workTime += 3_000
+            r.scheduler.dispatch(r.requestsForWork.last())
+            runCurrent()
+            assertFalse(r.workStore.read().pending)
+            assertEquals(2, r.requests.count { it.url.endsWith("/sync/pull") })
+        } finally { r.close() }
+    }
+
+    @Test fun `native foreground and old worker deliveries consume the same live trigger`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            val request = r.requestsForWork.single()
+            r.scheduler.enter(SyncForegroundOwner.LIBRARY)
+            runCurrent()
+            assertFalse(r.workStore.read().pending)
+            assertEquals(1, r.requests.count { it.url.endsWith("/sync/pull") })
+            r.scheduler.dispatch(request)
+            r.scheduler.leave(SyncForegroundOwner.LIBRARY)
+            r.scheduler.dispatch(request)
+            runCurrent()
+            assertEquals(1, r.requests.count { it.url.endsWith("/sync/pull") })
+        } finally { r.close() }
+    }
+
+    @Test fun `reconstructed foreground engine honors durable background retry due without another timer`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val mono = MonotonicClock { testScheduler.currentTime * 1_000_000 }
+        val r = Rig(dispatcher, mono = mono, scheduled = true)
+        r.login()
+        r.respond = { if (it.url.endsWith("/sync/pull")) HttpResponse(503, body = byteArrayOf()) else null }
+        r.scheduler.dispatch(r.requestsForWork.single())
+        runCurrent()
+        assertEquals(10_000, r.workStore.read().dueAt - r.workTime)
+        r.close()
+        val reopened = Rig(dispatcher, r.secrets, mono, scheduled = true)
+        try {
+            reopened.scheduler.enter(SyncForegroundOwner.LIBRARY)
+            runCurrent()
+            assertEquals(0, reopened.requests.count { it.url.endsWith("/sync/pull") })
+            reopened.workTime += 9_999
+            advanceTimeBy(9_999)
+            runCurrent()
+            assertEquals(0, reopened.requests.count { it.url.endsWith("/sync/pull") })
+            reopened.workTime++
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(1, reopened.requests.count { it.url.endsWith("/sync/pull") })
+            reopened.scheduler.leave(SyncForegroundOwner.LIBRARY)
+        } finally { reopened.close() }
+    }
+
+    @Test fun `failed reauthentication never clears a durable 401 stop`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.sync.requireSignIn()
+            runCurrent()
+            assertTrue(r.workStore.read().needsSignIn)
+            val generation = r.workStore.read().generation
+            r.respond = { if (it.url.endsWith("/auth/login")) HttpResponse(401,
+                body = ErrorResponse.codec.encode(ErrorResponse.Failure(FailureCode.UNAUTHORIZED))) else null }
+            assertFailsWith<SyncAccountServiceError> { r.login() }
+            runCurrent()
+            assertTrue(SyncWorkStateStore(r.files, r.files.syncOperations).read().needsSignIn)
+            assertEquals(generation, r.workStore.read().generation)
+        } finally { r.close() }
+    }
+
+    @Test fun `native periodic work scans for missed events after all live engine triggers were consumed`() = runTest {
+        val r = Rig(StandardTestDispatcher(testScheduler), scheduled = true)
+        try {
+            r.login()
+            r.scheduler.dispatch(r.requestsForWork.single())
+            runCurrent()
+            assertEquals(1, r.requests.count { it.url.endsWith("/sync/pull") })
+            r.remote("later.md")
+            r.workTime += 900_000
+            r.scheduler.dispatch(SyncWorkRequest(r.workStore.read().generation))
+            runCurrent()
+            assertEquals(2, r.requests.count { it.url.endsWith("/sync/pull") })
+            assertTrue(Files.exists(libraryDir.resolve("later.md")))
         } finally { r.close() }
     }
 

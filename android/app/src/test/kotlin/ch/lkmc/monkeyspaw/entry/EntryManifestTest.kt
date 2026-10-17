@@ -19,6 +19,10 @@ internal class EntryManifestTest {
         for (merged in mergedManifests()) assertFalse("androidx.profileinstaller.ProfileInstallerInitializer" in startupInitializers(merged))
     }
 
+    @Test fun `merged startup metadata leaves work initialization to authorized entry`() {
+        for (merged in mergedManifests()) assertFalse("androidx.work.WorkManagerInitializer" in startupInitializers(merged))
+    }
+
     @Test fun `merged manifest has the exact permissions components filters and safe startup allowlist`() {
         mergedManifests().forEach(::validateMergedManifest)
     }
@@ -43,7 +47,8 @@ internal class EntryManifestTest {
     }
 
     private fun validateMergedManifest(merged: Element) {
-        assertEquals(listOf("android.permission.INTERNET"), merged.children("uses-permission").map { it.attr("name") })
+        assertEquals(listOf("INTERNET", "WAKE_LOCK", "ACCESS_NETWORK_STATE", "RECEIVE_BOOT_COMPLETED", "FOREGROUND_SERVICE")
+            .map { "android.permission.$it" }.sorted(), merged.children("uses-permission").map { it.attr("name") }.sorted())
         for (tag in listOf("permission", "uses-permission-sdk-23", "uses-permission-sdk-m")) assertTrue(merged.children(tag).isEmpty())
         val application = merged.children("application").single()
         assertEquals("false", application.attr("allowBackup"))
@@ -53,7 +58,22 @@ internal class EntryManifestTest {
         val actual = components.associateBy { it.attr("name") }
         fun qualified(name: String) = if (name.startsWith('.')) "ch.lkmc.monkeyspaw$name" else name
         val profileReceiver = "androidx.profileinstaller.ProfileInstallReceiver"
-        assertEquals((source.map { qualified(it.attr("name")) } + profileReceiver).sorted(), components.map { it.attr("name") }.sorted())
+        val workComponents = mapOf(
+            "androidx.work.impl.background.systemjob.SystemJobService" to Component("service", true, "android.permission.BIND_JOB_SERVICE"),
+            "androidx.work.impl.foreground.SystemForegroundService" to Component("service", false),
+            "androidx.work.impl.utils.ForceStopRunnable\$BroadcastReceiver" to Component("receiver", false),
+            "androidx.work.impl.background.systemalarm.RescheduleReceiver" to Component("receiver", false),
+            "androidx.work.impl.diagnostics.DiagnosticsReceiver" to Component("receiver", true, "android.permission.DUMP"),
+            "androidx.room.MultiInstanceInvalidationService" to Component("service", false),
+        )
+        assertEquals((source.map { qualified(it.attr("name")) } + profileReceiver + workComponents.keys).sorted(),
+            components.map { it.attr("name") }.sorted())
+        for ((name, expected) in workComponents) {
+            val component = actual.getValue(name)
+            assertEquals(expected.tag, component.tagName)
+            assertEquals(expected.exported.toString(), component.attr("exported"))
+            assertEquals(expected.permission, component.attr("permission"))
+        }
         for (component in source) {
             val counterpart = actual.getValue(qualified(component.attr("name")))
             assertEquals(component.tagName, counterpart.tagName)
