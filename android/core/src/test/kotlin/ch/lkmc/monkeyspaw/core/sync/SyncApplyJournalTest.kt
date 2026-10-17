@@ -14,6 +14,30 @@ import kotlin.test.*
 class SyncApplyJournalTest {
     private val v = SyncTestValues
 
+    @Test fun localStartupRechecksTheReloadedJournalRootBeforeMutation() {
+        val h = SyncJournalHarness(seed = false)
+        val edit = h.replacement()
+        val plan = h.plan(listOf(edit), expectedState = null)
+        h.libraryOperations.failAt = 1
+        assertFails { h.journal.apply(plan) }
+        h.libraryOperations.failAt = null
+        val original = h.local.state.read("sync/apply.json")
+        val replaced = original.decodeToString().replace(h.binding.root.path, "/another-library").encodeToByteArray()
+        assertFalse(original.contentEquals(replaced))
+        h.local.state.writePrivate(replaced, "sync/apply.json")
+        h.clearCalls()
+
+        assertEquals(SyncError.BindingMismatch, assertFails { h.journal.replayLocal(h.binding.root) })
+        assertTrue(h.local.prompts.writes.isEmpty())
+        assertNull(h.states.snapshot.value)
+        assertContentEquals(replaced, h.local.state.read("sync/apply.json"))
+        assertFailsWith<LibraryError.RecoveryRequired> { h.local.library.entries() }
+
+        h.local.state.writePrivate(original, "sync/apply.json")
+        assertEquals(SyncApplyOutcome.Committed, h.journal.replayLocal(h.binding.root))
+        assertEquals(plan.nextState, h.states.snapshot.value)
+    }
+
     @Test fun durablePrivateIntentAndRetentionPrecedePublicationAndStatePrecedesDeletion() {
         val h = SyncJournalHarness()
         val plan = h.preparedCopy()
