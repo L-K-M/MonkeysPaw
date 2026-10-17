@@ -22,6 +22,7 @@ internal fun privateDirectory(path: Path) {
 
 /** Real NIO disk and checked fsync; this does not prove Android Os or power-loss behavior. */
 internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateStore {
+    var checkpoint: ((String, String?) -> Unit)? = null
     private val files = RootedFileStore(root.toFile(), if (library) RootedFileStore.Scan.LIBRARY else RootedFileStore.Scan.STATE)
     private val lock = Any()
     var writes = 0
@@ -38,9 +39,12 @@ internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateSt
     override fun stamp(path: String): FileStamp? = synchronized(lock) { files.stamp(path) }
     override fun read(path: String): ByteArray = synchronized(lock) { files.read(path) }
     override fun write(bytes: ByteArray, path: String): Unit = synchronized(lock) { files.write(bytes, path); writes++ }
-    override fun writePrivate(bytes: ByteArray, path: String) = write(bytes, path)
+    override fun writePrivate(bytes: ByteArray, path: String) {
+        checkpoint?.invoke("before_private_write", path)
+        write(bytes, path)
+    }
     override fun create(bytes: ByteArray, path: String): Unit = synchronized(lock) { files.create(bytes, path); writes++ }
-    override fun delete(path: String) = synchronized(lock) { files.delete(path) }
+    override fun delete(path: String) = synchronized(lock) { checkpoint?.invoke("before_delete", path); files.delete(path) }
     override fun move(source: String, destination: String) = synchronized(lock) { files.move(source, destination) }
 
     // External fixture writes are independent of the engine's publication metrics.
@@ -81,11 +85,18 @@ internal class DiskSyncFiles(val root: Path, library: Boolean = false) : StateSt
             }
             flushParents(path)
             receipts[path] = files.stamp(path) to SyncHash.of(intended)
+            checkpoint?.invoke("published", path)
             SyncFilePublication(effect.displaced)
         }
 
-        override fun flushFile(path: String) = checked { durable { force(regular(path)) } }
-        override fun flushDirectory(path: String?) = checked { durable { force(files.syncDirectory(path)) } }
+        override fun flushFile(path: String) = checked {
+            checkpoint?.invoke("before_file_flush", path)
+            durable { force(regular(path)) }
+        }
+        override fun flushDirectory(path: String?) = checked {
+            checkpoint?.invoke("before_directory_flush", path)
+            durable { force(files.syncDirectory(path)) }
+        }
         override fun setMode(mode: SyncFileMode, path: String) = checked { effect ->
             setPermissions(regular(path), mode)
             effect.applied = true

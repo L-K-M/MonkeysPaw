@@ -40,7 +40,7 @@ class ScenarioDecoderTest {
         assertEquals(cases.size, cases.map { it.id }.toSet().size)
         assertTrue(cases.any { it.id == "01-round-trip" })
         assertTrue(cases.any { it.steps.any { step -> step.action == "kill_client" } })
-        println("Z15 structural decode: ${files.size} files, ${cases.size} cases; semantic execution remains partial")
+        println("Sync structural decode: ${files.size} files, ${cases.size} cases; execution belongs to ScenarioRunnerTest")
     }
 
     @Test fun staleMutationPointersCannotSatisfyDecoderRejection() {
@@ -128,6 +128,25 @@ class ScenarioDecoderTest {
             assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(hook(then)) }
         }
         assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(advance.patching(mapOf("/seconds" to wireLong(0)))) }
+    }
+    @Test fun serverBindingsAndCrashExpectationsCannotBypassTheClosedLanguage() {
+        for (action in listOf("advance_server", "retention", "server_expect", "backup")) {
+            val scenario = SyncScenarioCorpus.load(directory).second.first { scenario -> scenario.steps.any { it.action == action } }
+            val step = scenario.steps.first { it.action == action }
+            val value = WireValue.ObjectValue(step.fields + mapOf("action" to wireString(action), "device" to wireString(step.device),
+                "bind" to wireString("unused")))
+            assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(value) }
+        }
+        for (action in listOf("kill_client", "resume_client")) {
+            val scenario = SyncScenarioCorpus.load(directory).second.first { scenario -> scenario.steps.any { it.action == action } }
+            val step = scenario.steps.first { it.action == action }
+            val value = WireValue.ObjectValue(step.fields + mapOf("action" to wireString(action), "device" to wireString(step.device),
+                "expected" to wireObject("file_count" to wireLong(0))))
+            assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(value) }
+        }
+        val step = SyncScenarioCorpus.load(directory).second.flatMap { it.steps }.first { it.action == "collect" }
+        assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(WireValue.ObjectValue(step.fields + mapOf(
+            "action" to wireString("collect"), "device" to wireString(step.device), "unused" to wireLong(1)))) }
     }
 
     @Test fun textExpansionUsesUtf8BytesAndAvoidsOverflow() {

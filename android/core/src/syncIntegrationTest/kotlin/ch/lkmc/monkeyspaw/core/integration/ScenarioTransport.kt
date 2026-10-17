@@ -10,8 +10,9 @@ import java.net.URI
 internal class ScenarioTransport : HttpTransport {
     enum class Phase { REQUEST, RESPONSE }
     enum class Network { ONLINE, OFFLINE }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val driver = OkHttpHttpTransport(MonotonicClock(System::nanoTime), scope)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var dispatcher = okhttp3.Dispatcher()
+    private var driver = OkHttpHttpTransport(MonotonicClock(System::nanoTime), scope, dispatcher)
     private val lock = Any()
     var library: DiskSyncFiles? = null
     private var network = Network.ONLINE
@@ -111,5 +112,12 @@ internal class ScenarioTransport : HttpTransport {
         val index = interruptions.indexOfFirst { it.phase == phase && it.method == method && it.path == path }
         if (index < 0) false else { interruptions.removeAt(index); true }
     }
-    suspend fun close() { scope.cancel(); scope.coroutineContext[Job]?.join() }
+    suspend fun serverRestarted() {
+        // The shared driver forbids retries; a deliberate server stop invalidates pooled sockets.
+        close()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        dispatcher = okhttp3.Dispatcher()
+        driver = OkHttpHttpTransport(MonotonicClock(System::nanoTime), scope, dispatcher)
+    }
+    suspend fun close() { scope.cancel(); scope.coroutineContext[Job]?.join(); dispatcher.executorService.shutdownNow() }
 }

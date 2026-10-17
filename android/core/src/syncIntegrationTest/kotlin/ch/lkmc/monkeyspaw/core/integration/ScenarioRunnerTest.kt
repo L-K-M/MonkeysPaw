@@ -2,7 +2,7 @@ package ch.lkmc.monkeyspaw.core.integration
 
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import kotlinx.coroutines.*
-import org.junit.Assume.assumeTrue
+import org.junit.AfterClass
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
 import java.nio.file.Files
@@ -10,34 +10,25 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
-/** Named partial proof only. Z17 owns the twelve external-control cases and aggregate ownership. */
+/** Every case is named and executes once; class completion rejects a consumption gap. */
 @RunWith(Parameterized::class)
 class ScenarioRunnerTest internal constructor(private val id: String, private val scenario: SyncScenario) {
     companion object {
+        private val corpus = SyncScenarioCorpus.load(fixtureRoot())
+        private val accounting = ScenarioAccounting(corpus.second, corpus.first)
         @JvmStatic @Parameterized.Parameters(name = "{0}")
-        fun scenarios(): Collection<Array<Any>> = selectedScenarios().map { arrayOf(it.id, it) }
+        fun scenarios(): Collection<Array<Any>> = corpus.second.map { arrayOf(it.id, it) }
+        @JvmStatic @AfterClass fun completeCorpus() = accounting.finish()
     }
-    @Test fun executesEverySelectedCheckpointOverRealHTTP() {
-        runLiveScenario(scenario)
-        println("PASS Z16 named partial scenario: $id")
+    @Test fun executesEveryCheckpointOverRealHTTP() {
+        runLiveScenario(scenario) { runner -> runner.run(); accounting.record(scenario, runner) }
+        println("PASS sync scenario: $id")
     }
 }
 
 internal fun fixtureRoot(): Path = Path.of(System.getProperty("monkeyspaw.fixtures"), "sync")
-internal fun selectedScenarios(): List<SyncScenario> {
-    val deferred = setOf("06-removed-retention.json", "17-crash-apply.json", "22-restore-lower-head.json", "23-quiet-scope-retention.json")
-    val deferredPaging = setOf("08-frozen-pages-survive-real-purge", "08-expired-manifest-discards-collected-page", "08-restarted-manifest")
-    val corpus = SyncScenarioCorpus.load(fixtureRoot())
-    val deferredIDs = deferred.flatMap { file -> ScenarioDecoder.decode(Files.readAllBytes(fixtureRoot().resolve(file))).map { it.id } }.toSet() + deferredPaging
-    val cases = corpus.second.filter { it.id !in deferredIDs }
-    scenarioCheck(cases.size == 75 && cases.map { it.id }.distinct().size == cases.size, "named Z16 inventory changed; coordinate selection with Z17")
-    return cases
-}
 internal fun liveRuntime(): ScenarioRuntime {
     val manifest = System.getenv("MONKEYSPAW_SYNC_MANIFEST")?.takeIf { it.isNotEmpty() }
-    if (manifest == null && System.getenv("MONKEYSPAW_REQUIRE_SYNC_SERVER") != "1") {
-        assumeTrue("Z16 named live proof requires a server manifest; local infrastructure checks remain separate", false)
-    }
     scenarioCheck(manifest != null, "required live server manifest missing")
     return ScenarioRuntime.read(Path.of(manifest!!))
 }
@@ -98,6 +89,14 @@ class ScenarioRunnerMutationTest {
             assertFailsWith<ScenarioFailure> { runner.checkpoints.check(runner.device("a"), mapOf("unknown" to wireLong(0))) }
             runner.run()
         }
+    }
+    @Test fun anUnregisteredActionMemberCannotPassTheDecoder() {
+        val step = roundTrip().at("/cases/0/steps/0").obj()
+        assertFailsWith<ScenarioFailure> { ScenarioDecoder.decodeStep(WireValue.ObjectValue(step + ("unused" to wireLong(1)))) }
+    }
+    @Test fun anUnconsumedCaseCannotPassAggregateAccounting() {
+        val corpus = SyncScenarioCorpus.load(fixtureRoot())
+        assertFailsWith<ScenarioFailure> { ScenarioAccounting(corpus.second, corpus.first).finish() }
     }
     @Test fun aLaterExternalWatchRunsTheProductionDebounceAndPush() {
         runLiveScenario(decode(roundTrip())) { runner ->

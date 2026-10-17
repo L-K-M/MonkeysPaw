@@ -33,13 +33,30 @@ def with_flatpak(jobs):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_full_sync_acceptance_selects_both_engines_server_and_fixture_inputs(self):
+        for path in ("android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/services/SyncEngine.kt",
+                     "android/core/src/syncIntegrationTest/kotlin/ch/lkmc/monkeyspaw/core/integration/ScenarioDeviceProcess.kt",
+                     "Sources/MonkeysPawCore/Sync/SyncService.swift", "Tests/MonkeysPawCoreTests/SyncTests.swift",
+                     "server/Tests/MonkeysPawSyncIntegrationTests/SyncCrashScenarioTests.swift",
+                     "server/Sources/MonkeysPawServer/Services/RetentionService.swift", "spec/fixtures/sync/17-crash-apply.json"):
+            self.assertIn("android-sync", changes.select_jobs("pull_request", [path]), path)
+
+    def test_acceptance_workflow_requires_semantic_aggregate_and_only_numeric_artifacts(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        job = workflow.split("  android-sync:\n", 1)[1].split("\n  core-macos:", 1)[0]
+        self.assertIn(":core:test :core:syncIntegrationTest --no-daemon --max-workers=2", job)
+        self.assertIn("scripts/android-sync-ci.py --verify-reports", job)
+        self.assertIn("path: android/core/build/reports/sync-acceptance.json", job)
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("*.xml", job)
+
     def test_path_rules(self):
         cases = {
             "Package.swift": SWIFT | {"android-sync"},
             "Package.resolved": SWIFT | {"android-sync"},
             "Sources/MonkeysPawCore/Domain/Prompt.swift": SWIFT | {"android-sync"},
             "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL,
-            "Tests/MonkeysPawCoreTests/PromptTests.swift": SWIFT,
+            "Tests/MonkeysPawCoreTests/PromptTests.swift": SWIFT | {"android-sync"},
             "Assistant/Prompts/write.md": ALL,
             "Assistant/Prompts/review.md": ALL,
             "Assistant/Prompts/improve.md": ALL,
@@ -160,8 +177,8 @@ class SelectionTests(unittest.TestCase):
 
     def test_assistant_accounting_drivers_and_disclosure_job_selection(self):
         cases = {
-            "Tests/MonkeysPawCoreTests/Assistant/LlmConformanceTests.swift": SWIFT,
-            "Tests/MonkeysPawCoreTests/PromptConformanceTests.swift": SWIFT,
+            "Tests/MonkeysPawCoreTests/Assistant/LlmConformanceTests.swift": SWIFT | {"android-sync"},
+            "Tests/MonkeysPawCoreTests/PromptConformanceTests.swift": SWIFT | {"android-sync"},
             "android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/EveryFixtureTest.kt": {"android", "android-sync"},
             "android/core/src/test/kotlin/ch/lkmc/monkeyspaw/core/conformance/LlmConformanceTest.kt": {"android", "android-sync"},
             "android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/settings/AssistantSettingsPersistenceTest.kt": {"android", "android-sync"},

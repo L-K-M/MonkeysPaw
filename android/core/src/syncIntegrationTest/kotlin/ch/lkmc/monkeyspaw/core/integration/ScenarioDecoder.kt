@@ -269,7 +269,7 @@ internal object ScenarioDecoder {
     }
 }
 
-/** Structural enumeration only. Z17 owns semantic full-corpus accounting. */
+/** Structural enumeration only; ScenarioRunnerTest separately proves full semantic consumption. */
 internal object SyncScenarioCorpus {
     private val required = setOf("01-round-trip.json", "02-offline-conflict.json", "03-edit-delete.json", "04-viewer-denied.json",
         "05-scope-transfers.json", "06-removed-offline.json", "06-removed-retention.json", "07-added-member.json",
