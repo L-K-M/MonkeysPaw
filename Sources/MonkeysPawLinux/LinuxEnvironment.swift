@@ -759,7 +759,12 @@ final class LinuxEnvironment {
                         return model
                     },
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
-                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
+                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage },
+                    makeAccount: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.accountModel
+                    })
             }
             self.currentSettingsWindow?.show()
         }
@@ -829,6 +834,7 @@ final class LinuxEnvironment {
 
     private func approveQuit(afterDraining graph: LibraryGraph, approved: @escaping () -> Void) {
         guard let sync = graph.sync else { approved(); return }
+        currentSettingsWindow?.suspendAccount()
         if !sync.needsDrain, sync.service.retire() == .stopped {
             sync.retireModels()
             sync.drained = true
@@ -1211,12 +1217,14 @@ final class LinuxEnvironment {
         // The reused panel was hidden directly above. Revoke old requests held
         // by Setup or focus restoration before retiring their graph.
         delivery.invalidatePendingPresentation()
+        currentSettingsWindow?.suspendAccount()
         old.stop()
         quitPending = false
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
         let graph = libraryGraph
         if resumeSync { startSync(in: graph) }
+        currentSettingsWindow?.rebindAccount()
         currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
             assistant: { [weak graph] in graph?.assistant })
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
@@ -1236,6 +1244,7 @@ final class LinuxEnvironment {
     private func beginSyncReplacement(_ graph: LibraryGraph, directory: URL?) {
         guard let sync = graph.sync else { return }
         syncReplacementIssue = nil
+        currentSettingsWindow?.suspendAccount()
         sync.retireModels()
         graph.stop()
         graph.picker.libraryAvailable = false
