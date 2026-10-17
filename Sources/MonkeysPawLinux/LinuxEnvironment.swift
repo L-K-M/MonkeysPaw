@@ -189,6 +189,7 @@ final class LinuxEnvironment {
         var conflict: ConflictModel?
         var observer: UUID?
         var startupRequested = false
+        var startupReserved = false
         var started = false
         var retired = false
         var drained = false
@@ -794,6 +795,10 @@ final class LinuxEnvironment {
                         guard let self, !self.isShutDown,
                               self.libraryGraph.sync?.retired == false else { return nil }
                         return self.groupManagementModel
+                    }, accountStartupPending: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              let sync = self.currentLibraryGraph?.sync, !sync.retired else { return false }
+                        return sync.startupReserved
                     })
             }
             switch destination {
@@ -1164,8 +1169,7 @@ final class LinuxEnvironment {
         _ = sync.account?.addObserver { [weak self, weak graph, weak sync] state in
             guard let self, let graph, let sync, !sync.retired, self.currentLibraryGraph === graph else { return }
             if sync.startupRequested, !state.isBusy {
-                sync.startupRequested = false
-                sync.account?.startup()
+                self.startAccount(in: graph)
             }
             self.onboardingModel.refresh()
         }
@@ -1177,10 +1181,26 @@ final class LinuxEnvironment {
         // A healthy local-only primary has no account work to start. Opening
         // Account still loads its models, and explicit login starts this engine.
         guard sync.accounts.hasConfiguredServer || sync.access.snapshot.isBlocked else { return }
+        // Reserve the initial snapshot-to-startup gap against native intents.
+        sync.startupReserved = true
         prepareSyncModels(in: graph)
         // Account's initial loading publication must complete before startup.
         if sync.account?.state.isBusy == true { sync.startupRequested = true }
-        else { sync.account?.startup() }
+        else { startAccount(in: graph) }
+    }
+
+    private func startAccount(in graph: LibraryGraph) {
+        guard let sync = graph.sync, !sync.retired, currentLibraryGraph === graph else { return }
+        sync.startupRequested = false
+        sync.account?.startup()
+        // Account admission precedes release at the same GLib priority. Its
+        // current loading state then owns the ordinary native intent gates.
+        mainThread.run { [weak self, weak graph, weak sync] in
+            guard let self, let graph, let sync, !self.isShutDown,
+                  !sync.retired, self.currentLibraryGraph === graph else { return }
+            sync.startupReserved = false
+            self.currentSettingsWindow?.refreshAccountStartup()
+        }
     }
 
     private func observeSync(in graph: LibraryGraph) {
