@@ -82,6 +82,31 @@ final class GroupAccessServiceTests: XCTestCase {
         XCTAssertEqual(browser.rows.map(\.relativePath), ["Notes/group.md"])
     }
 
+    func testBrowserMoveDestinationsUseCurrentFoldersAndRolesIncludingEmptyGroups() throws {
+        let rig = try GroupAccessRig(role: .editor)
+        let empty = SyncTestValues.device
+        try rig.base.states.update(for: rig.base.binding) {
+            $0.groups[empty] = try SyncGroupState(name: "Display label", folder: "Empty", role: .owner)
+        }
+        try rig.base.files.put("Folder seed", at: "Folder/seed.md")
+        try rig.index.rebuild()
+        let browser = LibraryBrowserModel(index: rig.index, usage: rig.base.usage,
+            favorites: rig.base.library, main: rig.main, editor: rig.model)
+        XCTAssertEqual(browser.moveDestination(for: .all), RelativePath(""))
+        XCTAssertEqual(browser.moveDestination(for: .folder("Folder")), "Folder")
+        XCTAssertEqual(browser.moveDestination(for: .group(empty)), "Groups/Empty")
+        XCTAssertEqual(browser.moveDestination(for: .group(SyncTestValues.group)), "Groups/Team")
+        for section in [LibrarySectionID.favourites, .recent, .conflicts, .tag("tag"), .folder("../outside")] {
+            XCTAssertNil(browser.moveDestination(for: section))
+        }
+        try rig.role(.viewer)
+        XCTAssertNil(browser.moveDestination(for: .group(SyncTestValues.group)))
+        try rig.removeMembership()
+        XCTAssertNil(browser.moveDestination(for: .group(empty)))
+        browser.deactivate()
+        XCTAssertNil(browser.moveDestination(for: .all))
+    }
+
     func testNewLocalGroupFavoriteSurvivesRestartAndIngestWithoutUIByteWrites() throws {
         for initial in [nil, false, true] as [Bool?] {
             let rig = try GroupAccessRig(role: .editor)

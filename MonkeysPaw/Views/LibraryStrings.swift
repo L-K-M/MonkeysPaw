@@ -7,6 +7,7 @@ enum LibraryStrings {
     static let filter = "Filter library"
     static let preview = "Prompt preview"
     static let folders = "Folders"
+    static let groups = "Groups"
     static let tags = "Tags"
     static let readOnly = "Read-only"
     static let invalid = "Invalid"
@@ -15,6 +16,23 @@ enum LibraryStrings {
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
     static let keyboardHint = "↑↓: select · ⌘S: save · ⌘⇧F: favourite · ⌘⇧A: Assistant · Esc: close Assistant, clear filter, then close"
+
+    static func role(_ role: AssistantGroupRole) -> String {
+        switch role {
+        case .viewer: return "Viewer"
+        case .editor: return "Editor"
+        case .owner: return "Owner"
+        }
+    }
+
+    /// Built in steps: one concatenation with an optional and a ternary
+    /// exceeds the Release type checker's time limit.
+    static func sectionLabel(title: String, role: AssistantGroupRole?, count: Int) -> String {
+        var parts = [title]
+        if let role { parts.append(Self.role(role)) }
+        parts.append(String(count) + (count == 1 ? " prompt" : " prompts"))
+        return parts.joined(separator: ", ")
+    }
 
     static func favoriteMessage(_ outcome: PromptFavoriteOutcome) -> String? {
         switch outcome {
