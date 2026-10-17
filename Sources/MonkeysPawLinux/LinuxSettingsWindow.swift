@@ -5,6 +5,7 @@ import MonkeysPawCore
 /// A reusable view over Settings presentation state.
 /// GTK owns the window and children; Swift keeps guarded borrowed pointers.
 final class LinuxSettingsWindow {
+    enum Page { case current, account }
     private let window: GTK.Widget
     private let notebook: GTK.Widget
     private let general: GeneralSettingsModel
@@ -51,14 +52,15 @@ final class LinuxSettingsWindow {
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
          librarySwitchMessage: @escaping () -> String? = { nil },
          makeAccount: @escaping () -> AccountModel? = { nil },
-         makeInvite: @escaping () -> InviteModel? = { nil }) {
+         makeInvite: @escaping () -> InviteModel? = { nil },
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
         self.updates = LinuxSettingsUpdatePage(model: updates)
-        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite)
+        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite, makeGroups: makeGroups)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
@@ -120,8 +122,11 @@ final class LinuxSettingsWindow {
         account.retire(isDestroyed ? .destroyed : .hidden)
     }
 
-    func show() {
+    func show(page: Page = .current) {
         guard !isDestroyed else { return }
+        if page == .account {
+            gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        }
         general.refresh()
         renderGeneral()
         shortcuts.refresh()
@@ -152,6 +157,8 @@ final class LinuxSettingsWindow {
 
     // Account follows the replaceable library graph, independently of General.
     func suspendAccount() { account.retire(.hidden) }
+
+    func refreshLibrarySwitchMessage() { renderGeneral() }
 
     func rebindAccount() {
         guard !isDestroyed else { return }
