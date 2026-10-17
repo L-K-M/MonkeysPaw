@@ -495,6 +495,118 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertEqual(transport.heldCount, 0)
     }
 
+    func testPrivacyScanRepeatsBothRootsAfterAListedFileDisappears() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data("clean".utf8), at: ".monkeyspaw-sync-transient")
+        try files.write(Data("clean".utf8), at: "library.md")
+        try RootedFileStore(root: data).write(Data("clean".utf8), at: "state.json")
+        var reads: [String] = []
+        try assertPrivate([token]) { store, path in
+            reads.append(path)
+            if path == ".monkeyspaw-sync-transient" { try store.move(from: path, to: "published.json") }
+            return try store.read(at: path)
+        }
+        XCTAssertEqual(reads.filter { $0 == "library.md" }.count, 2)
+        XCTAssertEqual(reads.filter { $0 == "state.json" }.count, 2)
+        XCTAssertTrue(reads.contains("published.json"))
+    }
+
+    func testPrivacyScanFailsImmediatelyOnALeakBeforeDisappearance() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data(token.utf8), at: "a-leak.md")
+        try files.write(Data("clean".utf8), at: "z-transient")
+        var reads: [String] = []
+        XCTAssertThrowsError(try assertPrivate([token]) { store, path in
+            reads.append(path)
+            if path == "z-transient" { try store.delete(at: path) }
+            return try store.read(at: path)
+        }) { XCTAssertEqual($0 as? PrivacyScanError, .persistedBytes) }
+        XCTAssertEqual(reads, ["a-leak.md"])
+    }
+
+    func testPrivacyScanFindsALeakAfterDisappearanceInTheSamePass() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data("clean".utf8), at: ".monkeyspaw-sync-transient")
+        try files.write(Data(token.utf8), at: "leak.md")
+        var reads: [String] = []
+        XCTAssertThrowsError(try assertPrivate([token]) { store, path in
+            reads.append(path)
+            if path == ".monkeyspaw-sync-transient" { try store.delete(at: path) }
+            return try store.read(at: path)
+        }) { XCTAssertEqual($0 as? PrivacyScanError, .persistedBytes) }
+        XCTAssertEqual(reads, [".monkeyspaw-sync-transient", "leak.md"])
+    }
+
+    func testPrivacyScanFindsALeakPublishedDuringAnUnstablePass() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data(token.utf8), at: ".monkeyspaw-sync-transient")
+        XCTAssertThrowsError(try assertPrivate([token]) { store, path in
+            if path == ".monkeyspaw-sync-transient" { try store.move(from: path, to: "persisted.json") }
+            return try store.read(at: path)
+        }) { XCTAssertEqual($0 as? PrivacyScanError, .persistedBytes) }
+    }
+
+    func testPrivacyScanChecksSecretsDuringAnUnstablePass() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data("clean".utf8), at: "transient")
+        try secrets.write(SecretValue(token), account: .device(UUID()))
+        var reads = 0
+        XCTAssertThrowsError(try assertPrivate([token]) { store, path in
+            reads += 1
+            try store.delete(at: path)
+            return try store.read(at: path)
+        }) { XCTAssertEqual($0 as? PrivacyScanError, .secretStoreBytes) }
+        XCTAssertEqual(reads, 1)
+    }
+
+    func testPrivacyScanPropagatesOtherReadErrorsWithoutRetrying() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data("clean".utf8), at: "library.md")
+        for error in [FileStoreError.ioFailure, .outsideRoot, .notRegularFile] {
+            var reads = 0
+            XCTAssertThrowsError(try assertPrivate([token]) { _, _ in
+                reads += 1
+                throw error
+            }) { XCTAssertEqual($0 as? FileStoreError, error) }
+            XCTAssertEqual(reads, 1)
+        }
+    }
+
+    func testPrivacyScanFailsAfterBoundedPersistentDisappearance() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data("clean".utf8), at: "library.md")
+        var reads = 0
+        XCTAssertThrowsError(try assertPrivate([token]) { _, _ in
+            reads += 1
+            throw FileStoreError.notFound
+        }) { XCTAssertEqual($0 as? PrivacyScanError, .unstableFiles) }
+        XCTAssertEqual(reads, 3)
+    }
+
+    func testPrivacyScanRefusesMissingRootsBeforeAndDuringScanning() throws {
+        let files = try makePrivacyFiles()
+        try files.write(Data("clean".utf8), at: "library.md")
+        try FileManager.default.removeItem(at: data)
+        XCTAssertThrowsError(try assertPrivate([token])) { XCTAssertEqual($0 as? FileStoreError, .notFound) }
+        try RootedFileStore(root: data).createRoot()
+        var reads = 0
+        XCTAssertThrowsError(try assertPrivate([token]) { store, path in
+            reads += 1
+            try FileManager.default.removeItem(at: self.root)
+            return try store.read(at: path)
+        }) { XCTAssertEqual($0 as? FileStoreError, .notFound) }
+        XCTAssertEqual(reads, 1)
+    }
+
+    private func makePrivacyFiles() throws -> RootedFileStore {
+        let files = try RootedFileStore(root: root)
+        try files.createRoot()
+        try RootedFileStore(root: data).createRoot()
+        return files
+    }
+
+    private enum PrivacyScanError: Error, Equatable { case persistedBytes, secretStoreBytes, unstableFiles }
+
     private func makeDelegate() {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, httpTransport: transport, secrets: secrets,
             clipboard: clipboard, replyToTermination: { [weak self] in self?.terminationReplies.append($0) },
@@ -564,15 +676,33 @@ final class MacInviteDeepLinkTests: XCTestCase {
         })
     }
 
-    private func assertPrivate(_ values: [String]) throws {
-        for url in [root!, data!] {
-            let files = try RootedFileStore(root: url)
-            for entry in try files.listFiles() {
-                let bytes = try files.read(at: entry.relativePath)
-                XCTAssertFalse(values.contains { bytes.range(of: Data($0.utf8)) != nil }, "Invite/password bytes persisted")
+    private func assertPrivate(_ values: [String],
+        read: (RootedFileStore, String) throws -> Data = { try $0.read(at: $1) }) throws {
+        let stores = try [root!, data!].map { try RootedFileStore(root: $0) }
+        for files in stores { try files.pinRoot() }
+        // Live atomic writers can rename a listed temporary. Retry both roots,
+        // retaining every readable-file and secret-store check in unstable passes.
+        for _ in 0..<3 {
+            var disappeared = false
+            for files in stores {
+                for entry in try files.listFiles() {
+                    let bytes: Data
+                    do { bytes = try read(files, entry.relativePath) }
+                    catch FileStoreError.notFound {
+                        try files.requireRoot()
+                        disappeared = true
+                        continue
+                    }
+                    if values.contains(where: { bytes.range(of: Data($0.utf8)) != nil }) {
+                        throw PrivacyScanError.persistedBytes
+                    }
+                }
             }
+            if secrets.containsAny(values) { throw PrivacyScanError.secretStoreBytes }
+            for files in stores { try files.requireRoot() }
+            if !disappeared { return }
         }
-        XCTAssertFalse(secrets.containsAny(values), "Invite/password bytes reached the secret store")
+        throw PrivacyScanError.unstableFiles
     }
 
     private func spin(_ predicate: () -> Bool, timeout: TimeInterval = 5) -> Bool {
