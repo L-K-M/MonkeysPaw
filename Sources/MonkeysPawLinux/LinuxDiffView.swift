@@ -2,25 +2,25 @@
 import CGtk
 import MonkeysPawCore
 
-/// Render Core's final merged comparison. Tags mark changed lines; blank rows
+/// Render Core's byte comparison. Tags mark changed lines; blank rows
 /// align insertions/deletions without changing the candidate's saved bytes.
-final class LinuxAssistantDiffView {
+final class LinuxDiffView {
     let widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
     private var rendered: ArtifactDiff?
     private var views: [(GTK.Widget, GTK.Widget)] = []
 
-    init() {
-        gtk_widget_set_name(widget, "assistant-diff")
-        for (name, title) in [("header", "Front matter"), ("body", "Body")] {
+    init(name: String = "assistant-diff", before: String = "Before", after: String = "Merged candidate") {
+        gtk_widget_set_name(widget, name)
+        for (section, title) in [("header", "Front matter"), ("body", "Body")] {
             gtk_box_append(mp_box(widget), GTK.label(title))
             let panes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
             var pair: [GTK.Widget] = []
-            for (side, label) in [("before", "Before"), ("after", "Merged candidate")] {
+            for (side, label) in [("before", before), ("after", after)] {
                 let column = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
                 gtk_widget_set_hexpand(column, 1)
                 gtk_box_append(mp_box(column), GTK.label(label))
                 let view = gtk_text_view_new()!
-                gtk_widget_set_name(view, "assistant-diff-" + name + "-" + side)
+                gtk_widget_set_name(view, name + "-" + section + "-" + side)
                 mp_accessible_label(view, title + ": " + label)
                 gtk_text_view_set_editable(mp_text_view(view), 0)
                 gtk_text_view_set_cursor_visible(mp_text_view(view), 0)

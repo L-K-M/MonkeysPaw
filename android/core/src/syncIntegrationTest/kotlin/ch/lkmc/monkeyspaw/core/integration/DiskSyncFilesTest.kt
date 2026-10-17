@@ -1,6 +1,7 @@
 package ch.lkmc.monkeyspaw.core.integration
 
 import ch.lkmc.monkeyspaw.core.domain.llm.*
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncHash
 import ch.lkmc.monkeyspaw.core.ports.*
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
@@ -8,6 +9,32 @@ import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.*
 
 class DiskSyncFilesTest {
+    @Test fun retirementRemembersTheUnsafeIntervalRatherThanOnlyFinalFiles(): Unit = withPrivateTestRoot { root ->
+        val files = DiskSyncFiles(root.resolve("library"), library = true)
+        val id = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+        val bytes = "---\nid: $id\n---\nBody.\n".encodeToByteArray()
+        files.externalWrite(bytes, "Old.md")
+        files.operations.trash("Old.md", SyncFileExpectation.Matching(files.stamp("Old.md")!!, bytes))
+        files.externalWrite(bytes, "New.md")
+        assertEquals(setOf(id), files.unprotectedTrashIDs)
+        files.resetMetrics()
+        files.externalWrite(bytes, "Old.md")
+        files.operations.trash("Old.md", SyncFileExpectation.Matching(files.stamp("Old.md")!!, bytes))
+        assertTrue(files.unprotectedTrashIDs.isEmpty())
+    }
+
+    @Test fun watcherReceiptsRequireThePublicationIncarnationAndCurrentBytes(): Unit = withPrivateTestRoot { root ->
+        val files = DiskSyncFiles(root.resolve("library"), library = true)
+        val bytes = "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAZ\n---\nBody.\n".encodeToByteArray()
+        files.operations.publish(bytes, "p.md", SyncFileExpectation.Absent, SyncFileMode.NORMAL)
+        val stamp = files.stamp("p.md")
+        val hash = SyncHash.of(bytes)
+        assertTrue(files.ownsChange("p.md", stamp, hash))
+        files.externalWrite(bytes, "p.md")
+        assertFalse(files.ownsChange("p.md", stamp, hash))
+        assertFalse(files.ownsChange("p.md", files.stamp("p.md"), hash))
+    }
+
     @Test fun checkedPublicationKeepsRawBytesModesAndStaleSource(): Unit = withPrivateTestRoot { root ->
         val files = DiskSyncFiles(root.resolve("library"), library = true)
         val bytes = byteArrayOf(-1, 0, 13, 10)
