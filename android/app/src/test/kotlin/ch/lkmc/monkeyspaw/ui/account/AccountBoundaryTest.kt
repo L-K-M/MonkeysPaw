@@ -18,6 +18,14 @@ internal class AccountBoundaryTest {
         val screen = root.resolve("ui/account/AccountScreen.kt").readText()
         assertTrue(screen.contains("PasswordVisualTransformation()"))
         assertTrue(screen.contains("KeyboardType.Password, autoCorrectEnabled = false"))
+        val invite = root.resolve("ui/account/AccountInviteSection.kt").readText()
+        assertTrue(invite.contains("PasswordVisualTransformation()"))
+        assertTrue(invite.contains("KeyboardType.Password, autoCorrectEnabled = false"))
+        assertTrue(invite.contains("R.string.invite_destination, invite.serverURL"))
+        assertTrue(invite.contains("current.username, current.identity.serverURL"))
+        assertTrue(invite.contains("R.string.invite_new_destination, state.draft.username, invite.serverURL"))
+        assertTrue(invite.contains("contentDescription = description"))
+        assertFalse(Regex("contentDescription\\s*=\\s*state\\.").containsMatchIn(invite))
     }
 
     @Test fun `shared local Library and Fill graph cannot reach the account presentation`() {

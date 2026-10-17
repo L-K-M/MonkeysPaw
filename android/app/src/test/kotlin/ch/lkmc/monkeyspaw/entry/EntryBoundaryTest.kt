@@ -12,7 +12,7 @@ internal class EntryBoundaryTest {
     private val namespace = "http://schemas.android.com/apk/res/android"
 
     @Test
-    fun `only launcher capture entries permission-protected tile and IME are exported`() {
+    fun `only launcher join links capture entries and protected tile and IME are exported`() {
         val manifest = xml("AndroidManifest.xml")
         val expected = mapOf(
             ".MainActivity" to "true", ".entry.FillActivity" to "false",
@@ -45,6 +45,28 @@ internal class EntryBoundaryTest {
         val widget = components.single { it.attr("name") == ".entry.PromptWidgetProvider" }
         assertEquals(listOf("android.appwidget.action.APPWIDGET_UPDATE"), children(widget, "action").map { it.attr("name") })
         assertEquals("@xml/prompt_widget_info", children(widget, "meta-data").single().attr("resource"))
+    }
+
+    @Test fun `join dispatch reuses the exported singleTop launcher and consumes cold and warm intents`() {
+        val main = children(xml("AndroidManifest.xml"), "activity").single { it.attr("name") == ".MainActivity" }
+        assertEquals("singleTop", main.attr("launchMode"))
+        val filters = children(main, "intent-filter")
+        assertEquals(2, filters.size)
+        val join = filters.single { children(it, "action").single().attr("name") == "android.intent.action.VIEW" }
+        assertEquals(setOf("android.intent.category.DEFAULT", "android.intent.category.BROWSABLE"),
+            children(join, "category").map { it.attr("name") }.toSet())
+        val data = children(join, "data").single()
+        assertEquals("monkeyspaw", data.attr("scheme"))
+        assertEquals("join", data.attr("host"))
+        val activity = sources.resolve("kotlin/ch/lkmc/monkeyspaw/MainActivity.kt").readText()
+        assertTrue(activity.contains("routeInvite(intent, restored = savedInstanceState != null)"))
+        assertTrue(activity.substringAfter("override fun onNewIntent(").contains("routeInvite(intent)"))
+        assertTrue(activity.contains("setIntent(Intent())"))
+        assertTrue(activity.contains("invite.withValue { account.stageInvite(it) }"))
+        val decoder = root.resolve("InviteIntentDecoder.kt").readText()
+        for (clear in listOf("intent.data = null", "intent.clipData = null", "intent.selector = null", "intent.replaceExtras(null as Bundle?)"))
+            assertTrue(decoder.contains(clear))
+        assertFalse(Regex("\\b(?:getExtras|getStringExtra|putExtra|Log|println|SavedStateHandle)\\b").containsMatchIn(decoder))
     }
 
     @Test

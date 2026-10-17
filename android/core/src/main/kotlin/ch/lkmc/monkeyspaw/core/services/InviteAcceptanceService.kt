@@ -7,9 +7,9 @@ import ch.lkmc.monkeyspaw.core.domain.sync.SyncAccount
 import ch.lkmc.monkeyspaw.core.sync.SyncHTTPClientError
 import kotlinx.coroutines.CancellationException
 
-internal enum class InviteAcceptance { EXISTING_ACCOUNT, NEW_ACCOUNT }
+enum class InviteAcceptance { EXISTING_ACCOUNT, NEW_ACCOUNT }
 
-internal sealed class InviteAcceptanceIssue(message: String) : Exception(message, null, false, true) {
+sealed class InviteAcceptanceIssue(message: String) : Exception(message, null, false, true) {
     data object InvalidLink : InviteAcceptanceIssue("Enter a valid invite link or token.")
     data object ServerRequired : InviteAcceptanceIssue("Select the server explicitly before entering a bare invite token.")
     data object AccountChanged : InviteAcceptanceIssue("Your account changed. Open the invite again and check the destination.")
@@ -23,12 +23,12 @@ internal sealed class InviteAcceptanceIssue(message: String) : Exception(message
     final override fun toString(): String = "<invite acceptance issue redacted>"
 }
 
-internal data class InviteDestination(val serverURL: String, val currentAccount: SyncAccount?, val canJoin: Boolean, val usesHTTP: Boolean) {
+data class InviteDestination(val serverURL: String, val currentAccount: SyncAccount?, val canJoin: Boolean, val usesHTTP: Boolean) {
     override fun toString(): String = "<invite destination redacted>"
 }
 
 /** Clear on hide; the first Accept attempt consumes the token even on busy/failure/cancellation. */
-internal class StagedInvite internal constructor(
+class StagedInvite internal constructor(
     link: InviteLink, internal val expectedAccount: SyncAccount?, val destination: InviteDestination,
 ) {
     private var link: InviteLink? = link
@@ -38,7 +38,7 @@ internal class StagedInvite internal constructor(
     override fun toString(): String = "<staged invite redacted>"
 }
 
-internal data class InviteAcceptanceResult(
+data class InviteAcceptanceResult(
     val snapshot: SyncAccountSnapshot, val issue: InviteAcceptanceIssue? = null,
     val cleanup: SyncAccountCleanup = snapshot.cleanup,
 ) {
@@ -48,7 +48,7 @@ internal data class InviteAcceptanceResult(
 
 /** Local staging only. The shared account service owns admission, credentials and compensation. */
 class InviteAcceptanceService(private val account: SyncAccountService) {
-    internal fun stage(input: String, server: String? = null): StagedInvite {
+    fun stage(input: String, server: String? = null): StagedInvite {
         val link = try { InviteLink(input, server) }
         catch (_: InviteLinkError.ServerRequired) { throw InviteAcceptanceIssue.ServerRequired }
         catch (_: InviteLinkError) { throw InviteAcceptanceIssue.InvalidLink }
@@ -58,7 +58,7 @@ class InviteAcceptanceService(private val account: SyncAccountService) {
     }
 
     /** Presentation supplies SecretValue and clears its password draft before awaiting. */
-    internal suspend fun accept(staged: StagedInvite, asAccount: InviteAcceptance, username: String = "",
+    suspend fun accept(staged: StagedInvite, asAccount: InviteAcceptance, username: String = "",
                                 password: SecretValue = SecretValue(""), deviceName: String = ""): InviteAcceptanceResult {
         val link = staged.consume() ?: throw InviteAcceptanceIssue.NoInvite
         try {
