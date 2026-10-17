@@ -1214,7 +1214,13 @@ final class LinuxEditorBackgroundWorkTests: XCTestCase {
                 main.run { XCTAssertTrue(Thread.isMainThread); order.append(position) }
             }
         }
-        XCTAssertTrue(GTKTestSupport.spin { order.count == 3 })
+        var drained = false
+        Task.detached {
+            do { try await worker.drainSubmittedWork() }
+            catch { XCTFail("The Linux worker must execute its drain barrier") }
+            main.run { drained = true }
+        }
+        XCTAssertTrue(GTKTestSupport.spin { drained })
         XCTAssertEqual(order, [0, 1, 2])
     }
 }

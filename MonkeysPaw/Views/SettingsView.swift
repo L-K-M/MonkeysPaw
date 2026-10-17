@@ -3,6 +3,10 @@ import SwiftUI
 
 /// Each model's view hook has one owner; independent service observers survive.
 final class SettingsViewState: ObservableObject {
+    enum Tab: Hashable { case general, shortcuts, delivery, assistant, account }
+    @Published var selectedTab: Tab = .general {
+        didSet { updateAccountVisibility() }
+    }
     @Published private(set) var general: GeneralSettingsModel.State
     @Published private(set) var togglePicker: ShortcutsSettingsModel.ActionState
     @Published private(set) var repeatLast: ShortcutsSettingsModel.ActionState
@@ -17,16 +21,20 @@ final class SettingsViewState: ObservableObject {
     let rememberedValuesModel: RememberedValuesSettingsModel
     let delivery: DeliverySettingsViewState
     let updates: UpdateSettingsViewState
+    let account: AccountSettingsViewState
     var onChooseFolder: (() -> Void)?
     var onRememberedValuesChange: (() -> Void)?
     /// An installed override may return nil to hide a resolved busy outcome.
     var librarySwitchMessage: (() -> String?)?
     private let openSetup: () -> Void
+    private var windowIsVisible = false
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
          rememberedValues: RememberedValuesSettingsModel,
          delivery: DeliverySettingsModel, updates: UpdateSettingsModel,
-         mainThread: MainThread, openSetup: @escaping () -> Void) {
+         mainThread: MainThread, openSetup: @escaping () -> Void,
+         makeAccount: @escaping () -> AccountModel? = { nil }, onAccountOpen: @escaping () -> Void = {},
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         generalModel = general
         shortcutsModel = shortcuts
         rememberedValuesModel = rememberedValues
@@ -34,6 +42,8 @@ final class SettingsViewState: ObservableObject {
         self.openSetup = openSetup
         self.delivery = DeliverySettingsViewState(model: delivery, mainThread: mainThread)
         self.updates = UpdateSettingsViewState(model: updates, mainThread: mainThread)
+        account = AccountSettingsViewState(mainThread: mainThread, makeModel: makeAccount,
+            onOpen: onAccountOpen, makeGroups: makeGroups)
         self.general = general.state
         togglePicker = shortcuts.togglePicker
         repeatLast = shortcuts.repeatLast
@@ -42,6 +52,7 @@ final class SettingsViewState: ObservableObject {
             mainThread.run { [weak self] in
                 guard let self else { return }
                 self.general = self.generalModel.state
+                self.account.refreshBinding()
             }
         }
         shortcuts.onChange = { [weak self] in
@@ -142,6 +153,21 @@ final class SettingsViewState: ObservableObject {
         assistant = nil
     }
 
+    func windowShown() {
+        windowIsVisible = true
+        updateAccountVisibility()
+    }
+
+    func windowHidden() {
+        windowIsVisible = false
+        account.hide()
+    }
+
+    func updateAccountVisibility() {
+        if windowIsVisible, selectedTab == .account { account.show() }
+        else { account.hide() }
+    }
+
     func chooseFolder() { onChooseFolder?() }
     func useDefaultFolder() { generalModel.useDefaultFolder() }
     func revealFolder() { generalModel.revealFolder() }
@@ -176,15 +202,22 @@ struct SettingsView: View {
     @ObservedObject var presentation: SettingsViewState
 
     var body: some View {
-        TabView {
-            general.tabItem { Text(Strings.generalTab) }
-            shortcuts.tabItem { Text(Strings.shortcutsTab) }
+        TabView(selection: $presentation.selectedTab) {
+            general.tabItem { Text(Strings.generalTab) }.tag(SettingsViewState.Tab.general)
+            shortcuts.tabItem { Text(Strings.shortcutsTab) }.tag(SettingsViewState.Tab.shortcuts)
             SettingsDeliveryView(presentation: presentation.delivery)
-                .tabItem { Text(DeliverySettingsStrings.title) }
+                .tabItem { Text(DeliverySettingsStrings.title) }.tag(SettingsViewState.Tab.delivery)
             if let assistant = presentation.assistant {
                 SettingsAssistantView(presentation: assistant).tabItem { Text(SettingsAssistantStrings.tab) }
+                    .tag(SettingsViewState.Tab.assistant)
             }
+            SettingsAccountView(presentation: presentation.account)
+                .tabItem { Text(SettingsAccountStrings.tab) }.tag(SettingsViewState.Tab.account)
+                .onAppear { presentation.updateAccountVisibility() }
         }
+        // Composition also publishes when a refused drain restores models but
+        // General's path/outcome is unchanged, so its onChange need not fire.
+        .onReceive(presentation.objectWillChange) { _ in presentation.account.refreshBinding() }
     }
 
     private var general: some View {
