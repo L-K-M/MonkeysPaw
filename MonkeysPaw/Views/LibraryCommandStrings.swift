@@ -31,6 +31,7 @@ enum LibraryCommandStrings {
     static let oversizedPreview = "No preview: this revision exceeds the supported prompt size."
     static let renamed = "Renamed"
     static let moved = "Moved"
+    static let moveUnavailable = "The prompt could not be moved. Check the source and destination, then try again."
     static let restored = "Restored"
     static let deleted = "Deleted. The prompt's history is kept."
     static let occupied = "The destination already exists. Choose another name or folder; no file was replaced."

@@ -122,7 +122,16 @@ struct LibraryView: View {
         presentation.snapshot.sections.filter { if case .tag = $0.id { return true }; return false }
     }
 
+    @ViewBuilder
     private func sectionRow(_ section: LibraryBrowserSection) -> some View {
+        let epoch = presentation.scopeDragEpoch
+        if presentation.canDropScopeRow(onto: section.id) {
+            sectionLabel(section).onDrop(of: [LibraryViewState.scopeDragTypeIdentifier],
+                delegate: LibraryScopeDropTarget(presentation: presentation, section: section.id, epoch: epoch))
+        } else { sectionLabel(section) }
+    }
+
+    private func sectionLabel(_ section: LibraryBrowserSection) -> some View {
         HStack {
             Text(section.title).padding(.leading, CGFloat(section.depth) * 12)
             if let role = section.role {
@@ -131,6 +140,7 @@ struct LibraryView: View {
             Spacer()
             Text(String(section.count)).foregroundStyle(.secondary)
         }
+        .contentShape(Rectangle())
         .tag(section.id)
         .accessibilityLabel(LibraryStrings.sectionLabel(title: section.title, role: section.role, count: section.count))
     }
@@ -144,11 +154,16 @@ struct LibraryView: View {
 
     private var prompts: some View {
         VStack(spacing: 0) {
+            // List selection arrives on mouse-down. Activate on click release
+            // so a row drag reaches its drop guard before any draft sheet opens.
             List(selection: Binding<RelativePath?>(get: { presentation.snapshot.selection?.relativePath },
-                set: presentation.selectPath)) {
+                set: { _ in })) {
                 ForEach(presentation.snapshot.rows, id: \.relativePath) { row in
-                    LibraryRowView(row: row, showsLastUse: presentation.snapshot.selectedSection == .recent)
-                        .tag(row.relativePath)
+                    promptRow(row).tag(row.relativePath)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { presentation.selectPath(row.relativePath) }
+                        .accessibilityAction { presentation.selectPath(row.relativePath) }
                 }
             }
             .focused($focusedPane, equals: .prompts)
@@ -161,6 +176,15 @@ struct LibraryView: View {
                 Text(LibraryStrings.noRows).foregroundStyle(.secondary).padding(12)
             }
         }
+    }
+
+    @ViewBuilder
+    private func promptRow(_ row: LibraryBrowserRow) -> some View {
+        let epoch = presentation.scopeDragEpoch
+        let content = LibraryRowView(row: row, showsLastUse: presentation.snapshot.selectedSection == .recent)
+        if presentation.canStartScopeDrag && !row.isReadOnly {
+            content.onDrag { presentation.scopeDragProvider(for: row.selection, epoch: epoch) ?? NSItemProvider() }
+        } else { content }
     }
 
     private var editor: some View {
@@ -285,6 +309,24 @@ struct LibraryView: View {
         .focused($focusedPane, equals: .preview)
         .accessibilityLabel(LibraryStrings.preview)
         .accessibilityIdentifier("library-preview")
+    }
+}
+
+private struct LibraryScopeDropTarget: DropDelegate {
+    let presentation: LibraryViewState
+    let section: LibrarySectionID
+    let epoch: UUID
+
+    func validateDrop(info: DropInfo) -> Bool {
+        presentation.scopeDragEpoch == epoch && presentation.canDropScopeRow(onto: section)
+            && info.hasItemsConforming(to: [LibraryViewState.scopeDragTypeIdentifier])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        presentation.acceptScopeDrop(info.itemProviders(for: [LibraryViewState.scopeDragTypeIdentifier]),
+            onto: section, epoch: epoch)
     }
 }
 
