@@ -764,6 +764,11 @@ final class LinuxEnvironment {
                         guard let self, !self.isShutDown,
                               self.libraryGraph.sync?.retired == false else { return nil }
                         return self.accountModel
+                    },
+                    makeGroups: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.groupManagementModel
                     })
             }
             self.currentSettingsWindow?.show()
